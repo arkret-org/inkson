@@ -80,7 +80,7 @@ pub fn load_organization_control_key(
 }
 
 /// Result of a successful organization mint (D2): the artefacts the caller
-/// persists + displays. The `submit_body` is POSTed to soland to mint the DID.
+/// persists + displays. The `submit_body` is POSTed to coland to mint the DID.
 pub struct PreparedOrganization {
     /// Stable identity of the organization principal.
     pub organization_id: DidCoreId,
@@ -109,7 +109,7 @@ pub enum OrganizationError {
 
 /// Build a `did:webvh` inception for a new organization (D2, client side).
 ///
-/// `principal_endpoint` is the soland base URL (the organization is anchored to
+/// `principal_endpoint` is the coland base URL (the organization is anchored to
 /// this Station's `did:webvh` method authority). `local_id` is the
 /// organization's stable handle / slug. `also_known_as` carries optional
 /// reverse-link handles. Organizations use the service-identity WebVH profile:
@@ -117,7 +117,7 @@ pub enum OrganizationError {
 /// device-enrollment-authority service slot.
 ///
 /// On success returns the prepared inception (which carries `submit_body` to
-/// POST to soland) plus a [`PreparedOrganization`] with the secrets + ids the
+/// POST to coland) plus a [`PreparedOrganization`] with the secrets + ids the
 /// caller persists.
 pub fn prepare_organization_inception(
     principal_endpoint: &str,
@@ -326,7 +326,7 @@ mod tests {
         let signed = sign_organization_statement(&input, &control_key).expect("sign");
 
         // Re-derive the signing bytes and verify with the control verifying key,
-        // exactly the path soland's verifier runs.
+        // exactly the path coland's verifier runs.
         let proof = match &signed.authorization.proof {
             SignatureMaterial::NonEmptyString(value) => value.clone(),
             SignatureMaterial::Variant1(_) => panic!("expected detached signature"),

@@ -1,7 +1,7 @@
 //! Session keep-alive, driven by the persisted `ak.session.grant`.
 //!
 //! ②(A+②) model (api-conventions.md §3.3): there is **no** second client-visible
-//! local session credential minted by soland. After login, the client
+//! local session credential minted by coland. After login, the client
 //! holds the `ak.session.grant` (issued by the Account Authority) plus the
 //! grant-binding (DPoP) key whose thumbprint is the grant's `cnf.jkt`. The grant
 //! itself is the live credential for `/_arkret/self/*`: every request presents
@@ -967,8 +967,8 @@ mod tests {
         };
         let binding = arkret_sdk::StationConnectionBinding {
             service_id: state.account_id.station_id.clone(),
-            base_url: "https://soland.example/".into(),
-            trust_domain: arkret_sdk::TrustDomainId::new("ak:trust_domain:soland.example").unwrap(),
+            base_url: "https://coland.example/".into(),
+            trust_domain: arkret_sdk::TrustDomainId::new("ak:trust_domain:coland.example").unwrap(),
             auth_metadata: arkret_sdk::AuthMetadata::minimal(),
         };
         let client = ClientBuilder::new(Url::parse(&binding.base_url).unwrap())
@@ -1013,7 +1013,7 @@ mod tests {
         let mut store = LocalStateStore::with_path(directory.path().join("state.json"));
         let account = crate::test_support::AccountFixture::new(principal_did.as_str())
             .station(state.account_id.station_id.as_str())
-            .server_url("https://soland.example/")
+            .server_url("https://coland.example/")
             .build();
         assert_eq!(account.authority, state.account_id);
         store.switch_active_account(&account).unwrap();
@@ -1150,7 +1150,7 @@ mod tests {
             arkret_sdk::DidCoreId::new("ak:did_core:webvh:z6mkfixture:alice.example".to_owned())
                 .unwrap();
         let station_id =
-            arkret_sdk::DidCoreId::new("ak:did_core:webvh:z6mkfixture:soland.example".to_owned())
+            arkret_sdk::DidCoreId::new("ak:did_core:webvh:z6mkfixture:coland.example".to_owned())
                 .unwrap();
         SessionGrantState {
             account_id: arkret_sdk::AccountId::new(principal_id, station_id),
@@ -1167,7 +1167,7 @@ mod tests {
             grant_jwt: "grant.jwt.signature".to_owned(),
             expires_at: Utc::now() + chrono::Duration::hours(1),
             audience_id: arkret_sdk::DidCoreId::new(
-                "ak:did_core:webvh:z6mkfixture:soland.example".to_owned(),
+                "ak:did_core:webvh:z6mkfixture:coland.example".to_owned(),
             )
             .unwrap(),
             granted_scope: Vec::new(),
@@ -1181,13 +1181,13 @@ mod tests {
             grant_jwt: "grant.jwt.signature".to_owned(),
             session_private_key_pem: String::new(),
             grant_id: "ak:session_grant:AY6DJbBwavsGTQuBZZiqqw9MVcqPZ8QX8invQ3i2kpi7".to_owned(),
-            audience_id: arkret_sdk::DidCoreId::new("ak:did_core:webvh:z6mkfixture:soland.example")
+            audience_id: arkret_sdk::DidCoreId::new("ak:did_core:webvh:z6mkfixture:coland.example")
                 .unwrap(),
             granted_scope: Vec::new(),
             account_id: arkret_sdk::AccountId::new(
                 arkret_sdk::DidCoreId::new(principal_id.to_owned()).unwrap(),
                 arkret_sdk::DidCoreId::new(
-                    "ak:did_core:webvh:z6mkfixture:soland.example".to_owned(),
+                    "ak:did_core:webvh:z6mkfixture:coland.example".to_owned(),
                 )
                 .unwrap(),
             ),
@@ -1195,7 +1195,7 @@ mod tests {
                 "ak:device:01964137-0000-7000-8000-000000000001".to_owned(),
             )
             .unwrap(),
-            station_url: url::Url::parse("https://soland.example").unwrap(),
+            station_url: url::Url::parse("https://coland.example").unwrap(),
             grant_expires_at: Some(Utc::now() + chrono::Duration::hours(1)),
             stored_at: Utc::now(),
         }
@@ -1208,7 +1208,7 @@ mod tests {
         original.granted_scope = vec!["ak:self:read".to_owned(), "ak:self:write".to_owned()];
         let persisted = persisted_session_grant_from_state(
             &original,
-            &Url::parse("https://soland.example").unwrap(),
+            &Url::parse("https://coland.example").unwrap(),
             &handle,
         )
         .unwrap();
@@ -1227,9 +1227,9 @@ mod tests {
     #[test]
     fn authenticated_and_refresh_transports_keep_their_respective_authorities() {
         let factory = InksonAuthenticatedTransportFactory {
-            principal_sdk_base_url: Url::parse("https://soland.example/").unwrap(),
+            principal_sdk_base_url: Url::parse("https://coland.example/").unwrap(),
             account_sdk_base_url: Url::parse("https://coauth.example/").unwrap(),
-            station_url: Url::parse("https://soland.example").unwrap(),
+            station_url: Url::parse("https://coland.example").unwrap(),
             device_handle: test_device_handle(),
             refresh_transport: ReplaceableSessionTransport::default(),
         };
@@ -1238,22 +1238,22 @@ mod tests {
         let authenticated = factory.build(&state).unwrap();
         let refresh = factory.build_account_client(&state).unwrap();
 
-        assert_eq!(authenticated.base_url().as_str(), "https://soland.example/");
+        assert_eq!(authenticated.base_url().as_str(), "https://coland.example/");
         assert_eq!(refresh.base_url().as_str(), "https://coauth.example/");
     }
 
     #[test]
     fn authenticated_factory_only_enables_local_discovery_for_explicit_test_station_scope() {
         let mut factory = InksonAuthenticatedTransportFactory {
-            principal_sdk_base_url: Url::parse("https://soland-server1.localhost:24630/").unwrap(),
+            principal_sdk_base_url: Url::parse("https://coland-server1.localhost:24630/").unwrap(),
             account_sdk_base_url: Url::parse("https://coauth-server1.localhost:24630/").unwrap(),
-            station_url: Url::parse("https://soland-server1.localhost:24630/").unwrap(),
+            station_url: Url::parse("https://coland-server1.localhost:24630/").unwrap(),
             device_handle: test_device_handle(),
             refresh_transport: ReplaceableSessionTransport::default(),
         };
         for namespace in ["localhost", "local.host"] {
             factory.station_url =
-                Url::parse(&format!("https://soland-server1.{namespace}:24630/")).unwrap();
+                Url::parse(&format!("https://coland-server1.{namespace}:24630/")).unwrap();
             #[cfg(feature = "wasm-localstorage-secrets-test")]
             assert_eq!(
                 factory.loopback_service_discovery_scope(),
@@ -1272,12 +1272,12 @@ mod tests {
             );
         }
         for station in [
-            "http://soland-server1.localhost:24630/",
-            "https://soland.example:24630/",
-            "https://soland-server1.localhost.evil.example:24630/",
+            "http://coland-server1.localhost:24630/",
+            "https://coland.example:24630/",
+            "https://coland-server1.localhost.evil.example:24630/",
             "https://127.0.0.1:24630/",
             "https://10.0.0.1:24630/",
-            "https://user:secret@soland-server1.localhost:24630/",
+            "https://user:secret@coland-server1.localhost:24630/",
         ] {
             factory.station_url = Url::parse(station).unwrap();
             assert_eq!(factory.loopback_service_discovery_scope(), None);
@@ -1399,7 +1399,7 @@ mod tests {
         let grant = test_persisted_grant("ak:did_core:webvh:z6mkfixture:alice.example");
         let authority = arkret_sdk::AccountId::new(
             grant.account_id.principal_id.clone(),
-            arkret_sdk::DidCoreId::new("ak:did_core:webvh:z6mkfixture:soland.example".to_owned())
+            arkret_sdk::DidCoreId::new("ak:did_core:webvh:z6mkfixture:coland.example".to_owned())
                 .unwrap(),
         );
         let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(Some((
@@ -1418,7 +1418,7 @@ mod tests {
             )
             .unwrap();
 
-        let restored = load_active_session_grant("https://soland.example", &secure_store).unwrap();
+        let restored = load_active_session_grant("https://coland.example", &secure_store).unwrap();
 
         assert_eq!(restored.grant_id, grant.grant_id);
         assert_eq!(restored.account_id, grant.account_id);
@@ -1432,7 +1432,7 @@ mod tests {
         let grant = test_persisted_grant(principal_id.as_str());
         let authority = arkret_sdk::AccountId::new(
             principal_id,
-            arkret_sdk::DidCoreId::new("ak:did_core:webvh:z6mkfixture:soland.example".to_owned())
+            arkret_sdk::DidCoreId::new("ak:did_core:webvh:z6mkfixture:coland.example".to_owned())
                 .unwrap(),
         );
         let account = crate::config::ActiveAccountContext::new(
@@ -1448,7 +1448,7 @@ mod tests {
                 updated_at: Utc::now(),
             },
             grant.device_id.clone(),
-            url::Url::parse("https://soland.example").unwrap(),
+            url::Url::parse("https://coland.example").unwrap(),
         )
         .unwrap();
         let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);

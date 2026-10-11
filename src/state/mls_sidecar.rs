@@ -216,7 +216,7 @@ impl LocalStateStore {
 
     /// Persist (or replace) the MLS snapshot envelope for a Realm.
     /// Idempotent: a re-snapshot at the same epoch overwrites the
-    /// previous record. The on-disk envelope is opaque to soland —
+    /// previous record. The on-disk envelope is opaque to coland —
     /// device-secret-derived encryption keeps the server zero-knowledge
     /// of the underlying group keys.
     pub fn save_mls_checkpoint(

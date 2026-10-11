@@ -72,7 +72,7 @@ pub fn RealmAdminPanel(
     let mut advanced_access_open = use_signal(|| false);
     // Realm-admin grant inputs (see realm-admin-grant-card). The subject is
     // the stable principal id being made / removed as admin; the grant id is minted
-    // client-side on grant and re-entered on revoke (the soland reducer
+    // client-side on grant and re-entered on revoke (the coland reducer
     // locates the cell by grant_id).
     let mut admin_subject_id = use_signal(String::new);
     let mut admin_grant_id = use_signal(String::new);
@@ -1406,7 +1406,7 @@ pub fn RealmAdminPanel(
                 // SOL-ORG-06 — read-only view of this Realm's verified
                 // organization relationships (verified-active / revoked-expired)
                 // and declared owning-organization hints. Binding and
-                // organization-side signing live in the admin console (sodmin).
+                // organization-side signing live in the admin console (codmin).
                 super::RealmOrganizationPanel {
                     token,
                     realm_id: selected_realm_id.clone(),

@@ -138,9 +138,9 @@ impl TransportClient {
 
     pub fn endpoint(&self, path: &str) -> anyhow::Result<Url> {
         let normalized = path.trim().trim_start_matches('/');
-        if !crate::wire_helpers::soland_path_allowed(normalized) {
+        if !crate::wire_helpers::coland_path_allowed(normalized) {
             anyhow::bail!(
-                "inkson redline: forbidden soland private path `{normalized}`; use only spec-defined `/_arkret/` endpoints"
+                "inkson redline: forbidden coland private path `{normalized}`; use only spec-defined `/_arkret/` endpoints"
             );
         }
         Ok(self.base_url.join(normalized)?)

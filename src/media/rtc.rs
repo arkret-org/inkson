@@ -4,7 +4,7 @@
 //! plane. The flow is:
 //!
 //! 1. **CALL-1** — `media_token_exchange` POSTs `ak.self.call.media.exchange.issue_token.v1` to
-//!    soland's `/_arkret/self/rtc/token`, then anchors + verifies the response via
+//!    coland's `/_arkret/self/rtc/token`, then anchors + verifies the response via
 //!    [`arkret_signatures::media::verify_call_media_token_outcome`] (issuer anchoring, ≤600s TTL,
 //!    six-tuple binding).
 //! 2. **ICE** — `ice_config` POSTs to `/_arkret/self/rtc/ice-config` and runs
@@ -40,7 +40,7 @@ use serde_json::Value;
 use crate::transport::TransportClient;
 
 /// Spec-mandated TTL ceiling for media tokens
-/// (`ak.self.call.media.exchange.issue_token.v1`). Soland defaults to 300s; the
+/// (`ak.self.call.media.exchange.issue_token.v1`). Coland defaults to 300s; the
 /// ceiling is 600s.
 pub const MEDIA_TOKEN_TTL_MAX_SECS: u64 = arkret_sdk::MEDIA_TOKEN_TTL_MAX_SECS;
 
@@ -94,12 +94,12 @@ pub enum RtcClientError {
     /// no RTP path. The call surface MUST surface this as "desktop calling
     /// is not ready yet" and keep the call FSM out of `Connected` — it never
     /// pretends a media session connected. This is a client-only reason; it
-    /// never originates from a soland wire `code`.
+    /// never originates from a coland wire `code`.
     DesktopMediaUnavailable,
 }
 
 impl RtcClientError {
-    /// Wire-form error code (matches the soland HTTP `code` field).
+    /// Wire-form error code (matches the coland HTTP `code` field).
     pub fn as_wire(self) -> &'static str {
         match self {
             Self::FocusUnavailableForClient => "focus_unavailable_for_client",
@@ -147,7 +147,7 @@ impl RtcClientError {
         }
     }
 
-    /// Parses a soland error `code` string into a typed [`RtcClientError`].
+    /// Parses a coland error `code` string into a typed [`RtcClientError`].
     /// Returns `None` for codes outside the media binding set —
     /// callers should fall back to the generic error path.
     pub fn from_wire(code: &str) -> Option<Self> {
@@ -172,7 +172,7 @@ impl RtcClientError {
         })
     }
 
-    /// Map a soland API error into the typed reason, classifying the
+    /// Map a coland API error into the typed reason, classifying the
     /// wire `code` carried by the error envelope. Unknown codes collapse
     /// to [`Self::ParticipantBindingInvalid`] so the renderer still fails
     /// closed instead of silently joining.
@@ -187,7 +187,7 @@ impl RtcClientError {
 }
 
 /// What media tracks the joining device intends to publish. Forwarded to
-/// soland in the token-exchange request so the focus can pre-allocate
+/// coland in the token-exchange request so the focus can pre-allocate
 /// publisher slots.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DesiredMedia {

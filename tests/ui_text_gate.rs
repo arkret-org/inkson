@@ -240,7 +240,7 @@ fn realm_creation_has_no_private_sovereign_deployment_controls() {
         "deployment_profile",
         "profile_override",
         "enclave_realms",
-        "/_soland/admin/deployment",
+        "/_coland/admin/deployment",
     ] {
         assert!(
             !source.contains(retired),

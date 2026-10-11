@@ -569,7 +569,7 @@ pub(crate) fn space_container_views_from_projection_and_ops(
             continue;
         }
         // CREATE establishes the container; UPDATE / ARCHIVE / RESTORE fold
-        // structural metadata + lifecycle on top, mirroring soland's
+        // structural metadata + lifecycle on top, mirroring coland's
         // `apply_space_*`. A space op observed before its create is ignored
         // (no container to patch yet).
         if let Some(mut local) = local_space_create_from_raw_operation(record) {

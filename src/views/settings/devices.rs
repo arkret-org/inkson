@@ -26,7 +26,7 @@
 //!
 //! ## Endpoints
 //!
-//! - `GET /_arkret/self/account/viewer` — implemented (soland)
+//! - `GET /_arkret/self/account/viewer` — implemented (coland)
 //! - `POST /_arkret/gate/account/device-pair` — spec-level device pairing.
 
 use arkret_wire::event_kind_str;

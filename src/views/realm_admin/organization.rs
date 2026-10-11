@@ -14,7 +14,7 @@
 //!
 //! Write side: binding a Realm to an organization and signing organization-side
 //! statements (and revocations) is the organization DID controller's authority,
-//! exercised in the admin console (sodmin). inkson does NOT mint or submit
+//! exercised in the admin console (codmin). inkson does NOT mint or submit
 //! organization-side signatures and does NOT call coauth admin endpoints; this
 //! panel only reads and links operators to where the binding flow lives.
 
@@ -318,7 +318,7 @@ pub fn RealmOrganizationPanel(
             div { class: "muted",
                 "View this Realm's verified organization relationships and declared hints. \
                  An organization principal is a separate DID controller: binding and \
-                 organization-side signing are performed in the admin console (sodmin), \
+                 organization-side signing are performed in the admin console (codmin), \
                  never by your login session. This panel is read-only."
             }
 

@@ -3036,7 +3036,7 @@ mod tests {
             stream_position: created.commit.stream_position,
             commit_id: created.commit.commit_id.clone(),
         };
-        let rows = soland_bootstrap_rows(&bundle, &items);
+        let rows = coland_bootstrap_rows(&bundle, &items);
         let validate = |rows: &[TypedCurrentRow]| {
             validate_signed_floor_rows(
                 &realm_id,
@@ -3110,7 +3110,7 @@ mod tests {
             stream_position: head_commit.stream_position,
             commit_id: head_commit.commit_id.clone(),
         };
-        let rows = soland_bootstrap_rows(&bundle, &items);
+        let rows = coland_bootstrap_rows(&bundle, &items);
         let validate = |rows: &[TypedCurrentRow]| {
             validate_signed_floor_rows(
                 &realm_id,
@@ -3534,7 +3534,7 @@ mod tests {
         }
     }
 
-    /// Soland discloses the founder's cut after messages and bootstrap facets:
+    /// Coland discloses the founder's cut after messages and bootstrap facets:
     /// alias, plaintext-visible services and each created message's
     /// `message_revision` are installable closed rows, and a message must name
     /// a Strand present in the same signed cut, including after later updates.
@@ -3592,7 +3592,7 @@ mod tests {
             },
             value,
         };
-        let mut rows = soland_bootstrap_rows(&bundle, &items[..items.len() - 1]);
+        let mut rows = coland_bootstrap_rows(&bundle, &items[..items.len() - 1]);
         rows.push(facet(
             arkret_wire::CurrentSelector::RealmPlaintextVisibleServices,
             json!({"services": [{
@@ -3689,7 +3689,7 @@ mod tests {
             commit_id: commit.commit_id.clone(),
         };
         let rows_with = |value| {
-            let mut rows = soland_bootstrap_rows(&bundle, &items);
+            let mut rows = coland_bootstrap_rows(&bundle, &items);
             rows.push(TypedCurrentRow::Value {
                 selector: arkret_wire::CurrentSelector::CallState {
                     call_id: arkret_sdk::CallId::from_event_id(&items[1].event.event_id),
@@ -3754,7 +3754,7 @@ mod tests {
             stream_position: commit.stream_position,
             commit_id: commit.commit_id.clone(),
         };
-        let mut rows = soland_bootstrap_rows(&bundle, &items[..items.len() - 1]);
+        let mut rows = coland_bootstrap_rows(&bundle, &items[..items.len() - 1]);
         rows.push(TypedCurrentRow::Value {
             selector: arkret_wire::CurrentSelector::Rsvp {
                 event_ref: arkret_sdk::StrandId::from_event_id(&items[1].event.event_id),
@@ -3829,7 +3829,7 @@ mod tests {
             arkret_sdk::DidCoreId::new("ak:did_core:web:agent.example").unwrap(),
             controller.station_id.clone(),
         );
-        let mut rows = soland_bootstrap_rows(&bundle, &items);
+        let mut rows = coland_bootstrap_rows(&bundle, &items);
         rows.push(TypedCurrentRow::Value {
             selector: arkret_wire::CurrentSelector::AgentInteraction {
                 agent_account_id: agent,
@@ -3905,7 +3905,7 @@ mod tests {
             "replay_nonce": "opaque_receipt_nonce",
             "signature": "signed-receipt"
         });
-        let mut rows = soland_bootstrap_rows(&bundle, &items);
+        let mut rows = coland_bootstrap_rows(&bundle, &items);
         rows.push(TypedCurrentRow::Value {
             selector: arkret_wire::CurrentSelector::ModerationFrankingProof {
                 event_id: proven_event,
@@ -3987,7 +3987,7 @@ mod tests {
             stream_position: accepted.commit.stream_position,
             commit_id: accepted.commit.commit_id.clone(),
         };
-        let mut rows = soland_bootstrap_rows(&bundle, &items[..items.len() - 1]);
+        let mut rows = coland_bootstrap_rows(&bundle, &items[..items.len() - 1]);
         rows.push(TypedCurrentRow::Value {
             selector: arkret_wire::CurrentSelector::MessageReactions {
                 target_ref: message.to_string(),
@@ -4079,7 +4079,7 @@ mod tests {
             stream_position: accepted.commit.stream_position,
             commit_id: accepted.commit.commit_id.clone(),
         };
-        let mut rows = soland_bootstrap_rows(&bundle, &items[..items.len() - 1]);
+        let mut rows = coland_bootstrap_rows(&bundle, &items[..items.len() - 1]);
         rows.push(TypedCurrentRow::Value {
             selector: arkret_wire::CurrentSelector::Pin {
                 pin_scope: arkret_sdk::PinScope::Realm {
@@ -4127,7 +4127,7 @@ mod tests {
         }
     }
 
-    /// Soland's founder cut after an edit and a retraction: the edited
+    /// Coland's founder cut after an edit and a retraction: the edited
     /// Message's `message_revision` is the revise carrier naming that Message,
     /// and a retracted Message is disclosed as its `object_redaction` row, each
     /// assertion redacting exactly that Message. A revise naming another
@@ -4171,7 +4171,7 @@ mod tests {
             stream_position: head_commit.stream_position,
             commit_id: head_commit.commit_id.clone(),
         };
-        let mut rows = soland_bootstrap_rows(&bundle, &items);
+        let mut rows = coland_bootstrap_rows(&bundle, &items);
         let message_index = rows
             .iter()
             .position(|row| {
@@ -4299,7 +4299,7 @@ mod tests {
         let tag = format!("{}:0", items[2].event.event_id);
         let assertion = json!({"tag_id": tag, "value": {"target_ref": target, "key": "+1"}});
         let value = json!({"assertions": [assertion]});
-        let mut rows = soland_bootstrap_rows(&bundle, &items);
+        let mut rows = coland_bootstrap_rows(&bundle, &items);
         rows.push(TypedCurrentRow::Value {
             selector: arkret_wire::CurrentSelector::MessageReactions {
                 target_ref: target.to_string(),
@@ -4398,7 +4398,7 @@ mod tests {
             let assertion = json!({"tag_id": tag, "value": {
                 "pin_scope": scope, "target_ref": target, "rank": "a0"
             }});
-            let mut rows = soland_bootstrap_rows(&bundle, &items);
+            let mut rows = coland_bootstrap_rows(&bundle, &items);
             rows.push(TypedCurrentRow::Value {
                 selector: arkret_wire::CurrentSelector::Pin {
                     pin_scope: scope.clone(),
@@ -4477,7 +4477,7 @@ mod tests {
         };
         let since_join = arkret_sdk::HistoryAccess::SinceJoin;
         let rows_with = |join_policy: Option<serde_json::Value>, rule: &str| {
-            let mut rows = soland_bootstrap_rows(&bundle, &items);
+            let mut rows = coland_bootstrap_rows(&bundle, &items);
             for row in &mut rows {
                 let TypedCurrentRow::Value {
                     selector, value, ..
@@ -4555,7 +4555,7 @@ mod tests {
         )
     }
 
-    fn soland_bootstrap_rows(
+    fn coland_bootstrap_rows(
         bundle: &arkret_sdk::RealmAuthorityBundle,
         items: &[arkret_sdk::CommittedEventFullView],
     ) -> Vec<TypedCurrentRow> {
@@ -4677,7 +4677,7 @@ mod tests {
                         json!(value),
                     )
                 }
-                // Soland's `message_revision` writer: the create payload at
+                // Coland's `message_revision` writer: the create payload at
                 // the Event-derived MessageId.
                 "ak.message.create" => row(
                     CurrentSelector::MessageRevision {
@@ -4686,7 +4686,7 @@ mod tests {
                     commit,
                     payload,
                 ),
-                other => panic!("{other} is outside the Soland bootstrap cut"),
+                other => panic!("{other} is outside the Coland bootstrap cut"),
             });
         }
         rows
@@ -5678,7 +5678,7 @@ mod tests {
                     "alice.example",
                     DEVICE_ID,
                 );
-            let rows = soland_bootstrap_rows(&bundle, &items);
+            let rows = coland_bootstrap_rows(&bundle, &items);
             let head = bundle.current_assertion.realm_stream_head.clone();
             validate_signed_floor_rows(
                 &realm_id,
@@ -5753,7 +5753,7 @@ mod tests {
             );
         let accepted = items.last().unwrap();
         let head = bundle.current_assertion.realm_stream_head.clone();
-        let mut rows = soland_bootstrap_rows(&bundle, &items[..items.len() - 1]);
+        let mut rows = coland_bootstrap_rows(&bundle, &items[..items.len() - 1]);
         rows.push(arkret_wire::TypedCurrentRow::Value {
             selector: serde_json::from_value(json!({"kind":"relation",
                 "primary_conflict_domain":domain}))
@@ -5847,7 +5847,7 @@ mod tests {
                 stream_position: head.commit.stream_position,
                 commit_id: head.commit.commit_id.clone(),
             }],
-            current_state_entries: soland_bootstrap_rows(bundle, prefix),
+            current_state_entries: coland_bootstrap_rows(bundle, prefix),
             retention_and_history_floor: arkret_wire::RetentionAndHistoryFloor {
                 history_access: arkret_wire::HistoryAccess::SinceJoin,
                 stream_floors: vec![arkret_wire::StreamHistoryFloor {
@@ -7054,7 +7054,7 @@ mod tests {
 
         // 1. The exact signed floor and tail leave Station current untouched.
         let (station, bundle, items, snapshot) = station_for(&exact_tail);
-        let exact_rows = soland_bootstrap_rows(&bundle, &items);
+        let exact_rows = coland_bootstrap_rows(&bundle, &items);
         let frame = account_frame(vec![
             (
                 REALM_ID,
@@ -7260,7 +7260,7 @@ mod tests {
                 &bundle,
                 prefix,
                 &snapshot,
-                soland_bootstrap_rows(&bundle, prefix),
+                coland_bootstrap_rows(&bundle, prefix),
                 false,
             ),
         )]);
@@ -7288,7 +7288,7 @@ mod tests {
                 &bundle,
                 prefix,
                 &snapshot,
-                soland_bootstrap_rows(&bundle, prefix),
+                coland_bootstrap_rows(&bundle, prefix),
                 false,
             ),
         )]);
@@ -7366,7 +7366,7 @@ mod tests {
                     &bundle,
                     &items,
                     &snapshot,
-                    soland_bootstrap_rows(&bundle, &items[..7]),
+                    coland_bootstrap_rows(&bundle, &items[..7]),
                     false,
                 ),
             ),

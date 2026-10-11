@@ -277,7 +277,7 @@ mod tests {
 
     #[test]
     fn active_generation_projects_a_resolvable_principal_did_to_its_core_id() {
-        let principal_did = "did:webvh:QmR4AHvRgux4GsojV8fkDVxjHWsJkFqDnV6SFCwDRGCE8u:soland.local.host%3A23452:webvh:01a04bf8-ad5b-7165-9691-45793fe99362";
+        let principal_did = "did:webvh:QmR4AHvRgux4GsojV8fkDVxjHWsJkFqDnV6SFCwDRGCE8u:coland.local.host%3A23452:webvh:01a04bf8-ad5b-7165-9691-45793fe99362";
         let principal = crate::mls_api_helpers::principal_core_id(principal_did).unwrap();
         let account_id = arkret_sdk::AccountId::new(principal.clone(), principal.clone());
         let device =

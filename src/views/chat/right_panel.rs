@@ -119,7 +119,7 @@ pub(super) fn DiscussionUsersPanel(
                 }
             }
             // G3.Y2 — presence list. One row per participant with
-            // `data-presence-state` derived from soland's live profile presence surface.
+            // `data-presence-state` derived from coland's live profile presence surface.
             div { class: "discussion-detail-section",
                 div { class: "discussion-subhead", span { "Presence" } }
                 div {

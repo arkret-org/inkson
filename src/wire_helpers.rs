@@ -46,7 +46,7 @@ pub(crate) fn validate_cursor(cursor: &str) -> anyhow::Result<arkret_sdk::identi
         .map_err(|err| anyhow::anyhow!("invalid cursor `{cursor}`: {err}"))
 }
 
-pub(crate) fn soland_path_allowed(normalized_path: &str) -> bool {
+pub(crate) fn coland_path_allowed(normalized_path: &str) -> bool {
     let path = normalized_path
         .split(['?', '#'])
         .next()

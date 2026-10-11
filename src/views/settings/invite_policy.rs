@@ -13,10 +13,10 @@
 //! `trusted_*` / `denied_source_ids` lists this form does not surface);
 //! on SET we stamp the required schema constant and exact active account_id
 //! and post the same object back, so server-stored lists survive the round-trip
-//! and the body satisfies the soland handler (which deserialises the SDK type
+//! and the body satisfies the coland handler (which deserialises the SDK type
 //! with deny_unknown_fields and enforces account_id == session account).
 //!
-//! The soland self-plane endpoint (`/_arkret/self/invite-receive-policy`)
+//! The coland self-plane endpoint (`/_arkret/self/invite-receive-policy`)
 //! degrades gracefully — on a 404/501/405 GET it seeds the form with defaults,
 //! and a failed save is surfaced inline without losing the user's edits.
 //!

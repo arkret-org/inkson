@@ -351,7 +351,7 @@ pub struct ReadMarkerRecord {
 /// Locks the per-scope toggle in the settings UI when `disclosure` is
 /// `required` (server forces send) or `disabled` (server forbids send).
 ///
-/// Until the sync wires the policy from soland's `ak.component.realm.read_receipt_policy.v1`
+/// Until the sync wires the policy from coland's `ak.component.realm.read_receipt_policy.v1`
 /// sequenced-state cell, this is populated by tests / dev tooling only.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReadReceiptPolicySnapshot {
@@ -569,7 +569,7 @@ impl MoveSubmissionState {
         }
     }
 
-    /// Human-readable label (Chinese where the spec / sodmin already
+    /// Human-readable label (Chinese where the spec / codmin already
     /// uses Chinese copy). Surfaces in message status pills / banners.
     pub fn label_zh(self) -> &'static str {
         match self {
@@ -1186,7 +1186,7 @@ pub struct ClientLocalState {
     pub mls_receive_recovery_checkpoints:
         BTreeMap<String, crate::mls::persistence::MlsLocalCheckpointEnvelope>,
     /// Realms whose `ak.mls.genesis` event has already been submitted to
-    /// soland. Tracked per-Realm so genesis is emitted exactly once for a
+    /// coland. Tracked per-Realm so genesis is emitted exactly once for a
     /// locally-created creator group (the server also rejects a duplicate
     /// genesis with `mls_genesis_already_exists`, but this avoids the
     /// needless round-trip on every encrypted write after the first).
@@ -1301,7 +1301,7 @@ pub struct ClientLocalState {
     #[serde(default, skip_serializing)]
     pub(crate) authenticated_identity_links: BTreeMap<String, LocallyAuthenticatedIdentityLink>,
     /// Actor-private Realm remarks per
-    /// `discovery/client-preferences.md` §3.7. Hydrated from the soland
+    /// `discovery/client-preferences.md` §3.7. Hydrated from the coland
     /// `/sync` `account_data[]` projection (entries with
     /// `account_data_key == "ak.contacts.realm.<realm_id>"`) and from user edits
     /// in settings. Keyed by Realm id so the sidebar / dashboard can join
@@ -1505,7 +1505,7 @@ impl RootIndex {
 pub struct DpopDeviceKeyRecord {
     /// Base64url-no-pad of the 32-byte ed25519 seed.
     pub seed_b64: String,
-    /// RFC 7638 thumbprint of the public JWK (what soland binds as
+    /// RFC 7638 thumbprint of the public JWK (what coland binds as
     /// `cnf.jkt` on issued grants). Cached so the UI / refresh path can
     /// surface it without re-deriving.
     pub jkt: String,
@@ -1521,7 +1521,7 @@ pub(crate) const MEMBER_HANDLE_NEGATIVE_CACHE_TTL_SECONDS: i64 = 5 * 60;
 /// Persisted `ak.session.grant` issued by the Account Authority during login.
 ///
 /// ②(A+②) model (api-conventions.md §3.3): the grant itself is the live
-/// credential for `/_arkret/self/*`; soland does not mint a second
+/// credential for `/_arkret/self/*`; coland does not mint a second
 /// client-visible local session credential. Each request presents `Authorization: DPoP
 /// <grant_jwt>` + a matching per-request `DPoP` proof. Keeping
 /// the grant on disk lets the client keep using it directly and rotate it (DPoP

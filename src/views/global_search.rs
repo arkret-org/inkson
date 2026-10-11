@@ -181,7 +181,7 @@ fn searchable_message_body(body: &str, redacted: bool) -> Option<&str> {
 }
 
 /// Resolve a search result to the most specific local target we can
-/// express. Newer soland rows may carry `message_id`, `event_id`,
+/// express. Newer coland rows may carry `message_id`, `event_id`,
 /// `surface`, or `task_id`; otherwise rows degrade to the Realm overview.
 pub fn result_destination(result: &Value) -> Option<SearchDestination> {
     let realm_id = result.get("realm_id").and_then(Value::as_str)?;

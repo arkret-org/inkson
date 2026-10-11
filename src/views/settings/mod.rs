@@ -68,7 +68,7 @@ pub(crate) fn presence_expiry_to_clears_at(choice: &str) -> Option<chrono::DateT
 }
 
 /// A4a — push the current `ak.client.ui_state` payload (theme + sidebar
-/// collapsed) to soland's `ak.account_data.set` endpoint so other
+/// collapsed) to coland's `ak.account_data.set` endpoint so other
 /// devices pick up the same preference.
 ///
 /// `local_theme` MUST already match the local `LocalConfigStore` write —
@@ -264,7 +264,7 @@ pub(crate) fn build_read_receipt_preferences_body(
     })
 }
 
-/// Push the actor-private personal blocklist to soland. Local state is
+/// Push the actor-private personal blocklist to coland. Local state is
 /// authoritative; network errors are logged only so privacy controls keep
 /// working offline.
 pub(crate) fn push_blocklist_account_data(
@@ -340,7 +340,7 @@ pub(crate) fn is_likely_valid_domain(input: &str) -> bool {
 }
 
 /// Spec client-preferences.md §3.7: push (or tombstone) a Realm remark to
-/// soland via `ak.account_data.set`. Local state is authoritative and the
+/// coland via `ak.account_data.set`. Local state is authoritative and the
 /// server write is best-effort. `remark.is_empty()` triggers a DELETE so the
 /// row tombstones cleanly across devices.
 pub(crate) fn push_realm_remark_account_data(
@@ -544,7 +544,7 @@ pub fn SettingsPanel(
     // Realm remarks editor state (spec client-preferences.md §3.7).
     // `realm_remarks_snapshot` is the resolved BTreeMap rendered for the
     // list; `realm_remark_inputs` keeps unsaved text edits keyed by
-    // realm_id so users can type without round-tripping through soland.
+    // realm_id so users can type without round-tripping through coland.
     // `new_realm_remark_id` / `new_realm_remark_name` drive the "Add by
     // Realm ID" row for Realms the user has joined but isn't yet
     // tracking locally.
@@ -845,7 +845,7 @@ pub fn SettingsPanel(
                             // current avatar (resolved via the blob URL
                             // helper when a blob_ref is present), an
                             // upload control, and a clear button. The
-                            // avatar is also published to soland's
+                            // avatar is also published to coland's
                             // `ak.self.account.command.update_profile.v1` so the
                             // directory + member lists pick it up.
                             div { class: "event settings-card-span-2 settings-avatar-card", "data-testid": "settings-avatar-card",
@@ -2082,7 +2082,7 @@ pub fn SettingsPanel(
                                     },
                                     vec![],
                                 );
-                                // Also push to soland's ak.account_data.set
+                                // Also push to coland's ak.account_data.set
                                 // so other devices pick up the change.
                                 // Endpoint may 404/501 — we swallow and keep
                                 // local authoritative.
@@ -2125,7 +2125,7 @@ pub fn SettingsPanel(
                         span { "{read_receipt_realm_overrides().len()} configured" }
                     }
                     for (realm_id, send) in read_receipt_realm_overrides() {
-                            // Policy lock — when soland publishes a
+                            // Policy lock — when coland publishes a
                             // ak.realm.read_receipt_policy with disclosure=
                             // required|disabled, the toggle is disabled and
                             // we show a lock badge with the reason. Until
@@ -2312,8 +2312,8 @@ pub fn SettingsPanel(
                 // Actor-private local alias / note / pin for each Realm the
                 // user has joined. Lets users disambiguate duplicate-titled
                 // Realms without leaking the remark beyond this account.
-                // Pushed to soland via `ak.account_data.set` under
-                // `ak.contacts.realm.<realm_id>`; soland echoes the same
+                // Pushed to coland via `ak.account_data.set` under
+                // `ak.contacts.realm.<realm_id>`; coland echoes the same
                 // entries back on the next `/sync` so other devices pick
                 // them up.
                 div { class: "event", "data-testid": "realm-remarks-editor",

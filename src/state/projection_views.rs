@@ -4,7 +4,7 @@ use serde::Deserialize;
 
 /// Server-side Space-container projection row.
 ///
-/// Soland serves these rows from
+/// Coland serves these rows from
 /// `GET /_arkret/self/realms/{realm_id}/spaces`.
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct SpaceContainerProjectionView {

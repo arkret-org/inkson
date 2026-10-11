@@ -97,10 +97,10 @@ pub mod pending_logout;
 pub mod perf;
 pub mod security_transaction;
 // Presence/typing receive-side helpers formerly lived in `presence_rx`;
-// after refactor a37e1b9 routed ephemeral signals through the soland sync
+// after refactor a37e1b9 routed ephemeral signals through the coland sync
 // projection the module was dead code. Its fail-closed `last_active_at`
 // bucket validation moved into the shared SDK
-// (`arkret_sdk::validate_last_active_at`), which soland now enforces at
+// (`arkret_sdk::validate_last_active_at`), which coland now enforces at
 // admission — the receive path here consumes the already-validated
 // projection.
 pub mod push;

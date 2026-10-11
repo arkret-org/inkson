@@ -614,7 +614,7 @@ mod tests {
             grant_jwt: jwt.to_owned(),
             session_private_key_pem: String::new(),
             grant_id: "ak:session_grant:AY6DJbBwavsGTQuBZZiqqw9MVcqPZ8QX8invQ3i2kpi7".to_owned(),
-            audience_id: arkret_sdk::DidCoreId::new("ak:did_core:webvh:z6mkfixture:soland.example")
+            audience_id: arkret_sdk::DidCoreId::new("ak:did_core:webvh:z6mkfixture:coland.example")
                 .unwrap(),
             granted_scope: Vec::new(),
             account_id: arkret_sdk::AccountId::new(
@@ -622,13 +622,13 @@ mod tests {
                     "ak:did_core:webvh:z6mkfixture:alice.example".to_owned(),
                 )
                 .unwrap(),
-                arkret_sdk::DidCoreId::new("ak:did_core:web:soland.example").unwrap(),
+                arkret_sdk::DidCoreId::new("ak:did_core:web:coland.example").unwrap(),
             ),
             device_id: arkret_sdk::DeviceId::new(
                 "ak:device:01964137-0000-7000-8000-000000000001".to_owned(),
             )
             .unwrap(),
-            station_url: url::Url::parse("https://soland.example").unwrap(),
+            station_url: url::Url::parse("https://coland.example").unwrap(),
             grant_expires_at: None,
             stored_at: chrono::Utc::now(),
         }

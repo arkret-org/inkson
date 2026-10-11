@@ -24,5 +24,5 @@ pub use organization::{RealmOrganizationPanel, ServerAdminSignal, is_server_admi
 // ak.self.events.command.submit.v1 via the ak_ops::* event builders. The original
 // helpers (and their tests) are preserved in git history.
 
-// (Move-strand test module removed; the wire shapes are now covered by soland's events.submit tests
+// (Move-strand test module removed; the wire shapes are now covered by coland's events.submit tests
 // and arkret-spec fixtures.)

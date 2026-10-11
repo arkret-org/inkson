@@ -251,7 +251,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                 return;
             }
             // Gate on device authorization. Publishing a KeyPackage requires an
-            // ACCEPTED `ak.device.authorize` — soland rejects the upload with
+            // ACCEPTED `ak.device.authorize` — coland rejects the upload with
             // `claim_generation_mismatch` ("accepted device authorization is
             // required") otherwise. The authorization probe and any
             // user-approved pairing/recovery run independently; without

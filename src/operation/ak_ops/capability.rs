@@ -156,7 +156,7 @@ pub fn capability_revoke_from_applet_preview(
 
 /// `ak.capability.grant` event carrying the canonical
 /// `capability_grant_payload` wrapper (`{grant_id, grant:{…}}`) the P1
-/// soland reducer (`apply_capability`) reads `issuer` / `subject` /
+/// coland reducer (`apply_capability`) reads `issuer` / `subject` /
 /// `actions` / `resources` from. This is the only capability-grant
 /// builder: every directed grant (e.g. setting a Realm admin via
 /// `actions=[ak.realm.admin]`, or an admin-panel capability grant to a

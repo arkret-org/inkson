@@ -4,7 +4,7 @@
 //! every device of an account shares one secret and can therefore decrypt the
 //! `mls_history` key-backups uploaded by sibling devices. To make that secret
 //! survive a brand-new browser, it is wrapped behind the user's Recovery Key
-//! (24 words) and uploaded to soland's `secret_storage` endpoint using the
+//! (24 words) and uploaded to coland's `secret_storage` endpoint using the
 //! `passphrase_kdf` envelope shape from
 //! [`crate::key_backup::build_passphrase_kdf_backup_body`].
 //!

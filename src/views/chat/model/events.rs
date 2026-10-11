@@ -45,7 +45,7 @@ pub(crate) fn watch_level_label_key(level: WatchLevel) -> &'static str {
     }
 }
 
-/// Detect the per-message redaction tombstone surfaced by soland on the sync
+/// Detect the per-message redaction tombstone surfaced by coland on the sync
 /// timeline (spec strand-and-message.md §9). The server folds a redacted
 /// `ak.message.create` into a tombstone form carrying `redacted: true` /
 /// `state: "redacted"`, so a receiver rebuilding the timeline renders the
@@ -1358,7 +1358,7 @@ fn chat_message_from_event_with_proof(
             .and_then(Value::as_bool)
             == Some(true);
     if proof_verdict == ChatProofVerdict::Rejected && server_projection_tombstone {
-        // Soland may replace an accepted create/revision with a proofless
+        // Coland may replace an accepted create/revision with a proofless
         // projection-only tombstone. This form can only remove content and is
         // therefore safe to render as unattributed server state; it cannot
         // inject sender-authored plaintext or actions. All non-tombstone

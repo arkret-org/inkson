@@ -1,7 +1,7 @@
 # inkson — FAQ & Troubleshooting
 
 Common issues and their fixes. Every server-error toast in inkson surfaces
-the `x-arkret-request-id` header from soland — capture that ID before
+the `x-arkret-request-id` header from coland — capture that ID before
 filing a bug.
 
 ---
@@ -12,13 +12,13 @@ filing a bug.
 
 **Checks**:
 
-1. The soland origin you pasted resolves and serves
+1. The coland origin you pasted resolves and serves
    `/.well-known/arkret-discovery`.
 2. TLS is valid for that origin (browser builds enforce HTTPS).
 3. Your network does not block WebSocket upgrade.
 
 **Fix**: re-enter the URL in the **Server / Switch** menu. If you self-host
-soland, run `cargo run -- --bind local.host:443` and add a hosts-file entry.
+coland, run `cargo run -- --bind local.host:443` and add a hosts-file entry.
 
 ---
 

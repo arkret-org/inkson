@@ -3,7 +3,7 @@
 //! Daily moderation governance is authored as self-signed protocol
 //! events submitted via `ak.self.events.command.submit.v1`
 //! (`POST /_arkret/self/events`); the product-admin moderation write path
-//! is retired. The soland P2 reducer (`apply_moderation`) projects
+//! is retired. The coland P2 reducer (`apply_moderation`) projects
 //! these into `ak.component.moderation_state.v1`.
 
 use serde_json::json;

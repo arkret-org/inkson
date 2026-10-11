@@ -15,8 +15,8 @@ use crate::recovery_crypto::VaultKek;
 
 /// `item_kind` carried by the account MLS snapshot secret backup.
 ///
-/// Both soland's validator
-/// (`soland/src/routing/identity/key_backup.rs::KEY_BACKUP_CONTENT_TYPES`)
+/// Both coland's validator
+/// (`coland/src/routing/identity/key_backup.rs::KEY_BACKUP_CONTENT_TYPES`)
 /// and the inkson client validator
 /// (`key_backup::item_kind_allowed_for_class`) allowlist this dedicated
 /// content type under the `secret_storage` class, so it is the primary
@@ -38,7 +38,7 @@ pub const MLS_ACCOUNT_SECRET_SECRET_ID: &str = "inkson_mls_account_secret";
 /// browsers. The sidecar JSON is encrypted under a KEK derived from the ACCOUNT
 /// SECRET (not the passphrase directly) so the restore flow — which imports the
 /// account secret first — can decrypt it with NO second passphrase prompt. Both
-/// soland's validator and the inkson client validator allowlist this content
+/// coland's validator and the inkson client validator allowlist this content
 /// type under the `secret_storage` class.
 pub const MLS_PRIVATE_PLAINTEXT_ITEM_KIND: SecretStorageItemKind =
     SecretStorageItemKind::MlsPrivatePlaintext;
@@ -50,7 +50,7 @@ pub const MLS_PRIVATE_PLAINTEXT_SECRET_ID: &str = "inkson_mls_private_plaintext"
 ///
 /// The envelope shape comes from [`crate::key_backup::build_passphrase_kdf_backup_body`]
 /// (the `secret_storage` / `passphrase_kdf` / argon2id+xchacha20poly1305 shape
-/// that soland already validates). The plaintext account secret is encrypted
+/// that coland already validates). The plaintext account secret is encrypted
 /// with the supplied KEK; only the ciphertext, salt and nonce travel on the
 /// wire. The `item_kind` / `secret_id` are the MLS-secret identifiers.
 ///

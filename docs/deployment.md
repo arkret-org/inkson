@@ -6,17 +6,17 @@ and pointing it at already deployed Arkret services.
 ## Service pairing
 
 Configure the Station base URL in the Settings view or local config.
-For local release testing, run soland first and use an externally reachable
+For local release testing, run coland first and use an externally reachable
 origin for web builds:
 
 ```powershell
-cd ../soland
+cd ../coland
 cargo run -- --bind local.host:443
 ```
 
 Web deployments must satisfy all of the following:
 
-- The soland origin is allowed by CORS.
+- The coland origin is allowed by CORS.
 - Discovery returns the Station, coauth, and push-gateway endpoints.
 - TLS is valid for the browser origin used by the client.
 - The UI is served from the web image or a static host that preserves the
@@ -34,7 +34,7 @@ may inject the same values through `INKSON_FCM_PUSH_TOKEN`,
 
 Required deployment inputs:
 
-- soland push registration endpoint enabled.
+- coland push registration endpoint enabled.
 - chime gateway reachable from the client network.
 - coauth session grant persisted in local state before `register_device`.
 - Platform push credentials configured on the gateway, not embedded in inkson.
@@ -110,7 +110,7 @@ default-src 'self';
 script-src 'self' 'wasm-unsafe-eval';
 style-src 'self' 'unsafe-inline';
 img-src 'self' data: blob:;
-connect-src 'self' https://<your-soland-origin> https://<your-chime-origin>;
+connect-src 'self' https://<your-coland-origin> https://<your-chime-origin>;
 font-src 'self' data:;
 frame-ancestors 'none';
 base-uri 'self';
@@ -124,7 +124,7 @@ Notes:
 - `style-src 'unsafe-inline'` is required by Dioxus's runtime `style="..."`
   prop interpolation. **TODO(P5-impl)**: migrate to scoped style tags so we
   can drop `unsafe-inline`.
-- Enumerate the soland + chime origins explicitly in `connect-src`. Do
+- Enumerate the coland + chime origins explicitly in `connect-src`. Do
   **not** ship `connect-src *`.
 - `frame-ancestors 'none'` prevents click-jacking. inkson is a top-level
   app, not an embed.
@@ -133,8 +133,8 @@ Notes:
 
 ### CORS
 
-soland sets the CORS policy; inkson is the browser caller. Required
-soland response headers for the inkson web origin:
+coland sets the CORS policy; inkson is the browser caller. Required
+coland response headers for the inkson web origin:
 
 ```text
 Access-Control-Allow-Origin: https://<inkson-web-origin>
@@ -153,12 +153,12 @@ also sends DPoP-bound credentials and the `ak.session.grant` cookie.
 
 - Minimum: TLS 1.2; prefer 1.3.
 - Reject SHA-1 cert chains.
-- Use a separate certificate per origin (soland, chime, the static
+- Use a separate certificate per origin (coland, chime, the static
   inkson host). Wildcards are acceptable when scoped to a single trust
   boundary.
 - HSTS: `Strict-Transport-Security: max-age=63072000; includeSubDomains; preload`
   for the inkson web origin.
-- OCSP stapling on the soland edge to reduce a fingerprinting vector.
+- OCSP stapling on the coland edge to reduce a fingerprinting vector.
 - Certificate transparency: rely on your CA. inkson does not currently
   pin certificates — that is a deferred mobile-only concern.
 

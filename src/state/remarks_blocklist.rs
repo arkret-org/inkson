@@ -129,7 +129,7 @@ impl LocalStateStore {
     /// [`RealmRemark::is_empty`] returns true tombstones the entry
     /// (equivalent to `remove_realm_remark`). Persists synchronously to
     /// disk; the caller is responsible for pushing the same payload to
-    /// soland via `ak.account_data.set`.
+    /// coland via `ak.account_data.set`.
     pub fn set_realm_remark(
         &mut self,
         realm_id: impl Into<String>,
@@ -456,7 +456,7 @@ impl LocalStateStore {
     /// in Settings → Privacy; pass `None` to skip.
     ///
     /// Persists synchronously to disk; the caller is responsible for
-    /// pushing the new list to soland via
+    /// pushing the new list to coland via
     /// `ak.account_data.set("ak.account.blocklist", …)`.
     pub fn block_user(&mut self, actor_id: impl AsRef<str>, reason: Option<String>) -> bool {
         let Ok(actor) = serde_json::from_str::<arkret_sdk::ActorId>(actor_id.as_ref()) else {

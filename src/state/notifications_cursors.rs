@@ -170,7 +170,7 @@ impl LocalStateStore {
             device_id: device_id.to_owned(),
             updated_at,
         };
-        // This account-stream update is emitted only after Soland has applied
+        // This account-stream update is emitted only after Coland has applied
         // the causal read-cursor reducer. Its payload is the persisted winner,
         // so the client must not run a second, HLC-only merge.
         self.replace_read_cursor_projection(marker);

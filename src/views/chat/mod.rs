@@ -3097,7 +3097,7 @@ pub fn ChatPanel(
                                                             // wires into Dioxus's
                                                             // mounted ref API; deferred
                                                             // until A6.3 lands the
-                                                            // soland projection.
+                                                            // coland projection.
                                                             status_msg.set(format!(
                                                                 "jump to pinned message {}",
                                                                 id_for_click

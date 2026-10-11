@@ -441,12 +441,12 @@ mod tests {
 
     fn station(bundles: &[&str]) -> ServiceDescribe {
         ServiceDescribe::development(
-            Did::new("did:web:soland.example".to_owned()).unwrap(),
+            Did::new("did:web:coland.example".to_owned()).unwrap(),
             TrustDomainId::new("ak:trust_domain:example.net").unwrap(),
             ServiceKind::Station,
             bundles.iter().map(|id| (*id).to_owned()).collect(),
             vec![TransportBinding::HttpJson {
-                base_url: "https://soland.example/".to_owned(),
+                base_url: "https://coland.example/".to_owned(),
                 extension_profile_required: (),
             }],
         )

@@ -126,7 +126,7 @@ pub fn is_authenticated_session_unavailable_error(error: &anyhow::Error) -> bool
 /// codes that reduce to "this device cannot establish a new account
 /// Recovery Key root":
 ///
-/// - `device_unauthorized` — soland's `ensure_key_backup_writer_device_authorized` gate (unverified
+/// - `device_unauthorized` — coland's `ensure_key_backup_writer_device_authorized` gate (unverified
 ///   / unpaired device writing the account Recovery Key backup).
 /// - `recovery_policy_device_unauthorized` — the recovery-policy genesis path falls back to the
 ///   projected device row's `device_public_key`; a session device that was never enrolled (no
@@ -196,7 +196,7 @@ pub(crate) fn invite_live_target_occupied_details(
 
 /// True when the error envelope says the persisted coauth session grant
 /// itself is terminal (revoked, expired, locked, suspended, or otherwise
-/// not active). Soland currently maps these through `capability_denied`
+/// not active). Coland currently maps these through `capability_denied`
 /// because the failure happens in the session-grant capability bridge, but
 /// the client must treat them as session loss, not as an ordinary Space/
 /// Strand capability denial.
@@ -248,7 +248,7 @@ fn terminal_session_grant_message(message: &str) -> bool {
             || message.contains("expired")
             || message.contains("locked")
             || message.contains("suspended")
-            // soland's introspection wording when the private authentication process no longer
+            // coland's introspection wording when the private authentication process no longer
             // recognizes the grant at all (e.g. coauth restarted and lost
             // it): "session grant introspection was rejected by the Auth
             // Server". Without this arm the client kept the dead grant and

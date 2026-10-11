@@ -362,7 +362,7 @@ fn outgoing_payload_schema_gate_accepts_sdk_object_patch_payload() {
 }
 
 /// Contract test: ak.space.create payload must satisfy spec
-/// space.schema.json — same validator soland runs on the wire.
+/// space.schema.json — same validator coland runs on the wire.
 #[test]
 fn space_create_payload_matches_spec_schema() {
     // Spec requires payload.object.realm_id to match the
@@ -404,7 +404,7 @@ fn space_create_payload_matches_spec_schema() {
 /// Contract test: every event produced by `build_realm_bootstrap_events`
 /// MUST satisfy the spec payload-schema rule for its event kind, using
 /// the same `arkret_schema_conformance::event_payload_validator_catalog` that
-/// soland runs on the wire. Catches schema drift (missing required
+/// coland runs on the wire. Catches schema drift (missing required
 /// fields, wrong patterns) at `cargo test` rather than user runtime.
 #[test]
 fn realm_bootstrap_payloads_match_spec_schema() {

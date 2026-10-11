@@ -118,7 +118,7 @@ fn sdk_api_errors_use_same_classifiers() {
 
 #[test]
 fn recognizes_device_not_authorized_errors() {
-    // The exact wire shape soland's key-backup gate emits for an
+    // The exact wire shape coland's key-backup gate emits for an
     // unverified / unauthorized session device. Recovery setup keys its
     // fail-closed routing on this, so the classifier must match it and
     // nothing else.
@@ -261,7 +261,7 @@ fn recognizes_auth_expired_errors() {
 }
 
 /// Regression lock (2026-08-01): when coauth restarts and forgets a session
-/// grant, soland answers every request with the exact wording below. This MUST
+/// grant, coland answers every request with the exact wording below. This MUST
 /// classify as a terminal session-grant loss — the client previously treated
 /// it as a transient auth expiry and hammered 1-second retries forever instead
 /// of clearing the session and routing to sign-in.

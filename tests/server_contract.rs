@@ -521,9 +521,9 @@ fn directory_preview_and_join_locator_keep_separate_authority_boundaries() {
 #[test]
 fn server_description_gates_event_envelope_write_plane() {
     let events_ready = parse_server_description(json!({
-        "service_id": "ak:did_core:web:soland.local",
-        "service_resolution": service_resolution("did:web:soland.local"),
-        "trust_domain": "ak:trust_domain:soland.local",
+        "service_id": "ak:did_core:web:coland.local",
+        "service_resolution": service_resolution("did:web:coland.local"),
+        "trust_domain": "ak:trust_domain:coland.local",
         "service_kind": "station",
         "protocol_version": "1.0",
         "supported_profiles": [
@@ -536,7 +536,7 @@ fn server_description_gates_event_envelope_write_plane() {
         ],
         "transport_bindings": [{
             "kind": "http_json",
-            "base_url": "https://soland.local/_arkret",
+            "base_url": "https://coland.local/_arkret",
             "extension_profile_required": null
         }],
         "supported_features": [],
@@ -842,7 +842,7 @@ fn inkson_config_store_preserves_signed_out_state_without_placeholder_identity()
 
 // (Move/Seal pipeline tests removed — all writes now go through
 // ak.self.events.command.submit.v1; the SubmitEventResult decoder is exercised by
-// soland's own integration tests and the arkret-spec fixtures.)
+// coland's own integration tests and the arkret-spec fixtures.)
 
 /// Regression: `is_auth_expired_error` MUST treat a bare 401
 /// (server returned 401 with no parseable error envelope, e.g. a

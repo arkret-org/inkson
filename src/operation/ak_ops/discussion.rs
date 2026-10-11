@@ -8,7 +8,7 @@ use super::{
 /// typed Strand payload expected by the current reducers.
 ///
 /// The full Strand lives under the spec-canonical `object` key —
-/// see soland `routing/events/operations.rs::STRAND_CREATE_REQUIREMENTS`
+/// see coland `routing/events/operations.rs::STRAND_CREATE_REQUIREMENTS`
 /// and SDK `crates/core/src/schema/payloads.rs` which both gate
 /// `ak.strand.create` on `payload.object`.
 /// Build a canonical `ak.strand.create` for a discussion Strand.

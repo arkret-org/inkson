@@ -875,7 +875,7 @@ pub(super) fn strand_lifecycle_from_projection(
 /// Dispatch a `ak.space.archive` or `ak.space.restore` operation against
 /// the given list (container Space) and mark the local row pending while
 /// the column's `SpaceContainerLifecycleState` in the UI signal. Spec:
-/// `models/realm-and-space.md §4.4`. Soland's lifecycle
+/// `models/realm-and-space.md §4.4`. Coland's lifecycle
 /// envelope validator and the SDK reducer's lifecycle guard
 /// both enforce wire / state shape; this helper only handles the
 /// submit + local pending projection. If the submit fails the local

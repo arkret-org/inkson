@@ -7,7 +7,7 @@ next step.
 
 For the protocol-level definitions see
 `arkret-rust-sdk/docs/architecture.md`. For the operator-side narrative
-(why the error fires) see the soland and coauth runbooks. **This page is
+(why the error fires) see the coland and coauth runbooks. **This page is
 deliberately user-first**: it does not require protocol knowledge to
 read.
 
@@ -134,9 +134,9 @@ Rejoining picks up where you left off.
 
 For administrators dealing with the operator side of these errors:
 
-- Agent FSM operational handling: `soland/docs/runbook.md` → Agent FSM
+- Agent FSM operational handling: `coland/docs/runbook.md` → Agent FSM
   transitions.
 - Strict-reject accountability posture (which can produce additional
-  user-visible rejects): `sodmin/docs/operator-runbook.md`.
+  user-visible rejects): `codmin/docs/operator-runbook.md`.
 - Push delivery failures (which produce different errors but show
   similar symptoms): `floria/docs/en/runbook.md`.

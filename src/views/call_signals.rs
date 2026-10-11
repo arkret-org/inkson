@@ -49,7 +49,7 @@ pub struct CallSignalInboxItem {
 }
 
 /// Dedup identity for a single inbound signal:
-/// `(realm, call, sender_actor, sender_device, seq)`. soland already delivers
+/// `(realm, call, sender_actor, sender_device, seq)`. coland already delivers
 /// once; this is the client-side belt-and-braces guard so a redelivered sync
 /// frame (catchup overlap, reconnect replay) never double-drives the FSM.
 pub type SignalDedupKey = (String, String, String, String, u64);

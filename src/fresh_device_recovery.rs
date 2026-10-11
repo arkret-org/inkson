@@ -319,7 +319,7 @@ pub struct SecurityRotationDraft {
     /// ambient Station (account-lifecycle.md §156).
     pub account_id: arkret_sdk::AccountId,
     /// The active device whose high-risk authorization created this rotation.
-    /// Soland rechecks this exact device before erasing the old series.
+    /// Coland rechecks this exact device before erasing the old series.
     pub authorizing_device_id: arkret_sdk::DeviceId,
     pub expires_at: chrono::DateTime<chrono::Utc>,
     pub revoke_submission: EventsSubmitBatchRequestBody,

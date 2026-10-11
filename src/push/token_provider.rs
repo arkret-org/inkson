@@ -180,7 +180,7 @@ fn bridged_or_env_token(
 /// `navigator.serviceWorker.register('/service-worker.js')` and
 /// `registration.pushManager.subscribe({ userVisibleOnly: true,
 /// applicationServerKey })`. The VAPID public key is supplied by the
-/// caller (typically fetched from soland's push-bridge describe).
+/// caller (typically fetched from coland's push-bridge describe).
 ///
 /// On non-wasm targets this struct exists but `subscribe` errors with
 /// `Unsupported`; the FCM / APNs providers cover those paths.

@@ -8,7 +8,7 @@ implements that trait + registers it via
 
 Sprint Q1 第二十四增量 (H1-mobile-host) ships **reference
 implementations** for the host side that drop into a Dioxus mobile
-project. The inkson / arkret-rust-sdk / soland workspaces do NOT
+project. The inkson / arkret-rust-sdk / coland workspaces do NOT
 link the JNI / Objective-C code — they can't, because the mobile
 toolchain isn't wired into the regular `cargo build`. The host
 project pastes these in, swaps the module path / package, then

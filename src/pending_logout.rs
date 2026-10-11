@@ -439,21 +439,21 @@ mod tests {
         PendingLogout {
             authority: arkret_sdk::AccountId::new(
                 arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap(),
-                arkret_sdk::DidCoreId::new("ak:did_core:web:soland.example").unwrap(),
+                arkret_sdk::DidCoreId::new("ak:did_core:web:coland.example").unwrap(),
             ),
             device_id: arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-000000000042")
                 .unwrap(),
             grant_jwt: Some("eyJ.grant.jwt".to_owned()),
             device_seed_b64: Some("seed".to_owned()),
             device_jkt: Some("jkt".to_owned()),
-            station_url: Some(url::Url::parse("https://soland.example").unwrap()),
+            station_url: Some(url::Url::parse("https://coland.example").unwrap()),
             gate_account_base_url: Some(
-                url::Url::parse("https://soland.example/_arkret/gate/account").unwrap(),
+                url::Url::parse("https://coland.example/_arkret/gate/account").unwrap(),
             ),
-            base_url: url::Url::parse("https://soland.example").unwrap(),
+            base_url: url::Url::parse("https://coland.example").unwrap(),
             session_credential: "session-credential".to_owned(),
             principal_id: arkret_sdk::DidCoreId::new(
-                "ak:did_core:web:soland.example:users:01".to_owned(),
+                "ak:did_core:web:coland.example:users:01".to_owned(),
             )
             .unwrap(),
             created_at,

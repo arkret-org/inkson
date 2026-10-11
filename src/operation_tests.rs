@@ -68,7 +68,7 @@ fn assert_payload_field_names_are_spec_canonical(
     }
     let value = serde_json::to_value(payload).unwrap();
     check(&value).unwrap_or_else(|err| {
-        panic!("payload violates soland canonical JSON gate: {err}\npayload: {value}")
+        panic!("payload violates coland canonical JSON gate: {err}\npayload: {value}")
     });
 }
 

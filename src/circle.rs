@@ -10,7 +10,7 @@
 //!   `scope_ref.kind=circle` on the signed envelope.
 //! - [`CircleSummary`] is the lightweight projection rendered by the Space-sidebar Circle list and
 //!   scope picker.
-//! - [`CircleErrorKind`] is the typed mapping from the Circle reason codes that surface in soland's
+//! - [`CircleErrorKind`] is the typed mapping from the Circle reason codes that surface in coland's
 //!   error envelopes. The UI Toast layer (see [`crate::components::circle_error_toast`]) consumes
 //!   this to produce localized user-facing strings.
 //!

@@ -512,7 +512,7 @@ pub async fn contacts(http: &arkret_sdk::http_client::Client) -> anyhow::Result<
 /// Spec `invite-addressing.md` §5 / OpenAPI
 /// `ak.self.invite_receive_policy.resource.get.v1`: served from the self plane at
 /// `GET /_arkret/self/invite-receive-policy` and returns the bare
-/// `arkret_sdk::InviteReceivePolicy` (soland echoes the stored override or
+/// `arkret_sdk::InviteReceivePolicy` (coland echoes the stored override or
 /// its recommended default). When the deployment does not yet wire this
 /// surface the caller treats 404/501/405 as "use defaults" rather than a
 /// hard error; the settings surface keeps the SDK fail-closed default.
@@ -1327,7 +1327,7 @@ pub async fn request_consent(
         .map_err(anyhow::Error::from)
 }
 
-/// Submit a `did:webvh` DID operation (inception / rotation) to soland's
+/// Submit a `did:webvh` DID operation (inception / rotation) to coland's
 /// embedded identity provider. Spec op
 /// `ak.root.identity.command.submit_did_operation.v1`
 /// (`POST /_arkret/root/identity/submit-did-operation`). The body is the
@@ -1424,7 +1424,7 @@ pub(crate) async fn account_data_snapshot(
 /// `ak.account_data.set`'s actor-private cell subject is
 /// `composite[envelope.actor_id, payload.key]`, so the Event's actor is not a
 /// formality: it is half the cell address. The holder must sign, which is why this
-/// is resolved here rather than left to the server — soland used to author these
+/// is resolved here rather than left to the server — coland used to author these
 /// Events under its own DID, which put every holder's value for one key into a
 /// single cell keyed by the service.
 fn account_data_holder() -> anyhow::Result<(arkret_sdk::Did, arkret_sdk::AccountId)> {

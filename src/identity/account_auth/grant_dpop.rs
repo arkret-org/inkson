@@ -82,7 +82,7 @@ impl std::fmt::Debug for DpopHandle {
 
 impl DpopHandle {
     /// RFC 7638 thumbprint of the public JWK. Equal to the `cnf.jkt`
-    /// claim soland sets on issued session grants — surfaced via the
+    /// claim coland sets on issued session grants — surfaced via the
     /// `session-status` testid so the cotest harness can assert
     /// stability across a refresh.
     pub fn jkt(&self) -> &str {

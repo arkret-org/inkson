@@ -1413,7 +1413,7 @@ mod tests {
         );
     }
 
-    /// Regression: soland inlines the primary strand under `summary.strand`
+    /// Regression: coland inlines the primary strand under `summary.strand`
     /// for legitimate Spaces (so the client can render the room title
     /// without joining a separate fanout). A previous filter treated
     /// any `summary.strand` as a strand-as-tree-node projection and dropped the
@@ -1434,7 +1434,7 @@ mod tests {
                 "summary": {
                     "category": "collaboration",
                     "title": "Arkret Demo Realm",
-                    "summary": "Shared demo Space served by soland",
+                    "summary": "Shared demo Space served by coland",
                     "tags": ["demo"],
                     "strand": {
                         "strand_id": "ak:strand:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j",

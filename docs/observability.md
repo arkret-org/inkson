@@ -23,11 +23,11 @@ Log line fields you can rely on:
 - `action` — verbose dotted name (`oidc.refresh`, `mls.commit`,
   `push.subscribe`).
 - `outcome` — `success` / `error` / `denied`.
-- `request_id` — soland's `x-arkret-request-id` for every HTTP exchange
+- `request_id` — coland's `x-arkret-request-id` for every HTTP exchange
   the line refers to (P5 addition; see §3 below).
 - `note` — optional free-form context.
 
-The line format mirrors sodmin's `format_admin_audit_line` so operator
+The line format mirrors codmin's `format_admin_audit_line` so operator
 tools can ingest inkson output without schema work.
 
 ## 2. Sentry opt-in
@@ -69,8 +69,8 @@ the toggle is flipped again.
 
 ## 3. `request_id` propagation (P5)
 
-Every inkson → soland HTTP call sets the `x-arkret-request-id` header.
-soland echoes the value in:
+Every inkson → coland HTTP call sets the `x-arkret-request-id` header.
+coland echoes the value in:
 
 - Success response bodies (when applicable).
 - Every error envelope (`ErrorEnvelope.request_id`).
@@ -81,7 +81,7 @@ The P5 work threads the same value end-to-end on the client:
 1. `crate::api` stores the inbound `x-arkret-request-id` on every
    response.
 2. `tracing` log lines emitted during the call carry the value via the
-   `request_id` field so a `grep` across inkson + soland logs lines up.
+   `request_id` field so a `grep` across inkson + coland logs lines up.
 3. Error toasts surface a **Copy ID** button so users can paste the ID
    into a bug report. The button is rendered by the global toast
    handler and tagged `data-testid="error-toast-copy-request-id"`.

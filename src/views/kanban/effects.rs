@@ -214,7 +214,7 @@ pub(super) fn KanbanEffects(
                     scope_security_encrypted,
                 } => {
                     // Remember this create before starting the detached submit.
-                    // A local Soland can accept the Event before Dioxus gets a
+                    // A local Coland can accept the Event before Dioxus gets a
                     // render pass that observes the queued op-log row. Without
                     // this producer-side marker, that fast queued -> accepted
                     // transition is indistinguishable from a cold-start row and

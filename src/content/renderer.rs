@@ -269,7 +269,7 @@ fn parse_markdown_blob_image_line(line: &str) -> Option<ContentBlock> {
 }
 
 /// Map a blob ref to a [`ContentBlock`] using the extension hint that
-/// may be embedded after the last `.` or `/` in the ref. soland's
+/// may be embedded after the last `.` or `/` in the ref. coland's
 /// canonical `ak:blob:<sha256>` form carries no extension, so the
 /// classifier degrades gracefully into the generic `Attachment` block.
 fn classify_blob_ref(blob_ref: &str) -> ContentBlock {

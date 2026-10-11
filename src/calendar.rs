@@ -1,7 +1,7 @@
 //! Headless Calendar authoring used by the UI and joint conformance tests.
 //!
 //! Keeping this entry point outside the Dioxus view tree ensures that the
-//! product and the live Inkson + Soland row exercise exactly the same RSVP
+//! product and the live Inkson + Coland row exercise exactly the same RSVP
 //! authoring path.
 
 /// Author `ak.calendar.rsvp.set` against the deterministic schedule winner.

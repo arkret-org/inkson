@@ -355,7 +355,7 @@ async fn fetch_active_series_tail(
 }
 
 /// Wrap the local account MLS secret behind a freshly-derived recovery KEK and
-/// upload it to soland's `secret_storage` endpoint.
+/// upload it to coland's `secret_storage` endpoint.
 ///
 /// This is the upload half of the backup-prompt flow (the inverse of
 /// [`crate::mls::account_recovery::auto_restore_mls_history_with_passphrase`]).
@@ -601,7 +601,7 @@ pub async fn upload_mls_account_secret_backup_with_recovery_public_key(
 }
 
 /// X5.3 — wrap the entire local-plaintext sidecar map behind a KEK derived from
-/// the ACCOUNT SECRET and upload it to soland's `secret_storage` endpoint.
+/// the ACCOUNT SECRET and upload it to coland's `secret_storage` endpoint.
 ///
 /// The KEK source is the account secret (already recoverable via the passphrase
 /// through the X3 `mls_account_secret` backup), so the restore flow decrypts the

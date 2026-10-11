@@ -9,7 +9,7 @@
 //!
 //! The local 1.0 UI hides the promote modal unless the
 //! `experimental-discussion-promote` feature is enabled. This module keeps
-//! the wire builders covered by unit tests while the soland reducer is
+//! the wire builders covered by unit tests while the coland reducer is
 //! completed.
 
 use crate::operation::ak_ops;

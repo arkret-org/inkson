@@ -307,7 +307,7 @@ fn parse_test_account_id(fixture: &Value) -> Result<arkret_sdk::AccountId, &'sta
 }
 
 /// Dev-only bearer injection for cotest scenarios that intentionally exercise
-/// soland's development login rather than a DPoP-bound account grant. This is
+/// coland's development login rather than a DPoP-bound account grant. This is
 /// compiled only into the explicit localStorage-secrets test build.
 #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
 pub(super) fn inject_test_session_credential(

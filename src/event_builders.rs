@@ -1214,12 +1214,12 @@ fn build_member_state_transition_event_for_station(
     // Strong `membership_payload` (`event-payload.schema.json`). The schema's
     // `allOf` if/then makes `realm_id` + `actor_id` + `delivery_status`
     // REQUIRED whenever `membership == "join"`; we carry `realm_id` for every
-    // transition (it is a valid property). Omitting it had made soland reject
+    // transition (it is a valid property). Omitting it had made coland reject
     // invite-accept with `schema_violation … requires field 'realm_id'`.
     //
     // NOTE: membership_payload is `additionalProperties:false` and has NO
     // `handle` property — the prior `handle` write was an illegal field that
-    // soland's schema validator rejects. The member identity is carried by
+    // coland's schema validator rejects. The member identity is carried by
     // `actor_id`; handle evidence lives in signed HandleClaim objects on the
     // roster, not the durable membership event. The `handle` param has been
     // dropped accordingly (spec is the source of truth).
@@ -1354,7 +1354,7 @@ mod genesis_authority_tests {
     }
 
     /// Mirror of the Station's `ak.realm.create` candidate gate
-    /// (`validate_realm_proposal_policy` — soland
+    /// (`validate_realm_proposal_policy` — coland
     /// `routing/events/operations/semantics.rs`): the authored
     /// `payload.object` MUST deserialize into the closed
     /// `ak.schema.realm_genesis.v1` model. `deny_unknown_fields` means any member

@@ -21,7 +21,7 @@ fn endpoint_enforces_private_path_redline() {
     let unlisted = format!("{private_prefix}/self/spaces/ak:space:1");
     let error = api
         .endpoint(&unlisted)
-        .expect_err("soland private paths must be rejected");
+        .expect_err("coland private paths must be rejected");
     assert!(
         error.to_string().contains("redline"),
         "error should mention the redline: {error}"

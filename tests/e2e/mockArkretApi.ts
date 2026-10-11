@@ -926,7 +926,7 @@ export async function mockArkretApi(
           account_id: accountId,
           version: 1,
            acceptance_basis_ref: mockCommitId(seededRecoveryPolicyId),
-          trust_domain: "ak:trust_domain:soland.local",
+          trust_domain: "ak:trust_domain:coland.local",
           methods: [{ kind: "did_root" }],
           supersedes_id: null,
           expires_at: null,
@@ -2759,7 +2759,7 @@ export async function mockArkretApi(
       url.pathname === "/_arkret/self/invite-receive-policy" &&
       route.request().method() === "PUT"
     ) {
-      // The real soland handler echoes the stored policy back verbatim;
+      // The real coland handler echoes the stored policy back verbatim;
       // mirror that so the client's `trusted_*` lists round-trip intact.
       const body = await route.request().postDataJSON();
       return json(route, body);
@@ -3776,7 +3776,7 @@ export async function mockArkretApi(
           account_id: accountId,
           version: policy.version ?? 1,
           acceptance_basis_ref: acceptanceBasisRef,
-          trust_domain: policy.trust_domain ?? "ak:trust_domain:soland.local",
+          trust_domain: policy.trust_domain ?? "ak:trust_domain:coland.local",
           methods: Array.isArray(policy.methods)
             ? policy.methods
             : [],

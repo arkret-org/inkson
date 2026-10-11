@@ -473,7 +473,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
     // Pull registry rows from the local raw-operation
     // projection. The shape is keyed by op_type so a row's evidence is
     // the actual canonical event the projection observed; this view is
-    // explicitly local-only — soland's projection_events feed will fan
+    // explicitly local-only — coland's projection_events feed will fan
     // out the same shape once the server-side applet broker ships.
     let raw_ops = state_store.read().load().raw_operations;
     let registrations: Vec<_> = raw_ops

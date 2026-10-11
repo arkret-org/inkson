@@ -636,7 +636,7 @@ pub(crate) fn initial_mls_checkpoint_summary_with_pinned_binding(
 /// `governance_binding` MUST be a realm/circle binding at epoch `0 -> 0`
 /// (genesis installs epoch 0); its serialized `effective_scope` is mirrored
 /// into the top-level `effective_scope` field so the two stay in lockstep
-/// (soland and strict client schema validators both compare them).
+/// (coland and strict client schema validators both compare them).
 ///
 /// Blob refs are content addresses over the exact raw RFC 9420 bytes,
 /// matching `encryption-and-audit.md` §5.1.1.

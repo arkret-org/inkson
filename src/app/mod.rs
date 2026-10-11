@@ -3297,7 +3297,7 @@ fn AppBootstrap() -> Element {
                                                         logout_effects.cancel_all().await;
                                                         // Drive the journalled logout: revoke the grant at
                                                         // coauth (terminating the rotation chain) then run
-                                                        // the soland courtesy logout. On success the journal
+                                                        // the coland courtesy logout. On success the journal
                                                         // entry is cleared; a transient coauth failure leaves
                                                         // it for the next boot to retry. Local credentials are
                                                         // already wiped, so a failure here never keeps THIS

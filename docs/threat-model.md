@@ -5,7 +5,7 @@
 This model covers the inkson client surfaces in the local 1.0 milestone:
 desktop and web. Mobile host-bridge references exist for a future phase, but
 iOS and Android artifacts are not built or shipped by this plan. Server
-authorization, federation, and push gateway internals are owned by soland,
+authorization, federation, and push gateway internals are owned by coland,
 coauth, and chime, but inkson is responsible for preserving their security
 properties at the client boundary.
 
@@ -22,7 +22,7 @@ properties at the client boundary.
 ## Trust boundaries
 
 - Browser or desktop renderer to local storage.
-- inkson to soland HTTP API.
+- inkson to coland HTTP API.
 - inkson to coauth OIDC and grant endpoints.
 - inkson to chime push registration path.
 - Local OS secure storage boundary.
@@ -194,7 +194,7 @@ key derivation, which uses a different label).
 
 The derivation chain is deliberately structured so that:
 
-1. **No backend party can derive the SFrame key.** soland, floria, and
+1. **No backend party can derive the SFrame key.** coland, floria, and
    the media SFU never see the MLS group state. The exporter API runs
    exclusively inside inkson on each participant's device.
 
@@ -221,7 +221,7 @@ The derivation chain is deliberately structured so that:
      hand-off is an explicit, audited, in-band consent step — not a
      cloud-side escrow.
 
-5. **The error `e2ee_key_source_unauthorised`** (soland-side; surfaced
+5. **The error `e2ee_key_source_unauthorised`** (coland-side; surfaced
    to clients) fires when the backend observes any attempt to source
    the SFrame key from outside the MLS-Exporter derivation. This is a
    hard reject on the call-control wire — backend providers that fail

@@ -36,7 +36,7 @@ import {
   waitForBundleReady,
 } from "./_helpers";
 
-// Same VAPID public key shape soland's `push describe` returns —
+// Same VAPID public key shape coland's `push describe` returns —
 // 65 bytes uncompressed P-256 (`0x04` prefix), URL-safe base64 with
 // no padding.
 const VAPID_PUBLIC_KEY_B64URL =

@@ -105,7 +105,7 @@ pub fn contact_grants_me_invite(contact: &ContactListRow) -> bool {
 ///
 /// This used to be a bespoke local mirror with all-`String`
 /// enum fields and **no** `schema`/`subject_id` — which made the SET body
-/// fail closed against the real soland handler (it deserialises
+/// fail closed against the real coland handler (it deserialises
 /// `arkret_sdk::InviteReceivePolicy`, `deny_unknown_fields`, with both
 /// fields required and account authority equality enforced) and dropped
 /// the server-stored `trusted_*` / `denied_source_ids` lists on
@@ -445,7 +445,7 @@ pub(crate) fn merge_member_roster_current_changes(
 }
 
 // `resolve-realm` decodes into the canonical SDK wire types so the client stays
-// byte-compatible with soland's `DirectoryRealmResolutionOutcome` response. A
+// byte-compatible with coland's `DirectoryRealmResolutionOutcome` response. A
 // inkson-local duplicate previously drifted from the wire (a required
 // `public`/`title` on the preview node, a non-optional `join_rule`) and broke
 // invite-accept with "error decoding response body" whenever the server omitted
@@ -1088,7 +1088,7 @@ pub use arkret_models_collaboration::governance::authorization::AuthzInviteList;
 pub use arkret_models_collaboration::governance::authorization::{
     EffectiveCapabilityGrantRow, GrantList,
 };
-/// `POST /_arkret/self/moderation/report` response. soland emits the SDK
+/// `POST /_arkret/self/moderation/report` response. coland emits the SDK
 /// `ModerationReportOutcome` wire shape verbatim (`status: "submitted"`,
 /// `routed_to: Vec<Did>` — scalar DIDs only, no fragments, per
 /// `service-operation-dtos.schema.json#/$defs/ModerationReportOutcome`).

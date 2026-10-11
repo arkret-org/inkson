@@ -163,7 +163,7 @@ impl AgentGrantPreset {
 
     /// Registered capability actions for this preset (agent spec §4.7 /
     /// §4.9). Only actions present in `capability-action-registry.json`
-    /// are emitted so soland never fail-closes on an unknown action.
+    /// are emitted so coland never fail-closes on an unknown action.
     pub fn actions(self) -> &'static [&'static str] {
         match self {
             Self::Read => &[CapabilityActionId::EVENT_READ],

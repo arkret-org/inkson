@@ -56,7 +56,7 @@ pub(crate) fn api_error_status_and_envelope(
 /// Diagnostic rendering for logs and developer surfaces (tracing fields,
 /// toast copy-detail affordances, bug reports) — NOT for default UI.
 /// Renders the raw error and appends the server's unstable `reason_detail`
-/// when one was deliberately returned. Soland exposes privacy-sensitive
+/// when one was deliberately returned. Coland exposes privacy-sensitive
 /// `reason_detail` values only in development mode, so the client does not
 /// need to infer deployment posture or loosen production redaction locally.
 ///

@@ -24,7 +24,7 @@ pub(crate) fn encrypted_account_data_value(
 }
 
 /// Spawn a fire-and-forget task that pushes the current read-receipt
-/// preferences to soland through `ak.account_data.set`. Read latest values
+/// preferences to coland through `ak.account_data.set`. Read latest values
 /// from the local state store at call time —
 /// the local state is always authoritative; the server-sync is best-effort.
 pub(super) fn push_read_receipt_account_data(
@@ -186,7 +186,7 @@ pub(super) fn push_presence_visibility_account_data(
 }
 
 /// Project the local per-realm watch levels into a spec-conformant
-/// `ak.push_rules` body (push-notifications.md §4) and sync it to soland.
+/// `ak.push_rules` body (push-notifications.md §4) and sync it to coland.
 ///
 /// Every emitted rule carries the MUST-on-wire `kind` (§4.2) and
 /// `evaluation_locus` (§4.3) fields. The rule chain is ordered highest

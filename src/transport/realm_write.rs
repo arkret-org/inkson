@@ -632,14 +632,14 @@ pub async fn ban_member(
 // self-authored protocol Moves submitted
 // via `ak.self.events.command.submit.v1` (`POST /_arkret/self/events`) —
 // mirroring `transition_member_state` / `ban_member`. P1 (capability)
-// and P2 (moderation) projected the matching reducers in soland and the
-// sodmin-side admin write paths were retired; these are the inkson-side
+// and P2 (moderation) projected the matching reducers in coland and the
+// codmin-side admin write paths were retired; these are the inkson-side
 // submitters that drive them.
 
 /// Grant Realm admin authority to `subject` by emitting a
 /// `ak.capability.grant{actions:[ak.realm.admin], subject}` event.
 /// The Grant id is derived from the accepted Event id. P1's
-/// `apply_capability` folds this into the soland authz index, so subsequent
+/// `apply_capability` folds this into the coland authz index, so subsequent
 /// `ak.realm.admin` checks for `subject` pass. `root_basis` must come from the
 /// verified authority-root current result, not the governance Station's
 /// handoff bundle: those two generations have different lifecycles.
