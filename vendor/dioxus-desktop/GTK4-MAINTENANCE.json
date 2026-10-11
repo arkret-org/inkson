@@ -43,7 +43,7 @@
       "default_features": false
     }
   },
-  "status": "candidate_all_target_strict_audit_passed_three_platform_compile_pending",
+  "status": "candidate_strict_audit_and_three_platform_release_build_passed_linux_package_runtime_pending",
   "adapters": {
     "linux_webview": "Tao Gtk4Box remains passed to Wry build_gtk; one resolved gtk4 0.11.5 makes IsA identity exact",
     "linux_menu": "Tao GTK4 ApplicationWindow has registered Application; Muda GTK4 init_for_gtk_window retains API",
@@ -96,5 +96,12 @@
     "latest_remote_checked_after_failure": true,
     "protocol_adapter_followup": "b7c86cab compiles Dioxus protocol bridge on all three platforms; Inkson exact-version guard mistook new dioxus-desktop patch for dioxus. Guard now compares assignment name exactly, same =0.7.10 enforced."
   },
-  "platform_evidence_scope": "Next fixed-source CI uses real release native cache families and .deb-extracted byte-matched binary with GTK4/WebKit AT-SPI login DOM, input callback, same-home cold restart on X11 and Wayland. No authenticated conversation acceptance claim."
+  "platform_evidence_scope": "Fixed-source CI runs Linux release cache families and byte-matched extracted .deb login DOM/input/cold restart on X11+Wayland. Windows/macOS probes actual own initialized window and new real renderer; Windows normal native close, macOS bounded SIGTERM. All are unauthenticated platform checks, not conversation acceptance or production UI integration proof.",
+  "third_compile_attempt": {
+    "run": "https://github.com/arkret-org/inkson/actions/runs/38175507496",
+    "source": "df387a97c268ced4694421fb732fcb743cc30326",
+    "all_three_release_builds": "actual success",
+    "linux_native_tests": "0 executed: missing official Spec fixture checkout, natural exit101",
+    "linux_package_runtime": "not executed"
+  }
 }

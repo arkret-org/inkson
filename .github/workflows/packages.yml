@@ -52,6 +52,14 @@ jobs:
           ref: 516c2992040337b4cb2eb008a80202fd48b23a47
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
 
+      - name: Checkout arkret-spec fixtures
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ github.repository_owner }}/arkret-spec
+          path: arkret-spec
+          ref: 273654ebc86a3b0c226d749c69d27f83f617aa71
+          token: ${{ secrets.CI_REPO_TOKEN || github.token }}
+
       - name: Checkout garth
         uses: actions/checkout@v7
         with:
@@ -134,6 +142,29 @@ jobs:
         with:
           name: ${{ matrix.package_name }}-signing-dry-run
           path: inkson/dist/signing/
+          if-no-files-found: error
+
+      - name: Install Python for the native platform renderer probe
+        if: runner.os != 'Linux'
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      - name: Exercise the actual Windows or macOS renderer
+        id: platform_renderer
+        if: runner.os != 'Linux'
+        working-directory: inkson
+        shell: pwsh
+        run: |
+          python scripts/desktop-platform-smoke.py --binary "${{ matrix.artifact_path }}"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload native platform renderer evidence
+        if: runner.os != 'Linux' && always() && steps.platform_renderer.outcome != 'skipped'
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.package_name }}-renderer-runtime
+          path: inkson/dist/desktop-platform-runtime/
           if-no-files-found: error
 
       - name: Build local Linux package
