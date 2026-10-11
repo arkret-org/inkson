@@ -514,3 +514,123 @@ mod tests {
         assert!(!StationFeature::Discussion.ready(Some(&description)));
     }
 }
+
+/// Exercise the ordinary native send ratchet and authored plaintext retention.
+/// The checkpoint must already represent an actually accepted Sidecar transition.
+#[cfg(all(not(target_arch = "wasm32"), feature = "spec-conformance"))]
+pub fn encrypt_private_sidecar_request(
+    store: &mut crate::LocalStateStore,
+    account: &arkret_sdk::AccountId,
+    device: &arkret_sdk::DeviceId,
+    scope: &arkret_sdk::ScopeRef,
+    group_state_ref: arkret_sdk::EventId,
+    content: &[u8],
+    metadata: &[u8],
+) -> anyhow::Result<(arkret_sdk::EncryptedPayload, arkret_sdk::EncryptedPayload)> {
+    let arkret_sdk::ScopeRef::Sidecar {
+        realm_id,
+        sidecar_id,
+    } = scope
+    else {
+        anyhow::bail!("native Sidecar required");
+    };
+    let secure = crate::secure_key_store::default_secure_key_store("inkson");
+    let encrypted = crate::mls::runtime::encrypt_message_with_device_snapshot(
+        store,
+        secure.as_ref(),
+        realm_id.as_str(),
+        account,
+        device,
+        "application/vnd.arkret.message+json",
+        arkret_sdk::EventKind::MessageCreate.as_str(),
+        group_state_ref,
+        content,
+        Some(arkret_sdk::MESSAGE_METADATA_MLS_CONTENT_TYPE),
+        Some(metadata),
+        None,
+        None,
+        Some(sidecar_id),
+    )
+    .map_err(|error| anyhow::anyhow!("native Sidecar encryption: {error:?}"))?;
+    Ok((
+        encrypted.content,
+        encrypted
+            .metadata
+            .ok_or_else(|| anyhow::anyhow!("metadata missing"))?,
+    ))
+}
+
+/// Commit the actual application's captured private cache through the ordinary
+/// secure-store barrier, including authored echoes and receive ratchets.
+#[cfg(all(not(target_arch = "wasm32"), feature = "spec-conformance"))]
+pub async fn persist_native_private_cache(store: &crate::LocalStateStore) -> anyhow::Result<()> {
+    let write = store
+        .capture_e2ee_plaintext_cache_secure_write()?
+        .ok_or_else(|| anyhow::anyhow!("active private cache namespace unavailable"))?;
+    let secure = crate::secure_key_store::default_secure_key_store("inkson");
+    crate::LocalStateStore::persist_captured_e2ee_cache_write_durable(secure.as_ref(), write).await
+}
+
+/// Restore the application's encrypted private cache during native startup.
+/// No expected plaintext or fixture projection is supplied to this operation.
+#[cfg(all(not(target_arch = "wasm32"), feature = "spec-conformance"))]
+pub fn hydrate_native_private_cache(store: &mut crate::LocalStateStore) -> anyhow::Result<()> {
+    let secure = crate::secure_key_store::default_secure_key_store("inkson");
+    store.hydrate_e2ee_plaintext_cache_with_secure_store(secure.as_ref())?;
+    Ok(())
+}
+
+/// Read an admitted response through the product fold, signer gate and receive
+/// ratchet. No fixture plaintext or projection is installed by this inspector.
+#[cfg(all(not(target_arch = "wasm32"), feature = "spec-conformance"))]
+pub fn private_sidecar_response_plaintext(
+    store: &crate::LocalStateStore,
+    account: &arkret_sdk::AccountId,
+    scope: &arkret_sdk::ScopeRef,
+    event_id: &arkret_sdk::EventId,
+) -> anyhow::Result<Vec<u8>> {
+    let realm = scope.realm_id();
+    let projections =
+        crate::sidecar::cached_sidecar_exchange_projections(store, account, realm.as_str())?;
+    anyhow::ensure!(
+        projections
+            .iter()
+            .any(|p| p.user_facing_response_event_ids.contains(event_id)),
+        "response has no authenticated user-facing exchange projection"
+    );
+    let (_, history) = retained_sidecar_cut(store, scope)?;
+    let event = history
+        .iter()
+        .find(|row| &row.event.event_id == event_id)
+        .ok_or_else(|| anyhow::anyhow!("response absent from durable private history"))?
+        .event
+        .clone();
+    let envelope: arkret_sdk::EncryptedEnvelope =
+        serde_json::from_value(event.payload["encrypted_content"].clone())?;
+    let sender = arkret_sdk::mls_basic_credential_identity(event.actual_signer())?;
+    let payload = crate::mls::runtime::encrypted_payload_from_verified_event_context(
+        store,
+        &envelope,
+        scope,
+        event.kind.as_str(),
+        &sender,
+        None,
+    )
+    .ok_or_else(|| anyhow::anyhow!("response lacks its accepted MLS context"))?;
+    let device = store
+        .load()
+        .device_authoring_authority
+        .ok_or_else(|| anyhow::anyhow!("authorized device absent"))?;
+    let secure = crate::secure_key_store::default_secure_key_store("inkson");
+    crate::mls::runtime::decrypt_application_payload_for_scope_from_verified_sender(
+        store,
+        secure.as_ref(),
+        realm.as_str(),
+        account,
+        &device.device_id,
+        &payload,
+        scope,
+        &sender,
+    )
+    .ok_or_else(|| anyhow::anyhow!("user-facing response cannot be authenticated and decrypted"))
+}

@@ -247,7 +247,17 @@ pub(super) async fn account_frame(
             for page in &pages {
                 scanned.extend(page.rows()?);
             }
-            require_exact_claimed_rows(&rows, &scanned)?;
+            // Conflicting disclosed originals are terminal even when a later
+            // row is missing. Absence alone is settled by the authenticated
+            // window head below before requiring the complete exact row set.
+            for claimed in &rows {
+                if scanned.iter().any(|row| {
+                    row.commit().stream_ref == claimed.commit().stream_ref
+                        && row.commit().stream_position == claimed.commit().stream_position
+                }) {
+                    require_exact_claimed_rows(std::slice::from_ref(claimed), &scanned)?;
+                }
+            }
             let expected = window
                 .next_position
                 .checked_sub(1)
@@ -275,6 +285,7 @@ pub(super) async fn account_frame(
                     "Account window differs from own Station continuous stream",
                 ));
             }
+            require_exact_claimed_rows(&rows, &scanned)?;
             if snapshot_window_basis(window).is_some() && rows.len() != scanned.len() {
                 return Err(protocol(
                     "Account snapshot tail differs from its original disclosed rows",
