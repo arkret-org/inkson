@@ -2,6 +2,316 @@
 
 use super::*;
 
+#[cfg(not(target_arch = "wasm32"))]
+struct DelayedClearStore {
+    inner: crate::secure_key_store::MemorySecureKeyStore,
+    release: std::sync::Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
+    fail: bool,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl crate::secure_key_store::SecureKeyStore for DelayedClearStore {
+    fn store_secret_bytes(
+        &self,
+        key: &str,
+        value: &[u8],
+    ) -> Result<(), crate::secure_key_store::SecureKeyStoreError> {
+        self.inner.store_secret_bytes(key, value)
+    }
+
+    fn store_secret_bytes_durable<'a>(
+        &'a self,
+        key: &'a str,
+        value: &'a [u8],
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<(), crate::secure_key_store::SecureKeyStoreError>,
+                > + Send
+                + 'a,
+        >,
+    > {
+        Box::pin(async move {
+            let release = self.release.lock().unwrap().take();
+            if let Some(release) = release {
+                release.await.unwrap();
+            }
+            if self.fail {
+                return Err(crate::secure_key_store::SecureKeyStoreError::Backend(
+                    "delayed clear failed".into(),
+                ));
+            }
+            self.inner.store_secret_bytes(key, value)
+        })
+    }
+
+    fn get_secret_bytes(
+        &self,
+        key: &str,
+    ) -> Result<Option<arkret_sdk::KeyBytes>, crate::secure_key_store::SecureKeyStoreError> {
+        self.inner.get_secret_bytes(key)
+    }
+    fn delete_secret(&self, key: &str) -> Result<(), crate::secure_key_store::SecureKeyStoreError> {
+        self.inner.delete_secret(key)
+    }
+    fn list_secret_keys(
+        &self,
+        prefix: Option<&str>,
+    ) -> Result<Vec<String>, crate::secure_key_store::SecureKeyStoreError> {
+        self.inner.list_secret_keys(prefix)
+    }
+    fn backend_info(&self) -> garth::SecureKeyStoreBackendInfo {
+        self.inner.backend_info()
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[tokio::test]
+async fn delayed_clear_blocks_stale_hydration_and_keeps_later_input() {
+    use crate::secure_key_store::{MemorySecureKeyStore, SecureKeyStore};
+
+    for scope in [
+        E2eePlaintextCacheClearScope::All,
+        E2eePlaintextCacheClearScope::Realm("realm-a".into()),
+    ] {
+        let path = temp_state_path("delayed-cache-clear");
+        let authority = test_authority("did:web:alice.example");
+        let device = test_device_id();
+        let other_device =
+            crate::test_support::device_id("ak:device:01964137-0000-7000-8000-000000000002");
+        let inner = MemorySecureKeyStore::default();
+        let mut original = LocalStateStore::with_path(path.clone());
+        original.switch_test_account("did:web:alice.example");
+        for (target_device, realm, body) in [
+            (&device, "realm-a", "old A"),
+            (&other_device, "realm-a", "old other device"),
+            (&device, "realm-b", "old B"),
+        ] {
+            original
+                .prepare_composer_draft_write(&authority, target_device, realm, "chat", body.into())
+                .unwrap();
+        }
+        original
+            .persist_e2ee_plaintext_cache_with_secure_store(&inner)
+            .unwrap();
+        // Mount a new state whose plaintext has not yet been hydrated.
+        let mut state = LocalStateStore::with_path(path);
+        state.switch_test_account("did:web:alice.example");
+        assert_eq!(state.composer_draft(&device, "realm-a", "chat"), "");
+        let (release, gate) = tokio::sync::oneshot::channel();
+        let secure = DelayedClearStore {
+            inner,
+            release: std::sync::Mutex::new(Some(gate)),
+            fail: false,
+        };
+        let pending = state
+            .prepare_e2ee_plaintext_cache_clear_with_secure_store(&scope, &secure)
+            .unwrap()
+            .unwrap();
+        let mut write = Box::pin(pending.persist(&secure));
+        assert!(futures_util::poll!(write.as_mut()).is_pending());
+        let mut remounted = state.clone();
+        remounted
+            .hydrate_e2ee_plaintext_cache_with_secure_store(&secure)
+            .unwrap();
+        assert_eq!(remounted.composer_draft(&device, "realm-a", "chat"), "");
+        assert_eq!(
+            remounted.composer_draft(&other_device, "realm-a", "chat"),
+            ""
+        );
+        assert_eq!(
+            remounted.composer_draft(&device, "realm-b", "chat"),
+            if scope == E2eePlaintextCacheClearScope::All {
+                ""
+            } else {
+                "old B"
+            }
+        );
+        state
+            .prepare_composer_draft_write(
+                &authority,
+                &device,
+                "realm-a",
+                "chat",
+                "new input".into(),
+            )
+            .unwrap();
+        state
+            .hydrate_e2ee_plaintext_cache_with_secure_store(&secure)
+            .unwrap();
+        assert_eq!(
+            state.composer_draft(&device, "realm-a", "chat"),
+            "new input"
+        );
+        release.send(()).unwrap();
+        write.await.unwrap();
+        drop(pending);
+        // Native callers persist synchronously; the WASM FIFO already orders
+        // this newer whole-cache snapshot after the awaited clear barrier.
+        state
+            .persist_e2ee_plaintext_cache_with_secure_store(&secure)
+            .unwrap();
+        let raw = secure
+            .get_secret(&crate::secure_key_store::e2ee_plaintext_cache_store_key(
+                &state.active_authority_namespace_for_test(),
+            ))
+            .unwrap()
+            .unwrap();
+        assert!(raw.contains("new input"));
+        assert!(!raw.contains("old A"));
+        assert!(!raw.contains("old other device"));
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[tokio::test]
+async fn delayed_failed_clear_is_exclusive_and_rolls_back_only_removed_realm() {
+    let authority = test_authority("did:web:alice.example");
+    let device = test_device_id();
+    let mut state = LocalStateStore::with_path(temp_state_path("delayed-clear-rollback"));
+    state.switch_test_account("did:web:alice.example");
+    for (realm, body) in [("realm-a", "old A"), ("realm-b", "old B")] {
+        state
+            .prepare_composer_draft_write(&authority, &device, realm, "chat", body.into())
+            .unwrap();
+    }
+    let (release, gate) = tokio::sync::oneshot::channel();
+    let secure = DelayedClearStore {
+        inner: Default::default(),
+        release: std::sync::Mutex::new(Some(gate)),
+        fail: true,
+    };
+    state
+        .persist_e2ee_plaintext_cache_with_secure_store(&secure)
+        .unwrap();
+    let scope = E2eePlaintextCacheClearScope::Realm("realm-a".into());
+    let pending = state
+        .prepare_e2ee_plaintext_cache_clear_with_secure_store(&scope, &secure)
+        .unwrap()
+        .unwrap();
+    let mut write = Box::pin(pending.persist(&secure));
+    assert!(futures_util::poll!(write.as_mut()).is_pending());
+    for next in [
+        E2eePlaintextCacheClearScope::All,
+        E2eePlaintextCacheClearScope::Realm("realm-b".into()),
+    ] {
+        assert!(
+            state
+                .clone()
+                .prepare_e2ee_plaintext_cache_clear_with_secure_store(&next, &secure)
+                .is_err()
+        );
+    }
+    state
+        .prepare_composer_draft_write(&authority, &device, "realm-a", "chat", "new A".into())
+        .unwrap();
+    // Another local operation removes B while A is in flight. A's rollback
+    // must not restore entries that A never removed.
+    state
+        .cached
+        .composer_drafts
+        .get_mut(device.as_str())
+        .unwrap()
+        .remove("realm-b");
+    release.send(()).unwrap();
+    assert!(write.await.is_err());
+    state.rollback_e2ee_plaintext_cache_clear(pending);
+    assert_eq!(state.composer_draft(&device, "realm-a", "chat"), "new A");
+    assert_eq!(state.composer_draft(&device, "realm-b", "chat"), "");
+    assert!(
+        state
+            .prepare_e2ee_plaintext_cache_clear(&scope)
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[tokio::test]
+async fn delayed_clear_failure_cannot_roll_back_across_account_or_reset_epoch() {
+    for reset in ["account-return", "device", "logout", "soft", "login"] {
+        let authority = test_authority("did:web:alice.example");
+        let device = test_device_id();
+        let mut state = LocalStateStore::with_path(temp_state_path("clear-reset-epoch"));
+        state.switch_test_account("did:web:alice.example");
+        state
+            .prepare_composer_draft_write(&authority, &device, "realm-a", "chat", "old A".into())
+            .unwrap();
+        let (release, gate) = tokio::sync::oneshot::channel();
+        let secure = DelayedClearStore {
+            inner: Default::default(),
+            release: std::sync::Mutex::new(Some(gate)),
+            fail: true,
+        };
+        state
+            .persist_e2ee_plaintext_cache_with_secure_store(&secure)
+            .unwrap();
+        let pending = state
+            .prepare_e2ee_plaintext_cache_clear_with_secure_store(
+                &E2eePlaintextCacheClearScope::All,
+                &secure,
+            )
+            .unwrap()
+            .unwrap();
+        let mut write = Box::pin(pending.persist(&secure));
+        assert!(futures_util::poll!(write.as_mut()).is_pending());
+        match reset {
+            "account-return" => {
+                state.switch_test_account("did:web:bob.example");
+                state
+                    .hydrate_e2ee_plaintext_cache_with_secure_store(&secure)
+                    .unwrap();
+                assert_eq!(state.composer_draft(&device, "realm-a", "chat"), "");
+                // A's pending clear cannot lock the unrelated B cache key.
+                assert!(
+                    state
+                        .prepare_e2ee_plaintext_cache_clear(&E2eePlaintextCacheClearScope::All)
+                        .unwrap()
+                        .is_none()
+                );
+                state.switch_test_account("did:web:alice.example");
+            }
+            "device" => state.clear_device_scoped(),
+            "logout" => state.clear_session_scoped_for_logout(),
+            "soft" => state.clear_account_scoped(),
+            "login" => {
+                state.begin_pending_login(&device, None);
+                state.switch_test_account("did:web:alice.example");
+            }
+            _ => unreachable!(),
+        }
+        state
+            .hydrate_e2ee_plaintext_cache_with_secure_store(&secure)
+            .unwrap();
+        assert_eq!(
+            state.composer_draft(&device, "realm-a", "chat"),
+            "",
+            "old-key hydration fence must survive {reset}"
+        );
+        state
+            .prepare_composer_draft_write(
+                &authority,
+                &device,
+                "realm-a",
+                "new-chat",
+                "new session input".into(),
+            )
+            .unwrap();
+        release.send(()).unwrap();
+        assert!(write.await.is_err());
+        state.rollback_e2ee_plaintext_cache_clear(pending);
+        assert_eq!(
+            state.composer_draft(&device, "realm-a", "chat"),
+            "",
+            "stale rollback after {reset}"
+        );
+        assert_eq!(
+            state.composer_draft(&device, "realm-a", "new-chat"),
+            "new session input"
+        );
+    }
+}
+
 #[test]
 fn private_plaintext_snapshot_json_round_trips_through_merge() {
     // X5.3 — write sidecar entries, snapshot to JSON, then merge that JSON
