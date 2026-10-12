@@ -147,6 +147,7 @@ fn cache_projection_preserves_exact_receive_bytes_without_copying_account_histor
         "private_plaintext": effective.mls_private_plaintext,
         "decrypted_plaintext": effective.mls_decrypted_plaintext,
         "authenticated_identity_links": effective.authenticated_identity_links,
+        "composer_drafts": effective.composer_drafts,
     });
     FULL_STATE_READ_COPIES.with(|count| count.set(0));
     for _ in 0..32 {

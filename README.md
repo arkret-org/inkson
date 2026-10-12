@@ -171,8 +171,8 @@ npm run release:check
 The repository includes CI for:
 
 - `Typos`: spell checking through `crate-ci/typos`.
-- `CI`: Rust format, clippy, tests, Dioxus web build, and Lighthouse budget on Ubuntu.
-- `Packages`: release binary artifacts and local signing dry-run evidence for Linux, Windows, and macOS runners.
+- `CI`: Rust format, clippy, tests, and Dioxus web build on Ubuntu.
+- `Packages` (manual `workflow_dispatch`): release binary artifacts and local signing dry-run evidence for Linux, Windows, and macOS runners. Run this explicitly when package evidence is needed; ordinary CI and CrossPlatform remain automatic. The desktop advisory gate remains mandatory. Linux packaging is currently blocked by upstream `glib 0.18.5` ([RUSTSEC-2024-0429](https://rustsec.org/advisories/RUSTSEC-2024-0429.html)). Making packaging manual does not resolve or waive this advisory.
 - `Docker`: local web image build, Trivy scan, SBOM evidence, and local cosign blob evidence when a local key is supplied. It does not push to GHCR or any registry.
 - `Dependabot`: weekly updates for GitHub Actions, Cargo, npm, and Docker.
 

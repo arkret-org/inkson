@@ -55,6 +55,13 @@ test("Direct structure local controls preserve action values and existing MLS an
     "归档话题", "恢复话题", "删除空话题",
   ];
   const literalTitle = "chat.direct_structure.new_chat {count} 原文";
+  const bobActorKey = JSON.stringify({
+    account_id: {
+      principal_id: BOB_ACCOUNT_ID.principal_id,
+      station_id: BOB_ACCOUNT_ID.station_id,
+    },
+    kind: "account",
+  });
 
   for (const language of ["en", "zh", "en"] as const) {
     await openSettings(page);
@@ -67,7 +74,13 @@ test("Direct structure local controls preserve action values and existing MLS an
     await gotoAndDismissRecovery(page, "/contacts/manage");
     const shell = page.getByTestId("client-shell");
     await shell.getByTestId("realm-sidebar-tab-direct").click();
-    await shell.getByTestId("direct-conversation-row").filter({ hasText: BOB_ACCOUNT_ID.principal_id }).click();
+    const bobRow = shell.locator(
+      `[data-testid="direct-conversation-row"][data-peer='${bobActorKey}']`,
+    );
+    expect(JSON.parse((await bobRow.getAttribute("data-peer"))!)).toEqual({
+      kind: "account", account_id: BOB_ACCOUNT_ID,
+    });
+    await bobRow.click();
     await expect(page).toHaveURL(/\/direct\/ak:realm:AUEAoXMJeJWBETvkqm7gk4imduk7g-l8bim19OPFQDaO\/ak:strand:Ae9PN2rTd0Dojs9yS8iLnfheJtjSEZ3mgDDyONpztHUd$/);
     const panel = page.getByTestId("direct-structure");
     await expect(panel).toBeVisible();

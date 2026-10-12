@@ -33,16 +33,17 @@ pub(crate) struct PendingE2eePlaintextClear {
     previous_identity_links: BTreeMap<String, LocallyAuthenticatedIdentityLink>,
     previous_drafts: BTreeMap<String, BTreeMap<String, BTreeMap<String, String>>>,
     hydration_fence: Arc<CacheClearFence>,
-    lifecycle_epoch: u64,
+    lifecycle_epoch: Arc<()>,
     registry: Arc<Mutex<CacheClearFences>>,
 }
 
 #[derive(Debug, Default)]
 pub(super) struct CacheClearFences {
     active: BTreeMap<String, CacheClearLease>,
-    lifecycle_epoch: u64,
+    lifecycle_epoch: Arc<()>,
     generations: BTreeMap<String, u64>,
     recoveries: BTreeMap<String, CacheRecoveryRecord>,
+    #[cfg(any(test, target_arch = "wasm32"))]
     capture_sequence: u64,
     cleared_scopes: BTreeMap<String, BTreeMap<Option<String>, u64>>,
 }
@@ -57,7 +58,7 @@ struct CacheClearLease {
 #[derive(Clone, Debug)]
 struct CacheRecoveryRecord {
     key: String,
-    lifecycle_epoch: u64,
+    lifecycle_epoch: Arc<()>,
     backup: E2eePlaintextCacheV1,
     fence: Option<Arc<CacheClearFence>>,
 }
@@ -66,9 +67,10 @@ struct CacheRecoveryRecord {
 struct CacheCaptureProvenance {
     key: String,
     registry: Arc<Mutex<CacheClearFences>>,
-    lifecycle_epoch: u64,
+    lifecycle_epoch: Arc<()>,
     generation: u64,
     pending_clear: Option<String>,
+    #[cfg(any(test, target_arch = "wasm32"))]
     sequence: u64,
 }
 
@@ -78,7 +80,7 @@ struct CacheCaptureProvenance {
 pub(crate) struct E2eeCacheWriteIntent {
     key: String,
     realm: String,
-    lifecycle_epoch: u64,
+    lifecycle_epoch: Arc<()>,
     generation: u64,
     registry: Arc<Mutex<CacheClearFences>>,
 }
@@ -126,6 +128,7 @@ impl PendingE2eePlaintextClear {
     fn recovery(&self) -> CacheClearRecovery {
         CacheClearRecovery {
             key: self.key.clone(),
+            #[cfg(any(test, target_arch = "wasm32"))]
             cleared_json: self.json.clone(),
             backup: E2eePlaintextCacheV1 {
                 private_plaintext: self.previous_private.clone(),
@@ -134,7 +137,7 @@ impl PendingE2eePlaintextClear {
                 composer_drafts: self.previous_drafts.clone(),
                 ..Default::default()
             },
-            lifecycle_epoch: self.lifecycle_epoch,
+            lifecycle_epoch: self.lifecycle_epoch.clone(),
             registry: self.registry.clone(),
             clear_id: self.hydration_fence.id.clone(),
             fence: Some(self.hydration_fence.clone()),
@@ -185,18 +188,17 @@ impl PendingE2eePlaintextClear {
                         .get_secret(&self.key)
                         .map_err(|error| error.to_string())
                         .and_then(|current| owner.reconcile(&current).map(|json| (current, json)));
-                    if let Ok((current, json)) = recovery {
-                        if current == json
+                    if let Ok((current, json)) = recovery
+                        && (current == json
                             || LocalStateStore::persist_e2ee_plaintext_cache_write_durable(
                                 secure_store,
                                 &self.key,
                                 json.as_deref(),
                             )
                             .await
-                            .is_ok()
-                        {
-                            owner.release_recovery_lease();
-                        }
+                            .is_ok())
+                    {
+                        owner.release_recovery_lease();
                     }
                 }
             }
@@ -543,7 +545,7 @@ impl LocalStateStore {
             .unwrap_or_else(|p| p.into_inner());
         Ok(E2eeCacheWriteIntent {
             realm: realm.to_owned(),
-            lifecycle_epoch: registry.lifecycle_epoch,
+            lifecycle_epoch: registry.lifecycle_epoch.clone(),
             generation: registry.generations.get(&key).copied().unwrap_or_default(),
             key,
             registry: self.e2ee_cache_clears.clone(),
@@ -562,7 +564,7 @@ impl LocalStateStore {
         anyhow::ensure!(
             Arc::ptr_eq(&self.e2ee_cache_clears, &intent.registry)
                 && self.active_e2ee_plaintext_cache_key().as_ref() == Some(&intent.key)
-                && registry.lifecycle_epoch == intent.lifecycle_epoch
+                && Arc::ptr_eq(&registry.lifecycle_epoch, &intent.lifecycle_epoch)
                 && intent.realm == realm
                 && !registry
                     .cleared_scopes
@@ -628,7 +630,7 @@ impl LocalStateStore {
                 .iter()
                 .filter(|(id, record)| {
                     record.key == key
-                        && record.lifecycle_epoch == registry.lifecycle_epoch
+                        && Arc::ptr_eq(&record.lifecycle_epoch, &registry.lifecycle_epoch)
                         && !self.e2ee_cache_reconciliations_seen.contains(*id)
                 })
                 .map(|(id, record)| (id.clone(), record.backup.clone()))
@@ -658,10 +660,12 @@ impl LocalStateStore {
         key: String,
         json: Option<String>,
     ) -> anyhow::Result<CapturedE2eeCacheWrite> {
-        let mut registry = self
+        let registry = self
             .e2ee_cache_clears
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
+        #[cfg(any(test, target_arch = "wasm32"))]
+        let mut registry = registry;
         let seen = self
             .e2ee_cache_clear_generations_seen
             .get(&key)
@@ -685,25 +689,29 @@ impl LocalStateStore {
             .iter()
             .filter(|(id, record)| {
                 record.key == key
-                    && record.lifecycle_epoch == registry.lifecycle_epoch
+                    && Arc::ptr_eq(&record.lifecycle_epoch, &registry.lifecycle_epoch)
                     && !self.e2ee_cache_reconciliations_seen.contains(*id)
             })
             .map(|(_, record)| record.backup.clone())
             .collect::<Vec<_>>();
-        registry.capture_sequence = registry
-            .capture_sequence
-            .checked_add(1)
-            .expect("secure-cache capture sequence exhausted");
+        #[cfg(any(test, target_arch = "wasm32"))]
+        {
+            registry.capture_sequence = registry
+                .capture_sequence
+                .checked_add(1)
+                .context("secure-cache capture sequence exhausted")?;
+        }
         let provenance = CacheCaptureProvenance {
             key: key.clone(),
             registry: self.e2ee_cache_clears.clone(),
-            lifecycle_epoch: registry.lifecycle_epoch,
+            lifecycle_epoch: registry.lifecycle_epoch.clone(),
             generation: registry.generations.get(&key).copied().unwrap_or_default(),
             pending_clear: registry
                 .active
                 .iter()
                 .find(|(_, lease)| lease.key == key && !lease.recovering)
                 .map(|(id, _)| id.clone()),
+            #[cfg(any(test, target_arch = "wasm32"))]
             sequence: registry.capture_sequence,
         };
         drop(registry);
@@ -1017,7 +1025,28 @@ impl LocalStateStore {
             }
             anyhow::bail!("cannot clear E2EE plaintext cache without an active account");
         }
-        let (key, json) = write?.expect("checked secure-cache clear write");
+        let (key, json) = write?.context("checked secure-cache clear write")?;
+        let id = crate::operation::uuid_v7();
+        let mut fences = self
+            .e2ee_cache_clears
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let lifecycle_epoch = fences.lifecycle_epoch.clone();
+        let Some(generation) = fences
+            .generations
+            .get(&key)
+            .copied()
+            .unwrap_or_default()
+            .checked_add(1)
+        else {
+            drop(fences);
+            self.cached.mls_private_plaintext = previous_private;
+            self.cached.mls_decrypted_plaintext = previous_decrypted;
+            self.cached.authenticated_identity_links = previous_identity_links;
+            self.cached.composer_drafts = previous_drafts;
+            anyhow::bail!("secure-cache clear generation exhausted");
+        };
+        fences.generations.insert(key.clone(), generation);
         // Keep a minimal encrypted empty object instead of deleting the entry.
         if let E2eePlaintextCacheClearScope::Realm(realm) = scope {
             previous_private.retain(|id, _| id == realm);
@@ -1028,17 +1057,6 @@ impl LocalStateStore {
                 realms.retain(|id, _| id == realm);
             }
         }
-        let id = crate::operation::uuid_v7();
-        let mut fences = self
-            .e2ee_cache_clears
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let lifecycle_epoch = fences.lifecycle_epoch;
-        let generation = fences.generations.entry(key.clone()).or_default();
-        *generation = generation
-            .checked_add(1)
-            .expect("secure-cache clear generation exhausted");
-        let generation = *generation;
         let realm = match scope {
             E2eePlaintextCacheClearScope::All => None,
             E2eePlaintextCacheClearScope::Realm(realm) => Some(realm.clone()),
@@ -1086,12 +1104,14 @@ impl LocalStateStore {
         pending: PendingE2eePlaintextClear,
     ) {
         if self.active_e2ee_plaintext_cache_key().as_ref() != Some(&pending.key)
-            || self
-                .e2ee_cache_clears
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .lifecycle_epoch
-                != pending.lifecycle_epoch
+            || !Arc::ptr_eq(
+                &self
+                    .e2ee_cache_clears
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .lifecycle_epoch,
+                &pending.lifecycle_epoch,
+            )
         {
             // A settings waiter may outlive an account change. Its failed clear
             // must never merge the previous account's plaintext into the new one.
@@ -1136,10 +1156,9 @@ impl LocalStateStore {
             .e2ee_cache_clears
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        fences.lifecycle_epoch = fences
-            .lifecycle_epoch
-            .checked_add(1)
-            .expect("secure-cache lifecycle epoch exhausted");
+        // Pending writes retain the old allocation, preventing overflow or ABA
+        // when a lifecycle change invalidates their rollback and provenance.
+        fences.lifecycle_epoch = Arc::new(());
         let retired = std::mem::take(&mut fences.recoveries);
         drop(fences);
         drop(retired);
@@ -1338,21 +1357,23 @@ type CachePersistReply = tokio::sync::oneshot::Sender<Result<(), String>>;
 
 struct CacheClearRecovery {
     key: String,
+    #[cfg(any(test, target_arch = "wasm32"))]
     cleared_json: String,
     backup: E2eePlaintextCacheV1,
-    lifecycle_epoch: u64,
+    lifecycle_epoch: Arc<()>,
     registry: Arc<Mutex<CacheClearFences>>,
     clear_id: String,
     fence: Option<Arc<CacheClearFence>>,
 }
 
 impl CacheClearRecovery {
+    #[cfg(any(test, target_arch = "wasm32"))]
     fn recovery_provenance(&self) -> CacheCaptureProvenance {
         let registry = self.registry.lock().unwrap_or_else(|p| p.into_inner());
         CacheCaptureProvenance {
             key: self.key.clone(),
             registry: self.registry.clone(),
-            lifecycle_epoch: self.lifecycle_epoch,
+            lifecycle_epoch: self.lifecycle_epoch.clone(),
             generation: registry
                 .generations
                 .get(&self.key)
@@ -1369,14 +1390,14 @@ impl CacheClearRecovery {
             .registry
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if registry.lifecycle_epoch != self.lifecycle_epoch {
+        if !Arc::ptr_eq(&registry.lifecycle_epoch, &self.lifecycle_epoch) {
             return;
         }
         registry.recoveries.insert(
             self.clear_id.clone(),
             CacheRecoveryRecord {
                 key: self.key.clone(),
-                lifecycle_epoch: self.lifecycle_epoch,
+                lifecycle_epoch: self.lifecycle_epoch.clone(),
                 backup: self.backup.clone(),
                 fence: self.fence.clone(),
             },
@@ -1401,12 +1422,14 @@ impl CacheClearRecovery {
     }
     fn current(&self, key: &str) -> bool {
         self.key == key
-            && self
-                .registry
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .lifecycle_epoch
-                == self.lifecycle_epoch
+            && Arc::ptr_eq(
+                &self
+                    .registry
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .lifecycle_epoch,
+                &self.lifecycle_epoch,
+            )
     }
 
     fn reconcile(&self, json: &Option<String>) -> Result<Option<String>, String> {
@@ -1438,14 +1461,14 @@ impl CacheCaptureProvenance {
                 .registry
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            if self.key != key || registry.lifecycle_epoch != self.lifecycle_epoch {
+            if self.key != key || !Arc::ptr_eq(&registry.lifecycle_epoch, &self.lifecycle_epoch) {
                 return;
             }
             registry
                 .recoveries
                 .values_mut()
                 .filter(|record| {
-                    record.key == key && record.lifecycle_epoch == self.lifecycle_epoch
+                    record.key == key && Arc::ptr_eq(&record.lifecycle_epoch, &self.lifecycle_epoch)
                 })
                 .filter_map(|record| {
                     // Keep only surviving original fields, with their latest
@@ -1464,7 +1487,7 @@ impl CacheCaptureProvenance {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         if self.key != key
-            || registry.lifecycle_epoch != self.lifecycle_epoch
+            || !Arc::ptr_eq(&registry.lifecycle_epoch, &self.lifecycle_epoch)
             || registry.generations.get(key).copied().unwrap_or_default() != self.generation
         {
             return Err("secure-cache snapshot was captured before a clear or lifecycle change; capture current state again".into());
@@ -1476,7 +1499,7 @@ impl CacheCaptureProvenance {
         else {
             return Ok(json.clone());
         };
-        if record.key != key || record.lifecycle_epoch != self.lifecycle_epoch {
+        if record.key != key || !Arc::ptr_eq(&record.lifecycle_epoch, &self.lifecycle_epoch) {
             return Ok(json.clone());
         }
         let mut cache: E2eePlaintextCacheV1 = json
@@ -1988,7 +2011,7 @@ mod cache_persist_tests {
                 }
                 if self
                     .failures
-                    .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+                    .try_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
                         left.checked_sub(1)
                     })
                     .is_ok()

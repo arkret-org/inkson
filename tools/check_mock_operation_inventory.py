@@ -169,10 +169,18 @@ def response_schema(
     response = resolve_local_ref(openapi, response)
     content = response.get("content", {}) if isinstance(response, dict) else {}
     media = content.get("application/json")
+    problem_only = media is None
+    if problem_only:
+        media = content.get("application/problem+json")
     if not isinstance(media, dict) or "schema" not in media:
         return None, None
     reference = external_schema_reference(openapi, media["schema"])
     if reference is None:
+        # Composite Problem schemas remain unsupported by this single-reference
+        # inventory; the runtime continues to reject their JSON bodies. Never
+        # replace an anyOf/oneOf contract with a weaker generic Problem schema.
+        if problem_only:
+            return None, None
         raise ValueError(f"JSON response schema is not one external $ref: {media['schema']}")
     return reference, schema_ids.get(reference)
 

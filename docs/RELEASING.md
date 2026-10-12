@@ -33,7 +33,7 @@ npm ci
 npm run e2e
 ```
 
-Run the Lighthouse budget against a local web preview:
+Generate an optional Lighthouse report from a local web preview:
 
 ```powershell
 dx serve --platform web --features web --port 4528 --open false

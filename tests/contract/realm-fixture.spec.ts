@@ -524,8 +524,11 @@ test("Mock account and committed Event streams retain the native Realm cut witho
 
 test("Account subscription emits schema-valid delta frames and catchup completion only when requested", async () => {
   const { route } = await mockReadFixture();
-  for (const after of [undefined, "ak:cursor:e2e-2"]) {
+  let issuedCursor: string | undefined;
+  for (const resume of [false, true]) {
     for (const catchup of [undefined, "true", "false"]) {
+      const after = resume ? issuedCursor : undefined;
+      if (resume) expect(after).toBeDefined();
       const parameters = new URLSearchParams();
       if (after !== undefined) parameters.set("after", after);
       if (catchup !== undefined) parameters.set("catchup", catchup);
@@ -534,13 +537,51 @@ test("Account subscription emits schema-valid delta frames and catchup completio
       });
       expect(response?.status).toBe(200);
       const frames = decodeStreamFrames(response?.body);
-      expect(frames.map(frame => frame.kind), `after=${after}, catchup=${catchup}`).toEqual(
+      expect(frames.map(frame => frame.kind), `resume=${resume}, catchup=${catchup}`).toEqual(
         catchup === "true" ? ["delta", "catchup_complete"] : ["delta"],
       );
+      const roundCursor = frames[0].cursor;
+      expect(typeof roundCursor).toBe("string");
+      if (after !== undefined) {
+        expect(roundCursor).toBe(after);
+        expect(frames[0].realms).toBeUndefined();
+      }
       for (const frame of frames) {
-        expect(frame.cursor).toBe("ak:cursor:e2e-2");
+        expect(frame.cursor).toBe(roundCursor);
         expect(() => validateMockSchema("schemas/account-subscribe-frame.schema.json", frame)).not.toThrow();
       }
+      issuedCursor = roundCursor;
     }
   }
+});
+
+test("Account continuation rejects unknown and cross-filter handles without advancing its issued cut", async () => {
+  const { fixture, route } = await mockReadFixture();
+  const filter = JSON.stringify({ realm_ids: [fixture.snapshot.realm_id] });
+  const parameters = new URLSearchParams({ filter });
+  const initial = await driveOnce(route, {
+    url: `https://local.host/_arkret/self/account/subscribe?${parameters}`, method: "GET",
+  });
+  expect(initial?.status).toBe(200);
+  const issuedCursor = decodeStreamFrames(initial?.body)[0].cursor;
+  for (const rejected of [
+    new URLSearchParams({ filter, after: "ak:cursor:not-issued" }),
+    new URLSearchParams({ filter: JSON.stringify({ realm_ids: [] }), after: issuedCursor }),
+  ]) {
+    const response = await driveOnce(route, {
+      url: `https://local.host/_arkret/self/account/subscribe?${rejected}`, method: "GET",
+    });
+    expect(response?.status).toBe(400);
+    expect(response?.body).toMatchObject({
+      type: "https://arkret.org/problems/cursor_integrity_invalid", status: 400,
+    });
+    expect(() => validateMockSchema("schemas/http-problem-details.schema.json", response?.body)).not.toThrow();
+  }
+  const resumed = await driveOnce(route, {
+    url: `https://local.host/_arkret/self/account/subscribe?${new URLSearchParams({ filter, after: issuedCursor })}`, method: "GET",
+  });
+  expect(resumed?.status).toBe(200);
+  const frames = decodeStreamFrames(resumed?.body);
+  expect(frames).toEqual([{ kind: "delta", cursor: issuedCursor }]);
+  expect(() => validateMockSchema("schemas/account-subscribe-frame.schema.json", frames[0])).not.toThrow();
 });

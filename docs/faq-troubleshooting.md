@@ -158,14 +158,12 @@ by sending them a direct message.
 
 ---
 
-## Lighthouse budget regressed locally
+## Inspect an optional Lighthouse report
 
-**Symptom**: `scripts/lighthouse-local.ps1` exits non-zero.
-
-**Fix**: check `docs/lighthouse-budget.json` for the current budgets. A
-regression usually means a new dependency landed without webpack
-splitting; run `cargo build --release --features desktop` then `dx serve` and inspect the
-network panel.
+Run `scripts/lighthouse-local.ps1 -Url <web-preview-url>` to generate
+`dist/lighthouse/lighthouse.json`. Inspect the report and browser network panel
+when investigating page-load performance. This report command does not assert
+the thresholds in `docs/lighthouse-budget.json`; it is not a CI budget gate.
 
 ---
 

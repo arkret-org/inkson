@@ -222,5 +222,6 @@ The release-gate wrapper bundles all of the above:
 powershell -ExecutionPolicy Bypass -File scripts/release-gate.ps1
 ```
 
-The gate also enforces the Lighthouse budget in
+Optional Lighthouse reports can be generated with `scripts/lighthouse-local.ps1`.
+The report command does not enforce the thresholds in
 [`docs/lighthouse-budget.json`](lighthouse-budget.json).

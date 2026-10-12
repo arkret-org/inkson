@@ -1,10 +1,11 @@
 import { expect, type Page, type Route } from "@playwright/test";
 import { spawnSync } from "node:child_process";
 import { Buffer } from "node:buffer";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { hasPendingRealmCreate } from "./pendingCreator";
 import {
   currentHttpDescribeCapabilities,
   DIRECTORY_DESCRIBE_BUNDLE,
@@ -13,7 +14,6 @@ import {
   PRINCIPAL_HTTP_CORE_BUNDLE,
 } from "./currentDescribeCapabilities";
 
-const STRAND_POSITION_CELL_FAMILY = "ak.component.strand.position.v1";
 const DEMO_FRONTIER_EVENT = "ak:event:Ad0EZUHcfLJv92Of4w-RJec6fkNlWP11fsQAQ4dqUOHS";
 const DIRECT_BOB_REALM =
   "ak:realm:AUEAoXMJeJWBETvkqm7gk4imduk7g-l8bim19OPFQDaO";
@@ -76,6 +76,26 @@ type StrandProjection = {
   }>;
   fields?: Record<string, unknown>;
 };
+
+class MockAccountContinuation {
+  private readonly issued = new Map<string, { scope: string; cut: string }>();
+
+  accepts(after: string, scope: string, replaceFilter: boolean): boolean {
+    const previous = this.issued.get(after);
+    return previous !== undefined && (replaceFilter || previous.scope === scope);
+  }
+
+  deliver(after: string | null, scope: string, cut: string) {
+    const previous = after === null ? undefined : this.issued.get(after);
+    if (previous?.scope === scope && previous.cut === cut) {
+      return { cursor: after!, changed: false };
+    }
+    // A handle names only a sent cut; authority remains in the native carriers.
+    const cursor = `ak:cursor:e2e-2-${randomUUID()}`;
+    this.issued.set(cursor, { scope, cut });
+    return { cursor, changed: true };
+  }
+}
 
 type MockArkretApiOptions = {
   accountPrincipalId?: string;
@@ -225,6 +245,15 @@ const snapshotUnavailableDescriptor = (() => {
   return descriptor;
 })();
 const streamScanOperationId = "ak.self.committed_event.read.scan.v1";
+const committedEventNotFoundDescriptor = (() => {
+  const descriptor = activeMockErrorDescriptor("not_found");
+  const operationId = "ak.self.committed_event.resource.get.v1";
+  const operations = mockOperationErrorMapping.operations.filter(operation => operation.operation_id === operationId);
+  if (operations.length !== 1 || !operations[0].operation_specific.includes(descriptor.code)) {
+    throw new Error(`committed Event not_found is not registered for ${operationId}`);
+  }
+  return descriptor;
+})();
 const streamScanCapabilityDeniedDescriptor = (() => {
   const descriptor = activeMockErrorDescriptor("capability_denied");
   const operations = mockOperationErrorMapping.operations.filter((operation) => operation.operation_id === streamScanOperationId);
@@ -835,6 +864,7 @@ export async function mockArkretApi(
   const DEMO_STRAND_SECONDARY_CARD = demoNative.ids.secondary;
   let invitedRealmId = DEMO_REALM;
   const nativeFixtures = new Map<string, NativeRealmFixture>();
+  const accountContinuation = new MockAccountContinuation();
   const historicalSignerResponses = new Map<string, Record<string, any>>();
   const registerNative = (fixture: NativeRealmFixture) => {
     nativeFixtures.set(String(fixture.snapshot.realm_id), structuredClone(fixture));
@@ -1742,40 +1772,77 @@ export async function mockArkretApi(
         syncToken = `sx:e2e:message-${messageCounter}`;
         const realmId = body.realm_id ?? DEMO_REALM;
       }
-      if (body.kind === "ak.strand.create") {
+      for (const event of submittedEvents) {
+        if (event.kind !== "ak.strand.create" && event.kind !== "ak.strand.move") {
+          continue;
+        }
+        const full = accepted.fixture.committed_events.find(
+          (row) => row.event.event_id === event.event_id,
+        );
+        if (!full || full.commit.event_ref !== event.event_id) {
+          throw new Error("Strand display projection requires its accepted Event");
+        }
+        const strandId = event.kind === "ak.strand.create"
+          ? `ak:strand:${event.event_id.slice("ak:event:".length)}`
+          : event.payload.strand_id;
+        const current = accepted.fixture.snapshot.current_state_entries.find(
+          (row: Record<string, any>) => row.selector.kind === "strand"
+            && row.selector.strand_id === strandId,
+        );
+        if (!current || current.value?.id !== strandId
+          || current.value.realm_id !== realmId
+          || current.source_stream_ref.realm_id !== realmId) {
+          throw new Error("Strand display projection requires its exact current object");
+        }
+        const currentFull = accepted.fixture.committed_events.find(
+          (row) => row.commit.commit_id === current.revision.commit_id
+            && row.commit.stream_position === current.revision.stream_position,
+        );
+        if (!currentFull || currentFull.commit.realm_id !== realmId) {
+          throw new Error("Strand display projection requires its accepted current revision");
+        }
+        const positions = event.kind === "ak.strand.move"
+          ? accepted.fixture.snapshot.current_state_entries.filter(
+            (row: Record<string, any>) => row.selector.kind === "strand_position"
+              && row.selector.board_space_id === event.payload.board_space_id
+              && row.selector.strand_id === strandId
+              && row.value !== null,
+          )
+          : [];
+        if (event.kind === "ak.strand.move" && (positions.length !== 1
+          || positions[0].source_stream_ref.realm_id !== realmId
+          || positions[0].revision.commit_id !== full.commit.commit_id
+          || positions[0].revision.stream_position !== full.commit.stream_position)) {
+          throw new Error("Strand display placement requires its exact accepted Board/Strand pair");
+        }
+        const position = positions[0];
+        const object = current.value;
+        const existing = boardStrandProjections.findIndex(
+          (row) => row.strand_id === strandId,
+        );
+        const nextProjection: StrandProjection = {
+          ...(existing >= 0 ? boardStrandProjections[existing] : {}),
+          strand_id: strandId,
+          realm_id: realmId,
+          title: object.metadata?.title ?? strandId,
+          summary: object.metadata?.summary,
+          state: object.state ?? "active",
+          is_default: accepted.fixture.snapshot.current_state_entries.some(
+            (row: Record<string, any>) => row.selector.kind === "realm_set_default_strand"
+              && row.value?.default_strand_id === strandId,
+          ),
+          board_space_id: position?.selector.board_space_id,
+          list_space_id: position?.value.list_space_id,
+          rank: position?.value.rank,
+          fields: object.metadata?.fields ?? {},
+        };
+        if (existing >= 0) {
+          boardStrandProjections[existing] = nextProjection;
+        } else {
+          boardStrandProjections.push(nextProjection);
+        }
         messageCounter += 1;
         syncToken = `sx:e2e:strand-${messageCounter}`;
-        const object = body.payload?.object ?? {};
-        const component = Array.isArray(body.payload?.components)
-          ? body.payload.components.find(
-              (candidate: { family?: string }) =>
-                candidate.family === STRAND_POSITION_CELL_FAMILY,
-            )
-          : undefined;
-        const strandId = body.payload?.strand_id ?? object.id;
-        if (typeof strandId === "string") {
-          const fields = object.fields ?? {};
-          const nextProjection: StrandProjection = {
-            strand_id: strandId,
-            realm_id: object.realm_id ?? body.realm_id ?? DEMO_REALM,
-            title: object.title ?? body.payload?.title ?? strandId,
-            summary: object.summary,
-            state: "active",
-            is_default: false,
-            board_space_id: component?.board_space_id ?? fields.board_space_id,
-            list_space_id: component?.list_space_id ?? fields.list_space_id,
-            rank: component?.rank ?? fields.rank ?? body.payload?.rank,
-            fields,
-          };
-          const existing = boardStrandProjections.findIndex(
-            (row) => row.strand_id === strandId,
-          );
-          if (existing >= 0) {
-            boardStrandProjections[existing] = nextProjection;
-          } else {
-            boardStrandProjections.push(nextProjection);
-          }
-        }
       }
       return json(route, accepted.outcome);
     }
@@ -2116,30 +2183,38 @@ export async function mockArkretApi(
       const catchup = url.searchParams.get("catchup") === "true";
       const filter = JSON.parse(url.searchParams.get("filter") ?? "{}");
       const requestedRealms: string[] | undefined = filter.realm_ids;
-      if (url.searchParams.has("after") && url.searchParams.get("replace_filter") !== "true") {
-        await new Promise((resolve) => setTimeout(resolve, 5_000));
-        const frames = [
-          { kind: "delta", cursor: "ak:cursor:e2e-2" },
-          ...(catchup ? [{ kind: "catchup_complete", cursor: "ak:cursor:e2e-2" }] : []),
-        ];
-        frames.forEach((frame) =>
-          validateMockSchema(
-            "schemas/account-subscribe-frame.schema.json",
-            frame,
-          ),
+      const scope = canonicalJson(filter);
+      const after = url.searchParams.get("after");
+      const replaceFilter = url.searchParams.get("replace_filter") === "true";
+      if (after !== null && !accountContinuation.accepts(after, scope, replaceFilter)) {
+        const descriptor = activeMockErrorDescriptor("cursor_integrity_invalid");
+        const mapping = mockOperationErrorMapping.operations.find(
+          operation => operation.operation_id === "ak.self.account.stream.subscribe.v1",
         );
+        if (!mapping?.operation_specific.includes(descriptor.code)) {
+          throw new Error("Account continuation integrity failure is not registered");
+        }
+        const problem = {
+          type: descriptor.type_uri,
+          title: descriptor.title,
+          status: descriptor.http_status,
+          detail: "Account cursor is unknown or does not match this filter.",
+        };
+        validateClosedMockProblem(descriptor, descriptor.http_status, problem, "application/problem+json");
         return route.fulfill({
-          status: 200,
-          contentType: "application/x-ndjson",
-          body: `${frames.map(canonicalJson).join("\n")}\n`,
+          status: descriptor.http_status,
+          contentType: "application/problem+json",
+          body: JSON.stringify(problem),
         });
+      }
+      if (after !== null && !replaceFilter) {
+        await new Promise((resolve) => setTimeout(resolve, 5_000));
       }
       const demoProjectionEvents = projectionEvents.filter(
         (event) => eventRealmId(event) === DEMO_REALM,
       );
       const frame = {
         kind: "delta",
-        cursor: "ak:cursor:e2e-2",
         realms: {
           ...Object.fromEntries(
             createdRealms.map((realm) => [
@@ -2296,9 +2371,16 @@ export async function mockArkretApi(
       for (const realmId of Object.keys(frame.realms)) {
         if (requestedRealms && !requestedRealms.includes(realmId)) delete frame.realms[realmId];
       }
+      // Re-deliver the native complete cut, including every held Full, when a
+      // known continuation missed accepted writes. Never infer current from a
+      // cursor or trim a signed window into an unverifiable partial slice.
+      const completeFrame = { ...frame, realm_list: realmList };
+      const continuation = accountContinuation.deliver(after, scope, canonicalSha256(completeFrame));
       const frames = [
-        { ...frame, realm_list: realmList },
-        ...(catchup ? [{ kind: "catchup_complete", cursor: "ak:cursor:e2e-2" }] : []),
+        continuation.changed
+          ? { ...completeFrame, cursor: continuation.cursor }
+          : { kind: "delta", cursor: continuation.cursor },
+        ...(catchup ? [{ kind: "catchup_complete", cursor: continuation.cursor }] : []),
       ];
       frames.forEach((value) =>
         validateMockSchema("schemas/account-subscribe-frame.schema.json", value),
@@ -2501,11 +2583,26 @@ export async function mockArkretApi(
         );
         if (source) return json(route, source);
       }
-      const index = projectionEvents.findIndex(
+      let index = projectionEvents.findIndex(
         (event) => event.event_id === requestedEventId,
       );
       if (index < 0) {
-        throw new Error(`native committed Event resource has no exact accepted source for ${requestedEventId}`);
+        const pending = await hasPendingRealmCreate(page, requestedEventId, accountId, currentDeviceId);
+        // A submit may complete while the readonly holder snapshot is inspected.
+        // Prefer its exact accepted source to an earlier local pending state.
+        index = projectionEvents.findIndex(event => event.event_id === requestedEventId);
+        if (index < 0) {
+          if (!pending) throw new Error(`native committed Event resource has no exact accepted source for ${requestedEventId}`);
+          const descriptor = committedEventNotFoundDescriptor;
+          const problem = {
+            type: descriptor.type_uri,
+            title: descriptor.title,
+            status: descriptor.http_status,
+            detail: "The pending Realm Create has not been accepted by this fixture Station.",
+          };
+          validateClosedMockProblem(descriptor, descriptor.http_status, problem, "application/problem+json");
+          return json(route, problem, descriptor.http_status, "application/problem+json");
+        }
       }
       return json(route, committedEventView(projectionEvents[index], index));
     }

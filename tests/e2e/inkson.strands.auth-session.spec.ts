@@ -30,18 +30,28 @@ test("bootstrap login and sync shows the connected realm", async ({ page }) => {
   await expect(page.getByTestId("realm-tree-list")).toContainText(
     "Launch Realm",
   );
+  // Realm summaries do not include encryption authority: load each detail
+  // through its real demand subscription before checking its verified marker.
+  await page.getByTestId("realm-tree-node-button")
+    .filter({ hasText: "Arkret Demo Realm" }).click();
+  await expect(page.getByTestId("kanban-panel")).toBeVisible();
   await expect(
     page
       .getByTestId("realm-tree-node-button")
       .filter({ hasText: "Arkret Demo Realm" })
       .locator(".sidebar-nav-icon"),
   ).toHaveAttribute("title", "Encrypted Realm");
+  await page.getByTestId("realm-tree-node-button")
+    .filter({ hasText: "Launch Realm" }).click();
+  await expect(page.getByTestId("kanban-panel")).toBeVisible();
   await expect(
     page
       .getByTestId("realm-tree-node-button")
       .filter({ hasText: "Launch Realm" })
       .locator(".sidebar-nav-icon"),
   ).toHaveAttribute("title", "Unencrypted Realm");
+  await page.locator('[data-testid="sidebar"] a.sidebar-nav-item[href="/"]').click();
+  await expect(page.getByTestId("dashboard-panel")).toBeVisible();
   await page.getByTestId("account-menu-button").click();
   await expect(page.getByTestId("account-menu-display-name")).toHaveText(
     "inkson",
@@ -236,13 +246,12 @@ test("selected Realm security badge matches its encrypted sidebar marker", async
   const realmButton = page
     .getByTestId("realm-tree-node-button")
     .filter({ hasText: "Arkret Demo Realm" });
+  await realmButton.click();
+  await expect(page.getByTestId("kanban-panel")).toBeVisible();
   await expect(realmButton.locator(".sidebar-nav-icon")).toHaveAttribute(
     "title",
     "Encrypted Realm",
   );
-  await realmButton.click();
-
-  await expect(page.getByTestId("kanban-panel")).toBeVisible();
   await expect(page.getByTestId("realm-security-state")).toHaveText(
     "Encrypted",
   );

@@ -333,27 +333,79 @@ test("realm sidebar separates contact-based direct chats", async ({ page }) => {
       .filter({ hasText: "Bob Helper" })
       .locator(".contact-sidebar-agent-avatar img"),
   ).toHaveCount(1);
-  const bobContactRow = shell
-    .getByTestId("direct-conversation-row")
-    .filter({ hasText: BOB_ACCOUNT_ID.principal_id });
+  const bobActorKey = JSON.stringify({
+    account_id: {
+      principal_id: BOB_ACCOUNT_ID.principal_id,
+      station_id: BOB_ACCOUNT_ID.station_id,
+    },
+    kind: "account",
+  });
+  const bobPrincipalToken = BOB_ACCOUNT_ID.principal_id.split(":").at(-1)!;
+  const bobDisplayLabel = `ak:did_core:webvh:${bobPrincipalToken.slice(0, 8)}...${bobPrincipalToken.slice(-6)}`;
+  const bobContactRow = shell.locator(
+    `[data-testid="direct-conversation-row"][data-peer='${bobActorKey}']`,
+  );
+  expect(JSON.parse((await bobContactRow.getAttribute("data-peer"))!)).toEqual({
+    kind: "account", account_id: BOB_ACCOUNT_ID,
+  });
   await expect(bobContactRow).toContainText("DM");
   await expect(bobContactRow).toHaveAttribute(
     "aria-label",
-    `Chat with ${BOB_ACCOUNT_ID.principal_id}`,
+    `Chat with ${bobDisplayLabel}`,
   );
   await expect(
     shell
       .getByTestId("direct-conversation-row")
       .filter({ hasText: "ak:did_core:web:carol.example" }),
   ).toContainText("pending");
+  const isDirectResolver = (request: import("@playwright/test").Request) =>
+    request.method() === "POST" &&
+    new URL(request.url()).pathname === "/_arkret/self/direct-conversations/resolve";
+  // The active Direct view revalidates its own authority. Track the real
+  // requests through either terminal network event: retiring the view can
+  // abort a response after headers, without resolving Response.finished().
+  const pendingHumanResolvers = new Set<import("@playwright/test").Request>();
+  const failedHumanResolvers = new Set<import("@playwright/test").Request>();
+  const observeHumanResolver = (request: import("@playwright/test").Request) => {
+    if (isDirectResolver(request)) pendingHumanResolvers.add(request);
+  };
+  const finishHumanResolver = (request: import("@playwright/test").Request) => {
+    pendingHumanResolvers.delete(request);
+  };
+  const failHumanResolver = (request: import("@playwright/test").Request) => {
+    if (!pendingHumanResolvers.has(request)) return;
+    failedHumanResolvers.add(request);
+    pendingHumanResolvers.delete(request);
+  };
+  page.on("request", observeHumanResolver);
+  page.on("requestfinished", finishHumanResolver);
+  page.on("requestfailed", failHumanResolver);
+  const humanRequest = page.waitForRequest(isDirectResolver);
   await bobContactRow.click();
+  const resolvedHumanRequest = await humanRequest;
+  expect(resolvedHumanRequest.postDataJSON().peer).toEqual({
+    kind: "human", account_id: BOB_ACCOUNT_ID,
+  });
+  const humanResponse = await resolvedHumanRequest.response();
+  expect(humanResponse?.status()).toBe(200);
+  expect(await humanResponse!.finished()).toBeNull();
   await expect(page).toHaveURL(
     /\/direct\/ak:realm:AUEAoXMJeJWBETvkqm7gk4imduk7g-l8bim19OPFQDaO\/ak:strand:Ae9PN2rTd0Dojs9yS8iLnfheJtjSEZ3mgDDyONpztHUd$/,
   );
+  await page.locator('[data-testid="sidebar"] a.sidebar-nav-item[href="/"]').click();
+  await expect(page.getByTestId("dashboard-panel")).toBeVisible();
+  await expect.poll(() => pendingHumanResolvers.size).toBe(0);
+  // Only normal Chromium cancellation may retire a background revalidation;
+  // other network errors must remain visible failures.
+  for (const failed of failedHumanResolvers) {
+    expect(failed.failure()?.errorText).toBe("net::ERR_ABORTED");
+  }
+  page.off("request", observeHumanResolver);
+  page.off("requestfinished", finishHumanResolver);
+  page.off("requestfailed", failHumanResolver);
   await shell.getByTestId("realm-sidebar-tab-direct").click();
-  const helperRequest = page.waitForRequest(request =>
-    request.method() === "POST" &&
-    new URL(request.url()).pathname === "/_arkret/self/direct-conversations/resolve");
+  // Do not filter by the expected peer: a wrong actual request must fail.
+  const helperRequest = page.waitForRequest(isDirectResolver);
   await shell
     .getByTestId("contact-sidebar-agent-row")
     .filter({ hasText: "Bob Helper" })
@@ -368,7 +420,9 @@ test("realm sidebar separates contact-based direct chats", async ({ page }) => {
   await expect(page).toHaveURL(/\/contacts\/manage$/);
   const contactsManagePage = shell.getByTestId("contacts-manage-page");
   await expect(contactsManagePage).toBeVisible();
-  await expect(contactsManagePage).toContainText(BOB_ACCOUNT_ID.principal_id);
+  await expect(contactsManagePage.locator(
+    `[data-testid="contacts-manage-row"][data-peer="${BOB_ACCOUNT_ID.principal_id}"]`,
+  )).toContainText(bobDisplayLabel);
   await expect(contactsManagePage.locator(".realm-manage-hero")).toHaveCount(0);
   await expect(
     contactsManagePage.locator('input[type="checkbox"]'),
@@ -533,7 +587,27 @@ test("topbar breadcrumbs avoid duplicated route and server context", async ({
 test("dashboard summarizes unread notifications from sync projection", async ({
   page,
 }) => {
+  await expect(page.getByTestId("dashboard-unread-notifications")).toHaveText(
+    "2",
+  );
+  const cursorIndicator = page.getByTestId("sync-cursor");
+  await expect(cursorIndicator).toHaveText(/^cursor \S+$/);
+  const savedCursor = (await cursorIndicator.textContent() ?? "").slice("cursor ".length);
+  const refreshDescribe = page.waitForRequest(request =>
+    request.method() === "GET" &&
+    new URL(request.url()).pathname === "/_arkret/describe"
+  );
+  // Inspect the first subscription after this refresh's describe, including a
+  // missing after; filtering by the expected cursor would hide a fresh baseline.
+  const resumedSubscription = refreshDescribe.then(() =>
+    page.waitForRequest(request =>
+      request.method() === "GET" &&
+      new URL(request.url()).pathname === "/_arkret/self/account/subscribe"
+    )
+  );
   await refreshServer(page);
+  const request = await resumedSubscription;
+  expect(new URL(request.url()).searchParams.get("after")).toBe(savedCursor);
 
   await expect(page.getByTestId("dashboard-unread-notifications")).toHaveText(
     "2",

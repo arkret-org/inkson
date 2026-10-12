@@ -103,11 +103,17 @@ pub(super) struct ServerSwitchHandlerContext {
     pub(super) session: crate::runtime::session::SessionCoordinator,
 }
 
-/// Reset the selected Station first, then connect against the newly selected
-/// base. The ordering preserves the cache/grant fence in `select_server`.
+/// Refresh the current Station without discarding its durable account state.
+/// A different Station retains the cache/grant fence in `select_server`.
 pub(super) fn switch_server_and_connect(option_url: String, ctx: ServerSwitchHandlerContext) {
     let next_url = normalize_server_url(&option_url);
     let runtime = ctx.runtime;
+    if same_server_url(ctx.base_url.peek().as_str(), &next_url) {
+        let mut server_menu_open = ctx.server_menu_open;
+        server_menu_open.set(false);
+        refresh_connection(next_url, runtime, ctx.session, ctx.state_store);
+        return;
+    }
     select_server(
         next_url.clone(),
         ServerSelectionContext {

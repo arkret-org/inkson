@@ -191,6 +191,7 @@ async fn follow_once<F: Fn() -> bool>(
     Ok(())
 }
 
+#[cfg(test)]
 async fn replay(
     client: &OwnStationResultClient,
     realm: &arkret_sdk::RealmId,
@@ -198,7 +199,25 @@ async fn replay(
     snapshot: &CreatorOwnSnapshot,
     saved: Option<&arkret_sdk::CommitStreamHead>,
 ) -> garth::Result<(OwnStationReplica, Vec<OwnStationScanPage>)> {
-    let mut replica = OwnStationReplica::new(realm.clone());
+    replay_with_admitted_replica(
+        client,
+        realm,
+        stream,
+        snapshot,
+        saved,
+        OwnStationReplica::new(realm.clone()),
+    )
+    .await
+}
+
+async fn replay_with_admitted_replica(
+    client: &OwnStationResultClient,
+    realm: &arkret_sdk::RealmId,
+    stream: &CommitStreamRef,
+    snapshot: &CreatorOwnSnapshot,
+    saved: Option<&arkret_sdk::CommitStreamHead>,
+    mut replica: OwnStationReplica,
+) -> garth::Result<(OwnStationReplica, Vec<OwnStationScanPage>)> {
     replica.install_bound_snapshot(snapshot)?;
     let cap = snapshot
         .value()?
@@ -214,7 +233,11 @@ async fn replay(
                 "current cut regresses or forks the durable stream",
             ));
         }
-        replica.restore_checkpoint_head(client, saved).await?;
+        // Only the same session's admitted original can avoid a new read.
+        // Durable coordinates alone still require exact-original admission.
+        if replica.head(stream) != Some(saved) {
+            replica.restore_checkpoint_head(client, saved).await?;
+        }
     }
     if saved.is_none()
         && snapshot
@@ -312,7 +335,15 @@ async fn drain_from_snapshot<F: Fn() -> bool>(
         .state_store
         .read(|s| s.verified_commit_stream_cursor(stream))
         .map_err(protocol)?;
-    let (replica, pages) = replay(client, realm, stream, snapshot, saved.as_ref()).await?;
+    let (replica, pages) = replay_with_admitted_replica(
+        client,
+        realm,
+        stream,
+        snapshot,
+        saved.as_ref(),
+        current.clone(),
+    )
+    .await?;
     let mut rows = Vec::new();
     for page in &pages {
         rows.extend(page.rows()?.iter().cloned());
@@ -345,6 +376,12 @@ async fn drain_from_snapshot<F: Fn() -> bool>(
     }
     if changed > 0 || evidence || batch.iter().any(|e| matches!(e, ClientEvent::Event(e) if e.kind == arkret_sdk::EventKind::AgentInteractionSet)) {
         projector.realm_live_epoch.update(|v| *v = v.wrapping_add(1));
+    }
+    // Adopt only the candidate whose history and current pointer committed.
+    // Cloning preserves independently admitted heads for every other stream.
+    client.check_session()?;
+    if is_active() {
+        *current = replica;
     }
     Ok(())
 }
@@ -1704,6 +1741,20 @@ pub(super) mod tests {
                     .unwrap();
                 let saved = store.verified_commit_stream_cursor(&stream).unwrap();
                 assert_eq!(saved.as_ref(), replica.head(&stream));
+                // The HTTP fixture served its only snapshot and original page.
+                // Reusing an admitted same-session head must require no new read.
+                let (idle_replica, idle_pages) = replay_with_admitted_replica(
+                    &client,
+                    &snapshot.realm_id,
+                    &stream,
+                    &bound,
+                    saved.as_ref(),
+                    replica.clone(),
+                )
+                .await
+                .unwrap();
+                assert!(idle_pages.is_empty());
+                assert_eq!(idle_replica.head(&stream), saved.as_ref());
                 let old = source.0.lock().unwrap().clone();
                 for replace_provider in [false, true] {
                     *source.0.lock().unwrap() = OwnStationSessionSnapshot::new(
@@ -1721,6 +1772,18 @@ pub(super) mod tests {
                     .unwrap()
                     .with_provider_identity(Default::default());
                     assert!(pages[0].rows().is_err());
+                    assert!(
+                        replay_with_admitted_replica(
+                            &client,
+                            &snapshot.realm_id,
+                            &stream,
+                            &bound,
+                            saved.as_ref(),
+                            idle_replica.clone(),
+                        )
+                        .await
+                        .is_err()
+                    );
                     assert!(
                         store
                             .stage_own_station_commit_stream_checkpoint(
