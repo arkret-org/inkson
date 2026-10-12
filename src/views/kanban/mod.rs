@@ -1409,7 +1409,7 @@ pub fn KanbanPanel(
                                         {
                                             let pending_label =
                                                 format!("{} ({})", pending.title, pending.status_hint());
-                                            let retryable = pending.is_retryable();
+                                            let retryable = pending.is_retryable() && card_write_ready;
                                             let retry_title = pending.error.clone().unwrap_or_else(|| {
                                                 if retryable {
                                                     "Retry Board creation".to_owned()
@@ -1490,10 +1490,12 @@ pub fn KanbanPanel(
                                     size: ButtonSize::Sm,
                                     class: "btn",
                                     "data-testid": "add-column-button",
-                                    // A pending Board has no protocol id yet, so it
-                                    // cannot be a List `parent_space_id`; the action
-                                    // unlocks when the receipt commits the selection.
-                                    disabled: selected_board_value.is_none(),
+                                    // List authoring needs an accepted parent and
+                                    // the same complete Realm baseline as submission.
+                                    // A visible draft is not an accepted Space.
+                                    disabled: selected_board_value.is_none()
+                                        || !event_write_ready
+                                        || !realm_current_ready,
                                     title: if selected_board_value.is_some() {
                                         crate::i18n::tr("kanban.ui.add_a_list_to_this_board")
                                     } else {
