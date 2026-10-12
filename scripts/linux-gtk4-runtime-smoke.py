@@ -13,9 +13,95 @@ import tempfile
 import time
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--backend', choices=['x11', 'wayland'], required=True)
-parser.add_argument('--binary', type=Path, required=True)
+parser.add_argument('--backend', choices=['x11', 'wayland'])
+parser.add_argument('--binary', type=Path)
+parser.add_argument('--secret-service-probe', action='store_true')
 args = parser.parse_args()
+
+def secret_service_probe():
+    output = Path('dist/linux-gtk4-runtime')
+    output.mkdir(parents=True, exist_ok=True)
+    result = {'probe_source_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+              'scope': 'actual Linux SecretService through the production adapter in a Tokio test; not authenticated desktop sign-in',
+              'passed': False, 'daemon_cleanup': False, 'private_state_cleanup': False}
+    daemon = None
+    private_path = None
+    try:
+        with tempfile.TemporaryDirectory(prefix='inkson-secret-service-') as private:
+            private_path = Path(private)
+            environment = os.environ.copy()
+            environment.update(XDG_DATA_HOME=str(private_path / 'data'),
+                               XDG_CONFIG_HOME=str(private_path / 'config'),
+                               XDG_RUNTIME_DIR=str(private_path / 'runtime'),
+                               COTEST_LINUX_KEYSTORE_PROBE='1')
+            for name in ['data', 'config', 'runtime']:
+                (private_path / name).mkdir(mode=0o700)
+            with (output / 'secret-service-daemon.log').open('wb') as daemon_log:
+                try:
+                    daemon = subprocess.Popen(
+                        ['gnome-keyring-daemon', '--foreground', '--components=secrets', '--unlock'],
+                        env=environment, stdin=subprocess.PIPE, stdout=daemon_log, stderr=subprocess.STDOUT)
+                    result['owned_daemon_pid'] = daemon.pid
+                    daemon.stdin.write(b'\n')
+                    daemon.stdin.close()
+                    deadline = time.monotonic() + 30
+                    while time.monotonic() < deadline:
+                        if daemon.poll() is not None:
+                            raise RuntimeError('private SecretService daemon exited before readiness')
+                        ready = subprocess.run(
+                            ['gdbus', 'call', '--session', '--dest', 'org.freedesktop.secrets',
+                             '--object-path', '/org/freedesktop/secrets', '--method',
+                             'org.freedesktop.Secret.Service.ReadAlias', 'default'],
+                            env=environment, capture_output=True, text=True, timeout=5)
+                        if ready.returncode == 0 and 'collection/' in ready.stdout:
+                            result['actual_default_collection_ready'] = True
+                            break
+                        time.sleep(0.25)
+                    else:
+                        raise RuntimeError('private unlocked default collection did not become ready')
+                    command = ['cargo', 'test', '--locked', '--release', '--features', 'desktop', '--lib',
+                               'secure_key_store::keyring::linux_runtime_tests::secret_service_round_trip_from_the_ui_tokio_runtime',
+                               '--', '--ignored', '--exact']
+                    result['command'] = command
+                    started = time.monotonic()
+                    with (output / 'secret-service-test.log').open('wb') as test_log:
+                        tested = subprocess.run(command, env=environment, stdout=test_log,
+                                                stderr=subprocess.STDOUT)
+                    result['test_exit_code'] = tested.returncode
+                    result['duration_seconds'] = round(time.monotonic() - started, 3)
+                    test_output = (output / 'secret-service-test.log').read_text()
+                    result['test_log_sha256'] = hashlib.sha256(
+                        (output / 'secret-service-test.log').read_bytes()).hexdigest()
+                    result['passed'] = tested.returncode == 0 and (
+                        'test result: ok. 1 passed; 0 failed; 0 ignored;' in test_output)
+                    if not result['passed']:
+                        raise RuntimeError('actual SecretService Tokio round-trip failed or executed zero tests')
+                finally:
+                    if daemon is not None:
+                        if daemon.poll() is None:
+                            daemon.terminate()
+                            try:
+                                daemon.wait(timeout=10)
+                            except subprocess.TimeoutExpired:
+                                daemon.kill()
+                                daemon.wait(timeout=10)
+                        result['owned_daemon_exit_code'] = daemon.returncode
+                        result['daemon_cleanup'] = daemon.poll() is not None
+    except Exception as error:
+        result['passed'] = False
+        result['error'] = str(error)
+    finally:
+        result['private_state_cleanup'] = private_path is not None and not private_path.exists()
+        result['passed'] = result['passed'] and result['daemon_cleanup'] and result['private_state_cleanup']
+        (output / 'secret-service-result.json').write_text(json.dumps(result, indent=2) + '\n')
+    return 0 if result['passed'] else 1
+
+if args.secret_service_probe:
+    if args.backend is not None or args.binary is not None:
+        parser.error('the SecretService lease is independent of the desktop display probe')
+    raise SystemExit(secret_service_probe())
+if args.backend is None or args.binary is None:
+    parser.error('--backend and --binary are required for the complete desktop oracle')
 
 # AT-SPI reads and edits the actual WebKit accessibility document. No JS,
 # fake request acknowledgement, alternate app storage, or product test hook.

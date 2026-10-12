@@ -81,7 +81,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            libgtk-4-dev dpkg-dev \
+            libgtk-4-dev libglib2.0-bin dpkg-dev \
             libwebkitgtk-6.0-dev \
             libdbus-1-dev \
             xvfb xdotool xclip wl-clipboard scrot openbox weston gnome-keyring dbus-x11 at-spi2-core python3-pyatspi \
@@ -156,6 +156,21 @@ jobs:
           verify_family 'state::e2ee_secure_cache::cache_persist_tests::' 12 cache-persist
           verify_family 'neutral_station_choice' 5 neutral-station
           verify_family 'native_bootstrap_load' 1 native-bootstrap
+          verify_family 'secure_key_store::keyring::linux_runtime_tests::mock_' 2 linux-keystore-isolation
+
+      - name: Exercise the real Linux SecretService from a UI Tokio runtime
+        id: linux_secret_service
+        if: runner.os == 'Linux'
+        working-directory: inkson
+        run: dbus-run-session -- python3 scripts/linux-gtk4-runtime-smoke.py --secret-service-probe
+
+      - name: Preserve the actual Linux SecretService result and failure logs
+        if: runner.os == 'Linux' && always() && steps.linux_secret_service.outcome != 'skipped'
+        uses: actions/upload-artifact@v7
+        with:
+          name: inkson-linux-secret-service-runtime
+          path: inkson/dist/linux-gtk4-runtime/secret-service-*
+          if-no-files-found: error
 
       - name: Prepare artifact directory
         shell: pwsh
