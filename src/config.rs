@@ -631,7 +631,21 @@ impl LocalConfigStore {
     /// Reattach the session credential to a config freshly read from the
     /// plaintext persistence layer (default secure store).
     fn rehydrate_config(&self, config: ClientConfig) -> ClientConfig {
-        let store = config_secure_store();
+        self.rehydrate_config_using(config, config_secure_store)
+    }
+
+    fn rehydrate_config_using(
+        &self,
+        mut config: ClientConfig,
+        make_store: impl FnOnce() -> std::sync::Arc<dyn crate::secure_key_store::SecureKeyStore>,
+    ) -> ClientConfig {
+        // A neutral Station preset has no Account/Device credential namespace.
+        // Do not initialize a platform backend while reading that public choice.
+        if config.active_account.is_none() {
+            config.session_credential.clear();
+            return config;
+        }
+        let store = make_store();
         self.reattach_session_credential(config, store.as_ref())
     }
 
@@ -960,6 +974,27 @@ mod tests {
             .save_neutral_station_choice("http://127.0.0.1:18932/")
             .unwrap();
         assert_eq!(store.load().stations.len(), cold.stations.len());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn neutral_station_choice_cold_hydration_never_opens_an_account_backend() {
+        let root = std::env::temp_dir().join(format!("inkson-neutral-backend-{}", uuid_v7()));
+        let path = root.join("config.json");
+        let mut store = LocalConfigStore::with_path(&path);
+        store
+            .save_neutral_station_choice("http://127.0.0.1:18932/")
+            .unwrap();
+        let cold = LocalConfigStore::with_path(&path);
+        let mut persisted = cold.read_persisted_config().unwrap();
+        persisted.session_credential = "untrusted-plaintext".to_owned();
+        let restored = cold.rehydrate_config_using(persisted, || {
+            panic!("neutral hydration must not probe a credential backend")
+        });
+        assert!(restored.active_account.is_none());
+        assert!(restored.session_credential.is_empty());
+        assert_eq!(restored.stations[0].as_str(), "http://127.0.0.1:18932/");
         fs::remove_dir_all(root).unwrap();
     }
 

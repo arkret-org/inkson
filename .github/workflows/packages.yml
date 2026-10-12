@@ -49,7 +49,7 @@ jobs:
         with:
           repository: ${{ github.repository_owner }}/arkret-rust-sdk
           path: arkret-rust-sdk
-          ref: f8ec4c91182f05acd300651e0581999764df633a
+          ref: f650a3bdb98470b799e5dfb42856a1914ce992b0
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
 
       - name: Checkout arkret-spec fixtures
@@ -154,7 +154,8 @@ jobs:
           }
           verify_family 'state::tests::private_plaintext::' 23 private-plaintext
           verify_family 'state::e2ee_secure_cache::cache_persist_tests::' 12 cache-persist
-          verify_family 'neutral_station_choice' 4 neutral-station
+          verify_family 'neutral_station_choice' 5 neutral-station
+          verify_family 'native_bootstrap_load' 1 native-bootstrap
 
       - name: Prepare artifact directory
         shell: pwsh
