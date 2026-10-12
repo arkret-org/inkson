@@ -49,7 +49,7 @@ jobs:
         with:
           repository: ${{ github.repository_owner }}/arkret-rust-sdk
           path: arkret-rust-sdk
-          ref: 516c2992040337b4cb2eb008a80202fd48b23a47
+          ref: f8ec4c91182f05acd300651e0581999764df633a
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
 
       - name: Checkout arkret-spec fixtures
@@ -57,7 +57,7 @@ jobs:
         with:
           repository: ${{ github.repository_owner }}/arkret-spec
           path: arkret-spec
-          ref: 273654ebc86a3b0c226d749c69d27f83f617aa71
+          ref: 2819a457214aacfba1ee54ba0da61c151a9a5326
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
 
       - name: Checkout garth
@@ -65,7 +65,7 @@ jobs:
         with:
           repository: ${{ github.repository_owner }}/garth
           path: garth
-          ref: 80dc94db5a8f6ca8dc951d63ce5cbdf11dcf8ce3
+          ref: 6e377fcc85b46f17eb13f722f1941fb6be294b8d
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
 
       - name: Checkout chime
@@ -84,7 +84,7 @@ jobs:
             libgtk-4-dev dpkg-dev \
             libwebkitgtk-6.0-dev \
             libdbus-1-dev \
-            xvfb xdotool openbox weston gnome-keyring dbus-x11 at-spi2-core python3-pyatspi \
+            xvfb xdotool xclip wl-clipboard scrot openbox weston gnome-keyring dbus-x11 at-spi2-core python3-pyatspi \
             libxdo-dev \
             librsvg2-dev
 
@@ -154,6 +154,7 @@ jobs:
           }
           verify_family 'state::tests::private_plaintext::' 23 private-plaintext
           verify_family 'state::e2ee_secure_cache::cache_persist_tests::' 12 cache-persist
+          verify_family 'neutral_station_choice' 4 neutral-station
 
       - name: Prepare artifact directory
         shell: pwsh
@@ -218,8 +219,8 @@ jobs:
           path: inkson/dist/linux-packages/
           if-no-files-found: error
 
-      - name: Exercise the real Linux GTK4 WebKit renderer
-        id: linux_renderer
+      - name: Verify the exact real Linux package executable
+        id: linux_package
         if: runner.os == 'Linux'
         working-directory: inkson
         run: |
@@ -228,13 +229,29 @@ jobs:
           dpkg-deb --info "$package"
           dpkg-deb --extract "$package" dist/linux-package-extracted
           cmp target/release/inkson dist/linux-package-extracted/usr/bin/inkson
-          xvfb-run -a dbus-run-session -- python3 scripts/linux-gtk4-runtime-smoke.py --backend x11 --binary dist/linux-package-extracted/usr/bin/inkson
-          dbus-run-session -- python3 scripts/linux-gtk4-runtime-smoke.py --backend wayland --binary dist/linux-package-extracted/usr/bin/inkson
+
+      - name: Exercise real X11 DOM keyboard clipboard blur and cold restore
+        id: linux_x11_renderer
+        if: runner.os == 'Linux'
+        continue-on-error: true
+        working-directory: inkson
+        run: xvfb-run -a dbus-run-session -- python3 scripts/linux-gtk4-runtime-smoke.py --backend x11 --binary dist/linux-package-extracted/usr/bin/inkson
+
+      - name: Exercise real Wayland DOM keyboard clipboard blur and cold restore
+        id: linux_wayland_renderer
+        if: runner.os == 'Linux'
+        continue-on-error: true
+        working-directory: inkson
+        run: xvfb-run -a dbus-run-session -- python3 scripts/linux-gtk4-runtime-smoke.py --backend wayland --binary dist/linux-package-extracted/usr/bin/inkson
 
       - name: Upload Linux GTK4 runtime evidence
-        if: runner.os == 'Linux' && always() && steps.linux_renderer.outcome != 'skipped'
+        if: runner.os == 'Linux' && always() && steps.linux_package.outcome != 'skipped'
         uses: actions/upload-artifact@v7
         with:
           name: inkson-linux-gtk4-runtime
           path: inkson/dist/linux-gtk4-runtime/
           if-no-files-found: error
+
+      - name: Require both complete Linux runtime oracles
+        if: runner.os == 'Linux' && always()
+        run: test '${{ steps.linux_x11_renderer.outcome }}' = success && test '${{ steps.linux_wayland_renderer.outcome }}' = success

@@ -21,8 +21,18 @@ args = parser.parse_args()
 # fake request acknowledgement, alternate app storage, or product test hook.
 STATION_NAMES = {'Sign-in server URL', '登录服务器地址'}
 STATION_MARKER = 'http://127.0.0.1:18932'
+TYPED_STATION = 'http://127.0.0.1:18931'
+COMMITTED_STATION = STATION_MARKER + '/'
+
+def dispatch_accessibility_events():
+    context = GLib.MainContext.default()
+    for _ in range(256):
+        if not context.pending():
+            break
+        context.iteration(False)
 
 def station_field(process_id):
+    dispatch_accessibility_events()
     rows = subprocess.check_output(['ps', '-eo', 'pid=,ppid='], text=True).splitlines()
     relations = [tuple(map(int, row.split())) for row in rows]
     process_ids = {process_id}
@@ -40,18 +50,55 @@ def station_field(process_id):
                 stack.append(node)
         except (AttributeError, RuntimeError, GLib.Error):
             continue
+    # WebKit emits its real document root even when the toolkit's embedded
+    # accessibility socket has not grafted it into the GTK desktop tree.
+    # Preserve the exact same owning-process/descendant restriction.
+    for source in document_event_sources:
+        try:
+            if source.get_process_id() in process_ids:
+                stack.append(source)
+        except (AttributeError, RuntimeError, GLib.Error):
+            continue
     visited = 0
     while stack and visited < 4096:
         node = stack.pop()
         visited += 1
         try:
             if node.name in STATION_NAMES:
-                node.queryEditableText()
+                node.queryText()
                 return node
             stack.extend(node.getChildAtIndex(i) for i in range(node.childCount))
         except (AttributeError, RuntimeError, NotImplementedError, GLib.Error):
             continue
     return None
+
+def diagnostic_tree(process_id):
+    rows = subprocess.check_output(['ps', '-eo', 'pid=,ppid=,args='], text=True)
+    (out / (args.backend + '-processes.log')).write_text(rows)
+    desktop = pyatspi.Registry.getDesktop(0)
+    stack = [(desktop, 0)] + [(source, 0) for source in document_event_sources]
+    nodes = []
+    while stack and len(nodes) < 2048:
+        node, depth = stack.pop()
+        record = {'depth': depth}
+        try:
+            record.update(name=node.name, role=node.getRoleName(), child_count=node.childCount)
+            for label, getter in [('pid', node.get_process_id), ('attributes', node.getAttributes)]:
+                try:
+                    record[label] = getter()
+                except (AttributeError, RuntimeError, NotImplementedError, GLib.Error) as error:
+                    record[label + '_error'] = str(error)
+            nodes.append(record)
+            if depth < 32:
+                stack.extend((node.getChildAtIndex(i), depth + 1)
+                             for i in reversed(range(min(node.childCount, 256))))
+        except (AttributeError, RuntimeError, NotImplementedError, GLib.Error) as error:
+            record['error'] = str(error)
+            nodes.append(record)
+    (out / (args.backend + '-accessibility-tree.json')).write_text(
+        json.dumps({'own_pid': process_id, 'nodes': nodes}, indent=2) + '\n')
+    subprocess.run(['scrot', '--overwrite', str(out / (args.backend + '-screen.png'))],
+                   check=False, capture_output=True)
 
 def wait_station(app, expected=None):
     deadline = time.monotonic() + 60
@@ -64,12 +111,14 @@ def wait_station(app, expected=None):
             if expected is None or value == expected:
                 return field
         time.sleep(0.25)
+    diagnostic_tree(app.pid)
     raise RuntimeError('actual accessible login Station field did not reach expected state')
 
 binary = args.binary.resolve(strict=True)
 out = Path('dist/linux-gtk4-runtime')
 out.mkdir(parents=True, exist_ok=True)
-result = {'backend': args.backend, 'binary_sha256': hashlib.sha256(binary.read_bytes()).hexdigest(),
+result = {'diagnostic_probe_source_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+          'product_source': os.environ.get('GITHUB_SHA'), 'backend': args.backend, 'binary_sha256': hashlib.sha256(binary.read_bytes()).hexdigest(),
           'test': 'actual GTK4/WebKit login DOM, input callback, same-home cold restart; not authenticated product acceptance'}
 with tempfile.TemporaryDirectory(prefix='inkson-gtk4-runtime-') as private:
     env = dict(os.environ)
@@ -79,13 +128,35 @@ with tempfile.TemporaryDirectory(prefix='inkson-gtk4-runtime-') as private:
     Path(env['XDG_RUNTIME_DIR']).mkdir(mode=0o700)
     background = None
     app = None
+    accessibility_events = {}
+    document_event_sources = []
+    document_event_metadata = []
+    def observed_accessibility_event(event):
+        accessibility_events[event.type] = accessibility_events.get(event.type, 0) + 1
+        if event.type.startswith('document:') and len(document_event_sources) < 16:
+            source = event.source
+            if source not in document_event_sources:
+                document_event_sources.append(source)
+                metadata = {'event': event.type}
+                for label, getter in [('pid', source.get_process_id), ('name', source.get_name),
+                                      ('role', source.get_role_name)]:
+                    try:
+                        metadata[label] = getter()
+                    except (AttributeError, RuntimeError, GLib.Error) as error:
+                        metadata[label + '_error'] = str(error)
+                document_event_metadata.append(metadata)
+    # WebKit enables its real AX cache for registered assistive clients.
+    # Polling the Registry alone does not register such a client.
+    listener_names = ('object', 'document')
+    pyatspi.Registry.registerEventListener(observed_accessibility_event, *listener_names)
+    result['registered_real_atspi_listener_names'] = list(listener_names)
     app_log = out / (args.backend + '-application.log')
     display_log = out / (args.backend + '-display.log')
     try:
         with display_log.open('w') as display_output:
             if args.backend == 'wayland':
                 env['WAYLAND_DISPLAY'] = 'inkson-gtk4-test'
-                background = subprocess.Popen(['weston', '--backend=headless-backend.so',
+                background = subprocess.Popen(['weston', '--backend=x11-backend.so',
                     '--socket=' + env['WAYLAND_DISPLAY'], '--idle-time=0', '--width=1280', '--height=800'],
                     env=env, stdout=display_output, stderr=subprocess.STDOUT)
                 deadline = time.monotonic() + 30
@@ -125,12 +196,64 @@ with tempfile.TemporaryDirectory(prefix='inkson-gtk4-runtime-') as private:
                 result.update(real_window=True, webkit_web_process=True, startup_remained_live=True)
                 field = wait_station(app)
                 result['actual_login_dom'] = True
-                if not field.queryEditableText().setTextContents(STATION_MARKER):
-                    raise RuntimeError('real accessible Station input rejected editing')
+                if not field.queryComponent().grabFocus():
+                    raise RuntimeError('real accessible Station input rejected focus')
+                if args.backend == 'x11':
+                    input_window = window
+                else:
+                    # Official nested backend receives physical X11 keys and
+                    # dispatches them to the real Wayland application's seat.
+                    query = subprocess.run(['xdotool', 'search', '--onlyvisible', '--class', '^Weston Compositor$'],
+                                           text=True, capture_output=True, check=True)
+                    candidates = query.stdout.splitlines()
+                    if len(candidates) != 1:
+                        raise RuntimeError('expected one actual Weston compositor X11 output window')
+                    input_window = candidates[0]
+                subprocess.run(['xdotool', 'windowfocus', '--sync', input_window], check=True, env=env)
+                subprocess.run(['xdotool', 'key', '--clearmodifiers', 'ctrl+a'], check=True, env=env)
+                subprocess.run(['xdotool', 'key', '--clearmodifiers', 'BackSpace'], check=True, env=env)
+                wait_station(app, '')
+                typed_prefix = ''
+                for character in TYPED_STATION:
+                    subprocess.run(['xdotool', 'type', '--clearmodifiers', '--delay', '30', character], check=True, env=env)
+                    typed_prefix += character
+                    wait_station(app, typed_prefix)
+                result['actual_per_character_raw_station_input'] = True
+                subprocess.run(['xdotool', 'key', '--clearmodifiers', 'ctrl+a'], check=True, env=env)
+                clipboard = subprocess.Popen(
+                    ['xclip', '-selection', 'clipboard', '-quiet'] if args.backend == 'x11' else ['wl-copy', '--foreground'],
+                    stdin=subprocess.PIPE, env=env)
+                try:
+                    clipboard.stdin.write(STATION_MARKER.encode())
+                    clipboard.stdin.close()
+                    time.sleep(0.5)
+                    if clipboard.poll() is not None:
+                        raise RuntimeError('real platform clipboard owner exited before keyboard paste')
+                    if args.backend == 'wayland':
+                        # wl-copy's fallback surface can receive keyboard focus.
+                        # Weston 13 desktop-shell registers its real window
+                        # switcher on Super+Tab (the default binding modifier).
+                        # Return the actual seat to the app before pasting.
+                        subprocess.run(['xdotool', 'key', '--clearmodifiers', 'super+Tab'], check=True, env=env)
+                        time.sleep(0.5)
+                        if not field.queryComponent().grabFocus():
+                            raise RuntimeError('Station rejected focus after real Weston window switch')
+                        subprocess.run(['xdotool', 'key', '--clearmodifiers', 'ctrl+a'], check=True, env=env)
+                        result['actual_wayland_focus_transport'] = 'Weston 13 desktop-shell physical Super+Tab and real Component focus'
+                    subprocess.run(['xdotool', 'key', '--clearmodifiers', 'ctrl+v'], check=True, env=env)
+                    wait_station(app, STATION_MARKER)
+                finally:
+                    if clipboard.poll() is None:
+                        clipboard.terminate()
+                    clipboard.wait(timeout=15)
+                result['actual_input_transport'] = 'X11 clipboard and physical Ctrl+V' if args.backend == 'x11' else 'Wayland clipboard and Weston native Wayland seat Ctrl+V'
                 wait_station(app, STATION_MARKER)
-                # Allow normal production config persistence to finish before close.
-                time.sleep(1)
                 result['actual_station_input'] = True
+                subprocess.run(['xdotool', 'key', '--clearmodifiers', 'Tab'], check=True, env=env)
+                wait_station(app, COMMITTED_STATION)
+                result['actual_blur_canonical_station_input'] = True
+                # Normal production blur commits the existing neutral config.
+                time.sleep(1)
                 if args.backend == 'x11':
                     subprocess.run(['xdotool', 'windowactivate', '--sync', window], check=True, env=env)
                     subprocess.run(['xdotool', 'key', '--clearmodifiers', 'alt+F4'], check=True, env=env)
@@ -146,7 +269,7 @@ with tempfile.TemporaryDirectory(prefix='inkson-gtk4-runtime-') as private:
                     result['controlled_probe_shutdown_signal'] = 'SIGTERM'
                 # A new real process reads the original persisted configuration.
                 app = subprocess.Popen([str(binary)], env=env, stdout=app_output, stderr=subprocess.STDOUT)
-                wait_station(app, STATION_MARKER)
+                wait_station(app, COMMITTED_STATION)
                 result['cold_restart_station_input_retained'] = True
                 app.send_signal(signal.SIGTERM)
                 app.wait(timeout=15)
@@ -155,6 +278,9 @@ with tempfile.TemporaryDirectory(prefix='inkson-gtk4-runtime-') as private:
         result.update(passed=False, error=str(error))
         raise
     finally:
+        pyatspi.Registry.deregisterEventListener(observed_accessibility_event, *listener_names)
+        result['actual_atspi_event_counts'] = accessibility_events
+        result['actual_document_event_sources'] = document_event_metadata
         for process in [app, background]:
             if process is not None and process.poll() is None:
                 process.terminate()

@@ -584,6 +584,21 @@ impl Default for LocalConfigStore {
 }
 
 impl LocalConfigStore {
+    /// Retain a sign-in Station choice without asserting an authenticated Account.
+    pub fn save_neutral_station_choice(&mut self, input: &str) -> anyhow::Result<String> {
+        let selected = normalize_server_url(input);
+        let station = validate_server_url(&selected)?;
+        let selected = station.to_string();
+        let mut config = self.load();
+        config
+            .stations
+            .retain(|existing| !same_server_url(existing.as_str(), &selected));
+        config.stations.insert(0, station);
+        self.cached = Some(config.normalized());
+        self.flush()?;
+        Ok(selected)
+    }
+
     pub fn load(&self) -> ClientConfig {
         self.cached
             .clone()
@@ -920,6 +935,94 @@ mod tests {
             config.stations,
             vec![Url::parse("https://local.host").unwrap()]
         );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn neutral_station_choice_survives_cold_load_without_an_account() {
+        let root = std::env::temp_dir().join(format!("inkson-neutral-station-{}", uuid_v7()));
+        let path = root.join("config.json");
+        let mut store = LocalConfigStore::with_path(&path);
+        let selected = store
+            .save_neutral_station_choice("  http://127.0.0.1:18932  ")
+            .unwrap();
+        assert_eq!(selected, "http://127.0.0.1:18932/");
+        let cold = LocalConfigStore::with_path(&path).load();
+        assert_eq!(cold.stations[0].as_str(), "http://127.0.0.1:18932/");
+        assert!(
+            cold.stations
+                .iter()
+                .any(|station| station.as_str() == "https://local.host/")
+        );
+        assert!(cold.active_account.is_none());
+        assert!(cold.session_credential.is_empty());
+        store
+            .save_neutral_station_choice("http://127.0.0.1:18932/")
+            .unwrap();
+        assert_eq!(store.load().stations.len(), cold.stations.len());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn neutral_station_choice_does_not_rebind_an_accepted_account() {
+        let root = std::env::temp_dir().join(format!("inkson-neutral-identity-{}", uuid_v7()));
+        let path = root.join("config.json");
+        let accepted = alice("ak:did_core:webvh:zServerA", "https://principal-a.example/");
+        let mut store = LocalConfigStore::with_path(&path);
+        store.save(ClientConfig::authenticated(accepted.clone(), String::new()));
+        store
+            .save_neutral_station_choice("https://principal-b.example/")
+            .unwrap();
+        let cold = LocalConfigStore::with_path(&path).load();
+        let retained = cold.active_account.unwrap();
+        assert_eq!(retained.authority, accepted.authority);
+        assert_eq!(retained.device_id, accepted.device_id);
+        assert_eq!(retained.server_url, accepted.server_url);
+        assert_eq!(cold.stations[0].as_str(), "https://principal-b.example/");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn invalid_neutral_station_choice_leaves_durable_selection_unchanged() {
+        let root = std::env::temp_dir().join(format!("inkson-neutral-invalid-{}", uuid_v7()));
+        let path = root.join("config.json");
+        let mut store = LocalConfigStore::with_path(&path);
+        store
+            .save_neutral_station_choice("https://principal.example/")
+            .unwrap();
+        let before = fs::read(&path).unwrap();
+        for invalid in [
+            "h",
+            "http://remote.example",
+            "https://user:secret@remote.example",
+        ] {
+            assert!(store.save_neutral_station_choice(invalid).is_err());
+            assert_eq!(fs::read(&path).unwrap(), before);
+        }
+        assert_eq!(
+            store.load().stations[0].as_str(),
+            "https://principal.example/"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn neutral_station_choice_reports_actual_persist_failure() {
+        let root = std::env::temp_dir().join(format!("inkson-neutral-failure-{}", uuid_v7()));
+        fs::create_dir_all(&root).unwrap();
+        let blocked = root.join("blocked-parent");
+        fs::write(&blocked, b"not a directory").unwrap();
+        let mut store = LocalConfigStore::with_path(blocked.join("config.json"));
+        assert!(
+            store
+                .save_neutral_station_choice("https://principal.example/")
+                .is_err()
+        );
+        assert!(store.persist_error().is_some());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
