@@ -2617,6 +2617,24 @@ mod tests {
             .unwrap();
         assert_eq!(accepted.id.as_ref(), Some(&strand_id));
         assert_eq!(accepted.realm_id, realm);
+        let mut untitled = make_row(3);
+        let TypedCurrentRow::Value { value, .. } = &mut untitled;
+        value.as_object_mut().unwrap().remove("metadata");
+        store
+            .stage_frame(
+                2,
+                &frame(vec![untitled], Some(baseline(CURSORS[1], 3, true))),
+            )
+            .await
+            .unwrap()
+            .finish();
+        let accepted_untitled = store
+            .read_strand_ready(&realm, &strand_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(accepted_untitled.id.as_ref(), Some(&strand_id));
+        assert!(accepted_untitled.metadata.is_none());
         let unknown = arkret_sdk::StrandId::from_event_id(&arkret_sdk::EventId::from_digest(
             arkret_sdk::DigestSuite::Sha256,
             [32; 32],
