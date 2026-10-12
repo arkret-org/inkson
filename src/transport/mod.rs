@@ -16,6 +16,7 @@ mod invite;
 pub(crate) mod invite_join;
 mod key_backup;
 pub mod keys;
+pub(crate) mod management_review;
 pub mod media;
 pub mod moderation;
 pub mod own_station_results;

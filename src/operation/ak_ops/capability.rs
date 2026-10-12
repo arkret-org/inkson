@@ -18,6 +18,88 @@ pub struct IssuerRealmAuthorityBasis {
     pub authority_event_ref: arkret_sdk::EventId,
 }
 
+/// Narrow choices registered for the controller-owned Agent source. This is
+/// a presentation/authoring allowlist, never a local authorization decision.
+pub const OWNED_AGENT_ACTIONS: &[&str] = &[
+    "ak.event.read",
+    "ak.message.create",
+    "ak.message.redact.own",
+    "ak.message.revise.own",
+    "ak.object.read",
+    "ak.object.read_content",
+    "ak.object.read_history",
+    "ak.object.read_metadata",
+    "ak.reaction.add",
+    "ak.reaction.remove",
+    "ak.strand.read",
+];
+
+/// Explicit controller confirmation carries exactly the two accepted join
+/// generations; it cannot become a Realm root or a regrant parent.
+#[allow(clippy::too_many_arguments)]
+pub fn capability_grant_owned_agent(
+    realm_id: &str,
+    actor: &str,
+    controller: &arkret_sdk::AccountId,
+    agent: &arkret_sdk::AccountId,
+    controller_join: &arkret_sdk::EventId,
+    agent_join: &arkret_sdk::EventId,
+    actions: &[&str],
+    resource: arkret_sdk::WireResourceSelector,
+) -> anyhow::Result<TypedOperationBuilder> {
+    let realm = arkret_sdk::RealmId::new(trim_realm_id(realm_id))?;
+    controller.validate()?;
+    agent.validate()?;
+    resource.validate()?;
+    anyhow::ensure!(
+        super::actor_id(actor)?.as_account_id() == Some(controller)
+            && controller != agent
+            && controller.station_id == agent.station_id,
+        "owned Agent grant requires the authenticated full controller Account and its hosted Agent"
+    );
+    anyhow::ensure!(
+        resource.realm_id.as_ref() == Some(&realm)
+            && matches!(resource.kind, arkret_sdk::ResourceSelectorKind::Strand)
+            && resource.strand_id.is_some(),
+        "owned Agent confirmation requires one explicit Strand in this Realm"
+    );
+    let unique = actions
+        .iter()
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>();
+    anyhow::ensure!(
+        !actions.is_empty()
+            && unique.len() == actions.len()
+            && actions
+                .iter()
+                .all(|action| OWNED_AGENT_ACTIONS.contains(action)),
+        "owned Agent confirmation contains an unsupported or duplicate action"
+    );
+    let grant = arkret_sdk::CapabilityGrantCreateBody {
+        schema: arkret_wire::SchemaId::CAPABILITY_V1.to_owned(),
+        realm_id: Some(realm.clone()),
+        issuer_id: arkret_sdk::ActorId::account(controller.clone()),
+        subject: arkret_sdk::CapabilitySubject::Actor(arkret_sdk::ActorId::account(agent.clone())),
+        actions: actions.iter().map(|action| (*action).to_owned()).collect(),
+        resources: vec![resource],
+        constraints: vec![arkret_sdk::GrantConstraint::authority_control(0, false)],
+        issuer_authority_refs: vec![arkret_sdk::IssuerAuthorityRef::OwnedAgent {
+            realm_id: realm.clone(),
+            controller_account_id: controller.clone(),
+            controller_join_event_id: controller_join.clone(),
+            agent_join_event_id: agent_join.clone(),
+        }],
+        issued_at: crate::clock::now_utc_millis(),
+    };
+    Ok(TypedOperationBuilder::new::<
+        arkret_sdk::event_spec::CapabilityGrant,
+    >(
+        realm.as_str(),
+        actor,
+        arkret_sdk::CapabilityGrantPayload { grant },
+    ))
+}
+
 /// Legacy no-current entry point retained only so forbidden callers fail
 /// closed before Event construction. New callers must use one of the two
 /// carrier-specific builders below.
@@ -157,8 +239,8 @@ pub fn capability_revoke_from_applet_preview(
 /// `ak.capability.grant` event carrying the canonical
 /// `capability_grant_payload` wrapper (`{grant_id, grant:{…}}`) the P1
 /// coland reducer (`apply_capability`) reads `issuer` / `subject` /
-/// `actions` / `resources` from. This is the only capability-grant
-/// builder: every directed grant (e.g. setting a Realm admin via
+/// `actions` / `resources` from. This Realm-root capability-grant
+/// builder handles directed grants (e.g. setting a Realm admin via
 /// `actions=[ak.realm.admin]`, or an admin-panel capability grant to a
 /// `subject`) carries the full grant object, because the reducer fails
 /// closed on a grant body with no `issuer` or no `actions`.
@@ -276,6 +358,109 @@ mod tests {
             )
             .unwrap(),
         }
+    }
+
+    #[test]
+    fn owned_agent_confirmation_has_one_exact_source_and_cannot_regrant() {
+        let realm =
+            arkret_sdk::RealmId::new("ak:realm:AV1bzsPGpTD74Cq12d9EOrCkieTddiSndS0kDtK1W2hM")
+                .unwrap();
+        let controller = crate::test_support::authority("did:web:issuer.example");
+        let agent = crate::test_support::authority("did:web:agent.example");
+        let controller_join =
+            arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [0x41; 32]);
+        let agent_join =
+            arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [0x42; 32]);
+        let resource = arkret_sdk::WireResourceSelector::strand(
+            realm.clone(),
+            arkret_sdk::StrandId::from_event_id(&agent_join),
+        );
+        let event = capability_grant_owned_agent(
+            realm.as_str(),
+            controller.principal_id.as_str(),
+            &controller,
+            &agent,
+            &controller_join,
+            &agent_join,
+            &["ak.message.create"],
+            resource.clone(),
+        )
+        .unwrap()
+        .build_sdk_event("inkson")
+        .unwrap();
+        let payload: arkret_sdk::CapabilityGrantPayload =
+            serde_json::from_value(serde_json::to_value(event.payload()).unwrap()).unwrap();
+        assert_eq!(payload.grant.issuer_id.as_account_id(), Some(&controller));
+        assert!(
+            matches!(&payload.grant.subject, arkret_sdk::CapabilitySubject::Actor(actor)
+            if actor == &arkret_sdk::ActorId::account(agent.clone()))
+        );
+        assert_eq!(
+            payload.grant.issuer_authority_refs,
+            vec![arkret_sdk::IssuerAuthorityRef::OwnedAgent {
+                realm_id: realm,
+                controller_account_id: controller,
+                controller_join_event_id: controller_join,
+                agent_join_event_id: agent_join,
+            }]
+        );
+        assert_eq!(payload.grant.resources, vec![resource]);
+        assert_eq!(payload.grant.constraints.len(), 1);
+        assert_eq!(payload.grant.constraints[0].max_authority_depth, Some(0));
+        assert_eq!(
+            payload.grant.constraints[0].authority_regrant_allowed,
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn owned_agent_confirmation_refuses_aggregate_foreign_station_and_duplicates() {
+        let realm =
+            arkret_sdk::RealmId::new("ak:realm:AV1bzsPGpTD74Cq12d9EOrCkieTddiSndS0kDtK1W2hM")
+                .unwrap();
+        let controller = crate::test_support::authority("did:web:issuer.example");
+        let agent = crate::test_support::authority("did:web:agent.example");
+        let join = arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [0x45; 32]);
+        let scope = arkret_sdk::WireResourceSelector::strand(
+            realm.clone(),
+            arkret_sdk::StrandId::from_event_id(&join),
+        );
+        for actions in [
+            vec!["ak.realm.admin"],
+            vec!["act_on_behalf"],
+            vec!["ak.capability.grant"],
+            vec!["ak.message.create", "ak.message.create"],
+            vec![],
+        ] {
+            assert!(
+                capability_grant_owned_agent(
+                    realm.as_str(),
+                    controller.principal_id.as_str(),
+                    &controller,
+                    &agent,
+                    &join,
+                    &join,
+                    &actions,
+                    scope.clone()
+                )
+                .is_err()
+            );
+        }
+        let mut foreign = agent;
+        foreign.station_id = crate::test_support::core_id("did:web:foreign.example");
+        assert!(
+            capability_grant_owned_agent(
+                realm.as_str(),
+                controller.principal_id.as_str(),
+                &controller,
+                &foreign,
+                &join,
+                &join,
+                &["ak.message.create"],
+                scope
+            )
+            .is_err()
+        );
     }
 
     #[test]

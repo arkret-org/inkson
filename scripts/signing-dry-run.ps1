@@ -24,7 +24,8 @@ try {
     }
 
     if (-not $NoBuild -and -not (Test-Path -LiteralPath $ArtifactPath)) {
-        cargo build --release --features desktop
+        cargo build --locked --release --features desktop
+        if ($LASTEXITCODE -ne 0) { throw "Desktop build failed: $LASTEXITCODE" }
     }
 
     $artifactExists = Test-Path -LiteralPath $ArtifactPath
@@ -57,7 +58,9 @@ try {
 
         if ($artifactExists -and $codesign -and $identity) {
             & codesign --force --sign $identity --timestamp=none $ArtifactPath
+            if ($LASTEXITCODE -ne 0) { throw "codesign signing failed: $LASTEXITCODE" }
             & codesign --verify --strict --verbose=2 $ArtifactPath
+            if ($LASTEXITCODE -ne 0) { throw "codesign verification failed: $LASTEXITCODE" }
             $mac.signed = $true
             $mac.verified = $true
         }
@@ -84,7 +87,9 @@ try {
             }
             $args += $ArtifactPath
             & signtool.exe @args
+            if ($LASTEXITCODE -ne 0) { throw "signtool signing failed: $LASTEXITCODE" }
             & signtool.exe verify /pa $ArtifactPath
+            if ($LASTEXITCODE -ne 0) { throw "signtool verification failed: $LASTEXITCODE" }
             $win.signed = $true
             $win.verified = $true
         }
@@ -96,20 +101,32 @@ try {
         $linux = [ordered]@{
             platform = "linux"
             gpg_available = [bool]$gpg
+            signing_key_present = $false
             tarball = $tarball
             tarball_created = $false
             detached_signature = "$tarball.asc"
             detached_signature_created = $false
+            detached_signature_verified = $false
             package_formats = @("tar.gz", "deb", "rpm", "AppImage", "Flatpak")
-            notes = @("This script creates and signs the tarball locally; docs/RELEASING.md lists local-only package commands for deb/rpm/AppImage/Flatpak.")
+            notes = @("This script creates the tarball locally and signs only when a local secret key is present; docs/RELEASING.md lists local-only package commands for deb/rpm/AppImage/Flatpak.")
         }
 
         if ($artifactExists) {
             tar -czf $tarball -C (Split-Path -Parent $ArtifactPath) (Split-Path -Leaf $ArtifactPath)
+            if ($LASTEXITCODE -ne 0) { throw "Tarball creation failed: $LASTEXITCODE" }
             $linux.tarball_created = $true
             if ($gpg) {
-                & gpg --batch --yes --armor --detach-sign --output "$tarball.asc" $tarball
-                $linux.detached_signature_created = $true
+                $keyListing = @(& gpg --batch --with-colons --list-secret-keys)
+                if ($LASTEXITCODE -ne 0) { throw "Local signing key discovery failed: $LASTEXITCODE" }
+                $linux.signing_key_present = [bool]($keyListing | Where-Object { $_ -match '^sec:' })
+                if ($linux.signing_key_present) {
+                    & gpg --batch --yes --armor --detach-sign --output "$tarball.asc" $tarball
+                    if ($LASTEXITCODE -ne 0) { throw "Detached signing failed: $LASTEXITCODE" }
+                    $linux.detached_signature_created = $true
+                    & gpg --batch --verify "$tarball.asc" $tarball
+                    if ($LASTEXITCODE -ne 0) { throw "Detached signature verification failed: $LASTEXITCODE" }
+                    $linux.detached_signature_verified = $true
+                }
             }
         }
         $evidence.platforms += $linux

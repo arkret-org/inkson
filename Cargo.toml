@@ -14,6 +14,7 @@ resolver = "3"
 # renderer's PHF 0.8 API while resolving rand to a patched registry release.
 # Both crates must share a source so phf_codegen uses the same PhfHash trait.
 [patch.crates-io]
+dioxus-desktop = { path = "vendor/dioxus-desktop" }
 phf_generator = { git = "https://github.com/rust-phf/rust-phf", rev = "6d5bfb4a377270d2ae69e05347044b1a95499973" }
 phf_shared = { git = "https://github.com/rust-phf/rust-phf", rev = "6d5bfb4a377270d2ae69e05347044b1a95499973" }
 

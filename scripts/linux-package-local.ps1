@@ -46,6 +46,45 @@ try {
         Copy-Item -Force -LiteralPath $BinaryPath -Destination (Join-Path $installDir "inkson")
         chmod 0755 (Join-Path $installDir "inkson")
 
+        # Derive runtime ABI dependencies from the actual ELF, rather than
+        # retaining a manually maintained GTK/WebKit version list.
+        if (-not (Get-Command dpkg-shlibdeps -ErrorAction SilentlyContinue)) {
+            throw "dpkg-shlibdeps is required to describe native package dependencies"
+        }
+        $resolvedBinary = (Resolve-Path -LiteralPath $BinaryPath).Path
+        $dependencyRoot = Join-Path $DistDir "dependency-metadata"
+        New-Item -ItemType Directory -Force -Path (Join-Path $dependencyRoot "debian") | Out-Null
+        @"
+Source: inkson
+Section: utils
+Priority: optional
+Maintainer: Arkret Local Release <local-release@example.invalid>
+Standards-Version: 4.6.2
+
+Package: inkson
+Architecture: any
+Description: Arkret cross-platform client local package
+"@ | Set-Content -Encoding ASCII -Path (Join-Path $dependencyRoot "debian/control")
+        Push-Location $dependencyRoot
+        try {
+            $dependencyOutput = @(& dpkg-shlibdeps -O -e $resolvedBinary)
+            if ($LASTEXITCODE -ne 0) {
+                throw "dpkg-shlibdeps failed with exit code $LASTEXITCODE"
+            }
+        }
+        finally {
+            Pop-Location
+        }
+        $dependsLine = @($dependencyOutput | Where-Object { $_ -like "shlibs:Depends=*" })
+        if ($dependsLine.Count -ne 1) {
+            throw "dpkg-shlibdeps did not emit exactly one runtime dependency list"
+        }
+        $packageDepends = $dependsLine[0] -replace '^shlibs:Depends=', ''
+        if (-not $packageDepends) {
+            throw "dynamic desktop binary has no identified package dependencies"
+        }
+        $evidence.runtime_dependencies = $packageDepends
+
         @"
 Package: inkson
 Version: $Version
@@ -53,11 +92,15 @@ Section: utils
 Priority: optional
 Architecture: amd64
 Maintainer: Arkret Local Release <local-release@example.invalid>
+Depends: $packageDepends
 Description: Arkret cross-platform client local package
 "@ | Set-Content -Encoding ASCII -Path (Join-Path $controlDir "control")
 
         $debPath = Join-Path $DistDir "inkson_${Version}_amd64.deb"
         & dpkg-deb --build $pkgRoot $debPath
+        if ($LASTEXITCODE -ne 0) {
+            throw "dpkg-deb failed with exit code $LASTEXITCODE"
+        }
         $hashPath = "$debPath.sha256"
         Get-FileHash -Algorithm SHA256 -LiteralPath $debPath |
             ForEach-Object { "$($_.Hash.ToLowerInvariant())  $(Split-Path -Leaf $debPath)" } |

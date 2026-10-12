@@ -33,6 +33,7 @@ pub(super) fn SidecarFoldEvidenceEffects(state: SidecarFoldEvidenceEffectState) 
         let SessionContext {
             state_store,
             active_account,
+            session_generation,
             ..
         } = SessionContext::get();
         use_hook(move || {
@@ -80,6 +81,129 @@ pub(super) fn SidecarFoldEvidenceEffects(state: SidecarFoldEvidenceEffectState) 
             // The handle must outlive this hook: the harness calls it at
             // arbitrary points in the scenario, not during a render.
             hook.forget();
+
+            // Test feature only: invoke the SAME sender as the real composer.
+            // Secret group state, Device keys and the nonce ledger never leave Rust.
+            let sender = Closure::<dyn Fn(String, String, bool) -> js_sys::Promise>::new(
+                move |realm_text: String, strand_text: String, typing: bool| {
+                    let account = active_account.peek().clone();
+                    let generation = *session_generation.peek();
+                    wasm_bindgen_futures::future_to_promise(async move {
+                        let result: anyhow::Result<serde_json::Value> = async {
+                            let account =
+                                account.ok_or_else(|| anyhow::anyhow!("account absent"))?;
+                            let fence = crate::transport::auth::AuthoringSessionFence::capture()?;
+                            let realm = arkret_sdk::RealmId::new(realm_text)?;
+                            let strand = arkret_sdk::StrandId::new(strand_text)?;
+                            let scope = arkret_sdk::ScopeRef::Realm {
+                                realm_id: realm.clone(),
+                            };
+                            let material = crate::signal::key_material_for_scope(
+                                &state_store.peek(),
+                                realm.as_str(),
+                                None,
+                            )?;
+                            let store =
+                                crate::app::runtime_adapter::state_store_handle(state_store);
+                            let session = store
+                                .read(|store| store.session_grant())
+                                .ok_or_else(|| anyhow::anyhow!("session absent"))?;
+                            anyhow::ensure!(
+                                session.account_id == account.authority
+                                    && session.device_id == account.device_id,
+                                "session does not belong to the active Device"
+                            );
+                            let group_id = scope.canonical_mls_group_id()?;
+                            let epoch = material.epoch;
+                            fence.check()?;
+                            anyhow::ensure!(
+                                *session_generation.peek() == generation
+                                    && active_account.peek().as_ref().is_some_and(
+                                        |current| current.authority == account.authority
+                                            && current.device_id == account.device_id
+                                            && current.server_url == account.server_url
+                                            && current.profile_id == account.profile_id
+                                    ),
+                                "session replaced"
+                            );
+                            let base_url = account.server_url.to_string();
+                            let authority = account.authority.clone();
+                            let device = account.device_id.clone();
+                            let outcome = crate::transport::auth::with_event_submitter(
+                                &base_url,
+                                session.grant_jwt,
+                                |submitter| async move {
+                                    submitter
+                                        .send_scope_signal(
+                                            scope,
+                                            &authority,
+                                            &device,
+                                            &material,
+                                            &crate::signal::SignalPayload::Typing {
+                                                strand_id: strand,
+                                                typing,
+                                            },
+                                            &store,
+                                        )
+                                        .await
+                                },
+                            )
+                            .await
+                            .map_err(|_| anyhow::anyhow!("Signal send failed"))?;
+                            fence.check()?;
+                            anyhow::ensure!(
+                                *session_generation.peek() == generation
+                                    && active_account.peek().as_ref().is_some_and(
+                                        |current| current.authority == account.authority
+                                            && current.device_id == account.device_id
+                                            && current.server_url == account.server_url
+                                            && current.profile_id == account.profile_id
+                                    ),
+                                "session replaced"
+                            );
+                            Ok(serde_json::json!({"accepted": outcome.accepted,
+                                "dispatched_recipient_count": outcome.dispatched_recipient_count,
+                                "envelope_digest": outcome.envelope_digest,
+                                "group_id": group_id, "epoch": epoch,
+                                "sender_actor_id": arkret_sdk::ActorId::account(account.authority.clone()),
+                                "sender_device_id": account.device_id}))
+                        }
+                        .await;
+                        // Never return arbitrary transport errors or any body/key bytes.
+                        let safe = result.unwrap_or_else(
+                            |_| serde_json::json!({"error": "real_signal_send_unavailable"}),
+                        );
+                        Ok(wasm_bindgen::JsValue::from_str(&safe.to_string()))
+                    })
+                },
+            );
+            if js_sys::Reflect::set(
+                &window,
+                &wasm_bindgen::JsValue::from_str("__inkson_signal_sender_evidence"),
+                sender.as_ref().unchecked_ref(),
+            )
+            .is_ok()
+            {
+                sender.forget();
+            }
+            let receiver = Closure::<dyn Fn(String) -> String>::new(move |command: String| {
+                let Some(principal) = principal_id.peek().clone() else {
+                    return "[]".to_owned();
+                };
+                crate::signal_receive_engine::signal_receiver_evidence(
+                    principal.as_str(),
+                    command == "clear",
+                )
+            });
+            if js_sys::Reflect::set(
+                &window,
+                &wasm_bindgen::JsValue::from_str("__inkson_signal_receiver_evidence"),
+                receiver.as_ref().unchecked_ref(),
+            )
+            .is_ok()
+            {
+                receiver.forget();
+            }
         });
     }
 

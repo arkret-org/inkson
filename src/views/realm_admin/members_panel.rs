@@ -26,6 +26,7 @@ use crate::views::helpers::{actor_display_label, short_protocol_id};
 mod controller;
 mod effects;
 mod model;
+mod owned_authority;
 
 use controller::*;
 use effects::use_realm_members_effects;
@@ -957,6 +958,13 @@ pub fn RealmMembersPanel(
                             }
                         }
                         div { class: "members-admin-content",
+                            if selected_section == MemberRosterSection::MyAgents {
+                                owned_authority::OwnedAgentWithdrawal {
+                                    key: "withdraw:{selected_realm_id}:{principal_id}",
+                                    realm_id: selected_realm_id.clone(),
+                                    token,
+                                }
+                            }
                             div { class: "member-section-head",
                                 div {
                                     div { class: "entity-title", "{selected_section_title}" }
@@ -1202,7 +1210,7 @@ pub fn RealmMembersPanel(
                                                             let can_enable = agent_in_realm && !agent_behavior_pending.read().contains(&agent_id);
                                                             let can_remove_agent = agent_in_realm;
                                                             rsx! {
-                                                                div { class: "member-self-agent-row", "data-testid": "member-self-agent-row", "data-agent-id": "{agent_id}",
+                                                                div { key: "{selected_realm_id}:{agent_id}:{principal_id}", class: "member-self-agent-row", "data-testid": "member-self-agent-row", "data-agent-id": "{agent_id}",
                                                                     div { class: "member-agent-summary",
                                                                         div { class: "member-avatar member-avatar-agent",
                                                                             crate::components::IdentityAvatar {
@@ -1256,6 +1264,11 @@ pub fn RealmMembersPanel(
                                                                                         "{label}"
                                                                                     }
                                                                                 }
+                                                                            }
+                                                                            owned_authority::OwnedAgentAuthority {
+                                                                                realm_id: selected_realm_id.clone(),
+                                                                                agent_id: agent_id.clone(),
+                                                                                token,
                                                                             }
                                                                             div { class: "member-agent-realm-behavior", "data-testid": "member-agent-realm-behavior",
                                                                                 label { class: "member-agent-behavior-toggle",

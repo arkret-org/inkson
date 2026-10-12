@@ -11,21 +11,8 @@ version = 2
 unsound = "all"
 yanked = "warn"
 ignore = [
-    # Dioxus desktop's Linux backend is still GTK3. No compatible GTK4 backend
-    # exists in the pinned Dioxus release; keep each inherited maintenance
-    # notice explicit so a new advisory still fails the gate.
-    { id = "RUSTSEC-2024-0411", reason = "transitive GTK3 backend required by Dioxus desktop" },
-    { id = "RUSTSEC-2024-0412", reason = "transitive GTK3 backend required by Dioxus desktop" },
-    { id = "RUSTSEC-2024-0413", reason = "transitive GTK3 backend required by Dioxus desktop" },
-    { id = "RUSTSEC-2024-0414", reason = "transitive GTK3 backend required by Dioxus desktop" },
-    { id = "RUSTSEC-2024-0415", reason = "transitive GTK3 backend required by Dioxus desktop" },
-    { id = "RUSTSEC-2024-0416", reason = "transitive GTK3 backend required by Dioxus desktop" },
-    { id = "RUSTSEC-2024-0418", reason = "transitive GTK3 backend required by Dioxus desktop" },
-    { id = "RUSTSEC-2024-0419", reason = "transitive GTK3 backend required by Dioxus desktop" },
-    { id = "RUSTSEC-2024-0420", reason = "transitive GTK3 backend required by Dioxus desktop" },
     { id = "RUSTSEC-2025-0057", reason = "transitive Dioxus dependency; maintenance notice has no vulnerability" },
     { id = "RUSTSEC-2024-0436", reason = "transitive image/rav1e dependency with no compatible replacement" },
-    { id = "RUSTSEC-2024-0370", reason = "transitive GTK3 macro dependency with no compatible replacement" },
     { id = "RUSTSEC-2026-0173", reason = "transitive OpenMLS hax macro dependency with no compatible replacement" },
 ]
 
@@ -34,6 +21,8 @@ version = 2
 allow = [
     "MIT",
     "MIT-0",
+    # Official KSNI backend is Unlicense; retain its real source license.
+    "Unlicense",
     "Apache-2.0",
     "Apache-2.0 WITH LLVM-exception",
     "BSD-2-Clause",

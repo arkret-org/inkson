@@ -33,7 +33,7 @@ use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::card::Card;
 use crate::ui::input::Input;
 use crate::ui::label::Label;
-use crate::views::helpers::{actor_display_label, persist_config, short_protocol_id};
+use crate::views::helpers::{actor_display_label, short_protocol_id};
 
 mod controller;
 mod model;
@@ -49,8 +49,8 @@ pub(crate) use session::*;
 pub fn LoginPanel(
     principal_id: Signal<Option<arkret_sdk::DidCoreId>>,
     device_id: Signal<String>,
-    token: Signal<String>,
-    config_store: Signal<LocalConfigStore>,
+    mut token: Signal<String>,
+    mut config_store: Signal<LocalConfigStore>,
     mut locale: Signal<crate::i18n::UiLocale>,
     auto_capture_callback: bool,
     #[props(default)] session_error: Option<String>,
@@ -59,6 +59,8 @@ pub fn LoginPanel(
     // A4 — base_url / state_store from session context instead of props.
     let session_context = crate::app::SessionContext::get();
     let mut base_url = session_context.base_url;
+    let mut station_draft = use_signal(|| base_url());
+    use_effect(move || station_draft.set(base_url()));
     let mut active_account = session_context.active_account;
     let state_store = session_context.state_store;
     let session_generation = session_context.session_generation;
@@ -359,7 +361,18 @@ pub fn LoginPanel(
     // and device evidence is only a returning candidate checked after the
     // handoff reports the authenticated account as Bound.
     let mut launch_sign_in = move || {
-        let principal = base_url();
+        let principal = match config_store
+            .write()
+            .save_neutral_station_choice(&station_draft())
+        {
+            Ok(selected) => selected,
+            Err(error) => {
+                auth_status.set(format!("Could not retain sign-in Station: {error}"));
+                return;
+            }
+        };
+        base_url.set(principal.clone());
+        station_draft.set(principal.clone());
         let ui_locale = i18n.read().0.code().to_owned();
         let loaded_config = config_store.read().load();
         // The returning-principal assertion is a resolvable DID, so it comes
@@ -438,13 +451,20 @@ pub fn LoginPanel(
                         "data-testid": "login-server-url",
                         "aria-label": crate::i18n::tr("login.station_url"),
                         autocomplete: "off",
-                        value: "{base_url}",
+                        value: "{station_draft}",
                         disabled: is_busy(),
                         oninput: move |event: FormEvent| {
-                            let value = normalize_server_url(&event.value());
-                            base_url.set(value.clone());
+                            station_draft.set(event.value());
                             token.set(String::new());
-                            persist_config(config_store, value, principal_id(), device_id(), String::new());
+                        },
+                        onblur: move |_| {
+                            match config_store.write().save_neutral_station_choice(&station_draft()) {
+                                Ok(selected) => {
+                                    base_url.set(selected.clone());
+                                    station_draft.set(selected);
+                                }
+                                Err(error) => auth_status.set(format!("Could not retain sign-in Station: {error}")),
+                            }
                         },
                     }
                     button {
@@ -482,16 +502,14 @@ pub fn LoginPanel(
                                     onclick: {
                                         let option_url = option_url.clone();
                                         move |_| {
-                                            let value = normalize_server_url(&option_url);
-                                            base_url.set(value.clone());
-                                            token.set(String::new());
-                                            persist_config(
-                                                config_store,
-                                                value,
-                                                principal_id(),
-                                                device_id(),
-                                                String::new(),
-                                            );
+                                            match config_store.write().save_neutral_station_choice(&option_url) {
+                                                Ok(selected) => {
+                                                    base_url.set(selected.clone());
+                                                    station_draft.set(selected);
+                                                    token.set(String::new());
+                                                }
+                                                Err(error) => auth_status.set(format!("Could not retain sign-in Station: {error}")),
+                                            }
                                             server_menu_open.set(false);
                                         }
                                     },

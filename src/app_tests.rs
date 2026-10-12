@@ -25,6 +25,51 @@ fn test_active_account(
         .build()
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+#[tokio::test(flavor = "multi_thread")]
+async fn native_bootstrap_load_restores_an_accepted_account_outside_the_ui_runtime() {
+    let root = std::env::temp_dir().join(format!(
+        "inkson-native-bootstrap-{}",
+        crate::operation::uuid_v7()
+    ));
+    let config_path = root.join("config.json");
+    let accepted = test_client_config(
+        "https://principal.example/",
+        "ak:did_core:web:example.com:users:bootstrap",
+        "ak:device:01964137-0000-7000-8000-000000000041",
+        "bootstrap-credential",
+    );
+    let expected_account = accepted.active_account.clone().unwrap();
+    let mut config_store = LocalConfigStore::with_path(&config_path);
+    config_store.save(accepted);
+    config_store.flush().unwrap();
+
+    // Exercise the same blocking-runtime boundary as the native backend. This
+    // test uses the existing memory secure store, rather than the OS keyring.
+    let nested_result = read_native_bootstrap(|| {
+        assert!(tokio::runtime::Handle::try_current().is_err());
+        tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(async { 41 })
+    });
+    assert_eq!(nested_result, 41);
+    let (restored, ..) = read_bootstrap_snapshot(
+        LocalConfigStore::with_path(&config_path),
+        LocalStateStore::with_path(root.join("state.json")),
+    );
+    let restored_account = restored.active_account.unwrap();
+    assert_eq!(restored_account.authority, expected_account.authority);
+    assert_eq!(restored_account.device_id, expected_account.device_id);
+    assert_eq!(restored_account.profile_id, expected_account.profile_id);
+    assert_eq!(restored_account.server_url, expected_account.server_url);
+    assert_eq!(
+        serde_json::to_value(restored_account.resolution).unwrap(),
+        serde_json::to_value(expected_account.resolution).unwrap(),
+    );
+    assert_eq!(restored.session_credential, "bootstrap-credential");
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 fn test_authority(principal: &str) -> arkret_sdk::AccountId {
     crate::test_support::authority(principal)
 }

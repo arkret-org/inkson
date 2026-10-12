@@ -1230,6 +1230,69 @@ impl CurrentIndex {
             })
     }
 
+    /// The installed complete verified cut, not a cached projection, binds a
+    /// decrypted Signal's Strand to its current Realm/Circle security scope.
+    pub(crate) async fn read_strand_ready(
+        &self,
+        realm: &arkret_sdk::RealmId,
+        strand_id: &arkret_sdk::StrandId,
+    ) -> anyhow::Result<Option<arkret_sdk::Strand>> {
+        let _lease = self.lease.lock().await;
+        anyhow::ensure!(
+            !self.is_poisoned(),
+            "current pointer durability is unresolved"
+        );
+        let generation = self.generation.load(Ordering::Acquire);
+        let progress = self.progress_at(realm.as_str(), generation).await?;
+        anyhow::ensure!(
+            progress_is_complete_cut(&progress, realm),
+            "Strand current requires a complete verified cut"
+        );
+        let selector = CurrentSelector::Strand {
+            strand_id: strand_id.clone(),
+        };
+        match self
+            .ready_selector(realm.as_str(), &selector, generation)
+            .await?
+        {
+            None => Ok(None),
+            Some(TypedCurrentRow::Value {
+                selector: found,
+                source_stream_ref,
+                value,
+                ..
+            }) if found == selector => {
+                let current: arkret_sdk::Strand = serde_json::from_value(value)?;
+                anyhow::ensure!(
+                    current.id.as_ref() == Some(strand_id)
+                        && current.realm_id == *realm
+                        && current.schema == arkret_wire::SchemaId::STRAND_V1,
+                    "Strand current differs from its selected subject"
+                );
+                let expected_stream = match &current.scope_circle_id {
+                    Some(circle_id) => arkret_sdk::CommitStreamRef::Circle {
+                        realm_id: current.realm_id.clone(),
+                        circle_id: circle_id.clone(),
+                    },
+                    None => arkret_sdk::CommitStreamRef::Realm {
+                        realm_id: current.realm_id.clone(),
+                    },
+                };
+                anyhow::ensure!(
+                    source_stream_ref == expected_stream,
+                    "Strand current source stream differs from its security scope"
+                );
+                if current.encrypted_metadata.is_none() {
+                    current.validate_title()?;
+                }
+                current.validate_profile_activation()?;
+                current.validate_content_surfaces()?;
+                Ok(Some(current))
+            }
+            Some(_) => anyhow::bail!("Strand current selector returned another family"),
+        }
+    }
+
     /// A Call selector derives from its accepted create Event. Only the installed
     /// verified current cut may establish its existence and exact scope.
     pub(crate) async fn read_call_state_ready(
@@ -2505,6 +2568,94 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[tokio::test]
+    async fn signal_strand_reader_requires_complete_cut_and_exact_typed_subject() {
+        let storage_path = path();
+        let store = index(&storage_path, 0).await;
+        let realm: arkret_sdk::RealmId = REALM.parse().unwrap();
+        let event = arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [31; 32]);
+        let strand_id = arkret_sdk::StrandId::from_event_id(&event);
+        let actor = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
+        ));
+        let strand = arkret_sdk::Strand::discussion(
+            strand_id.clone(),
+            realm.clone(),
+            "Current target",
+            actor,
+        );
+        let make_row = |revision| {
+            serde_json::from_value(json!({
+                "selector": {"kind":"strand", "strand_id": strand_id},
+                "source_stream_ref": {"kind":"realm", "realm_id": realm},
+                "revision": {"commit_id": COMMIT, "stream_position": revision},
+                "value": strand
+            }))
+            .unwrap()
+        };
+        store
+            .stage_frame(0, &frame(vec![make_row(1)], None))
+            .await
+            .unwrap()
+            .finish();
+        // A row alone is never scope authority.
+        assert!(store.read_strand_ready(&realm, &strand_id).await.is_err());
+        store
+            .stage_frame(
+                1,
+                &frame(vec![make_row(2)], Some(baseline(CURSORS[0], 2, true))),
+            )
+            .await
+            .unwrap()
+            .finish();
+        let accepted = store
+            .read_strand_ready(&realm, &strand_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(accepted.id.as_ref(), Some(&strand_id));
+        assert_eq!(accepted.realm_id, realm);
+        let unknown = arkret_sdk::StrandId::from_event_id(&arkret_sdk::EventId::from_digest(
+            arkret_sdk::DigestSuite::Sha256,
+            [32; 32],
+        ));
+        assert!(
+            store
+                .read_strand_ready(&realm, &unknown)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            store
+                .read_strand_ready(&OTHER_REALM.parse().unwrap(), &strand_id)
+                .await
+                .is_err()
+        );
+        let forged_path = path();
+        let forged_store = index(&forged_path, 0).await;
+        let mut forged_row = make_row(1);
+        let TypedCurrentRow::Value { value, .. } = &mut forged_row;
+        value["scope_circle_id"] = json!(arkret_sdk::CircleId::from_event_id(&event));
+        // A Realm source cannot assert a Circle-bound Strand, even at a
+        // complete cut. This trusted-storage fixture claims no native signature.
+        forged_store
+            .stage_frame(
+                0,
+                &frame(vec![forged_row], Some(baseline(CURSORS[0], 1, true))),
+            )
+            .await
+            .unwrap()
+            .finish();
+        assert!(
+            forged_store
+                .read_strand_ready(&realm, &strand_id)
+                .await
+                .is_err()
+        );
+    }
 
     #[tokio::test]
     async fn concurrent_current_publication_retries_without_installing_stale_rows() {

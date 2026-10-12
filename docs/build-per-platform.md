@@ -88,8 +88,9 @@ The MSI build uses WiX 4 and lands at `dist/inkson-windows.msi`. It is
 ## 3. Linux desktop
 
 ```bash
-cargo build --release --features desktop
-./scripts/codesign-dryrun.sh
+cargo deny --locked --features desktop check advisories
+cargo build --locked --release --features desktop
+pwsh -NoProfile -File scripts/signing-dry-run.ps1 -NoBuild
 ```
 
 Outputs:
@@ -101,11 +102,23 @@ Outputs:
 To produce distro packages locally:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/linux-package-local.ps1
+pwsh -NoProfile -File scripts/linux-package-local.ps1
 ```
 
-The script wraps `cargo-deb` / `cargo-generate-rpm` / `appimagetool` /
-`flatpak-builder` when present. None of them push to a public repository.
+The script resolves the actual Cargo binary path and uses `dpkg-deb` for the
+local `.deb`, deriving its runtime dependencies from that ELF with
+`dpkg-shlibdeps`. RPM, AppImage and Flatpak entries report tool availability;
+they do not build those formats or publish packages. A non-Linux invocation
+records no Linux package acceptance.
+
+The manual `Packages` workflow extracts the `.deb` and compares its executable
+to the release binary before running the actual X11 and Wayland input/cold
+restart probes. It also executes the real SecretService adapter test in a
+private D-Bus session. The ordinary Linux regression groups currently contain
+63 tests (the original 43 plus 19 admin-panel and one typed terminal test);
+the separate explicit SecretService test must report one passed, zero ignored.
+Each group is discovered and checked against its exact count at runtime.
+Successful macOS native or Web tests do not replace these Linux checks.
 
 ---
 

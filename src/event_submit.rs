@@ -1712,6 +1712,96 @@ impl EventSubmitter {
             .await?)
     }
 
+    /// Retain one original reviewed management Event and its approvals in the
+    /// existing durable lane. This does not change the producer proof or nonce.
+    pub(crate) async fn submit_management_review_event(
+        &self,
+        event: &arkret_sdk::Event,
+        approvals: Vec<arkret_sdk::ApprovalSignature>,
+    ) -> anyhow::Result<SubmitEventResult> {
+        let account = self.authority()?.clone();
+        let generation = (crate::app::SessionContext::get().session_generation)();
+        crate::transport::management_review::check_session(&account, generation)?;
+        anyhow::ensure!(
+            event.actor_id == arkret_sdk::ActorId::account(account.clone())
+                && event.executed_by.is_none(),
+            "Reviewed Event must retain its original controller producer"
+        );
+        let first = approvals
+            .first()
+            .ok_or_else(|| anyhow::anyhow!("Reviewed Event has no approvals"))?;
+        let arkret_sdk::ApprovalContext::Management {
+            management_operation,
+            effective_scope,
+            request_id,
+        } = &first.input.approval_context
+        else {
+            anyhow::bail!("Reviewed Event requires management approvals")
+        };
+        let request = arkret_sdk::ManagementReviewRequestBody {
+            request_id: request_id.clone(),
+            effective_scope: effective_scope.clone(),
+            management_operation: *management_operation,
+            requester_actor_id: event.actor_id.clone(),
+            target: arkret_sdk::ManagementReviewTarget::Event {
+                event: Box::new(event.clone()),
+            },
+        };
+        crate::transport::management_review::candidate(&request)?;
+        let digest = crate::canonical::canonical_sha256(event)?;
+        let action = match management_operation {
+            arkret_sdk::ManagementOperation::Join => arkret_sdk::CapabilityActionId::AgentJoin,
+            arkret_sdk::ManagementOperation::Publish => {
+                arkret_sdk::CapabilityActionId::AgentPublish
+            }
+            _ => anyhow::bail!("Reviewed Event has no supported management consumer"),
+        };
+        for signature in &approvals {
+            signature.validate()?;
+            anyhow::ensure!(
+                signature.input.approval_context == first.input.approval_context
+                    && matches!(&signature.input.approval_target, arkret_sdk::ApprovalTarget::Event { event_id } if event_id == &event.event_id)
+                    && signature.input.request_canonical_digest.as_str() == digest
+                    && signature.input.operation == "ak.self.events.command.submit.v1"
+                    && signature.input.action == action
+                    && signature.input.realm_id == event.realm_id
+                    && signature.input.initiating_actor_id == event.actor_id,
+                "Approval does not bind the exact frozen management Event"
+            );
+        }
+        let authored = arkret_sdk::AuthoredEvent::from_verified_with_digest_suite(
+            event.clone(),
+            event.realm_id.digest_suite_code().digest_suite(),
+        )?;
+        validate_signed_sdk_event_for_submit(event, authored.digest_suite())?;
+        let intent = EventIntent::from_authored(&authored);
+        self.ensure_recovery_material_ready(&intent).await?;
+        self.ensure_application_send_gate(&intent).await?;
+        let _single_writer = outbound_submit_lock().lock().await;
+        self.ensure_realm_detail_current(event.realm_id.as_str())
+            .await?;
+        crate::transport::management_review::check_session(&account, generation)?;
+        // Original Event/proof and approval set are retained byte-for-byte.
+        // Unknown delivery retries this queue item; it never reauthors intent.
+        let submission = QueuedSubmission::new(arkret_wire::AuthoritySubmitRequest::Event(
+            arkret_wire::EventAdmissionSubmission {
+                event: event.clone(),
+                approval_signatures: Some(approvals),
+            },
+        ))?;
+        let item = self
+            .enqueue_and_drive(QueuedWrite {
+                lane: OutboundLane::Standard,
+                submission,
+                local_operation_id: event.event_id.to_string(),
+                post_accept: PostAccept::None,
+                retry_scope: InteractiveRetryScope::Ordinary,
+            })
+            .await?;
+        crate::transport::management_review::check_session(&account, generation)?;
+        settled_outbound_result(&item)
+    }
+
     /// Submit already-signed Events one at a time, in order, to the same
     /// governance Station.
     ///

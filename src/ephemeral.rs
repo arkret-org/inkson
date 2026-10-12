@@ -35,6 +35,15 @@ pub(crate) fn authority_rejected_for_reason(error: &anyhow::Error, reason: &str)
     })
 }
 
+/// A terminal authority refusal, distinguished from an unknown transport outcome.
+pub(crate) fn authority_rejection_reason(error: &anyhow::Error) -> Option<&str> {
+    error.chain().find_map(|cause| {
+        cause
+            .downcast_ref::<AuthorityRejectedError>()
+            .map(|rejection| rejection.reason_code.as_str())
+    })
+}
+
 pub(crate) fn validate_outgoing_registered_event_payload<T: Serialize>(
     kind: &str,
     payload: &T,
@@ -69,7 +78,9 @@ pub(crate) fn ensure_authority_accepted(
 
 #[cfg(test)]
 mod tests {
-    use super::{AuthorityRejectedError, authority_rejected_for_reason};
+    use super::{
+        AuthorityRejectedError, authority_rejected_for_reason, authority_rejection_reason,
+    };
 
     #[test]
     fn control_flow_reads_the_typed_reason_and_ignores_diagnostic_prose() {
@@ -79,11 +90,16 @@ mod tests {
         });
         assert!(authority_rejected_for_reason(&typed, "dependency_missing"));
         assert!(!authority_rejected_for_reason(&typed, "policy_violation"));
+        assert_eq!(
+            authority_rejection_reason(&typed),
+            Some("dependency_missing")
+        );
 
         let prose_only = anyhow::anyhow!("dependency_missing");
         assert!(!authority_rejected_for_reason(
             &prose_only,
             "dependency_missing"
         ));
+        assert_eq!(authority_rejection_reason(&prose_only), None);
     }
 }

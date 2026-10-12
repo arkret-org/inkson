@@ -22,18 +22,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             package_name: inkson-linux-x64
             binary_name: inkson
-            artifact_path: target/release/inkson
           - os: windows-latest
             package_name: inkson-windows-x64
             binary_name: inkson.exe
-            artifact_path: target/release/inkson.exe
           - os: macos-latest
             package_name: inkson-macos-arm64
             binary_name: inkson
-            artifact_path: target/release/inkson
 
     steps:
       - name: Checkout inkson
@@ -46,6 +43,15 @@ jobs:
         with:
           repository: ${{ github.repository_owner }}/arkret-rust-sdk
           path: arkret-rust-sdk
+          ref: 8886c96efe041adf5df8ea3086562554e4aed804
+          token: ${{ secrets.CI_REPO_TOKEN || github.token }}
+
+      - name: Checkout arkret-spec fixtures
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ github.repository_owner }}/arkret-spec
+          path: arkret-spec
+          ref: c68acccf66cf86c00f955a6dcabe742c137eef07
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
 
       - name: Checkout garth
@@ -53,6 +59,7 @@ jobs:
         with:
           repository: ${{ github.repository_owner }}/garth
           path: garth
+          ref: cb3d1d4f31897780413da8474333f47f87bd32c7
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
 
       - name: Checkout chime
@@ -60,6 +67,7 @@ jobs:
         with:
           repository: ${{ github.repository_owner }}/chime
           path: chime
+          ref: 4474f37d200655c06ab5cf29d98de90aa2fda45c
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
 
       - name: Install Linux desktop dependencies
@@ -67,14 +75,59 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            libgtk-3-dev \
-            libwebkit2gtk-4.1-dev \
-            libayatana-appindicator3-dev \
+            libgtk-4-dev libglib2.0-bin dpkg-dev \
+            libwebkitgtk-6.0-dev \
+            libdbus-1-dev \
+            xvfb xdotool xclip wl-clipboard scrot openbox weston gnome-keyring dbus-x11 at-spi2-core python3-pyatspi \
             libxdo-dev \
             librsvg2-dev
 
+      - name: Admit the real WebKit sandbox through the official AppArmor profile
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y apparmor-profiles bubblewrap
+          # Ubuntu's official purpose-built profile admits bwrap user namespaces
+          # while stripping capabilities from sandboxed children. Keep the
+          # global userns restriction and the WebKit sandbox enabled.
+          profile=''
+          for directory in /usr/share/apparmor/extra-profiles /etc/apparmor.d; do
+            if test -d "$directory"; then
+              profile=$(find "$directory" -type f -name bwrap-userns-restrict -print -quit)
+              if test -n "$profile"; then break; fi
+            fi
+          done
+          if test -z "$profile"; then
+            profile="$RUNNER_TEMP/bwrap-userns-restrict"
+            curl --fail --silent --show-error --location \
+              https://gitlab.com/apparmor/apparmor/-/raw/b0eb95457bc2de401920308869d016e696c73664/profiles/apparmor/profiles/extras/bwrap-userns-restrict \
+              --output "$profile"
+            printf '%s  %s\n' 11d39094f044f0cda0febb3ad517b830301da6b2ce929664af09ee9e4dd264f9 "$profile" | sha256sum --check
+          fi
+          dpkg-query --show apparmor apparmor-profiles bubblewrap
+          sha256sum "$profile"
+          sudo apparmor_parser --replace "$profile"
+          sysctl kernel.apparmor_restrict_unprivileged_userns
+          bwrap --unshare-user --unshare-pid --ro-bind / / --proc /proc --dev /dev \
+            /bin/sh -c 'test "$(awk "/^CapEff:/{print \$2}" /proc/self/status)" = "0000000000000000"'
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Resolve the actual Cargo desktop target directory
+        working-directory: inkson
+        shell: pwsh
+        run: |
+          $metadataJson = & cargo metadata --locked --format-version 1 --no-deps --manifest-path Cargo.toml
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $metadata = $metadataJson | ConvertFrom-Json
+          if ([string]::IsNullOrWhiteSpace([string]$metadata.target_directory)) {
+            throw 'Cargo metadata did not return a target directory'
+          }
+          $targetDirectory = [System.IO.Path]::GetFullPath([string]$metadata.target_directory)
+          $releaseBinary = Join-Path (Join-Path $targetDirectory 'release') '${{ matrix.binary_name }}'
+          "INKSON_DESKTOP_TARGET_DIRECTORY=$targetDirectory" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "INKSON_DESKTOP_RELEASE_BINARY=$releaseBinary" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
@@ -96,11 +149,48 @@ jobs:
         working-directory: inkson
         run: cargo build --locked --release --features desktop
 
+      - name: Exercise the Linux native persistence and management regression families
+        if: runner.os == 'Linux'
+        working-directory: inkson
+        run: |
+          set -euo pipefail
+          verify_family() {
+            local family="$1" expected="$2" name="$3"
+            cargo test --locked --release --features desktop --lib "$family" -- --list > "$name-list.txt"
+            test "$(grep -c ': test$' "$name-list.txt")" = "$expected"
+            cargo test --locked --release --features desktop --lib "$family" 2>&1 | tee "$name-result.txt"
+            grep -q "test result: ok\. $expected passed; 0 failed; 0 ignored;" "$name-result.txt"
+          }
+          verify_family 'state::tests::private_plaintext::' 23 private-plaintext
+          verify_family 'state::e2ee_secure_cache::cache_persist_tests::' 12 cache-persist
+          verify_family 'neutral_station_choice' 5 neutral-station
+          verify_family 'native_bootstrap_load' 1 native-bootstrap
+          verify_family 'views::realm_admin::admin_panel::' 19 admin-panel
+          verify_family 'ephemeral::tests::' 1 typed-terminal
+          verify_family 'secure_key_store::keyring::linux_runtime_tests::mock_' 2 linux-keystore-isolation
+          verify_family 'state::current_index::tests::signal_strand_reader_requires_complete_cut_and_exact_typed_subject' 1 typing-1
+          verify_family 'signal_receive_engine::tests::decrypted_strand_target_requires_exact_realm_and_circle_scope' 1 typing-2
+          verify_family 'signal_receive_engine::tests::decrypted_typing_without_verified_current_produces_no_live_body' 1 typing-3
+
+      - name: Exercise the real Linux SecretService from a UI Tokio runtime
+        id: linux_secret_service
+        if: runner.os == 'Linux'
+        working-directory: inkson
+        run: dbus-run-session -- python3 scripts/linux-gtk4-runtime-smoke.py --secret-service-probe
+
+      - name: Preserve the actual Linux SecretService result and failure logs
+        if: runner.os == 'Linux' && always() && steps.linux_secret_service.outcome != 'skipped'
+        uses: actions/upload-artifact@v7
+        with:
+          name: inkson-linux-secret-service-runtime
+          path: inkson/dist/linux-gtk4-runtime/secret-service-*
+          if-no-files-found: error
+
       - name: Prepare artifact directory
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path "dist/${{ matrix.package_name }}"
-          Copy-Item -LiteralPath "inkson/${{ matrix.artifact_path }}" -Destination "dist/${{ matrix.package_name }}/${{ matrix.binary_name }}"
+          Copy-Item -LiteralPath $env:INKSON_DESKTOP_RELEASE_BINARY -Destination "dist/${{ matrix.package_name }}/${{ matrix.binary_name }}"
           Copy-Item -LiteralPath "inkson/README.md" -Destination "dist/${{ matrix.package_name }}/README.md"
 
       - name: Upload native package
@@ -113,7 +203,7 @@ jobs:
       - name: Local signing dry-run evidence
         working-directory: inkson
         shell: pwsh
-        run: ./scripts/signing-dry-run.ps1 -ArtifactPath "${{ matrix.artifact_path }}" -NoBuild
+        run: ./scripts/signing-dry-run.ps1 -ArtifactPath $env:INKSON_DESKTOP_RELEASE_BINARY -NoBuild
 
       - name: Upload signing dry-run evidence
         uses: actions/upload-artifact@v7
@@ -122,11 +212,34 @@ jobs:
           path: inkson/dist/signing/
           if-no-files-found: error
 
+      - name: Install Python for the native platform renderer probe
+        if: runner.os != 'Linux'
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      - name: Exercise the actual Windows or macOS renderer
+        id: platform_renderer
+        if: runner.os != 'Linux'
+        working-directory: inkson
+        shell: pwsh
+        run: |
+          python scripts/desktop-platform-smoke.py --binary $env:INKSON_DESKTOP_RELEASE_BINARY
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload native platform renderer evidence
+        if: runner.os != 'Linux' && always() && steps.platform_renderer.outcome != 'skipped'
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.package_name }}-renderer-runtime
+          path: inkson/dist/desktop-platform-runtime/
+          if-no-files-found: error
+
       - name: Build local Linux package
         if: runner.os == 'Linux'
         working-directory: inkson
         shell: pwsh
-        run: ./scripts/linux-package-local.ps1 -BinaryPath "${{ matrix.artifact_path }}"
+        run: ./scripts/linux-package-local.ps1 -BinaryPath $env:INKSON_DESKTOP_RELEASE_BINARY
 
       - name: Upload local Linux package
         if: runner.os == 'Linux'
@@ -135,3 +248,40 @@ jobs:
           name: ${{ matrix.package_name }}-deb-local
           path: inkson/dist/linux-packages/
           if-no-files-found: error
+
+      - name: Verify the exact real Linux package executable
+        id: linux_package
+        if: runner.os == 'Linux'
+        working-directory: inkson
+        run: |
+          package=$(find dist/linux-packages -maxdepth 1 -type f -name '*.deb')
+          test -n "$package"
+          dpkg-deb --info "$package"
+          dpkg-deb --extract "$package" dist/linux-package-extracted
+          cmp "$INKSON_DESKTOP_RELEASE_BINARY" dist/linux-package-extracted/usr/bin/inkson
+
+      - name: Exercise real X11 DOM keyboard clipboard blur and cold restore
+        id: linux_x11_renderer
+        if: runner.os == 'Linux'
+        continue-on-error: true
+        working-directory: inkson
+        run: xvfb-run -a dbus-run-session -- python3 scripts/linux-gtk4-runtime-smoke.py --backend x11 --binary dist/linux-package-extracted/usr/bin/inkson
+
+      - name: Exercise real Wayland DOM keyboard clipboard blur and cold restore
+        id: linux_wayland_renderer
+        if: runner.os == 'Linux'
+        continue-on-error: true
+        working-directory: inkson
+        run: xvfb-run -a dbus-run-session -- python3 scripts/linux-gtk4-runtime-smoke.py --backend wayland --binary dist/linux-package-extracted/usr/bin/inkson
+
+      - name: Upload Linux GTK4 runtime evidence
+        if: runner.os == 'Linux' && always() && steps.linux_package.outcome != 'skipped'
+        uses: actions/upload-artifact@v7
+        with:
+          name: inkson-linux-gtk4-runtime
+          path: inkson/dist/linux-gtk4-runtime/
+          if-no-files-found: error
+
+      - name: Require both complete Linux runtime oracles
+        if: runner.os == 'Linux' && always()
+        run: test '${{ steps.linux_x11_renderer.outcome }}' = success && test '${{ steps.linux_wayland_renderer.outcome }}' = success

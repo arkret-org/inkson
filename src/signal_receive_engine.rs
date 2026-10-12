@@ -397,6 +397,19 @@ impl InksonSignalSink {
             domain: *domain,
             payload: plaintext,
         };
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+        let observation_owner = self.state_store.read(|store| store.active_principal_id());
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+        let observation_epoch = crate::identity::device_directory::session_cache_epoch();
+        let target_scope_matches = self
+            .strand_target_at_verified_cut(&signal)
+            .await
+            .unwrap_or(false);
+        if !target_scope_matches {
+            #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+            self.observe_typing(&signal, observation_owner, observation_epoch, false, false);
+            return Ok(());
+        }
         match signal.kind() {
             arkret_sdk::SignalPlaintextKind::CallSignal => {
                 if !self.call_exists_at_verified_cut(&signal).await? {
@@ -408,7 +421,14 @@ impl InksonSignalSink {
                 self.products.message_stream(&signal).await;
             }
             arkret_sdk::SignalPlaintextKind::Presence | arkret_sdk::SignalPlaintextKind::Typing => {
-                self.apply_live_body(&signal)?;
+                let applied = self.apply_live_body(&signal)?;
+                #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+                self.observe_typing(&signal, observation_owner, observation_epoch, true, applied);
+                #[cfg(not(all(
+                    target_arch = "wasm32",
+                    feature = "wasm-localstorage-secrets-test"
+                )))]
+                let _ = applied;
             }
             arkret_sdk::SignalPlaintextKind::ReadReceipt => {
                 // Not a live body: presence and typing are TTL projections
@@ -428,6 +448,61 @@ impl InksonSignalSink {
     }
 }
 
+/// Containment is a separate recipient check after genuine MLS decryption.
+/// It grants no action permission; the existing product gates remain in place.
+fn plaintext_strand_target(signal: &AdmittedSignal) -> garth::Result<Option<arkret_sdk::StrandId>> {
+    match &signal.payload {
+        arkret_sdk::SignalPlaintext::Typing(value) => Ok(Some(value.strand_id.clone())),
+        arkret_sdk::SignalPlaintext::MessageStream(value) => Ok(Some(value.strand_id().clone())),
+        arkret_sdk::SignalPlaintext::ReadReceipt(value)
+            if value.read_scope.kind == arkret_sdk::ReadScopeKind::Strand =>
+        {
+            let id = value.read_scope.object_ref.as_ref().ok_or_else(|| {
+                garth::Error::Protocol("Strand read receipt lacks a target".to_owned())
+            })?;
+            arkret_sdk::StrandId::new(id.clone())
+                .map(Some)
+                .map_err(|_| {
+                    garth::Error::Protocol("Strand read receipt has an invalid target".to_owned())
+                })
+        }
+        _ => Ok(None),
+    }
+}
+
+fn strand_scope_matches(current: &arkret_sdk::Strand, scope: &arkret_sdk::ScopeRef) -> bool {
+    match scope {
+        arkret_sdk::ScopeRef::Realm { realm_id } => {
+            current.realm_id == *realm_id && current.scope_circle_id.is_none()
+        }
+        arkret_sdk::ScopeRef::Circle {
+            realm_id,
+            circle_id,
+        } => current.realm_id == *realm_id && current.scope_circle_id.as_ref() == Some(circle_id),
+        _ => false,
+    }
+}
+
+#[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+static SIGNAL_RECEIVER_EVIDENCE: Mutex<Vec<(String, u64, Value)>> = Mutex::new(Vec::new());
+
+#[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+pub(crate) fn signal_receiver_evidence(principal: &str, clear: bool) -> String {
+    let epoch = crate::identity::device_directory::session_cache_epoch();
+    let Ok(mut rows) = SIGNAL_RECEIVER_EVIDENCE.lock() else {
+        return "[]".to_owned();
+    };
+    let result: Vec<_> = rows
+        .iter()
+        .filter(|(owner, at, _)| owner == principal && *at == epoch)
+        .map(|(_, _, value)| value.clone())
+        .collect();
+    if clear {
+        rows.retain(|(owner, at, _)| owner != principal || *at != epoch);
+    }
+    serde_json::to_string(&result).unwrap_or_else(|_| "[]".to_owned())
+}
+
 fn call_current_attempt_matches(
     store: &crate::state::LocalStateStore,
     authority: &arkret_sdk::AccountId,
@@ -439,6 +514,97 @@ fn call_current_attempt_matches(
 }
 
 impl InksonSignalSink {
+    async fn strand_target_at_verified_cut(&self, signal: &AdmittedSignal) -> garth::Result<bool> {
+        let Some(strand) = plaintext_strand_target(signal)? else {
+            return Ok(true);
+        };
+        let (authority, reset, location) = self.state_store.read(|store| {
+            (
+                store.active_authority(),
+                store.current_reset_required(),
+                store.current_index_location(),
+            )
+        });
+        let Some(authority) = authority else {
+            return Ok(false);
+        };
+        if reset {
+            return Ok(false);
+        }
+        let epoch = crate::identity::device_directory::session_cache_epoch();
+        let mut generation = 0;
+        let index = crate::state::CurrentIndex::open_committed(&authority, location, || {
+            generation = self.state_store.read(|store| store.current_generation());
+            Ok(generation)
+        })
+        .await
+        .map_err(|_| garth::Error::Protocol("Signal Strand current is unavailable".to_owned()))?;
+        let current = index
+            .read_strand_ready(signal.scope_ref().realm_id(), &strand)
+            .await
+            .map_err(|_| garth::Error::Protocol("Signal Strand current is not ready".to_owned()))?;
+        let same_attempt = self
+            .state_store
+            .read(|store| call_current_attempt_matches(store, &authority, generation))
+            && epoch == crate::identity::device_directory::session_cache_epoch();
+        Ok(same_attempt
+            && current
+                .as_ref()
+                .is_some_and(|current| strand_scope_matches(current, signal.scope_ref())))
+    }
+
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+    fn observe_typing(
+        &self,
+        signal: &AdmittedSignal,
+        principal: Option<String>,
+        epoch: u64,
+        target_scope_matches: bool,
+        live_applied: bool,
+    ) {
+        let arkret_sdk::SignalPlaintext::Typing(typing) = &signal.payload else {
+            return;
+        };
+        let Some(principal) = principal else {
+            return;
+        };
+        let now = crate::clock::now_utc();
+        let actor = serde_json::to_value(signal.actor_id()).ok();
+        let visible_count = self.state_store.read(|store| {
+            store
+                .load()
+                .presence_projection
+                .iter()
+                .filter(|body| {
+                    body.get("strand_id").and_then(Value::as_str) == Some(typing.strand_id.as_str())
+                        && body.get("actor_id") == actor.as_ref()
+                        && body.get("typing").and_then(Value::as_bool) == Some(true)
+                        && body
+                            .get("expires_at")
+                            .and_then(Value::as_str)
+                            .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
+                            .is_some_and(|expiry| expiry > now)
+                })
+                .count()
+        });
+        if let Ok(mut rows) = SIGNAL_RECEIVER_EVIDENCE.lock() {
+            rows.push((
+                principal,
+                epoch,
+                serde_json::json!({
+                    "scope_ref": signal.scope_ref(), "strand_id": typing.strand_id,
+                "sender_actor_id": signal.actor_id(), "sender_endpoint": signal.sender_endpoint(),
+                    "payload_sequence": signal.payload_sequence(), "typing": typing.typing,
+                    "admitted_and_decrypted": true, "target_scope_matches": target_scope_matches,
+                    "live_applied": live_applied, "visible_count": visible_count
+                }),
+            ));
+            if rows.len() > 128 {
+                rows.remove(0);
+            }
+        }
+    }
+
     async fn call_exists_at_verified_cut(&self, signal: &AdmittedSignal) -> garth::Result<bool> {
         let arkret_sdk::SignalPlaintext::CallSignal(call) = &signal.payload else {
             return Ok(false);
@@ -557,20 +723,20 @@ impl InksonSignalSink {
         policy
     }
 
-    fn apply_live_body(&self, signal: &AdmittedSignal) -> garth::Result<()> {
+    fn apply_live_body(&self, signal: &AdmittedSignal) -> garth::Result<bool> {
         let body = live_body_value(signal)?;
         let now = crate::clock::now_utc();
         let Ok(mut live) = self.live.lock() else {
-            return Ok(());
+            return Ok(false);
         };
         if !live.apply_admitted(signal, body, now)? {
-            return Ok(());
+            return Ok(false);
         }
         let bodies = live.bodies();
         drop(live);
         self.state_store
             .write(|store| store.save_presence_projection(&bodies));
-        Ok(())
+        Ok(true)
     }
 }
 
@@ -1032,6 +1198,95 @@ mod tests {
         );
         store.set_current_generation(7);
         assert!(!call_current_attempt_matches(&store, &authority, 7));
+    }
+
+    #[test]
+    fn decrypted_strand_target_requires_exact_realm_and_circle_scope() {
+        let id = arkret_sdk::StrandId::from_event_id(&arkret_sdk::EventId::from_digest(
+            arkret_sdk::DigestSuite::Sha256,
+            [31; 32],
+        ));
+        let signal = plaintext_of(
+            "ak.typing",
+            json!({"kind":"ak.typing", "strand_id":id, "typing":true}),
+        );
+        assert_eq!(
+            plaintext_strand_target(&signal).unwrap().as_ref(),
+            Some(&id)
+        );
+        let realm = signal.scope_ref().realm_id().clone();
+        let mut strand =
+            arkret_sdk::Strand::discussion(id, realm.clone(), "Target", signal.actor_id().clone());
+        assert!(strand_scope_matches(&strand, signal.scope_ref()));
+        let other =
+            arkret_sdk::RealmId::new("ak:realm:AQJmSg1s9QyzppFeJL40dN92YVHZeLdBBt3UWHa9XNOD")
+                .unwrap();
+        assert!(!strand_scope_matches(
+            &strand,
+            &arkret_sdk::ScopeRef::Realm { realm_id: other }
+        ));
+        let circle = arkret_sdk::CircleId::from_event_id(&arkret_sdk::EventId::from_digest(
+            arkret_sdk::DigestSuite::Sha256,
+            [33; 32],
+        ));
+        strand.scope_circle_id = Some(circle.clone());
+        assert!(!strand_scope_matches(&strand, signal.scope_ref()));
+        assert!(strand_scope_matches(
+            &strand,
+            &arkret_sdk::ScopeRef::Circle {
+                realm_id: realm.clone(),
+                circle_id: circle
+            }
+        ));
+        let other_circle = arkret_sdk::CircleId::from_event_id(&arkret_sdk::EventId::from_digest(
+            arkret_sdk::DigestSuite::Sha256,
+            [34; 32],
+        ));
+        assert!(!strand_scope_matches(
+            &strand,
+            &arkret_sdk::ScopeRef::Circle {
+                realm_id: realm,
+                circle_id: other_circle
+            }
+        ));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn decrypted_typing_without_verified_current_produces_no_live_body() {
+        use std::sync::Arc;
+        let directory = tempfile::tempdir().unwrap();
+        let store = Arc::new(Mutex::new(crate::LocalStateStore::with_path(
+            directory.path().join("typing-target.json"),
+        )));
+        let read = store.clone();
+        let write = store.clone();
+        let sink = InksonSignalSink {
+            state_store: crate::runtime::input::StateStoreHandle::new(
+                move |consume| consume(&read.lock().unwrap()),
+                move |consume| consume(&mut write.lock().unwrap()),
+            ),
+            products: SignalProductRouter::default(),
+            live: Mutex::new(Default::default()),
+        };
+        let id = arkret_sdk::StrandId::from_event_id(&arkret_sdk::EventId::from_digest(
+            arkret_sdk::DigestSuite::Sha256,
+            [31; 32],
+        ));
+        let signal = plaintext_of(
+            "ak.typing",
+            json!({"kind":"ak.typing", "strand_id":id, "typing":true}),
+        );
+        // Accepted fixture isolates product containment; it claims no transport/MLS proof.
+        sink.handle(SignalReceiveOutcome::Accepted {
+            domain: Box::new(signal.domain),
+            plaintext: signal.payload,
+            effective_expires_at: crate::clock::now_utc() + chrono::Duration::seconds(5),
+        })
+        .await
+        .unwrap();
+        assert!(sink.live.lock().unwrap().is_empty());
+        assert!(store.lock().unwrap().load().presence_projection.is_empty());
     }
 
     // These are product-layer regression checks. The already-admitted profile

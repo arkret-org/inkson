@@ -279,28 +279,61 @@ pub fn RouterView() -> Element {
     rsx! { AppBootstrap {} }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+fn read_native_bootstrap<T: Send + 'static>(read: impl FnOnce() -> T + Send + 'static) -> T {
+    // Desktop rendering already runs inside Tokio. Secret Service's blocking
+    // client owns another Tokio runtime, so boot reads need a separate thread.
+    std::thread::spawn(read)
+        .join()
+        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+}
+
+fn read_bootstrap_snapshot(
+    config_store: LocalConfigStore,
+    state_store: LocalStateStore,
+) -> (ClientConfig, LocalStateStore, ClientLocalState) {
+    let read = move || {
+        let config = config_store.load();
+        let state = state_store.load();
+        (config, state_store, state)
+    };
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        read_native_bootstrap(read)
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        read()
+    }
+}
+
 /// Owns one-time persisted-state hydration and constructs the session-scoped
 /// runtime context. `RouterView` intentionally remains assembly-only.
 #[component]
 fn AppBootstrap() -> Element {
-    let initial_config = LocalConfigStore::default().load();
-    let initial_state_store = LocalStateStore::default();
-    let initial_local_state = initial_state_store.load();
-    if let (Some(account), Some(persisted)) = (
-        initial_config.active_account.as_ref(),
-        initial_local_state.device_authoring_authority.as_ref(),
-    ) {
-        let cache_epoch = crate::identity::device_directory::cache_epoch();
-        crate::identity::device_directory::restore_persisted_device_authoring_authority(
-            cache_epoch,
-            &account.authority,
-            &account.device_id,
-            persisted,
-        );
-    }
+    // Hydrate boot evidence once. Reactive renders must not reopen the native
+    // credential backend or reinstall the persisted authoring authority.
+    let boot_snapshot = use_hook(|| {
+        let (initial_config, initial_state_store, initial_local_state) =
+            read_bootstrap_snapshot(LocalConfigStore::default(), LocalStateStore::default());
+        if let (Some(account), Some(persisted)) = (
+            initial_config.active_account.as_ref(),
+            initial_local_state.device_authoring_authority.as_ref(),
+        ) {
+            let cache_epoch = crate::identity::device_directory::cache_epoch();
+            crate::identity::device_directory::restore_persisted_device_authoring_authority(
+                cache_epoch,
+                &account.authority,
+                &account.device_id,
+                persisted,
+            );
+        }
+        std::rc::Rc::new((initial_config, initial_state_store, initial_local_state))
+    });
+    let (initial_config, initial_state_store, initial_local_state) = boot_snapshot.as_ref();
     let initial_session_credential = initial_session_credential_from_state(
-        &initial_local_state,
-        &initial_config,
+        initial_local_state,
+        initial_config,
         chrono::Utc::now().timestamp(),
     );
     let initial_active_account = initial_config.active_account.clone();

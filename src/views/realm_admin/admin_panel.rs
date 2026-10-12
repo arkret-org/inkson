@@ -20,7 +20,9 @@ use crate::ui::select::{Select, SelectOption};
 use crate::ui::textarea::Textarea;
 use crate::views::helpers::short_protocol_id;
 
+mod agent_policy;
 mod controller;
+mod management_review;
 mod model;
 
 use controller::*;
@@ -676,6 +678,10 @@ pub fn RealmAdminPanel(
             }
 
             if active_section == RealmAdminSection::Access {
+            div { key: "agent-management-{selected_realm_id}",
+                agent_policy::AgentPolicyEditor { realm_id: selected_realm_id.clone(), token }
+                management_review::ManagementReviewPanel { realm_id: selected_realm_id.clone(), token }
+            }
             // Join policy selector
             div { class: "event", "data-testid": "join-policy",
                 div { class: "event-head", span { "Join Policy" } span { "access control" } }
