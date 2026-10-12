@@ -245,7 +245,7 @@ mod linux_runtime_tests {
                 arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),
                 arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned()).unwrap(),
             ),
-            arkret_sdk::DeviceId::new(format!("ak:device:{}", uuid::Uuid::now_v7())).unwrap(),
+            arkret_sdk::DeviceId::new(crate::config::new_device_id()).unwrap(),
         )
         .unwrap();
         let key = user.secret_key("recovery-key.v1");
