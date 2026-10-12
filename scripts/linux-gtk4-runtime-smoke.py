@@ -48,6 +48,17 @@ def secret_service_probe():
                     while time.monotonic() < deadline:
                         if daemon.poll() is not None:
                             raise RuntimeError('private SecretService daemon exited before readiness')
+                        owner = subprocess.run(
+                            ['gdbus', 'call', '--session', '--dest', 'org.freedesktop.DBus',
+                             '--object-path', '/org/freedesktop/DBus', '--method',
+                             'org.freedesktop.DBus.GetConnectionUnixProcessID', 'org.freedesktop.secrets'],
+                            env=environment, capture_output=True, text=True, timeout=5)
+                        if owner.returncode != 0:
+                            time.sleep(0.25)
+                            continue
+                        if owner.stdout.strip() != f'(uint32 {daemon.pid},)':
+                            raise RuntimeError('SecretService bus owner is not the private owned daemon')
+                        result['actual_bus_owner_matches_owned_daemon'] = True
                         ready = subprocess.run(
                             ['gdbus', 'call', '--session', '--dest', 'org.freedesktop.secrets',
                              '--object-path', '/org/freedesktop/secrets', '--method',
