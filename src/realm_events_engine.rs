@@ -132,7 +132,7 @@ fn committed_views_to_client_events(
         // families decoded, all other kinds (Space, Strand, membership,
         // moderation, RSVP) as the Event itself.
         if let Some(event) = delta.event() {
-            match decoder.decode_event(event.clone()) {
+            match decoder.try_decode_event(event.clone())? {
                 DecodedInbound::Message(message) => batch.push(ClientEvent::Message(message)),
                 DecodedInbound::Event(event) => batch.push(ClientEvent::Event(event)),
             }

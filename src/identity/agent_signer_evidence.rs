@@ -878,8 +878,9 @@ mod historical_result_tests {
             handle.read(|store| verify_cached_event(&envelope, store, None)),
             CachedAgentEventVerdict::Verified
         );
-        let garth::DecodedInbound::Message(message) =
-            garth::InboundDecoder::new().decode_event(selector.accepted_event.clone())
+        let garth::DecodedInbound::Message(message) = garth::InboundDecoder::new()
+            .try_decode_event(selector.accepted_event.clone())
+            .unwrap()
         else {
             panic!("fixture is an ordinary Agent reply");
         };
