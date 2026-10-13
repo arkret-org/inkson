@@ -97,6 +97,8 @@ fn verified_page_variant(
         .expect_verifiable();
         rows[2].commit.event_ref = rows[2].event.event_id.clone();
         rows[2].commit = FixtureStation::did_web().seal_commit(rows[2].commit.clone());
+        bundle.realm_stream_head.commit_id = rows[2].commit.commit_id.clone();
+        bundle.current_assertion.realm_stream_head = bundle.realm_stream_head.clone();
         FixtureStation::did_web().reassert_for_nonce(
             &mut bundle,
             arkret_sdk::Base64UrlString::new("AAAAAAAAAAAAAAAAAAAAAA").unwrap(),

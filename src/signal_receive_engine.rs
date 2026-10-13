@@ -388,6 +388,8 @@ impl InksonSignalSink {
             domain,
             plaintext,
             effective_expires_at,
+            authority_commit_id,
+            parent_realm_authority_commit_id,
         } = outcome
         else {
             return Ok(());
@@ -395,6 +397,8 @@ impl InksonSignalSink {
         let signal = AdmittedSignal {
             expires_at: effective_expires_at,
             domain: *domain,
+            authority_commit_id,
+            parent_realm_authority_commit_id,
             payload: plaintext,
         };
         #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
@@ -539,10 +543,21 @@ impl InksonSignalSink {
         })
         .await
         .map_err(|_| garth::Error::Protocol("Signal Strand current is unavailable".to_owned()))?;
-        let current = index
-            .read_strand_ready(signal.scope_ref().realm_id(), &strand)
-            .await
-            .map_err(|_| garth::Error::Protocol("Signal Strand current is not ready".to_owned()))?;
+        let current = if signal.kind() == arkret_sdk::SignalPlaintextKind::Typing {
+            index
+                .read_typing_strand_ready(
+                    signal.scope_ref(),
+                    &strand,
+                    signal.actor_id(),
+                    &arkret_sdk::ActorId::account(authority.clone()),
+                )
+                .await
+        } else {
+            index
+                .read_strand_ready(signal.scope_ref().realm_id(), &strand)
+                .await
+        }
+        .map_err(|_| garth::Error::Protocol("Signal Strand current is not ready".to_owned()))?;
         let same_attempt = self
             .state_store
             .read(|store| call_current_attempt_matches(store, &authority, generation))
@@ -671,7 +686,11 @@ impl InksonSignalSink {
         let Ok(mut live) = self.live.lock() else {
             return;
         };
-        let changed = live.expire(now);
+        let blocklist = self.state_store.read(|store| store.client_blocklist());
+        let before = live.bodies.len();
+        live.bodies
+            .retain(|_, body| !typing_body_blocked(&body.body, &blocklist));
+        let changed = live.expire(now) || live.bodies.len() != before;
         let bodies = changed.then(|| live.bodies());
         drop(live);
         let cached = self
@@ -681,10 +700,12 @@ impl InksonSignalSink {
         // Its admitted cached bodies still expire without a new network frame.
         let mut bodies = bodies.unwrap_or_else(|| cached.clone());
         bodies.retain(|body| {
-            body.get("expires_at")
-                .and_then(Value::as_str)
-                .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
-                .is_some_and(|expiry| expiry > now)
+            !typing_body_blocked(body, &blocklist)
+                && body
+                    .get("expires_at")
+                    .and_then(Value::as_str)
+                    .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
+                    .is_some_and(|expiry| expiry > now)
         });
         if bodies != cached {
             self.state_store
@@ -724,6 +745,16 @@ impl InksonSignalSink {
     }
 
     fn apply_live_body(&self, signal: &AdmittedSignal) -> garth::Result<bool> {
+        if signal.kind() == arkret_sdk::SignalPlaintextKind::Typing
+            && self.state_store.read(|store| {
+                crate::account_data::is_blocked(
+                    &store.client_blocklist(),
+                    &signal.actor_id().to_string(),
+                )
+            })
+        {
+            return Ok(false);
+        }
         let body = live_body_value(signal)?;
         let now = crate::clock::now_utc();
         let Ok(mut live) = self.live.lock() else {
@@ -738,6 +769,17 @@ impl InksonSignalSink {
             .write(|store| store.save_presence_projection(&bodies));
         Ok(true)
     }
+}
+
+fn typing_body_blocked(
+    body: &Value,
+    blocklist: &[arkret_models_collaboration::objects::productivity::AccountBlocklistEntry],
+) -> bool {
+    body.get("kind").and_then(Value::as_str) == Some("ak.typing")
+        && body
+            .get("actor_id")
+            .and_then(|actor| serde_json::from_value::<arkret_sdk::ActorId>(actor.clone()).ok())
+            .is_none_or(|actor| crate::account_data::is_blocked(blocklist, &actor.to_string()))
 }
 
 /// Serialize the already-admitted SDK profile for product adapters that still
@@ -1151,6 +1193,8 @@ mod tests {
             .expect("test plaintext matches its registered closed profile");
         assert_eq!(payload.kind().as_str(), kind);
         AdmittedSignal {
+            authority_commit_id: arkret_sdk::RealmCommitId::from_digest([41; 32]),
+            parent_realm_authority_commit_id: None,
             expires_at: at(30),
             domain: arkret_sdk::SignalSequenceDomain {
                 sender_actor_id: arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
@@ -1252,6 +1296,53 @@ mod tests {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn typing_product_observes_exact_private_blocklist_and_clears_retained_bodies() {
+        use std::sync::Arc;
+        let directory = tempfile::tempdir().unwrap();
+        let store = Arc::new(Mutex::new(crate::LocalStateStore::with_path(
+            directory.path().join("typing-block.json"),
+        )));
+        let read = store.clone();
+        let write = store.clone();
+        let sink = InksonSignalSink {
+            state_store: crate::runtime::input::StateStoreHandle::new(
+                move |consume| consume(&read.lock().unwrap()),
+                move |consume| consume(&mut write.lock().unwrap()),
+            ),
+            products: SignalProductRouter::default(),
+            live: Mutex::new(Default::default()),
+        };
+        let id = arkret_sdk::StrandId::from_event_id(&arkret_sdk::EventId::from_digest(
+            arkret_sdk::DigestSuite::Sha256,
+            [31; 32],
+        ));
+        let mut signal = plaintext_of(
+            "ak.typing",
+            json!({"kind":"ak.typing", "strand_id":id, "typing":true}),
+        );
+        signal.expires_at = crate::clock::now_utc() + chrono::Duration::seconds(30);
+        assert!(sink.apply_live_body(&signal).unwrap());
+        let entry = crate::account_data::new_blocklist_entry(
+            crate::account_data::BlocklistUiTargetKind::Actor, &signal.actor_id().to_string(), None,
+            vec![arkret_models_collaboration::objects::productivity::AccountBlocklistSurface::Messages],
+            None, chrono::Utc::now(),
+        ).unwrap();
+        store.lock().unwrap().set_client_blocklist(1, vec![entry]);
+        assert!(!sink.apply_live_body(&signal).unwrap());
+        sink.expire_live_bodies(crate::clock::now_utc());
+        assert!(sink.live.lock().unwrap().is_empty());
+        assert!(store.lock().unwrap().load().presence_projection.is_empty());
+        if let arkret_sdk::ActorId::Account { account_id } = &mut signal.domain.sender_actor_id {
+            account_id.station_id =
+                arkret_sdk::DidCoreId::new("ak:did_core:web:other-station.example").unwrap();
+        }
+        assert!(sink.apply_live_body(&signal).unwrap());
+        sink.expire_live_bodies(crate::clock::now_utc());
+        assert_eq!(sink.live.lock().unwrap().len(), 1);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn decrypted_typing_without_verified_current_produces_no_live_body() {
         use std::sync::Arc;
@@ -1280,6 +1371,8 @@ mod tests {
         // Accepted fixture isolates product containment; it claims no transport/MLS proof.
         sink.handle(SignalReceiveOutcome::Accepted {
             domain: Box::new(signal.domain),
+            authority_commit_id: signal.authority_commit_id,
+            parent_realm_authority_commit_id: signal.parent_realm_authority_commit_id,
             plaintext: signal.payload,
             effective_expires_at: crate::clock::now_utc() + chrono::Duration::seconds(5),
         })
@@ -1332,12 +1425,16 @@ mod tests {
                 domain,
                 plaintext,
                 effective_expires_at,
+                authority_commit_id,
+                parent_realm_authority_commit_id,
             } = outcome
             else {
                 return Ok(0);
             };
             let signal = AdmittedSignal {
                 domain: *domain,
+                authority_commit_id,
+                parent_realm_authority_commit_id,
                 payload: plaintext,
                 expires_at: effective_expires_at,
             };
@@ -1393,6 +1490,8 @@ mod tests {
         .unwrap();
         let outcome = |signal: AdmittedSignal| SignalReceiveOutcome::Accepted {
             domain: Box::new(signal.domain),
+            authority_commit_id: signal.authority_commit_id,
+            parent_realm_authority_commit_id: signal.parent_realm_authority_commit_id,
             plaintext: signal.payload,
             effective_expires_at: signal.expires_at,
         };
