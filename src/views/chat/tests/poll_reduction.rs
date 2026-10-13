@@ -78,6 +78,7 @@ fn verified_page_variant(
         (kind.clone(), response),
         (kind, last_response),
     ]);
+    let realm = bundle.realm_id.clone();
     if foreign_last_station {
         let mut actor = rows[2].event.actor_id.as_account_id().unwrap().clone();
         actor.station_id = arkret_sdk::DidCoreId::new(REMOTE_STATION_ID).unwrap();
@@ -184,23 +185,37 @@ fn verified_circle_page() -> (garth::VerifiedScanPage, Value) {
         RealmCommit, RealmCommitId, ScopeRef,
     };
 
-    let realm = arkret_sdk::RealmId::new(REALM).unwrap();
+    let realm_seed = arkret_sdk::RealmId::new(REALM).unwrap();
+    let (root, ..) =
+        verified_realm_fixture_as(realm_seed.clone(), Vec::new(), "alice.example", DEVICE);
+    let realm = root.realm_id;
+    let actor = ActorId::account(arkret_sdk::AccountId::new(
+        DidCoreId::new("ak:did_core:web:alice.example").unwrap(),
+        DidCoreId::new("ak:did_core:web:station.example").unwrap(),
+    ));
     let (bundle, keys, created) = verified_realm_fixture_as(
-        realm.clone(),
-        vec![(
-            "ak.circle.create".to_owned(),
-            json!({"object":{"schema":"ak.schema.circle.v1","realm_id":realm,
+        realm_seed,
+        vec![
+            (
+                "ak.member.state".to_owned(),
+                json!({"member_id":actor,"membership":"join",
+                "expected_membership":null}),
+            ),
+            (
+                "ak.circle.create".to_owned(),
+                json!({"object":{"schema":"ak.schema.circle.v1","realm_id":realm,
                 "title":"Poll circle","display":{"short_name":"Polls","color_token":"blue",
                     "symbol":{"glyph":"vote"}},"directory_visibility":"members",
                 "join_rule":"public","history_access":"all_history_for_current_members",
-                "state":"active","created_by":{"kind":"account","principal_id":
-                    "ak:did_core:web:alice.example","station_id":"ak:did_core:web:station.example"},
-                "created_at":arkret_sdk::canonical::format_timestamp_canonical(fixture_time(2))}}),
-        )],
+                "state":"active","created_by":actor,
+                "created_at":arkret_sdk::canonical::format_timestamp_canonical(fixture_time(3))}}),
+            ),
+        ],
         "alice.example",
         DEVICE,
     );
-    let circle_id = CircleId::from_event_id(&created[0].event.event_id);
+    let realm = bundle.realm_id.clone();
+    let circle_id = CircleId::from_event_id(&created[1].event.event_id);
     let scope = ScopeRef::Circle {
         realm_id: realm.clone(),
         circle_id: circle_id.clone(),
@@ -209,10 +224,6 @@ fn verified_circle_page() -> (garth::VerifiedScanPage, Value) {
         realm_id: realm.clone(),
         circle_id: circle_id.clone(),
     };
-    let actor = ActorId::account(arkret_sdk::AccountId::new(
-        DidCoreId::new("ak:did_core:web:alice.example").unwrap(),
-        DidCoreId::new("ak:did_core:web:station.example").unwrap(),
-    ));
     let signer = arkret_test_kit::keys::seeded_signer(
         Did::new("did:web:alice.example").unwrap(),
         DidUrl::new(format!("did:web:alice.example#{DEVICE}")).unwrap(),
@@ -232,7 +243,10 @@ fn verified_circle_page() -> (garth::VerifiedScanPage, Value) {
     let membership = signed(
         "ak.circle.member.state",
         json!({"circle_id":circle_id,"member_id":actor,"membership":"join",
-            "expected_membership":null}),
+        "expected_membership":null,"parent_membership_revision":{
+            "commit_id":created[0].commit.commit_id,
+            "stream_position":created[0].commit.stream_position
+        }}),
         9,
     );
     let poll = signed("ak.message.create", definition_payload(), 10);

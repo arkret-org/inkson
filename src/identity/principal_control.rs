@@ -118,6 +118,7 @@ mod tests {
             "alice.example",
             "ak:device:01904100-0000-7000-8000-000000000003",
         );
+        let realm = bundle.realm_id.clone();
         assert_eq!(
             holder_root_from_verified_bundle(&bundle, &realm, &holder).unwrap(),
             bundle.genesis_event.event_id

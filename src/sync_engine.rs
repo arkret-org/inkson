@@ -3799,7 +3799,15 @@ mod tests {
                             "schema": "ak.schema.space.v1",
                             "realm_id": realm_id.as_str(),
                             "kind": "board",
-                            "title": "Adapter Board"
+                            "title": "Adapter Board",
+                            "state": "active",
+                            "created_by": {"kind":"account","account_id":{
+                                "principal_id":"ak:did_core:web:alice.example",
+                                "station_id":"ak:did_core:web:station.example"
+                            }},
+                            "created_at": arkret_sdk::canonical::format_timestamp_canonical(
+                                crate::test_support::committed_event::fixture_time(3)
+                            )
                         }
                     }),
                 ),

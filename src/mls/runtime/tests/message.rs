@@ -1837,12 +1837,16 @@ async fn frozen_message_real_mls_retry_and_durable_reopen_preserve_sender_state(
         "real encryption must advance sender state"
     );
     let envelope = arkret_sdk::mls::encrypted_envelope_from_payload(&encrypted).unwrap();
+    let strand_id = arkret_sdk::StrandId::from_event_id(&arkret_sdk::EventId::from_digest(
+        arkret_sdk::DigestSuite::Sha256,
+        [0x31; 32],
+    ));
     let unsigned = arkret_test_kit::signed_event::SignedEventFixtureBuilder::new(
         arkret_sdk::EventKind::MessageCreate.as_str(),
         header.effective_scope.clone(),
         fixture::account_actor("did:web:alice.example"),
         json!({
-            "strand_id": "ak:strand:ALH536fxXVv9EDZIoWa7sN1gzbTVJQ02x6AugHURwkvE",
+            "strand_id": strand_id,
             "track_name": "discussion", "encrypted_content": envelope,
         }),
     )

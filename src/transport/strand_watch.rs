@@ -260,6 +260,7 @@ mod tests {
             "alice.example",
             "ak:device:0196419b-0000-7000-8000-000000000001",
         );
+        let realm = bundle.realm_id.clone();
         let request = StrandWatchCurrentRequestBody {
             realm_id: realm.clone(),
             strand_id: strand.clone(),

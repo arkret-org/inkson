@@ -1956,6 +1956,13 @@ fn use_composer_state(target: ComposerTarget) -> ComposerState {
                 poll_draft: Signal::new(None),
                 latest_read_cursor: Signal::new(String::new()),
             };
+            // Mounting is not an authored empty-string tombstone. In particular,
+            // a pending cache clear can temporarily hide another Chat's draft;
+            // only a later edit or committed send may replace that saved value.
+            last_seen.write().insert(
+                target.clone(),
+                (state.session_generation, state.draft.peek().clone()),
+            );
             targets.write().insert(target.clone(), state);
             state
         });

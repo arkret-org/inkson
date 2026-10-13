@@ -84,6 +84,7 @@ fn install_empty_signed_cut(store: &mut LocalStateStore) {
         "alice.example",
         "ak:device:01964137-0000-7000-8000-000000000001",
     );
+    let realm = bundle.realm_id.clone();
     let mut snapshot = arkret_sdk::RealmStateSnapshot {
         snapshot_id: arkret_sdk::RealmSnapshotId::from_digest([0; 32]),
         realm_id: realm,

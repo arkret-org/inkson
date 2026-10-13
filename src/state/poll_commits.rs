@@ -919,6 +919,7 @@ mod tests {
             "bob.example",
             "ak:device:0196419b-0000-7000-8000-000000000001",
         );
+        let realm = bundle.realm_id.clone();
         let request = arkret_sdk::AuthorityBundleRequest {
             realm_id: realm.clone(),
             nonce: bundle.current_assertion.nonce.clone(),
@@ -1077,6 +1078,7 @@ mod tests {
             "bob.example",
             "ak:device:0196419b-0000-7000-8000-000000000001",
         );
+        let realm = bundle.realm_id.clone();
         let request = arkret_sdk::AuthorityBundleRequest {
             realm_id: realm.clone(),
             nonce: bundle.current_assertion.nonce.clone(),
@@ -1220,10 +1222,9 @@ mod tests {
                 realm_id: realm.clone(),
             };
             let (mut bundle, keys, _) =
-                crate::test_support::committed_event::verified_realm_fixture_signed_by(
+                crate::test_support::committed_event::verified_realm_fixture_from_genesis(
                     &station,
-                    realm.clone(),
-                    serde_json::json!({}),
+                    event.clone(),
                     Vec::new(),
                     "alice.example",
                     "ak:device:0196419b-0000-7000-8000-000000000001",
@@ -1331,6 +1332,7 @@ mod tests {
             "bob.example",
             "ak:device:0196419b-0000-7000-8000-000000000001",
         );
+        let realm = bundle.realm_id.clone();
         assert_eq!(items[0].event.event_id, first.event.event_id);
         let stream_ref = arkret_sdk::CommitStreamRef::Realm {
             realm_id: realm.clone(),
