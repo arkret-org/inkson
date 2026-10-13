@@ -347,7 +347,9 @@ impl SocketChannel {
     }
 }
 impl garth::signal::SignalFrameSource for SocketChannel {
-    async fn next_frame(&mut self) -> garth::Result<Option<arkret_wire::SignalStreamFrame>> {
+    async fn next_frame(
+        &mut self,
+    ) -> garth::Result<Option<arkret_models_collaboration::SignalStreamFrame>> {
         match SocketChannel::next_frame(self).await? {
             WebSocketServerFrame::Data {
                 payload: WebSocketDataPayload::Signal(frame),
@@ -360,7 +362,9 @@ impl garth::signal::SignalFrameSource for SocketChannel {
             WebSocketServerFrame::ChannelControl {
                 payload: WebSocketChannelControlPayload::Heartbeat(_),
                 ..
-            } => Ok(Some(arkret_wire::SignalStreamFrame::Heartbeat)),
+            } => Ok(Some(
+                arkret_models_collaboration::SignalStreamFrame::Heartbeat,
+            )),
             _ => Err(garth::Error::Protocol(
                 "wrong Signal channel payload".to_owned(),
             )),
@@ -648,7 +652,9 @@ impl SignalRailSource {
     }
 }
 impl garth::signal::SignalFrameSource for SignalRailSource {
-    async fn next_frame(&mut self) -> garth::Result<Option<arkret_wire::SignalStreamFrame>> {
+    async fn next_frame(
+        &mut self,
+    ) -> garth::Result<Option<arkret_models_collaboration::SignalStreamFrame>> {
         match self {
             Self::Socket(channel) => garth::signal::SignalFrameSource::next_frame(channel).await,
             Self::Http { stream, rail } => loop {

@@ -684,8 +684,6 @@ fn AppBootstrap() -> Element {
                     call_signal_hub,
                     message_stream_hub,
                     read_receipt_hub,
-                    base_url,
-                    token,
                     principal_id,
                 ),
             ));

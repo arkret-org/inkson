@@ -471,6 +471,7 @@ mod tests {
     ) -> anyhow::Result<AdmittedSignal> {
         let bytes = arkret_sdk::canonical::canonical_json_bytes(&plaintext)?;
         Ok(AdmittedSignal {
+            product_authority: None,
             authority_commit_id: envelope.authority_commit_id.clone(),
             parent_realm_authority_commit_id: envelope.parent_realm_authority_commit_id.clone(),
             domain: arkret_sdk::SignalSequenceDomain::from_verified_envelope(envelope, None)?,
