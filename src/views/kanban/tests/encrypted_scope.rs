@@ -404,7 +404,6 @@ async fn kanban_write_does_not_consume_pending_welcome_without_checkpoint() {
 
     let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
     let bob_actor = "ak:did_core:web:bob.example";
-    let bob_principal_id = crate::mls_api_helpers::principal_core_id(bob_actor).unwrap();
     let bob_device = "ak:device:01904100-0000-7000-8000-0000000000b2";
     let _account_scope = active_account_scope(bob_actor, bob_device);
     let alice = ArkretMlsIdentity::new_test_human_device(
@@ -435,32 +434,13 @@ async fn kanban_write_does_not_consume_pending_welcome_without_checkpoint() {
     );
 
     let mut state = isolated_store_for_tests("pending-local-welcome");
-    state.ingest_to_device_messages(&[serde_json::from_value(json!({
-        "device_message_id": "ak:device_message:01904100-0000-7000-8000-0000000000e1",
-        "kind": "ak.mls.welcome",
-        "sender_account_id": {
-            "principal_id": crate::mls_api_helpers::principal_core_id(
-                "ak:did_core:web:alice.example"
-            ).unwrap(),
-            "station_id": "ak:did_core:web:station.example"
-        },
-        "sender_device_id": "ak:device:01904100-0000-7000-8000-0000000000a1",
-        "recipient_account_id": {
-            "principal_id": bob_principal_id,
-            "station_id": "ak:did_core:web:station.example"
-        },
-        "recipient_device_id": bob_device,
-        "sent_at": arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now()),
-        "expires_at": arkret_sdk::canonical::format_timestamp_canonical(
-            chrono::Utc::now() + chrono::Duration::hours(1)
-        ),
-        "content": serde_json::to_value(&pending_welcome).unwrap(),
-        "unsigned": {
-            "mls_welcome_id": "ak:mls_welcome:01904100-0000-7000-8000-0000000000ff",
-            "key_package_id": bob_key_package.keypackage_id.clone(),
-        },
-    }))
-    .unwrap()]);
+    state
+        .ingest_recipient_deliveries(&[
+            arkret_models_collaboration::device_messages::RecipientDelivery::MlsWelcome {
+                mls_welcome: pending_welcome,
+            },
+        ])
+        .unwrap();
     // Welcome validation and application belong to the MLS runtime sync path.
     // The Kanban writer consumes only checkpoint-proven active group state.
     assert!(crate::mls::runtime::has_pending_mls_welcome_for_endpoint(
@@ -518,7 +498,6 @@ async fn kanban_write_waits_for_runtime_to_apply_pending_welcome() {
 
     let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
     let bob_actor = "ak:did_core:web:bob.example";
-    let bob_principal_id = crate::mls_api_helpers::principal_core_id(bob_actor).unwrap();
     let bob_device = "ak:device:01904100-0000-7000-8000-0000000000b3";
     let _account_scope = active_account_scope(bob_actor, bob_device);
     let alice = ArkretMlsIdentity::new_test_human_device(
@@ -550,32 +529,13 @@ async fn kanban_write_waits_for_runtime_to_apply_pending_welcome() {
     );
 
     let mut state = isolated_store_for_tests("pending-local-welcome-with-state");
-    state.ingest_to_device_messages(&[serde_json::from_value(json!({
-        "device_message_id": "ak:device_message:01904100-0000-7000-8000-0000000000e2",
-        "kind": "ak.mls.welcome",
-        "sender_account_id": {
-            "principal_id": crate::mls_api_helpers::principal_core_id(
-                "ak:did_core:web:alice.example"
-            ).unwrap(),
-            "station_id": "ak:did_core:web:station.example"
-        },
-        "sender_device_id": "ak:device:01904100-0000-7000-8000-0000000000a1",
-        "recipient_account_id": {
-            "principal_id": bob_principal_id,
-            "station_id": "ak:did_core:web:station.example"
-        },
-        "recipient_device_id": bob_device,
-        "sent_at": arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now()),
-        "expires_at": arkret_sdk::canonical::format_timestamp_canonical(
-            chrono::Utc::now() + chrono::Duration::hours(1)
-        ),
-        "content": serde_json::to_value(&pending_welcome).unwrap(),
-        "unsigned": {
-            "mls_welcome_id": "ak:mls_welcome:01904100-0000-7000-8000-0000000000f1",
-            "key_package_id": bob_key_package.keypackage_id.clone(),
-        },
-    }))
-    .unwrap()]);
+    state
+        .ingest_recipient_deliveries(&[
+            arkret_models_collaboration::device_messages::RecipientDelivery::MlsWelcome {
+                mls_welcome: pending_welcome,
+            },
+        ])
+        .unwrap();
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
     crate::mls::runtime::store_account_mls_secret(
         &secure,

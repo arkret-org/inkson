@@ -2048,7 +2048,6 @@ mod tests {
             .expect("strand id"),
         };
         let outcome: arkret_sdk::AgentParticipationOutcome = serde_json::from_value(json!({
-            "ok": true,
             "agent_id": "ak:did_core:web:agent.example",
             "participation_entries": [{
                 "target_scope": scope,

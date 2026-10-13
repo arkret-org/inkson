@@ -21,17 +21,17 @@ pub struct IssuerRealmAuthorityBasis {
 /// Narrow choices registered for the controller-owned Agent source. This is
 /// a presentation/authoring allowlist, never a local authorization decision.
 pub const OWNED_AGENT_ACTIONS: &[&str] = &[
-    "ak.event.read",
-    "ak.message.create",
-    "ak.message.redact.own",
-    "ak.message.revise.own",
-    "ak.object.read",
-    "ak.object.read_content",
-    "ak.object.read_history",
-    "ak.object.read_metadata",
-    "ak.reaction.add",
-    "ak.reaction.remove",
-    "ak.strand.read",
+    arkret_wire::CapabilityActionId::EVENT_READ,
+    arkret_wire::CapabilityActionId::MESSAGE_CREATE,
+    arkret_wire::CapabilityActionId::MESSAGE_REDACT_OWN,
+    arkret_wire::CapabilityActionId::MESSAGE_REVISE_OWN,
+    arkret_wire::CapabilityActionId::OBJECT_READ,
+    arkret_wire::CapabilityActionId::OBJECT_READ_CONTENT,
+    arkret_wire::CapabilityActionId::OBJECT_READ_HISTORY,
+    arkret_wire::CapabilityActionId::OBJECT_READ_METADATA,
+    arkret_wire::CapabilityActionId::REACTION_ADD,
+    arkret_wire::CapabilityActionId::REACTION_REMOVE,
+    arkret_wire::CapabilityActionId::STRAND_READ,
 ];
 
 /// Explicit controller confirmation carries exactly the two accepted join

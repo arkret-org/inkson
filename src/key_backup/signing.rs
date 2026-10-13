@@ -162,7 +162,8 @@ pub fn build_key_backup_unlock_proof(
                 && challenge.ciphertext_digest == backup.ciphertext_digest
                 && challenge.audience.as_str() == audience
                 && challenge.service_id == account.station_id
-                && challenge.operation == "ak.self.keys.backups.command.unlock.v1"
+                && challenge.operation
+                    == arkret_wire::ServiceOperationId::SELF_KEYS_BACKUPS_COMMAND_UNLOCK_V1
                 && challenge.issued_at <= issued_at
                 && challenge.expires_at > issued_at,
             "server unlock challenge binding mismatch"

@@ -714,12 +714,12 @@ pub(super) fn OwnedAgentAuthority(
                         }
                     }
                     for (action, label) in [
-                        ("ak.message.create", "发送消息"), ("ak.reaction.add", "添加回应"),
-                        ("ak.reaction.remove", "移除回应"), ("ak.message.revise.own", "修改自己消息"),
-                        ("ak.message.redact.own", "撤回自己消息"), ("ak.strand.read", "读取 Strand"),
-                        ("ak.event.read", "读取事件"), ("ak.object.read", "读取对象"),
-                        ("ak.object.read_metadata", "读取对象信息"), ("ak.object.read_content", "读取对象内容"),
-                        ("ak.object.read_history", "读取对象历史"),
+                        (arkret_wire::CapabilityActionId::MESSAGE_CREATE, "发送消息"), (arkret_wire::CapabilityActionId::REACTION_ADD, "添加回应"),
+                        (arkret_wire::CapabilityActionId::REACTION_REMOVE, "移除回应"), (arkret_wire::CapabilityActionId::MESSAGE_REVISE_OWN, "修改自己消息"),
+                        (arkret_wire::CapabilityActionId::MESSAGE_REDACT_OWN, "撤回自己消息"), (arkret_wire::CapabilityActionId::STRAND_READ, "读取 Strand"),
+                        (arkret_wire::CapabilityActionId::EVENT_READ, "读取事件"), (arkret_wire::CapabilityActionId::OBJECT_READ, "读取对象"),
+                        (arkret_wire::CapabilityActionId::OBJECT_READ_METADATA, "读取对象信息"), (arkret_wire::CapabilityActionId::OBJECT_READ_CONTENT, "读取对象内容"),
+                        (arkret_wire::CapabilityActionId::OBJECT_READ_HISTORY, "读取对象历史"),
                     ] {
                         label {
                             input { r#type: "checkbox", checked: selected.read().contains(action), disabled: pending(),

@@ -44,7 +44,7 @@ export function mockOperations(): MockOperation[] {
 /// use. They only have to satisfy the identifier patterns the mock parses
 /// them with; nothing here is asserted against.
 const PATH_PARAMETERS: Record<string, string> = {
-  account_data_key: "ak.notifications.projection.v1",
+  account_data_key: "ak.account.invite_delivery",
   actor_id: "ak:did_core:web:alice.example",
   agent_id: "ak:did_core:web:agents.example:assistant",
   applet_id: "ak:applet:AY61QviMxoJ0ALEn5U39bA7Qbi1BxHCrOq4950m2JRjM",

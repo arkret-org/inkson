@@ -1762,7 +1762,8 @@ impl EventSubmitter {
                 signature.input.approval_context == first.input.approval_context
                     && matches!(&signature.input.approval_target, arkret_sdk::ApprovalTarget::Event { event_id } if event_id == &event.event_id)
                     && signature.input.request_canonical_digest.as_str() == digest
-                    && signature.input.operation == "ak.self.events.command.submit.v1"
+                    && signature.input.operation
+                        == arkret_wire::ServiceOperationId::SELF_EVENTS_COMMAND_SUBMIT_V1
                     && signature.input.action == action
                     && signature.input.realm_id == event.realm_id
                     && signature.input.initiating_actor_id == event.actor_id,

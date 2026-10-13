@@ -326,7 +326,7 @@ impl LocalStatePersistBarrier {
 /// is unverified, so any occurrence is sufficient to quarantine its Realm
 /// until a new projection is built from verified current governance facts.
 fn realm_tree_projection_has_retired_minimal_metadata_marker(body: &Value) -> bool {
-    const RETIRED_MARKER: &str = "ak.profile.mls.minimal_metadata_realm.v1";
+    const RETIRED_MARKER: &str = arkret_wire::RejectedProfileId::MLS_MINIMAL_METADATA_REALM_V1;
     match body {
         Value::String(value) => value == RETIRED_MARKER,
         Value::Array(values) => values

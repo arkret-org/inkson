@@ -174,7 +174,7 @@ impl LocalStateStore {
         };
         let mut restored = 0;
         for event in self.current_account_data_events() {
-            if event.kind.as_str() != "ak.account_data.set"
+            if event.kind.as_str() != arkret_wire::event_kind_str::ACCOUNT_DATA_SET
                 || event.actor_id != arkret_sdk::ActorId::account(authority.clone())
             {
                 continue;

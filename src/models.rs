@@ -870,7 +870,6 @@ mod tests {
                     }
                 }]
             }],
-            "next_cursor": null,
             "has_more": false
         });
         let decoded: arkret_sdk::ContactList = serde_json::from_value(value).unwrap();

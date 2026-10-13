@@ -1260,7 +1260,7 @@ mod tests {
         let _g = reset();
         let seed = [11u8; 32];
         let signer = build_ed25519_signer(seed, "did:web:history.example");
-        let binding = br#"{"context":"ak.history_key_response_proof.v1","fixture":"response"}"#;
+        let binding = br#"{"context":"org.arkret.inkson.test.proof.v1","fixture":"response"}"#;
         let key = PublicKeyMaterial::Ed25519Raw {
             bytes: ed25519_dalek::SigningKey::from_bytes(&seed)
                 .verifying_key()
