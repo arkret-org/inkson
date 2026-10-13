@@ -81,7 +81,7 @@ pub(super) async fn recover_bound_principal_device(
     ))
     .map_err(anyhow::Error::msg)?;
     let possession = arkret_models_crypto::RecoveryDevicePossessionTranscript {
-        schema: "ak.identity.recovery_device_possession.v1".to_owned(),
+        schema: arkret_wire::DomainSeparationId::IDENTITY_RECOVERY_DEVICE_POSSESSION_V1.to_owned(),
         session_grant_id: recovery_grant_id,
         session_grant_cnf_jkt: arkret_sdk::Base64UrlString::new(recovery_grant_jkt)
             .map_err(anyhow::Error::msg)?,

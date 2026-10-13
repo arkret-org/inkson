@@ -589,7 +589,7 @@ impl Builder {
         let delegation =
             DidUrl::new(format!("{did}#managed-controller")).map_err(anyhow::Error::msg)?;
         let requested_scope: AgentKeyScope = serde_json::from_value(json!({
-            "actions":["ak.event.read"], "resources":[{"kind":"operation","operation":"ak.self.committed_event.read.scan.v1"}]
+            "actions":[arkret_wire::CapabilityActionId::EVENT_READ], "resources":[{"kind":"operation","operation":arkret_wire::CapabilityActionId::SELF_COMMITTED_EVENT_READ_SCAN_V1}]
         }))?;
         let digest = arkret_models_collaboration::agent_scope::agent_requested_scope_digest(
             &agent_id,

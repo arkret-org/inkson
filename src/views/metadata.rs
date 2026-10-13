@@ -103,10 +103,10 @@ pub(crate) fn open_metadata_with_secure_store(
                 .and_then(Value::as_str)
                 .and_then(|id| arkret_sdk::EventId::new(id).ok())
                 .is_some_and(|event_id| match event.get("kind").and_then(Value::as_str) {
-                    Some("ak.space.create") => {
+                    Some(arkret_wire::CapabilityActionId::SPACE_CREATE) => {
                         arkret_sdk::SpaceId::from_event_id(&event_id).as_str() == id
                     }
-                    Some("ak.strand.create") => {
+                    Some(arkret_wire::CapabilityActionId::STRAND_CREATE) => {
                         arkret_sdk::StrandId::from_event_id(&event_id).as_str() == id
                     }
                     _ => false,

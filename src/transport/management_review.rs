@@ -476,7 +476,7 @@ pub(crate) async fn approve<F: FnOnce(PreparedDecision)>(
                 event_id: event.event_id.clone(),
             },
             request_canonical_digest: fresh.target_digest.clone(),
-            operation: "ak.self.events.command.submit.v1".into(),
+            operation: arkret_wire::ServiceOperationId::SELF_EVENTS_COMMAND_SUBMIT_V1.into(),
             action,
             realm_id: event.realm_id.clone(),
             initiating_actor_id: event.actual_signer().clone(),
@@ -502,7 +502,7 @@ pub(crate) async fn approve<F: FnOnce(PreparedDecision)>(
         &control,
         &signature,
         event,
-        "ak.self.events.command.submit.v1",
+        arkret_wire::ServiceOperationId::SELF_EVENTS_COMMAND_SUBMIT_V1,
         action,
         approved_at,
     )?;

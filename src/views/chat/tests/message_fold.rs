@@ -135,7 +135,7 @@ fn message_operations_from_events_folds_create_and_renders_local_first() {
     // A non-message timeline event (e.g. a poll close) MUST be ignored.
     let poll = json!({
         "event_id": "ak:event:AemHyQfTHaRP4hPsEzDRoY0ybwSW0ZIu_kPanXYJ_cJ8",
-        "kind": "ak.content.poll.close",
+        "kind": "ak.realm.create",
         "realm_id": "ak:realm:ARqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
         "strand_id": "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE"
     });

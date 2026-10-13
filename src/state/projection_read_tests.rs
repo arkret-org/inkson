@@ -34,12 +34,13 @@ fn signed_link() -> LocallyAuthenticatedIdentityLink {
     let placeholder = arkret_sdk::canonical::sha256_digest(b"placeholder");
     let mut link: arkret_sdk::IdentityLink = serde_json::from_value(serde_json::json!({
         "schema": arkret_sdk::IdentityLink::SCHEMA,
-        "pairwise_actor_id": arkret_sdk::project_did_to_core_id(&did).unwrap(),
+        "status": "active",
+        "pairwise_id": arkret_sdk::project_did_to_core_id(&did).unwrap(),
         "principal_id": "ak:did_core:web:alice.example",
         "device_id": "ak:device:01964137-0000-7000-8000-000000000001",
         "realm_id": REALM,
         "trust_domain": "ak:trust_domain:station.example",
-        "mls_group_id": "AQID", "mls_leaf_index": 4, "mls_epoch": 2,
+        "mls_group_id": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "mls_leaf_index": 4, "mls_epoch": 2,
         "response_signing_verification_method": method,
         "response_signing_algorithm": "Ed25519",
         "response_signing_public_key_b64u": arkret_sdk::base64url_encode(public_key),
@@ -178,7 +179,12 @@ fn identity_link_replay_is_narrow_but_conflicting_authenticated_bytes_still_fail
             .cache_locally_authenticated_identity_link(link.clone())
             .unwrap();
         assert_eq!(
-            store.locally_authenticated_identity_link(&link.identity_link.realm_id, "AQID", 2, 4,),
+            store.locally_authenticated_identity_link(
+                &link.identity_link.realm_id,
+                "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                2,
+                4,
+            ),
             Some(link.clone())
         );
     }
@@ -198,7 +204,12 @@ fn identity_link_replay_is_narrow_but_conflicting_authenticated_bytes_still_fail
             .is_err()
     );
     assert_eq!(
-        store.locally_authenticated_identity_link(&link.identity_link.realm_id, "AQID", 2, 4,),
+        store.locally_authenticated_identity_link(
+            &link.identity_link.realm_id,
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            2,
+            4,
+        ),
         Some(link)
     );
 }
