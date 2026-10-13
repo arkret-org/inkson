@@ -76,13 +76,16 @@ type LocalBoxFuture<'a> = std::pin::Pin<Box<dyn std::future::Future<Output = ()>
 /// producer proof, the AEAD and the per-endpoint sequence, then hands back the
 /// typed closed profile plus the verified sender domain. This carrier is the
 /// host-side pairing of the two, with the envelope instants the TTL projections
-/// need: the rail carries no durable coordinates, so there is nothing else to
-/// retain.
+/// need, and the original governance basis required by product authorization.
 #[derive(Clone, Debug, PartialEq)]
 pub struct AdmittedSignal {
     /// The verified sender actor, endpoint and scope the sequence high-water
     /// was enforced against.
     pub domain: arkret_sdk::SignalSequenceDomain,
+    /// The scope authorization basis retained from the verified envelope.
+    pub authority_commit_id: arkret_sdk::RealmCommitId,
+    /// Circle authorization separately binds its parent Realm basis.
+    pub parent_realm_authority_commit_id: Option<arkret_sdk::RealmCommitId>,
     /// The registered closed profile this plaintext parsed as. Consumers match
     /// this union; hand-parsing a Signal body by field name is forbidden.
     pub payload: arkret_sdk::SignalPlaintext,

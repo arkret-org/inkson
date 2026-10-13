@@ -354,6 +354,8 @@ mod tests {
         };
         let at = chrono::DateTime::from_timestamp(1_800_000_000, 0).unwrap();
         crate::runtime::projection::AdmittedSignal {
+            authority_commit_id: arkret_sdk::RealmCommitId::from_digest([41; 32]),
+            parent_realm_authority_commit_id: None,
             domain: arkret_sdk::SignalSequenceDomain {
                 sender_actor_id: crate::mls_api_helpers::local_account_actor_id("did:web:a")
                     .unwrap(),

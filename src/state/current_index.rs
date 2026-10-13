@@ -1248,6 +1248,16 @@ impl CurrentIndex {
             progress_is_complete_cut(&progress, realm),
             "Strand current requires a complete verified cut"
         );
+        self.read_strand_at_generation(realm, strand_id, generation)
+            .await
+    }
+
+    async fn read_strand_at_generation(
+        &self,
+        realm: &arkret_sdk::RealmId,
+        strand_id: &arkret_sdk::StrandId,
+        generation: u64,
+    ) -> anyhow::Result<Option<arkret_sdk::Strand>> {
         let selector = CurrentSelector::Strand {
             strand_id: strand_id.clone(),
         };
@@ -1291,6 +1301,96 @@ impl CurrentIndex {
             }
             Some(_) => anyhow::bail!("Strand current selector returned another family"),
         }
+    }
+
+    /// Typing requires both endpoints to remain effective members at the
+    /// same complete cut as the decrypted target. This grants no action.
+    pub(crate) async fn read_typing_strand_ready(
+        &self,
+        scope: &arkret_sdk::ScopeRef,
+        strand_id: &arkret_sdk::StrandId,
+        sender: &arkret_sdk::ActorId,
+        recipient: &arkret_sdk::ActorId,
+    ) -> anyhow::Result<Option<arkret_sdk::Strand>> {
+        let _lease = self.lease.lock().await;
+        anyhow::ensure!(
+            !self.is_poisoned(),
+            "current pointer durability is unresolved"
+        );
+        let realm = scope.realm_id();
+        let generation = self.generation.load(Ordering::Acquire);
+        let progress = self.progress_at(realm.as_str(), generation).await?;
+        anyhow::ensure!(
+            progress_is_complete_cut(&progress, realm),
+            "Typing requires a complete verified cut"
+        );
+        for actor in [sender, recipient] {
+            let Some(parent) = self
+                .ready_selector(
+                    realm.as_str(),
+                    &CurrentSelector::MemberState {
+                        actor_id: actor.clone(),
+                    },
+                    generation,
+                )
+                .await?
+            else {
+                return Ok(None);
+            };
+            let Some(parent_revision) = parent.parent_membership_revision(realm, actor) else {
+                return Ok(None);
+            };
+            if let arkret_sdk::ScopeRef::Circle { circle_id, .. } = scope {
+                let Some(TypedCurrentRow::Value {
+                    source_stream_ref,
+                    value,
+                    ..
+                }) = self
+                    .ready_selector(
+                        realm.as_str(),
+                        &CurrentSelector::CircleMemberState {
+                            circle_id: circle_id.clone(),
+                            member_actor_id: actor.clone(),
+                        },
+                        generation,
+                    )
+                    .await?
+                else {
+                    return Ok(None);
+                };
+                anyhow::ensure!(
+                    source_stream_ref
+                        == arkret_sdk::CommitStreamRef::Circle {
+                            realm_id: realm.clone(),
+                            circle_id: circle_id.clone(),
+                        },
+                    "Typing Circle member belongs to another stream"
+                );
+                let membership: arkret_wire::CircleMemberStateCurrent =
+                    serde_json::from_value(value)?;
+                let TypedCurrentRow::Value {
+                    source_stream_ref: parent_stream,
+                    ..
+                } = &parent;
+                if !membership.is_effective_under_parent(
+                    realm,
+                    parent_stream,
+                    &parent_revision,
+                    arkret_sdk::MembershipState::Join,
+                ) {
+                    return Ok(None);
+                }
+            }
+        }
+        let current = self
+            .read_strand_at_generation(realm, strand_id, generation)
+            .await?;
+        Ok(current.filter(|strand| {
+            strand
+                .tracks
+                .get("discussion")
+                .is_some_and(|track| track.enabled != Some(false))
+        }))
     }
 
     /// A Call selector derives from its accepted create Event. Only the installed
@@ -2673,6 +2773,170 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn typing_target_requires_both_exact_members_and_active_discussion_at_one_cut() {
+        let realm: arkret_sdk::RealmId = REALM.parse().unwrap();
+        let strand_id = arkret_sdk::StrandId::from_event_id(&arkret_sdk::EventId::from_digest(
+            arkret_sdk::DigestSuite::Sha256,
+            [31; 32],
+        ));
+        let actor = |principal: &str, station: &str| {
+            arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+                principal.parse().unwrap(),
+                station.parse().unwrap(),
+            ))
+        };
+        let sender = actor(
+            "ak:did_core:web:alice.example",
+            "ak:did_core:web:station.example",
+        );
+        let recipient = actor(
+            "ak:did_core:web:bob.example",
+            "ak:did_core:web:station.example",
+        );
+        for scenario in [
+            "valid",
+            "missing",
+            "sender_leave",
+            "recipient_leave",
+            "other_station",
+            "missing_track",
+            "disabled_track",
+            "circle_valid",
+            "circle_rejoin",
+        ] {
+            let storage_path = path();
+            let store = index(&storage_path, 0).await;
+            let parent = |actor: &arkret_sdk::ActorId, membership: &str| TypedCurrentRow::Value {
+                selector: CurrentSelector::MemberState {
+                    actor_id: actor.clone(),
+                },
+                source_stream_ref: arkret_sdk::CommitStreamRef::Realm {
+                    realm_id: realm.clone(),
+                },
+                revision: arkret_wire::CurrentRevision {
+                    commit_id: COMMIT.parse().unwrap(),
+                    stream_position: 1,
+                },
+                value: json!({"membership":membership}),
+            };
+            let mut rows = vec![parent(
+                &recipient,
+                if scenario == "recipient_leave" {
+                    "leave"
+                } else {
+                    "join"
+                },
+            )];
+            if scenario != "missing" {
+                let joined_actor = if scenario == "other_station" {
+                    actor(
+                        "ak:did_core:web:alice.example",
+                        "ak:did_core:web:other.example",
+                    )
+                } else {
+                    sender.clone()
+                };
+                rows.push(parent(
+                    &joined_actor,
+                    if scenario == "sender_leave" {
+                        "leave"
+                    } else {
+                        "join"
+                    },
+                ));
+            }
+            let mut strand = arkret_sdk::Strand::discussion(
+                strand_id.clone(),
+                realm.clone(),
+                "Target",
+                sender.clone(),
+            );
+            if scenario == "missing_track" {
+                strand.tracks.remove("discussion");
+            }
+            if scenario == "disabled_track" {
+                strand.tracks.get_mut("discussion").unwrap().enabled = Some(false);
+                strand.tracks.get_mut("discussion").unwrap().is_primary = None;
+            }
+            let mut coverage = baseline(CURSORS[0], 1, true);
+            let scope = if scenario.starts_with("circle_") {
+                let circle_id = arkret_sdk::CircleId::from_event_id(
+                    &arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [32; 32]),
+                );
+                let stream = arkret_sdk::CommitStreamRef::Circle {
+                    realm_id: realm.clone(),
+                    circle_id: circle_id.clone(),
+                };
+                let revision = arkret_wire::CurrentRevision {
+                    commit_id: arkret_sdk::RealmCommitId::from_digest([42; 32]),
+                    stream_position: 1,
+                };
+                coverage["coverage"]["stream_heads"].as_array_mut().unwrap().push(json!({"stream_ref":stream, "stream_position":1, "commit_id":revision.commit_id}));
+                for member in [&sender, &recipient] {
+                    let parent_revision = arkret_wire::CurrentRevision {
+                        commit_id: if scenario == "circle_rejoin" && member == &sender {
+                            arkret_sdk::RealmCommitId::from_digest([43; 32])
+                        } else {
+                            COMMIT.parse().unwrap()
+                        },
+                        stream_position: 1,
+                    };
+                    rows.push(TypedCurrentRow::Value {
+                        selector: CurrentSelector::CircleMemberState { circle_id: circle_id.clone(), member_actor_id: member.clone() },
+                        source_stream_ref: stream.clone(), revision: revision.clone(),
+                        value: json!({"membership":"join", "parent_membership_revision":parent_revision, "effective_at":"2026-09-30T00:00:00.000Z"}),
+                    });
+                }
+                strand.scope_circle_id = Some(circle_id.clone());
+                rows.push(TypedCurrentRow::Value {
+                    selector: CurrentSelector::Strand {
+                        strand_id: strand_id.clone(),
+                    },
+                    source_stream_ref: stream,
+                    revision,
+                    value: serde_json::to_value(strand).unwrap(),
+                });
+                arkret_sdk::ScopeRef::Circle {
+                    realm_id: realm.clone(),
+                    circle_id,
+                }
+            } else {
+                rows.push(TypedCurrentRow::Value {
+                    selector: CurrentSelector::Strand {
+                        strand_id: strand_id.clone(),
+                    },
+                    source_stream_ref: arkret_sdk::CommitStreamRef::Realm {
+                        realm_id: realm.clone(),
+                    },
+                    revision: arkret_wire::CurrentRevision {
+                        commit_id: COMMIT.parse().unwrap(),
+                        stream_position: 1,
+                    },
+                    value: serde_json::to_value(strand).unwrap(),
+                });
+                arkret_sdk::ScopeRef::Realm {
+                    realm_id: realm.clone(),
+                }
+            };
+            store
+                .stage_frame(0, &frame(rows, Some(coverage)))
+                .await
+                .unwrap()
+                .finish();
+            let visible = store
+                .read_typing_strand_ready(&scope, &strand_id, &sender, &recipient)
+                .await
+                .unwrap()
+                .is_some();
+            assert_eq!(
+                visible,
+                matches!(scenario, "valid" | "circle_valid"),
+                "{scenario}"
+            );
+        }
     }
 
     #[tokio::test]
