@@ -103,7 +103,7 @@ async fn read_policy(
             entry: ExactCurrentResultEntry::Policy(row),
             ..
         } => {
-            let PolicySetValue::Governance(policy) = row.value.value else {
+            let PolicySetValue::Governance(policy) = row.value else {
                 anyhow::bail!("This Policy id belongs to another policy family")
             };
             anyhow::ensure!(
@@ -561,7 +561,7 @@ fn Choice(
     options: Vec<String>,
     onvalue: EventHandler<String>,
 ) -> Element {
-    rsx! { label { "{label}" select { value, onchange: move |e| onvalue.call(e.value()), for option in options { option { value: "{option}", "{option}" } } } } }
+    rsx! { label { "{label}" select { "aria-label": label.clone(), value, onchange: move |e| onvalue.call(e.value()), for option in options { option { value: "{option}", "{option}" } } } } }
 }
 #[component]
 fn OperationChoices(

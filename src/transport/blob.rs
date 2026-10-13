@@ -163,10 +163,14 @@ impl<'a> BlobEndpoints<'a> {
 }
 
 fn verify_content_addressed_blob_bytes(blob_ref: &str, bytes: &[u8]) -> anyhow::Result<()> {
-    if let Some(expected_sha256) = blob_ref.strip_prefix("ak:blob:sha256:")
-        && !crate::media::hash_matches(expected_sha256, bytes)
+    if let Some(expected) = blob_ref.strip_prefix("ak:blob:")
+        && let Some((suite, _)) = expected.split_once(':')
     {
-        anyhow::bail!("blob content digest does not match content-addressed blob_ref");
+        anyhow::ensure!(
+            arkret_sdk::canonical::digest(arkret_sdk::canonical::digest_suite(suite)?, bytes)
+                == expected,
+            "blob content digest does not match content-addressed blob_ref"
+        );
     }
     Ok(())
 }
@@ -178,8 +182,14 @@ mod tests {
     #[test]
     fn content_addressed_download_rejects_digest_mismatch() {
         let bytes = b"authenticated attachment";
-        let blob_ref = format!("ak:blob:sha256:{}", crate::canonical::sha256_hex(bytes));
-        assert!(verify_content_addressed_blob_bytes(&blob_ref, bytes).is_ok());
-        assert!(verify_content_addressed_blob_bytes(&blob_ref, b"tampered").is_err());
+        for suite in [
+            arkret_sdk::DigestSuite::Sha256,
+            arkret_sdk::DigestSuite::Blake3,
+        ] {
+            let blob_ref = format!("ak:blob:{}", arkret_sdk::canonical::digest(suite, bytes));
+            assert!(verify_content_addressed_blob_bytes(&blob_ref, bytes).is_ok());
+            assert!(verify_content_addressed_blob_bytes(&blob_ref, b"tampered").is_err());
+        }
+        assert!(verify_content_addressed_blob_bytes("ak:blob:unknown:abcd", bytes).is_err());
     }
 }

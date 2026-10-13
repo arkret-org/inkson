@@ -394,6 +394,11 @@ pub(crate) fn space_participants(
         );
     }
 
+    annotate_agents_from_current(
+        &mut participants,
+        state_store.current_product_view().as_ref(),
+        realm_id,
+    );
     participants.sort_by(|left, right| {
         right
             .is_self

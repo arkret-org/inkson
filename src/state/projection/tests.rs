@@ -10,12 +10,7 @@ fn golden_actor() -> arkret_sdk::DidCoreId {
     arkret_sdk::DidCoreId::new("ak:did_core:webvh:z6mkfixture:alice.example").unwrap()
 }
 
-fn golden_event(
-    event_id: &str,
-    kind: &str,
-    created_at: &str,
-    payload: serde_json::Value,
-) -> arkret_sdk::Event {
+fn golden_event(kind: &str, created_at: &str, payload: serde_json::Value) -> arkret_sdk::Event {
     let mut event = arkret_wire::test_support::raw_event(
         kind,
         arkret_sdk::ScopeRef::Realm {
@@ -26,15 +21,26 @@ fn golden_event(
         payload,
     )
     .unwrap();
-    event.event_id = arkret_sdk::EventId::new(event_id).unwrap();
     event.created_at = created_at.parse().unwrap();
-    event
+    let signer = arkret_test_kit::keys::seeded_signer(
+        arkret_sdk::Did::new("did:webvh:z6mkfixture:alice.example").unwrap(),
+        arkret_sdk::DidUrl::new(
+            "did:webvh:z6mkfixture:alice.example#ak:device:0196419b-0000-7000-8000-000000000001",
+        )
+        .unwrap(),
+    );
+    arkret_test_kit::signed_event::sign_verifiable_event(
+        event,
+        &signer,
+        arkret_sdk::DigestSuite::Sha256,
+    )
+    .unwrap()
+    .expect_verifiable()
 }
 
 #[test]
 fn client_core_message_decode_golden_matches_inkson_ingest() {
     let create = golden_event(
-        "ak:event:AfqXI4jyBJWA5HRhSr3SdFP5Qb_2V210Q00mFqUjA7_z",
         arkret_sdk::EventKind::MessageCreate.as_str(),
         "2026-07-08T00:00:00.000Z",
         serde_json::json!({
@@ -44,11 +50,10 @@ fn client_core_message_decode_golden_matches_inkson_ingest() {
         }),
     );
     let reaction = golden_event(
-        "ak:event:AbHexNOxiiU334tA-ZHyM5pRxJxbMY0jvwlMVDY3Xjrz",
         arkret_sdk::EventKind::ReactionAdd.as_str(),
         "2026-07-08T00:00:01.000Z",
         serde_json::json!({
-            "target_ref": "ak:event:AfqXI4jyBJWA5HRhSr3SdFP5Qb_2V210Q00mFqUjA7_z",
+            "target_ref": create.event_id,
             "key": "+1"
         }),
     );
@@ -90,18 +95,12 @@ fn client_core_message_decode_golden_matches_inkson_ingest() {
     let records = super::message_ops::message_operations_from_events(GOLDEN_REALM, &event_values);
 
     assert_eq!(records.len(), 2);
-    assert_eq!(
-        records[0].operation_id,
-        "ak:event:AfqXI4jyBJWA5HRhSr3SdFP5Qb_2V210Q00mFqUjA7_z"
-    );
+    assert_eq!(records[0].operation_id, events[0].event_id.as_str());
     assert_eq!(
         records[0].payload["payload"]["content"]["body"],
         serde_json::json!("hello")
     );
-    assert_eq!(
-        records[1].operation_id,
-        "ak:event:AbHexNOxiiU334tA-ZHyM5pRxJxbMY0jvwlMVDY3Xjrz"
-    );
+    assert_eq!(records[1].operation_id, events[1].event_id.as_str());
     assert_eq!(
         records[1].payload["payload"]["key"],
         serde_json::json!("+1")

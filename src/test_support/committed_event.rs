@@ -280,8 +280,9 @@ pub(crate) fn verified_realm_fixture_as(
     )
 }
 
-/// One contiguous signed Realm stream governed by `station`, whose genesis
-/// Event carries `genesis_payload`. An empty tail keeps its head at genesis.
+/// One contiguous signed Realm stream governed by `station`. The input Realm
+/// is a deterministic salt seed; callers use the returned bundle's derived
+/// Realm identity. An explicit genesis payload retains its original salt.
 pub(crate) fn verified_realm_fixture_signed_by(
     station: &FixtureStation,
     realm_id: RealmId,
@@ -298,13 +299,74 @@ pub(crate) fn verified_realm_fixture_signed_by(
         Did::new(format!("did:web:{principal}")).unwrap(),
         DidUrl::new(format!("did:web:{principal}#{device_id}")).unwrap(),
     );
-    let scope = ScopeRef::Realm {
-        realm_id: realm_id.clone(),
-    };
     let actor = ActorId::account(arkret_sdk::AccountId::new(
         DidCoreId::new(format!("ak:did_core:web:{principal}")).unwrap(),
         DidCoreId::new("ak:did_core:web:station.example").unwrap(),
     ));
+    let realm_seed = realm_id;
+    let genesis_payload = if genesis_payload == json!({}) {
+        let salt = arkret_sdk::GenesisSalt::new(arkret_sdk::canonical::base64url_encode(
+            arkret_sdk::canonical::sha256_bytes(realm_seed.as_str().as_bytes()),
+        ))
+        .unwrap();
+        arkret_sdk::RealmCreatePayload::new(
+            arkret_sdk::RealmGenesis::new(
+                arkret_sdk::RealmPurpose::Collaboration,
+                salt,
+                arkret_sdk::TrustDomainId::new("ak:trust_domain:fixture.example").unwrap(),
+                arkret_sdk::SecurityClass::Standard,
+                station.service_id.clone(),
+                arkret_sdk::JoinRule::Invite,
+                arkret_sdk::HistoryAccess::SinceJoin,
+                arkret_sdk::Discoverability::InviteOnly,
+                None,
+                None,
+            )
+            .unwrap(),
+        )
+        .to_value()
+        .unwrap()
+    } else {
+        genesis_payload
+    };
+    let genesis = SignedEventFixtureBuilder::new(
+        EventKind::RealmCreate.as_str(),
+        ScopeRef::RealmGenesis,
+        actor.clone(),
+        genesis_payload,
+    )
+    .with_created_at(time(0))
+    .sign_verifiable(&event_signer)
+    .unwrap()
+    .expect_verifiable();
+    verified_realm_fixture_from_genesis(station, genesis, entries, principal, device_id)
+}
+
+/// Keep an already authored genesis and its derived identity intact while
+/// sealing the fixture's complete accepting stream and authority bundle.
+pub(crate) fn verified_realm_fixture_from_genesis(
+    station: &FixtureStation,
+    genesis: arkret_sdk::Event,
+    entries: Vec<(String, Value)>,
+    principal: &str,
+    device_id: &str,
+) -> (
+    RealmAuthorityBundle,
+    RealmAuthorityKeyMap,
+    Vec<CommittedEventFullView>,
+) {
+    let event_signer = arkret_test_kit::keys::seeded_signer(
+        Did::new(format!("did:web:{principal}")).unwrap(),
+        DidUrl::new(format!("did:web:{principal}#{device_id}")).unwrap(),
+    );
+    let actor = ActorId::account(arkret_sdk::AccountId::new(
+        DidCoreId::new(format!("ak:did_core:web:{principal}")).unwrap(),
+        DidCoreId::new("ak:did_core:web:station.example").unwrap(),
+    ));
+    let realm_id = genesis.realm_id.clone();
+    let scope = ScopeRef::Realm {
+        realm_id: realm_id.clone(),
+    };
     let signed = |kind: &str, payload: Value, at| {
         SignedEventFixtureBuilder::new(kind, scope.clone(), actor.clone(), payload)
             .with_created_at(at)
@@ -312,7 +374,6 @@ pub(crate) fn verified_realm_fixture_signed_by(
             .unwrap()
             .expect_verifiable()
     };
-    let genesis = signed(EventKind::RealmCreate.as_str(), genesis_payload, time(0));
     let events = entries
         .into_iter()
         .enumerate()

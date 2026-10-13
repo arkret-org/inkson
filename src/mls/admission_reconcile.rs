@@ -152,17 +152,30 @@ pub(crate) async fn submit_mls_admission_for_invitee(
             == invitee_actor,
         "KeyPackage claim actor does not match the selected complete member ActorId"
     );
+    let scope = arkret_sdk::ScopeRef::Realm {
+        realm_id: arkret_sdk::RealmId::new(realm_id.clone())?,
+    };
+    let state_handle = crate::app::runtime_adapter::state_store_handle(state_store);
+    let current_input = crate::mls::send_gate::MlsSendGateInput::capture(&state_handle, &scope);
+    let current = crate::mls::send_gate::read_durable_mls_current(&current_input, &scope)
+        .await?
+        .context("MLS admission requires verified durable current")?;
+    // The product projection can lag the committed current index after a
+    // membership update. Pin one verified cut for the handshake and Event.
+    let binding = crate::mls::governance_proof::binding_for_current_transition(&current)
+        .map_err(anyhow::Error::msg)?;
     let local_state = state_store.read().clone();
-    let admission = crate::mls::admission::build_realm_mls_admission_events_from_claim(
+    let admission = crate::mls::admission::build_admission_events_with_binding(
         &local_state,
         secure_store.as_ref(),
-        &realm_id,
+        &scope,
         &account.authority,
         &mls_actor_id,
         &account.device_id,
         &claim,
         &claim_request_id,
         &claim_receipt,
+        Some(&binding),
     )
     .map_err(|err| anyhow::anyhow!(err))?;
     let next_epoch = admission.staged_checkpoint.epoch;

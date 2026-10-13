@@ -1418,7 +1418,13 @@ impl EventSubmitter {
             arkret_sdk::EventKind::MessageCreate | arkret_sdk::EventKind::StrandWatchSet
         ) {
             let context = store
-                .read(|state| state.direct_message_context(realm.as_str(), intent.actor_id()))
+                .read(|state| {
+                    if intent.kind() == &arkret_sdk::EventKind::StrandWatchSet {
+                        state.direct_structure_context(realm.as_str(), intent.actor_id())
+                    } else {
+                        state.direct_message_context(realm.as_str(), intent.actor_id())
+                    }
+                })
                 .ok_or_else(|| {
                     anyhow::anyhow!("Direct message current authority is unavailable")
                 })?;

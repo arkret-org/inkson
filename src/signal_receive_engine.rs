@@ -446,13 +446,20 @@ impl InksonSignalSink {
         let observation_owner = self.state_store.read(|store| store.active_principal_id());
         #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
         let observation_epoch = crate::identity::device_directory::session_cache_epoch();
-        let target_scope_matches = self
-            .strand_target_at_verified_cut(&signal)
-            .await
-            .unwrap_or(false);
+        let target_scope_result = self.strand_target_at_verified_cut(&signal).await;
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+        let target_scope_error = target_scope_result.as_ref().err().map(ToString::to_string);
+        let target_scope_matches = target_scope_result.unwrap_or(false);
         if !target_scope_matches {
             #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
-            self.observe_typing(&signal, observation_owner, observation_epoch, false, false);
+            self.observe_typing(
+                &signal,
+                observation_owner,
+                observation_epoch,
+                false,
+                false,
+                target_scope_error,
+            );
             return Ok(());
         }
         match signal.kind() {
@@ -468,7 +475,14 @@ impl InksonSignalSink {
             arkret_sdk::SignalPlaintextKind::Presence | arkret_sdk::SignalPlaintextKind::Typing => {
                 let applied = self.apply_live_body(&signal)?;
                 #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
-                self.observe_typing(&signal, observation_owner, observation_epoch, true, applied);
+                self.observe_typing(
+                    &signal,
+                    observation_owner,
+                    observation_epoch,
+                    true,
+                    applied,
+                    None,
+                );
                 #[cfg(not(all(
                     target_arch = "wasm32",
                     feature = "wasm-localstorage-secrets-test"
@@ -800,6 +814,7 @@ impl InksonSignalSink {
         epoch: u64,
         target_scope_matches: bool,
         live_applied: bool,
+        target_scope_error: Option<String>,
     ) {
         let arkret_sdk::SignalPlaintext::Typing(typing) = &signal.payload else {
             return;
@@ -835,6 +850,7 @@ impl InksonSignalSink {
                 "sender_actor_id": signal.actor_id(), "sender_endpoint": signal.sender_endpoint(),
                     "payload_sequence": signal.payload_sequence(), "typing": typing.typing,
                     "admitted_and_decrypted": true, "target_scope_matches": target_scope_matches,
+                    "target_scope_error": target_scope_error,
                     "live_applied": live_applied, "visible_count": visible_count
                 }),
             ));

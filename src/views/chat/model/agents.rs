@@ -1,5 +1,150 @@
 use super::*;
 
+/// A Realm-authorized, accepted interaction row identifies its exact Agent
+/// account independently of the viewer's private inventory. Labels remain
+/// unresolved; the composer still re-reads current mode before offering it.
+pub(crate) fn annotate_agents_from_current(
+    participants: &mut [SpaceParticipant],
+    view: Option<&crate::current_projection::RealmCurrentView>,
+    realm_id: &str,
+) {
+    let Some(view) = view.filter(|view| view.complete_cut && view.realm_id == realm_id) else {
+        return;
+    };
+    for row in &view.entries {
+        let arkret_wire::TypedCurrentRow::Value {
+            selector: arkret_wire::CurrentSelector::AgentInteraction { agent_account_id },
+            source_stream_ref:
+                arkret_wire::CommitStreamRef::Realm {
+                    realm_id: source_realm,
+                },
+            value,
+            ..
+        } = row
+        else {
+            continue;
+        };
+        if source_realm.as_str() != realm_id
+            || serde_json::from_value::<arkret_sdk::AgentInteractionCurrentValue>(value.clone())
+                .is_err()
+        {
+            continue;
+        }
+        for participant in participants.iter_mut() {
+            if participant
+                .actor_id
+                .as_ref()
+                .and_then(arkret_sdk::ActorId::as_account_id)
+                == Some(agent_account_id)
+            {
+                participant.is_agent = true;
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn public_agent_identity_uses_exact_authorized_current_without_private_inventory() {
+    const REALM: &str = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
+    let agent = arkret_sdk::AccountId::new(
+        arkret_sdk::DidCoreId::new("ak:did_core:web:public-agent.example").unwrap(),
+        arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
+    );
+    let remote = arkret_sdk::AccountId::new(
+        agent.principal_id.clone(),
+        arkret_sdk::DidCoreId::new("ak:did_core:web:other-station.example").unwrap(),
+    );
+    let controller = arkret_sdk::AccountId::new(
+        arkret_sdk::DidCoreId::new("ak:did_core:web:controller.example").unwrap(),
+        agent.station_id.clone(),
+    );
+    let mut ordinary = Vec::new();
+    for account in [&agent, &remote] {
+        upsert_participant(
+            &mut ordinary,
+            &arkret_sdk::ActorId::account(account.clone()),
+            SpaceParticipantRole::Member,
+            "ak:did_core:web:caller.example",
+            None,
+            None,
+        );
+    }
+    let row = arkret_wire::TypedCurrentRow::Value {
+        selector: arkret_wire::CurrentSelector::AgentInteraction {
+            agent_account_id: agent.clone(),
+        },
+        source_stream_ref: arkret_wire::CommitStreamRef::Realm {
+            realm_id: arkret_sdk::RealmId::new(REALM).unwrap(),
+        },
+        revision: arkret_sdk::CurrentRevision {
+            commit_id: arkret_sdk::RealmCommitId::from_digest([1; 32]),
+            stream_position: 1,
+        },
+        value: serde_json::to_value(arkret_sdk::AgentInteractionCurrentValue {
+            controller_account_id: controller,
+            interaction_mode: arkret_sdk::AgentInteractionMode::Public,
+        })
+        .unwrap(),
+    };
+    let view = crate::current_projection::RealmCurrentView::new(REALM, vec![row], true).unwrap();
+    let mut participants = ordinary.clone();
+    annotate_agents_from_current(&mut participants, Some(&view), REALM);
+    let participant = participants
+        .iter()
+        .find(|p| participant_mention_account(p).as_ref() == Some(&agent))
+        .unwrap();
+    assert!(participant.is_agent);
+    assert!(participant.agent_metadata.is_none());
+    let candidate = mention_candidate_for_participant(
+        participant,
+        &participants,
+        "ak:did_core:web:caller.example",
+    )
+    .unwrap();
+    assert_eq!(candidate.subject_account_id, agent);
+    assert!(candidate.is_agent);
+    assert!(candidate.agent_slug_at_time.is_empty());
+    assert!(!agent_candidate_is_visible(
+        participant,
+        &Default::default(),
+        "ak:did_core:web:caller.example"
+    ));
+    assert!(agent_candidate_is_visible(
+        participant,
+        &std::collections::BTreeSet::from([arkret_sdk::ActorId::account(agent).to_string()]),
+        "ak:did_core:web:caller.example"
+    ));
+    assert!(
+        !participants
+            .iter()
+            .find(|p| participant_mention_account(p).as_ref() == Some(&remote))
+            .unwrap()
+            .is_agent
+    );
+    let mut incomplete = view.clone();
+    incomplete.complete_cut = false;
+    let mut wrong_stream = view.clone();
+    let arkret_wire::TypedCurrentRow::Value {
+        source_stream_ref, ..
+    } = &mut wrong_stream.entries[0];
+    *source_stream_ref = arkret_wire::CommitStreamRef::Realm {
+        realm_id: arkret_sdk::RealmId::new("ak:realm:AV1bzsPGpTD74Cq12d9EOrCkieTddiSndS0kDtK1W2hM")
+            .unwrap(),
+    };
+    let mut malformed = view.clone();
+    let arkret_wire::TypedCurrentRow::Value { value, .. } = &mut malformed.entries[0];
+    *value = serde_json::json!({"interaction_mode":"public"});
+    for invalid in [&incomplete, &wrong_stream, &malformed] {
+        let mut participants = ordinary.clone();
+        annotate_agents_from_current(&mut participants, Some(invalid), REALM);
+        assert!(participants.iter().all(|p| !p.is_agent));
+    }
+    let mut participants = ordinary;
+    annotate_agents_from_current(&mut participants, Some(&view), "another Realm");
+    assert!(participants.iter().all(|p| !p.is_agent));
+}
+
 pub(crate) fn merge_agent_metadata(
     existing: &mut AgentParticipantMetadata,
     next: AgentParticipantMetadata,

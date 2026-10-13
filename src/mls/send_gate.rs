@@ -27,6 +27,10 @@ pub(crate) enum MlsSendGate {
 /// Why the gate cannot open for a new application body yet.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub(crate) enum MlsSendGateBlocked {
+    /// No body has been encrypted or authored while this Realm detail waits
+    /// for its complete baseline. The existing editor can retain and retry it.
+    #[error("the Realm detail awaits a complete baseline")]
+    DetailBaselinePending,
     /// The durable current of the Realm is not a complete verified cut, so
     /// the scope's MLS state is unknown. Never collapses into plaintext.
     #[error("MLS send gate is not ready: {0}")]
@@ -384,10 +388,6 @@ pub(crate) async fn resolve_restorable_mls_send_gate(
             .realm_id_opt()
             .ok_or_else(|| anyhow::anyhow!("scope has no Realm"))?;
         anyhow::ensure!(
-            !state.realm_detail_invalidated(realm_id.as_str()),
-            "the Realm detail awaits a complete baseline"
-        );
-        anyhow::ensure!(
             !state.current_reset_required() && state.active_authority() == input.authority,
             "the account current changed"
         );
@@ -395,6 +395,9 @@ pub(crate) async fn resolve_restorable_mls_send_gate(
             state.persist_error().is_none(),
             "local persistence has failed"
         );
+        if state.realm_detail_invalidated(realm_id.as_str()) {
+            return Err(MlsSendGateBlocked::DetailBaselinePending.into());
+        }
         Ok::<_, anyhow::Error>(())
     })?;
     if let MlsSendGate::Encrypted(current) = &gate {

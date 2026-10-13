@@ -752,7 +752,7 @@ async fn submit_structure(
     let actor = account.principal_id.as_str();
     let context = store
         .read()
-        .direct_message_context(&realm, &arkret_sdk::ActorId::account(account.clone()))
+        .direct_structure_context(&realm, &arkret_sdk::ActorId::account(account.clone()))
         .ok_or_else(|| anyhow::anyhow!("Conversation authority is pending"))?;
     anyhow::ensure!(
         context.authority_source == arkret_wire::AuthoritySourceId::DirectConversationParticipantV1,
@@ -941,7 +941,7 @@ pub(super) fn DirectStructurePanel(
         "new_chat" | "new_topic" | "rename_chat" | "rename_topic_target"
     );
     let actor = arkret_sdk::ActorId::account(account.clone());
-    let context = store.read().direct_message_context(&realm, &actor);
+    let context = store.read().direct_structure_context(&realm, &actor);
     let stable = context.as_ref().is_some_and(|c| {
         c.authority_source == arkret_wire::AuthoritySourceId::DirectConversationParticipantV1
     });

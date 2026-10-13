@@ -2669,12 +2669,14 @@ mod tests {
         .unwrap()
         .expect_verifiable();
         let realm = event.realm_id.clone();
-        let (mut bundle, ..) = crate::test_support::committed_event::verified_realm_fixture_as(
-            realm.clone(),
-            Vec::new(),
-            "alice.example",
-            DEVICE_ID,
-        );
+        let (mut bundle, ..) =
+            crate::test_support::committed_event::verified_realm_fixture_from_genesis(
+                &crate::test_support::committed_event::FixtureStation::did_web(),
+                event.clone(),
+                Vec::new(),
+                "alice.example",
+                DEVICE_ID,
+            );
         bundle.genesis_event = event.clone();
         bundle.genesis_commit.event_ref = event.event_id.clone();
         assert_eq!(
@@ -2858,6 +2860,7 @@ mod tests {
                 "alice.example",
                 DEVICE_ID,
             );
+        let realm_id = bundle.realm_id.clone();
         let snapshot = snapshot_at(&bundle, &items, bundle.bundle_issued_at);
         let head = &snapshot.visible_stream_heads[0];
         let space_id = arkret_sdk::SpaceId::from_event_id(&items[0].event.event_id);
@@ -2956,6 +2959,7 @@ mod tests {
                 "alice.example",
                 DEVICE_ID,
             );
+        let realm_id = bundle.realm_id.clone();
         let created = items.last().unwrap();
         let head = arkret_wire::CommitStreamHead {
             stream_ref: created.commit.stream_ref.clone(),
@@ -3030,6 +3034,7 @@ mod tests {
                 "alice.example",
                 DEVICE_ID,
             );
+        let realm_id = bundle.realm_id.clone();
         let head_commit = &items.last().unwrap().commit;
         let head = arkret_wire::CommitStreamHead {
             stream_ref: head_commit.stream_ref.clone(),
@@ -3094,6 +3099,7 @@ mod tests {
                 "alice.example",
                 DEVICE_ID,
             );
+        let realm_id = bundle.realm_id.clone();
         let stream_ref = CommitStreamRef::Realm {
             realm_id: realm_id.clone(),
         };
@@ -3289,10 +3295,9 @@ mod tests {
             .expect_verifiable();
             let realm = event.realm_id.clone();
             let (mut bundle, keys, _) =
-                crate::test_support::committed_event::verified_realm_fixture_signed_by(
+                crate::test_support::committed_event::verified_realm_fixture_from_genesis(
                     &station,
-                    realm.clone(),
-                    json!({}),
+                    event.clone(),
                     Vec::new(),
                     "alice.example",
                     DEVICE_ID,
@@ -3388,6 +3393,7 @@ mod tests {
                     "alice.example",
                     DEVICE_ID,
                 );
+            let realm_id = bundle.realm_id.clone();
             let stream_ref = CommitStreamRef::Realm {
                 realm_id: realm_id.clone(),
             };
@@ -3608,6 +3614,7 @@ mod tests {
                 "alice.example",
                 DEVICE_ID,
             );
+        let realm_id = bundle.realm_id.clone();
         let commit = &items.last().unwrap().commit;
         let head = arkret_wire::CommitStreamHead {
             stream_ref: commit.stream_ref.clone(),
@@ -3674,6 +3681,7 @@ mod tests {
                 "alice.example",
                 DEVICE_ID,
             );
+        let realm_id = bundle.realm_id.clone();
         let commit = &items.last().unwrap().commit;
         let head = arkret_wire::CommitStreamHead {
             stream_ref: commit.stream_ref.clone(),
@@ -3745,6 +3753,7 @@ mod tests {
                 "alice.example",
                 DEVICE_ID,
             );
+        let realm_id = bundle.realm_id.clone();
         let commit = &items.last().unwrap().commit;
         let head = arkret_wire::CommitStreamHead {
             stream_ref: commit.stream_ref.clone(),
@@ -3815,6 +3824,7 @@ mod tests {
                 "alice.example",
                 DEVICE_ID,
             );
+        let realm_id = bundle.realm_id.clone();
         let commit = &items.last().unwrap().commit;
         let head = arkret_wire::CommitStreamHead {
             stream_ref: commit.stream_ref.clone(),
@@ -4215,6 +4225,7 @@ mod tests {
                 "alice.example",
                 DEVICE_ID,
             );
+        let realm_id = bundle.realm_id.clone();
         let commit = &items.last().unwrap().commit;
         let head = arkret_wire::CommitStreamHead {
             stream_ref: commit.stream_ref.clone(),
@@ -4289,6 +4300,7 @@ mod tests {
                 "alice.example",
                 DEVICE_ID,
             );
+        let realm_id = bundle.realm_id.clone();
         let commit = &items.last().unwrap().commit;
         let head = arkret_wire::CommitStreamHead {
             stream_ref: commit.stream_ref.clone(),
@@ -4395,6 +4407,7 @@ mod tests {
                 "alice.example",
                 DEVICE_ID,
             );
+        let realm_id = bundle.realm_id.clone();
         let head_commit = &items.last().unwrap().commit;
         let head = arkret_wire::CommitStreamHead {
             stream_ref: head_commit.stream_ref.clone(),
@@ -4680,6 +4693,7 @@ mod tests {
                 "alice.example",
                 DEVICE_ID,
             );
+        let realm = bundle.realm_id.clone();
         let request = arkret_sdk::AuthorityBundleRequest {
             realm_id: realm.clone(),
             nonce: bundle.current_assertion.nonce.clone(),
@@ -4770,6 +4784,7 @@ mod tests {
                 "alice.example",
                 DEVICE_ID,
             );
+        let realm = bundle.realm_id.clone();
         let request = arkret_sdk::AuthorityBundleRequest {
             realm_id: realm.clone(),
             nonce: bundle.current_assertion.nonce.clone(),
@@ -5421,6 +5436,7 @@ mod tests {
                 "alice.example",
                 DEVICE_ID,
             );
+        let realm_id = bundle.realm_id.clone();
         let request = arkret_sdk::AuthorityBundleRequest {
             realm_id: realm_id.clone(),
             nonce: bundle.current_assertion.nonce.clone(),
@@ -5604,6 +5620,7 @@ mod tests {
                     "alice.example",
                     DEVICE_ID,
                 );
+            let realm_id = bundle.realm_id.clone();
             let rows = coland_bootstrap_rows(&bundle, &items);
             let head = bundle.current_assertion.realm_stream_head.clone();
             validate_signed_floor_rows(
@@ -5677,6 +5694,7 @@ mod tests {
                 "alice.example",
                 DEVICE_ID,
             );
+        let realm_id = bundle.realm_id.clone();
         let accepted = items.last().unwrap();
         let head = bundle.current_assertion.realm_stream_head.clone();
         let mut rows = coland_bootstrap_rows(&bundle, &items[..items.len() - 1]);
@@ -6027,6 +6045,7 @@ mod tests {
             "agent.example",
             "ak:device:0196419b-0000-7000-8000-000000000001",
         );
+        let realm_id = bundle.realm_id.clone();
         let stream_ref = arkret_sdk::CommitStreamRef::Realm {
             realm_id: realm_id.clone(),
         };
@@ -6676,6 +6695,7 @@ mod tests {
                 "alice.example",
                 DEVICE_ID,
             );
+        let realm_id = bundle.realm_id.clone();
         let rows = std::iter::once(CommittedEventView::Full(
             arkret_sdk::CommittedEventFullView {
                 commit: bundle.genesis_commit.clone(),
@@ -6823,6 +6843,7 @@ mod tests {
                 "alice.example",
                 DEVICE_ID,
             );
+        let sibling_id = sibling_bundle.realm_id.clone();
         let sibling = StationRealm {
             rows: with_genesis(&sibling_bundle, sibling_items),
             bundle: sibling_bundle,
@@ -6842,6 +6863,7 @@ mod tests {
                     "alice.example",
                     DEVICE_ID,
                 );
+            let realm_id = bundle.realm_id.clone();
             let mut snapshot = snapshot_at(
                 &bundle,
                 &items[..6],

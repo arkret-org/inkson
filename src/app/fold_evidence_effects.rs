@@ -84,11 +84,19 @@ pub(super) fn SidecarFoldEvidenceEffects(state: SidecarFoldEvidenceEffectState) 
 
             // Test feature only: invoke the SAME sender as the real composer.
             // Secret group state, Device keys and the nonce ledger never leave Rust.
-            let sender = Closure::<dyn Fn(String, String, bool) -> js_sys::Promise>::new(
-                move |realm_text: String, strand_text: String, typing: bool| {
+            // Foreign JS calls have no Dioxus scope. Re-enter the owning
+            // callback and register the real sender task with that scope;
+            // only the non-secret result crosses the Promise boundary.
+            let send_signal = Callback::new(
+                move |(realm_text, strand_text, typing, reply): (
+                    String,
+                    String,
+                    bool,
+                    tokio::sync::oneshot::Sender<String>,
+                )| {
                     let account = active_account.peek().clone();
                     let generation = *session_generation.peek();
-                    wasm_bindgen_futures::future_to_promise(async move {
+                    spawn(async move {
                         let result: anyhow::Result<serde_json::Value> = async {
                             let account =
                                 account.ok_or_else(|| anyhow::anyhow!("account absent"))?;
@@ -173,7 +181,19 @@ pub(super) fn SidecarFoldEvidenceEffects(state: SidecarFoldEvidenceEffectState) 
                         let safe = result.unwrap_or_else(
                             |_| serde_json::json!({"error": "real_signal_send_unavailable"}),
                         );
-                        Ok(wasm_bindgen::JsValue::from_str(&safe.to_string()))
+                        let _ = reply.send(safe.to_string());
+                    });
+                },
+            );
+            let sender = Closure::<dyn Fn(String, String, bool) -> js_sys::Promise>::new(
+                move |realm_text: String, strand_text: String, typing: bool| {
+                    let (reply, received) = tokio::sync::oneshot::channel();
+                    send_signal.call((realm_text, strand_text, typing, reply));
+                    wasm_bindgen_futures::future_to_promise(async move {
+                        let safe = received.await.unwrap_or_else(|_| {
+                            serde_json::json!({"error": "real_signal_send_unavailable"}).to_string()
+                        });
+                        Ok(wasm_bindgen::JsValue::from_str(&safe))
                     })
                 },
             );

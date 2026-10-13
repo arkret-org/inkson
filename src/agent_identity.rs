@@ -6,7 +6,7 @@ use arkret_sdk::webvh::{
 };
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Utc};
 use ed25519_dalek::SigningKey;
 use serde::{Deserialize, Serialize};
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
@@ -135,7 +135,11 @@ fn binding_version_time(
     now: DateTime<Utc>,
 ) -> anyhow::Result<DateTime<Utc>> {
     let inception = DateTime::parse_from_rfc3339(inception_version_time)?.with_timezone(&Utc);
-    Ok(now.max(inception + Duration::seconds(1)))
+    anyhow::ensure!(
+        now.timestamp_millis() > inception.timestamp_millis(),
+        "Agent binding clock has not advanced beyond inception"
+    );
+    Ok(now)
 }
 
 #[cfg(test)]
@@ -145,14 +149,22 @@ mod tests {
     use super::binding_version_time;
 
     #[test]
-    fn binding_version_time_advances_when_inception_and_binding_share_a_second() {
+    fn binding_version_time_keeps_the_real_subsecond_clock() {
         let inception = DateTime::parse_from_rfc3339("2026-09-28T06:00:00Z")
             .unwrap()
             .with_timezone(&Utc);
         let now = inception + Duration::milliseconds(250);
         assert_eq!(
             binding_version_time("2026-09-28T06:00:00Z", now).unwrap(),
-            inception + Duration::seconds(1)
+            now
+        );
+        assert!(binding_version_time("2026-09-28T06:00:00Z", inception).is_err());
+        assert!(
+            binding_version_time(
+                "2026-09-28T06:00:00Z",
+                inception - Duration::milliseconds(1)
+            )
+            .is_err()
         );
     }
 }

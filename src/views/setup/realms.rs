@@ -1184,6 +1184,35 @@ pub(super) fn RealmsSection(
                                         to: Route::Realm { realm_id: created_realm_id_value.clone() },
                                         {tr("setup.action.open_realm")}
                                     }
+                                    Button {
+                                        variant: ButtonVariant::Secondary,
+                                        "data-testid": "new-realm-start-another",
+                                        disabled: pending_recovery_gate(),
+                                        onclick: move |_| {
+                                            if created_realm_id().trim().is_empty()
+                                                || realm_create_busy()
+                                                || pending_recovery_gate()
+                                            {
+                                                return;
+                                            }
+                                            // Only the completed wizard is reset. The accepted
+                                            // Realm and its durable MLS recovery remain intact.
+                                            created_realm_id.set(String::new());
+                                            realm_title.set(String::new());
+                                            realm_summary.set(String::new());
+                                            realm_alias.set(String::new());
+                                            realm_discoverability.set("listed".into());
+                                            realm_policy_join_rule.set("invite".into());
+                                            realm_policy_history_access.set("since_join".into());
+                                            realm_mls_activation.set("after_create".into());
+                                            realm_security_class.set("standard".into());
+                                            realm_federation_policy.set("restricted".into());
+                                            realm_digest_algorithm.set("sha256".into());
+                                            realm_state.set(tr("setup.state.draft"));
+                                            create_step.set(NewRealmStep::Basics);
+                                        },
+                                        {tr("setup.new_realm")}
+                                    }
                                 }
                             }
                         } else {
