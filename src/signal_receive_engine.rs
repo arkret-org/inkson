@@ -9,7 +9,7 @@
 //!
 //! Admission is entirely [`garth::SignalReceiver`]. The client no longer
 //! resolves a sender key of its own: the Station issues the
-//! [`arkret_wire::SignalDeliveryAuthority`] inside the authenticated stream
+//! [`arkret_models_collaboration::SignalDeliveryAuthority`] inside the authenticated stream
 //! frame, and the receiver binds the envelope to it, verifies the producer
 //! proof, and enforces the per-endpoint sequence high-water. This module
 //! supplies only the two seams that need host state:
@@ -390,6 +390,7 @@ impl InksonSignalSink {
             effective_expires_at,
             authority_commit_id,
             parent_realm_authority_commit_id,
+            product_authority,
         } = outcome
         else {
             return Ok(());
@@ -399,6 +400,7 @@ impl InksonSignalSink {
             domain: *domain,
             authority_commit_id,
             parent_realm_authority_commit_id,
+            product_authority,
             payload: plaintext,
         };
         #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
@@ -532,6 +534,33 @@ fn call_current_attempt_matches(
 }
 
 impl InksonSignalSink {
+    async fn refresh_message_streams(&self, now: DateTime<Utc>) {
+        let mut eligible = Vec::new();
+        for signal in self.products.retained_message_streams() {
+            let arkret_sdk::SignalPlaintext::MessageStream(frame) = &signal.payload else {
+                continue;
+            };
+            if signal.expires_at > now
+                && self
+                    .strand_target_at_verified_cut(&signal)
+                    .await
+                    .unwrap_or(false)
+                && signal.product_authority.as_deref().is_some_and(|material| {
+                    arkret_policy::signal_authorization::message_stream_allowed(
+                        material,
+                        signal.actor_id(),
+                        signal.scope_ref(),
+                        frame.strand_id(),
+                        now,
+                    )
+                })
+            {
+                eligible.push(signal);
+            }
+        }
+        self.products.retain_message_streams(&eligible);
+    }
+
     async fn strand_target_at_verified_cut(&self, signal: &AdmittedSignal) -> garth::Result<bool> {
         let Some(strand) = plaintext_strand_target(signal)? else {
             return Ok(true);
@@ -557,7 +586,29 @@ impl InksonSignalSink {
         })
         .await
         .map_err(|_| garth::Error::Protocol("Signal Strand current is unavailable".to_owned()))?;
-        let current = if signal.kind() == arkret_sdk::SignalPlaintextKind::Typing {
+        if signal.kind() == arkret_sdk::SignalPlaintextKind::MessageStream {
+            let Some(material) = signal.product_authority.as_deref() else {
+                return Ok(false);
+            };
+            if !index
+                .signal_product_cut_current(material)
+                .await
+                .unwrap_or(false)
+                || self.state_store.read(|store| {
+                    crate::account_data::is_blocked(
+                        &store.client_blocklist(),
+                        &signal.actor_id().to_string(),
+                    )
+                })
+            {
+                return Ok(false);
+            }
+        }
+        let current = if matches!(
+            signal.kind(),
+            arkret_sdk::SignalPlaintextKind::Typing
+                | arkret_sdk::SignalPlaintextKind::MessageStream
+        ) {
             index
                 .read_typing_strand_ready(
                     signal.scope_ref(),
@@ -908,6 +959,7 @@ pub async fn run_signal_receive_engine(
         ) {
             let now = crate::clock::now_utc();
             sink.expire_live_bodies(now);
+            sink.refresh_message_streams(now).await;
             sink.products.advance_clock(now);
             crate::runtime_helpers::sleep_for(Duration::from_secs(1)).await;
         }
@@ -1065,7 +1117,7 @@ async fn run_signal_receive_attempt(
             return Ok(SignalStreamStopReason::Ended);
         };
         match frame {
-            arkret_wire::SignalStreamFrame::Signal {
+            arkret_models_collaboration::SignalStreamFrame::Signal {
                 envelope,
                 delivery_authority,
             } => {
@@ -1080,7 +1132,7 @@ async fn run_signal_receive_attempt(
                 sink.handle(outcome).await?;
                 *healthy_progress = true;
             }
-            arkret_wire::SignalStreamFrame::Heartbeat => {
+            arkret_models_collaboration::SignalStreamFrame::Heartbeat => {
                 // The initial heartbeat alone must not reset a rapid failure
                 // loop. A later heartbeat proves a sustained live window.
                 if received_heartbeat {
@@ -1091,12 +1143,12 @@ async fn run_signal_receive_attempt(
                 sink.expire_live_bodies(now);
                 sink.products.advance_clock(now);
             }
-            arkret_wire::SignalStreamFrame::Drain {
+            arkret_models_collaboration::SignalStreamFrame::Drain {
                 reconnect_after_ms, ..
             } => {
                 return Ok(SignalStreamStopReason::ReconnectAfter { reconnect_after_ms });
             }
-            arkret_wire::SignalStreamFrame::Unauthorized { reason } => {
+            arkret_models_collaboration::SignalStreamFrame::Unauthorized { reason } => {
                 return Ok(SignalStreamStopReason::Unauthorized { reason });
             }
         }
@@ -1209,6 +1261,7 @@ mod tests {
             .expect("test plaintext matches its registered closed profile");
         assert_eq!(payload.kind().as_str(), kind);
         AdmittedSignal {
+            product_authority: None,
             authority_commit_id: arkret_sdk::RealmCommitId::from_digest([41; 32]),
             parent_realm_authority_commit_id: None,
             expires_at: at(30),
@@ -1389,6 +1442,7 @@ mod tests {
             domain: Box::new(signal.domain),
             authority_commit_id: signal.authority_commit_id,
             parent_realm_authority_commit_id: signal.parent_realm_authority_commit_id,
+            product_authority: signal.product_authority,
             plaintext: signal.payload,
             effective_expires_at: crate::clock::now_utc() + chrono::Duration::seconds(5),
         })
@@ -1443,6 +1497,7 @@ mod tests {
                 effective_expires_at,
                 authority_commit_id,
                 parent_realm_authority_commit_id,
+                product_authority,
             } = outcome
             else {
                 return Ok(0);
@@ -1451,6 +1506,7 @@ mod tests {
                 domain: *domain,
                 authority_commit_id,
                 parent_realm_authority_commit_id,
+                product_authority,
                 payload: plaintext,
                 expires_at: effective_expires_at,
             };
@@ -1508,6 +1564,7 @@ mod tests {
             domain: Box::new(signal.domain),
             authority_commit_id: signal.authority_commit_id,
             parent_realm_authority_commit_id: signal.parent_realm_authority_commit_id,
+            product_authority: signal.product_authority,
             plaintext: signal.payload,
             effective_expires_at: signal.expires_at,
         };

@@ -1506,6 +1506,52 @@ impl CurrentIndex {
         }
         Ok(Some(entry))
     }
+    /// A frame cannot overrule a newer locally verified governance observation.
+    pub(crate) async fn signal_product_cut_current(
+        &self,
+        material: &arkret_sdk::SignalProductAuthority,
+    ) -> anyhow::Result<bool> {
+        let _lease = self.lease.lock().await;
+        if self.is_poisoned() {
+            return Ok(false);
+        }
+        let realm = material.current_realm_head.stream_ref.realm_id();
+        let progress = self
+            .progress_at(realm.as_str(), self.generation.load(Ordering::Acquire))
+            .await?;
+        if !progress_is_complete_cut(&progress, realm) {
+            return Ok(false);
+        }
+        let installed = progress
+            .signed_snapshot
+            .as_ref()
+            .map(|c| &c.stream_heads)
+            .or_else(|| progress.baseline.as_ref().map(|b| &b.coverage.stream_heads));
+        let Some(installed) = installed else {
+            return Ok(false);
+        };
+        if ![&material.current_realm_head, &material.current_scope_head]
+            .into_iter()
+            .all(|head| installed.contains(head))
+        {
+            return Ok(false);
+        }
+        Ok(Some(installed)
+            .into_iter()
+            .flatten()
+            .chain(&progress.observed_heads)
+            .all(|known| {
+                [&material.current_realm_head, &material.current_scope_head]
+                    .into_iter()
+                    .all(|head| {
+                        head.stream_ref != known.stream_ref
+                            || known.stream_position < head.stream_position
+                            || (known.stream_position == head.stream_position
+                                && known.commit_id == head.commit_id)
+                    })
+            }))
+    }
+
     pub(crate) async fn read_progress(&self, realm: &str) -> anyhow::Result<CurrentRealmProgress> {
         let _lease = self.lease.lock().await;
         self.progress_at(realm, self.generation.load(Ordering::Acquire))

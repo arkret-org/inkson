@@ -659,6 +659,58 @@ impl AgentAdminController {
                 last_op_status.set("Select at least one runtime service surface.".to_owned());
                 return;
             };
+            let recovery =
+                match with_authed_sdk_client(&base, api_token.clone(), |http| async move {
+                    http.get::<arkret_sdk::RecoveryPolicyActiveOutcome>(
+                        "/_arkret/root/identity/recovery-policy",
+                    )
+                    .await
+                    .map_err(anyhow::Error::from)
+                })
+                .await
+                {
+                    Ok(value) => value,
+                    Err(_) => {
+                        last_op_status.set(
+                            "Could not check your recovery policy. Refresh and try again."
+                                .to_owned(),
+                        );
+                        return;
+                    }
+                };
+            if recovery
+                .account_id
+                .as_ref()
+                .is_some_and(|identity| identity != &account.authority)
+            {
+                last_op_status.set(
+                    "The recovery policy does not match this account. Refresh and try again."
+                        .to_owned(),
+                );
+                return;
+            }
+            let Some(policy) = recovery.active_policy else {
+                last_op_status
+                    .set("Set up your recovery policy before creating an Agent.".to_owned());
+                return;
+            };
+            if policy.account_id != account.authority {
+                last_op_status.set(
+                    "The recovery policy does not match this account. Refresh and try again."
+                        .to_owned(),
+                );
+                return;
+            }
+            if !crate::app::SessionContext::get()
+                .active_account()
+                .is_some_and(|current| {
+                    current.authority == account.authority && current.did() == account.did()
+                })
+            {
+                last_op_status
+                    .set("The active account changed. Start Agent creation again.".to_owned());
+                return;
+            }
             let nonce = crate::operation::uuid_v7();
             let agent_did_local_id = format!("agent-{nonce}");
             let operation_id = match arkret_sdk::ProtocolOperationId::new(format!(

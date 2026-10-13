@@ -83,6 +83,7 @@ pub struct AdmittedSignal {
     /// was enforced against.
     pub domain: arkret_sdk::SignalSequenceDomain,
     /// The scope authorization basis retained from the verified envelope.
+    pub product_authority: Option<Box<arkret_sdk::SignalProductAuthority>>,
     pub authority_commit_id: arkret_sdk::RealmCommitId,
     /// Circle authorization separately binds its parent Realm basis.
     pub parent_realm_authority_commit_id: Option<arkret_sdk::RealmCommitId>,
@@ -156,6 +157,11 @@ pub trait SignalProductSink {
     /// marks a preview stalled after 30 seconds without a valid frame and
     /// discards it after ten minutes. A producer that goes quiet emits nothing
     /// to drive that, so the rail's own keepalive cadence drives it instead.
+    fn retained_message_streams(&self) -> Vec<AdmittedSignal> {
+        Vec::new()
+    }
+    fn retain_message_streams(&self, _eligible: &[AdmittedSignal]) {}
+
     fn advance_clock(&self, now: chrono::DateTime<chrono::Utc>);
 }
 
@@ -218,6 +224,13 @@ impl SignalProductSink for SignalProductRouter {
 
     fn read_receipt(&self, plaintext: &AdmittedSignal, policy: &arkret_sdk::ReadReceiptPolicy) {
         self.sink.borrow().read_receipt(plaintext, policy);
+    }
+
+    fn retained_message_streams(&self) -> Vec<AdmittedSignal> {
+        self.sink.borrow().retained_message_streams()
+    }
+    fn retain_message_streams(&self, eligible: &[AdmittedSignal]) {
+        self.sink.borrow().retain_message_streams(eligible);
     }
 
     fn advance_clock(&self, now: chrono::DateTime<chrono::Utc>) {
