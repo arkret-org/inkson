@@ -43,44 +43,6 @@ pub(super) struct AgentAdminController {
 
 struct ProvisionInFlightReset(Signal<bool>);
 
-#[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
-struct ProvisionStageDiagnostic(Option<&'static str>);
-
-#[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
-impl ProvisionStageDiagnostic {
-    fn enter(&mut self, stage: &'static str) {
-        self.0 = Some(stage);
-        tracing::warn!(
-            stage,
-            outcome = "entered",
-            "Agent provision state transition"
-        );
-    }
-
-    fn complete(&mut self) {
-        if let Some(stage) = self.0.take() {
-            tracing::warn!(
-                stage,
-                outcome = "completed",
-                "Agent provision state transition"
-            );
-        }
-    }
-}
-
-#[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
-impl Drop for ProvisionStageDiagnostic {
-    fn drop(&mut self) {
-        if let Some(stage) = self.0 {
-            tracing::warn!(
-                stage,
-                outcome = "failed",
-                "Agent provision state transition"
-            );
-        }
-    }
-}
-
 impl Drop for ProvisionInFlightReset {
     fn drop(&mut self) {
         self.0.set(false);
@@ -621,22 +583,13 @@ impl AgentAdminController {
                 return;
             }
             let controller_did = account.did().clone();
-            let (controller_recovery_evidence, controller_station_id) = match state_store
-                .read()
-                .recovery_material_evidence()
+            let controller_recovery_evidence = match state_store.read().recovery_material_evidence()
             {
                 Some(evidence)
                     if evidence.controller_authority.as_ref() == Some(&account.authority)
                         && evidence.principal_did == controller_did =>
                 {
-                    let station_id = evidence
-                        .controller_authority
-                        .as_ref()
-                        .map(|authority| authority.station_id.clone());
-                    match station_id {
-                        Some(station_id) => (evidence, station_id),
-                        None => unreachable!("the guarded evidence has an authority pair"),
-                    }
+                    evidence
                 }
                 Some(_) => {
                     last_op_status.set(
@@ -711,571 +664,108 @@ impl AgentAdminController {
                     .set("The active account changed. Start Agent creation again.".to_owned());
                 return;
             }
-            let nonce = crate::operation::uuid_v7();
-            let agent_did_local_id = format!("agent-{nonce}");
-            let operation_id = match arkret_sdk::ProtocolOperationId::new(format!(
-                "ak:operation:agent.provision.{nonce}"
-            )) {
-                Ok(value) => value,
-                Err(error) => {
-                    last_op_status.set(format!("Create failed: operation id: {error}"));
-                    return;
-                }
-            };
-            let idempotency_key = match arkret_sdk::IdempotencyKey::new(nonce) {
-                Ok(value) => value,
-                Err(error) => {
-                    last_op_status.set(format!("Create failed: idempotency key: {error}"));
-                    return;
-                }
-            };
-            let (agent_inception, agent_did_keys) = match crate::agent_identity::prepare_inception(
-                &base,
-                &agent_did_local_id,
-                &controller_principal_id,
+            let vault = match crate::outbound_store::InksonOutboundStore::open(
+                &account.authority,
+                crate::outbound_store::OutboundLane::Standard,
             ) {
-                Ok(value) => value,
+                Ok(vault) => vault,
                 Err(error) => {
-                    last_op_status.set(format!("Create failed: Agent DID inception: {error}"));
+                    last_op_status
+                        .set(format!("Create failed: open durable Agent intent: {error}"));
                     return;
                 }
             };
-            let did = match arkret_sdk::Did::new(agent_inception.did.clone()) {
-                Ok(value) => value,
+            let pending = match vault.pending_agent_provisions(&account.authority).await {
+                Ok(pending) => pending,
                 Err(error) => {
-                    last_op_status.set(format!("Create failed: generated Agent DID: {error}"));
+                    last_op_status
+                        .set(format!("Create failed: read durable Agent intent: {error}"));
                     return;
                 }
             };
-            let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-            if let Err(error) = crate::agent_identity::store_keys_durable(
-                secure_store.as_ref(),
-                did.as_str(),
-                &agent_did_keys,
-            )
-            .await
-            {
-                last_op_status.set(format!(
-                    "Create failed: persist Agent DID update keys before inception: {error}"
-                ));
-                return;
-            }
-            let inception_submit = agent_inception.submit_body.clone();
-            let inception_outcome =
-                match with_authed_sdk_client(&base, api_token.clone(), move |http| {
-                    let inception_submit = inception_submit.clone();
-                    async move {
-                        crate::transport::account::submit_did_operation(&http, &inception_submit)
-                            .await
-                    }
-                })
-                .await
-                {
-                    Ok(value) => value,
-                    Err(error) => {
-                        last_op_status.set(format!(
-                            "Create failed: publish Agent DID inception: {}",
-                            error.display()
-                        ));
-                        return;
-                    }
-                };
-            if inception_outcome.did != did {
-                last_op_status.set("Create failed: inception response DID mismatch".to_owned());
-                return;
-            }
-            if inception_outcome.status == arkret_sdk::DidOperationSubmitStatus::Pending {
-                last_op_status.set(
-                        "Agent DID inception is pending acceptance; retry creation after it is accepted."
-                            .to_owned(),
-                    );
-                return;
-            }
-            let prepare =
-                AgentProvisionRequestBody::Prepare(arkret_sdk::AgentProvisionPrepareRequestBody {
-                    phase: arkret_sdk::AgentProvisionPreparePhase::Prepare,
-                    operation_id: operation_id.clone(),
-                    idempotency_key: idempotency_key.clone(),
-                    did: did.clone(),
-                    controller_station_id: controller_station_id.clone(),
-                    slug: slug.clone(),
-                    requested_scope: requested_scope.clone(),
-                    pairing_ttl_ms: None,
-                });
-            let preparation = match with_authed_sdk_client(&base, api_token.clone(), move |http| {
-                let prepare = prepare.clone();
-                async move {
-                    http.agent_provision(&prepare)
-                        .await
-                        .map_err(anyhow::Error::from)
-                }
-            })
-            .await
-            {
-                Ok(AgentProvisionOutcome::AwaitingControllerEvent(outcome))
-                    if outcome.did == did =>
-                {
-                    (
-                        outcome.agent_id,
-                        outcome.did,
-                        outcome.initial_resolution,
-                        outcome.controller_realm_id,
-                        outcome.allocation_handle,
-                        outcome.controller_authorization_ref,
+            let record = if let Some(original) = pending.into_iter().next() {
+                if original.device_id != account.device_id
+                    || original.slug != slug
+                    || original.controller_did != controller_did
+                    || original.principal_endpoint != base
+                    || !matches!(
+                        (crate::canonical::canonical_json_bytes(&original.requested_scope), crate::canonical::canonical_json_bytes(&requested_scope)),
+                        (Ok(original), Ok(requested)) if original == requested
                     )
-                }
-                Ok(AgentProvisionOutcome::AwaitingPcrGenesis(_)) => {
-                    last_op_status
-                        .set("Create failed: prepare returned a committed allocation".to_owned());
-                    return;
-                }
-                Ok(AgentProvisionOutcome::Complete(_)) => {
-                    last_op_status
-                        .set("Create failed: prepare returned a completed allocation".to_owned());
-                    return;
-                }
-                Ok(AgentProvisionOutcome::AwaitingDidBinding(_)) => {
-                    last_op_status.set(
-                        "Create failed: prepare returned an allocation awaiting DID binding"
-                            .to_owned(),
-                    );
-                    return;
-                }
-                Ok(AgentProvisionOutcome::AwaitingControllerEvent(_)) => {
-                    last_op_status
-                        .set("Create failed: prepare returned a different Agent DID".to_owned());
-                    return;
-                }
-                Err(error) => {
-                    last_op_status.set(format!("Create failed: {}", error.display()));
-                    return;
-                }
-            };
-            let (
-                agent_id,
-                did,
-                initial_resolution,
-                controller_realm_id,
-                allocation_handle,
-                controller_authorization_ref,
-            ) = preparation;
-            let prepared_inception_head =
-                match crate::canonical::canonical_sha256(&agent_inception.log_entry) {
-                    Ok(value) => value,
-                    Err(error) => {
-                        last_op_status.set(format!(
-                            "Create failed: digest Agent DID inception: {error}"
-                        ));
-                        return;
-                    }
-                };
-            if initial_resolution.did != did
-                || initial_resolution.version_id != agent_inception.version_id
-                || initial_resolution.method_history_head != prepared_inception_head
-            {
-                last_op_status.set(
-                    "Create failed: server did not pin the exact accepted Agent DID inception"
-                        .to_owned(),
-                );
-                return;
-            }
-            let projected_agent_id = match arkret_sdk::project_did_to_core_id(&did) {
-                Ok(value) => value,
-                Err(error) => {
-                    last_op_status.set(format!("Create failed: allocated DID: {error}"));
-                    return;
-                }
-            };
-            if projected_agent_id != agent_id {
-                last_op_status.set(
-                    "Create failed: allocated DID does not project to the allocated Agent ID"
-                        .to_owned(),
-                );
-                return;
-            }
-            let observed_digest = match arkret_signatures::agent::agent_requested_scope_digest(
-                &agent_id,
-                &controller_principal_id,
-                &requested_scope,
-            ) {
-                Ok(value) => value,
-                Err(error) => {
-                    last_op_status.set(format!("Create failed: requested scope digest: {error}"));
-                    return;
-                }
-            };
-            let expected_digest = observed_digest;
-            if controller_recovery_evidence.principal_control_realm_id != controller_realm_id {
-                last_op_status.set(
-                        "Create failed: the server allocation controller PCR does not match this device's verified bootstrap evidence."
-                            .to_owned(),
-                    );
-                return;
-            }
-            let controller_pcr_create = controller_recovery_evidence
-                .pcr_genesis_unit
-                .create()
-                .clone();
-            let controller_evidence_for_checkpoint = controller_recovery_evidence.clone();
-            if let Err(error) = with_authed_api(&base, api_token.clone(), move |api| async move {
-                crate::recovery_flow::verify_recovery_authority_evidence(
-                    &api,
-                    &controller_evidence_for_checkpoint,
-                )
-                .await
-            })
-            .await
-            {
-                last_op_status.set(format!(
-                    "Create failed: verify Controller PCR recovery authority: {}",
-                    error.display()
-                ));
-                return;
-            }
-            // Freeze and sign the exact Agent PCR create before authoring
-            // the provision Event.  Its content-derived EventId is the only source
-            // of the PCR Realm id carried by that provision declaration.
-            let frozen_genesis = match with_event_submitter(&base, api_token.clone(), {
-                let agent_id = agent_id.clone();
-                let initial_resolution = initial_resolution.clone();
-                let governance_station_id = controller_station_id.clone();
-                let controller_principal_id = controller_principal_id.clone();
-                let controller_authorization_ref = controller_authorization_ref.clone();
-                move |submitter| async move {
-                    let describe = submitter.service_describe().await?;
-                    let draft = crate::event_builders::build_agent_pcr_create_event(
-                        agent_id.as_str(),
-                        initial_resolution,
-                        governance_station_id,
-                        controller_principal_id.as_str(),
-                        controller_authorization_ref.as_str(),
-                        describe.trust_domain.as_str(),
-                    )?;
-                    // A Agent PCR genesis is a one-Event unit: the create
-                    // names the Realm, so it is authored as a unit and its shape is
-                    // proven on the authored result.
-                    let intent = draft.into_intent();
-                    submitter
-                        .author_event_unit(vec![Box::new(move |_| Ok(vec![intent]))])
-                        .await?
-                        .into_iter()
-                        .next()
-                        .ok_or_else(|| anyhow::anyhow!("prepared Agent PCR genesis is missing"))
-                }
-            })
-            .await
-            {
-                Ok(value) => value,
-                Err(error) => {
-                    last_op_status.set(format!(
-                        "Create failed: freeze Agent PCR genesis: {}",
-                        error.display()
-                    ));
-                    return;
-                }
-            };
-            let principal_control_realm_id = frozen_genesis.realm_id.clone();
-            // The controller is the active account, already closed in
-            // `account.authority`; its Station is read from there, not from the
-            // ambient authoring slot (account-lifecycle.md §156).
-            if account.authority.principal_id != controller_principal_id {
-                last_op_status.set(
-                    "Create failed: controller principal is not the active account".to_owned(),
-                );
-                return;
-            }
-            let controller_station_id = account.authority.station_id.clone();
-            let draft = match build_agent_provision_intent(
-                &controller_did,
-                &controller_station_id,
-                &controller_realm_id,
-                &agent_id,
-                &principal_control_realm_id,
-                &controller_authorization_ref,
-                &slug,
-                &expected_digest,
-            ) {
-                Ok(value) => value,
-                Err(error) => {
-                    last_op_status.set(format!("Create failed: author provision Event: {error}"));
-                    return;
-                }
-            };
-            let provision_event =
-                match with_event_submitter(&base, api_token.clone(), move |submitter| async move {
-                    let authored = submitter
-                        .author_independent_events(vec![draft.into_intent()])
-                        .await?;
-                    let authored = authored
-                        .first()
-                        .ok_or_else(|| anyhow::anyhow!("prepared provision Event is missing"))?;
-                    submitter.prepare_authority_authored_self_principal_submission(
-                        authored,
-                        &controller_pcr_create,
-                    )
-                })
-                .await
                 {
+                    last_op_status.set("An original Agent creation is pending for this controller. Resume it with its original device and intent.".to_owned());
+                    return;
+                }
+                original
+            } else {
+                let nonce = crate::operation::uuid_v7();
+                let operation_id = match arkret_sdk::ProtocolOperationId::new(format!(
+                    "ak:operation:agent.provision.{nonce}"
+                )) {
                     Ok(value) => value,
                     Err(error) => {
-                        last_op_status.set(format!(
-                            "Create failed: sign provision Event: {}",
-                            error.display()
-                        ));
+                        last_op_status.set(format!("Create failed: operation id: {error}"));
                         return;
                     }
                 };
-            let commit =
-                AgentProvisionRequestBody::Commit(arkret_sdk::AgentProvisionCommitRequestBody {
-                    phase: arkret_sdk::AgentProvisionCommitPhase::Commit,
+                let idempotency_key = match arkret_sdk::IdempotencyKey::new(nonce.clone()) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        last_op_status.set(format!("Create failed: idempotency key: {error}"));
+                        return;
+                    }
+                };
+                let (inception, keys) = match crate::agent_identity::prepare_inception(
+                    &base,
+                    &format!("agent-{nonce}"),
+                    &controller_principal_id,
+                ) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        last_op_status.set(format!("Create failed: Agent DID inception: {error}"));
+                        return;
+                    }
+                };
+                let candidate = crate::agent_identity::provision::ProvisionCeremony {
+                    authority: account.authority.clone(),
+                    device_id: account.device_id.clone(),
+                    controller_did,
+                    principal_endpoint: base.clone(),
                     operation_id,
                     idempotency_key,
-                    agent_id: agent_id.clone(),
-                    did: did.clone(),
-                    principal_control_realm_id: principal_control_realm_id.clone(),
-                    allocation_handle: allocation_handle.clone(),
                     slug: slug.clone(),
                     requested_scope,
-                    provision_event,
-                    pairing_ttl_ms: None,
-                });
-            let commit_for_first_request = commit.clone();
-            #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
-            let mut diagnostic = ProvisionStageDiagnostic(None);
-            #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
-            diagnostic.enter("first_commit");
-            match with_authed_sdk_client(&base, api_token.clone(), move |http| async move {
-                http.agent_provision(&commit_for_first_request)
-                    .await
-                    .map_err(anyhow::Error::from)
-            })
-            .await
-            {
-                Ok(AgentProvisionOutcome::AwaitingPcrGenesis(outcome))
-                    if outcome.agent_id == agent_id
-                        && outcome.did == did
-                        && outcome.initial_resolution == initial_resolution
-                        && outcome.principal_control_realm_id == principal_control_realm_id
-                        && outcome.allocation_handle == allocation_handle
-                        && outcome.controller_authorization_ref == controller_authorization_ref => {
-                }
-                Ok(AgentProvisionOutcome::AwaitingPcrGenesis(_)) => {
-                    last_op_status.set(
-                        "Create failed: commit returned mismatched PCR authoring coordinates"
-                            .to_owned(),
-                    );
-                    return;
-                }
-                Ok(AgentProvisionOutcome::Complete(_)) => {
-                    last_op_status.set(
-                            "Create failed: commit completed before the declared PCR genesis was submitted"
-                                .to_owned(),
-                        );
-                    return;
-                }
-                Ok(AgentProvisionOutcome::AwaitingControllerEvent(_)) => {
-                    last_op_status
-                        .set("Create failed: commit returned another preparation".to_owned());
-                    return;
-                }
-                Ok(AgentProvisionOutcome::AwaitingDidBinding(_)) => {
-                    last_op_status.set(
-                        "Create failed: commit requested DID binding before PCR acceptance"
-                            .to_owned(),
-                    );
-                    return;
-                }
-                Err(error) => {
-                    last_op_status.set(format!("Create failed: {}", error.display()));
-                    return;
-                }
-            };
-            let genesis_for_submit = frozen_genesis.clone();
-            #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
-            {
-                diagnostic.complete();
-                diagnostic.enter("genesis_submit");
-            }
-            if let Err(error) =
-                with_event_submitter(&base, api_token.clone(), move |submitter| async move {
-                    submitter
-                        .submit_signed_sdk_events_in_order(std::slice::from_ref(
-                            &genesis_for_submit,
-                        ))
-                        .await
-                        .map(|_| ())
-                })
-                .await
-            {
-                last_op_status.set(format!(
-                    "Agent provision accepted, but PCR genesis submission failed: {}",
-                    error.display()
-                ));
-                return;
-            }
-            let commit_for_pcr_check = commit.clone();
-            #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
-            {
-                diagnostic.complete();
-                diagnostic.enter("pcr_commit_check");
-            }
-            let binding_coordinates = match with_authed_sdk_client(
-                &base,
-                api_token.clone(),
-                move |http| async move {
-                    http.agent_provision(&commit_for_pcr_check)
-                        .await
-                        .map_err(anyhow::Error::from)
-                },
-            )
-            .await
-            {
-                Ok(AgentProvisionOutcome::AwaitingDidBinding(outcome))
-                    if outcome.agent_id == agent_id
-                        && outcome.did == did
-                        && outcome.initial_resolution == initial_resolution
-                        && outcome.principal_control_realm_id == principal_control_realm_id
-                        && outcome.allocation_handle == allocation_handle
-                        && outcome.controller_authorization_ref == controller_authorization_ref =>
-                {
-                    outcome.principal_control_realm_id
-                }
-                Ok(AgentProvisionOutcome::AwaitingDidBinding(_)) => {
-                    last_op_status.set(
-                        "Create failed: PCR acceptance returned mismatched DID-binding coordinates"
-                            .to_owned(),
-                    );
-                    return;
-                }
-                Ok(AgentProvisionOutcome::Complete(_)) => {
-                    last_op_status.set(
-                            "Create failed: Agent became visible before its DID PCR binding was accepted"
-                                .to_owned(),
-                        );
-                    return;
-                }
-                Ok(AgentProvisionOutcome::AwaitingPcrGenesis(_)) => {
-                    last_op_status.set(
-                        "Create failed: PCR genesis was accepted but provisioning did not finalize"
-                            .to_owned(),
-                    );
-                    return;
-                }
-                Ok(AgentProvisionOutcome::AwaitingControllerEvent(_)) => {
-                    last_op_status
-                        .set("Create failed: final commit returned another preparation".to_owned());
-                    return;
-                }
-                Err(error) => {
-                    last_op_status.set(format!("Create failed: {}", error.display()));
-                    return;
-                }
-            };
-            #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
-            {
-                diagnostic.complete();
-                diagnostic.enter("did_binding_prepare");
-            }
-            let binding_update = match crate::agent_identity::prepare_binding_update(
-                &agent_inception,
-                &agent_did_keys,
-                &controller_principal_id,
-                &binding_coordinates,
-                &expected_digest,
-            ) {
-                Ok(value) => value,
-                Err(error) => {
-                    last_op_status.set(format!(
-                        "Create failed: build Agent DID PCR binding: {error}"
-                    ));
-                    return;
-                }
-            };
-            let binding_submit = binding_update.submit_body.clone();
-            #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
-            {
-                diagnostic.complete();
-                diagnostic.enter("did_binding_publish");
-            }
-            let binding_outcome =
-                match with_authed_sdk_client(&base, api_token.clone(), move |http| {
-                    let binding_submit = binding_submit.clone();
-                    async move {
-                        crate::transport::account::submit_did_operation(&http, &binding_submit)
-                            .await
-                    }
-                })
-                .await
-                {
-                    Ok(value) => value,
+                    inception,
+                    keys,
+                    preparation: None,
+                    authored: None,
+                    binding_operation: None,
+                    outcome: None,
+                };
+                match vault.freeze_agent_provision(candidate).await {
+                    Ok(record) => record,
                     Err(error) => {
                         last_op_status.set(format!(
-                            "Agent PCR accepted, but DID PCR binding publication failed: {}",
-                            error.display()
+                            "Create failed: freeze original Agent intent: {error}"
                         ));
                         return;
                     }
-                };
-            if binding_outcome.did != did
-                || binding_outcome.status == arkret_sdk::DidOperationSubmitStatus::Pending
+                }
+            };
+            let outcome = match crate::agent_identity::provision::resume_ceremony(
+                record,
+                controller_recovery_evidence,
+                api_token.clone(),
+            )
+            .await
             {
-                last_op_status.set(
-                    "Agent PCR accepted, but its DID binding is still pending acceptance."
-                        .to_owned(),
-                );
-                return;
-            }
-            #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
-            {
-                diagnostic.complete();
-                diagnostic.enter("final_commit");
-            }
-            let outcome =
-                match with_authed_sdk_client(&base, api_token.clone(), move |http| async move {
-                    http.agent_provision(&commit)
-                        .await
-                        .map_err(anyhow::Error::from)
-                })
-                .await
-                {
-                    Ok(AgentProvisionOutcome::Complete(outcome)) => outcome,
-                    Ok(AgentProvisionOutcome::AwaitingDidBinding(_)) => {
-                        last_op_status.set(
-                        "Create failed: DID binding was accepted but provisioning did not finalize"
-                            .to_owned(),
-                    );
-                        return;
-                    }
-                    Ok(AgentProvisionOutcome::AwaitingPcrGenesis(_)) => {
-                        last_op_status.set(
-                            "Create failed: final commit lost the accepted PCR genesis".to_owned(),
-                        );
-                        return;
-                    }
-                    Ok(AgentProvisionOutcome::AwaitingControllerEvent(_)) => {
-                        last_op_status.set(
-                            "Create failed: final commit returned another preparation".to_owned(),
-                        );
-                        return;
-                    }
-                    Err(error) => {
-                        last_op_status.set(format!("Create failed: {}", error.display()));
-                        return;
-                    }
-                };
-            if outcome.agent_id != agent_id
-                || outcome.did != did
-                || outcome.principal_control_realm_id != principal_control_realm_id
-                || outcome.controller_authorization_ref != controller_authorization_ref
-            {
-                last_op_status.set(
-                    "Create failed: completed Agent coordinates differ from the frozen ceremony"
-                        .to_owned(),
-                );
-                return;
-            }
-            #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
-            diagnostic.complete();
+                Ok(outcome) => outcome,
+                Err(error) => {
+                    last_op_status.set(format!("Agent creation remains recoverable: {error}"));
+                    return;
+                }
+            };
+            let agent_id = outcome.agent_id.clone();
             let created_view = match fetch_agent_details(&base, &api_token, agent_id.as_str()).await
             {
                 Ok(view) => view,

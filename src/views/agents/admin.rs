@@ -8,9 +8,8 @@
 use std::time::Duration;
 
 use arkret_models_collaboration::agent_operations::{
-    AgentDeactivateRequestBody, AgentLifecycleState, AgentPauseRequestBody, AgentProvisionOutcome,
-    AgentProvisionRequestBody, AgentRenewPairingOutcome, AgentResumeRequestBody, AgentRuntimeState,
-    AgentView, KeyState,
+    AgentDeactivateRequestBody, AgentLifecycleState, AgentPauseRequestBody,
+    AgentRenewPairingOutcome, AgentResumeRequestBody, AgentRuntimeState, AgentView, KeyState,
 };
 use arkret_models_collaboration::events_payloads::agent::AgentKeyScope;
 use dioxus::prelude::*;
@@ -20,13 +19,12 @@ use dioxus_router::hooks::{use_navigator, use_route};
 use super::model::{
     AgentGrantPreset, AgentServiceScopePreset, agent_lifecycle_wire, agent_runtime_state_wire,
     agent_state_badge_class, agent_state_label, agent_view_from_directory_row,
-    build_agent_pairing_deep_link, build_agent_pairing_handoff_token, build_agent_provision_intent,
-    is_pairing_request_expired, key_state_runtime_state, render_agent_pairing_qr_svg,
-    requested_scope_for_presets,
+    build_agent_pairing_deep_link, build_agent_pairing_handoff_token, is_pairing_request_expired,
+    key_state_runtime_state, render_agent_pairing_qr_svg, requested_scope_for_presets,
 };
 use crate::components::{QrSharePanel, UiIcon};
 use crate::routes::Route;
-use crate::transport::auth::{with_authed_api, with_authed_sdk_client, with_event_submitter};
+use crate::transport::auth::{with_authed_sdk_client, with_event_submitter};
 use crate::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
 use crate::ui::dialog::Dialog;

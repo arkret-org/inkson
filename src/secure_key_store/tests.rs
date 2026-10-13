@@ -252,6 +252,12 @@ fn load_signing_seed_rejects_short_entries() {
 
 #[test]
 fn wasm_indexeddb_required_key_classifier_covers_high_value_secrets() {
+    assert!(is_wasm_indexeddb_required_secret_key(
+        "agent.did.keys.fixture"
+    ));
+    assert!(is_wasm_indexeddb_required_secret_key(
+        "inkson.account.device.agent.did.keys.fixture"
+    ));
     assert!(is_wasm_indexeddb_required_secret_key(SIGNING_SEED_KEY));
     assert!(is_wasm_indexeddb_required_secret_key(
         GRANT_BINDING_SEED_KEY
@@ -311,6 +317,9 @@ fn wasm_indexeddb_required_key_classifier_covers_high_value_secrets() {
 
 #[test]
 fn wasm_test_downgrade_is_limited_to_device_signing_seed_fixtures() {
+    assert!(!is_wasm_test_downgrade_fixture_key(
+        "agent.did.keys.fixture"
+    ));
     assert!(is_wasm_test_downgrade_fixture_key(SIGNING_SEED_KEY));
     assert!(is_wasm_test_downgrade_fixture_key(
         "inkson.web:alice.example.device.ed25519.signing_seed.v1"

@@ -12,6 +12,7 @@
 //! Events is ciphertext at rest and is not charged against the ~5 MB
 //! localStorage per-origin quota that a single queue can exhaust on its own.
 
+mod agent_provision;
 mod creator_discussion;
 pub(crate) mod creator_protection;
 mod creator_quarantine;
@@ -91,6 +92,8 @@ type ScheduledDispatches =
 #[serde(deny_unknown_fields)]
 struct DurableOutboundState {
     items: Vec<garth::SendQueueItem>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    agent_provision_records: Vec<crate::agent_identity::provision::ProvisionCeremony>,
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     mls_commit_checkpoints: std::collections::BTreeMap<
         arkret_sdk::EventId,
@@ -182,6 +185,21 @@ impl DurableOutboundState {
     }
 
     fn validate(&self) -> garth::Result<()> {
+        for (index, record) in self.agent_provision_records.iter().enumerate() {
+            record.validate().map_err(|error| {
+                garth::Error::Storage(format!("invalid Agent ceremony: {error}"))
+            })?;
+            if self.agent_provision_records[..index].iter().any(|other| {
+                other.operation_id == record.operation_id
+                    || (other.authority == record.authority
+                        && other.outcome.is_none()
+                        && record.outcome.is_none())
+            }) {
+                return Err(garth::Error::Storage(
+                    "duplicate Agent ceremony identity or active controller intent".into(),
+                ));
+            }
+        }
         self.validate_creator_discussions()?;
         for (index, record) in self.creator_bootstrap_records.iter().enumerate() {
             record.validate()?;

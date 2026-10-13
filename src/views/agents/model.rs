@@ -10,52 +10,16 @@ use arkret_models_collaboration::agent_operations::{
 use arkret_models_collaboration::events_payloads::agent::{
     AgentKeyScope, AgentKeyScopeResource, AgentKeyScopeResourceKind,
 };
-use arkret_models_identity::handle::HandleVisibility;
 use arkret_sdk::{
     AgentKeyApprovalEvidence, AgentKeyApprovalEvidenceKind, AgentKeyAuthorizePayload,
     AgentKeyPairRequestBody, AgentKeySupersession, AgentPairingBootstrap,
     AgentRequestedScopeDisclosure, AgentRuntimeApprovalControllerProjection, CapabilityActionId,
     Did, DidCoreId, DidUrl, GrantConstraint, GrantConstraintEffect, GrantConstraintKind,
-    GrantConstraintSubkind, Hash, KeyState, NonEmptyString, OpaqueLocalId, PayloadProof, RealmId,
-    RequestId, ServiceOperationId,
+    GrantConstraintSubkind, Hash, KeyState, NonEmptyString, OpaqueLocalId, PayloadProof, RequestId,
+    ServiceOperationId,
 };
 use chrono::Utc;
 use serde_json::{Value, json};
-
-pub fn build_agent_provision_intent(
-    controller_did: &Did,
-    controller_station_id: &DidCoreId,
-    controller_realm_id: &RealmId,
-    agent_id: &DidCoreId,
-    principal_control_realm_id: &RealmId,
-    controller_authorization_ref: &DidUrl,
-    agent_slug: &str,
-    requested_scope_digest: &Hash,
-) -> anyhow::Result<crate::operation::LocalOperation> {
-    let created_at = crate::clock::now_utc();
-    let controller_actor_id = arkret_sdk::project_did_to_core_id(controller_did)?;
-    let authored = arkret_bootstrap::build_agent_provision_intent(
-        &controller_actor_id,
-        controller_realm_id,
-        agent_id,
-        principal_control_realm_id,
-        controller_authorization_ref,
-        agent_slug,
-        requested_scope_digest,
-        HandleVisibility::Private,
-        None,
-        arkret_bootstrap::AgentProvisionIntentOptions {
-            controller_station_id: controller_station_id.clone(),
-            created_at,
-        },
-    )?;
-    // The bootstrap builder finalizes producer content, while the shared
-    // submitter owns signing and Station admission. Reconstruct only that
-    // exact producer intent, never a retired Seal basis.
-    Ok(crate::operation::LocalOperation::new(
-        arkret_event_draft::EventIntent::from_authored(&authored),
-    ))
-}
 
 // ─────────────────────────────────────────────────────────────────────
 // Actor Profile `actor_kind` is non-authoritative display metadata.
