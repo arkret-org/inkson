@@ -88,7 +88,7 @@ jobs:
           rsync -a --delete --exclude .git arkret-spec/ docker-context/arkret-spec/
 
       - name: Build image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: docker-context
           file: docker-context/inkson/Dockerfile
