@@ -15,7 +15,9 @@ use crate::secure_key_store::{SecureKeyStore, SecureKeyStoreError};
 
 pub(crate) const MANAGED_AGENT_DID_KEYS: &str = "agent.did.keys";
 
-#[derive(Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
+pub(crate) mod provision;
+
+#[derive(Clone, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
 pub(crate) struct AgentDidKeys {
     pub(crate) local_id: String,
     binding_seed_hex: String,
