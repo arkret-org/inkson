@@ -8,6 +8,7 @@ pub(crate) struct DirectMessageContext {
     pub authority_source: arkret_wire::AuthoritySourceId,
     pub authority_event_ref: arkret_sdk::EventId,
     pub group_state_ref: arkret_sdk::EventId,
+    pub structure_only: bool,
 }
 
 impl LocalStateStore {
@@ -76,6 +77,33 @@ impl LocalStateStore {
         realm: &str,
         actor: &arkret_sdk::ActorId,
     ) -> Option<DirectMessageContext> {
+        self.direct_authoring_context(realm, actor)
+            .filter(|context| !context.structure_only)
+    }
+
+    pub(crate) fn direct_structure_context(
+        &self,
+        realm: &str,
+        actor: &arkret_sdk::ActorId,
+    ) -> Option<DirectMessageContext> {
+        let context = self.direct_authoring_context(realm, actor)?;
+        let view = self.current_product_view()?;
+        view.entries_for(realm)?;
+        if context.authority_source
+            != arkret_wire::AuthoritySourceId::DirectConversationParticipantV1
+            || !self.current_product_view_ready(realm)
+            || !view.complete_joined_members().ok()??.contains(actor)
+        {
+            return None;
+        }
+        Some(context)
+    }
+
+    fn direct_authoring_context(
+        &self,
+        realm: &str,
+        actor: &arkret_sdk::ActorId,
+    ) -> Option<DirectMessageContext> {
         let context = self.cached.direct_message_contexts.get(realm)?;
         if actor.as_account_id() != Some(&context.account)
             || self.active_authority().as_ref() != Some(&context.account)
@@ -139,6 +167,7 @@ mod tests {
                 authority_source: arkret_wire::AuthoritySourceId::DirectConversationParticipantV1,
                 authority_event_ref: reference.clone(),
                 group_state_ref: reference,
+                structure_only: false,
             }),
         );
         assert!(
@@ -146,6 +175,89 @@ mod tests {
                 .direct_message_context(realm, &arkret_sdk::ActorId::account(authority.clone()))
                 .is_some()
         );
+        let actor = arkret_sdk::ActorId::account(authority.clone());
+        let mut normal = store.direct_message_context(realm, &actor).unwrap();
+        let mut suspended = normal.clone();
+        suspended.structure_only = true;
+        store.set_direct_message_context(realm.into(), Some(suspended.clone()));
+        assert!(store.direct_message_context(realm, &actor).is_none());
+        assert!(store.direct_structure_context(realm, &actor).is_none());
+        let row = |selector: serde_json::Value, value: serde_json::Value| {
+            serde_json::from_value::<arkret_wire::TypedCurrentRow>(serde_json::json!({
+                "selector": selector,
+                "source_stream_ref": {"kind": "realm", "realm_id": realm},
+                "revision": {"commit_id": "ak:realm_commit:AT33EWBTXdTx5CjY-ogbIIF2T4vh-v7jCMCQ80Fss2Rq", "stream_position": 1},
+                "value": value
+            })).unwrap()
+        };
+        let rows = vec![
+            row(
+                serde_json::json!({"kind": "realm_profile"}),
+                serde_json::json!({"title": "Direct"}),
+            ),
+            row(
+                serde_json::json!({"kind": "realm_policy_bundle"}),
+                serde_json::json!({"policy_revision": 1}),
+            ),
+            row(
+                serde_json::json!({"kind": "member_state", "actor_id": actor}),
+                serde_json::json!({"membership": "join"}),
+            ),
+            row(
+                serde_json::json!({"kind": "member_state", "actor_id": arkret_sdk::ActorId::account(account("peer-station"))}),
+                serde_json::json!({"membership": "leave"}),
+            ),
+        ];
+        store
+            .install_current_product_view(
+                crate::current_projection::RealmCurrentView::new(realm, rows.clone(), false)
+                    .unwrap(),
+            )
+            .unwrap();
+        assert!(
+            store.direct_structure_context(realm, &actor).is_none(),
+            "a partial roster never grants structural authority"
+        );
+        store
+            .install_current_product_view(
+                crate::current_projection::RealmCurrentView::new(realm, rows.clone(), true)
+                    .unwrap(),
+            )
+            .unwrap();
+        assert!(
+            store.direct_structure_context(realm, &actor).is_some(),
+            "the joined actor retains structure when its peer leaves"
+        );
+        assert!(
+            store.direct_message_context(realm, &actor).is_none(),
+            "structural authority does not reopen Messages"
+        );
+        let mut left = rows.clone();
+        let arkret_wire::TypedCurrentRow::Value { value, .. } = &mut left[2];
+        *value = serde_json::json!({"membership": "leave"});
+        store
+            .install_current_product_view(
+                crate::current_projection::RealmCurrentView::new(realm, left, true).unwrap(),
+            )
+            .unwrap();
+        assert!(
+            store.direct_structure_context(realm, &actor).is_none(),
+            "the author that left cannot use the stable pair binding"
+        );
+        store
+            .install_current_product_view(
+                crate::current_projection::RealmCurrentView::new(realm, rows, true).unwrap(),
+            )
+            .unwrap();
+        suspended.authority_source =
+            arkret_wire::AuthoritySourceId::DirectConversationBootstrapParticipantV1;
+        store.set_direct_message_context(realm.into(), Some(suspended));
+        assert!(
+            store.direct_structure_context(realm, &actor).is_none(),
+            "bootstrap does not grant structure"
+        );
+        normal.structure_only = false;
+        store.set_direct_message_context(realm.into(), Some(normal));
         crate::identity::device_directory::fence_device_refresh();
         let mut retained = store
             .direct_message_context(realm, &arkret_sdk::ActorId::account(authority.clone()))
@@ -206,6 +318,7 @@ mod tests {
                     arkret_sdk::DigestSuite::Sha256,
                     [8; 32],
                 ),
+                structure_only: false,
             }),
         );
         store

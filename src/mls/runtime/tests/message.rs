@@ -462,6 +462,7 @@ fn direct_epoch_zero_send_requires_exact_verified_founder_bootstrap_context() {
         authority_event_ref: arkret_sdk::EventId::new(realm.replace("ak:realm:", "ak:event:"))
             .unwrap(),
         group_state_ref: reference.clone(),
+        structure_only: false,
     };
     state.set_direct_message_context(realm.into(), Some(context.clone()));
     assert_eq!(ready(&state), Some(true));

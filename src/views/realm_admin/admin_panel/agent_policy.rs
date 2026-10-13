@@ -561,7 +561,7 @@ fn Choice(
     options: Vec<String>,
     onvalue: EventHandler<String>,
 ) -> Element {
-    rsx! { label { "{label}" select { value, onchange: move |e| onvalue.call(e.value()), for option in options { option { value: "{option}", "{option}" } } } } }
+    rsx! { label { "{label}" select { "aria-label": label.clone(), value, onchange: move |e| onvalue.call(e.value()), for option in options { option { value: "{option}", "{option}" } } } } }
 }
 #[component]
 fn OperationChoices(

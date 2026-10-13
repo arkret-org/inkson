@@ -438,7 +438,15 @@ pub(super) async fn dispatch_card_detail_update(
             )
             .await
             {
-                board_status.set(format!("encrypted card write is not ready: {error}"));
+                let pending_baseline = matches!(
+                    error.downcast_ref::<crate::mls::send_gate::MlsSendGateBlocked>(),
+                    Some(crate::mls::send_gate::MlsSendGateBlocked::DetailBaselinePending)
+                );
+                board_status.set(if pending_baseline {
+                    format!("encryption_transition_pending: {error}")
+                } else {
+                    format!("encrypted card write is not ready: {error}")
+                });
                 return false;
             }
         }

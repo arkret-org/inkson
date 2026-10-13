@@ -313,7 +313,7 @@ pub(crate) async fn install_resolved_message_context(
         return Ok(());
     };
     let realm = coordinates.realm_id.clone();
-    let (authority_source, authority_event_ref, group_state_ref) = match outcome {
+    let (authority_source, authority_event_ref, group_state_ref, structure_only) = match outcome {
         DirectConversationResolveOutcome::Found {
             coordinates,
             group_state_ref,
@@ -329,6 +329,29 @@ pub(crate) async fn install_resolved_message_context(
                 arkret_wire::AuthoritySourceId::DirectConversationParticipantV1,
                 reference,
                 group_state_ref.clone(),
+                false,
+            )
+        }
+        DirectConversationResolveOutcome::Suspended {
+            coordinates,
+            blockers,
+            group_state_ref: Some(group_state_ref),
+        } if blockers.as_slice()
+            == [
+                arkret_sdk::direct_conversation::DirectConversationSendBlocker::PeerNotJoinedMls,
+            ] =>
+        {
+            // A peer leave blocks Messages, not the active participant's
+            // structural authority. Its own membership is checked at the
+            // complete current cut by direct_structure_context.
+            let reference = coordinates.binding_event_ref.clone().ok_or_else(|| {
+                anyhow::anyhow!("Suspended Direct Conversation omits binding reference")
+            })?;
+            (
+                arkret_wire::AuthoritySourceId::DirectConversationParticipantV1,
+                reference,
+                group_state_ref.clone(),
+                true,
             )
         }
         DirectConversationResolveOutcome::Provisional {
@@ -358,6 +381,7 @@ pub(crate) async fn install_resolved_message_context(
                 arkret_wire::AuthoritySourceId::DirectConversationBootstrapParticipantV1,
                 genesis.event_id.clone(),
                 group_state_ref.clone(),
+                false,
             )
         }
         _ => return Ok(()),
@@ -379,6 +403,7 @@ pub(crate) async fn install_resolved_message_context(
                 authority_source,
                 authority_event_ref,
                 group_state_ref,
+                structure_only,
             }),
         );
         Ok(())
@@ -909,7 +934,7 @@ mod tests {
             handle.write(|state| state.set_direct_message_context(realm.into(), Some(crate::state::DirectMessageContext {
                 account: account.clone(), session_epoch: epoch, query_sequence: sequence,
                 authority_source: arkret_wire::AuthoritySourceId::DirectConversationBootstrapParticipantV1,
-                authority_event_ref: founding.clone(), group_state_ref: group.clone(),
+                authority_event_ref: founding.clone(), group_state_ref: group.clone(), structure_only: false,
             })));
             let coordinates = serde_json::from_value(json!({
                 "pair_key":format!("sha256:{}", "ab".repeat(32)), "realm_id":realm,
