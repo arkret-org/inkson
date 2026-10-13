@@ -1311,6 +1311,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                                                 self_badge_test_id: None,
                                                                 agent_badge_test_id: Some("mention-suggestion-agent-badge".to_owned()),
                                                                 is_self: candidate_is_self,
+                                                                is_agent: candidate.is_agent,
                                                                 agent_slug: candidate_agent_slug,
                                                                 agent_selector: None,
                                                             }

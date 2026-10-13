@@ -32,6 +32,7 @@ pub fn ActorIdentityLabel(
     self_badge_test_id: Option<String>,
     agent_badge_test_id: Option<String>,
     #[props(default)] is_self: bool,
+    #[props(default)] is_agent: bool,
     agent_slug: Option<String>,
     agent_selector: Option<String>,
 ) -> Element {
@@ -48,13 +49,14 @@ pub fn ActorIdentityLabel(
     let agent_badge_test_id =
         agent_badge_test_id.unwrap_or_else(|| format!("{test_id}-agent-badge"));
     let agent_slug = agent_slug.filter(|slug| !slug.trim().is_empty());
+    let is_agent = is_agent || agent_slug.is_some();
     let agent_selector = agent_selector.filter(|selector| !selector.trim().is_empty());
 
     rsx! {
         span {
             class: "{class_name}",
             "data-testid": "{identity_test_id}",
-            "data-actor-kind": if agent_slug.is_some() { "agent" } else { "user" },
+            "data-actor-kind": if is_agent { "agent" } else { "user" },
             title: "{title}",
             span { class: "actor-identity-primary", "{label}" }
             if is_self {
@@ -63,7 +65,7 @@ pub fn ActorIdentityLabel(
                     test_id: Some(self_badge_test_id),
                 }
             }
-            if agent_slug.is_some() {
+            if is_agent {
                 span {
                     class: "badge member-badge member-badge-agent actor-identity-agent-badge",
                     "data-testid": "{agent_badge_test_id}",
