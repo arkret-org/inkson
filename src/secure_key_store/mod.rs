@@ -87,12 +87,9 @@ pub use signing_seed::{
 #[cfg(target_arch = "wasm32")]
 // The garth `SecureKeyStore` trait object drops its `Send + Sync` supertrait on
 // wasm (`MaybeSendSync`), but a `static OnceLock<T>` still requires `T: Sync`.
-// The concrete backends we ever install here (IndexedDb via `IndexedDbSendBoundary`,
-// LocalStorage over `String`/`[u8; 32]`, memory over `Arc<Mutex<…>>`) are all
-// genuinely `Send + Sync`, so pin the process-global slot to the `+ Send + Sync`
-// trait object; callers freely coerce it down to the bare `Arc<dyn SecureKeyStore>`.
-static WASM_INDEXEDDB_SECURE_KEY_STORE: OnceLock<Arc<dyn SecureKeyStore + Send + Sync>> =
-    OnceLock::new();
+// Pin the actual initialized IndexedDB backend, whose JS handles retain their
+// same-thread boundary. Callers coerce it to the secure-store port.
+static WASM_INDEXEDDB_SECURE_KEY_STORE: OnceLock<Arc<IndexedDbSecureKeyStore>> = OnceLock::new();
 
 /// The seed-grade IndexedDB/SubtleCrypto tier has completed initialization.
 #[cfg(target_arch = "wasm32")]
@@ -221,6 +218,7 @@ pub(crate) fn is_wasm_indexeddb_required_secret_key(key: &str) -> bool {
         key.starts_with(logical_prefix) || key.contains(&format!(".{logical_prefix}"))
     };
     is_wasm_ed25519_seed_key(key)
+        || scoped_prefix(crate::agent_identity::MANAGED_AGENT_DID_KEYS)
         || key.starts_with(PENDING_LOGOUT_SECRET_KEY_PREFIX)
         || key.contains(&format!(".{PENDING_LOGOUT_SECRET_KEY_PREFIX}"))
         || scoped_prefix(crate::identity::account_auth::ACCOUNT_HANDOFF_GRANT_SECRET_KEY_PREFIX)
@@ -441,6 +439,16 @@ pub fn default_secure_key_store(service_name: &str) -> Arc<dyn SecureKeyStore + 
         let _ = service_name;
         Arc::new(MemorySecureKeyStore::new())
     }
+}
+
+#[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+#[doc(hidden)]
+pub fn close_wasm_product_database_for_test() -> Result<(), SecureKeyStoreError> {
+    let store = WASM_INDEXEDDB_SECURE_KEY_STORE.get().ok_or_else(|| {
+        SecureKeyStoreError::Backend("product IndexedDB store is not initialized".to_owned())
+    })?;
+    store.close_database_for_test();
+    Ok(())
 }
 
 pub(crate) use signing_seed::{active_device_seed_scope_snapshot, load_signing_seed_for};
