@@ -103,7 +103,7 @@ async fn read_policy(
             entry: ExactCurrentResultEntry::Policy(row),
             ..
         } => {
-            let PolicySetValue::Governance(policy) = row.value.value else {
+            let PolicySetValue::Governance(policy) = row.value else {
                 anyhow::bail!("This Policy id belongs to another policy family")
             };
             anyhow::ensure!(

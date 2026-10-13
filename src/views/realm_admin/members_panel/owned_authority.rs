@@ -178,11 +178,44 @@ async fn join_basis(
             && resource.agent.lifecycle != arkret_sdk::AgentLifecycleState::Deactivated,
         "Agent ownership/lifecycle is unavailable"
     );
-    let genesis = crate::transport::own_station_results::accepted_genesis(http, realm).await?;
-    let founding: arkret_sdk::RealmCreatePayload =
-        serde_json::from_value(serde_json::to_value(&genesis.event.payload)?)?;
+    // Since-join members need not read the old create Event. The authenticated
+    // complete Snapshot already carries its immutable registered current.
+    let genesis_rows: Vec<_> = snapshot
+        .current_state_entries
+        .iter()
+        .filter(|row| {
+            matches!(
+                row,
+                arkret_sdk::TypedCurrentRow::Value {
+                    selector: arkret_sdk::CurrentSelector::RealmGenesis,
+                    ..
+                }
+            )
+        })
+        .collect();
     anyhow::ensure!(
-        founding.object.purpose == arkret_sdk::RealmPurpose::Collaboration,
+        genesis_rows.len() == 1,
+        "Realm Genesis current is unavailable"
+    );
+    let arkret_sdk::TypedCurrentRow::Value {
+        source_stream_ref,
+        revision,
+        value,
+        ..
+    } = genesis_rows[0];
+    anyhow::ensure!(
+        snapshot.realm_id == *realm
+            && *source_stream_ref
+                == arkret_sdk::CommitStreamRef::Realm {
+                    realm_id: realm.clone()
+                }
+            && revision.stream_position == 0,
+        "Realm Genesis current has another scope or revision"
+    );
+    let founding: arkret_sdk::RealmGenesis = serde_json::from_value(value.clone())?;
+    founding.validate()?;
+    anyhow::ensure!(
+        founding.purpose == arkret_sdk::RealmPurpose::Collaboration,
         "Owned Agent grants require a Collaboration Realm"
     );
     let submitter = crate::event_submit::EventSubmitter::from_current_session(http.clone());
@@ -448,7 +481,7 @@ pub(super) fn OwnedAgentWithdrawal(realm_id: String, token: Signal<String>) -> E
     rsx! {
         div { "data-testid": "owned-agent-withdrawal-ledger",
             p { "我签发的自有 Agent 授权（离群或停用后仍可撤回）" }
-            p { "{message}" }
+            p { "data-testid": "owned-agent-authority-status", "{message}" }
             button { r#type: "button", disabled: pending(), onclick: move |_| refresh += 1, "重读原授权记录" }
             for row in rows() {
                 div { "data-grant-id": "{row.value.id}",
@@ -509,9 +542,9 @@ async fn load(
         else {
             continue;
         };
-        let state: arkret_sdk::PolicySetStatePayload = serde_json::from_value(value.clone())?;
-        state.validate()?;
-        let arkret_sdk::PolicySetValue::Governance(policy) = state.value else {
+        let document: arkret_sdk::PolicySetValue = serde_json::from_value(value.clone())?;
+        document.validate()?;
+        let arkret_sdk::PolicySetValue::Governance(policy) = document else {
             continue;
         };
         if policy.policy_kind != arkret_sdk::PolicyKind::Agent {
