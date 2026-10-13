@@ -2804,6 +2804,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn signal_product_material_is_cleared_when_installed_governance_advances() {
+        let storage_path = path();
+        let store = index(&storage_path, 0).await;
+        let head = arkret_wire::CommitStreamHead {
+            stream_ref: arkret_wire::CommitStreamRef::Realm {
+                realm_id: REALM.parse().unwrap(),
+            },
+            commit_id: COMMIT.parse().unwrap(),
+            stream_position: 1,
+        };
+        let material = arkret_sdk::SignalProductAuthority {
+            authority_commit_id: head.commit_id.clone(),
+            parent_realm_authority_commit_id: None,
+            current_realm_head: head.clone(),
+            current_scope_head: head,
+            sent_at: chrono::Utc::now(),
+            grants: vec![],
+            current_grants: vec![],
+            historical_product_policies: vec![],
+            current_product_policies: vec![],
+            owner_actions: vec![],
+            profile_actions: vec![],
+            agent: None,
+        };
+        assert!(!store.signal_product_cut_current(&material).await.unwrap());
+        store
+            .stage_frame(0, &frame(vec![], Some(baseline("ak:cursor:Yg", 1, true))))
+            .await
+            .unwrap()
+            .finish();
+        assert!(store.signal_product_cut_current(&material).await.unwrap());
+        store
+            .stage_frame(1, &frame(vec![], Some(baseline("ak:cursor:Yw", 2, true))))
+            .await
+            .unwrap()
+            .finish();
+        assert!(!store.signal_product_cut_current(&material).await.unwrap());
+    }
+
+    #[tokio::test]
     async fn typing_target_requires_both_exact_members_and_active_discussion_at_one_cut() {
         let realm: arkret_sdk::RealmId = REALM.parse().unwrap();
         let strand_id = arkret_sdk::StrandId::from_event_id(&arkret_sdk::EventId::from_digest(

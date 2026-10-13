@@ -228,6 +228,8 @@ mod tests {
             sent_at: now,
             grants: vec![grant.clone()],
             current_grants: vec![grant],
+            historical_product_policies: vec![],
+            current_product_policies: vec![],
             owner_actions: vec![],
             profile_actions: vec![],
             agent: None,
@@ -240,6 +242,8 @@ mod tests {
                 },
                 scope_ref: scope,
             },
+            signer_verification_method: arkret_sdk::DidUrl::new("did:web:alice.example#device-1")
+                .unwrap(),
             product_authority: None,
             authority_commit_id: head.commit_id,
             parent_realm_authority_commit_id: None,

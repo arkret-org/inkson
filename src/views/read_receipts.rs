@@ -354,6 +354,8 @@ mod tests {
         };
         let at = chrono::DateTime::from_timestamp(1_800_000_000, 0).unwrap();
         crate::runtime::projection::AdmittedSignal {
+            signer_verification_method: arkret_sdk::DidUrl::new("did:web:alice.example#device-1")
+                .unwrap(),
             product_authority: None,
             authority_commit_id: arkret_sdk::RealmCommitId::from_digest([41; 32]),
             parent_realm_authority_commit_id: None,

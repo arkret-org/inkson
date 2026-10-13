@@ -82,6 +82,8 @@ pub struct AdmittedSignal {
     /// The verified sender actor, endpoint and scope the sequence high-water
     /// was enforced against.
     pub domain: arkret_sdk::SignalSequenceDomain,
+    /// Accepted exact method; never reconstructed from an opaque identity core.
+    pub signer_verification_method: arkret_sdk::DidUrl,
     /// The scope authorization basis retained from the verified envelope.
     pub product_authority: Option<Box<arkret_sdk::SignalProductAuthority>>,
     pub authority_commit_id: arkret_sdk::RealmCommitId,

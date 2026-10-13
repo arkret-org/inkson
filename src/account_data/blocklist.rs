@@ -255,6 +255,79 @@ pub fn is_blocked(list: &[AccountBlocklistEntry], actor_id: &str) -> bool {
     actor_entries_filter_surface(list, actor_id, AccountBlocklistSurface::Messages, false)
 }
 
+/// Only verified inputs from the admitted Signal and accepted inline identity
+/// claim may match. No name, affiliation or opaque identity-core expansion.
+pub(crate) fn hides_typing(
+    list: &[AccountBlocklistEntry],
+    signal: &crate::runtime::projection::AdmittedSignal,
+    verified_handles: &[arkret_sdk::Handle],
+    now: chrono::DateTime<chrono::Utc>,
+) -> bool {
+    let method = &signal.signer_verification_method;
+    // The caller received this exact method from the authenticated per-frame
+    // accepted key binding and verified its producer proof. This is not DID
+    // discovery or a conversion from a bare core identifier.
+    let did_domain = method
+        .as_str()
+        .split_once('#')
+        .and_then(|(did, _)| did.parse::<arkret_sdk::Did>().ok())
+        .and_then(|did| match did.method() {
+            "web" => arkret_models_identity::did_web_document_url(&did)
+                .ok()
+                .and_then(|url| url::Url::parse(&url).ok())
+                .and_then(|url| url.host_str().map(str::to_owned)),
+            // A webvh core binds the SCID, not this URL's host. A signer
+            // method alone supplies no verified domain-successor binding.
+            "webvh" => None,
+            _ => None,
+        });
+    let handles = verified_handles
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    let direct = signal.product_authority.as_ref().is_some_and(|material| {
+        material
+            .profile_actions
+            .iter()
+            .any(|action| action == arkret_sdk::CapabilityActionId::TYPING_BROADCAST)
+    });
+    list.iter().any(|entry| {
+        if !(entry
+            .applies_to
+            .contains(&AccountBlocklistSurface::Messages)
+            || direct && entry.applies_to.contains(&AccountBlocklistSurface::Dm))
+            || !matches!(
+                entry.mode,
+                AccountBlocklistMode::Block | AccountBlocklistMode::Hide
+            )
+            || entry.expires_at.is_some_and(|expiry| expiry <= now)
+        {
+            return false;
+        }
+        match &entry.target {
+            AccountBlocklistTarget::Actor(target) => target.actor_id == *signal.actor_id(),
+            AccountBlocklistTarget::DeviceId(target) => matches!(signal.sender_endpoint(),
+                arkret_sdk::SignalSequenceEndpoint::AccountDevice { device_id }
+                if device_id == &target.object_ref),
+            AccountBlocklistTarget::DeviceVerificationMethod(target) => target.value == *method,
+            AccountBlocklistTarget::Value(target) => match target.kind {
+                AccountBlocklistValueTargetKind::Handle => {
+                    handles.iter().any(|handle| handle == target.value.as_str())
+                }
+                AccountBlocklistValueTargetKind::Domain => {
+                    did_domain.as_deref() == Some(target.value.as_str())
+                        || handles.iter().any(|handle| {
+                            handle.split_once(':').map(|(_, domain)| domain)
+                                == Some(target.value.as_str())
+                        })
+                }
+                AccountBlocklistValueTargetKind::Keyword => false,
+            },
+            AccountBlocklistTarget::Applet(_) => false,
+        }
+    })
+}
+
 pub fn suppresses_notifications(
     list: &[AccountBlocklistEntry],
     actor_id: &str,
