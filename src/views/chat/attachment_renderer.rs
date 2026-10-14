@@ -391,15 +391,25 @@ fn VerifiedAttachment(
     descriptor: EncryptedAttachment,
 ) -> Element {
     let session = consume_context::<crate::app::SessionContext>();
+    let instance = use_hook(uuid_v7);
     let generation = *session.session_generation.read();
     let mut result =
         use_signal(|| None::<Result<std::rc::Rc<crate::attachments::artifact::Artifact>, String>>);
     let mut revision = use_signal(|| 0_u64);
+    let mut requested =
+        use_signal(|| None::<(AuthenticatedMessageContent, EncryptedAttachment, u64)>);
     let source_for_effect = source.clone();
     let descriptor_for_effect = descriptor.clone();
     use_effect(use_reactive(
         (&source_for_effect, &descriptor_for_effect, &generation),
         move |(source, descriptor, generation)| {
+            let binding = (source.clone(), descriptor.clone(), generation);
+            // Effect scheduling must be idempotent for this exact authenticated
+            // input. Unrelated folds must not revoke a verified artifact.
+            if requested.peek().as_ref() == Some(&binding) {
+                return;
+            }
+            requested.set(Some(binding));
             result.set(None);
             let captured = revision.peek().wrapping_add(1);
             revision.set(captured);
@@ -421,7 +431,15 @@ fn VerifiedAttachment(
         .and_then(Value::as_str)
         .unwrap_or("attachment")
         .to_owned();
-    match result() {
+    let resolved = result();
+    let status = match &resolved {
+        Some(Ok(_)) => "verified",
+        Some(Err(_)) => "failed",
+        None => "loading",
+    };
+    rsx! {div {"data-attachment-renderer-id": instance, "data-attachment-source": source.source.to_string(),
+        "data-attachment-status": status, "data-attachment-load-revision": "{revision}",
+    match resolved {
         Some(Ok(artifact)) if source.content.kind == arkret_sdk::ContentBlockKind::LongText => {
             rsx! { VerifiedLongText {artifact, name, markdown: descriptor.media_type() == "text/markdown"} }
         }
@@ -442,6 +460,7 @@ fn VerifiedAttachment(
         Some(Err(error)) => rsx! {p {role: "alert", "data-testid": "attachment-error", "{error}"}},
         None => rsx! {p {"data-testid": "attachment-loading", "Verifying attachment…"}},
     }
+    }}
 }
 
 type TextPageSelection = (String, u64);
