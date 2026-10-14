@@ -2,6 +2,88 @@ use arkret_wire::{AccountDataKey, CapabilityActionId};
 
 use super::*;
 
+// The key must belong to the loop's immediate VNode, not a node produced by
+// a nested Rust expression. Otherwise a sliding window matches rows by slot
+// and disposes the attachment components of still-visible messages.
+fn keyed_timeline_rows(rows: Vec<(String, Element)>) -> Element {
+    rsx! {
+        for (key, row) in rows {
+            Fragment {key: "{key}", {row}}
+        }
+    }
+}
+
+#[cfg(test)]
+mod row_lifetime_tests {
+    use std::cell::RefCell;
+    use std::collections::BTreeMap;
+    use std::rc::Rc;
+
+    use super::*;
+
+    #[derive(Clone)]
+    struct Control {
+        window: Rc<RefCell<Option<Signal<usize>>>>,
+        mounts: Rc<RefCell<BTreeMap<String, usize>>>,
+    }
+
+    #[component]
+    fn RowProbe(id: String, mounts: Rc<RefCell<BTreeMap<String, usize>>>) -> Element {
+        let instance = use_hook(|| {
+            let mut counts = mounts.borrow_mut();
+            let count = counts.entry(id.clone()).or_default();
+            *count += 1;
+            *count
+        });
+        rsx! {div {"{id}:{instance}"}}
+    }
+
+    fn window_harness(control: Control) -> Element {
+        let start = use_signal(|| 0_usize);
+        *control.window.borrow_mut() = Some(start);
+        let rows = ["a", "b", "c", "d", "e"]
+            .into_iter()
+            .skip(start())
+            .take(3)
+            .map(|id| {
+                (
+                    id.to_owned(),
+                    rsx! {RowProbe {id, mounts: control.mounts.clone()}},
+                )
+            })
+            .collect();
+        keyed_timeline_rows(rows)
+    }
+
+    #[test]
+    fn overlapping_virtual_rows_keep_their_component_instances_when_window_slides() {
+        let control = Control {
+            window: Rc::new(RefCell::new(None)),
+            mounts: Rc::new(RefCell::new(BTreeMap::new())),
+        };
+        let mut dom = VirtualDom::new_with_props(window_harness, control.clone());
+        dom.rebuild_in_place();
+        let mut previous_start = 0;
+        for start in [1, 2, 1] {
+            let before = control.mounts.borrow().clone();
+            dom.in_runtime(|| control.window.borrow().unwrap().set(start));
+            for _ in 0..4 {
+                dom.render_immediate_to_vec();
+            }
+            let after = control.mounts.borrow();
+            // b/c/d remain mounted across these overlapping windows. A row
+            // that actually leaves the window is allowed to release its URL.
+            let keys = ["a", "b", "c", "d", "e"];
+            for &id in &keys[start.max(previous_start)..(start + 3).min(previous_start + 3)] {
+                if let Some(count) = before.get(id) {
+                    assert_eq!(after.get(id), Some(count), "overlapping row {id} remounted");
+                }
+            }
+            previous_start = start;
+        }
+    }
+}
+
 thread_local! {
     static CHAT_FEED_SCROLL_OFFSETS: std::cell::RefCell<
         std::collections::BTreeMap<String, ChatFeedScrollPosition>,
@@ -238,8 +320,8 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                         style: "height: {virtual_window.total}px",
                         div { class: "chat-virtual-slice",
                             style: "transform: translateY({virtual_window.top}px)",
-                    for (virtual_index, msg) in mounted_rows {
-                        {
+                    {keyed_timeline_rows(mounted_rows.into_iter().map(|(virtual_index, msg)| {
+                            let row_key = msg.id.clone();
                             let message_is_private_sidecar =
                                 private_sidecar_event_ids.contains(&msg.id);
                             let message_is_read_only_private = message_is_private_sidecar;
@@ -325,7 +407,7 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                             let message_menu_is_open =
                                 message_context_menu().as_deref() == Some(msg.id.as_str());
                             let message_menu_id = format!("message-actions-{}", msg.id);
-                            rsx! {
+                            (row_key, rsx! {
                         div {
                             key: "{msg.id}",
                             id: "chat-msg-{msg.id}",
@@ -1242,9 +1324,8 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                 }
                             }
                         }
-                            }
-                        }
-                    }
+                            })
+                        }).collect())}
                     }
                     }
                     if let Some(report) = moderation_report_draft() {
