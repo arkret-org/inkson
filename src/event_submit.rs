@@ -2379,6 +2379,9 @@ impl EventSubmitter {
             SelfAuthoritySubmitRequest::DirectConversationFounding(value) => {
                 value.events.iter().map(|event| &event.event).collect()
             }
+            SelfAuthoritySubmitRequest::AuditPairedEvent(value) => {
+                value.events.iter().map(|event| &event.event).collect()
+            }
             SelfAuthoritySubmitRequest::MembershipCompensation(value) => {
                 vec![&value.event_submission.event]
             }
