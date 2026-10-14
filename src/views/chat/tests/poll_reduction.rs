@@ -325,12 +325,13 @@ fn verified_circle_page() -> (garth::VerifiedScanPage, Value) {
 #[test]
 fn verified_circle_poll_revote_survives_durable_reopen_and_retains_circle_heads() {
     let (page, visible_poll) = verified_circle_page();
+    let realm = visible_poll["realm_id"].as_str().unwrap().to_owned();
     let path = std::env::temp_dir().join(format!("inkson-circle-poll-replay-{}.json", uuid_v7()));
     let mut store = LocalStateStore::with_path(&path);
     store.ingest_verified_message_commits(&page).unwrap();
     store.ingest_verified_message_commits(&page).unwrap();
     let cards = poll_cards_from_events_with_sidecar(
-        REALM,
+        realm.as_str(),
         std::slice::from_ref(&visible_poll),
         Some(&store),
         None,
@@ -367,7 +368,7 @@ fn verified_circle_poll_revote_survives_durable_reopen_and_retains_circle_heads(
         unreachable!("the verified poll came from the Circle stream")
     };
     let next_vote = crate::messaging::polls::build_poll_vote_op_with_heads_scoped(
-        REALM,
+        realm.as_str(),
         actor.signing_principal_id().as_str(),
         STRAND,
         Some(circle_id.as_str()),
@@ -388,7 +389,7 @@ fn verified_circle_poll_revote_survives_durable_reopen_and_retains_circle_heads(
     drop(store);
     let reopened = LocalStateStore::with_path(&path);
     assert_eq!(
-        poll_cards_from_events_with_sidecar(REALM, &[visible_poll], Some(&reopened), None),
+        poll_cards_from_events_with_sidecar(realm.as_str(), &[visible_poll], Some(&reopened), None),
         cards
     );
     std::fs::remove_file(path).ok();
@@ -397,11 +398,13 @@ fn verified_circle_poll_revote_survives_durable_reopen_and_retains_circle_heads(
 #[test]
 fn verified_poll_revote_survives_reverse_replay_and_durable_reopen() {
     let (page, visible) = verified_page(false, false);
+    let realm = visible[0]["realm_id"].as_str().unwrap().to_owned();
     let path = std::env::temp_dir().join(format!("inkson-verified-poll-replay-{}.json", uuid_v7()));
     let mut store = LocalStateStore::with_path(&path);
     store.ingest_verified_message_commits(&page).unwrap();
     store.ingest_verified_message_commits(&page).unwrap();
-    let cards = poll_cards_from_events_with_sidecar(REALM, &visible[..1], Some(&store), None);
+    let cards =
+        poll_cards_from_events_with_sidecar(realm.as_str(), &visible[..1], Some(&store), None);
     assert_eq!(cards.len(), 1);
     assert!(!cards[0].provisional);
     assert_eq!(
@@ -432,7 +435,7 @@ fn verified_poll_revote_survives_reverse_replay_and_durable_reopen() {
     )
     .unwrap();
     let operation = crate::messaging::polls::build_poll_vote_op_with_heads(
-        REALM,
+        realm.as_str(),
         actor.signing_principal_id().as_str(),
         STRAND,
         cards[0].poll_ref.as_ref().unwrap().as_str(),
@@ -448,7 +451,7 @@ fn verified_poll_revote_survives_reverse_replay_and_durable_reopen() {
     drop(store);
     let reopened = LocalStateStore::with_path(&path);
     assert_eq!(
-        poll_cards_from_events_with_sidecar(REALM, &visible[..1], Some(&reopened), None),
+        poll_cards_from_events_with_sidecar(realm.as_str(), &visible[..1], Some(&reopened), None),
         cards
     );
     std::fs::remove_file(path).ok();
@@ -457,9 +460,11 @@ fn verified_poll_revote_survives_reverse_replay_and_durable_reopen() {
 #[test]
 fn poll_created_at_authorized_join_floor_is_complete_and_full_account_partitions_stay_distinct() {
     let (page, visible) = verified_page(true, true);
+    let realm = visible[0]["realm_id"].as_str().unwrap().to_owned();
     let mut store = crate::state::isolated_store_for_tests("verified-poll-membership-floor");
     store.ingest_verified_message_commits(&page).unwrap();
-    let cards = poll_cards_from_events_with_sidecar(REALM, &visible[..1], Some(&store), None);
+    let cards =
+        poll_cards_from_events_with_sidecar(realm.as_str(), &visible[..1], Some(&store), None);
     assert_eq!(cards.len(), 1);
     assert!(!cards[0].provisional);
     assert_eq!(
@@ -476,8 +481,9 @@ fn poll_created_at_authorized_join_floor_is_complete_and_full_account_partitions
 #[test]
 fn shape_only_rows_never_supply_poll_tally_or_revote_heads() {
     let (_page, visible) = verified_page(false, false);
+    let realm = visible[0]["realm_id"].as_str().unwrap().to_owned();
     let store = crate::state::isolated_store_for_tests("unverified-poll-timeline");
-    let cards = poll_cards_from_events_with_sidecar(REALM, &visible, Some(&store), None);
+    let cards = poll_cards_from_events_with_sidecar(realm.as_str(), &visible, Some(&store), None);
     assert_eq!(cards.len(), 1);
     assert!(cards[0].provisional);
     assert_eq!(cards[0].total_votes(), 0);
@@ -497,9 +503,11 @@ fn shape_only_rows_never_supply_poll_tally_or_revote_heads() {
 #[test]
 fn invalid_signed_replacement_head_is_quarantined_and_withheld_history_retracts_the_vote() {
     let (invalid, visible) = verified_page_variant(false, false, true, false);
+    let realm = visible[0]["realm_id"].as_str().unwrap().to_owned();
     let mut store = crate::state::isolated_store_for_tests("verified-poll-invalid-head");
     store.ingest_verified_message_commits(&invalid).unwrap();
-    let cards = poll_cards_from_events_with_sidecar(REALM, &visible[..1], Some(&store), None);
+    let cards =
+        poll_cards_from_events_with_sidecar(realm.as_str(), &visible[..1], Some(&store), None);
     assert_eq!((cards[0].votes_for(0), cards[0].votes_for(1)), (1, 0));
     assert_eq!(
         cards[0]
@@ -517,8 +525,10 @@ fn invalid_signed_replacement_head_is_quarantined_and_withheld_history_retracts_
             .event_ref
     );
     let (withheld, visible) = verified_page_variant(false, false, true, true);
+    let realm = visible[0]["realm_id"].as_str().unwrap().to_owned();
     store.ingest_verified_message_commits(&withheld).unwrap();
-    let cards = poll_cards_from_events_with_sidecar(REALM, &visible[..1], Some(&store), None);
+    let cards =
+        poll_cards_from_events_with_sidecar(realm.as_str(), &visible[..1], Some(&store), None);
     assert!(cards[0].provisional);
     assert_eq!(cards[0].total_votes(), 0);
     assert!(cards[0].response_heads.is_empty());

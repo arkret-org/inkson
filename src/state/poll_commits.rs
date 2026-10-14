@@ -1201,7 +1201,10 @@ mod tests {
             .unwrap();
             let signer = arkret_test_kit::keys::seeded_signer(
                 arkret_sdk::Did::new("did:web:alice.example").unwrap(),
-                arkret_sdk::DidUrl::new("did:web:alice.example#device").unwrap(),
+                arkret_sdk::DidUrl::new(
+                    "did:web:alice.example#ak:device:0196419b-0000-7000-8000-000000000001",
+                )
+                .unwrap(),
             );
             let actor = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
                 arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap(),

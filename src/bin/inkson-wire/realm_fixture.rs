@@ -337,7 +337,15 @@ impl Builder {
             &root,
             arkret_sdk::signatures::SignEventOptions::new().with_created_at(at(0)),
         )?;
-        let source_create = commit(&authority.verification_method, &authority.signing_key, &create, 0, None, create.event_id.clone(), None)?;
+        let source_create = commit(
+            &authority.verification_method,
+            &authority.signing_key,
+            &create,
+            0,
+            None,
+            create.event_id.clone(),
+            None,
+        )?;
         let mut authorization = TypedEventDraft::<event_spec::DeviceAuthorize>::new(
             ScopeRef::Realm {
                 realm_id: create.realm_id.clone(),

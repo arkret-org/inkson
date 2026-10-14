@@ -1739,13 +1739,24 @@ mod tests {
     }
 
     // Closed transport fixture only: these bytes are never passed to RFC processing.
+    fn recovery_realm_id() -> arkret_sdk::RealmId {
+        crate::test_support::committed_event::verified_realm_fixture_as(
+            realm_id(),
+            Vec::new(),
+            "alice.example",
+            "ak:device:0196419b-0000-7000-8000-000000000001",
+        )
+        .0
+        .realm_id
+    }
+
     fn recovery_commit_payload(
         base: arkret_sdk::EventId,
         previous_epoch: u64,
     ) -> serde_json::Value {
         let next_epoch = previous_epoch.checked_add(1).unwrap();
         let binding = arkret_sdk::MlsGovernanceBindingPayload::realm(
-            realm_id(),
+            recovery_realm_id(),
             Some(base.clone()),
             previous_epoch,
             next_epoch,
@@ -1898,7 +1909,7 @@ mod tests {
     ) -> (Vec<serde_json::Value>, Vec<CommittedEventFullView>) {
         use serde_json::json;
         let scope = arkret_sdk::ScopeRef::Realm {
-            realm_id: realm_id(),
+            realm_id: recovery_realm_id(),
         };
         let initial_ref =
             arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [0x32; 32]);
@@ -1943,7 +1954,7 @@ mod tests {
         let stream = rows[0].commit.stream_ref.clone();
         let mut snapshot = arkret_wire::RealmStateSnapshot {
             snapshot_id: arkret_sdk::RealmSnapshotId::from_digest([0; 32]),
-            realm_id: realm_id(),
+            realm_id: recovery_realm_id(),
             governance_generation: 0,
             retention_and_history_floor: arkret_wire::RetentionAndHistoryFloor {
                 history_access: arkret_wire::HistoryAccess::SinceJoin,
@@ -2101,7 +2112,7 @@ mod tests {
         let (bodies, rows) = recovery_fixture(false, false, 1);
         let (client, source, server) = recovery_http(bodies, &rows[0]);
         let scope = arkret_sdk::ScopeRef::Realm {
-            realm_id: realm_id(),
+            realm_id: recovery_realm_id(),
         };
         let tail = own_recovery_tail(client, &scope, &rows[0].event.event_id)
             .await
@@ -2141,7 +2152,7 @@ mod tests {
             let (bodies, rows) = recovery_fixture(fork, withheld, floor);
             let (client, _, server) = recovery_http(bodies, &rows[0]);
             let scope = arkret_sdk::ScopeRef::Realm {
-                realm_id: realm_id(),
+                realm_id: recovery_realm_id(),
             };
             let error = match own_recovery_tail(client, &scope, &rows[0].event.event_id).await {
                 Ok(_) => panic!("invalid recovery proof admitted"),
@@ -2177,6 +2188,8 @@ mod tests {
         let mut delivery = welcome_delivery(arkret_wire::MlsWelcomeRecipientEndpoint::Device {
             device_id: device_id(),
         });
+        delivery.realm_id = item.event.realm_id.clone();
+        delivery.effective_scope = item.event.scope_ref.clone();
         delivery.commit_event_ref = item.event.event_id.clone();
         let accepted = accepted_welcome_original(client, &delivery)
             .await
@@ -2202,7 +2215,7 @@ mod tests {
         let path = temp_path("ordinary-late-welcome");
         let (state, shared) = handle(crate::state::LocalStateStore::with_path(path.clone()));
         let scope = arkret_sdk::ScopeRef::Realm {
-            realm_id: realm_id(),
+            realm_id: recovery_realm_id(),
         };
         let error = record_joined_welcome_guarded(
             &state,

@@ -3779,9 +3779,17 @@ mod tests {
 
     #[tokio::test]
     async fn account_response_projects_client_events_and_decodes_realm_payloads() {
-        let realm_id = sdk_realm_id();
+        let realm_seed = sdk_realm_id();
+        let realm_id = crate::test_support::committed_event::verified_realm_fixture_as(
+            realm_seed.clone(),
+            Vec::new(),
+            "alice.example",
+            "ak:device:0196419b-0000-7000-8000-000000000001",
+        )
+        .0
+        .realm_id;
         let accepted = crate::test_support::committed_event::verified_realm_items(
-            realm_id.clone(),
+            realm_seed,
             vec![
                 (
                     arkret_sdk::EventKind::MessageCreate.as_str().to_owned(),
@@ -3996,18 +4004,26 @@ mod tests {
         use arkret_models_collaboration::sync_frames::committed_event_subscribe::{
             CommittedEventSubscribeFrame, CommittedEventSubscribeFramePayload,
         };
-        let realm_id = sdk_realm_id();
+        let realm_seed = sdk_realm_id();
+        let realm_id = crate::test_support::committed_event::verified_realm_fixture_as(
+            realm_seed.clone(),
+            Vec::new(),
+            "alice.example",
+            "ak:device:0196419b-0000-7000-8000-000000000001",
+        )
+        .0
+        .realm_id;
         let object = arkret_sdk::Space::create_object(
             realm_id.clone(),
             "board",
             "Cross-member board",
             arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
-                sdk_actor_id(),
-                arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
+                arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap(),
+                arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
             )),
         );
         let accepted = crate::test_support::committed_event::verified_realm_item(
-            realm_id.clone(),
+            realm_seed,
             arkret_sdk::EventKind::SpaceCreate.as_str(),
             serde_json::to_value(arkret_sdk::SpaceCreatePayload::new(object)).unwrap(),
         );

@@ -2628,6 +2628,19 @@ mod tests {
 
     const GENESIS_SALT: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
+    fn collaboration_fixture_realm_id() -> arkret_sdk::RealmId {
+        crate::test_support::committed_event::verified_realm_fixture_signed_by(
+            &crate::test_support::committed_event::FixtureStation::did_web(),
+            arkret_sdk::RealmId::new(REALM_ID).unwrap(),
+            json!({"object": collaboration_genesis(GENESIS_SALT)}),
+            Vec::new(),
+            "alice.example",
+            DEVICE_ID,
+        )
+        .0
+        .realm_id
+    }
+
     #[test]
     fn holder_pcr_root_is_exact_immutable_genesis_and_never_collaboration_owner() {
         let fixture: serde_json::Value = serde_json::from_str(include_str!(
@@ -2716,7 +2729,7 @@ mod tests {
     #[test]
     fn signed_floor_watch_rows_admit_written_null_and_closed_object_but_reject_open_value() {
         use crate::test_support::committed_event::FixtureStation;
-        let realm_id = arkret_sdk::RealmId::new(REALM_ID).unwrap();
+        let realm_id = collaboration_fixture_realm_id();
         let creator = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
             arkret_sdk::DidCoreId::new(ACTOR_ID).unwrap(),
             arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
@@ -3011,7 +3024,7 @@ mod tests {
 
     #[test]
     fn signed_parent_floor_installs_exact_circle_configuration_without_child_state() {
-        let realm_id = arkret_sdk::RealmId::new(REALM_ID).unwrap();
+        let realm_id = collaboration_fixture_realm_id();
         let creator = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
             arkret_sdk::DidCoreId::new(ACTOR_ID).unwrap(),
             arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
@@ -3277,7 +3290,7 @@ mod tests {
             .unwrap();
             let signer = arkret_test_kit::keys::seeded_signer(
                 arkret_sdk::Did::new("did:web:alice.example").unwrap(),
-                arkret_sdk::DidUrl::new("did:web:alice.example#device").unwrap(),
+                arkret_sdk::DidUrl::new(format!("did:web:alice.example#{DEVICE_ID}")).unwrap(),
             );
             let actor = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
                 arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap(),
@@ -3472,7 +3485,7 @@ mod tests {
     /// a Strand present in the same signed cut, including after later updates.
     #[test]
     fn signed_floor_rows_admit_bootstrap_facets_and_messages_of_earlier_strands() {
-        let realm_id = arkret_sdk::RealmId::new(REALM_ID).unwrap();
+        let realm_id = collaboration_fixture_realm_id();
         let creator = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
             arkret_sdk::DidCoreId::new(ACTOR_ID).unwrap(),
             arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
@@ -3879,7 +3892,7 @@ mod tests {
 
     #[test]
     fn signed_floor_reactions_admit_the_closed_set_and_reject_subject_or_dot_drift() {
-        let realm_id = arkret_sdk::RealmId::new(REALM_ID).unwrap();
+        let realm_id = collaboration_fixture_realm_id();
         let creator = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
             arkret_sdk::DidCoreId::new(ACTOR_ID).unwrap(),
             arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
@@ -3971,7 +3984,7 @@ mod tests {
 
     #[test]
     fn signed_floor_pins_admit_the_closed_set_and_reject_scope_or_dot_drift() {
-        let realm_id = arkret_sdk::RealmId::new(REALM_ID).unwrap();
+        let realm_id = collaboration_fixture_realm_id();
         let creator = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
             arkret_sdk::DidCoreId::new(ACTOR_ID).unwrap(),
             arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
@@ -4071,7 +4084,7 @@ mod tests {
     /// subject reject the whole snapshot.
     #[test]
     fn signed_floor_snapshot_installs_message_revise_and_redaction() {
-        let realm_id = arkret_sdk::RealmId::new(REALM_ID).unwrap();
+        let realm_id = collaboration_fixture_realm_id();
         let creator = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
             arkret_sdk::DidCoreId::new(ACTOR_ID).unwrap(),
             arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
@@ -4769,7 +4782,7 @@ mod tests {
     async fn verified_native_sidecar_prefix_survives_restart_and_requires_the_signed_head() {
         use crate::state::LocalStateStore;
         use crate::test_support::committed_event::{FixtureStation, fixture_time};
-        let realm = arkret_sdk::RealmId::new(REALM_ID).unwrap();
+        let realm = collaboration_fixture_realm_id();
         let station = FixtureStation::did_web();
         let actor = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
             arkret_sdk::DidCoreId::new(ACTOR_ID).unwrap(),
@@ -4933,7 +4946,7 @@ mod tests {
                 snapshot: snapshot.clone(),
             })
             .unwrap();
-        assert!(store.verified_sidecar_inputs(REALM_ID).is_err());
+        assert!(store.verified_sidecar_inputs(realm.as_str()).is_err());
         assert!(store.current_mls_group_for_scope(&scope).is_none());
         let mut replay = replica.fork_verified_authority().unwrap();
         let scan = arkret_sdk::StreamScanRequest {
@@ -4985,7 +4998,7 @@ mod tests {
         );
         let group_id = scope.canonical_mls_group_id().unwrap();
         let checkpoint = crate::mls::persistence::encrypt_state(
-            REALM_ID,
+            realm.as_str(),
             group_id.as_str(),
             0,
             b"provider state",
@@ -5001,7 +5014,7 @@ mod tests {
         );
         assert_eq!(
             reopened
-                .verified_sidecar_for_source(&controller, REALM_ID, &source_strand)
+                .verified_sidecar_for_source(&controller, realm.as_str(), &source_strand)
                 .unwrap()
                 .unwrap()
                 .id,
@@ -5010,7 +5023,7 @@ mod tests {
         let other_strand = arkret_sdk::StrandId::from_event_id(&native[0].event.event_id);
         assert!(
             reopened
-                .verified_sidecar_for_source(&controller, REALM_ID, &other_strand)
+                .verified_sidecar_for_source(&controller, realm.as_str(), &other_strand)
                 .unwrap()
                 .is_none()
         );
@@ -5019,12 +5032,12 @@ mod tests {
             arkret_sdk::DidCoreId::new("ak:did_core:web:other.example").unwrap();
         assert!(
             reopened
-                .verified_sidecar_for_source(&other_station, REALM_ID, &source_strand)
+                .verified_sidecar_for_source(&other_station, realm.as_str(), &source_strand)
                 .unwrap()
                 .is_none()
         );
         assert_eq!(
-            reopened.verified_sidecar_inputs(REALM_ID).unwrap().1[sidecar.as_str()],
+            reopened.verified_sidecar_inputs(realm.as_str()).unwrap().1[sidecar.as_str()],
             vec![native[0].clone()]
         );
         let old = snapshot.clone();
@@ -5041,13 +5054,13 @@ mod tests {
             .install_verified_current_snapshot_heads(&snapshot, &freshness, &keys)
             .unwrap();
         let before_new_cut = reopened.load();
-        let prior_position = reopened.verified_sidecar_inputs(REALM_ID).unwrap().1
+        let prior_position = reopened.verified_sidecar_inputs(realm.as_str()).unwrap().1
             [sidecar.as_str()]
         .last()
         .unwrap()
         .commit
         .stream_position;
-        assert!(!reopened.has_pending_sidecar_history(REALM_ID));
+        assert!(!reopened.has_pending_sidecar_history(realm.as_str()));
         let mut missing_tail = snapshot.clone();
         let missing_head = missing_tail
             .visible_stream_heads
@@ -5128,8 +5141,8 @@ mod tests {
                 snapshot: snapshot.clone(),
             })
             .unwrap();
-        assert!(reopened.verified_sidecar_inputs(REALM_ID).is_err());
-        assert!(reopened.has_pending_sidecar_history(REALM_ID));
+        assert!(reopened.verified_sidecar_inputs(realm.as_str()).is_err());
+        assert!(reopened.has_pending_sidecar_history(realm.as_str()));
         assert!(
             reopened
                 .install_verified_sidecar_current(&VerifiedCurrentSnapshot {
@@ -5141,7 +5154,7 @@ mod tests {
         assert!(reopened.mls_scopes_needing_tail_recovery().is_empty());
         assert!(
             reopened
-                .verified_sidecar_for_source(&controller, REALM_ID, &source_strand)
+                .verified_sidecar_for_source(&controller, realm.as_str(), &source_strand)
                 .is_err()
         );
         let scan = arkret_sdk::StreamScanRequest {
@@ -5174,7 +5187,10 @@ mod tests {
             "history alone must not replace the accepted current original"
         );
         assert_eq!(
-            live_follow.verified_sidecar_inputs(REALM_ID).unwrap().1[sidecar.as_str()],
+            live_follow
+                .verified_sidecar_inputs(realm.as_str())
+                .unwrap()
+                .1[sidecar.as_str()],
             vec![native[0].clone()],
             "the old complete cut still exposes only its exact prefix"
         );
@@ -5186,16 +5202,19 @@ mod tests {
         )
         .await;
         assert_eq!(
-            live_follow.verified_sidecar_inputs(REALM_ID).unwrap().1[sidecar.as_str()],
+            live_follow
+                .verified_sidecar_inputs(realm.as_str())
+                .unwrap()
+                .1[sidecar.as_str()],
             native
         );
         reopened.ingest_verified_message_history(&page).unwrap();
-        assert!(!reopened.has_pending_sidecar_history(REALM_ID));
+        assert!(!reopened.has_pending_sidecar_history(realm.as_str()));
         let mut ahead = LocalStateStore::with_path(directory.join("ahead.json"));
         ahead.save(before_new_cut.clone());
         ahead.ingest_verified_message_history(&page).unwrap();
         assert_eq!(
-            ahead.verified_sidecar_inputs(REALM_ID).unwrap().1[sidecar.as_str()],
+            ahead.verified_sidecar_inputs(realm.as_str()).unwrap().1[sidecar.as_str()],
             vec![native[0].clone()]
         );
         let stream_key = serde_json::to_string(&stream).unwrap();
@@ -5273,7 +5292,10 @@ mod tests {
             failed_before
         );
         assert_eq!(
-            failed_reload.verified_sidecar_inputs(REALM_ID).unwrap().1[sidecar.as_str()],
+            failed_reload
+                .verified_sidecar_inputs(realm.as_str())
+                .unwrap()
+                .1[sidecar.as_str()],
             vec![native[0].clone()]
         );
         println!(
@@ -5313,7 +5335,10 @@ mod tests {
             serde_json::to_value(atomic.load()).unwrap()
         );
         assert_eq!(
-            atomic_reload.verified_sidecar_inputs(REALM_ID).unwrap().1[sidecar.as_str()],
+            atomic_reload
+                .verified_sidecar_inputs(realm.as_str())
+                .unwrap()
+                .1[sidecar.as_str()],
             native
         );
         assert_eq!(
@@ -5340,7 +5365,7 @@ mod tests {
             })
             .unwrap();
         assert_eq!(
-            ahead.verified_sidecar_inputs(REALM_ID).unwrap().1[sidecar.as_str()],
+            ahead.verified_sidecar_inputs(realm.as_str()).unwrap().1[sidecar.as_str()],
             native
         );
         ahead.flush().unwrap();
@@ -5350,7 +5375,10 @@ mod tests {
             serde_json::to_value(ahead.load()).unwrap()
         );
         assert_eq!(
-            complete_reload.verified_sidecar_inputs(REALM_ID).unwrap().1[sidecar.as_str()],
+            complete_reload
+                .verified_sidecar_inputs(realm.as_str())
+                .unwrap()
+                .1[sidecar.as_str()],
             native
         );
         let complete = ahead.load();
@@ -5361,14 +5389,14 @@ mod tests {
             .unwrap()
             .pop();
         ahead.save(missing);
-        assert!(ahead.verified_sidecar_inputs(REALM_ID).is_err());
+        assert!(ahead.verified_sidecar_inputs(realm.as_str()).is_err());
         let mut gap = complete.clone();
         gap.verified_sidecar_history
             .get_mut(&stream_key)
             .unwrap()
             .remove(0);
         ahead.save(gap);
-        assert!(ahead.verified_sidecar_inputs(REALM_ID).is_err());
+        assert!(ahead.verified_sidecar_inputs(realm.as_str()).is_err());
         let mut withheld = complete.clone();
         withheld
             .verified_sidecar_history
@@ -5380,7 +5408,7 @@ mod tests {
             },
         });
         ahead.save(withheld);
-        assert!(ahead.verified_sidecar_inputs(REALM_ID).is_err());
+        assert!(ahead.verified_sidecar_inputs(realm.as_str()).is_err());
         let mut wrong_head = snapshot.clone();
         wrong_head
             .visible_stream_heads
@@ -5400,7 +5428,7 @@ mod tests {
             vec![scope.clone()]
         );
         assert_eq!(
-            reopened.verified_sidecar_inputs(REALM_ID).unwrap().1[sidecar.as_str()],
+            reopened.verified_sidecar_inputs(realm.as_str()).unwrap().1[sidecar.as_str()],
             native
         );
         assert!(
@@ -5408,9 +5436,9 @@ mod tests {
                 .install_verified_sidecar_current(&VerifiedCurrentSnapshot { snapshot: old })
                 .is_err()
         );
-        reopened.invalidate_sidecar_current(Some(REALM_ID));
-        assert!(!reopened.has_pending_sidecar_history(REALM_ID));
-        assert!(reopened.verified_sidecar_inputs(REALM_ID).is_err());
+        reopened.invalidate_sidecar_current(Some(realm.as_str()));
+        assert!(!reopened.has_pending_sidecar_history(realm.as_str()));
+        assert!(reopened.verified_sidecar_inputs(realm.as_str()).is_err());
         assert!(reopened.mls_scopes_needing_tail_recovery().is_empty());
         drop(reopened);
         std::fs::remove_dir_all(directory).unwrap();
@@ -5420,7 +5448,7 @@ mod tests {
     #[tokio::test]
     async fn signed_snapshot_current_staging_is_atomic_and_cut_bound() {
         use crate::test_support::committed_event::FixtureStation;
-        let realm_id = arkret_sdk::RealmId::new(REALM_ID).unwrap();
+        let realm_id = collaboration_fixture_realm_id();
         let account = arkret_sdk::AccountId::new(
             arkret_sdk::DidCoreId::new(ACTOR_ID).unwrap(),
             arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
@@ -5459,7 +5487,7 @@ mod tests {
         };
         let mut frame: arkret_sdk::sync::AccountSubscribeFrame = serde_json::from_value(json!({
             "kind":"delta", "cursor":"ak:cursor:YQ",
-            "realms":{REALM_ID:{"current":{
+            "realms":{realm_id.as_str():{"current":{
                 "realm_id":realm_id, "governance_generation":snapshot.governance_generation,
                 "stream_heads":snapshot.visible_stream_heads, "entries":[]
             }}}
@@ -5471,7 +5499,7 @@ mod tests {
             .as_mut()
             .unwrap()
             .entries
-            .get_mut(REALM_ID)
+            .get_mut(realm_id.as_str())
             .unwrap()
             .streams = Some(vec![
             serde_json::from_value(json!({
@@ -5485,24 +5513,27 @@ mod tests {
             }))
             .unwrap(),
         ]);
-        let proofs = BTreeMap::from([(REALM_ID.to_owned(), VerifiedCurrentSnapshot { snapshot })]);
+        let proofs = BTreeMap::from([(
+            realm_id.as_str().to_owned(),
+            VerifiedCurrentSnapshot { snapshot },
+        )]);
         let unresolved = VerifiedAccountFrame::default();
         assert!(
-            unresolved.product_frame(&frame).realms.unwrap().entries[REALM_ID]
+            unresolved.product_frame(&frame).realms.unwrap().entries[realm_id.as_str()]
                 .current
                 .is_none()
         );
         let proven = VerifiedAccountFrame {
             current_snapshots: BTreeMap::from([(
-                REALM_ID.to_owned(),
+                realm_id.as_str().to_owned(),
                 VerifiedCurrentSnapshot {
-                    snapshot: proofs[REALM_ID].snapshot().clone(),
+                    snapshot: proofs[realm_id.as_str()].snapshot().clone(),
                 },
             )]),
             ..Default::default()
         };
         assert!(
-            proven.product_frame(&frame).realms.unwrap().entries[REALM_ID]
+            proven.product_frame(&frame).realms.unwrap().entries[realm_id.as_str()]
                 .current
                 .is_some()
         );
@@ -5520,17 +5551,23 @@ mod tests {
             .unwrap();
         drop(stage);
         assert_eq!(
-            index.read_selector(REALM_ID, &selector).await.unwrap(),
+            index
+                .read_selector(realm_id.as_str(), &selector)
+                .await
+                .unwrap(),
             None
         );
-        assert_eq!(index.read_complete_cut(REALM_ID).await.unwrap(), None);
+        assert_eq!(
+            index.read_complete_cut(realm_id.as_str()).await.unwrap(),
+            None
+        );
         let mut wrong_cut = frame.clone();
         wrong_cut
             .realms
             .as_mut()
             .unwrap()
             .entries
-            .get_mut(REALM_ID)
+            .get_mut(realm_id.as_str())
             .unwrap()
             .current
             .as_mut()
@@ -5543,7 +5580,10 @@ mod tests {
                 .await
                 .is_err()
         );
-        assert_eq!(index.read_complete_cut(REALM_ID).await.unwrap(), None);
+        assert_eq!(
+            index.read_complete_cut(realm_id.as_str()).await.unwrap(),
+            None
+        );
         let mut lagging = frame.clone();
         let earlier = &items[items.len() - 2].commit;
         let lagging_head = &mut lagging
@@ -5551,7 +5591,7 @@ mod tests {
             .as_mut()
             .unwrap()
             .entries
-            .get_mut(REALM_ID)
+            .get_mut(realm_id.as_str())
             .unwrap()
             .current
             .as_mut()
@@ -5564,17 +5604,23 @@ mod tests {
             .await
             .unwrap()
             .finish();
-        assert!(index.read_complete_cut(REALM_ID).await.unwrap().is_some());
         assert!(
             index
-                .read_selector(REALM_ID, &selector)
+                .read_complete_cut(realm_id.as_str())
+                .await
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            index
+                .read_selector(realm_id.as_str(), &selector)
                 .await
                 .unwrap()
                 .is_some()
         );
         let invalidation = serde_json::from_value(json!({
             "kind":"delta", "cursor":"ak:cursor:YQ",
-            "realm_invalidations":[{"realm_id":REALM_ID,"revision":1}]
+            "realm_invalidations":[{"realm_id":realm_id.as_str(),"revision":1}]
         }))
         .unwrap();
         index
@@ -5582,16 +5628,25 @@ mod tests {
             .await
             .unwrap()
             .finish();
-        assert_eq!(index.read_complete_cut(REALM_ID).await.unwrap(), None);
+        assert_eq!(
+            index.read_complete_cut(realm_id.as_str()).await.unwrap(),
+            None
+        );
         index
             .stage_verified_frame_with_snapshots(2, &lagging, &BTreeSet::new(), &proofs)
             .await
             .unwrap()
             .finish();
-        assert!(index.read_complete_cut(REALM_ID).await.unwrap().is_some());
         assert!(
             index
-                .read_selector_ready(REALM_ID, &selector)
+                .read_complete_cut(realm_id.as_str())
+                .await
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            index
+                .read_selector_ready(realm_id.as_str(), &selector)
                 .await
                 .unwrap()
                 .is_some()
@@ -5670,7 +5725,7 @@ mod tests {
 
     #[test]
     fn signed_realm_floor_accepts_complete_relation_and_rejects_domain_or_scope_drift() {
-        let realm_id = arkret_sdk::RealmId::new(REALM_ID).unwrap();
+        let realm_id = collaboration_fixture_realm_id();
         let creator = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
             arkret_sdk::DidCoreId::new(ACTOR_ID).unwrap(),
             arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
@@ -5829,7 +5884,8 @@ mod tests {
         target: &arkret_sdk::StrandId,
         expected: Option<&arkret_sdk::StrandId>,
     ) -> (String, serde_json::Value) {
-        let mut payload = json!({"realm_id": REALM_ID, "strand_id": target});
+        let mut payload =
+            json!({"realm_id": collaboration_fixture_realm_id(), "strand_id": target});
         if let Some(expected) = expected {
             payload["expected_default_strand_id"] = json!(expected);
         }
@@ -6008,6 +6064,7 @@ mod tests {
             "agent.example",
             "ak:device:0196419b-0000-7000-8000-000000000001",
         );
+        let realm = committed.event.realm_id.clone();
         let event_id = committed.event.event_id.clone();
         let batch = committed_views_to_client_events(
             &realm,
@@ -6479,8 +6536,8 @@ mod tests {
                 readable_floor,
             }
         };
-        let preview_id = arkret_sdk::RealmId::new(REALM_ID).unwrap();
-        let verified_id = arkret_sdk::RealmId::new(OTHER_REALM_ID).unwrap();
+        let preview_id = fixture_realm(REALM_ID, &[], 0).bundle.realm_id;
+        let verified_id = fixture_realm(OTHER_REALM_ID, &[], 0).bundle.realm_id;
         let preview_stream = CommitStreamRef::Realm {
             realm_id: preview_id.clone(),
         };
@@ -6506,9 +6563,12 @@ mod tests {
         };
         let batch = |station: &FrameStation| {
             account_frame(vec![
-                (REALM_ID, frame_entry(&station.realms[&preview_id], 1, true)),
                 (
-                    OTHER_REALM_ID,
+                    preview_id.as_str(),
+                    frame_entry(&station.realms[&preview_id], 1, true),
+                ),
+                (
+                    verified_id.as_str(),
                     frame_entry(&station.realms[&verified_id], 2, false),
                 ),
             ])
@@ -6524,7 +6584,7 @@ mod tests {
             .as_mut()
             .unwrap()
             .entries
-            .get_mut(OTHER_REALM_ID)
+            .get_mut(verified_id.as_str())
             .unwrap()
             .current
             .as_mut()
@@ -6585,14 +6645,21 @@ mod tests {
         );
         let product = verified.product_frame(&frame);
         let entries = &product.realms.as_ref().unwrap().entries;
-        assert!(entries[REALM_ID].current.is_none() && entries[REALM_ID].baseline.is_none());
+        assert!(
+            entries[preview_id.as_str()].current.is_none()
+                && entries[preview_id.as_str()].baseline.is_none()
+        );
         assert_eq!(
-            entries[REALM_ID].committed_events.as_ref().unwrap().len(),
+            entries[preview_id.as_str()]
+                .committed_events
+                .as_ref()
+                .unwrap()
+                .len(),
             1
         );
         assert_eq!(
-            entries[OTHER_REALM_ID].current,
-            frame.realms.as_ref().unwrap().entries[OTHER_REALM_ID].current
+            entries[verified_id.as_str()].current,
+            frame.realms.as_ref().unwrap().entries[verified_id.as_str()].current
         );
         project(&mut store, &verified, "ak:cursor:preview-1");
         let unresolved = station(2);
@@ -6618,7 +6685,7 @@ mod tests {
             .as_mut()
             .unwrap()
             .entries
-            .get_mut(REALM_ID)
+            .get_mut(preview_id.as_str())
             .unwrap();
         let CommittedEventView::Full(row) = &mut entry.committed_events.as_mut().unwrap()[0] else {
             unreachable!()
@@ -6683,9 +6750,6 @@ mod tests {
         use crate::test_support::committed_event::FixtureStation;
         let inception_at = chrono::Utc::now() - chrono::Duration::seconds(1000);
         let realm_id = arkret_sdk::RealmId::new(REALM_ID).unwrap();
-        let stream_ref = CommitStreamRef::Realm {
-            realm_id: realm_id.clone(),
-        };
         let (bundle, _, items) =
             crate::test_support::committed_event::verified_realm_fixture_signed_by(
                 &FixtureStation::webvh(0x48, inception_at),
@@ -6696,6 +6760,10 @@ mod tests {
                 DEVICE_ID,
             );
         let realm_id = bundle.realm_id.clone();
+        let stream_ref = CommitStreamRef::Realm {
+            realm_id: realm_id.clone(),
+        };
+
         let rows = std::iter::once(CommittedEventView::Full(
             arkret_sdk::CommittedEventFullView {
                 commit: bundle.genesis_commit.clone(),
@@ -6796,13 +6864,10 @@ mod tests {
         use crate::test_support::committed_event::FixtureStation;
         let inception_at = chrono::Utc::now() - chrono::Duration::seconds(1000);
         let fixture_station = || FixtureStation::webvh(0x47, inception_at);
-        let realm_id = arkret_sdk::RealmId::new(REALM_ID).unwrap();
+        let realm_id = collaboration_fixture_realm_id();
         let sibling_id = arkret_sdk::RealmId::new(OTHER_REALM_ID).unwrap();
         let realm_stream = CommitStreamRef::Realm {
             realm_id: realm_id.clone(),
-        };
-        let sibling_stream = CommitStreamRef::Realm {
-            realm_id: sibling_id.clone(),
         };
         let circle_stream = CommitStreamRef::Circle {
             realm_id: realm_id.clone(),
@@ -6844,6 +6909,10 @@ mod tests {
                 DEVICE_ID,
             );
         let sibling_id = sibling_bundle.realm_id.clone();
+        let sibling_stream = CommitStreamRef::Realm {
+            realm_id: sibling_id.clone(),
+        };
+
         let sibling = StationRealm {
             rows: with_genesis(&sibling_bundle, sibling_items),
             bundle: sibling_bundle,
@@ -6863,7 +6932,6 @@ mod tests {
                     "alice.example",
                     DEVICE_ID,
                 );
-            let realm_id = bundle.realm_id.clone();
             let mut snapshot = snapshot_at(
                 &bundle,
                 &items[..6],
@@ -6882,7 +6950,10 @@ mod tests {
         let exact_tail = vec![strand.clone(), default_strand_entry(&strand_id, None)];
         let unsupported_tail = vec![
             strand.clone(),
-            ("ak.realm.alias".to_owned(), json!({"alias": "general"})),
+            (
+                "ak.realm.alias".to_owned(),
+                json!({"alias": "general:station.example"}),
+            ),
         ];
         let station_for = |tail: &[(String, serde_json::Value)]| {
             let (bundle, items, snapshot) = anchored(tail.to_vec());
@@ -7005,10 +7076,10 @@ mod tests {
         let exact_rows = coland_bootstrap_rows(&bundle, &items);
         let frame = account_frame(vec![
             (
-                REALM_ID,
+                realm_id.as_str(),
                 anchored_entry(&bundle, &items, &snapshot, exact_rows.clone(), false),
             ),
-            (OTHER_REALM_ID, frame_entry(&sibling, 2, false)),
+            (sibling_id.as_str(), frame_entry(&sibling, 2, false)),
         ]);
         let verified = verify_account_frame_described(
             &AuthorityClient::new(station),
@@ -7089,7 +7160,7 @@ mod tests {
                 },
             );
         }
-        let multi_frame = account_frame(vec![(REALM_ID, multi_entry)]);
+        let multi_frame = account_frame(vec![(realm_id.as_str(), multi_entry)]);
         let multi_authority = AuthorityClient::new(station);
         let multi_verified =
             verify_account_frame_described(&multi_authority, &http, Some(&describe), &multi_frame)
@@ -7110,9 +7181,9 @@ mod tests {
                 .product_frame(&multi_frame)
                 .realms
                 .unwrap()
-                .entries[REALM_ID]
-                .current
-                .is_some()
+                .entries[realm_id.as_str()]
+            .current
+            .is_some()
         );
         let mut accepted_dependency = multi_frame.clone();
         accepted_dependency
@@ -7120,7 +7191,7 @@ mod tests {
             .as_mut()
             .unwrap()
             .entries
-            .get_mut(REALM_ID)
+            .get_mut(realm_id.as_str())
             .unwrap()
             .streams
             .as_mut()
@@ -7150,7 +7221,7 @@ mod tests {
             .as_mut()
             .unwrap()
             .entries
-            .get_mut(REALM_ID)
+            .get_mut(realm_id.as_str())
             .unwrap()
             .streams
             .as_mut()
@@ -7181,7 +7252,7 @@ mod tests {
             .as_mut()
             .unwrap()
             .entries
-            .get_mut(REALM_ID)
+            .get_mut(realm_id.as_str())
             .unwrap()
             .current
             .as_mut()
@@ -7203,7 +7274,7 @@ mod tests {
         let (station, bundle, items, snapshot) = station_for(&exact_tail);
         let prefix = &items[..7];
         let older_frame = account_frame(vec![(
-            REALM_ID,
+            realm_id.as_str(),
             anchored_entry(
                 &bundle,
                 prefix,
@@ -7231,7 +7302,7 @@ mod tests {
         let (station, bundle, items, snapshot) = station_for(&exact_tail);
         let prefix = &items[..6];
         let empty_frame = account_frame(vec![(
-            REALM_ID,
+            realm_id.as_str(),
             anchored_entry(
                 &bundle,
                 prefix,
@@ -7258,7 +7329,7 @@ mod tests {
             .as_mut()
             .unwrap()
             .entries
-            .get_mut(REALM_ID)
+            .get_mut(realm_id.as_str())
             .unwrap()
             .streams
             .as_mut()
@@ -7282,10 +7353,10 @@ mod tests {
         forged_rows.pop();
         let forged = account_frame(vec![
             (
-                REALM_ID,
+                realm_id.as_str(),
                 anchored_entry(&bundle, &items, &snapshot, forged_rows.clone(), false),
             ),
-            (OTHER_REALM_ID, frame_entry(&sibling, 2, false)),
+            (sibling_id.as_str(), frame_entry(&sibling, 2, false)),
         ]);
         let verified = verify_account_frame_described(
             &AuthorityClient::new(station),
@@ -7296,7 +7367,7 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(
-            verified.product_frame(&forged).realms.unwrap().entries[REALM_ID]
+            verified.product_frame(&forged).realms.unwrap().entries[realm_id.as_str()]
                 .current
                 .as_ref()
                 .unwrap()
@@ -7309,7 +7380,7 @@ mod tests {
         let (station, bundle, items, snapshot) = station_for(&unsupported_tail);
         let frame = account_frame(vec![
             (
-                REALM_ID,
+                realm_id.as_str(),
                 anchored_entry(
                     &bundle,
                     &items,
@@ -7318,7 +7389,7 @@ mod tests {
                     false,
                 ),
             ),
-            (OTHER_REALM_ID, frame_entry(&sibling, 2, false)),
+            (sibling_id.as_str(), frame_entry(&sibling, 2, false)),
         ]);
         let verified = verify_account_frame_described(
             &AuthorityClient::new(station),
@@ -7332,14 +7403,18 @@ mod tests {
         assert_eq!(positions(&verified, &sibling_stream), vec![0, 1, 2]);
         let product = verified.product_frame(&frame);
         let entries = &product.realms.as_ref().unwrap().entries;
-        assert!(entries[REALM_ID].current.is_some());
+        assert!(entries[realm_id.as_str()].current.is_some());
         assert_eq!(
-            entries[REALM_ID].committed_events.as_ref().unwrap().len(),
+            entries[realm_id.as_str()]
+                .committed_events
+                .as_ref()
+                .unwrap()
+                .len(),
             2
         );
         assert_eq!(
-            entries[OTHER_REALM_ID].current,
-            frame.realms.as_ref().unwrap().entries[OTHER_REALM_ID].current
+            entries[sibling_id.as_str()].current,
+            frame.realms.as_ref().unwrap().entries[sibling_id.as_str()].current
         );
         let mut store = crate::state::isolated_store_for_tests("account-frame-unresolved-tail");
         store.switch_test_account("did:web:reader.example");
@@ -7360,7 +7435,7 @@ mod tests {
                     .map_err(|error| error.to_string())
             })
             .unwrap();
-        assert!(store.realm_tree_projection(REALM_ID).is_none());
+        assert!(store.realm_tree_projection(realm_id.as_str()).is_none());
         assert!(
             store
                 .verified_commit_stream_cursor(&realm_stream)
@@ -7377,15 +7452,15 @@ mod tests {
         for reads_circle in [false, true] {
             let (station, bundle, items, snapshot) = station_for(&exact_tail);
             let frame = account_frame(vec![(
-                REALM_ID,
+                realm_id.as_str(),
                 anchored_entry(&bundle, &items, &snapshot, exact_rows.clone(), reads_circle),
             )]);
-            let mut entry = frame.realms.as_ref().unwrap().entries[REALM_ID].clone();
+            let mut entry = frame.realms.as_ref().unwrap().entries[realm_id.as_str()].clone();
             if !reads_circle {
                 entry.current.as_mut().unwrap().stream_heads.truncate(1);
                 entry.streams.as_mut().unwrap().push(circle_window.clone());
             }
-            let frame = account_frame(vec![(REALM_ID, entry)]);
+            let frame = account_frame(vec![(realm_id.as_str(), entry)]);
             let verified = verify_account_frame_described(
                 &AuthorityClient::new(station),
                 &http,
@@ -7400,7 +7475,7 @@ mod tests {
             );
             assert_eq!(positions(&verified, &realm_stream), vec![7, 8]);
             let product = verified.product_frame(&frame);
-            let installed = product.realms.as_ref().unwrap().entries[REALM_ID]
+            let installed = product.realms.as_ref().unwrap().entries[realm_id.as_str()]
                 .current
                 .is_some();
             assert_eq!(installed, !reads_circle, "reads Circle: {reads_circle}");

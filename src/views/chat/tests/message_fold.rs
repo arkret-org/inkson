@@ -72,6 +72,7 @@ fn restores_messages_from_local_raw_operations() {
     )
     .unwrap();
     let committed = verified_chat_create(&realm, "alice.example", "local fallback message");
+    let realm = committed.event.realm_id.clone();
     let state = ClientLocalState {
         raw_operations: vec![crate::state::RawOperationRecord {
             operation_id: "ak:operation:local".to_owned(),
@@ -131,6 +132,7 @@ fn message_operations_from_events_folds_create_and_renders_local_first() {
     )
     .unwrap();
     let committed = verified_chat_create(&realm, "bob.example", "hello from bob");
+    let realm = committed.event.realm_id.clone();
     let create = serde_json::to_value(&committed.event).unwrap();
     // A non-message timeline event (e.g. a poll close) MUST be ignored.
     let poll = json!({
@@ -294,6 +296,7 @@ fn chat_messages_do_not_promote_projection_reaction_without_verified_scan() {
         "bob.example",
         "ak:device:0196419b-0000-7000-8000-000000000001",
     );
+    let realm = committed[0].event.realm_id.clone();
     assert_eq!(committed[0].event.event_id, create.event.event_id);
     assert_eq!(
         committed[0].commit.stream_position + 1,
@@ -1145,6 +1148,7 @@ fn message_operations_fold_independent_redaction_event_by_message_id() {
             ),
         ],
     );
+    let realm = committed[0].event.realm_id.clone();
     assert_eq!(committed[0].event.event_id, create_id);
     assert_eq!(committed[0].commit.stream_position, 1);
     assert_eq!(committed[1].commit.stream_position, 2);
@@ -1215,6 +1219,7 @@ fn committed_create_revision_redaction_folds_in_any_arrival_order() {
             ),
         ],
     );
+    let realm = committed[0].event.realm_id.clone();
     assert_eq!(committed[0].event.event_id, create_id);
     assert_eq!(
         committed
