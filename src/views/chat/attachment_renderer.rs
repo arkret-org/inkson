@@ -475,14 +475,17 @@ fn VerifiedLongText(
     }));
     let last = artifact.size.saturating_sub(1) / PAGE_BYTES;
     rsx! {div {"data-testid": "verified-long-text",
-        match text() {
-            Some(Ok(body)) if markdown => {
-                let html = crate::content::renderer::markdown_to_safe_html(&body);
-                rsx! {div {"data-testid": "verified-long-text-page", class: "content-block-markdown", dangerous_inner_html: html}}
-            },
-            Some(Ok(body)) => rsx! {pre {"data-testid": "verified-long-text-page", "{body}"}},
-            Some(Err(error)) => rsx! {p {role: "alert", "{error}"}},
-            None => rsx! {p {"Loading text…"}},
+        div {class: "verified-long-text-viewport", "data-testid": "verified-long-text-viewport",
+            tabindex: "0", role: "region", "aria-label": "Message text",
+            match text() {
+                Some(Ok(body)) if markdown => {
+                    let html = crate::content::renderer::markdown_to_safe_html(&body);
+                    rsx! {div {"data-testid": "verified-long-text-page", class: "content-block-markdown", dangerous_inner_html: html}}
+                },
+                Some(Ok(body)) => rsx! {pre {"data-testid": "verified-long-text-page", "{body}"}},
+                Some(Err(error)) => rsx! {p {role: "alert", "{error}"}},
+                None => rsx! {p {"Loading text…"}},
+            }
         }
         button {disabled: page() == 0, onclick: move |_| page.set(page().saturating_sub(1)), "Previous page"}
         button {"data-testid": "verified-long-text-next", disabled: page() >= last, onclick: move |_|page.set((page()+1).min(last)), "Next page"}
