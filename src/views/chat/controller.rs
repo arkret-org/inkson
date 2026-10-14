@@ -242,6 +242,11 @@ pub(super) struct ChatController {
     pub typing_throttle: crate::perf::TypingThrottle,
     pub compose_dragover: Signal<bool>,
     pub compose_upload_status: Signal<String>,
+    pub attachments: Signal<Vec<crate::attachments::DraftAttachment>>,
+    pub attachment_target_key: Signal<String>,
+    pub attachment_target_revision: Signal<u64>,
+    pub attachment_upload_revision: Signal<u64>,
+    pub selection_revision: Signal<u64>,
     pub shared_pins: Signal<Vec<SharedMessagePin>>,
     pub private_saved_targets: Signal<std::collections::BTreeSet<String>>,
     pub private_saved_account_data: Signal<std::collections::BTreeMap<String, serde_json::Value>>,
@@ -311,6 +316,10 @@ pub(super) struct ChatController {
 
 impl ChatController {
     pub fn select_channel(mut self, strand_id: String) {
+        if *self.selected_channel.peek() != strand_id {
+            let next = self.selection_revision.peek().wrapping_add(1);
+            self.selection_revision.set(next);
+        }
         self.selected_channel.set(strand_id);
         self.message_context_menu.set(None);
         self.reaction_picker.set(None);
@@ -330,6 +339,10 @@ impl ChatController {
     }
 
     pub fn update_draft(mut self, draft: String) {
+        if *self.draft.peek() != draft {
+            let next = self.attachment_target_revision.peek().wrapping_add(1);
+            self.attachment_target_revision.set(next);
+        }
         self.draft.set(draft);
     }
 
@@ -1844,6 +1857,10 @@ struct ComposerState {
     edit_draft: Signal<String>,
     compose_dragover: Signal<bool>,
     compose_upload_status: Signal<String>,
+    attachments: Signal<Vec<crate::attachments::DraftAttachment>>,
+    attachment_target_key: Signal<String>,
+    attachment_target_revision: Signal<u64>,
+    attachment_upload_revision: Signal<u64>,
     message_context_menu: Signal<Option<String>>,
     moderation_report_draft: Signal<Option<ModerationReportDraft>>,
     moderation_report_pending: Signal<bool>,
@@ -1943,6 +1960,10 @@ fn use_composer_state(target: ComposerTarget) -> ComposerState {
                 edit_draft: Signal::new(String::new()),
                 compose_dragover: Signal::new(false),
                 compose_upload_status: Signal::new(String::new()),
+                attachments: Signal::new(Vec::new()),
+                attachment_target_key: Signal::new(String::new()),
+                attachment_target_revision: Signal::new(0),
+                attachment_upload_revision: Signal::new(0),
                 message_context_menu: Signal::new(None),
                 moderation_report_draft: Signal::new(None),
                 moderation_report_pending: Signal::new(false),
@@ -2111,6 +2132,17 @@ pub(super) fn use_chat_controller(
         .into_iter()
         .collect::<Vec<_>>();
     let selected_channel = use_signal(move || initial_selected_channel);
+    let mut selection_key = use_signal(String::new);
+    let mut selection_revision = use_signal(|| 0_u64);
+    let key = format!(
+        "{authority:?}|{device_id}|{selected_realm_id}|{}",
+        selected_channel()
+    );
+    if *selection_key.peek() != key {
+        selection_key.set(key);
+        let revision = selection_revision.peek().wrapping_add(1);
+        selection_revision.set(revision);
+    }
     let composer = use_composer_state(ComposerTarget {
         authority: authority.clone(),
         device_id: device_id.clone(),
@@ -2128,6 +2160,11 @@ pub(super) fn use_chat_controller(
         typing_throttle: crate::perf::use_typing_throttle(3_000, 4_000),
         compose_dragover: composer.compose_dragover,
         compose_upload_status: composer.compose_upload_status,
+        attachments: composer.attachments,
+        attachment_target_key: composer.attachment_target_key,
+        attachment_target_revision: composer.attachment_target_revision,
+        attachment_upload_revision: composer.attachment_upload_revision,
+        selection_revision,
         shared_pins: use_signal(Vec::<SharedMessagePin>::new),
         private_saved_targets: use_signal(std::collections::BTreeSet::<String>::new),
         private_saved_account_data: use_signal(

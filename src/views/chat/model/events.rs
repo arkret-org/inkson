@@ -158,6 +158,7 @@ fn apply_redaction_marker_to_message(message: &mut ChatMessage, marker: &Message
         *message = redacted;
     } else {
         message.body.clear();
+        message.protocol_content = None;
         message.redacted = true;
         message.reactions.clear();
         message.mentions.clear();
@@ -407,6 +408,7 @@ fn fold_revision_message_into(message: &mut ChatMessage, revision: ChatMessage) 
     } else {
         let previous = std::mem::replace(&mut message.body, revision.body);
         message.content_format = revision.content_format;
+        message.protocol_content = revision.protocol_content;
         append_revision_body(message, previous);
     }
     message.edited = true;
@@ -561,6 +563,7 @@ pub(crate) fn merge_duplicate_create_message(
                 && incoming.executed_by == existing.executed_by
             {
                 incoming.crypto_state = MessageCryptoState::Plaintext;
+                incoming.protocol_content = existing.protocol_content.clone();
             }
         }
         // Carry forward locally-tracked edit metadata. The sync projection
@@ -1416,6 +1419,9 @@ fn chat_message_from_event_with_proof(
             store.private_plaintext_for(message_realm, strand_id, &format!("message:{message_id}"))
         })
     };
+    let private_typed_content = sidecar_body
+        .as_ref()
+        .and_then(|body| serde_json::from_str::<arkret_sdk::ContentBlock>(body).ok());
     let sidecar_content = sidecar_body.map(content_from_private_sidecar);
     let body_from_sidecar = sidecar_content.is_some();
     // P0 decrypt-on-read: a remote member's message carries ciphertext but no
@@ -1437,7 +1443,7 @@ fn chat_message_from_event_with_proof(
         None
     };
     let decrypt_was_attempted = decrypt_context.is_some();
-    let decrypted_content =
+    let decrypted_value =
         decrypt_context.and_then(|(store, authority, _, device_id, encrypted)| {
             decrypt_chat_encrypted_content_value(
                 store,
@@ -1448,10 +1454,26 @@ fn chat_message_from_event_with_proof(
                 encrypted,
                 verified_sender_domain.as_deref(),
             )
-            .and_then(|content_value| {
-                display_body_from_value(&content_value)
-                    .map(|body| (body, content_format_from_value(&content_value)))
-            })
+        });
+    let decrypted_content = decrypted_value.as_ref().and_then(|value| {
+        display_body_from_value(value).map(|body| (body, content_format_from_value(value)))
+    });
+    let typed_content = private_typed_content
+        .or_else(|| {
+            decrypted_value
+                .clone()
+                .and_then(|value| serde_json::from_value::<arkret_sdk::ContentBlock>(value).ok())
+        })
+        .or_else(|| {
+            (!has_encrypted_payload)
+                .then(|| {
+                    candidates.iter().find_map(|candidate| {
+                        candidate.get("content").cloned().and_then(|v| {
+                            serde_json::from_value::<arkret_sdk::ContentBlock>(v).ok()
+                        })
+                    })
+                })
+                .flatten()
         });
     let body_was_decrypted = decrypted_content.is_some();
     let (body, content_format) = if is_redaction_tombstone {
@@ -1520,6 +1542,19 @@ fn chat_message_from_event_with_proof(
     let reactions = Vec::new();
     let sender = message_actor_from_candidates(&candidates)?;
     Some(ChatMessage {
+        protocol_content: if proof_verdict == ChatProofVerdict::Verified && !is_redaction_tombstone
+        {
+            effective_scope
+                .zip(arkret_sdk::EventId::new(event_id.clone()).ok())
+                .zip(typed_content)
+                .map(|((scope, source), content)| AuthenticatedMessageContent {
+                    scope,
+                    source,
+                    content,
+                })
+        } else {
+            None
+        },
         local_scope: None,
         realm_id: first_string_in_candidates(&candidates, &["realm_id"])
             .unwrap_or(realm_id)

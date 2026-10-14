@@ -13,6 +13,7 @@
 //! localStorage per-origin quota that a single queue can exhaust on its own.
 
 mod agent_provision;
+mod attachments;
 mod creator_discussion;
 pub(crate) mod creator_protection;
 mod creator_quarantine;
@@ -92,6 +93,8 @@ type ScheduledDispatches =
 #[serde(deny_unknown_fields)]
 struct DurableOutboundState {
     items: Vec<garth::SendQueueItem>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    attachments: Vec<crate::attachments::AttachmentObject>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     agent_provision_records: Vec<crate::agent_identity::provision::ProvisionCeremony>,
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
@@ -185,6 +188,19 @@ impl DurableOutboundState {
     }
 
     fn validate(&self) -> garth::Result<()> {
+        for (index, object) in self.attachments.iter().enumerate() {
+            object
+                .validate()
+                .map_err(|e| garth::Error::Storage(format!("attachment vault: {e:#}")))?;
+            if self.attachments[..index]
+                .iter()
+                .any(|other| other.id == object.id || other.salt == object.salt)
+            {
+                return Err(garth::Error::Storage(
+                    "duplicate attachment identity or salt".into(),
+                ));
+            }
+        }
         for (index, record) in self.agent_provision_records.iter().enumerate() {
             record.validate().map_err(|error| {
                 garth::Error::Storage(format!("invalid Agent ceremony: {error}"))
@@ -1802,6 +1818,23 @@ impl OutboundQueueStore for InksonOutboundStore {
                 });
                 let result = mutation(&mut queue)?;
                 state.items = queue.snapshot().items;
+                for item in &state.items {
+                    if let arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest::Event(submission) = item.request()
+                        && submission.event.kind == arkret_sdk::EventKind::MessageCreate
+                    {
+                        let payload: arkret_sdk::MessageCreatePayload = serde_json::from_value(serde_json::Value::Object(submission.event.payload.clone().into_iter().collect()))
+                            .map_err(|e| garth::Error::Storage(format!("queued attachment payload: {e}")))?;
+                        for attachment in &mut state.attachments {
+                            if attachment.submitted_operation.is_none() && attachment.uploaded
+                                && attachment.scope == submission.event.scope_ref
+                                && attachment.strand_id == payload.strand_id
+                                && attachment.prepared.as_ref().is_some_and(|p| payload.blob_refs.iter().any(|r| r == p.blob_ref.as_str()))
+                            {
+                                attachment.submitted_operation = Some(item.event_id().to_string());
+                            }
+                        }
+                    }
+                }
                 state.settle_creator_rejections(&decision)?;
                 Ok(result)
             })

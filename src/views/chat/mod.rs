@@ -243,6 +243,7 @@ pub(crate) use model::{
 };
 use right_panel::{DiscussionSettingsPanel, DiscussionUsersPanel, SidecarDeliveryDiagnostics};
 use timeline::*;
+mod attachment_renderer;
 use timeline_surface::{ChatTimeline, ChatTimelineContext};
 
 // Invariant assertions: each `expect` message names the check that
@@ -1165,6 +1166,7 @@ async fn submit_source_routed_sidecar_message(
     routed_source_strand_id: &str,
     source_event_id: Option<&str>,
     body: &str,
+    attachment_drafts: &[crate::attachments::DraftAttachment],
     mentions: &[MentionNode],
     addressed_agent_ids: &[String],
     mut state_store: SyncSignal<LocalStateStore>,
@@ -1232,7 +1234,27 @@ async fn submit_source_routed_sidecar_message(
     {
         anyhow::bail!("every addressed Agent must have effective native Sidecar MLS access");
     }
-    let mut content = chat_content_block_for_body(body)?;
+    let content_api = crate::transport::auth::authed_api(base_url, api_token.clone())?;
+    let initial_content = crate::attachments::private_message_body(
+        &content_api,
+        crate::app::runtime_adapter::state_store_handle(state_store),
+        authority,
+        device_id,
+        &effective_scope,
+        attached_source_strand_id,
+        &crate::sidecar::sidecar_submission_intent_digest(
+            attached_source_strand_id,
+            body,
+            addressed_agent_ids,
+        ),
+        body,
+    )
+    .await?;
+    let mut content = crate::attachments::compose_draft_attachments(
+        initial_content,
+        attachment_drafts,
+        &effective_scope,
+    )?;
     let actor_mentions = mentions
         .iter()
         .filter_map(|mention| mention.as_mention().cloned())
@@ -1256,7 +1278,7 @@ async fn submit_source_routed_sidecar_message(
         .collect::<Vec<_>>();
     let intent_digest = crate::sidecar::sidecar_submission_intent_digest(
         attached_source_strand_id,
-        body,
+        &content_for_sidecar,
         &addressed_strings,
     );
     let Some(_submission_guard) = crate::sidecar::try_begin_sidecar_submission(
@@ -1893,6 +1915,10 @@ pub fn ChatPanel(
         typing_throttle: _,
         compose_dragover: _,
         compose_upload_status: _,
+        attachments: _,
+        attachment_target_key: _,
+        attachment_target_revision: _,
+        selection_revision: _,
         shared_pins,
         private_saved_targets: _,
         private_saved_account_data: _,
@@ -1948,6 +1974,7 @@ pub fn ChatPanel(
         mut new_channel_scope,
         sidecar_send_pending: _,
         member_handle_fetching: _,
+        attachment_upload_revision: _,
     } = controller;
     let blocked_actor_id_set =
         crate::account_data::blocked_message_actor_ids(&state_store.read().client_blocklist());

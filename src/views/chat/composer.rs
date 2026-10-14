@@ -404,7 +404,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
     let channels = controller.channels;
     let selected_channel = controller.selected_channel;
     let mut reply_to_message = controller.reply_to_message;
-    let mut chat_draft = controller.draft;
+    let chat_draft = controller.draft;
     let mut compose_dragover = controller.compose_dragover;
     let mut compose_upload_status = controller.compose_upload_status;
     let mut mention_picker_state = controller.mention_picker_state;
@@ -460,9 +460,47 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
         });
     let private_probe = crate::views::secure_send::use_scope_send_probe(
         state_store,
-        private_scope,
+        private_scope.clone(),
         device_id.clone(),
     );
+    let upload_scope = if private_draft {
+        private_scope
+    } else if mixed_draft {
+        None
+    } else {
+        selected_channel_info
+            .as_ref()
+            .and_then(|channel| ordinary_composer_scope(&selected_realm_id, channel))
+    };
+    let target_key = format!(
+        "{upload_scope:?}|{preview_route:?}|{interaction_modes:?}|{selected_channel_security_encrypted}"
+    );
+    let mut attachment_target_key = controller.attachment_target_key;
+    let mut attachment_target_revision = controller.attachment_target_revision;
+    if *attachment_target_key.peek() != target_key {
+        attachment_target_key.set(target_key.clone());
+        let revision = attachment_target_revision.peek().wrapping_add(1);
+        attachment_target_revision.set(revision);
+    }
+    {
+        let base = base_url.clone();
+        let scope = upload_scope.clone();
+        let strand = selected_channel();
+        use_effect(use_reactive(
+            (&scope, &strand, &device_id, &target_key),
+            move |(scope, ..)| {
+                if scope.is_some() {
+                    commands::upload_dropped_attachments(
+                        controller,
+                        base.clone(),
+                        token(),
+                        scope,
+                        Vec::new(),
+                    );
+                }
+            },
+        ));
+    }
     let sidecar_send_blocked = installed_sidecar_send_blocked(
         private_draft,
         active_sidecar_session.is_some(),
@@ -587,7 +625,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                 let updated = mention_picker_state
                     .write()
                     .select(candidate, &current, None);
-                chat_draft.set(updated);
+                controller.update_draft(updated);
                 mention_picker_state.write().close();
                 let _ = dioxus::document::eval(
                     r#"
@@ -617,7 +655,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
             let did_for_sidecar = plaintext_sidecar_did.clone();
             let device_id_for_sidecar = sidecar_device_id.clone();
             let body = chat_draft().trim().to_owned();
-            if body.is_empty() {
+            if body.is_empty() && controller.attachments.peek().is_empty() {
                 return;
             }
             let inserted_candidates = mention_picker_state.read().bound_candidates(&chat_draft());
@@ -680,6 +718,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
             }
             let local_id = new_chat_local_id();
             messages.write().push(ChatMessage {
+                protocol_content: None,
                 local_scope: ordinary_composer_scope(&realm, &channel),
                 realm_id: realm.clone(),
                 id: local_id.clone(),
@@ -759,7 +798,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                     mentions,
                 },
             );
-            chat_draft.set(String::new());
+            controller.update_draft(String::new());
             reply_to_message.set(None);
         }
     });
@@ -782,7 +821,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
             let did_for_sidecar = secure_sidecar_did.clone();
             let device_id_for_sidecar = sidecar_device_id.clone();
             let body = chat_draft().trim().to_owned();
-            if body.is_empty() {
+            if body.is_empty() && controller.attachments.peek().is_empty() {
                 status_msg.set("Type a message before secure send".to_owned());
                 return;
             }
@@ -910,6 +949,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
             let reply_to = reply_to_message().filter(|value| !value.trim().is_empty());
             let message_id = new_chat_local_id();
             messages.write().push(ChatMessage {
+                protocol_content: None,
                 local_scope: channels()
                     .iter()
                     .find(|channel| channel.strand_id == strand_id)
@@ -938,7 +978,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                 crypto_state: MessageCryptoState::Plaintext,
             });
             mention_picker_state.write().clear();
-            chat_draft.set(String::new());
+            controller.update_draft(String::new());
             reply_to_message.set(None);
             let base = base.clone();
             let realm = realm.clone();
@@ -1036,12 +1076,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                         }
                     }
                 }
-                // A6.2: drag-drop attachment zone wrapping the textarea.
-                // Dropping a file uploads the bytes via
-                // `upload_blob_bytes`, then appends `[Attachment: {ref}]`
-                // to the draft so the existing send pipeline picks it
-                // up as message body. `ondragover` is required to
-                // prevent the browser's default open-the-file behaviour.
+                // Freeze structured attachment objects before network upload.
                 div {
                     class: if compose_dragover() {
                         "compose-drop-zone is-dragover"
@@ -1056,7 +1091,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                     ondragleave: move |_| compose_dragover.set(false),
                     ondrop: {
                         let base = base_url.clone();
-                        let realm = selected_realm_id.clone();
+                        let scope = upload_scope.clone();
                         move |evt| {
                             evt.prevent_default();
                             compose_dragover.set(false);
@@ -1073,11 +1108,11 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                             }
                             let api_token = token();
                             let base = base.clone();
-                            let realm = realm.clone();
+                            let scope = scope.clone();
                             compose_upload_status.set(
                                 crate::i18n::tr("compose.upload_progress"),
                             );
-                            commands::upload_dropped_attachments(controller, base, api_token, realm, files);
+                            commands::upload_dropped_attachments(controller, base, api_token, scope, files);
                         }
                     },
                     if (controller.draft_storage)() == "error" {
@@ -1299,7 +1334,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                                                     let current = chat_draft();
                                                                     let range = mention_picker_state.read().active_range;
                                                                     let updated = mention_picker_state.write().select(candidate.clone(), &current, range);
-                                                                    chat_draft.set(updated);
+                                                                    controller.update_draft(updated);
                                                                                                                         mention_picker_state.write().close();
                                                                 }
                                                             },
@@ -1465,6 +1500,23 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                         class: "compose-upload-progress",
                         "data-testid": "compose-upload-progress",
                         "{compose_upload_status}"
+                        button { r#type: "button", "data-testid": "retry-attachment-upload",
+                            onclick: {
+                                let scope = upload_scope.clone();
+                                let base = base_url.clone();
+                                move |_| commands::upload_dropped_attachments(controller, base.clone(), token(), scope.clone(), Vec::new())
+                            },
+                            "Retry attachments"
+                        }
+                    }
+                }
+                for attachment in (controller.attachments)() {
+                    div { "data-testid": "compose-attachment", "data-attachment-id": attachment.id.clone(),
+                        "{attachment.content.body}"
+                        button { r#type: "button", "data-testid": "remove-compose-attachment",
+                            onclick: move |_| commands::discard_draft_attachment(controller, attachment.id.clone()),
+                            "Remove"
+                        }
                     }
                 }
                 if polls_available {
@@ -1566,6 +1618,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         // renders it in place.
                                         poll_cards.write().push(card);
                                         messages.write().push(ChatMessage {
+                                            protocol_content: None,
                                             local_scope: Some(op.intent().scope_ref().clone()),
                                             realm_id: realm.clone(),
                                             id: poll_id.clone(),
@@ -1636,8 +1689,8 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                 div { class: "actions",
                     OrdinarySendActions {
                         plaintext: !selected_channel_security_encrypted && !private_draft,
-                        plaintext_disabled: selected_channel_unavailable || draft_scope_send_blocked(preview_route, selected_realm_pending_mls_binding, sidecar_send_blocked || sidecar_route_pending() || sidecar_send_pending()),
-                        secure_disabled: selected_channel_unavailable || draft_scope_send_blocked(
+                        plaintext_disabled: (controller.attachments)().iter().any(|a|a.pending) || selected_channel_unavailable || draft_scope_send_blocked(preview_route, selected_realm_pending_mls_binding, sidecar_send_blocked || sidecar_route_pending() || sidecar_send_pending()),
+                        secure_disabled: (controller.attachments)().iter().any(|a|a.pending) || selected_channel_unavailable || draft_scope_send_blocked(
                             preview_route,
                             selected_realm_pending_mls_binding || creator_mls_bootstrap_pending,
                             sidecar_send_blocked || sidecar_route_pending() || sidecar_send_pending() || sidecar_target_missing,

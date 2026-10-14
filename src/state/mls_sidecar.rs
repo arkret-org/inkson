@@ -474,6 +474,48 @@ impl LocalStateStore {
         })
     }
 
+    /// Find the exact accepted state, never substitute the current epoch.
+    pub(crate) fn attachment_checkpoint_for_ref(
+        &self,
+        scope: &arkret_sdk::ScopeRef,
+        reference: &arkret_sdk::EventId,
+    ) -> anyhow::Result<crate::mls::persistence::MlsLocalCheckpointEnvelope> {
+        let group_id = scope.canonical_mls_group_id()?;
+        let mut candidates = self.with_unoverlaid_account_fields(|state| {
+            state
+                .mls_historical_checkpoints
+                .values()
+                .filter(|s| {
+                    s.group_id == group_id.as_str()
+                        && s.group_state_event_id.as_ref() == Some(reference)
+                })
+                .cloned()
+                .collect::<Vec<_>>()
+        });
+        if let Some(snapshot) = self.mls_checkpoint_for_scope(scope)
+            && snapshot.group_id == group_id.as_str()
+            && snapshot.group_state_event_id.as_ref() == Some(reference)
+        {
+            candidates.push(snapshot);
+        }
+        let snapshot = candidates.first().ok_or_else(|| {
+            anyhow::anyhow!(
+                "attachment_group_state_unresolved: authorized checkpoint is unavailable"
+            )
+        })?;
+        anyhow::ensure!(
+            candidates.iter().all(|s| s.epoch == snapshot.epoch),
+            "attachment_group_state_unresolved: ambiguous state"
+        );
+        anyhow::ensure!(
+            self.mls_group_state_ref_for_scope(scope, group_id.as_str(), snapshot.epoch)
+                .map_err(anyhow::Error::msg)?
+                == *reference,
+            "attachment_group_state_unresolved: checkpoint is not the accepted winner"
+        );
+        Ok(snapshot.clone())
+    }
+
     /// Snapshot of every persisted MLS envelope. Used by the boot
     /// path to rehydrate every known Realm's group in one pass and by
     /// device-recovery flows to enumerate the encrypted snapshots that

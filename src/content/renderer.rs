@@ -460,7 +460,7 @@ fn is_safe_link_url(url: &str) -> bool {
     }
 }
 
-fn markdown_to_safe_html(src: &str) -> String {
+pub(crate) fn markdown_to_safe_html(src: &str) -> String {
     let mut opts = Options::empty();
     opts.insert(Options::ENABLE_STRIKETHROUGH);
     opts.insert(Options::ENABLE_TABLES);

@@ -2,6 +2,7 @@ use super::*;
 
 fn row(id: &str, protocol: Option<&str>, version: i64) -> ChatMessage {
     ChatMessage {
+        protocol_content: None,
         local_scope: None,
         realm_id: "fixture-realm".to_owned(),
         id: id.to_owned(),

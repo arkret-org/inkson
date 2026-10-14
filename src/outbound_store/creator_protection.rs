@@ -100,6 +100,7 @@ pub(super) fn protect_records(
         }
     }
     super::agent_provision::protect_records(&mut value, authority, store)?;
+    super::attachments::protect_records(&mut value, authority, store)?;
     Ok(serde_json::to_string(&value)?)
 }
 
@@ -145,5 +146,6 @@ pub(super) fn open_records(
         }
     }
     super::agent_provision::open_records(&mut value, authority, store)?;
+    super::attachments::open_records(&mut value, authority, store)?;
     Ok(serde_json::to_string(&value)?)
 }

@@ -465,6 +465,7 @@ pub(crate) type SecureControlPlan = Box<
 /// One ordinary message, ready to be completed by the account's own Station.
 pub(crate) struct SecureMessageAuthoring {
     pub strand_id: String,
+    pub blob_refs: Vec<String>,
     pub reply_to: Option<String>,
     pub plan: SecureMessagePlan,
 }
@@ -548,6 +549,10 @@ pub(crate) async fn build_secure_send(
         &crate::app::runtime_adapter::state_store_handle(state_store),
         &effective_scope,
     )?;
+    let attachment_refs = serde_json::from_slice::<arkret_sdk::ContentBlock>(plaintext_bytes)
+        .map_err(|e| format!("private ContentBlock: {e}"))?
+        .referenced_blobs()
+        .map_err(|e| format!("private attachment references: {e}"))?;
     let encryption = run_local_mls_encrypt(
         state_store,
         realm_id,
@@ -631,6 +636,7 @@ pub(crate) async fn build_secure_send(
     Ok(SecureSendBuild {
         message_plan: SecureWritePlan::Message(SecureMessageAuthoring {
             strand_id: strand_id.to_owned(),
+            blob_refs: attachment_refs,
             reply_to: reply_to
                 .filter(|value| !value.trim().is_empty())
                 .map(ToOwned::to_owned),
@@ -806,7 +812,7 @@ pub(crate) async fn submit_secure_send(
                 Ok(content) => content,
                 Err(message) => return SecureSendOutcome::MessageFailed { message },
             };
-            return match crate::views::chat::model::send_ordinary_chat_message(
+            return match crate::views::chat::model::send_ordinary_chat_message_with_blob_refs(
                 api,
                 crate::app::runtime_adapter::state_store_handle(state_store),
                 realm_id,
@@ -815,6 +821,7 @@ pub(crate) async fn submit_secure_send(
                 content,
                 authoring.reply_to.as_deref(),
                 message_local_operation_id.to_string(),
+                authoring.blob_refs,
             )
             .await
             {

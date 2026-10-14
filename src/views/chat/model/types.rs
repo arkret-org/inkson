@@ -126,7 +126,15 @@ impl MessageCryptoState {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub(crate) struct AuthenticatedMessageContent {
+    pub scope: arkret_sdk::ScopeRef,
+    pub source: arkret_sdk::EventId,
+    pub content: arkret_sdk::ContentBlock,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ChatMessage {
+    pub(crate) protocol_content: Option<AuthenticatedMessageContent>,
     /// Scope fixed by the local ordinary composer before authoring. Private
     /// Sidecar rows never acquire this ordinary-timeline provenance.
     pub(crate) local_scope: Option<arkret_sdk::ScopeRef>,

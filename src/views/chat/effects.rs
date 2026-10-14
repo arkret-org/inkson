@@ -134,6 +134,7 @@ mod tests {
 
     fn row(id: &str, realm: &str) -> ChatMessage {
         ChatMessage {
+            protocol_content: None,
             local_scope: None,
             realm_id: realm.to_owned(),
             id: id.to_owned(),

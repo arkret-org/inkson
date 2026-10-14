@@ -67,6 +67,7 @@ fn sidecar_projection_message_for_realm(
     body: &str,
 ) -> ChatMessage {
     ChatMessage {
+        protocol_content: None,
         local_scope: None,
         realm_id: realm_id.to_owned(),
         id: id.to_owned(),

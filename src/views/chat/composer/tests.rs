@@ -281,6 +281,7 @@ type FailureState = Rc<RefCell<Option<(Signal<Vec<ChatMessage>>, Signal<String>,
 fn send_failure_harness(control: FailureState) -> Element {
     let messages = use_signal(|| {
         vec![ChatMessage {
+            protocol_content: None,
             local_scope: None,
             realm_id: String::new(),
             id: "local-send".to_owned(),

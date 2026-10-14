@@ -836,7 +836,11 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                             } else if sender_blocked {
                                                 {crate::i18n::tr("message.blocked_user")}
                                             } else {
-                                                {render_message_body(&msg.body, msg.content_format, &msg.mentions, &base_url)}
+                                                if let Some(source) = &msg.protocol_content {
+                                                    {super::attachment_renderer::render_protocol_content(source, &msg.mentions, &base_url)}
+                                                } else {
+                                                    {render_message_body(&msg.body, msg.content_format, &msg.mentions, &base_url)}
+                                                }
                                             }
                                         }
                                     }

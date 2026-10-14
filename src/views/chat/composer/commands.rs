@@ -38,6 +38,8 @@ struct PendingComposerDraft {
     operation: String,
     body: String,
     submission: ComposerSubmissionState,
+    attachments: Signal<Vec<crate::attachments::DraftAttachment>>,
+    attachment_ids: Vec<String>,
 }
 
 impl PendingComposerDraft {
@@ -52,6 +54,13 @@ impl PendingComposerDraft {
             operation: operation.to_owned(),
             body: body.to_owned(),
             submission: ComposerSubmissionState::Recoverable,
+            attachments: controller.attachments,
+            attachment_ids: controller
+                .attachments
+                .peek()
+                .iter()
+                .map(|a| a.id.clone())
+                .collect(),
         }
     }
 
@@ -80,6 +89,11 @@ impl PendingComposerDraft {
 
 impl Drop for PendingComposerDraft {
     fn drop(&mut self) {
+        if self.submission != ComposerSubmissionState::Recoverable
+            && let Ok(mut attachments) = self.attachments.try_write()
+        {
+            attachments.retain(|a| !self.attachment_ids.contains(&a.id));
+        }
         if let Ok(mut pending) = self.pending.try_write() {
             pending.remove(&self.operation);
         }
@@ -92,159 +106,250 @@ impl Drop for PendingComposerDraft {
     }
 }
 
-/// Upload every dropped file to the Realm's blob store and append an
-/// attachment reference to the draft for each one that lands.
-///
-/// Failures are collected rather than aborting the batch: a five-file drop
-/// where one file is unreadable still uploads the other four, and the status
-/// line reports the last error.
+/// Prepare and recover exact attachment objects in the account's private vault.
 pub(super) fn upload_dropped_attachments(
     controller: ChatController,
     base_url: String,
     api_token: String,
-    realm_id: String,
+    scope: Option<arkret_sdk::ScopeRef>,
     files: Vec<dioxus::html::FileData>,
 ) {
-    let mut chat_draft = controller.draft;
-    let mut compose_upload_status = controller.compose_upload_status;
+    let mut status = controller.compose_upload_status;
+    let Some(scope) = scope else {
+        status.set("Attachment upload requires a verified conversation scope.".into());
+        return;
+    };
+    let selected_is_private = controller.channels.peek().iter().any(|channel| {
+        channel.strand_id == *controller.selected_channel.peek() && channel.is_private_sidecar
+    });
+    if selected_is_private && !matches!(scope, arkret_sdk::ScopeRef::Sidecar { .. }) {
+        status.set("Attachment upload requires a verified conversation scope.".into());
+        return;
+    }
+    let mut attachments = controller.attachments;
     let session = consume_context::<crate::app::SessionContext>();
-    let state_store = crate::app::runtime_adapter::state_store_handle(session.state_store);
-    let session_generation = *session.session_generation.peek();
-    let selected_channel = controller.selected_channel.peek().clone();
-    let scope = controller
-        .channels
-        .peek()
-        .iter()
-        .find(|channel| channel.strand_id == selected_channel)
-        .and_then(|channel| ordinary_composer_scope(&realm_id, channel));
+    let generation = *session.session_generation.peek();
+    let selected = controller.selected_channel.peek().clone();
+    let target_revision = *controller.attachment_target_revision.peek();
+    let mut upload_revision = controller.attachment_upload_revision;
+    let run = upload_revision.peek().wrapping_add(1);
+    upload_revision.set(run);
+    let selection_revision = *controller.selection_revision.peek();
+    let draft = controller.draft.peek().clone();
+    let account = session.active_account.peek().clone();
+    let store = crate::app::runtime_adapter::state_store_handle(session.state_store);
     spawn(async move {
-        let Some(scope) = scope else {
-            compose_upload_status
-                .set("Attachment upload requires a verified conversation scope.".to_owned());
-            return;
-        };
-        let input = crate::mls::send_gate::MlsSendGateInput::capture(&state_store, &scope);
-        match crate::mls::send_gate::resolve_mls_send_gate(&input, &scope).await {
-            Ok(crate::mls::send_gate::MlsSendGate::Plaintext) => {}
-            Ok(crate::mls::send_gate::MlsSendGate::Encrypted(_)) => {
-                compose_upload_status.set(
-                    "Attachment upload is unavailable for this encrypted conversation.".to_owned(),
+        let result = async {
+            let account = account.ok_or_else(|| anyhow::anyhow!("no active attachment account"))?;
+            let strand = arkret_sdk::StrandId::new(selected.clone())?;
+            let active = || {
+                *session.session_generation.peek() == generation
+                    && *upload_revision.peek() == run
+                    && *controller.selected_channel.peek() == selected
+                && *controller.attachment_target_revision.peek() == target_revision
+                && *controller.selection_revision.peek() == selection_revision
+                    && *controller.draft.peek() == draft
+                    && session.active_account.peek().as_ref().is_some_and(|a| {
+                        a.authority == account.authority && a.device_id == account.device_id
+                    })
+            };
+            anyhow::ensure!(active(), "attachment session or draft changed");
+            let fence = crate::transport::auth::AuthoringSessionFence::capture()?;
+            let vault = crate::outbound_store::InksonOutboundStore::open(
+                &account.authority,
+                crate::outbound_store::OutboundLane::Standard,
+            )?;
+            let clients = crate::transport::EndpointClients::from_http(
+                crate::transport::auth::authed_api_ready(&base_url, api_token).await?.sdk_http_client()?,
+            );
+            anyhow::ensure!(active(), "attachment session or target changed");
+            for file in files {
+                anyhow::ensure!(
+                    file.size() <= 64 * 1024 * 1024,
+                    "attachment exceeds the 64 MiB client limit"
                 );
-                return;
+                let input = crate::mls::send_gate::MlsSendGateInput::capture(&store, &scope);
+                let gate = crate::mls::send_gate::resolve_restorable_mls_send_gate(
+                    &input,
+                    &scope,
+                    &account.device_id,
+                )
+                .await?;
+                anyhow::ensure!(active(), "attachment session or draft changed");
+                let salt = arkret_crypto::blob_aead::fresh_content_key_salt()?;
+                let (context, checkpoint, state_tree_ref, nonce_prefix) = match gate {
+                    crate::mls::send_gate::MlsSendGate::Plaintext => {
+                        anyhow::ensure!(
+                            !matches!(scope, arkret_sdk::ScopeRef::Sidecar { .. }),
+                            "private attachments require MLS"
+                        );
+                        (None, None, None, None)
+                    }
+                    crate::mls::send_gate::MlsSendGate::Encrypted(current) => {
+                        let checkpoint = store
+                            .read(|s| s.durable_mls_checkpoint_for_scope(&scope))?
+                            .ok_or_else(|| {
+                                anyhow::anyhow!("missing durable attachment checkpoint")
+                            })?;
+                        anyhow::ensure!(
+                            checkpoint.group_state_event_id.as_ref()
+                                == Some(&current.current_mls_commit_event_ref)
+                                && checkpoint.epoch == current.epoch,
+                            "attachment winning state changed"
+                        );
+                        (
+                            Some(arkret_models_crypto::AttachmentContentKeyContext {
+                                effective_scope: scope.clone(),
+                                genesis_event_ref: current.genesis_event_ref,
+                                epoch: current.epoch,
+                                scheme: arkret_crypto::blob_aead::SCHEME_STREAM.into(),
+                                encryption_algorithm: arkret_crypto::blob_aead::ALG_STREAM_XCHACHA
+                                    .into(),
+                                content_key_salt: salt.clone(),
+                            }),
+                            Some(checkpoint),
+                            Some(current.public_tree_ref),
+                            Some(arkret_sdk::Base64UrlString::new(arkret_sdk::canonical::base64url_encode(arkret_crypto::blob_aead::fresh_stream_nonce_prefix()?)).map_err(anyhow::Error::msg)?),
+                        )
+                    }
+                };
+                let suite = arkret_sdk::DigestSuite::Sha256;
+                anyhow::ensure!(active(), "attachment target changed");
+                fence.check_session_identity()?;
+                let object = vault
+                    .freeze_attachment(crate::attachments::AttachmentObject {
+                        id: salt.as_str().to_owned(),
+                        authority: account.authority.clone(),
+                        device_id: account.device_id.clone(),
+                        scope: scope.clone(),
+                        strand_id: strand.clone(),
+                        filename: file.name(),
+                        long_text: false,
+                        input_size: file.size(), input_digest: None, text_prefix: None, line_count: None,
+                        media_type: file
+                            .content_type()
+                            .unwrap_or_else(|| "application/octet-stream".into())
+                            .split(';')
+                            .next()
+                            .unwrap_or("application/octet-stream")
+                            .trim()
+                            .to_ascii_lowercase(),
+                        salt,
+                        digest_suite: suite,
+                        context,
+                        checkpoint,
+                        state_tree_ref, nonce_prefix,
+                        prepared: None,
+                        uploaded: false,
+                        submitted_operation: None,
+                    })
+                    .await?;
+                let chunks = crate::state::current_index::AttachmentChunkStore::open(store.read(|s|s.current_index_location()), &account.authority, &account.device_id, &object.id).await?;
+                let digest = crate::attachments::file_to_parts(&chunks, &file, suite, active).await?;
+                fence.check_session_identity()?;
+                anyhow::ensure!(active(), "attachment target changed");
+                vault.freeze_attachment_input(&object.id, digest).await?;
             }
-            Err(error) => {
-                compose_upload_status.set(format!(
-                    "Attachment upload requires verified conversation security: {error}"
-                ));
-                return;
-            }
-        }
-        let api = match crate::transport::auth::authed_api_with_sync(&base_url, api_token, None) {
-            Ok(api) => api,
-            Err(err) => {
-                compose_upload_status.set(format!(
-                    "{}: {err}",
-                    crate::i18n::tr("compose.upload_error"),
-                ));
-                return;
-            }
-        };
-        let clients = match api.sdk_http_client() {
-            Ok(http) => crate::transport::EndpointClients::from_http(http),
-            Err(err) => {
-                compose_upload_status.set(format!(
-                    "{}: {err}",
-                    crate::i18n::tr("compose.upload_error"),
-                ));
-                return;
-            }
-        };
-        let mut ok_count = 0usize;
-        let mut last_error: Option<String> = None;
-        for file in files {
-            let filename = file.name();
-            let content_type = file
-                .content_type()
-                .unwrap_or_else(|| "application/octet-stream".to_owned());
-            let bytes = match file.read_bytes().await {
-                Ok(b) => b.to_vec(),
-                Err(err) => {
-                    last_error = Some(format!("{err}"));
+            for mut object in vault
+                .attachment_objects(&account.device_id, &scope, &strand)
+                .await?
+            {
+                if object.long_text {
                     continue;
                 }
-            };
-            if *session.session_generation.peek() != session_generation
-                || *controller.selected_channel.peek() != selected_channel
-            {
-                compose_upload_status.set(
-                    "Attachment upload stopped because the session or conversation changed."
-                        .to_owned(),
-                );
-                return;
-            }
-            let input = crate::mls::send_gate::MlsSendGateInput::capture(&state_store, &scope);
-            match crate::mls::send_gate::resolve_mls_send_gate(&input, &scope).await {
-                Ok(crate::mls::send_gate::MlsSendGate::Plaintext) => {}
-                Ok(crate::mls::send_gate::MlsSendGate::Encrypted(_)) => {
-                    compose_upload_status.set(
-                        "Attachment upload is unavailable for this encrypted conversation."
-                            .to_owned(),
-                    );
-                    return;
+                anyhow::ensure!(active(), "attachment session or draft changed");
+                let chunks = crate::state::current_index::AttachmentChunkStore::open(store.read(|s|s.current_index_location()), &account.authority, &account.device_id, &object.id).await?;
+                if !attachments.peek().iter().any(|a|a.id == object.id) {
+                    attachments.write().push(crate::attachments::DraftAttachment {id: object.id.clone(), scope: scope.clone(),
+                        content: object.prepared.as_ref().map(|p|p.content.clone()).unwrap_or_else(||arkret_sdk::ContentBlock::new(arkret_sdk::ContentBlockKind::File, object.filename.clone())), pending: !object.uploaded});
                 }
-                Err(error) => {
-                    compose_upload_status.set(format!(
-                        "Attachment upload requires verified conversation security: {error}"
-                    ));
-                    return;
+                if object.prepared.is_none() {
+                    let prepared = object.prepare(&chunks).await?;
+                    object = vault
+                        .freeze_prepared_attachment(&object.id, prepared)
+                        .await?;
+                    chunks.clear("input").await?;
                 }
-            }
-            if *session.session_generation.peek() != session_generation
-                || *controller.selected_channel.peek() != selected_channel
-            {
-                compose_upload_status.set(
-                    "Attachment upload stopped because the session or conversation changed."
-                        .to_owned(),
-                );
-                return;
-            }
-            match clients
-                .blob()
-                .upload_bytes_scoped(bytes, &content_type, Some(&realm_id), Some(&filename))
-                .await
-            {
-                Ok(resp) => {
-                    if *session.session_generation.peek() != session_generation
-                        || *controller.selected_channel.peek() != selected_channel
-                    {
-                        compose_upload_status.set("Attachment upload stopped because the session or conversation changed.".to_owned());
-                        return;
+                if !object.uploaded {
+                    fence.check_session_identity()?;
+                    anyhow::ensure!(active(), "attachment session or draft changed");
+                    let gate = crate::attachments::await_attachment_send_gate(&store, &scope, &account.device_id, active).await?;
+                    match (&object.context, gate) {
+                        (None, crate::mls::send_gate::MlsSendGate::Plaintext) => {},
+                        (Some(context), crate::mls::send_gate::MlsSendGate::Encrypted(current)) if context.genesis_event_ref == current.genesis_event_ref => {},
+                        _ => anyhow::bail!("attachment classification or Genesis changed; remove it and select the file again"),
                     }
-                    let current = chat_draft();
-                    let needs_space =
-                        !current.is_empty() && !current.ends_with(' ') && !current.ends_with('\n');
-                    let attachment = format!(
-                        "{}[Attachment: {}]",
-                        if needs_space { " " } else { "" },
-                        resp.blob_ref
-                    );
-                    chat_draft.set(format!("{current}{attachment}"));
-                    ok_count += 1;
+                    anyhow::ensure!(active(), "attachment target changed");
+                    crate::attachments::with_target_fence(clients.blob().upload_attachment_object(&object, chunks), active).await?;
+                    vault.mark_attachment_uploaded(&object.id).await?;
                 }
-                Err(err) => {
-                    last_error = Some(err.to_string());
+                fence.check_session_identity()?;
+                anyhow::ensure!(active(), "attachment session or draft changed");
+                if let Some(draft) = attachments.write().iter_mut().find(|a|a.id == object.id) {
+                    draft.pending = false;
+                    draft.content = object.prepared.ok_or_else(||anyhow::anyhow!("missing attachment descriptor"))?.content;
                 }
+
             }
+            Ok::<_, anyhow::Error>(())
         }
-        if let Some(err) = last_error {
-            compose_upload_status.set(format!(
-                "{}: {err}",
-                crate::i18n::tr("compose.upload_error"),
-            ));
-        } else if ok_count > 0 {
-            compose_upload_status.set(format!("{ok_count} attachment(s) uploaded"));
-        } else {
-            compose_upload_status.set(crate::i18n::tr("compose.upload_error"));
+        .await;
+        if *session.session_generation.peek() != generation
+            || *upload_revision.peek() != run
+            || *controller.selected_channel.peek() != selected
+            || *controller.selection_revision.peek() != selection_revision
+        {
+            return;
+        }
+        if *controller.attachment_target_revision.peek() != target_revision
+            || *controller.draft.peek() != draft
+        {
+            status.set("Attachment upload: attachment session or target changed".into());
+            return;
+        }
+        match result {
+            Ok(()) => status.set(format!("{} attachment(s) ready", attachments.peek().len())),
+            Err(e) => status.set(format!("Attachment upload: {e:#}")),
+        }
+    });
+}
+
+/// Cancel the selected durable draft object and revoke its local parts.
+pub(super) fn discard_draft_attachment(controller: ChatController, id: String) {
+    let mut revision = controller.attachment_target_revision;
+    let next = revision.peek().wrapping_add(1);
+    revision.set(next);
+    let session = consume_context::<crate::app::SessionContext>();
+    let account = session.active_account.peek().clone();
+    let generation = *session.session_generation.peek();
+    let mut attachments = controller.attachments;
+    let mut status = controller.compose_upload_status;
+    let store = crate::app::runtime_adapter::state_store_handle(session.state_store);
+    spawn(async move {
+        let result = async {
+            let account = account.ok_or_else(|| anyhow::anyhow!("no active attachment account"))?;
+            let vault = crate::outbound_store::InksonOutboundStore::open(
+                &account.authority,
+                crate::outbound_store::OutboundLane::Standard,
+            )?;
+            vault.discard_attachment(&id, &account.device_id).await?;
+            let chunks = crate::state::current_index::AttachmentChunkStore::open(
+                store.read(|s| s.current_index_location()),
+                &account.authority,
+                &account.device_id,
+                &id,
+            )
+            .await?;
+            chunks.clear("input").await?;
+            chunks.clear("ciphertext").await?;
+            if *session.session_generation.peek() == generation {
+                attachments.write().retain(|a| a.id != id);
+            }
+            Ok::<_, anyhow::Error>(())
+        }
+        .await;
+        if let Err(e) = result {
+            status.set(format!("Attachment removal: {e:#}"));
         }
     });
 }
@@ -843,6 +948,7 @@ pub(super) fn send_plaintext_message(
     let mut messages = controller.messages;
     let mut status_msg = controller.status_msg;
     let chat_draft = controller.draft;
+    let attachment_drafts = controller.attachments.peek().clone();
     let mut pending_draft = PendingComposerDraft::new(controller, &request.local_id, &request.body);
     let mut state_store = consume_context::<crate::app::SessionContext>().state_store;
     // A verified-current refresh can replace the composer send Button.
@@ -938,8 +1044,6 @@ pub(super) fn send_plaintext_message(
                     return;
                 }
             };
-            let content_for_store =
-                serde_json::to_value(&content).unwrap_or(serde_json::Value::Null);
             let local_operation_id =
                 crate::operation::LocalOperationId::from_holder_key(local_id.clone()).to_string();
             let api = match authed_api_with_sync(&base_url, api_token, wait_for) {
@@ -977,6 +1081,11 @@ pub(super) fn send_plaintext_message(
                         return;
                     }
                 };
+            let content = match crate::attachments::compose_draft_attachments(content, &attachment_drafts, &scope) {
+                Ok(content) => content,
+                Err(error) => { fail_optimistic_send_row(messages, &local_id, format!("send failed: {error:#}")); status_msg.set(format!("send failed: {error:#}")); return; }
+            };
+            let content_for_store = serde_json::to_value(&content).unwrap_or(serde_json::Value::Null);
             // The §4.5 mention-routing sidecar exists so an encrypted Realm can
             // route a notification without revealing the mentioned DID. A
             // plaintext send already carries `mentions` in the clear, so it gets
@@ -1161,6 +1270,8 @@ fn send_sidecar_message_with_hosted(
     let mut messages = controller.messages;
     let mut status_msg = controller.status_msg;
     let mut chat_draft = controller.draft;
+    let attachment_drafts = controller.attachments.peek().clone();
+    let mut draft_attachments = controller.attachments;
     let mut picker = controller.mention_picker_state;
     let picker_at_send = picker.peek().clone();
     let mut sending = controller.sidecar_send_pending;
@@ -1187,6 +1298,7 @@ fn send_sidecar_message_with_hosted(
     };
     sending.set(true);
     messages.write().push(ChatMessage {
+        protocol_content: None,
         local_scope: None,
         realm_id: request.session.source_realm_id.clone(),
         id: request.local_id.clone(),
@@ -1272,6 +1384,7 @@ fn send_sidecar_message_with_hosted(
                                 &sidecar_strand_id,
                                 source_event_id.as_deref(),
                                 &body,
+                                &attachment_drafts,
                                 &resolved_mentions,
                                 &addressed_agent_ids,
                                 state_store,
@@ -1285,6 +1398,9 @@ fn send_sidecar_message_with_hosted(
             };
             match outcome {
                 Ok(routed) => {
+                    draft_attachments
+                        .write()
+                        .retain(|a| !attachment_drafts.iter().any(|used| used.id == a.id));
                     trace_private_send_stage(if routed.history_pending.is_some() {
                         "private_submit_accepted_history_pending"
                     } else {
@@ -1390,6 +1506,9 @@ pub(super) fn send_encrypted_message(
     let mut messages = controller.messages;
     let mut status_msg = controller.status_msg;
     let chat_draft = controller.draft;
+    let attachment_drafts = controller.attachments.peek().clone();
+    let selection_revision = *controller.selection_revision.peek();
+    let selected = controller.selected_channel.peek().clone();
     let mut pending_draft =
         PendingComposerDraft::new(controller, &request.message_id, &request.body);
     let session = consume_context::<crate::app::SessionContext>();
@@ -1442,19 +1561,24 @@ pub(super) fn send_encrypted_message(
             .iter()
             .filter_map(|mention| mention.as_audience_mention().cloned())
             .collect::<Vec<_>>();
-        let mut secure_content_block = match chat_content_block_for_body(&body) {
+        let scope = match arkret_sdk::RealmId::new(realm.clone()).and_then(|realm_id| match circle_id.as_ref() {
+            Some(id) => arkret_sdk::CircleId::new(id.clone()).map(|circle_id| arkret_sdk::ScopeRef::Circle {realm_id, circle_id}),
+            None => Ok(arkret_sdk::ScopeRef::Realm {realm_id}),
+        }) { Ok(scope) => scope, Err(e) => { status_msg.set(e.to_string()); return; } };
+        let content_api = match authed_api_with_sync(&base, api_token.clone(), wait_for.clone()) { Ok(api) => api, Err(e) => {status_msg.set(e.to_string()); return;} };
+        let target_active = || *controller.selection_revision.peek() == selection_revision
+            && *controller.selected_channel.peek() == selected
+            && *session.session_generation.peek() == session_generation;
+        let mut secure_content_block = match crate::attachments::with_target_fence(
+            crate::attachments::private_message_body(&content_api,
+                crate::app::runtime_adapter::state_store_handle(state_store), &authority_for_sidecar, &did, &scope, &strand_id, &message_id, &body),
+            target_active,
+        ).await {
             Ok(content) => content,
-            Err(err) => {
-                fail_optimistic_chat_send(
-                    messages,
-                    chat_draft,
-                    status_msg,
-                    &message_id,
-                    &body,
-                    format!("Send Secure rejected message content: {err:#}"),
-                );
-                return;
-            }
+            Err(e) => { fail_optimistic_chat_send(messages, chat_draft, status_msg, &message_id, &body, format!("Send Secure: {e:#}")); return; }
+        };
+        secure_content_block = match crate::attachments::compose_draft_attachments(secure_content_block, &attachment_drafts, &scope) {
+            Ok(content) => content, Err(e) => { fail_optimistic_chat_send(messages, chat_draft, status_msg, &message_id, &body, e.to_string()); return; }
         };
         if !actor_mentions.is_empty() {
             secure_content_block = match secure_content_block.with_mentions(actor_mentions) {

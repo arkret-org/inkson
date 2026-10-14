@@ -36,6 +36,99 @@ mod platform;
 pub mod wasm_harness;
 
 pub(crate) const CURRENT_PREFIX: &str = "inkson.current.v1/";
+
+/// Holder-private blob parts share the authenticated on-demand KV backend.
+/// Their namespace is outside account current stages and the secret-cache scan.
+#[derive(Clone)]
+pub(crate) struct AttachmentChunkStore {
+    backend: platform::Backend,
+    prefix: String,
+}
+
+impl AttachmentChunkStore {
+    pub(crate) async fn open(
+        location: CurrentIndexLocation,
+        authority: &AccountId,
+        device: &arkret_sdk::DeviceId,
+        object_id: &str,
+    ) -> anyhow::Result<Self> {
+        let identity = arkret_sdk::canonical::canonical_sha256(&(authority, device, object_id))?;
+        Ok(Self {
+            backend: platform::Backend::open(location).await?,
+            prefix: format!("{CURRENT_PREFIX}attachment_objects/{identity}/"),
+        })
+    }
+
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    pub(crate) async fn for_test(path: std::path::PathBuf) -> anyhow::Result<Self> {
+        Ok(Self {
+            backend: platform::Backend::open_test(path).await?,
+            prefix: format!("{CURRENT_PREFIX}attachment_objects/test/"),
+        })
+    }
+
+    fn key(&self, kind: &str, index: u32) -> anyhow::Result<String> {
+        anyhow::ensure!(
+            matches!(kind, "input" | "ciphertext"),
+            "invalid attachment part domain"
+        );
+        Ok(format!("{}{kind}/{index:08x}", self.prefix))
+    }
+
+    pub(crate) async fn write_part(
+        &self,
+        kind: &str,
+        index: u32,
+        bytes: &[u8],
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            bytes.len() <= arkret_models_crypto::MAX_SEGMENT_SIZE as usize + 16,
+            "attachment part exceeds v1 bound"
+        );
+        let key = self.key(kind, index)?;
+        let encoded = arkret_sdk::canonical::base64url_encode(bytes).into_bytes();
+        if let Some(existing) = self.backend.get(&key).await? {
+            anyhow::ensure!(
+                existing == encoded,
+                "frozen attachment part cannot be replaced"
+            );
+            return Ok(());
+        }
+        self.backend.apply(Vec::new(), vec![(key, encoded)]).await
+    }
+
+    pub(crate) async fn read_part(
+        &self,
+        kind: &str,
+        index: u32,
+    ) -> anyhow::Result<zeroize::Zeroizing<Vec<u8>>> {
+        let key = self.key(kind, index)?;
+        let encoded = self
+            .backend
+            .get(&key)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("frozen attachment part is missing"))?;
+        let encoded = std::str::from_utf8(&encoded)?;
+        let bytes = arkret_sdk::canonical::base64url_decode(encoded)?;
+        anyhow::ensure!(
+            bytes.len() <= arkret_models_crypto::MAX_SEGMENT_SIZE as usize + 16
+                && arkret_sdk::canonical::base64url_encode(&bytes) == encoded,
+            "attachment part is malformed"
+        );
+        Ok(zeroize::Zeroizing::new(bytes))
+    }
+
+    pub(crate) async fn clear(&self, kind: &str) -> anyhow::Result<()> {
+        let prefix = format!("{}{kind}/", self.prefix);
+        loop {
+            let keys = self.backend.keys(&prefix, None, None, 100).await?;
+            if keys.is_empty() {
+                return Ok(());
+            }
+            self.backend.apply(keys, Vec::new()).await?;
+        }
+    }
+}
 const PAGE_LIMIT: usize = 100;
 
 /// Index grouping of one typed current selector.

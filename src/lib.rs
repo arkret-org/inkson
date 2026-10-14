@@ -187,3 +187,4 @@ pub mod webrtc;
 pub mod websocket_rail_engine;
 
 pub use app::App;
+pub(crate) mod attachments;
