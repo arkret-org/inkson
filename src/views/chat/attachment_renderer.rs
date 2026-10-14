@@ -444,6 +444,139 @@ fn VerifiedAttachment(
     }
 }
 
+type TextPageSelection = (String, u64);
+type LoadedTextPage = Option<(TextPageSelection, Result<String, String>)>;
+
+// Bind selection and results to the artifact itself. A deferred reset effect
+// must not overwrite a page change, and an older read cannot publish for a
+// replacement artifact or a different page.
+fn use_verified_text_page(
+    artifact: std::rc::Rc<crate::attachments::artifact::Artifact>,
+) -> (Signal<TextPageSelection>, Signal<LoadedTextPage>) {
+    const PAGE_BYTES: u64 = 65_536;
+    let identity = artifact.url.clone();
+    let mut selection = use_signal(|| (identity.clone(), 0_u64));
+    let mut text = use_signal(|| None::<(TextPageSelection, Result<String, String>)>);
+    let mut revision = use_signal(|| 0_u64);
+    if selection.peek().0 != identity {
+        selection.set((identity, 0));
+    }
+    let index = selection().1;
+    use_effect(use_reactive((&artifact, &index), move |(read, index)| {
+        text.set(None);
+        let captured = revision.peek().wrapping_add(1);
+        revision.set(captured);
+        spawn(async move {
+            let binding = (read.url.clone(), index);
+            let loaded = read
+                .text_page(index, PAGE_BYTES)
+                .await
+                .map_err(|e| format!("{e:#}"));
+            if *revision.peek() == captured && *selection.peek() == binding {
+                text.set(Some((binding, loaded)));
+            }
+        });
+    }));
+    (selection, text)
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod reader_tests {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use super::*;
+
+    type Handles = (
+        Signal<Rc<crate::attachments::artifact::Artifact>>,
+        Signal<u64>,
+        Signal<TextPageSelection>,
+        Signal<LoadedTextPage>,
+    );
+
+    #[derive(Clone)]
+    struct Control {
+        artifact: Rc<crate::attachments::artifact::Artifact>,
+        handles: Rc<RefCell<Option<Handles>>>,
+    }
+
+    fn reader_harness(control: Control) -> Element {
+        let artifact = use_signal(|| control.artifact);
+        let pulse = use_signal(|| 0_u64);
+        let (selection, text) = use_verified_text_page(artifact());
+        *control.handles.borrow_mut() = Some((artifact, pulse, selection, text));
+        let ready = text.read().is_some();
+        rsx! {span {"{pulse}:{ready}"}}
+    }
+
+    async fn settle(dom: &mut VirtualDom, control: &Control, identity: &str, index: u64) -> String {
+        for _ in 0..200 {
+            dom.render_immediate_to_vec();
+            let text = dom.in_runtime(|| {
+                let (_, _, selection, text) = control.handles.borrow().unwrap();
+                assert_eq!(*selection.peek(), (identity.to_owned(), index));
+                text.peek().clone()
+            });
+            if let Some((binding, body)) = text
+                && binding == (identity.to_owned(), index)
+            {
+                return body.unwrap();
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        panic!("verified reader did not settle to the selected artifact/page");
+    }
+
+    #[tokio::test]
+    async fn verified_text_page_survives_parent_updates_and_resets_only_for_new_artifact() {
+        // This exercises the real reader hook and native artifacts, with
+        // verified bytes given. It makes no authorization/install claim.
+        let mut builder = crate::attachments::artifact::Builder::new("text/plain", false).unwrap();
+        builder.push(&vec![b'a'; 65_536]).unwrap();
+        builder.push(b"last page sentinel").unwrap();
+        let first = builder.finish().await.unwrap();
+        let control = Control {
+            artifact: first.clone(),
+            handles: Rc::new(RefCell::new(None)),
+        };
+        let mut dom = VirtualDom::new_with_props(reader_harness, control.clone());
+        dom.rebuild_in_place();
+        assert_eq!(
+            settle(&mut dom, &control, &first.url, 0).await.len(),
+            65_536
+        );
+        dom.in_runtime(|| {
+            let (_, _, mut selection, _) = control.handles.borrow().unwrap();
+            selection.set((first.url.clone(), 1));
+        });
+        assert_eq!(
+            settle(&mut dom, &control, &first.url, 1).await,
+            "last page sentinel"
+        );
+        for value in 1..=4 {
+            dom.in_runtime(|| {
+                let (_, mut pulse, ..) = control.handles.borrow().unwrap();
+                pulse.set(value);
+            });
+            assert_eq!(
+                settle(&mut dom, &control, &first.url, 1).await,
+                "last page sentinel"
+            );
+        }
+        let mut builder = crate::attachments::artifact::Builder::new("text/plain", false).unwrap();
+        builder.push(b"replacement artifact").unwrap();
+        let replacement = builder.finish().await.unwrap();
+        dom.in_runtime(|| {
+            let (mut artifact, ..) = control.handles.borrow().unwrap();
+            artifact.set(replacement.clone());
+        });
+        assert_eq!(
+            settle(&mut dom, &control, &replacement.url, 0).await,
+            "replacement artifact"
+        );
+    }
+}
+
 #[component]
 fn VerifiedLongText(
     artifact: std::rc::Rc<crate::attachments::artifact::Artifact>,
@@ -451,33 +584,19 @@ fn VerifiedLongText(
     markdown: bool,
 ) -> Element {
     const PAGE_BYTES: u64 = 65_536;
-    let mut page = use_signal(|| 0_u64);
-    let mut text = use_signal(|| None::<Result<String, String>>);
-    let mut revision = use_signal(|| 0_u64);
-    let identity = artifact.url.clone();
-    use_effect(use_reactive((&identity,), move |_| {
-        page.set(0);
-    }));
-    use_effect(use_reactive((&artifact,), move |(read,)| {
-        let index = page();
-        text.set(None);
-        let captured = revision.peek().wrapping_add(1);
-        revision.set(captured);
-        spawn(async move {
-            let loaded = read
-                .text_page(index, PAGE_BYTES)
-                .await
-                .map_err(|e| format!("{e:#}"));
-            if *revision.peek() == captured {
-                text.set(Some(loaded));
-            }
-        });
-    }));
+    let reader_identity = use_hook(uuid_v7);
+    let (mut selection, loaded) = use_verified_text_page(artifact.clone());
+    let current = selection();
+    let index = current.1;
+    let text = loaded().and_then(|(binding, result)| (binding == current).then_some(result));
+    let previous_identity = artifact.url.clone();
+    let next_identity = artifact.url.clone();
+    let last_identity = artifact.url.clone();
     let last = artifact.size.saturating_sub(1) / PAGE_BYTES;
-    rsx! {div {"data-testid": "verified-long-text",
+    rsx! {div {"data-testid": "verified-long-text", "data-page-index": "{index}", "data-reader-id": reader_identity,
         div {class: "verified-long-text-viewport", "data-testid": "verified-long-text-viewport",
             tabindex: "0", role: "region", "aria-label": "Message text",
-            match text() {
+            match text {
                 Some(Ok(body)) if markdown => {
                     let html = crate::content::renderer::markdown_to_safe_html(&body);
                     rsx! {div {"data-testid": "verified-long-text-page", class: "content-block-markdown", dangerous_inner_html: html}}
@@ -487,9 +606,9 @@ fn VerifiedLongText(
                 None => rsx! {p {"Loading text…"}},
             }
         }
-        button {disabled: page() == 0, onclick: move |_| page.set(page().saturating_sub(1)), "Previous page"}
-        button {"data-testid": "verified-long-text-next", disabled: page() >= last, onclick: move |_|page.set((page()+1).min(last)), "Next page"}
-        button {"data-testid": "verified-long-text-last", disabled: page() >= last, onclick: move |_|page.set(last), "Last page"}
+        button {disabled: index == 0, onclick: move |_| selection.set((previous_identity.clone(), index.saturating_sub(1))), "Previous page"}
+        button {"data-testid": "verified-long-text-next", disabled: index >= last, onclick: move |_|selection.set((next_identity.clone(), (index+1).min(last))), "Next page"}
+        button {"data-testid": "verified-long-text-last", disabled: index >= last, onclick: move |_|selection.set((last_identity.clone(), last)), "Last page"}
         a {href: artifact.url.clone(), download: name, "Download full text"}
     }}
 }
