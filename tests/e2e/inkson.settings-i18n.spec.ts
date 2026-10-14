@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { CURRENT_ACCOUNT_ID, validateMockSchema } from "./mockArkretApi";
 import {
   registerStrandsBeforeEach,
   gotoAndDismissRecovery,
@@ -7,9 +8,6 @@ import {
 registerStrandsBeforeEach();
 
 test("settings capabilities and consent read surfaces and forms follow the active language", async ({ page }) => {
-  await page.route("**/_arkret/self/authz/effective-grants?*", async (route) => {
-    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ grants: [] }) });
-  });
   let failConsent = true;
   let consentReads = 0;
   await page.route("**/_arkret/self/consent/results", async (route) => {
@@ -63,6 +61,30 @@ test("settings capabilities and consent read surfaces and forms follow the activ
     await expect(page.getByTestId("consent-request-submit-button")).toBeDisabled();
     await expect(page.getByTestId("consent-request-submit-button")).toHaveText(language === "zh" ? "发送请求" : "Send request");
   }
+});
+
+test("invite policy saves the actual Account policy and restores it after reload", async ({ page }) => {
+  const writes: Array<Record<string, any>> = [];
+  page.on("request", request => {
+    if (request.method() === "PUT" && new URL(request.url()).pathname === "/_arkret/self/invite-receive-policy") {
+      const body = request.postDataJSON();
+      validateMockSchema("schemas/invite-receive-policy.schema.json", body);
+      expect(body.account_id).toEqual(CURRENT_ACCOUNT_ID);
+      expect(body.explicit_address_behavior).toBe("notify");
+      expect(body.denied_actor_ids).toEqual([]);
+      writes.push(body);
+    }
+  });
+  await gotoAndDismissRecovery(page, "/settings/invite-policy");
+  await page.getByTestId("invite-policy-explicit-behavior").getByRole("button").click();
+  await page.getByRole("option", { name: "Notify me", exact: true }).click();
+  await page.getByTestId("invite-policy-blocked-row").getByRole("button").click();
+  await page.getByTestId("invite-policy-save-button").click();
+  await expect(page.getByTestId("invite-policy-status")).toHaveText("Saved.");
+  expect(writes).toHaveLength(1);
+  await page.reload();
+  await expect(page.getByTestId("invite-policy-explicit-behavior").getByRole("button")).toHaveText("Notify me");
+  await expect(page.getByTestId("invite-policy-blocked-empty")).toBeVisible();
 });
 
 test("settings invite policy labels and options follow the active language without saving", async ({ page }) => {

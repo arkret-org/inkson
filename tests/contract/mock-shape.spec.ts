@@ -100,6 +100,11 @@ test("every mock response the inventory names still matches its schema", async (
     `mock shape gate: ${covered.size} operations reached, ` +
       `${requestDependent.length} request-dependent and therefore unjudged`,
   );
+  await test.info().attach("mock-request-dependent-operations", {
+    body: JSON.stringify([...new Set(requestDependent)].sort(), null, 2),
+    contentType: "application/json",
+  });
+  console.log(`mock shape request-dependent operations:\n${[...new Set(requestDependent)].sort().join("\n")}`);
 
   // An operation reached under more than one install reports the same drift
   // once per install; the reader wants the drift, not the install count.

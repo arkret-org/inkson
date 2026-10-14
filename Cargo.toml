@@ -91,7 +91,7 @@ web = ["app", "dioxus/web"]
 # hidden from the local 1.0 UI unless explicitly opted in.
 experimental-discussion-promote = []
 experimental-applets = []
-spec-conformance = ["dep:arkret-schema-conformance"]
+spec-conformance = ["dep:arkret-schema-conformance", "dep:arkret-test-kit"]
 # Test-only wasm escape hatch for Playwright/cotest fixtures that must inject a
 # real session grant and grant-binding seed before IndexedDB is ready. Production
 # builds must not enable this feature.
@@ -124,6 +124,7 @@ path = "src/bin/inkson-wire.rs"
 required-features = ["spec-conformance"]
 
 [dependencies]
+arkret-test-kit = { path = "../arkret-rust-sdk/crates/test-kit", optional = true }
 rand_chacha = "0.10"
 # Feature-unification alias: `getrandom@0.2` is pulled in transitively by the
 # crypto stack (rand_core 0.6 → p256/k256/hpke-rs/openmls and Arkret owner

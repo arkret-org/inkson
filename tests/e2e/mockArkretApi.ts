@@ -118,6 +118,7 @@ type MockArkretApiOptions = {
   invitePreview?: "disclosed" | "restricted" | "retry_once";
   invitePreviewDelayMs?: number;
   contactRequestOutcome?: "failed" | "tampered";
+  contactCeremony?: Record<string, any>;
 };
 
 type MockAccountDevice = {
@@ -142,12 +143,16 @@ type InksonWireCommand =
   | "sha256-canonical-json"
   | "service-resolution"
   | "service-document"
+  | "mock-ice-config"
   | "direct-conversation-pair-key"
   | "principal-locator"
   | "validate-mock-response"
   | "contact-request-prepare"
   | "contact-request-commit"
   | "contact-request-sign"
+  | "contact-ceremony-fixture"
+  | "contact-ceremony-verify"
+  | "contact-ceremony-operation"
   | "contact-request-verify"
   | "mock-realm-fixture"
   | "mock-realm-verify"
@@ -640,6 +645,7 @@ export async function mockArkretApi(
   // top-level `station_id` beside it. Every synthesized Event below authors
   // through this one value rather than spelling the shape again.
   const accountActorId = { kind: "account", account_id: accountId };
+  let savedInviteReceivePolicy: Record<string, unknown> | undefined;
   const accountActorIdFor = (principalCoreId: string) => ({
     kind: "account" as const,
     account_id: { principal_id: principalCoreId, station_id: CURRENT_STATION_ID },
@@ -715,8 +721,39 @@ export async function mockArkretApi(
     },
   });
 
-  // Request fixtures use the SDK's exact unsigned Event and source receipt.
-  // Other ceremonies need bilateral round material and remain terminal failures.
+  // Native Contact fixtures retain exact holder/source signatures and both directions.
+  const ceremony = options.contactCeremony;
+  if (ceremony) {
+    inksonWire("contact-ceremony-verify", ceremony);
+    if (canonicalJson(ceremony.responder.account_id) !== canonicalJson(accountId)) {
+      throw new Error("Contact ceremony responder differs from the active account");
+    }
+  }
+  let ceremonyState: "incoming" | "accepted" | "updated" | "rejected" | "terminal" = "incoming";
+  const ceremonyReservations = new Map<string, {
+    kind: string; prepareBytes: string; idempotencyKey: unknown;
+    prepared: Record<string, any>; commitBytes?: string; terminal?: Record<string, any>;
+  }>();
+  const ceremonyRows = () => {
+    if (!ceremony) return [];
+    const f = ceremony.ceremony;
+    const incoming = ceremonyState === "incoming";
+    const accepted = ceremonyState === "accepted" || ceremonyState === "updated";
+    const last = ceremonyState === "updated" ? f.scope_update : f.response;
+    const scopes = accepted ? last.signed_event.payload.granted_to_peer_scopes : [];
+    const byPeer = incoming || accepted ? f.request.signed_event.payload.granted_to_peer_scopes : [];
+    return [{
+      peer: ceremony.requester,
+      state: incoming ? "pending_incoming" : accepted ? "accepted" : ceremonyState === "rejected" ? "rejected" : "tombstoned",
+      request_event_ref: f.request.signed_event.event_id,
+      ...(accepted || ceremonyState === "terminal" ? { response_event_ref: f.response.signed_event.event_id } : {}),
+      ...(ceremonyState === "terminal" ? { tombstone_event_ref: f.tombstone.signed_event.event_id } : {}),
+      ...(accepted ? { next_prepare_input: { contact_round_id: f.round.contact_round_id,
+        version: ceremonyState === "updated" ? 3 : 2, predecessor_event_ref: last.signed_event.event_id } } : {}),
+      granted_to_peer_scopes: scopes, granted_by_peer_scopes: byPeer,
+      bidirectional_scopes: scopes.filter((scope: string) => byPeer.includes(scope)),
+    }];
+  };
   const contactReservations = new Map<string, {
     prepareBytes: string;
     idempotencyKey: unknown;
@@ -739,7 +776,40 @@ export async function mockArkretApi(
         operation_id: operationId,
         reason,
     });
-    if (resultKind !== "request") return failed();
+    if (resultKind !== "request") {
+      if (!ceremony) return failed();
+      const existing = ceremonyReservations.get(operationId);
+      if (body.phase === "prepare") {
+        const prepareBytes = canonicalJson(body);
+        if (existing) return existing.kind === resultKind && existing.prepareBytes === prepareBytes
+          ? existing.prepared : failed("contact_idempotency_conflict");
+        const expected = resultKind === "response" || resultKind === "reject" ? "incoming"
+          : resultKind === "scope_update" ? "accepted" : "updated";
+        if (ceremonyState !== expected) return failed(ceremonyState === "terminal" ? "contact_terminal" : "contact_lineage_conflict");
+        const prepared = inksonWire<Record<string, any>>("contact-ceremony-operation", {
+          material: ceremony, result_kind: resultKind, body,
+        });
+        ceremonyReservations.set(operationId, { kind: resultKind, prepareBytes,
+          idempotencyKey: body.idempotency_key, prepared });
+        return prepared;
+      }
+      if (!existing || existing.kind !== resultKind || existing.idempotencyKey !== body.idempotency_key)
+        return failed("contact_idempotency_conflict");
+      const commitBytes = canonicalJson(body);
+      if (existing.commitBytes) return existing.commitBytes === commitBytes
+        ? existing.terminal : failed("contact_idempotency_conflict");
+      const expected = resultKind === "response" || resultKind === "reject" ? "incoming"
+        : resultKind === "scope_update" ? "accepted" : "updated";
+      if (ceremonyState !== expected) return failed(ceremonyState === "terminal" ? "contact_terminal" : "contact_lineage_conflict");
+      const outcome = inksonWire<Record<string, any>>("contact-ceremony-operation", {
+        material: ceremony, result_kind: resultKind, body, prepared: existing.prepared,
+      });
+      existing.commitBytes = commitBytes;
+      existing.terminal = outcome;
+      ceremonyState = resultKind === "response" ? "accepted" : resultKind === "reject" ? "rejected"
+        : resultKind === "scope_update" ? "updated" : "terminal";
+      return outcome;
+    }
     const existing = contactReservations.get(operationId);
     if (body.phase === "prepare") {
       const prepareBytes = canonicalJson(body);
@@ -2715,31 +2785,10 @@ export async function mockArkretApi(
       route.request().method() === "GET"
     ) {
       return json(route, {
-        grants: [
-          {
-            id: "ak:grant:Aa1lsSUPO6wXCITbk8eNFN84GlTcykTUKRcvz1PQJsau",
-            issuer: "did:web:admin.example",
-            subject: url.searchParams.get("subject"),
-            actions: ["space.read", "message.create"],
-            resource_selectors: [`realm:${DEMO_REALM}`],
-            constraints: [
-              { type: "temporal", not_after: "2026-12-31T00:00:00.000Z" },
-              {
-                type: "kind_restriction",
-                params: {
-                  allowed_object_kinds: ["space"],
-                  allowed_facets: ["renderable", "stateful"],
-                },
-              },
-            ],
-            delegation_chain: [
-              "ak:grant:Ab1Y2gdaHKIySvl3lY954bFCuMV-rh6sV2f8wmRJLaIF",
-              "ak:grant:Aa1lsSUPO6wXCITbk8eNFN84GlTcykTUKRcvz1PQJsau",
-            ],
-          },
-        ],
-        state_digest:
-          "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        // This install has no accepted capability-grant current row. A legacy
+        // display grant cannot stand in for the required {grant, revision}.
+        grants: [],
+        state_digest: `sha256:${createHash("sha256").update("[]").digest("hex")}`,
         evaluated_at: "2026-04-28T12:00:00.000Z",
       });
     }
@@ -2757,6 +2806,7 @@ export async function mockArkretApi(
     ) {
       return json(route, {
         contacts: [
+          ...ceremonyRows(),
           ...outgoingContactRows,
           {
             peer: {
@@ -2879,13 +2929,15 @@ export async function mockArkretApi(
       // The real coland handler echoes the stored policy back verbatim;
       // mirror that so the client's `trusted_*` lists round-trip intact.
       const body = await route.request().postDataJSON();
+        validateMockSchema("schemas/invite-receive-policy.schema.json", body);
+        savedInviteReceivePolicy = structuredClone(body);
       return json(route, body);
     }
     if (
       url.pathname === "/_arkret/self/invite-receive-policy" &&
       route.request().method() === "GET"
     ) {
-      return json(route, {
+      return json(route, savedInviteReceivePolicy ?? {
         schema: "ak.schema.invite_receive_policy.v1",
         account_id: { principal_id: accountPrincipalCoreId, station_id: CURRENT_STATION_ID },
         holder_allowed_introduction_kinds: [
@@ -3808,33 +3860,8 @@ export async function mockArkretApi(
       route.request().method() === "POST"
     ) {
       const body = await route.request().postDataJSON();
-      return json(route, {
-        realm_id: body.realm_id ?? DEMO_REALM,
-        call_id:
-          body.call_id ??
-          "ak:call:AbhvODyrIRCskAIoS9IXLjMfD-Zsr8lwDpiCU_zLR4it",
-        actor_id: body.actor_id
-          ? accountActorIdFor(String(body.actor_id))
-          : accountActorId,
-        device_id:
-          body.device_id ?? "ak:device:01904100-0000-7000-8000-a11ce0000001",
-        ice_servers: [
-          { urls: ["stun:stun.server.local:3478"] },
-          {
-            urls: ["turn:turn.server.local:3478?transport=udp"],
-            username: "turn-user",
-            credential: "turn-secret",
-          },
-        ],
-        ttl_seconds: 600,
-        refresh_lead_seconds: 150,
-        issued_at: "2026-05-19T00:00:00.000Z",
-        signature: {
-          alg: "Ed25519",
-          kid: `${CURRENT_STATION_DID}#media-ice`,
-          sig: "placeholder",
-        },
-      });
+      validateMockSchema("schemas/media-operations.schema.json#/$defs/media_ice_config_request_body", body);
+      return json(route, inksonWire("mock-ice-config", body));
     }
 
     if (

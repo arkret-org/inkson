@@ -187,57 +187,7 @@ fn unsigned<T: Serialize>(value: &T, excluded: &[&str]) -> Result<Value> {
     Ok(value)
 }
 
-fn commit(
-    authority: &MockServiceAuthority,
-    event: &Event,
-    position: u64,
-    predecessor: Option<RealmCommitId>,
-    genesis: EventId,
-    fact: Option<Hash>,
-) -> Result<RealmCommit> {
-    let mut value = RealmCommit {
-        commit_id: RealmCommitId::from_digest([0; 32]),
-        realm_id: event.realm_id.clone(),
-        stream_ref: CommitStreamRef::from_scope(&event.scope_ref, Some(event.realm_id.clone()))?,
-        stream_position: position,
-        previous_commit_ref: predecessor,
-        event_ref: event.event_id.clone(),
-        governance_generation: 0,
-        authority_ref: arkret_wire::RealmCommitAuthorityRef::GenesisOrChangeEvent(genesis),
-        committed_at: event.created_at,
-        producer_signer_fact_digest: fact,
-        signature: arkret_signatures::detached_object::sign_detached_object(
-            &json!({}),
-            arkret_wire::DetachedSignatureContext::RealmCommit,
-            authority.verification_method.clone(),
-            event.created_at,
-            &authority.signing_key,
-        )?,
-    };
-    value.commit_id = RealmCommitId::from_digest(arkret_sdk::canonical::sha256_bytes(
-        &arkret_sdk::canonical::canonical_json_bytes(&unsigned(
-            &value,
-            &["commit_id", "signature"],
-        )?)?,
-    ));
-    value.signature = arkret_signatures::detached_object::sign_detached_object(
-        &unsigned(&value, &["signature"])?,
-        arkret_wire::DetachedSignatureContext::RealmCommit,
-        authority.verification_method.clone(),
-        event.created_at,
-        &authority.signing_key,
-    )?;
-    value.verify_commit_id_matches_content()?;
-    arkret_signatures::detached_object::verify_detached_object_signature(
-        &value.signature,
-        &unsigned(&value, &["signature"])?,
-        arkret_wire::DetachedSignatureContext::RealmCommit,
-        &arkret_signatures::PublicKeyMaterial::Ed25519Raw {
-            bytes: authority.signing_key.verifying_key().to_bytes().to_vec(),
-        },
-    )?;
-    Ok(value)
-}
+use arkret_test_kit::authority_objects::signed_commit as commit;
 
 impl Builder {
     fn new(input: &BuildInput) -> Result<Self> {
@@ -387,7 +337,7 @@ impl Builder {
             &root,
             arkret_sdk::signatures::SignEventOptions::new().with_created_at(at(0)),
         )?;
-        let source_create = commit(&authority, &create, 0, None, create.event_id.clone(), None)?;
+        let source_create = commit(&authority.verification_method, &authority.signing_key, &create, 0, None, create.event_id.clone(), None)?;
         let mut authorization = TypedEventDraft::<event_spec::DeviceAuthorize>::new(
             ScopeRef::Realm {
                 realm_id: create.realm_id.clone(),
@@ -413,7 +363,8 @@ impl Builder {
             updated_at: at(0),
         };
         let source_commit = commit(
-            &authority,
+            &authority.verification_method,
+            &authority.signing_key,
             &authorization,
             1,
             Some(source_create.commit_id.clone()),
@@ -529,7 +480,8 @@ impl Builder {
         };
         fact.validate_event_binding(&event, DigestSuite::Sha256)?;
         let accepted = commit(
-            &self.authority,
+            &self.authority.verification_method,
+            &self.authority.signing_key,
             &event,
             position,
             previous,
@@ -908,7 +860,8 @@ impl Builder {
             .map(|view| view.event.event_id.clone())
             .unwrap_or_else(|| event.event_id.clone());
         let accepted = commit(
-            &self.authority,
+            &self.authority.verification_method,
+            &self.authority.signing_key,
             &event,
             self.events.len() as u64,
             predecessor,

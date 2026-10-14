@@ -41,6 +41,9 @@ struct MockServiceAuthority {
     verification_method: arkret_sdk::DidUrl,
 }
 
+#[path = "inkson-wire/contact_fixture.rs"]
+mod contact_fixture;
+
 fn main() -> Result<()> {
     let command = std::env::args().nth(1).context("missing command")?;
     let input = read_stdin_json()?;
@@ -52,6 +55,25 @@ fn main() -> Result<()> {
         "service-document" => {
             serde_json::to_value(service_resolution(input)?.normalized_did_document)?
         }
+        "mock-ice-config" => {
+            let request: arkret_models_collaboration::objects::media::MediaIceConfigRequestBody =
+                serde_json::from_value(input)?;
+            let endpoint = url::Url::parse("https://server.local/")?;
+            let at = chrono::DateTime::parse_from_rfc3339("2026-06-01T00:00:00Z")?
+                .with_timezone(&chrono::Utc);
+            let now = arkret_sdk::canonical::normalize_timestamp_canonical(chrono::Utc::now());
+            let authority = arkret_test_kit::service_identity::ServiceIdentityFixture::webvh(
+                &endpoint,
+                31,
+                [31; 32],
+                "signing-1",
+                at,
+                now,
+            )?;
+            serde_json::to_value(arkret_test_kit::media_ice::signed_config(
+                &request, &authority, now,
+            )?)?
+        }
         "principal-locator" => principal_locator(input)?,
         "direct-conversation-pair-key" => direct_conversation_pair_key(input)?,
         "did-key-from-seed" => did_key_from_seed(input)?,
@@ -61,6 +83,9 @@ fn main() -> Result<()> {
         "contact-request-commit" => contact_request_commit(input)?,
         "contact-request-sign" => contact_request_sign(input)?,
         "contact-request-verify" => contact_request_verify(input)?,
+        "contact-ceremony-fixture" => contact_fixture::build(input)?,
+        "contact-ceremony-verify" => contact_fixture::verify(input)?,
+        "contact-ceremony-operation" => contact_fixture::operation(input)?,
         "mock-realm-fixture" => realm_fixture::build(input)?,
         "mock-realm-list" => realm_fixture::realm_list(input)?,
         "mock-realm-verify" => realm_fixture::verify(input)?,
@@ -345,9 +370,7 @@ fn contact_request_sign(input: Value) -> Result<Value> {
     else {
         bail!("Contact signer requires prepared outcome")
     };
-    let mut event = outcome
-        .event_draft()?
-        .unsigned_event_for_kind(arkret_wire::event_kind_str::CONTACT_REQUESTED)?;
+    let mut event = outcome.event_draft()?.unsigned_event()?;
     let seed: [u8; 32] = arkret_sdk::base64url_decode(&input.seed_b64url)?
         .try_into()
         .map_err(|_| anyhow::anyhow!("Contact fixture seed must have 32 bytes"))?;
@@ -438,59 +461,22 @@ fn demo_realm_genesis() -> Result<Value> {
 }
 
 fn mock_service_authority() -> Result<MockServiceAuthority> {
-    use arkret_identity::{
-        DidResolver as _, DidWebvhDocumentOutcome, DidWebvhLogOutcome, DidWebvhResolver,
-    };
-    use rand_core::SeedableRng as _;
     let endpoint = url::Url::parse("https://server.local/")?;
     let at =
         chrono::DateTime::parse_from_rfc3339("2026-06-01T00:00:00Z")?.with_timezone(&chrono::Utc);
-    let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(31);
-    let prepared = arkret_signatures::webvh::prepare_service_inception_with_did_key_seed(
-        &mut rng,
-        &arkret_signatures::webvh::ServiceInceptionInput {
-            principal_endpoint: &endpoint,
-            local_id: "service",
-            also_known_as: &[],
-            version_time: at,
-            did_key_fragment: Some("signing-1"),
-        },
-        &[31; 32],
-    )?;
-    let did = arkret_sdk::Did::new(prepared.did.clone())?;
-    let service_id = arkret_wire::project_did_to_core_id(&did)?;
-    let verification_method =
-        arkret_sdk::DidUrl::new(prepared.did_key_id.clone()).map_err(anyhow::Error::msg)?;
-    let mut resolver = DidWebvhResolver::new();
-    resolver.insert_from_https_response(
-        &did,
-        DidWebvhDocumentOutcome {
-            url: DidWebvhResolver::document_url(&did)?,
-            content_type: "application/json".into(),
-            body: serde_json::to_vec(&prepared.log_entry["state"])?,
-        },
-    )?;
-    resolver.ingest_log(
-        &did,
-        DidWebvhLogOutcome {
-            url: DidWebvhResolver::log_url(&did)?,
-            content_type: "application/jsonl".into(),
-            body: serde_json::to_vec(&prepared.log_entry)?,
-        },
-    )?;
-    let resolution = arkret_identity::build_authenticated_webvh_service_resolution(
-        service_id.clone(),
-        "station".into(),
-        resolver.resolve_did(&did)?.document,
-        vec![prepared.log_entry.clone()],
-        vec![],
+    let fixture = arkret_test_kit::service_identity::ServiceIdentityFixture::webvh(
+        &endpoint,
+        31,
+        [31; 32],
+        "signing-1",
+        at,
         chrono::Utc::now(),
     )?;
     Ok(MockServiceAuthority {
-        resolution,
-        signing_key: ed25519_dalek::SigningKey::from_bytes(&[31; 32]),
-        service_id,
-        verification_method,
+        resolution: fixture.resolution,
+        signing_key: fixture.signing_key,
+        service_id: fixture.service_id,
+        verification_method: fixture.verification_method,
     })
 }
 
