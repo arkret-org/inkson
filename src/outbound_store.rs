@@ -2866,6 +2866,7 @@ mod tests {
             Some(
                 &evidence
                     .creator_device_authority()
+                    .unwrap()
                     .projection()
                     .device_authorize_event_id,
             ),
@@ -3045,6 +3046,7 @@ mod tests {
                 Some(
                     &evidence
                         .creator_device_authority()
+                        .unwrap()
                         .projection()
                         .device_authorize_event_id,
                 ),

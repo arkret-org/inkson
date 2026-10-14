@@ -91,7 +91,7 @@ pub(crate) fn verify_creator_genesis_producer(
     let projection = record
         .governance_evidence()
         .ok_or_else(|| anyhow::anyhow!("accepted creator lost its pin"))?
-        .creator_device_authority()
+        .creator_device_authority()?
         .projection();
     let key = crate::identity::device_directory::public_key_from_directory_value(
         projection.device_signing_key_did.as_str(),
@@ -128,7 +128,7 @@ pub(crate) fn original_creator_checkpoint_secret(
         .ok_or_else(|| anyhow::anyhow!("creator recovery has no active pinned authority"))?;
     let public = crate::identity::device_directory::public_key_from_directory_value(
         evidence
-            .creator_device_authority()
+            .creator_device_authority()?
             .projection()
             .device_signing_key_did
             .as_str(),
@@ -226,10 +226,25 @@ impl EventSubmitter {
             // pin must authenticate its own current creator/endpoint cut.
             return Ok(());
         }
-        let (accepted, snapshot, own_client) =
-            self.read_verified_creator_cut(record.intent()).await?;
+        let own_client = crate::transport::own_station_results::client_for_http(&self.http).await?;
+        let read = garth::mls::creator::read_creator_scope(&own_client, record.intent()).await?;
+        if let Some(winner) = read.genesis {
+            let winner = arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapWinner::from_accepted(
+                record.intent(), read.accepted_create, winner, read.authority)?;
+            store
+                .supersede_creator_guarded(record, winner, Some(&own_client))
+                .await?;
+            anyhow::bail!(
+                "creator was superseded before its acceptance checkpoint; use Welcome, migration or recovery"
+            );
+        }
         store
-            .accept_creator_realm_guarded(record, accepted, snapshot, Some(&own_client))
+            .accept_creator_realm_guarded(
+                record,
+                read.accepted_create,
+                read.snapshot,
+                Some(&own_client),
+            )
             .await?;
         Ok(())
     }
@@ -265,7 +280,7 @@ impl EventSubmitter {
                     &signer,
                     self.authority()?,
                     intent.creator_device_id(),
-                    evidence.creator_device_authority().projection()
+                    evidence.creator_device_authority()?.projection()
                 ),
                 "pinned creator authority does not match the local private signer"
             );
@@ -352,7 +367,7 @@ impl EventSubmitter {
                 &secret,
                 Some(
                     &evidence
-                        .creator_device_authority()
+                        .creator_device_authority()?
                         .projection()
                         .device_authorize_event_id,
                 ),
