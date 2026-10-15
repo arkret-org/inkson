@@ -2083,7 +2083,7 @@ mod tests {
     #[tokio::test]
     async fn blocklist_call_invite_product_tracks_private_revision_and_exact_actor() {
         use std::sync::Arc;
-        async fn observe_private_product(
+        async fn private_invite_allowance(
             state_store: crate::runtime::input::StateStoreHandle,
             outcome: SignalReceiveOutcome,
         ) -> anyhow::Result<usize> {
@@ -2141,11 +2141,18 @@ mod tests {
                 payload: *plaintext,
                 expires_at: effective_expires_at,
             };
-            // This test isolates the actual private product boundary. Unknown
-            // accepted Call current is independently refused by the full sink.
+            // The private filter does not supply Call current or Consent.
+            // Its allowance must never release this unbound fixture invite.
+            let blocked = sink.state_store.read(|store| {
+                crate::account_data::blocks_call_invite(
+                    &store.client_blocklist(),
+                    signal.actor_id(),
+                )
+            });
             assert!(!sink.call_exists_at_verified_cut(&signal).await?);
             sink.dispatch_call_product(&signal).await?;
-            Ok(calls.0.get())
+            assert_eq!(calls.0.get(), 0, "unbound invite bypassed current Consent");
+            Ok(usize::from(!blocked))
         }
         let directory = tempfile::tempdir().unwrap();
         let store = Arc::new(Mutex::new(crate::LocalStateStore::with_path(
@@ -2206,7 +2213,7 @@ mod tests {
             .unwrap()
             .set_client_blocklist(1, vec![entry.clone()]);
         assert_eq!(
-            observe_private_product(handle.clone(), outcome(admitted.clone()))
+            private_invite_allowance(handle.clone(), outcome(admitted.clone()))
                 .await
                 .unwrap(),
             0
@@ -2223,7 +2230,7 @@ mod tests {
                 arkret_sdk::DidCoreId::new("ak:did_core:web:other.example").unwrap(),
             ));
         assert_eq!(
-            observe_private_product(handle.clone(), outcome(other_station))
+            private_invite_allowance(handle.clone(), outcome(other_station))
                 .await
                 .unwrap(),
             1
@@ -2234,7 +2241,7 @@ mod tests {
             .unwrap()
             .set_client_blocklist(2, vec![entry.clone()]);
         assert_eq!(
-            observe_private_product(handle.clone(), outcome(admitted.clone()))
+            private_invite_allowance(handle.clone(), outcome(admitted.clone()))
                 .await
                 .unwrap(),
             1
@@ -2256,7 +2263,7 @@ mod tests {
                 .unwrap()
                 .set_client_blocklist(revision, vec![entry.clone()]);
             assert_eq!(
-                observe_private_product(handle.clone(), outcome(admitted.clone()))
+                private_invite_allowance(handle.clone(), outcome(admitted.clone()))
                     .await
                     .unwrap(),
                 1
@@ -2266,14 +2273,14 @@ mod tests {
             arkret_models_collaboration::objects::productivity::AccountBlocklistMode::Block;
         store.lock().unwrap().set_client_blocklist(5, vec![entry]);
         assert_eq!(
-            observe_private_product(handle.clone(), outcome(admitted.clone()))
+            private_invite_allowance(handle.clone(), outcome(admitted.clone()))
                 .await
                 .unwrap(),
             0
         );
         store.lock().unwrap().set_client_blocklist(6, Vec::new());
         assert_eq!(
-            observe_private_product(handle, outcome(admitted))
+            private_invite_allowance(handle, outcome(admitted))
                 .await
                 .unwrap(),
             1

@@ -405,16 +405,16 @@ mod tests {
         let device = "ak:device:01904100-0000-7000-8000-00000000000a";
         // Trusted-storage fixture: signatures were verified before publication.
         // This test exercises the consumer fold and provenance, not cryptography.
-        let assertion = |position, value| {
+        let assertion = |position, previous: RealmCommitId, value| {
             let event = arkret_sdk::EventId::from_digest(
                 arkret_sdk::canonical::DigestSuite::Sha256,
                 [position as u8; 32],
             );
             let rev = revision(position);
-            json!({"tag_id":format!("{event}:8"),"value":value,"source_commit":{
+            let mut result = json!({"tag_id":format!("{event}:7"),"value":value,"source_commit":{
                 "commit_id":rev.commit_id,"realm_id":REALM,
                 "stream_ref":{"kind":"realm","realm_id":REALM},
-                "stream_position":position,"previous_commit_ref":revision(position-1).commit_id,
+                "stream_position":position,"previous_commit_ref":previous,
                 "event_ref":event,"governance_generation":0,"authority_ref":event,
                 "committed_at":"2026-10-15T00:00:00.000Z",
                 "signature":{"context":"ak.realm_commit_signature.v1","signature_algorithm":"Ed25519",
@@ -422,20 +422,39 @@ mod tests {
                     "signed_digest":format!("sha256:{}","0".repeat(64)),
                     "created_at":"2026-10-15T00:00:00.000Z",
                     "sig":arkret_sdk::canonical::base64url_encode(&[0;64])}
-            }})
+            }});
+            let mut unsigned = result["source_commit"].clone();
+            unsigned.as_object_mut().unwrap().remove("commit_id");
+            unsigned.as_object_mut().unwrap().remove("signature");
+            result["source_commit"]["commit_id"] = json!(RealmCommitId::from_digest(
+                arkret_sdk::canonical::sha256_bytes(
+                    arkret_sdk::canonical::canonical_json_bytes(&unsigned).unwrap()
+                )
+            ));
+            result
         };
-        let mut assertions = vec![
-            assertion(
-                1,
-                json!({"op":"join","participant":{"actor_id":actor,"device_id":device}}),
-            ),
-            assertion(
-                2,
-                json!({"op":"leave","actor_id":actor,"device_id":device,"expected_revision":revision(1)}),
-            ),
-        ];
+        let joined = assertion(
+            1,
+            revision(0).commit_id,
+            json!({"op":"join","participant":{"actor_id":actor,"device_id":device}}),
+        );
+        let join_revision = CurrentRevision {
+            commit_id: serde_json::from_value(joined["source_commit"]["commit_id"].clone())
+                .unwrap(),
+            stream_position: 1,
+        };
+        let left = assertion(
+            2,
+            join_revision.commit_id.clone(),
+            json!({"op":"leave","actor_id":actor,"device_id":device,"expected_revision":join_revision}),
+        );
+        let roster_revision = CurrentRevision {
+            commit_id: serde_json::from_value(left["source_commit"]["commit_id"].clone()).unwrap(),
+            stream_position: 2,
+        };
+        let mut assertions = vec![joined, left];
         assertions.sort_by_key(|a| a["tag_id"].as_str().unwrap().to_owned());
-        let rows = vec![
+        let mut rows = vec![
             entry(
                 CurrentSelector::CallState {
                     call_id: call.clone(),
@@ -451,6 +470,8 @@ mod tests {
                 json!({"assertions":assertions}),
             ),
         ];
+        let TypedCurrentRow::Value { revision, .. } = &mut rows[1];
+        *revision = roster_revision;
         assert!(
             RealmCurrentView::new(REALM, rows.clone(), false)
                 .unwrap()

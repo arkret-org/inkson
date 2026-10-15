@@ -1218,80 +1218,85 @@ impl InksonAccountProjector {
         }
         current_stage.arm_account_commit();
         let local_account = self.ctx.account.authority.clone();
-        let (theme, changed) = self
-            .ctx
-            .state_store
-            .write(|store| {
-                verified.project_transaction(store, |store| {
-                    verified
-                        .check_session()
-                        .map_err(|error| error.to_string())?;
-                    for page in verified.own_pages() {
-                        store.ingest_verified_message_history(page)?;
-                        crate::identity::agent_signer_evidence::index_verified_committed_page(
-                            store, page,
-                        )?;
+        let installed = self.ctx.state_store.write(|store| {
+            verified.project_transaction(store, |store| {
+                verified
+                    .check_session()
+                    .map_err(|error| error.to_string())?;
+                for page in verified.own_pages() {
+                    store.ingest_verified_message_history(page)?;
+                    crate::identity::agent_signer_evidence::index_verified_committed_page(
+                        store, page,
+                    )?;
+                }
+                verified.stage_own_checkpoints(store)?;
+                if frame.kind == arkret_sdk::sync::AccountSubscribeFrameKind::ResyncRequired {
+                    store.invalidate_sidecar_current(None);
+                }
+                if let Some(invalidations) = &frame.realm_invalidations {
+                    for invalidation in invalidations {
+                        store.invalidate_sidecar_current(Some(invalidation.realm_id.as_str()));
                     }
-                    verified.stage_own_checkpoints(store)?;
-                    if frame.kind == arkret_sdk::sync::AccountSubscribeFrameKind::ResyncRequired {
-                        store.invalidate_sidecar_current(None);
+                }
+                for basis in verified.authority_bases() {
+                    if !store.record_realm_authority_basis(basis.clone()) {
+                        return Err("verified Account authority generation regressed".to_owned());
                     }
-                    if let Some(invalidations) = &frame.realm_invalidations {
-                        for invalidation in invalidations {
-                            store.invalidate_sidecar_current(Some(invalidation.realm_id.as_str()));
-                        }
-                    }
-                    for basis in verified.authority_bases() {
-                        if !store.record_realm_authority_basis(basis.clone()) {
-                            return Err(
-                                "verified Account authority generation regressed".to_owned()
-                            );
-                        }
-                    }
-                    for (realm, role) in verified.genesis_roles() {
-                        store.save_realm_collaboration_role(realm.clone(), *role);
-                    }
-                    for page in verified.pages() {
-                        store.ingest_verified_message_history(page)?;
-                        crate::identity::agent_signer_evidence::index_verified_committed_page(
-                            store, page,
-                        )?;
-                    }
-                    for snapshot in verified.current_snapshots().values() {
-                        // Retain the highest observed signed cut even when its
-                        // history is pending. Private fold remains fail-closed
-                        // until the exact prefix is complete; no older cut can
-                        // replace this watermark during recovery.
-                        store.install_verified_sidecar_current(snapshot)?;
-                    }
-                    let staged = store
-                        .prepare_account_demand_frame(
-                            current_stage
-                                .filtered_frame()
-                                .map_err(|error| error.to_string())?,
-                        )
-                        .map_err(|error| error.to_string())?;
-                    let effects = apply_account_frame_payload(store, &response, &self.ctx)
-                        .map_err(|error| format!("{error:#}"))?;
-                    if changed_device_accounts(&response.device_lists()).contains(&local_account) {
-                        store.set_local_device_refresh_pending(true);
-                    }
+                }
+                for (realm, role) in verified.genesis_roles() {
+                    store.save_realm_collaboration_role(realm.clone(), *role);
+                }
+                for page in verified.pages() {
+                    store.ingest_verified_message_history(page)?;
+                    crate::identity::agent_signer_evidence::index_verified_committed_page(
+                        store, page,
+                    )?;
+                }
+                for snapshot in verified.current_snapshots().values() {
+                    // Retain the highest observed signed cut even when its
+                    // history is pending. Private fold remains fail-closed
+                    // until the exact prefix is complete; no older cut can
+                    // replace this watermark during recovery.
+                    store.install_verified_sidecar_current(snapshot)?;
+                }
+                let staged = store
+                    .prepare_account_demand_frame(
+                        current_stage
+                            .filtered_frame()
+                            .map_err(|error| error.to_string())?,
+                    )
+                    .map_err(|error| error.to_string())?;
+                let effects = apply_account_frame_payload(store, &response, &self.ctx)
+                    .map_err(|error| format!("{error:#}"))?;
+                if changed_device_accounts(&response.device_lists()).contains(&local_account) {
+                    store.set_local_device_refresh_pending(true);
+                }
+                store
+                    .finish_account_demand_frame(&staged)
+                    .map_err(|error| error.to_string())?;
+                store.set_current_generation(current_stage.generation());
+                store
+                    .save_sync_demand_filter(self.request_filter.clone())
+                    .map_err(|error| error.to_string())?;
+                if let Some((scope, checkpoint)) = next_checkpoint {
                     store
-                        .finish_account_demand_frame(&staged)
+                        .save_account_checkpoint(scope, checkpoint.clone())
                         .map_err(|error| error.to_string())?;
-                    store.set_current_generation(current_stage.generation());
-                    store
-                        .save_sync_demand_filter(self.request_filter.clone())
-                        .map_err(|error| error.to_string())?;
-                    if let Some((scope, checkpoint)) = next_checkpoint {
-                        store
-                            .save_account_checkpoint(scope, checkpoint.clone())
-                            .map_err(|error| error.to_string())?;
-                    }
-                    Ok(effects)
-                })
+                }
+                Ok(effects)
             })
-            .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+        });
+        let (theme, changed) = match installed {
+            Ok(effects) => effects,
+            Err(error) => {
+                // The synchronous transaction restored the previous account.
+                // Re-prove its durable root before disarming this publication;
+                // a failed or ambiguous confirmation still poisons it on Drop.
+                self.confirm_current_pointer_durable(&current_index, previous_generation)
+                    .await?;
+                return Err(garth::Error::Protocol(error.to_string()));
+            }
+        };
         if let Err(error) = await_account_state_durable(&self.ctx, "account frame").await {
             self.rollback_current_pointer(&current_index, previous_generation)
                 .await?;
