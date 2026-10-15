@@ -298,7 +298,8 @@ async fn private_sidecar_file_drop_never_inherits_verified_plaintext_parent() {
         crate::state::CurrentIndex::open(&account.authority, 0, state.current_index_location())
             .await
             .unwrap();
-    index.stage_frame(0, &frame).await.unwrap().finish();
+    let stage = index.stage_frame(0, &frame).await.unwrap();
+    state.commit_current_stage_for_test(stage).unwrap();
     state.set_current_generation(1);
     state.flush().unwrap();
     let scope = arkret_sdk::ScopeRef::Realm {

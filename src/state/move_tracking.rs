@@ -163,7 +163,7 @@ impl LocalStateStore {
     pub fn resolve_member_remove_mls_bindings(&mut self, realm_id: &str) -> usize {
         self.ensure_cached_loaded();
         let mut updated = 0;
-        for record in self.cached.move_submissions.values_mut() {
+        self.cached.move_submissions.for_each_mut(|_, record| {
             if record.realm_id == realm_id
                 && record.kind == "mls_member_remove"
                 && record.state == MoveSubmissionState::PendingMlsBinding
@@ -172,7 +172,7 @@ impl LocalStateStore {
                 record.reason = None;
                 updated += 1;
             }
-        }
+        });
         if updated > 0 {
             let _ = self.flush();
         }
@@ -186,7 +186,7 @@ impl LocalStateStore {
     pub fn resolve_member_add_mls_bindings(&mut self, realm_id: &str) -> usize {
         self.ensure_cached_loaded();
         let mut updated = 0;
-        for record in self.cached.move_submissions.values_mut() {
+        self.cached.move_submissions.for_each_mut(|_, record| {
             if record.realm_id == realm_id
                 && record.kind == "mls_member_add"
                 && record.state == MoveSubmissionState::PendingMlsBinding
@@ -195,7 +195,7 @@ impl LocalStateStore {
                 record.reason = None;
                 updated += 1;
             }
-        }
+        });
         if updated > 0 {
             let _ = self.flush();
         }

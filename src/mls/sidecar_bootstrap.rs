@@ -79,7 +79,7 @@ async fn publish_genesis(
         .write(|store| store.mark_mls_genesis_emitted_for_scope_with_event(scope, event_id))
         .map_err(anyhow::Error::msg)?;
     barrier.wait().await?;
-    let durable = state.read(|store| store.durable_mls_checkpoint_for_scope(scope))?;
+    let durable = crate::mls::read_durable_checkpoint(state, scope).await?;
     anyhow::ensure!(
         durable.is_some_and(|checkpoint| {
             checkpoint.epoch == 0 && checkpoint.group_state_event_id.as_ref() == Some(event_id)

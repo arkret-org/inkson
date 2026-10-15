@@ -2282,8 +2282,16 @@ async fn application_authoring_waits_for_detail_even_with_a_complete_durable_cut
     let index = crate::state::CurrentIndex::open(&authority, 0, local.current_index_location())
         .await
         .unwrap();
-    index.stage_frame(0, &frame).await.unwrap().finish();
-    local.set_current_generation(1);
+    let mut stage = index.stage_frame(0, &frame).await.unwrap();
+    stage.arm_account_commit();
+    local
+        .verified_projection_transaction(|store| {
+            store.set_current_generation(stage.generation());
+            Ok(())
+        })
+        .unwrap();
+    local.begin_durable_flush().unwrap().wait().await.unwrap();
+    stage.finish();
     assert!(index.read_complete_cut(REALM).await.unwrap().is_some());
     assert!(local.realm_detail_invalidated(REALM));
     let state = std::sync::Arc::new(std::sync::Mutex::new(local));

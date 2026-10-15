@@ -259,6 +259,7 @@ impl LocalStateStore {
             self.cached
                 .verified_sidecar_current
                 .get(incoming.realm_id.as_str())
+                .map(|snapshot| &**snapshot)
                 != Some(incoming),
         );
         self.cached.verified_sidecar_current_watermarks.insert(
@@ -270,7 +271,7 @@ impl LocalStateStore {
         );
         self.cached
             .verified_sidecar_current
-            .insert(incoming.realm_id.to_string(), incoming.clone());
+            .insert(incoming.realm_id.to_string(), incoming.clone().into());
         Ok(changed)
     }
 
@@ -297,7 +298,7 @@ impl LocalStateStore {
             state
                 .verified_sidecar_current
                 .get(realm)
-                .cloned()
+                .map(|snapshot| (**snapshot).clone())
                 .ok_or_else(|| {
                     anyhow::anyhow!(
                         "Sidecar exchange current requires a verified signed current cut"
@@ -507,7 +508,11 @@ mod tests {
                 .unwrap();
         }
         assert_eq!(
-            store.load().verified_sidecar_current.get(realm.as_str()),
+            store
+                .load()
+                .verified_sidecar_current
+                .get(realm.as_str())
+                .map(|snapshot| &**snapshot),
             Some(&hidden)
         );
         // Original exact visible cut stays hidden; the held current watermark
@@ -539,7 +544,11 @@ mod tests {
             .verified_projection_transaction(|s| s.install_own_station_sidecar_current(&response))
             .unwrap();
         assert_eq!(
-            reopened.load().verified_sidecar_current.get(realm.as_str()),
+            reopened
+                .load()
+                .verified_sidecar_current
+                .get(realm.as_str())
+                .map(|snapshot| &**snapshot),
             Some(&forward)
         );
         assert!(

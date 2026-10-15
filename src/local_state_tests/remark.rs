@@ -281,10 +281,8 @@ fn cold_reload_restores_private_contact_labels_without_redelivering_the_cursor()
         writer
             .save_account_checkpoint(&scope, checkpoint.clone())
             .unwrap();
-        let persisted = std::fs::read_to_string(
-            writer.account_state_path(&writer.active_authority_namespace_for_test()),
-        )
-        .unwrap();
+        let persisted = writer
+            .persisted_account_records_for_test(&writer.active_authority_namespace_for_test());
         assert!(!persisted.contains("Holder petname"));
         assert!(!persisted.contains("Original confirmed name"));
         let mut reopened = LocalStateStore::with_path(path);

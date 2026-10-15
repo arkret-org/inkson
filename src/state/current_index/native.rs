@@ -3,40 +3,215 @@ use std::sync::{Arc, Mutex};
 use rusqlite::{Connection, OptionalExtension, params};
 
 #[derive(Clone)]
-pub(super) struct Backend {
+pub(crate) struct Backend {
     connection: Arc<Mutex<Connection>>,
     key: Arc<[u8; 32]>,
 }
 
 impl Backend {
     #[cfg(test)]
-    pub(super) async fn open_test(path: std::path::PathBuf) -> anyhow::Result<Self> {
+    pub(crate) async fn open_test(path: std::path::PathBuf) -> anyhow::Result<Self> {
         tokio::task::spawn_blocking(move || {
             let conn=Connection::open(path)?;
             conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS current_entries(key TEXT PRIMARY KEY,value TEXT NOT NULL) WITHOUT ROWID;")?;
             Ok(Self{connection:Arc::new(Mutex::new(conn)),key:Arc::new([37;32])})
         }).await?
     }
-    pub(super) async fn open(location: super::CurrentIndexLocation) -> anyhow::Result<Self> {
-        tokio::task::spawn_blocking(move || {
-            if let Some(parent)=location.path.parent() { std::fs::create_dir_all(parent)?; }
-            let name=format!("inkson.current.v1.wrapping.{}",arkret_sdk::canonical::canonical_sha256(&location.path.to_string_lossy())?);
-            let mut conn=Connection::open(location.path)?;
-            conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS current_entries(key TEXT PRIMARY KEY,value TEXT NOT NULL) WITHOUT ROWID;")?;
-            let secure=crate::secure_key_store::default_secure_key_store("inkson");
-            let tx=conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-            let key=match secure.get_secret(&name)? {
-                Some(encoded)=>hex::decode(encoded)?.try_into().map_err(|_|anyhow::anyhow!("invalid current wrapping key"))?,
-                None=>{
-                    let exists:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM current_entries)",[],|row|row.get(0))?;
-                    anyhow::ensure!(!exists,"current wrapping key unavailable for existing index");
-                    let mut key=[0u8;32];getrandom::fill(&mut key)?;
-                    secure.store_secret(&name,&hex::encode(key))?;key
+    pub(crate) async fn open(location: super::CurrentIndexLocation) -> anyhow::Result<Self> {
+        tokio::task::spawn_blocking(move || Self::open_sync(location)).await?
+    }
+    pub(crate) fn open_sync(mut location: super::CurrentIndexLocation) -> anyhow::Result<Self> {
+        let absolute = std::path::absolute(&location.path)?;
+        let parent = absolute
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("account storage lacks parent"))?;
+        std::fs::create_dir_all(parent)?;
+        location.path = if absolute.exists() {
+            std::fs::canonicalize(absolute)?
+        } else {
+            std::fs::canonicalize(parent)?.join(
+                absolute
+                    .file_name()
+                    .ok_or_else(|| anyhow::anyhow!("account storage lacks filename"))?,
+            )
+        };
+        if let Some(parent) = location.path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        #[cfg(not(test))]
+        let name = format!(
+            "inkson.current.v1.wrapping.{}",
+            arkret_sdk::canonical::canonical_sha256(&location.path.to_string_lossy())?
+        );
+        let conn = Connection::open(location.path)?;
+        #[cfg(not(test))]
+        let mut conn = conn;
+        conn.busy_timeout(std::time::Duration::from_secs(15))?;
+        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS current_entries(key TEXT PRIMARY KEY,value TEXT NOT NULL) WITHOUT ROWID;")?;
+        #[cfg(test)]
+        let key = [37; 32];
+        #[cfg(not(test))]
+        let key = {
+            let secure = crate::secure_key_store::default_secure_key_store("inkson");
+            let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+            let key = match secure.get_secret(&name)? {
+                Some(encoded) => hex::decode(encoded)?
+                    .try_into()
+                    .map_err(|_| anyhow::anyhow!("invalid current wrapping key"))?,
+                None => {
+                    let exists: bool =
+                        tx.query_row("SELECT EXISTS(SELECT 1 FROM current_entries)", [], |row| {
+                            row.get(0)
+                        })?;
+                    anyhow::ensure!(
+                        !exists,
+                        "current wrapping key unavailable for existing index"
+                    );
+                    let mut key = [0u8; 32];
+                    getrandom::fill(&mut key)?;
+                    secure.store_secret(&name, &hex::encode(key))?;
+                    key
                 }
             };
             tx.commit()?;
-            Ok(Self{connection:Arc::new(Mutex::new(conn)),key:Arc::new(key)})
-        }).await?
+            key
+        };
+        Ok(Self {
+            connection: Arc::new(Mutex::new(conn)),
+            key: Arc::new(key),
+        })
+    }
+    pub(crate) fn get_sync(&self, key: &str) -> anyhow::Result<Option<Vec<u8>>> {
+        let conn = self
+            .connection
+            .lock()
+            .map_err(|_| anyhow::anyhow!("account index lock poisoned"))?;
+        let raw: Option<String> = conn
+            .query_row(
+                "SELECT value FROM current_entries WHERE key=?1",
+                [key],
+                |row| row.get(0),
+            )
+            .optional()?;
+        raw.map(|value| self.unpack(key, value)).transpose()
+    }
+    pub(crate) fn scan_sync(
+        &self,
+        prefix: &str,
+        after: Option<&str>,
+        limit: usize,
+    ) -> anyhow::Result<Vec<(String, Vec<u8>)>> {
+        anyhow::ensure!((1..=100).contains(&limit), "unbounded account scan");
+        let conn = self
+            .connection
+            .lock()
+            .map_err(|_| anyhow::anyhow!("account index lock poisoned"))?;
+        let mut query=conn.prepare("SELECT key,value FROM current_entries WHERE key>=?1 AND key<?2 AND key>?3 ORDER BY key LIMIT ?4")?;
+        let rows = query.query_map(
+            params![
+                prefix,
+                format!("{prefix}~"),
+                after.unwrap_or(""),
+                limit as i64
+            ],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )?;
+        rows.map(|row| {
+            let (key, value) = row?;
+            Ok((key.clone(), self.unpack(&key, value)?))
+        })
+        .collect()
+    }
+    pub(crate) fn get_raw_sync(&self, key: &str) -> anyhow::Result<Option<Vec<u8>>> {
+        let conn = self
+            .connection
+            .lock()
+            .map_err(|_| anyhow::anyhow!("account raw lock poisoned"))?;
+        let raw: Option<String> = conn
+            .query_row(
+                "SELECT value FROM current_entries WHERE key=?1",
+                [key],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(raw.map(String::into_bytes))
+    }
+    pub(crate) fn apply_checked_sync(
+        &self,
+        check: Option<(String, Option<Vec<u8>>)>,
+        deletes: Vec<String>,
+        writes: Vec<(String, Vec<u8>)>,
+    ) -> anyhow::Result<()> {
+        self.apply_condition_sync(check, deletes, writes, false)
+    }
+    pub(crate) fn apply_raw_checked_sync(
+        &self,
+        check: (String, Option<Vec<u8>>),
+        deletes: Vec<String>,
+        writes: Vec<(String, Vec<u8>)>,
+    ) -> anyhow::Result<()> {
+        self.apply_condition_sync(Some(check), deletes, writes, true)
+    }
+    fn apply_condition_sync(
+        &self,
+        check: Option<(String, Option<Vec<u8>>)>,
+        deletes: Vec<String>,
+        writes: Vec<(String, Vec<u8>)>,
+        raw_check: bool,
+    ) -> anyhow::Result<()> {
+        let mut conn = self
+            .connection
+            .lock()
+            .map_err(|_| anyhow::anyhow!("account index lock poisoned"))?;
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        if let Some((key, expected)) = check {
+            let raw: Option<String> = tx
+                .query_row(
+                    "SELECT value FROM current_entries WHERE key=?1",
+                    [&key],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            let actual = if raw_check {
+                raw.map(String::into_bytes)
+            } else {
+                raw.map(|value| self.unpack(&key, value)).transpose()?
+            };
+            anyhow::ensure!(
+                actual == expected,
+                "account checkpoint changed before transaction"
+            );
+        }
+        for key in deletes {
+            tx.execute("DELETE FROM current_entries WHERE key=?1", [key])?;
+        }
+        for (write_index, (key, value)) in writes.into_iter().enumerate() {
+            let plain = serde_json::to_string(&(&key, String::from_utf8(value)?))?;
+            let wrapped = crate::secure_key_store::wrap_secret(&plain, &self.key)?;
+            tx.execute("INSERT INTO current_entries(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",params![key,wrapped])?;
+            #[cfg(test)]
+            if write_index == 1
+                && let Some(ready) = std::env::var_os("INKSON_TEST_PAUSE_ACCOUNT_TX")
+            {
+                std::fs::write(ready, b"transaction open")?;
+                loop {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+            }
+            #[cfg(not(test))]
+            let _ = write_index;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+    pub(crate) async fn apply_checked(
+        &self,
+        check: Option<(String, Option<Vec<u8>>)>,
+        deletes: Vec<String>,
+        writes: Vec<(String, Vec<u8>)>,
+    ) -> anyhow::Result<()> {
+        let this = self.clone();
+        tokio::task::spawn_blocking(move || this.apply_checked_sync(check, deletes, writes)).await?
     }
     fn unpack(&self, key: &str, value: String) -> anyhow::Result<Vec<u8>> {
         let plain = crate::secure_key_store::unwrap_secret(&value, &self.key)?
@@ -45,7 +220,7 @@ impl Backend {
         anyhow::ensure!(bound_key == key, "current entry key binding differs");
         Ok(payload.into_bytes())
     }
-    pub(super) async fn get(&self, key: &str) -> anyhow::Result<Option<Vec<u8>>> {
+    pub(crate) async fn get(&self, key: &str) -> anyhow::Result<Option<Vec<u8>>> {
         let this = self.clone();
         let key = key.to_owned();
         tokio::task::spawn_blocking(move || {
@@ -64,7 +239,7 @@ impl Backend {
         })
         .await?
     }
-    pub(super) async fn scan(
+    pub(crate) async fn scan(
         &self,
         prefix: &str,
         lower: Option<&str>,
@@ -85,7 +260,7 @@ impl Backend {
             Ok(out)
         }).await?
     }
-    pub(super) async fn keys(
+    pub(crate) async fn keys(
         &self,
         prefix: &str,
         lower: Option<&str>,
@@ -104,22 +279,84 @@ impl Backend {
             Ok(rows.collect::<Result<Vec<_>,_>>()?)
         }).await?
     }
-    pub(super) async fn apply(
+    pub(crate) async fn apply(
         &self,
         deletes: Vec<String>,
         writes: Vec<(String, Vec<u8>)>,
     ) -> anyhow::Result<()> {
-        let this = self.clone();
-        tokio::task::spawn_blocking(move || {
-            let mut conn=this.connection.lock().map_err(|_|anyhow::anyhow!("current index lock poisoned"))?;
-            let tx=conn.transaction()?;
-            for key in deletes {tx.execute("DELETE FROM current_entries WHERE key=?1",[key])?;}
-            for (key,value) in writes {
-                let plain=serde_json::to_string(&(&key,String::from_utf8(value)?))?;
-                let wrapped=crate::secure_key_store::wrap_secret(&plain,&this.key)?;
-                tx.execute("INSERT INTO current_entries(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",params![key,wrapped])?;
-            }
-            tx.commit()?;Ok(())
-        }).await?
+        self.apply_checked(None, deletes, writes).await
+    }
+}
+
+impl std::fmt::Debug for Backend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("AccountKvBackend")
+    }
+}
+
+pub(crate) struct Snapshot<'a> {
+    backend: &'a Backend,
+    connection: &'a Connection,
+}
+impl Snapshot<'_> {
+    pub(crate) fn get_sync(&self, key: &str) -> anyhow::Result<Option<Vec<u8>>> {
+        let raw: Option<String> = self
+            .connection
+            .query_row(
+                "SELECT value FROM current_entries WHERE key=?1",
+                [key],
+                |row| row.get(0),
+            )
+            .optional()?;
+        raw.map(|value| self.backend.unpack(key, value)).transpose()
+    }
+    pub(crate) fn scan_sync(
+        &self,
+        prefix: &str,
+        after: Option<&str>,
+        limit: usize,
+    ) -> anyhow::Result<Vec<(String, Vec<u8>)>> {
+        anyhow::ensure!(
+            (1..=100).contains(&limit),
+            "unbounded account snapshot scan"
+        );
+        let mut query=self.connection.prepare("SELECT key,value FROM current_entries WHERE key>=?1 AND key<?2 AND key>?3 ORDER BY key LIMIT ?4")?;
+        let rows = query.query_map(
+            params![
+                prefix,
+                format!("{prefix}~"),
+                after.unwrap_or(""),
+                limit as i64
+            ],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )?;
+        rows.map(|row| {
+            let (key, value) = row?;
+            Ok((key.clone(), self.backend.unpack(&key, value)?))
+        })
+        .collect()
+    }
+}
+impl Backend {
+    pub(crate) fn snapshot<R>(
+        &self,
+        read: impl FnOnce(&Snapshot<'_>) -> anyhow::Result<R>,
+    ) -> anyhow::Result<R> {
+        let mut connection = self
+            .connection
+            .lock()
+            .map_err(|_| anyhow::anyhow!("account snapshot lock poisoned"))?;
+        let transaction = connection.transaction()?;
+        let result = read(&Snapshot {
+            backend: self,
+            connection: &transaction,
+        })?;
+        transaction.commit()?;
+        Ok(result)
+    }
+    #[cfg(any(test, feature = "spec-conformance"))]
+    pub(crate) fn execute_for_test(&self, sql: &str) -> anyhow::Result<()> {
+        self.connection.lock().unwrap().execute_batch(sql)?;
+        Ok(())
     }
 }

@@ -823,7 +823,16 @@ mod historical_result_tests {
             .unwrap();
         store.store_historical_agent_signer_key(entry).unwrap();
         let mut legacy = store.load();
-        for candidate in legacy.historical_agent_event_candidates.values_mut() {
+        let keys = legacy
+            .historical_agent_event_candidates
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        for key in keys {
+            let candidate = legacy
+                .historical_agent_event_candidates
+                .get_mut(&key)
+                .unwrap();
             let mut old_value = serde_json::to_value(&*candidate).unwrap();
             old_value
                 .as_object_mut()

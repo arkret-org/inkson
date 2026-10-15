@@ -1876,12 +1876,12 @@ pub(crate) fn apply_shared_pin_event(
 }
 
 pub(crate) fn chat_messages_from_sync_realms_with_sidecar(
-    realms: &std::collections::BTreeMap<String, Value>,
+    realms: &impl crate::state::account_items::ReadMap<Value>,
     state_store: Option<&LocalStateStore>,
     decrypt_identity: Option<(&arkret_sdk::AccountId, &str, &arkret_sdk::DeviceId)>,
 ) -> Vec<ChatMessage> {
     let mut messages = Vec::new();
-    for (realm_id, body) in realms {
+    for (realm_id, body) in realms.iter() {
         let Some(wire_events) = body
             .get("timeline")
             .and_then(|projection| projection.get("events"))

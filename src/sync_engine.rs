@@ -1919,7 +1919,7 @@ fn selected_account_filter(ctx: &SyncEngineContext) -> AccountFilter {
 /// exact `RealmCommit` revision it holds at, so nothing here re-runs a reducer,
 /// replays Event order, or reads a Cell projection. The rows are read in
 /// bounded pages of the index the frame was just committed to and held only in
-/// memory; the account blob carries no copy of them.
+/// memory; account records carry no copy of them.
 async fn refresh_current_product_view(
     index: &crate::state::CurrentIndex,
     ctx: &SyncEngineContext,
@@ -3786,22 +3786,8 @@ mod tests {
             Some(checkpoint.clone())
         );
         let before = serde_json::to_value(store.load()).unwrap();
-        let prefix = format!("{}.account.", path.file_stem().unwrap().to_string_lossy());
-        let account_path = std::fs::read_dir(path.parent().unwrap())
-            .unwrap()
-            .map(|entry| entry.unwrap().path())
-            .find(|path| {
-                path.file_name()
-                    .unwrap()
-                    .to_string_lossy()
-                    .starts_with(&prefix)
-                    && path.extension().is_some_and(|ext| ext == "json")
-            })
-            .expect("the real account-state shard must have been persisted");
-        let durable_bytes = std::fs::read(&account_path).unwrap();
-        let backup = account_path.with_extension("backup");
-        std::fs::rename(&account_path, &backup).unwrap();
-        std::fs::create_dir(&account_path).unwrap();
+        let durable_bytes = store.conformance_account_checkpoint_token().unwrap();
+        store.conformance_fail_account_commit(true).unwrap();
         let newer = garth::AccountCursorCheckpoint {
             cursor: "ak:cursor:newer-undurable-account-batch".to_owned(),
             ..checkpoint.clone()
@@ -3812,14 +3798,16 @@ mod tests {
                 .save_account_checkpoint(&scope, newer)
                 .map_err(|error| error.to_string())
         });
-        std::fs::remove_dir(&account_path).unwrap();
-        std::fs::rename(&backup, &account_path).unwrap();
+        store.conformance_fail_account_commit(false).unwrap();
         assert!(
             failed.is_err(),
-            "an actual filesystem failure must refuse the transaction"
+            "an actual account transaction failure must refuse the candidate"
         );
         assert_eq!(serde_json::to_value(store.load()).unwrap(), before);
-        assert_eq!(std::fs::read(&account_path).unwrap(), durable_bytes);
+        assert_eq!(
+            store.conformance_account_checkpoint_token().unwrap(),
+            durable_bytes
+        );
         let restored = LocalStateStore::with_path(&path);
         assert_eq!(serde_json::to_value(restored.load()).unwrap(), before);
         assert_eq!(
@@ -3827,7 +3815,6 @@ mod tests {
             Some(checkpoint)
         );
         let _ = std::fs::remove_file(path);
-        let _ = std::fs::remove_file(account_path);
     }
 
     fn sdk_realm_id() -> arkret_sdk::RealmId {
@@ -4489,7 +4476,7 @@ fn apply_account_frame_payload(
         realm_projection_changed = true;
         // Typed current rows and baseline progress are owned by the durable
         // current index, which installed this frame before the projection is
-        // folded. The account blob keeps no second copy of either.
+        // folded. Account records keep no second copy of either.
         let mut body = body.clone();
         if let Some(object) = body.as_object_mut() {
             object.remove("current");

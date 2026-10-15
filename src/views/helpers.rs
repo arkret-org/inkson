@@ -284,7 +284,7 @@ pub(crate) fn realm_mls_activation(
 /// resolves through its stored body's home Realm rather than pretending to
 /// carry a scope of its own.
 pub(crate) fn scope_mls_activation(
-    projections: &std::collections::BTreeMap<String, serde_json::Value>,
+    projections: &impl crate::state::account_items::ReadMap<serde_json::Value>,
     current: Option<&crate::current_projection::RealmCurrentView>,
     scope_id: &str,
 ) -> Option<bool> {

@@ -79,6 +79,7 @@ test("global search results preserve local text and routes across language chang
   let originalHref: string | null = null;
   let originalRealm: string | null = null;
   let originalSeal: string | null = null;
+  let originalCommit: string | null = null;
   for (const language of ["en", "zh", "en"] as const) {
     await setLanguage(page, language);
     const panel = page.getByTestId("global-search-panel");
@@ -98,6 +99,7 @@ test("global search results preserve local text and routes across language chang
       originalHref = await link.getAttribute("href");
       originalRealm = await realm.getAttribute("title");
       originalSeal = await seal.getAttribute("data-seal");
+      originalCommit = await row.getAttribute("data-commit-id");
       expect(originalRealm).toMatch(/^ak:realm:/);
       expect(originalSeal).toMatch(/^ak:event:/);
       await expect(row).toHaveAttribute("data-event-id", originalSeal!);
@@ -105,11 +107,26 @@ test("global search results preserve local text and routes across language chang
       expect(decodeURIComponent(route.pathname)).toBe(`/chat/${originalRealm}`);
       expect(route.searchParams.get("message")).toBe(originalSeal);
     }
+    await expect(row).toHaveAttribute("data-commit-id", originalCommit!);
     await expect(link).toHaveAttribute("href", originalHref!);
     await expect(realm).toHaveAttribute("title", originalRealm!);
     await expect(seal).toHaveAttribute("data-seal", originalSeal!);
     await expect(seal).toHaveText(`${language === "zh" ? "打开消息" : "Open message"}: ${originalSeal}`);
   }
+  // A new Wasm instance must hydrate the committed account records and current
+  // cut before the existing local history can authorize this same result.
+  await page.reload();
+  await expect(page.getByTestId("client-shell")).toBeVisible();
+  await openSearch(page);
+  const recovered = page.getByTestId("global-search-panel");
+  await recovered.getByTestId("global-search-input").fill(query);
+  await recovered.getByTestId("global-search-submit").click();
+  const recoveredRow = recovered.getByTestId("global-search-result-item");
+  await expect(recoveredRow).toHaveCount(1);
+  await expect(recoveredRow).toHaveAttribute("data-event-id", originalSeal!);
+  await expect(recoveredRow).toHaveAttribute("data-commit-id", originalCommit!);
+  await expect(recoveredRow.getByTestId("global-search-result-snippet")).toHaveText(originalBody);
+  await expect(recoveredRow.getByTestId("global-search-result-link")).toHaveAttribute("href", originalHref!);
   const destination = new URL(originalHref!, page.url()).toString();
   await page.getByTestId("global-search-result-link").click();
   await expect(page).toHaveURL(destination);

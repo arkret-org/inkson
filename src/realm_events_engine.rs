@@ -4557,30 +4557,8 @@ mod tests {
             .unwrap();
         failed.flush().unwrap();
         let failed_before = serde_json::to_value(failed.load()).unwrap();
-        let account_files = std::fs::read_dir(&directory)
-            .unwrap()
-            .map(|entry| entry.unwrap().path())
-            .filter(|path| {
-                path.file_name()
-                    .unwrap()
-                    .to_string_lossy()
-                    .starts_with("failed-cut.account.")
-                    && path
-                        .extension()
-                        .is_some_and(|extension| extension == "json")
-            })
-            .filter(|path| {
-                serde_json::from_slice::<serde_json::Value>(&std::fs::read(path).unwrap()).unwrap()
-                    ["sync_cursor"]
-                    == "ak:cursor:sidecar-retained"
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(account_files.len(), 1);
-        let account_file = &account_files[0];
-        let prior_bytes = std::fs::read(account_file).unwrap();
-        let backup = account_file.with_extension("saved");
-        std::fs::rename(account_file, &backup).unwrap();
-        std::fs::create_dir(account_file).unwrap();
+        let prior_bytes = failed.conformance_account_checkpoint_token().unwrap();
+        failed.conformance_fail_account_commit(true).unwrap();
         let mut candidate_validated = false;
         let failed_cut = failed.verified_projection_transaction(|store| {
             store.ingest_verified_message_history(&page)?;
@@ -4608,9 +4586,11 @@ mod tests {
             "the candidate must reach the real durable write"
         );
         assert_eq!(serde_json::to_value(failed.load()).unwrap(), failed_before);
-        std::fs::remove_dir(account_file).unwrap();
-        std::fs::rename(&backup, account_file).unwrap();
-        assert_eq!(std::fs::read(account_file).unwrap(), prior_bytes);
+        failed.conformance_fail_account_commit(false).unwrap();
+        assert_eq!(
+            failed.conformance_account_checkpoint_token().unwrap(),
+            prior_bytes
+        );
         let failed_reload = LocalStateStore::with_path(directory.join("failed-cut.json"));
         assert_eq!(
             serde_json::to_value(failed_reload.load()).unwrap(),
@@ -4765,8 +4745,30 @@ mod tests {
         assert!(!reopened.has_pending_sidecar_history(realm.as_str()));
         assert!(reopened.verified_sidecar_inputs(realm.as_str()).is_err());
         assert!(reopened.mls_scopes_needing_tail_recovery().is_empty());
-        drop(reopened);
-        std::fs::remove_dir_all(directory).unwrap();
+        drop((
+            reopened,
+            live_follow,
+            failed,
+            atomic,
+            missing_reload,
+            failed_reload,
+            atomic_reload,
+            complete_reload,
+        ));
+        // Independent GC can finish its last SQLite transaction after a host drops.
+        let cleanup_deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            match std::fs::remove_dir_all(&directory) {
+                Ok(()) => break,
+                Err(error)
+                    if error.raw_os_error() == Some(32)
+                        && std::time::Instant::now() < cleanup_deadline =>
+                {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                Err(error) => panic!("fixture cleanup failed: {error}"),
+            }
+        }
     }
 
     #[cfg(not(target_arch = "wasm32"))]

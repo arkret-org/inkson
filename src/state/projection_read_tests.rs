@@ -104,7 +104,7 @@ fn install_empty_signed_cut(store: &mut LocalStateStore) {
     store
         .cached
         .verified_sidecar_current
-        .insert(REALM.into(), snapshot);
+        .insert(REALM.into(), snapshot.into());
 }
 
 #[test]
@@ -114,9 +114,9 @@ fn cache_projection_preserves_exact_receive_bytes_without_copying_account_histor
     add_unrelated_history(&mut store);
     store.cached.mls_private_plaintext.insert(
         REALM.into(),
-        BTreeMap::from([(
+        persistent_map([(
             "strand".into(),
-            BTreeMap::from([("body".into(), "author".into())]),
+            persistent_map([("body".to_owned(), "author".to_owned())]),
         )]),
     );
     let original = encrypt_state(REALM, "AQID", 1, b"before", "secret", b"salt");
@@ -127,9 +127,9 @@ fn cache_projection_preserves_exact_receive_bytes_without_copying_account_histor
         .insert(REALM.into(), original.clone());
     store.cached.mls_decrypted_plaintext.insert(
         REALM.into(),
-        BTreeMap::from([
-            ("digest".into(), "before".into()),
-            ("base-only".into(), "unchanged".into()),
+        persistent_map([
+            ("digest".to_owned(), "before".to_owned()),
+            ("base-only".into(), "unchanged".to_owned()),
         ]),
     );
     let link = signed_link();
@@ -139,7 +139,7 @@ fn cache_projection_preserves_exact_receive_bytes_without_copying_account_histor
         overlay.recovery_snapshots.insert(REALM.into(), original);
         overlay.plaintexts.insert(
             REALM.into(),
-            BTreeMap::from([("digest".into(), "after".into())]),
+            BTreeMap::from([("digest".to_owned(), "after".to_owned())]),
         );
         overlay.identity_links.insert("link".into(), link);
     }
@@ -220,7 +220,9 @@ fn admitted_sidecar_cut_reads_do_not_copy_other_account_history() {
     let (_directory, mut store) = store();
     install_empty_signed_cut(&mut store);
     add_unrelated_history(&mut store);
-    let expected = store.cached.verified_sidecar_current[REALM].clone();
+    let expected = store.cached.verified_sidecar_current[REALM]
+        .clone()
+        .into_inner();
     FULL_STATE_READ_COPIES.with(|count| count.set(0));
     for _ in 0..100 {
         let (snapshot, histories) = store.verified_sidecar_inputs(REALM).unwrap();
@@ -258,9 +260,9 @@ fn narrow_projection_reads_follow_active_account_instead_of_a_detached_old_cache
     store.cached.server_trust_domain = Some("ak:trust_domain:alice.example".into());
     store.cached.mls_private_plaintext.insert(
         REALM.into(),
-        BTreeMap::from([(
+        persistent_map([(
             "strand".into(),
-            BTreeMap::from([("body".into(), "alice secret".into())]),
+            persistent_map([("body".to_owned(), "alice secret".to_owned())]),
         )]),
     );
     store.flush().unwrap();
@@ -287,4 +289,8 @@ fn narrow_projection_reads_follow_active_account_instead_of_a_detached_old_cache
         "Alice's old plaintext cannot enter Bob's secure namespace"
     );
     assert_eq!(stale.e2ee_plaintext_cache_usage().entry_count(), 0);
+}
+
+fn persistent_map<V: Clone, const N: usize>(entries: [(String, V); N]) -> im::OrdMap<String, V> {
+    entries.into_iter().collect()
 }

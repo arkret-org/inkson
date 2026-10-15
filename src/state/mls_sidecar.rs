@@ -90,7 +90,7 @@ impl LocalStateStore {
     pub(crate) fn pending_keypackage_consumes(
         &self,
     ) -> anyhow::Result<Vec<(String, arkret_sdk::KeyPackagesConsumeRequestBody)>> {
-        let Some(state) = self.durable_mls_account_state()? else {
+        let Some(state) = self.durable_mls_account_state(None)? else {
             return Ok(Vec::new());
         };
         state
@@ -409,7 +409,10 @@ impl LocalStateStore {
         }
     }
 
-    fn durable_mls_account_state(&self) -> anyhow::Result<Option<ClientLocalState>> {
+    fn durable_mls_account_state(
+        &self,
+        scope_key: Option<&str>,
+    ) -> anyhow::Result<Option<ClientLocalState>> {
         let namespace = self.effective_account_key();
         anyhow::ensure!(
             self.cached_account_key
@@ -417,25 +420,61 @@ impl LocalStateStore {
                 .is_none_or(|cached| cached == namespace),
             "active account changed before the durable MLS checkpoint read"
         );
+        let mut state = ClientLocalState::default();
         #[cfg(not(target_arch = "wasm32"))]
-        let bytes = match std::fs::read(self.account_state_path(&namespace)) {
-            Ok(bytes) => bytes,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(error.into()),
-        };
+        {
+            let backend = self.account_record_backend()?;
+            let expected = self.committed_account_checkpoint(&namespace)?;
+            if let Some(key) = scope_key {
+                state.mls_local_checkpoints = account_store::committed_map(
+                    &backend,
+                    &namespace,
+                    "mls_snapshots",
+                    Some(key),
+                    &expected,
+                )?;
+            } else {
+                state.mls_pending_keypackage_consumes = account_store::committed_map(
+                    &backend,
+                    &namespace,
+                    "mls_pending_keypackage_consumes",
+                    None,
+                    &expected,
+                )?;
+            }
+        }
         #[cfg(target_arch = "wasm32")]
-        let bytes = {
+        {
             anyhow::ensure!(
                 crate::secure_key_store::wasm_secure_store_ready(),
-                "secure account-state store is not ready"
+                "secure account store is not ready"
             );
-            let store = crate::secure_key_store::default_secure_key_store("inkson");
-            let Some(bytes) = store.get_secret_bytes(&account_state_key(&namespace))? else {
+            let Some(cached) = account_store::browser::cached(&namespace) else {
                 return Ok(None);
             };
-            bytes.as_ref().to_vec()
-        };
-        let state: ClientLocalState = serde_json::from_slice(&bytes)?;
+            let committed = cached.last_committed.lock().unwrap();
+            if let Some(key) = scope_key {
+                if let Some(checkpoint) = committed.state.mls_local_checkpoints.get(key) {
+                    state
+                        .mls_local_checkpoints
+                        .insert(key.to_owned(), checkpoint.clone());
+                }
+                let prefix = format!("{key}\u{1f}");
+                for (key, checkpoint) in committed
+                    .state
+                    .mls_local_checkpoints
+                    .range(prefix.clone()..format!("{prefix}~"))
+                {
+                    state
+                        .mls_local_checkpoints
+                        .insert(key.clone(), checkpoint.clone());
+                }
+            } else {
+                state.mls_pending_keypackage_consumes =
+                    committed.state.mls_pending_keypackage_consumes.clone();
+            }
+        }
+
         Ok(Some(state))
     }
 
@@ -444,10 +483,11 @@ impl LocalStateStore {
         &self,
         scope: &arkret_sdk::ScopeRef,
     ) -> anyhow::Result<Option<garth::mls::checkpoint::MlsLocalCheckpointEnvelope>> {
-        let Some(state) = self.durable_mls_account_state()? else {
+        let key = mls_scope_checkpoint_key(scope).map_err(anyhow::Error::msg)?;
+        let Some(state) = self.durable_mls_account_state(Some(&key))? else {
             return Ok(None);
         };
-        let key = mls_scope_checkpoint_key(scope).map_err(anyhow::Error::msg)?;
+
         Ok(match scope {
             arkret_sdk::ScopeRef::Sidecar { .. } => {
                 let prefix = format!("{key}\u{1f}");
@@ -548,7 +588,7 @@ impl LocalStateStore {
     pub fn mls_local_checkpoints(
         &self,
     ) -> BTreeMap<String, garth::mls::checkpoint::MlsLocalCheckpointEnvelope> {
-        self.load().mls_local_checkpoints
+        self.load().mls_local_checkpoints.into_iter().collect()
     }
 
     /// Test-only scenario helper: drop the persisted MLS snapshot for a
@@ -777,7 +817,7 @@ impl LocalStateStore {
         self.ensure_cached_loaded();
         let realm_id = realm_id.into();
         let key = mls_effective_scope_checkpoint_key(&realm_id, circle_id)?;
-        if self.cached.mls_genesis_emitted.insert(key) {
+        if self.cached.mls_genesis_emitted.insert(key).is_none() {
             let _ = self.flush();
         }
         Ok(())
@@ -898,7 +938,7 @@ impl LocalStateStore {
             return Err("refusing to discard an accepted creator MLS transition".to_owned());
         }
 
-        let mut changed = self.cached.mls_genesis_emitted.remove(&key);
+        let mut changed = self.cached.mls_genesis_emitted.remove(&key).is_some();
         changed |= self.cached.mls_group_state_refs.remove(&key).is_some();
         if let Some(snapshot) = self.cached.mls_local_checkpoints.get_mut(&key)
             && snapshot.group_state_event_id.take().is_some()
@@ -1489,10 +1529,11 @@ mod tests {
         );
         store.cached.mls_private_plaintext.insert(
             REALM.to_owned(),
-            std::collections::BTreeMap::from([(
-                "strand".to_owned(),
-                std::collections::BTreeMap::from([("body".to_owned(), "author text".to_owned())]),
-            )]),
+            im::ordmap! {
+                "strand".to_owned() => im::ordmap! {
+                    "body".to_owned() => "author text".to_owned()
+                }
+            },
         );
         assert!(store.realm_projection_has_retired_minimal_metadata_marker(REALM));
         assert!(store.realm_tree_projection(REALM).is_some());
@@ -1570,7 +1611,8 @@ mod tests {
             std::collections::BTreeMap::from([
                 ("digest".to_owned(), encode(b"base text")),
                 ("base-only".to_owned(), encode(b"base only")),
-            ]),
+            ])
+            .into(),
         );
         let mut advanced = checkpoint(2, b"advanced");
         advanced.group_state_event_id = Some(event_id("bbbb"));
@@ -1579,7 +1621,8 @@ mod tests {
             overlay.snapshots.insert(key.clone(), advanced);
             overlay.plaintexts.insert(
                 REALM.to_owned(),
-                std::collections::BTreeMap::from([("digest".to_owned(), encode(b"overlay text"))]),
+                std::collections::BTreeMap::from([("digest".to_owned(), encode(b"overlay text"))])
+                    .into(),
             );
         }
         assert_eq!(store.mls_checkpoint_for_scope(&scope).unwrap().epoch, 2);

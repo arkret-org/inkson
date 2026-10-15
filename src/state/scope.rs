@@ -317,7 +317,15 @@ impl LocalStateStore {
         // rehydrates the exact pending signer from durable storage before it
         // signs or resumes a prepared registration request.
         crate::event_signer::clear_active_device_signer();
+        let anonymous_was_quarantined = !preserve_onboarding
+            && self
+                .corrupt_account_scopes
+                .lock()
+                .unwrap()
+                .contains(ANONYMOUS_ACCOUNT_NAMESPACE);
+        let reset_incarnation = anonymous_was_quarantined.then(crate::operation::uuid_v7);
         let pending = PendingLogin {
+            anonymous_storage_incarnation: reset_incarnation.clone(),
             device_id: device_id.clone(),
             dpop_jkt: dpop_jkt
                 .map(str::trim)
@@ -333,29 +341,8 @@ impl LocalStateStore {
         self.cached = anonymous;
         self.cached_account_key = Some(self.effective_account_key());
         self.loaded.store(true, Ordering::Relaxed);
-        let anonymous_was_quarantined = !preserve_onboarding
-            && self
-                .corrupt_account_scopes
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .contains(ANONYMOUS_ACCOUNT_NAMESPACE);
-        if anonymous_was_quarantined {
-            // A fresh sign-in is an explicit reset of the pre-DID scratch
-            // namespace. `read_account_state` has already preserved the
-            // undecodable payload under the sibling `.corrupt` entry, so it is
-            // safe to replace only the active anonymous blob here. Keep real
-            // account namespaces fail-closed, and keep the quarantine latched
-            // if even this replacement write fails.
-            let result = self.write_account_state(
-                ANONYMOUS_ACCOUNT_NAMESPACE,
-                self.effective_state_for_persist(),
-            );
-            if result.is_ok() {
-                self.corrupt_account_scopes
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner())
-                    .remove(ANONYMOUS_ACCOUNT_NAMESPACE);
-            }
+        if let Some(incarnation) = reset_incarnation {
+            let result = self.reset_quarantined_anonymous_records(&incarnation);
             self.record_persist_result(&result);
         } else {
             let _ = self.flush();

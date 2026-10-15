@@ -127,8 +127,8 @@ pub async fn run_browser_account_persist_fault_contract() -> anyhow::Result<()> 
 
 #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
 #[doc(hidden)]
-pub async fn run_browser_retired_account_contract() -> anyhow::Result<()> {
-    state::run_browser_retired_account_contract().await
+pub async fn run_browser_account_record_corruption_contract() -> anyhow::Result<()> {
+    state::run_browser_account_record_corruption_contract().await
 }
 
 /// Durable-outbound-queue contract entry points for the browser test suite

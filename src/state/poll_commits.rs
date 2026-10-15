@@ -253,7 +253,7 @@ impl LocalStateStore {
                     && commit.stream_position == head.stream_position
                     && commit.commit_id == head.commit_id
                 {
-                    anchor = Some(commit.clone());
+                    anchor = Some(commit.clone().into());
                 }
             }
         }
@@ -292,7 +292,7 @@ impl LocalStateStore {
         Ok(())
     }
 
-    /// Stage verified coordinates in the existing account-state blob. On wasm,
+    /// Stage verified coordinates in the account record transaction. On wasm,
     /// the caller must await `begin_durable_flush()` before ACKing the scan
     /// cursor: `flush()` alone only enqueues the IndexedDB write.
     pub(crate) fn ingest_verified_message_commits(
@@ -490,7 +490,7 @@ impl LocalStateStore {
     }
 
     pub(crate) fn verified_poll_inputs(&self) -> Vec<VerifiedPollInput> {
-        self.load().verified_poll_inputs
+        self.load().verified_poll_inputs.into_inner()
     }
 
     /// Unread ordinary Chat messages come from accepted stream coordinates,
@@ -584,7 +584,7 @@ impl LocalStateStore {
 // and conflict handling without constructing a public trust-token shortcut.
 fn merge_verified_poll_page(
     inputs: &mut Vec<VerifiedPollInput>,
-    prefixes: &mut BTreeMap<String, VerifiedPollPrefix>,
+    prefixes: &mut im::OrdMap<String, VerifiedPollPrefix>,
     rows: &[arkret_sdk::CommittedEventView],
 ) -> Result<(), String> {
     let mut next_inputs = inputs.clone();
@@ -1439,9 +1439,9 @@ mod tests {
             .accepted_ref
             .stream_position;
         assert!(target_position > 0);
-        for prefix in since_join.verified_poll_prefixes.values_mut() {
+        since_join.verified_poll_prefixes.for_each_mut(|_, prefix| {
             prefix.start_position = target_position;
-        }
+        });
         assert_eq!(
             crate::views::chat::model::chat_messages_from_local_state_with_sidecar(
                 &since_join,
@@ -1452,9 +1452,9 @@ mod tests {
             first_messages[0].reactions,
             "a complete target-to-reaction chain does not require pre-join genesis history"
         );
-        for prefix in since_join.verified_poll_prefixes.values_mut() {
+        since_join.verified_poll_prefixes.for_each_mut(|_, prefix| {
             prefix.start_position = target_position + 1;
-        }
+        });
         assert!(
             crate::views::chat::model::chat_messages_from_local_state_with_sidecar(
                 &since_join,
@@ -1507,9 +1507,11 @@ mod tests {
             .accepted_ref
             .stream_position;
         assert!(target_position > 0);
-        for prefix in joined_suffix.verified_poll_prefixes.values_mut() {
-            prefix.start_position = target_position;
-        }
+        joined_suffix
+            .verified_poll_prefixes
+            .for_each_mut(|_, prefix| {
+                prefix.start_position = target_position;
+            });
         assert_eq!(
             crate::views::chat::model::chat_messages_from_local_state_with_sidecar(
                 &joined_suffix,
@@ -1520,9 +1522,11 @@ mod tests {
             first_messages[0].reactions,
             "a contiguous authorized suffix covering the target includes all possible reactions"
         );
-        for prefix in joined_suffix.verified_poll_prefixes.values_mut() {
-            prefix.start_position = target_position + 1;
-        }
+        joined_suffix
+            .verified_poll_prefixes
+            .for_each_mut(|_, prefix| {
+                prefix.start_position = target_position + 1;
+            });
         assert!(
             crate::views::chat::model::chat_messages_from_local_state_with_sidecar(
                 &joined_suffix,
@@ -1534,9 +1538,9 @@ mod tests {
             "a suffix starting after the target cannot establish complete reaction membership"
         );
         let mut incomplete = first_state;
-        for prefix in incomplete.verified_poll_prefixes.values_mut() {
+        incomplete.verified_poll_prefixes.for_each_mut(|_, prefix| {
             prefix.contiguous = false;
-        }
+        });
         assert!(
             crate::views::chat::model::chat_messages_from_local_state_with_sidecar(
                 &incomplete,

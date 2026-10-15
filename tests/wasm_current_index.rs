@@ -155,7 +155,10 @@ async fn an_unconfirmed_durable_result_poisons_the_pointer() {
 async fn a_cancelled_install_recovers_only_the_confirmed_pointer() {
     let id = authority("cancelled");
     let store = CurrentIndexHarness::open(&id, 0).await.unwrap();
-    store.abandon_armed(0, &frame(1, false)).await.unwrap();
+    store
+        .persist_unconfirmed(0, &frame(1, false))
+        .await
+        .unwrap();
     assert!(store.is_poisoned());
     store.confirm_durable_pointer(1).unwrap();
     let installed = store.read_ready(REALM, &selector()).await.unwrap().unwrap();

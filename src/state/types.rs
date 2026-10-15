@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, VecDeque};
 
 pub use arkret_sdk::{PresencePreference, PresenceVisibility, ReadCursorPosition, ReadCursorScope};
 use chime::PushRegistrationState;
@@ -920,14 +920,15 @@ pub struct ClientLocalState {
     /// account-aggregate `sync_cursor`: each stream has an independent
     /// ordering domain and its cursor must never be reused by another stream.
     #[serde(default)]
-    pub commit_stream_cursors: BTreeMap<String, String>,
+    pub commit_stream_cursors: im::OrdMap<String, String>,
     /// Only pages admitted by Garth's fresh authority and Commit signature
     /// gate may advance these positions. A bare head cannot resume a new
     /// replica; the signed anchor must be reverified against fresh authority.
     #[serde(default)]
-    pub verified_commit_stream_cursors: BTreeMap<String, arkret_sdk::CommitStreamHead>,
+    pub verified_commit_stream_cursors: im::OrdMap<String, arkret_sdk::CommitStreamHead>,
     #[serde(default)]
-    pub(crate) verified_commit_stream_anchors: BTreeMap<String, arkret_sdk::RealmCommit>,
+    pub(crate) verified_commit_stream_anchors:
+        im::OrdMap<String, super::account_items::Shared<arkret_sdk::RealmCommit>>,
     /// Station-CAS revision identity folded through the same durable account
     /// checkpoint as `sync_cursor`.
     #[serde(default)]
@@ -936,67 +937,71 @@ pub struct ClientLocalState {
     /// admits are committed in one local-state write; the UI projector acks
     /// only after its own durable fold succeeds.
     #[serde(default)]
-    pub(crate) client_core_pending_deliveries: VecDeque<StoredClientDelivery>,
+    pub(crate) client_core_pending_deliveries:
+        super::account_items::Shared<VecDeque<StoredClientDelivery>>,
     #[serde(default)]
     pub client_core_next_delivery_id: u64,
     #[serde(default)]
-    pub device_message_cursors: BTreeMap<String, String>,
+    pub device_message_cursors: im::OrdMap<String, String>,
     #[serde(default)]
-    pub client_core_seen_event_ids: VecDeque<String>,
-    pub raw_operations: Vec<RawOperationRecord>,
+    pub client_core_seen_event_ids: super::account_items::Shared<VecDeque<String>>,
+    pub raw_operations: super::account_items::Shared<Vec<RawOperationRecord>>,
     /// Bounded read-side coordinates for poll reduction. The producer may use
     /// a response head only after a verified reducer also binds its decrypted
     /// poll content to this exact Event and partition.
     #[serde(default)]
-    pub(crate) verified_message_commits: Vec<VerifiedMessageCommit>,
+    pub(crate) verified_message_commits: super::account_items::Shared<Vec<VerifiedMessageCommit>>,
     #[serde(default)]
-    pub(crate) verified_poll_inputs: Vec<VerifiedPollInput>,
+    pub(crate) verified_poll_inputs: super::account_items::Shared<Vec<VerifiedPollInput>>,
     #[serde(default)]
-    pub(crate) verified_reaction_assertions: Vec<VerifiedReactionAssertion>,
+    pub(crate) verified_reaction_assertions:
+        super::account_items::Shared<Vec<VerifiedReactionAssertion>>,
     #[serde(default)]
-    pub(crate) verified_poll_prefixes: BTreeMap<String, VerifiedPollPrefix>,
-    /// Complete private replay material in the existing account-state blob.
+    pub(crate) verified_poll_prefixes: im::OrdMap<String, VerifiedPollPrefix>,
+    /// Complete private replay material, persisted as individually authenticated records.
     /// Only VerifiedScanPage and VerifiedCurrentSnapshot can produce it.
     #[serde(default)]
-    pub(crate) verified_sidecar_history: BTreeMap<String, Vec<arkret_sdk::CommittedEventView>>,
+    pub(crate) verified_sidecar_history:
+        im::OrdMap<String, super::account_items::Shared<Vec<arkret_sdk::CommittedEventView>>>,
     #[serde(default)]
-    pub(crate) verified_sidecar_current: BTreeMap<String, arkret_sdk::RealmStateSnapshot>,
+    pub(crate) verified_sidecar_current:
+        im::OrdMap<String, super::account_items::Shared<arkret_sdk::RealmStateSnapshot>>,
     /// Durable observed current-head union. This is an anti-rollback watermark,
     /// never a downloaded history prefix, replay cursor or readable current cut.
     #[serde(default)]
     pub(crate) verified_sidecar_current_watermarks:
-        BTreeMap<String, ObservedSidecarCurrentWatermark>,
+        im::OrdMap<String, ObservedSidecarCurrentWatermark>,
     #[serde(default)]
-    pub realm_destroy_receipts: BTreeMap<String, RealmDestroyReceipt>,
-    pub realm_tree_projections: BTreeMap<String, Value>,
+    pub realm_destroy_receipts: im::OrdMap<String, RealmDestroyReceipt>,
+    pub realm_tree_projections: im::OrdMap<String, Value>,
     #[serde(default)]
-    pub realm_collaboration_roles: BTreeMap<String, arkret_sdk::CollaborationRealmRole>,
+    pub realm_collaboration_roles: im::OrdMap<String, arkret_sdk::CollaborationRealmRole>,
     #[serde(default)]
     // Persisted key, unchanged: it addresses local state already written
     // on every device, and an at-rest key is not a wire name.
     #[serde(rename = "snapshot_sync")]
-    pub realm_state_snapshot_sync: BTreeMap<String, RealmStateSnapshotSyncStatus>,
+    pub realm_state_snapshot_sync: im::OrdMap<String, RealmStateSnapshotSyncStatus>,
     /// Principal-private saved-item account-data values, keyed by
     /// `ak.saved.v1:<collection_key>:<target_key>`.
     #[serde(default)]
-    pub saved_account_data: BTreeMap<String, Value>,
+    pub saved_account_data: im::OrdMap<String, Value>,
     /// Principal-private scheduled-send plan account-data entry contents,
     /// keyed by `ak.scheduled_send.v1:<scheduled_send_id>`; values are the
     /// encrypted envelopes exactly as the account-data projection carries
     /// them (spec `models/personal-productivity.md` §4).
     #[serde(default)]
-    pub scheduled_send_account_data: BTreeMap<String, Value>,
+    pub scheduled_send_account_data: im::OrdMap<String, Value>,
     /// Local dispatch aid: `scheduled_send_id` -> home Realm of the plan's
     /// target Strand. The spec plan value carries no `realm_id`, so the
     /// dispatch driver resolves the authoring Realm from this index (or a
     /// projection scan fallback) when it builds the `ak.message.create`
     /// envelope at expiry.
     #[serde(default)]
-    pub scheduled_send_target_realms: BTreeMap<String, String>,
+    pub scheduled_send_target_realms: im::OrdMap<String, String>,
     #[serde(default)]
-    pub notification_projection: Vec<StoredNotification>,
+    pub notification_projection: super::account_items::Shared<Vec<StoredNotification>>,
     #[serde(default)]
-    pub presence_projection: Vec<Value>,
+    pub presence_projection: super::account_items::Shared<Vec<Value>>,
     #[serde(default)]
     pub presence_visibility: PresenceVisibility,
     /// Manual presence preference (`ak.presence.preference`,
@@ -1010,33 +1015,33 @@ pub struct ClientLocalState {
     /// them. Entries stay local only and are deduplicated by envelope identity
     /// plus transaction/request ids where present.
     #[serde(default)]
-    pub to_device_inbox: Vec<Value>,
+    pub to_device_inbox: super::account_items::Shared<Vec<Value>>,
     #[serde(default)]
-    pub mls_welcome_inbox_index: BTreeMap<String, Vec<usize>>,
+    pub mls_welcome_inbox_index: im::OrdMap<String, super::account_items::Shared<Vec<usize>>>,
     /// Durable canonical-envelope digest keyed by
     /// the exact closed sender branch plus `message_id`.
     /// The receipt is written in the same state snapshot as the inbox entry,
     /// before any protocol-specific handler runs.
     #[serde(default)]
-    pub to_device_receipts: BTreeMap<String, DeviceMessageReceipt>,
+    pub to_device_receipts: im::OrdMap<String, DeviceMessageReceipt>,
     #[serde(default)]
-    pub notification_client_state: BTreeMap<String, NotificationClientState>,
+    pub notification_client_state: im::OrdMap<String, NotificationClientState>,
     /// Invite-accept credentials delivered over the actor-private
     /// account-data carrier, keyed by invite id. Entries carry their own
     /// `expires_at`; lookup drops expired credentials, and writes cap the map
     /// at `MAX_INVITE_CREDENTIALS` (expired first, then oldest).
     #[serde(default)]
-    pub invite_credentials: BTreeMap<String, StoredInviteCredential>,
+    pub invite_credentials: im::OrdMap<String, StoredInviteCredential>,
     /// Authoritative Station-CAS Account Data projection from account subscribe.
     #[serde(default)]
-    pub station_cas_account_data: BTreeMap<String, arkret_sdk::AccountDataRow>,
+    pub station_cas_account_data: im::OrdMap<String, arkret_sdk::AccountDataRow>,
     /// Per-realm watch level overrides (spec
     /// `discovery/push-notifications.md` §4.3.2). Only non-default entries are
     /// stored; an absent realm resolves to `WatchLevel::MentionsOnly`.
     #[serde(default)]
-    pub realm_watch_levels: BTreeMap<String, WatchLevel>,
+    pub realm_watch_levels: im::OrdMap<String, WatchLevel>,
     #[serde(default)]
-    pub muted_notification_kinds: BTreeMap<String, bool>,
+    pub muted_notification_kinds: im::OrdMap<String, bool>,
     /// Actor-private do-not-disturb preference for this local account view.
     /// The synced account_data value is encrypted/opaque to the server, so
     /// notification projection must evaluate DND from the locally held
@@ -1056,13 +1061,13 @@ pub struct ClientLocalState {
     #[serde(default = "default_true")]
     pub read_receipt_default_display: bool,
     #[serde(default)]
-    pub read_receipt_realm_overrides: BTreeMap<String, bool>,
+    pub read_receipt_realm_overrides: im::OrdMap<String, bool>,
     #[serde(default)]
-    pub read_receipt_realm_display_overrides: BTreeMap<String, bool>,
+    pub read_receipt_realm_display_overrides: im::OrdMap<String, bool>,
     #[serde(default)]
-    pub read_receipt_strand_overrides: BTreeMap<String, bool>,
+    pub read_receipt_strand_overrides: im::OrdMap<String, bool>,
     #[serde(default)]
-    pub read_receipt_strand_display_overrides: BTreeMap<String, bool>,
+    pub read_receipt_strand_display_overrides: im::OrdMap<String, bool>,
     /// Server-declared `ak.realm.read_receipt_policy` snapshots, keyed by
     /// realm id. Populated when sync (P0 M3) lands — surfaces the
     /// disclosure / visibility values from the
@@ -1070,7 +1075,7 @@ pub struct ClientLocalState {
     /// the settings UI can lock per-Realm toggles when the server's
     /// policy is `required` or `disabled`.
     #[serde(default)]
-    pub read_receipt_policy_snapshots: BTreeMap<String, ReadReceiptPolicySnapshot>,
+    pub read_receipt_policy_snapshots: im::OrdMap<String, ReadReceiptPolicySnapshot>,
     /// Per-commit-stream read cursors, keyed by [`commit_stream_key`].
     ///
     /// A Realm, each Circle and each Sidecar own separate linear streams and
@@ -1079,10 +1084,10 @@ pub struct ClientLocalState {
     /// aggregate cursor. Callers drive each stream's tail independently
     /// through `AuthorityClient::scan`.
     #[serde(default)]
-    pub stream_cursors: BTreeMap<String, arkret_wire::CommitStreamHead>,
+    pub stream_cursors: im::OrdMap<String, arkret_wire::CommitStreamHead>,
     /// Verified current governance authority per Realm, keyed by realm id.
     #[serde(default)]
-    pub realm_authority_basis: BTreeMap<String, PersistedRealmAuthorityBasis>,
+    pub realm_authority_basis: im::OrdMap<String, PersistedRealmAuthorityBasis>,
     #[serde(default)]
     pub push_registration: Option<PushRegistrationState>,
     /// Per-device ed25519 identity. Generated + persisted on first access
@@ -1099,16 +1104,16 @@ pub struct ClientLocalState {
     /// sync surfaces an Seal that includes the id (or a rejection).
     /// Drives message / realm_admin state pill UI.
     #[serde(default)]
-    pub move_submissions: BTreeMap<String, MoveSubmissionRecord>,
+    pub move_submissions: im::OrdMap<String, MoveSubmissionRecord>,
     /// Plaintext, non-secret device-local records for the active account
     /// namespace: UI preferences, prompt-dismissal markers, public Recovery
     /// Key metadata, in-flight Sidecar ceremony requests. There is no at-rest
     /// protection here; secret material belongs in `secure_key_store`.
     #[serde(default)]
-    pub plain_local_data: BTreeMap<String, String>,
+    pub plain_local_data: im::OrdMap<String, String>,
     /// Private ak.read_cursor.advance cursors keyed by Realm + read_scope.
     #[serde(default)]
-    pub read_cursors: BTreeMap<String, ReadMarkerRecord>,
+    pub read_cursors: im::OrdMap<String, ReadMarkerRecord>,
     /// Persisted coauth `session_grant` payload. It is the client-visible
     /// session credential for `/_arkret/self/*` and is rotated through the
     /// Account Authority refresh endpoint when it nears expiry.
@@ -1135,12 +1140,13 @@ pub struct ClientLocalState {
     // The persisted key keeps its original spelling: it addresses local state
     // already written on every device, and an at-rest key is not a wire name.
     #[serde(default, rename = "mls_snapshots")]
-    pub mls_local_checkpoints: BTreeMap<String, garth::mls::checkpoint::MlsLocalCheckpointEnvelope>,
+    pub mls_local_checkpoints:
+        im::OrdMap<String, garth::mls::checkpoint::MlsLocalCheckpointEnvelope>,
     /// Exact cleared checkpoints committed with their candidate cleanup.
     /// A secure-cache rollback cannot match this marker.
     #[serde(default)]
     pub mls_rejection_cleared_checkpoints:
-        BTreeMap<String, garth::mls::checkpoint::MlsLocalCheckpointEnvelope>,
+        im::OrdMap<String, garth::mls::checkpoint::MlsLocalCheckpointEnvelope>,
     /// Pre-decrypt MLS checkpoints retained until the combined secure entry
     /// (advanced snapshot + decrypted plaintext cache) is durably confirmed.
     /// These envelopes are already device-secret-encrypted; keeping the oldest
@@ -1148,47 +1154,48 @@ pub struct ClientLocalState {
     /// again if the IndexedDB put was interrupted by page exit.
     #[serde(default, rename = "mls_receive_recovery_snapshots")]
     pub mls_receive_recovery_checkpoints:
-        BTreeMap<String, garth::mls::checkpoint::MlsLocalCheckpointEnvelope>,
+        im::OrdMap<String, garth::mls::checkpoint::MlsLocalCheckpointEnvelope>,
     /// Realms whose `ak.mls.genesis` event has already been submitted to
     /// coland. Tracked per-Realm so genesis is emitted exactly once for a
     /// locally-created creator group (the server also rejects a duplicate
     /// genesis with `mls_genesis_already_exists`, but this avoids the
     /// needless round-trip on every encrypted write after the first).
     #[serde(default)]
-    pub mls_genesis_emitted: BTreeSet<String>,
+    pub mls_genesis_emitted: im::OrdSet<String>,
     /// Exact accepted `ak.mls.genesis` / winning `ak.mls.commit` Event for
     /// the current locally persisted epoch, keyed by effective scope.
     #[serde(default)]
-    pub mls_group_state_refs: BTreeMap<String, MlsGroupStateRefRecord>,
+    pub mls_group_state_refs: im::OrdMap<String, MlsGroupStateRefRecord>,
     /// Signed `keypackages/consume` commands this device owes for Welcomes
     /// whose joined group state is durable, as the canonical JSON of the
     /// exact signed request keyed by claim id. Each is resent unchanged until
     /// its Station settles it (device-lifecycle.md §9, decision 0121).
     #[serde(default)]
-    pub mls_pending_keypackage_consumes: BTreeMap<String, String>,
+    pub mls_pending_keypackage_consumes: im::OrdMap<String, String>,
     /// Bounded accepted historical epoch references, keyed by exact
     /// `(epoch, effective scope, group)` coordinates.
     #[serde(default)]
-    pub mls_historical_group_state_refs: BTreeMap<String, MlsGroupStateRefRecord>,
+    pub mls_historical_group_state_refs: im::OrdMap<String, MlsGroupStateRefRecord>,
     /// Device-secret-encrypted historical MLS snapshots used only to
     /// reconstruct authenticated author views for old messages.
     #[serde(default, rename = "mls_historical_snapshots")]
     pub mls_historical_checkpoints:
-        BTreeMap<String, garth::mls::checkpoint::MlsLocalCheckpointEnvelope>,
+        im::OrdMap<String, garth::mls::checkpoint::MlsLocalCheckpointEnvelope>,
     /// Exact historical Agent Events observed through a verified committed-row
     /// carrier. A bare Event found in a current projection never enters this
     /// index.
     #[serde(default)]
-    pub historical_agent_event_candidates: BTreeMap<String, HistoricalAgentEventCandidate>,
+    pub historical_agent_event_candidates:
+        im::OrdMap<String, super::account_items::Shared<HistoricalAgentEventCandidate>>,
     /// Bounded self-query results keyed by the complete historical target
     /// coordinate. The returned authorization coordinate is retained
     /// independently and is never substituted for the target.
     ///
-    /// The v2 at-rest name intentionally does not decode the former bare
-    /// EventId cache. Old entries are ignored and re-fetched only after an
-    /// exact committed row has rebuilt the candidate index.
+    /// Entries bind the complete historical target, receiver and authority;
+    /// a bare EventId is never a sufficient cache coordinate.
     #[serde(default)]
-    pub historical_agent_signer_keys_v2: BTreeMap<String, CachedHistoricalAgentSignerKey>,
+    pub historical_agent_signer_keys:
+        im::OrdMap<String, super::account_items::Shared<CachedHistoricalAgentSignerKey>>,
     /// `encryption-and-audit.md` §2.4.1 `epoch_update_required` — effective
     /// scopes whose last E2EE application ordinary Event was refused with
     /// `mls_governance_binding_stale`, keyed by
@@ -1200,13 +1207,13 @@ pub struct ClientLocalState {
     /// lags; treating it as such makes the client emit one commit per Seal
     /// forever.
     #[serde(default)]
-    pub mls_coverage_stale: BTreeMap<String, MlsCoverageStale>,
+    pub mls_coverage_stale: im::OrdMap<String, MlsCoverageStale>,
     #[serde(default)]
-    pub direct_conversation_peers: BTreeMap<String, arkret_sdk::contact_operations::ContactPeer>,
+    pub direct_conversation_peers: im::OrdMap<String, arkret_sdk::contact_operations::ContactPeer>,
     #[serde(skip)]
-    pub(crate) direct_message_contexts: BTreeMap<String, super::DirectMessageContext>,
+    pub(crate) direct_message_contexts: im::OrdMap<String, super::DirectMessageContext>,
     #[serde(default)]
-    pub mls_welcome_discovery: BTreeMap<String, super::MlsWelcomeDiscoveryProgress>,
+    pub mls_welcome_discovery: im::OrdMap<String, super::MlsWelcomeDiscoveryProgress>,
     #[serde(default)]
     pub current_generation: u64,
     #[serde(default)]
@@ -1238,7 +1245,7 @@ pub struct ClientLocalState {
     /// the dedicated encrypted sidecar-backup path. When hardened storage is
     /// unavailable it remains memory-only.
     #[serde(default, skip_serializing)]
-    pub mls_private_plaintext: BTreeMap<String, BTreeMap<String, BTreeMap<String, String>>>,
+    pub mls_private_plaintext: im::OrdMap<String, im::OrdMap<String, im::OrdMap<String, String>>>,
     /// local-only decrypted-plaintext cache for REMOTE members'
     /// MLS application messages, keyed `realm_id -> payload_digest ->
     /// base64url(plaintext)`. The receive chain is persisted forward on every
@@ -1258,16 +1265,16 @@ pub struct ClientLocalState {
     /// and is never serialized into plaintext account-state storage. When
     /// hardened storage is unavailable it remains memory-only.
     #[serde(default, skip_serializing)]
-    pub mls_decrypted_plaintext: BTreeMap<String, BTreeMap<String, String>>,
+    pub mls_decrypted_plaintext: im::OrdMap<String, im::OrdMap<String, String>>,
     /// Exact IdentityLink and LeafNode bytes observed through an authenticated
     /// MLS decrypt. This pairwise-to-principal mapping is private and therefore
     /// persists only in the hardened E2EE cache.
     #[serde(default, skip_serializing)]
-    pub(crate) authenticated_identity_links: BTreeMap<String, LocallyAuthenticatedIdentityLink>,
+    pub(crate) authenticated_identity_links: im::OrdMap<String, LocallyAuthenticatedIdentityLink>,
     /// Device-local composer text, isolated by device, Realm and actual Strand.
     /// Only the existing account-scoped encrypted cache may persist this map.
     #[serde(default, skip_serializing)]
-    pub(crate) composer_drafts: BTreeMap<String, BTreeMap<String, BTreeMap<String, String>>>,
+    pub(crate) composer_drafts: im::OrdMap<String, im::OrdMap<String, im::OrdMap<String, String>>>,
     /// Actor-private Realm remarks per
     /// `discovery/client-preferences.md` §3.7. Hydrated from the coland
     /// `/sync` `account_data[]` projection (entries with
@@ -1276,20 +1283,20 @@ pub struct ClientLocalState {
     /// it against the public `RealmTreeNode.name` at render time and prefer
     /// `local_name` when set.
     #[serde(default)]
-    pub realm_remarks: BTreeMap<String, crate::account_data::RealmRemark>,
+    pub realm_remarks: im::OrdMap<String, crate::account_data::RealmRemark>,
     /// Account-private global Contact petnames per
     /// `discovery/client-preferences.md` §3.6. Keyed by the decrypted human
     /// Contact `principal_id`; the opaque account-data slot is verified before
     /// an entry reaches this map.
     #[serde(default, skip)]
-    pub contact_remarks: BTreeMap<String, crate::account_data::ContactRemark>,
+    pub contact_remarks: im::OrdMap<String, crate::account_data::ContactRemark>,
     /// Principals from the latest accepted-human Contact projection. This is a
     /// transient eligibility index: retained remarks stay in `contact_remarks`
     /// after a Contact becomes inactive, but must not decorate live surfaces.
     /// Until the Contact projection is refreshed after startup, the safe
     /// behavior is therefore to show no petnames.
     #[serde(default, skip)]
-    pub accepted_human_contact_principals: BTreeSet<String>,
+    pub accepted_human_contact_principals: im::OrdSet<String>,
     /// Actor-private personal blocklist per
     /// `discovery/client-preferences.md` (`ak.account.blocklist`). Each
     /// actor entry hides messages from one exact complete sender ActorId in chat
@@ -1297,8 +1304,9 @@ pub struct ClientLocalState {
     /// Entries use the SDK's closed wire contract directly; no client-local
     /// DTO is persisted alongside it.
     #[serde(default)]
-    pub client_blocklist:
+    pub client_blocklist: super::account_items::Shared<
         Vec<arkret_models_collaboration::objects::productivity::AccountBlocklistEntry>,
+    >,
     /// Account Data CAS revision that produced `client_blocklist`. The
     /// blocklist payload's `version` is the same counter, not a schema marker.
     #[serde(default)]
@@ -1307,12 +1315,12 @@ pub struct ClientLocalState {
     /// Contact tombstone leg. Consent is deliberately unrelated to Personal
     /// DM authority and is not revoked as part of this saga.
     #[serde(default)]
-    pub pending_personal_block_sagas: BTreeSet<String>,
+    pub pending_personal_block_sagas: im::OrdSet<String>,
     /// Subset of `pending_personal_block_sagas` whose exact blocklist value has
     /// already been accepted. These retries resume at the Contact leg and MUST
     /// NOT mint another identical Account Data revision.
     #[serde(default)]
-    pub committed_personal_block_sagas: BTreeSet<String>,
+    pub committed_personal_block_sagas: im::OrdSet<String>,
     /// A local whole-value edit not yet acknowledged by Account Data CAS.
     #[serde(default)]
     pub personal_blocklist_write_pending: bool,
@@ -1344,13 +1352,14 @@ pub struct ClientLocalState {
     /// `MemberIdentityUpdatePayload` extensions and lets the renderer
     /// re-decrypt encrypted carriers once an MLS welcome arrives later.
     #[serde(default)]
-    pub member_identity_events: BTreeMap<String, BTreeMap<String, Vec<Value>>>,
+    pub member_identity_events:
+        im::OrdMap<String, im::OrdMap<String, super::account_items::Shared<Vec<Value>>>>,
     /// Display-only cache for reverse handle lookup by subject DID. Entries
     /// come from validated signed handle evidence
     /// or equivalent roster evidence and are never used as authority for
     /// ACL, attribution, membership, or delivery.
     #[serde(default)]
-    pub member_handle_cache: BTreeMap<String, MemberHandleCacheEntry>,
+    pub member_handle_cache: im::OrdMap<String, MemberHandleCacheEntry>,
     /// This account's primary personal handle (e.g. `david`), resolved at login
     /// from the account viewer. Persisted per-account so the signed-out
     /// re-login screen's account selector can label each known account by its
@@ -1398,11 +1407,15 @@ pub struct PendingLogin {
     /// `pending.<device_id>` secure-store namespace.
     #[serde(default)]
     pub dpop_jkt: Option<String>,
+    /// Exact fresh-login repair intent. It selects a new anonymous storage
+    /// incarnation without destroying an unreadable previous checkpoint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anonymous_storage_incarnation: Option<String>,
 }
 
 /// Small, cold-written root index that replaces the former single global
-/// `ClientLocalState` blob. Each account's full [`ClientLocalState`] lives in
-/// its own sibling authority-digest key; this index only
+/// `ClientLocalState` blob. Each account selects individually authenticated
+/// records in the shared transaction store; this index only
 /// records which account is active, the cross-account [`DevicePrefs`], any
 /// in-flight [`PendingLogin`] device material, and the set of known account
 /// profiles (for enumeration / cleanup). Hot per-write flushes touch only the
@@ -1530,94 +1543,94 @@ impl Default for ClientLocalState {
         Self {
             sync_cursor: None,
             demand_sync: Default::default(),
-            commit_stream_cursors: BTreeMap::new(),
-            verified_commit_stream_cursors: BTreeMap::new(),
-            verified_commit_stream_anchors: BTreeMap::new(),
+            commit_stream_cursors: im::OrdMap::new(),
+            verified_commit_stream_cursors: im::OrdMap::new(),
+            verified_commit_stream_anchors: im::OrdMap::new(),
             station_cas_projection: garth::StationCasProjection::default(),
-            client_core_pending_deliveries: VecDeque::new(),
+            client_core_pending_deliveries: VecDeque::new().into(),
             client_core_next_delivery_id: 0,
-            device_message_cursors: BTreeMap::new(),
-            client_core_seen_event_ids: VecDeque::new(),
-            raw_operations: Vec::new(),
-            verified_message_commits: Vec::new(),
-            verified_poll_inputs: Vec::new(),
-            verified_reaction_assertions: Vec::new(),
-            verified_poll_prefixes: BTreeMap::new(),
-            verified_sidecar_history: BTreeMap::new(),
-            verified_sidecar_current: BTreeMap::new(),
-            verified_sidecar_current_watermarks: BTreeMap::new(),
-            realm_destroy_receipts: BTreeMap::new(),
-            realm_tree_projections: BTreeMap::new(),
-            realm_collaboration_roles: BTreeMap::new(),
-            realm_state_snapshot_sync: BTreeMap::new(),
-            saved_account_data: BTreeMap::new(),
-            scheduled_send_account_data: BTreeMap::new(),
-            scheduled_send_target_realms: BTreeMap::new(),
-            notification_projection: Vec::new(),
-            presence_projection: Vec::new(),
+            device_message_cursors: im::OrdMap::new(),
+            client_core_seen_event_ids: VecDeque::new().into(),
+            raw_operations: Vec::new().into(),
+            verified_message_commits: Vec::new().into(),
+            verified_poll_inputs: Vec::new().into(),
+            verified_reaction_assertions: Vec::new().into(),
+            verified_poll_prefixes: im::OrdMap::new(),
+            verified_sidecar_history: im::OrdMap::new(),
+            verified_sidecar_current: im::OrdMap::new(),
+            verified_sidecar_current_watermarks: im::OrdMap::new(),
+            realm_destroy_receipts: im::OrdMap::new(),
+            realm_tree_projections: im::OrdMap::new(),
+            realm_collaboration_roles: im::OrdMap::new(),
+            realm_state_snapshot_sync: im::OrdMap::new(),
+            saved_account_data: im::OrdMap::new(),
+            scheduled_send_account_data: im::OrdMap::new(),
+            scheduled_send_target_realms: im::OrdMap::new(),
+            notification_projection: Vec::new().into(),
+            presence_projection: Vec::new().into(),
             presence_visibility: PresenceVisibility::Public,
             presence_preference: PresencePreference::default(),
-            to_device_inbox: Vec::new(),
-            mls_welcome_inbox_index: BTreeMap::new(),
-            to_device_receipts: BTreeMap::new(),
-            notification_client_state: BTreeMap::new(),
-            invite_credentials: BTreeMap::new(),
-            station_cas_account_data: BTreeMap::new(),
-            realm_watch_levels: BTreeMap::new(),
-            muted_notification_kinds: BTreeMap::new(),
+            to_device_inbox: Vec::new().into(),
+            mls_welcome_inbox_index: im::OrdMap::new(),
+            to_device_receipts: im::OrdMap::new(),
+            notification_client_state: im::OrdMap::new(),
+            invite_credentials: im::OrdMap::new(),
+            station_cas_account_data: im::OrdMap::new(),
+            realm_watch_levels: im::OrdMap::new(),
+            muted_notification_kinds: im::OrdMap::new(),
             notification_dnd_settings: None,
             read_receipt_default_send: true,
             read_receipt_default_display: true,
-            read_receipt_realm_overrides: BTreeMap::new(),
-            read_receipt_realm_display_overrides: BTreeMap::new(),
-            read_receipt_strand_overrides: BTreeMap::new(),
-            read_receipt_strand_display_overrides: BTreeMap::new(),
-            read_receipt_policy_snapshots: BTreeMap::new(),
-            stream_cursors: BTreeMap::new(),
-            realm_authority_basis: BTreeMap::new(),
+            read_receipt_realm_overrides: im::OrdMap::new(),
+            read_receipt_realm_display_overrides: im::OrdMap::new(),
+            read_receipt_strand_overrides: im::OrdMap::new(),
+            read_receipt_strand_display_overrides: im::OrdMap::new(),
+            read_receipt_policy_snapshots: im::OrdMap::new(),
+            stream_cursors: im::OrdMap::new(),
+            realm_authority_basis: im::OrdMap::new(),
             push_registration: None,
             local_identity: None,
             device_authoring_authority: None,
-            move_submissions: BTreeMap::new(),
-            plain_local_data: BTreeMap::new(),
-            read_cursors: BTreeMap::new(),
+            move_submissions: im::OrdMap::new(),
+            plain_local_data: im::OrdMap::new(),
+            read_cursors: im::OrdMap::new(),
             session_grant: None,
             pending_principal_registration: None,
             recovery_material_evidence: None,
             pending_account_handoff: None,
-            mls_local_checkpoints: BTreeMap::new(),
-            mls_rejection_cleared_checkpoints: BTreeMap::new(),
-            mls_receive_recovery_checkpoints: BTreeMap::new(),
-            mls_genesis_emitted: BTreeSet::new(),
-            mls_group_state_refs: BTreeMap::new(),
-            mls_pending_keypackage_consumes: BTreeMap::new(),
-            mls_historical_group_state_refs: BTreeMap::new(),
-            mls_historical_checkpoints: BTreeMap::new(),
-            historical_agent_event_candidates: BTreeMap::new(),
-            historical_agent_signer_keys_v2: BTreeMap::new(),
-            mls_coverage_stale: BTreeMap::new(),
-            direct_conversation_peers: BTreeMap::new(),
-            direct_message_contexts: BTreeMap::new(),
-            mls_welcome_discovery: BTreeMap::new(),
+            mls_local_checkpoints: im::OrdMap::new(),
+            mls_rejection_cleared_checkpoints: im::OrdMap::new(),
+            mls_receive_recovery_checkpoints: im::OrdMap::new(),
+            mls_genesis_emitted: im::OrdSet::new(),
+            mls_group_state_refs: im::OrdMap::new(),
+            mls_pending_keypackage_consumes: im::OrdMap::new(),
+            mls_historical_group_state_refs: im::OrdMap::new(),
+            mls_historical_checkpoints: im::OrdMap::new(),
+            historical_agent_event_candidates: im::OrdMap::new(),
+            historical_agent_signer_keys: im::OrdMap::new(),
+            mls_coverage_stale: im::OrdMap::new(),
+            direct_conversation_peers: im::OrdMap::new(),
+            direct_message_contexts: im::OrdMap::new(),
+            mls_welcome_discovery: im::OrdMap::new(),
             current_generation: 0,
             current_reset_required: false,
             local_device_refresh_pending: false,
-            mls_private_plaintext: BTreeMap::new(),
-            mls_decrypted_plaintext: BTreeMap::new(),
-            authenticated_identity_links: BTreeMap::new(),
-            composer_drafts: BTreeMap::new(),
-            realm_remarks: BTreeMap::new(),
-            contact_remarks: BTreeMap::new(),
-            accepted_human_contact_principals: BTreeSet::new(),
-            client_blocklist: Vec::new(),
+            mls_private_plaintext: im::OrdMap::new(),
+            mls_decrypted_plaintext: im::OrdMap::new(),
+            authenticated_identity_links: im::OrdMap::new(),
+            composer_drafts: im::OrdMap::new(),
+            realm_remarks: im::OrdMap::new(),
+            contact_remarks: im::OrdMap::new(),
+            accepted_human_contact_principals: im::OrdSet::new(),
+            client_blocklist: Vec::new().into(),
             client_blocklist_revision: 0,
-            pending_personal_block_sagas: BTreeSet::new(),
-            committed_personal_block_sagas: BTreeSet::new(),
+            pending_personal_block_sagas: im::OrdSet::new(),
+            committed_personal_block_sagas: im::OrdSet::new(),
             personal_blocklist_write_pending: false,
             server_trust_domain: None,
             dpop_device_key: None,
-            member_identity_events: BTreeMap::new(),
-            member_handle_cache: BTreeMap::new(),
+            member_identity_events: im::OrdMap::new(),
+            member_handle_cache: im::OrdMap::new(),
             primary_handle: String::new(),
         }
     }

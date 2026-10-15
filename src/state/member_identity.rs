@@ -168,5 +168,6 @@ impl LocalStateStore {
             .and_then(|by_actor| by_actor.get(&actor_id.to_string()))
             .cloned()
             .unwrap_or_default()
+            .into_inner()
     }
 }

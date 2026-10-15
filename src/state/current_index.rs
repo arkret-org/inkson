@@ -1,4 +1,4 @@
-//! Demand-loaded current selectors, staged independently of the account blob.
+//! Demand-loaded current selectors published with the account record transaction.
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
@@ -24,11 +24,12 @@ use tokio::sync::{Mutex, OwnedMutexGuard};
 
 #[cfg(not(target_arch = "wasm32"))]
 #[path = "current_index/native.rs"]
-mod platform;
+pub(super) mod platform;
 
 #[cfg(target_arch = "wasm32")]
 #[path = "current_index/wasm.rs"]
-mod platform;
+pub(super) mod platform;
+pub(super) mod publication_lock;
 mod search;
 
 // The browser regressions of this index are an integration test target, which
@@ -564,6 +565,8 @@ async fn complete_independently<T: 'static>(
 #[derive(Clone)]
 pub(crate) struct CurrentIndex {
     backend: platform::Backend,
+    location: CurrentIndexLocation,
+    account_scope: Option<String>,
     prefix: String,
     generation: Arc<AtomicU64>,
     lease: Arc<Mutex<()>>,
@@ -575,9 +578,23 @@ struct SharedGeneration {
     lease: Arc<Mutex<()>>,
     poisoned: AtomicBool,
     pending: AtomicU64,
+    publication: std::sync::Mutex<Option<AccountPublication>>,
 }
 static SHARED_INDICES: OnceLock<std::sync::Mutex<BTreeMap<String, Arc<SharedGeneration>>>> =
     OnceLock::new();
+
+struct CurrentLease {
+    _local: OwnedMutexGuard<()>,
+    _cross: Arc<publication_lock::PublicationLock>,
+}
+
+#[derive(Clone)]
+pub(super) struct AccountPublication {
+    pub _lease: Arc<publication_lock::PublicationLock>,
+    pub generation: u64,
+    pub deletes: Arc<Vec<String>>,
+    pub writes: Arc<Vec<(String, Vec<u8>)>>,
+}
 
 pub(crate) struct CurrentStage {
     index: CurrentIndex,
@@ -585,10 +602,24 @@ pub(crate) struct CurrentStage {
     generation: u64,
     filtered: Option<AccountSubscribeFrame>,
     changed: bool,
-    _lease: OwnedMutexGuard<()>,
+    _lease: CurrentLease,
+    publication: Option<AccountPublication>,
 }
 
 impl CurrentStage {
+    #[cfg(any(test, target_arch = "wasm32"))]
+    async fn persist_for_harness(&self) -> anyhow::Result<()> {
+        if let Some(publication) = &self.publication {
+            self.index
+                .backend
+                .apply(
+                    publication.deletes.as_ref().clone(),
+                    publication.writes.as_ref().clone(),
+                )
+                .await?;
+        }
+        Ok(())
+    }
     pub(crate) fn previous_generation(&self) -> u64 {
         self.previous_generation
     }
@@ -605,6 +636,7 @@ impl CurrentStage {
     }
     pub(crate) fn arm_account_commit(&mut self) {
         if self.changed {
+            *self.index._shared.publication.lock().unwrap() = self.publication.clone();
             self.index
                 ._shared
                 .pending
@@ -613,10 +645,25 @@ impl CurrentStage {
     }
     /// The caller must first durably commit this generation and account cursor together.
     pub(crate) fn finish(self) {
+        #[cfg(all(test, not(target_arch = "wasm32")))]
+        if self.index.account_scope.is_none()
+            && let Some(publication) = &self.publication
+        {
+            self.index
+                .backend
+                .apply_checked_sync(
+                    None,
+                    publication.deletes.as_ref().clone(),
+                    publication.writes.as_ref().clone(),
+                )
+                .expect("index fixture publication");
+        }
+
         self.index
             .generation
             .store(self.generation, Ordering::Release);
         self.index._shared.pending.store(0, Ordering::Release);
+        self.index._shared.publication.lock().unwrap().take();
     }
 }
 
@@ -624,6 +671,13 @@ impl Drop for CurrentStage {
     fn drop(&mut self) {
         if self.changed && self.index._shared.pending.load(Ordering::Acquire) == self.generation {
             self.index.poison();
+            let mut publication = self.index._shared.publication.lock().unwrap();
+            if publication
+                .as_ref()
+                .is_some_and(|p| p.generation == self.generation)
+            {
+                publication.take();
+            }
         }
     }
 }
@@ -718,7 +772,7 @@ pub(crate) struct CurrentTargetPage {
 #[derive(Clone)]
 pub(crate) struct CurrentIndexLocation {
     #[cfg(not(target_arch = "wasm32"))]
-    path: std::path::PathBuf,
+    pub(super) path: std::path::PathBuf,
 }
 
 impl super::LocalStateStore {
@@ -841,6 +895,7 @@ impl CurrentIndex {
                         lease,
                         poisoned: AtomicBool::new(false),
                         pending: AtomicU64::new(0),
+                        publication: Default::default(),
                     });
                     registry.insert(registry_key, shared.clone());
                     (shared, Some((guard, committed)))
@@ -855,13 +910,28 @@ impl CurrentIndex {
             }
             (None, None) => unreachable!("committed generation was never read"),
         };
+        let _cross = publication_lock::PublicationLock::acquire(location.clone()).await?;
+        let backend = platform::Backend::open(location.clone()).await?;
+        let scope = super::account_storage_scope(authority)?;
+        let published = backend.get(&super::account_store::root_key(&scope)).await?;
+        if let Some(root) = published.as_ref() {
+            if super::account_store::published_generation(root)? != committed_generation {
+                return Err(CurrentGenerationChanged.into());
+            }
+            if !shared.poisoned.load(Ordering::Acquire)
+                && shared.generation.load(Ordering::Acquire) < committed_generation
+            {
+                shared
+                    .generation
+                    .store(committed_generation, Ordering::Release);
+            }
+        }
         anyhow::ensure!(
             shared.generation.load(Ordering::Acquire) == committed_generation
                 || (shared.poisoned.load(Ordering::Acquire)
                     && shared.pending.load(Ordering::Acquire) == committed_generation),
             "account current pointer differs from active durable generation"
         );
-        let backend = platform::Backend::open(location).await?;
         if committed_generation > 0
             && backend
                 .get(&format!("{prefix}stage/{}", version(committed_generation)))
@@ -879,13 +949,68 @@ impl CurrentIndex {
                 "committed current generation {committed_generation} is missing its durable manifest ({prefix}); retained generations: {retained:?}"
             );
         }
+        #[cfg(test)]
+        let account_scope = published.as_ref().map(|_| scope.clone());
+        #[cfg(not(test))]
+        let account_scope = Some(scope);
         Ok(Self {
             backend,
+            location,
+            account_scope,
             prefix,
             generation: shared.generation.clone(),
             lease: shared.lease.clone(),
             _shared: shared.clone(),
         })
+    }
+
+    async fn acquire_lease(&self) -> anyhow::Result<CurrentLease> {
+        let local = self.lease.clone().lock_owned().await;
+        let cross = publication_lock::PublicationLock::acquire(self.location.clone()).await?;
+        if let Some(scope) = &self.account_scope {
+            let published = self
+                .backend
+                .get(&super::account_store::root_key(scope))
+                .await?;
+            let actual = published
+                .as_ref()
+                .map(|root| super::account_store::published_generation(root))
+                .transpose()?;
+            if actual.unwrap_or(0) != self.generation.load(Ordering::Acquire) {
+                return Err(CurrentGenerationChanged.into());
+            }
+        }
+
+        Ok(CurrentLease {
+            _local: local,
+            _cross: Arc::new(cross),
+        })
+    }
+
+    pub(super) fn account_publication(
+        location: CurrentIndexLocation,
+        authority: &AccountId,
+        generation: u64,
+    ) -> anyhow::Result<Option<AccountPublication>> {
+        #[cfg(not(target_arch = "wasm32"))]
+        let storage_id = std::fs::canonicalize(location.path)?
+            .to_string_lossy()
+            .to_string();
+        #[cfg(target_arch = "wasm32")]
+        let storage_id = {
+            let _ = location;
+            "inkson.secret.inkson/entries".to_owned()
+        };
+        let key = format!("{storage_id}/{}{}/", CURRENT_PREFIX, hash(authority)?);
+        let registry = SHARED_INDICES
+            .get_or_init(Default::default)
+            .lock()
+            .map_err(|_| anyhow::anyhow!("current registry poisoned"))?;
+        let result = registry
+            .get(&key)
+            .and_then(|shared| shared.publication.lock().ok()?.clone())
+            .filter(|batch| batch.generation == generation);
+        Ok(result)
     }
 
     pub(crate) fn poison(&self) {
@@ -905,6 +1030,7 @@ impl CurrentIndex {
         );
         self.generation.store(generation, Ordering::Release);
         self._shared.pending.store(0, Ordering::Release);
+        self._shared.publication.lock().unwrap().take();
         self._shared.poisoned.store(false, Ordering::Release);
         Ok(())
     }
@@ -1094,7 +1220,7 @@ impl CurrentIndex {
         realm: &str,
         selector: &CurrentSelector,
     ) -> anyhow::Result<Option<TypedCurrentRow>> {
-        let _lease = self.lease.lock().await;
+        let _lease = self.acquire_lease().await?;
         self.visible_selector(realm, selector, self.generation.load(Ordering::Acquire))
             .await
     }
@@ -1105,7 +1231,7 @@ impl CurrentIndex {
         account: &AccountId,
         realms: &[String],
     ) -> anyhow::Result<(u64, std::collections::BTreeMap<String, Option<bool>>)> {
-        let _lease = self.lease.lock().await;
+        let _lease = self.acquire_lease().await?;
         anyhow::ensure!(
             self.prefix == format!("{}{}/", CURRENT_PREFIX, hash(account)?),
             "Realm security index account mismatch"
@@ -1150,7 +1276,7 @@ impl CurrentIndex {
         realm: &str,
         selector: &CurrentSelector,
     ) -> anyhow::Result<Option<TypedCurrentRow>> {
-        let _lease = self.lease.lock().await;
+        let _lease = self.acquire_lease().await?;
         anyhow::ensure!(
             !self.is_poisoned(),
             "current pointer durability is unresolved"
@@ -1166,7 +1292,7 @@ impl CurrentIndex {
     /// read absence as an answer.
     pub(crate) async fn read_complete_cut(&self, realm: &str) -> anyhow::Result<Option<u64>> {
         let realm_id = arkret_sdk::RealmId::new(realm.trim().to_owned())?;
-        let _lease = self.lease.lock().await;
+        let _lease = self.acquire_lease().await?;
         anyhow::ensure!(
             !self.is_poisoned(),
             "current pointer durability is unresolved"
@@ -1202,7 +1328,7 @@ impl CurrentIndex {
         let realm_id = scope_ref
             .realm_id_opt()
             .ok_or_else(|| anyhow::anyhow!("MLS current scope has no Realm"))?;
-        let _lease = self.lease.lock().await;
+        let _lease = self.acquire_lease().await?;
         anyhow::ensure!(
             !self.is_poisoned(),
             "current pointer durability is unresolved"
@@ -1315,7 +1441,7 @@ impl CurrentIndex {
         realm: &arkret_sdk::RealmId,
         member: &arkret_sdk::ActorId,
     ) -> anyhow::Result<Option<arkret_wire::CurrentRevision>> {
-        let _lease = self.lease.lock().await;
+        let _lease = self.acquire_lease().await?;
         anyhow::ensure!(
             !self.is_poisoned(),
             "current pointer durability is unresolved"
@@ -1344,7 +1470,7 @@ impl CurrentIndex {
         realm: &arkret_sdk::RealmId,
         strand_id: &arkret_sdk::StrandId,
     ) -> anyhow::Result<Option<arkret_sdk::Strand>> {
-        let _lease = self.lease.lock().await;
+        let _lease = self.acquire_lease().await?;
         anyhow::ensure!(
             !self.is_poisoned(),
             "current pointer durability is unresolved"
@@ -1419,7 +1545,7 @@ impl CurrentIndex {
         sender: &arkret_sdk::ActorId,
         recipient: &arkret_sdk::ActorId,
     ) -> anyhow::Result<Option<arkret_sdk::Strand>> {
-        let _lease = self.lease.lock().await;
+        let _lease = self.acquire_lease().await?;
         anyhow::ensure!(
             !self.is_poisoned(),
             "current pointer durability is unresolved"
@@ -1511,7 +1637,7 @@ impl CurrentIndex {
     > {
         let realm = scope.realm_id();
         let expected_stream = arkret_sdk::CommitStreamRef::from_scope(scope, None)?;
-        let _lease = self.lease.lock().await;
+        let _lease = self.acquire_lease().await?;
         anyhow::ensure!(
             !self.is_poisoned(),
             "current pointer durability is unresolved"
@@ -1618,7 +1744,7 @@ impl CurrentIndex {
         &self,
         material: &arkret_sdk::SignalProductAuthority,
     ) -> anyhow::Result<bool> {
-        let _lease = self.lease.lock().await;
+        let _lease = self.acquire_lease().await?;
         if self.is_poisoned() {
             return Ok(false);
         }
@@ -1660,7 +1786,7 @@ impl CurrentIndex {
     }
 
     pub(crate) async fn read_progress(&self, realm: &str) -> anyhow::Result<CurrentRealmProgress> {
-        let _lease = self.lease.lock().await;
+        let _lease = self.acquire_lease().await?;
         self.progress_at(realm, self.generation.load(Ordering::Acquire))
             .await
     }
@@ -1699,7 +1825,7 @@ impl CurrentIndex {
         >,
         guard: &dyn Fn() -> anyhow::Result<()>,
     ) -> anyhow::Result<CurrentStage> {
-        let lease = self.lease.clone().lock_owned().await;
+        let lease = self.acquire_lease().await?;
         guard()?;
         let previous = committed_generation()?;
         anyhow::ensure!(
@@ -1827,11 +1953,12 @@ impl CurrentIndex {
         writes.extend(unversioned);
         guard()?;
         response.value()?;
-        let backend = self.backend.clone();
-        complete_independently(async move {
-            backend.apply(deletes, writes.into_iter().collect()).await
-        })
-        .await?;
+        let publication = AccountPublication {
+            _lease: lease._cross.clone(),
+            generation,
+            deletes: Arc::new(deletes),
+            writes: Arc::new(writes.into_iter().collect()),
+        };
         Ok(CurrentStage {
             index: self.clone(),
             previous_generation: previous,
@@ -1839,6 +1966,7 @@ impl CurrentIndex {
             filtered: None,
             changed: true,
             _lease: lease,
+            publication: Some(publication),
         })
     }
     #[cfg(test)]
@@ -1880,7 +2008,7 @@ impl CurrentIndex {
             (1..=PAGE_LIMIT).contains(&limit),
             "invalid current page limit"
         );
-        let _lease = self.lease.lock().await;
+        let _lease = self.acquire_lease().await?;
         anyhow::ensure!(
             !self.is_poisoned(),
             "current pointer durability is unresolved"
@@ -2097,7 +2225,7 @@ impl CurrentIndex {
             >,
         >,
     ) -> anyhow::Result<CurrentStage> {
-        let lease = self.lease.clone().lock_owned().await;
+        let lease = self.acquire_lease().await?;
         guard()?;
         let expected_generation = committed_generation()?;
         anyhow::ensure!(
@@ -2153,6 +2281,7 @@ impl CurrentIndex {
                     filtered: None,
                     changed: false,
                     _lease: lease,
+                    publication: None,
                 });
             }
         }
@@ -2591,7 +2720,13 @@ impl CurrentIndex {
         }
         writes.insert(manifest_key, serde_json::to_vec(&manifest)?);
         writes.extend(unversioned);
-        let backend = self.backend.clone();
+        let writes: Vec<_> = writes.into_iter().collect();
+        let publication = AccountPublication {
+            _lease: lease._cross.clone(),
+            generation,
+            deletes: Arc::new(deletes.clone()),
+            writes: Arc::new(writes.clone()),
+        };
         let stage = CurrentStage {
             index: self.clone(),
             previous_generation: expected_generation,
@@ -2599,13 +2734,10 @@ impl CurrentIndex {
             filtered,
             changed: true,
             _lease: lease,
+            publication: Some(publication),
         };
         guard()?;
         let stage = complete_independently(async move {
-            if let Some(bound) = &bound {
-                bound.value()?;
-            }
-            backend.apply(deletes, writes.into_iter().collect()).await?;
             if let Some(bound) = &bound {
                 bound.value()?;
             }
@@ -2919,7 +3051,7 @@ impl CurrentIndex {
     }
 
     async fn maintain_locked(&self) -> anyhow::Result<bool> {
-        let _lease = self.lease.lock().await;
+        let _lease = self.acquire_lease().await?;
         anyhow::ensure!(
             !self.is_poisoned(),
             "current pointer durability is unresolved"
@@ -3530,9 +3662,14 @@ mod tests {
             lease: Arc::new(Mutex::new(())),
             poisoned: AtomicBool::new(false),
             pending: AtomicU64::new(0),
+            publication: Default::default(),
         });
         CurrentIndex {
             backend: platform::Backend::open_test(path.to_owned()).await.unwrap(),
+            location: CurrentIndexLocation {
+                path: path.to_owned(),
+            },
+            account_scope: None,
             prefix: "inkson.current.v1/test/".into(),
             generation: shared.generation.clone(),
             lease: shared.lease.clone(),
@@ -4162,7 +4299,7 @@ mod tests {
             .unwrap();
         let unknown = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19".to_owned();
         let realms = vec![REALM.to_owned(), OTHER_REALM.to_owned(), unknown.clone()];
-        index
+        let stage = index
             .stage_frame(
                 0,
                 &frame(
@@ -4171,8 +4308,8 @@ mod tests {
                 ),
             )
             .await
-            .unwrap()
-            .finish();
+            .unwrap();
+        store.commit_current_stage_for_test(stage).unwrap();
         store.set_current_generation(1);
         let (generation, first) = index
             .read_realm_mls_activations(&alice, &realms)
@@ -4188,14 +4325,14 @@ mod tests {
             .unwrap();
         assert_eq!(store.realm_security_states()[REALM], Some(true));
 
-        index
+        let stage = index
             .stage_frame(
                 1,
                 &realm_frame(OTHER_REALM, vec![], Some(baseline(CURSORS[1], 1, true))),
             )
             .await
-            .unwrap()
-            .finish();
+            .unwrap();
+        store.commit_current_stage_for_test(stage).unwrap();
         store.set_current_generation(2);
         assert!(
             store.realm_security_states().is_empty(),
@@ -4269,7 +4406,8 @@ mod tests {
             "A-B-A cannot revive an old presentation cache"
         );
         let reset = serde_json::from_value(json!({"kind":"resync_required"})).unwrap();
-        index.stage_frame(2, &reset).await.unwrap().finish();
+        let stage = index.stage_frame(2, &reset).await.unwrap();
+        store.commit_current_stage_for_test(stage).unwrap();
         store.set_current_generation(3);
         let (generation, reset_states) = index
             .read_realm_mls_activations(&alice, &realms)
@@ -5084,6 +5222,7 @@ mod tests {
             .await
             .unwrap();
         stage.arm_account_commit();
+        stage.persist_for_harness().await.unwrap();
         drop(stage);
         assert!(index.is_poisoned());
         assert!(
@@ -5555,15 +5694,16 @@ mod tests {
                 .unwrap()
                 .finish();
         }
-        drop(
-            store
-                .stage_frame(
-                    2,
-                    &frame(vec![row(1, false)], Some(baseline(CURSORS[2], 5, true))),
-                )
-                .await
-                .unwrap(),
-        );
+        let prepared = store
+            .stage_frame(
+                2,
+                &frame(vec![row(1, false)], Some(baseline(CURSORS[2], 5, true))),
+            )
+            .await
+            .unwrap();
+        // Fixture host injects a durable future cut whose pointer was not confirmed.
+        prepared.persist_for_harness().await.unwrap();
+        drop(prepared);
         let future = store.seen_prefix(CURSORS[2], REALM, &selector).unwrap();
         let staged = store
             .backend

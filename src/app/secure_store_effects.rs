@@ -55,6 +55,19 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
             match crate::secure_key_store::initialize_wasm_secure_key_store_async("inkson").await {
                 Ok(Some(secure_store)) => {
                     trace_secure_store_bootstrap_stage("backend initialized");
+                    let account_scopes = state_store_for_secure_upgrade
+                        .read()
+                        .account_record_scopes_for_boot();
+                    if let Err(error) =
+                        LocalStateStore::prepare_account_records(account_scopes).await
+                    {
+                        state_store_for_secure_upgrade
+                            .read()
+                            .account_records_boot_failed(&error);
+                        tracing::error!(%error,"account records could not be restored; readiness withheld");
+                        return;
+                    }
+
                     // Hydrate the active account's main state from the IndexedDB
                     // encrypted entries store into `cached` before
                     // anything downstream reads it. Runs before the E2EE plaintext

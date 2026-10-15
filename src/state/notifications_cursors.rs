@@ -5,12 +5,12 @@ use super::*;
 impl LocalStateStore {
     pub fn save_notification_projection(&mut self, notifications: Vec<StoredNotification>) {
         self.ensure_cached_loaded();
-        self.cached.notification_projection = notifications;
+        *self.cached.notification_projection = notifications;
         let _ = self.flush();
     }
 
     pub fn notification_projection(&self) -> Vec<StoredNotification> {
-        self.load().notification_projection
+        self.load().notification_projection.into_inner()
     }
 
     pub fn set_notification_read(&mut self, notification_id: impl Into<String>, read: bool) {
@@ -210,7 +210,7 @@ impl LocalStateStore {
 
     /// All non-default per-realm watch level overrides.
     pub fn realm_watch_levels(&self) -> BTreeMap<String, WatchLevel> {
-        self.load().realm_watch_levels
+        self.load().realm_watch_levels.into_iter().collect()
     }
 
     pub fn set_realm_muted(&mut self, realm_id: impl Into<String>, muted: bool) {
@@ -295,7 +295,10 @@ impl LocalStateStore {
     }
 
     pub fn read_receipt_realm_overrides(&self) -> BTreeMap<String, bool> {
-        self.load().read_receipt_realm_overrides
+        self.load()
+            .read_receipt_realm_overrides
+            .into_iter()
+            .collect()
     }
 
     pub fn set_read_receipt_realm_display_override(
@@ -321,7 +324,10 @@ impl LocalStateStore {
     }
 
     pub fn read_receipt_realm_display_overrides(&self) -> BTreeMap<String, bool> {
-        self.load().read_receipt_realm_display_overrides
+        self.load()
+            .read_receipt_realm_display_overrides
+            .into_iter()
+            .collect()
     }
 
     pub fn read_receipt_strand_override(&self, strand_id: &str) -> Option<bool> {
@@ -352,7 +358,10 @@ impl LocalStateStore {
     }
 
     pub fn read_receipt_strand_overrides(&self) -> BTreeMap<String, bool> {
-        self.load().read_receipt_strand_overrides
+        self.load()
+            .read_receipt_strand_overrides
+            .into_iter()
+            .collect()
     }
 
     pub fn read_receipt_strand_display_override(&self, strand_id: &str) -> Option<bool> {
@@ -385,7 +394,10 @@ impl LocalStateStore {
     }
 
     pub fn read_receipt_strand_display_overrides(&self) -> BTreeMap<String, bool> {
-        self.load().read_receipt_strand_display_overrides
+        self.load()
+            .read_receipt_strand_display_overrides
+            .into_iter()
+            .collect()
     }
 
     // ── Realm remarks (spec client-preferences.md §3.7) ─
@@ -429,7 +441,10 @@ impl LocalStateStore {
 
     /// All known server-declared read-receipt policy snapshots.
     pub fn read_receipt_policy_snapshots(&self) -> BTreeMap<String, ReadReceiptPolicySnapshot> {
-        self.load().read_receipt_policy_snapshots
+        self.load()
+            .read_receipt_policy_snapshots
+            .into_iter()
+            .collect()
     }
 
     /// Resolve effective send preference per spec (server policy → strand →

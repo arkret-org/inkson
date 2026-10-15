@@ -92,6 +92,37 @@ impl MlsCheckpointStage for StagedCheckpoint<'_> {
     }
 }
 
+pub(crate) async fn read_durable_checkpoint(
+    state: &StateStoreHandle,
+    scope: &arkret_sdk::ScopeRef,
+) -> anyhow::Result<Option<garth::mls::checkpoint::MlsLocalCheckpointEnvelope>> {
+    let read = state.read(LocalStateStore::capture_committed_account_read)?;
+    let checkpoint = read.checkpoint_for_scope(scope).await?;
+    state.read(|store| -> anyhow::Result<()> {
+        anyhow::ensure!(
+            read.matches(store),
+            "MLS committed read belongs to a replaced session"
+        );
+        Ok(())
+    })?;
+    Ok(checkpoint)
+}
+
+pub(crate) async fn read_durable_consumes(
+    state: &StateStoreHandle,
+) -> anyhow::Result<Vec<(String, arkret_sdk::KeyPackagesConsumeRequestBody)>> {
+    let read = state.read(LocalStateStore::capture_committed_account_read)?;
+    let consumes = read.pending_consumes().await?;
+    state.read(|store| -> anyhow::Result<()> {
+        anyhow::ensure!(
+            read.matches(store),
+            "MLS consume read belongs to a replaced session"
+        );
+        Ok(())
+    })?;
+    Ok(consumes)
+}
+
 // Dropping an installer does not revoke an accepted MLS transition. Its exact
 // checkpoint/consume tuple stays recoverable; consumers read durable state and
 // re-establish a barrier before sending an owed command.
