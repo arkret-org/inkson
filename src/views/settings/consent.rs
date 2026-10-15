@@ -379,7 +379,7 @@ pub fn ConsentSettingsPanel(principal_id: Signal<String>, token: Signal<String>)
                                             spawn(async move {
                                                 match with_authed_sdk_client(&base, api_token, |http| async move {
                                                     crate::transport::account::grant_consent(
-                                                        &crate::event_submit::EventSubmitter::from_current_session(http),
+                                                        &crate::app::runtime_adapter::event_submitter(http),
                                                         &holder, &peer, &scope, expires_at,
                                                     ).await
                                                 })
@@ -561,7 +561,7 @@ pub fn ConsentSettingsPanel(principal_id: Signal<String>, token: Signal<String>)
                                                                 spawn(async move {
                                                                     match with_authed_sdk_client(&base, api_token, |http| async move {
                                                                         crate::transport::account::revoke_consent(
-                                                        &crate::event_submit::EventSubmitter::from_current_session(http),
+                                                        &crate::app::runtime_adapter::event_submitter(http),
                                                         &holder, &consent_id, &peer, &scope,
                                                     ).await
                                                                     })

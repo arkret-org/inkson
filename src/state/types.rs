@@ -848,40 +848,9 @@ pub struct MlsCoverageStale {
     pub reason: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct HistoricalAgentEventCandidate {
-    /// Older persisted candidates came from shape-only rows. Missing means
-    /// untrusted and is never used as a signer-key query target.
-    #[serde(default)]
-    pub authority_chain_verified: bool,
-    pub recipient_account_id: arkret_sdk::AccountId,
-    pub realm_id: arkret_sdk::RealmId,
-    pub target_ref: arkret_wire::CommittedEventRef,
-    pub accepted_event: arkret_sdk::Event,
-    pub agent_actor_id: arkret_sdk::ActorId,
-    pub agent_id: arkret_sdk::DidCoreId,
-    pub verification_method: arkret_sdk::DidUrl,
-    pub receiver_id: arkret_sdk::DidCoreId,
-    pub indexed_at_unix_ms: u64,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CachedHistoricalAgentSignerKey {
-    pub recipient_account_id: arkret_sdk::AccountId,
-    pub realm_id: arkret_sdk::RealmId,
-    pub target_ref: arkret_wire::CommittedEventRef,
-    pub receiver_id: arkret_sdk::DidCoreId,
-    pub accepted_at: chrono::DateTime<chrono::Utc>,
-    pub actor: arkret_sdk::ActorId,
-    pub verification_method: arkret_sdk::DidUrl,
-    pub public_key_b64u: arkret_sdk::Base64UrlString,
-    pub authorization_ref: arkret_wire::CommittedEventRef,
-    pub revision: arkret_wire::CurrentRevision,
-    pub governance_generation: u64,
-    pub cached_at_unix_ms: u64,
-}
+pub use garth::historical_agent_keys::{
+    CachedHistoricalAgentSignerKey, HistoricalAgentEventCandidate,
+};
 
 /// Last locally verified authoring authority for this account's active device.
 ///
@@ -1160,19 +1129,18 @@ pub struct ClientLocalState {
     pub recovery_material_evidence: Option<RecoveryMaterialEvidence>,
     /// Persisted MLS group state snapshots, keyed by `realm_id`. Each
     /// entry is the encrypted envelope produced by
-    /// [`crate::mls::persistence::encrypt_state`]; the boot path
+    /// [`garth::mls::checkpoint::encrypt_state`]; the boot path
     /// rehydrates each Realm's MLS group state from the latest envelope
     /// rather than rejoining via Welcome from scratch.
     // The persisted key keeps its original spelling: it addresses local state
     // already written on every device, and an at-rest key is not a wire name.
     #[serde(default, rename = "mls_snapshots")]
-    pub mls_local_checkpoints:
-        BTreeMap<String, crate::mls::persistence::MlsLocalCheckpointEnvelope>,
+    pub mls_local_checkpoints: BTreeMap<String, garth::mls::checkpoint::MlsLocalCheckpointEnvelope>,
     /// Exact cleared checkpoints committed with their candidate cleanup.
     /// A secure-cache rollback cannot match this marker.
     #[serde(default)]
     pub mls_rejection_cleared_checkpoints:
-        BTreeMap<String, crate::mls::persistence::MlsLocalCheckpointEnvelope>,
+        BTreeMap<String, garth::mls::checkpoint::MlsLocalCheckpointEnvelope>,
     /// Pre-decrypt MLS checkpoints retained until the combined secure entry
     /// (advanced snapshot + decrypted plaintext cache) is durably confirmed.
     /// These envelopes are already device-secret-encrypted; keeping the oldest
@@ -1180,7 +1148,7 @@ pub struct ClientLocalState {
     /// again if the IndexedDB put was interrupted by page exit.
     #[serde(default, rename = "mls_receive_recovery_snapshots")]
     pub mls_receive_recovery_checkpoints:
-        BTreeMap<String, crate::mls::persistence::MlsLocalCheckpointEnvelope>,
+        BTreeMap<String, garth::mls::checkpoint::MlsLocalCheckpointEnvelope>,
     /// Realms whose `ak.mls.genesis` event has already been submitted to
     /// coland. Tracked per-Realm so genesis is emitted exactly once for a
     /// locally-created creator group (the server also rejects a duplicate
@@ -1206,7 +1174,7 @@ pub struct ClientLocalState {
     /// reconstruct authenticated author views for old messages.
     #[serde(default, rename = "mls_historical_snapshots")]
     pub mls_historical_checkpoints:
-        BTreeMap<String, crate::mls::persistence::MlsLocalCheckpointEnvelope>,
+        BTreeMap<String, garth::mls::checkpoint::MlsLocalCheckpointEnvelope>,
     /// Exact historical Agent Events observed through a verified committed-row
     /// carrier. A bare Event found in a current projection never enters this
     /// index.
@@ -1673,10 +1641,10 @@ pub(crate) struct MlsReceiveOverlay {
     /// than) the `cached` envelope for the same realm; `&mut` snapshot
     /// writers clear/absorb the entry so it can never shadow a newer
     /// send-path snapshot.
-    pub(crate) snapshots: BTreeMap<String, crate::mls::persistence::MlsLocalCheckpointEnvelope>,
+    pub(crate) snapshots: BTreeMap<String, garth::mls::checkpoint::MlsLocalCheckpointEnvelope>,
     /// Oldest pre-decrypt checkpoint for each realm touched by this overlay.
     pub(crate) recovery_snapshots:
-        BTreeMap<String, crate::mls::persistence::MlsLocalCheckpointEnvelope>,
+        BTreeMap<String, garth::mls::checkpoint::MlsLocalCheckpointEnvelope>,
     /// Decrypted-plaintext cache entries pending absorption into
     /// `ClientLocalState::mls_decrypted_plaintext`
     /// (`realm_id -> payload_digest -> base64url(plaintext)`).

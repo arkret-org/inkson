@@ -306,7 +306,7 @@ mod tests {
             "ak:device:01904100-0000-7000-8000-000000000001",
         );
         let mut signs = 0;
-        sign_event_through_message_seam(&mut event, |unsigned| {
+        sign_finalized_event(&mut event, |unsigned| {
             signs += 1;
             signer
                 .sign_sdk_event_with_context(

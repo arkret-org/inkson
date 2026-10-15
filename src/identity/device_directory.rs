@@ -5,7 +5,6 @@ use std::sync::{LazyLock, RwLock};
 
 use arkret_sdk::signatures::PublicKeyMaterial;
 
-use super::verification_method_controller;
 use crate::transport::TransportClient;
 
 const POSITIVE_TTL_MS: u64 = 5 * 60 * 1000;
@@ -620,55 +619,6 @@ pub async fn resolve_device_signing_key_with_http(
     ))
 }
 
-fn verification_method_controller_matches_signer(
-    verification_method: &str,
-    signer_id: &str,
-) -> bool {
-    let controller = verification_method_controller(verification_method);
-    let Ok(controller_core_id) = crate::mls_api_helpers::principal_core_id(controller) else {
-        return false;
-    };
-    let Ok(signer_core_id) = crate::mls_api_helpers::principal_core_id(signer_id) else {
-        return false;
-    };
-    controller_core_id == signer_core_id
-}
-
-pub fn verify_proof_value_for_signer_result_with_digest_suite(
-    envelope_without_proof: &serde_json::Value,
-    proof_value: &serde_json::Value,
-    signer_id: &str,
-    binding_actor_id: &str,
-    public_key: &PublicKeyMaterial,
-    digest_suite: arkret_sdk::canonical::DigestSuite,
-) -> Result<(), String> {
-    let proof: arkret_sdk::ProducerEventProof = serde_json::from_value(proof_value.clone())
-        .map_err(|error| format!("decode Event proof: {error}"))?;
-    if !verification_method_controller_matches_signer(&proof.verification_method, signer_id) {
-        return Err("Event proof verification-method controller differs from signer".to_owned());
-    }
-    let actor_id = serde_json::from_value::<arkret_sdk::ActorId>(
-        envelope_without_proof
-            .get("actor_id")
-            .cloned()
-            .ok_or_else(|| "Event binding omits actor_id".to_owned())?,
-    )
-    .map_err(|error| format!("invalid Event binding actor_id: {error}"))?;
-    if actor_id.signing_principal_id().as_str() != binding_actor_id {
-        return Err("Event binding actor differs from requested actor".to_owned());
-    }
-    let canonical_bytes = crate::canonical::canonical_json_bytes(envelope_without_proof)
-        .map_err(|error| format!("canonicalize Event proof envelope: {error}"))?;
-    arkret_sdk::signatures::verify_ed25519_detached_jws_proof_with_digest_suite(
-        &proof,
-        &canonical_bytes,
-        &actor_id,
-        public_key,
-        digest_suite,
-    )
-    .map_err(|error| error.to_string())
-}
-
 pub fn invalidate_actor(actor: &str) -> usize {
     let actor = actor.trim();
     if actor.is_empty() {
@@ -758,10 +708,7 @@ pub(crate) fn seed_device_authorization_for_test(
 
 #[cfg(test)]
 mod verification_method_controller_tests {
-    use super::{
-        cached_device_authorize_event_id, seed_device_authorization_for_test,
-        verification_method_controller_matches_signer,
-    };
+    use super::{cached_device_authorize_event_id, seed_device_authorization_for_test};
 
     fn self_projection_fixture(
         now: chrono::DateTime<chrono::Utc>,
@@ -1231,19 +1178,6 @@ mod verification_method_controller_tests {
     }
 
     #[test]
-    fn accepts_the_same_principal_in_full_and_core_forms() {
-        let full = "did:webvh:zfixture:alice.example";
-        let core = crate::mls_api_helpers::principal_core_id(full).expect("core id");
-        let method = format!("{full}#ak:device:01904100-0000-7000-8000-0000000000a1");
-
-        assert!(verification_method_controller_matches_signer(&method, full));
-        assert!(verification_method_controller_matches_signer(
-            &method,
-            core.as_str()
-        ));
-    }
-
-    #[test]
     fn device_authorization_cache_binds_the_exact_account() {
         // Directory writes and negative reads share the session tests' cache fence.
         let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
@@ -1282,13 +1216,5 @@ mod verification_method_controller_tests {
             None
         );
         assert_eq!(cached_device_authorize_event_id(full, device), None);
-    }
-
-    #[test]
-    fn rejects_a_different_principal() {
-        assert!(!verification_method_controller_matches_signer(
-            "did:webvh:zfixture:alice.example#ak:device:01904100-0000-7000-8000-0000000000a1",
-            "did:webvh:zmallory:mallory.example",
-        ));
     }
 }

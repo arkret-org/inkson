@@ -218,7 +218,7 @@ async fn join_basis(
         founding.purpose == arkret_sdk::RealmPurpose::Collaboration,
         "Owned Agent grants require a Collaboration Realm"
     );
-    let submitter = crate::event_submit::EventSubmitter::from_current_session(http.clone());
+    let submitter = crate::app::runtime_adapter::event_submitter(http.clone());
     anyhow::ensure!(
         submitter.authority()? == controller,
         "Authenticated controller changed"
@@ -498,7 +498,7 @@ pub(super) fn OwnedAgentWithdrawal(realm_id: String, token: Signal<String>) -> E
                                         let realm = arkret_sdk::RealmId::new(realm)?;
                                         let current = exact_grant(&http, &realm, &id).await?;
                                         let event = ak_ops::capability_revoke_from_owned_current(realm.as_str(), account.principal_id.as_str(), &current, Some("controller_withdrawal"))?.build_sdk_event("inkson")?;
-                                        let accepted = crate::event_submit::EventSubmitter::from_current_session(http.clone()).submit_sdk_event(&event).await?;
+                                        let accepted = crate::app::runtime_adapter::event_submitter(http.clone()).submit_sdk_event(&event).await?;
                                         anyhow::ensure!(accepted.is_committed(), "撤回未接纳：{:?}", accepted.rejection_reason_code);
                                         anyhow::ensure!(exact_grant(&http, &realm, &id).await?.value.status == arkret_sdk::CapabilityGrantStatus::Revoked, "撤回结果尚未确认");
                                         Ok(())
@@ -793,7 +793,7 @@ pub(super) fn OwnedAgentAuthority(
                                     let actions = actions.iter().map(String::as_str).collect::<Vec<_>>();
                                     let event = ak_ops::capability_grant_owned_agent(realm.as_str(), account.principal_id.as_str(),
                                         &basis.controller, &basis.agent, &basis.controller_join, &basis.agent_join, &actions, resource)?.build_sdk_event("inkson")?;
-                                    let submitter = crate::event_submit::EventSubmitter::from_current_session(http.clone());
+                                    let submitter = crate::app::runtime_adapter::event_submitter(http.clone());
                                     let accepted = submitter.submit_sdk_event(&event).await?;
                                     anyhow::ensure!(accepted.is_committed(), "授权未接纳：{:?}", accepted.rejection_reason_code);
                                     retain_accepted_grant_locator(&submitter, &account, &accepted).await?;
@@ -826,7 +826,7 @@ pub(super) fn OwnedAgentAuthority(
                                             let realm = arkret_sdk::RealmId::new(realm)?;
                                             let row = exact_grant(&http, &realm, &id).await?;
                                             let event = ak_ops::capability_revoke_from_owned_current(realm.as_str(), account.principal_id.as_str(), &row, Some("controller_withdrawal"))?.build_sdk_event("inkson")?;
-                                            let accepted = crate::event_submit::EventSubmitter::from_current_session(http.clone()).submit_sdk_event(&event).await?;
+                                            let accepted = crate::app::runtime_adapter::event_submitter(http.clone()).submit_sdk_event(&event).await?;
                                             anyhow::ensure!(accepted.is_committed(), "撤回未接纳：{:?}", accepted.rejection_reason_code);
                                             let current = exact_grant(&http, &realm, &id).await?;
                                             anyhow::ensure!(current.value.status == arkret_sdk::CapabilityGrantStatus::Revoked, "撤回结果尚未确认");

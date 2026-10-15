@@ -37,18 +37,6 @@ pub(crate) fn warn_mls_decrypt_once(
     }
 }
 
-/// Accepted-Welcome convergence and KeyPackage-ack outcome.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct WelcomeApplyOutcome {
-    pub applied: usize,
-    pub failed: usize,
-    /// Welcomes skipped because a snapshot at an equal-or-higher
-    /// epoch for the same group already exists (a replayed / stale Welcome that
-    /// would otherwise roll the local MLS snapshot back to the join epoch).
-    pub skipped_stale: usize,
-    pub first_error: Option<String>,
-}
-
 /// Test-only entry point: production decryption always carries a verified
 /// sender domain and enters via
 /// [`decrypt_application_payload_for_scope_from_verified_sender`]; these
@@ -644,8 +632,8 @@ fn export_receive_chain_envelope(
     group: &arkret_sdk::ArkretMlsGroup,
     realm_id: &str,
     secret: &str,
-    previous: &crate::mls::persistence::MlsLocalCheckpointEnvelope,
-) -> Result<crate::mls::persistence::MlsLocalCheckpointEnvelope, MlsRuntimeError> {
+    previous: &garth::mls::checkpoint::MlsLocalCheckpointEnvelope,
+) -> Result<garth::mls::checkpoint::MlsLocalCheckpointEnvelope, MlsRuntimeError> {
     let post_state = group
         .export_state_record()
         .map_err(|err| MlsRuntimeError::Export(err.to_string()))?;
@@ -659,7 +647,7 @@ fn export_receive_chain_envelope(
     } else {
         1
     };
-    Ok(crate::mls::persistence::encrypt_state(
+    Ok(garth::mls::checkpoint::encrypt_state(
         realm_id,
         &post_state.group_id,
         post_state.epoch,
@@ -807,9 +795,9 @@ fn persist_send_ratchet(
     group: &arkret_sdk::ArkretMlsGroup,
     realm_id: &str,
     secret: &str,
-    previous: &crate::mls::persistence::MlsLocalCheckpointEnvelope,
+    previous: &garth::mls::checkpoint::MlsLocalCheckpointEnvelope,
     sent: u64,
-) -> Result<crate::mls::persistence::MlsLocalCheckpointEnvelope, MlsRuntimeError> {
+) -> Result<garth::mls::checkpoint::MlsLocalCheckpointEnvelope, MlsRuntimeError> {
     let post_state = group
         .export_state_record()
         .map_err(|err| MlsRuntimeError::Export(err.to_string()))?;
@@ -818,7 +806,7 @@ fn persist_send_ratchet(
     let mut salt = [0_u8; 16];
     getrandom::fill(&mut salt)
         .map_err(|err| MlsRuntimeError::Encrypt(format!("MLS checkpoint salt: {err}")))?;
-    let new_envelope = crate::mls::persistence::encrypt_state(
+    let new_envelope = garth::mls::checkpoint::encrypt_state(
         realm_id,
         &post_state.group_id,
         post_state.epoch,

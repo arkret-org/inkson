@@ -235,8 +235,8 @@ pub(super) fn submit_kanban_operation_event(
     let operation_id_for_status = operation_id.clone();
     let operation_id_for_reconcile = operation_id.clone();
     // `spawn_forever` executes at the Dioxus root and therefore has no current
-    // component scope from which `EventSubmitter::from_current_session` can
-    // consume SessionContext. Carry the governance store explicitly across
+    // component scope for the app's session adapter to consume SessionContext.
+    // Carry the governance store explicitly across
     // that lifetime boundary; otherwise a perfectly pinned checkpoint is
     // reported as absent before the Event ever reaches the durable queue.
     let submit_state_store = crate::app::runtime_adapter::state_store_handle(state_store);

@@ -173,8 +173,8 @@ fn temp_store(name: &str) -> LocalStateStore {
     LocalStateStore::with_path(path)
 }
 
-fn dummy_mls_checkpoint(realm_id: &str) -> crate::mls::persistence::MlsLocalCheckpointEnvelope {
-    crate::mls::persistence::MlsLocalCheckpointEnvelope {
+fn dummy_mls_checkpoint(realm_id: &str) -> garth::mls::checkpoint::MlsLocalCheckpointEnvelope {
+    garth::mls::checkpoint::MlsLocalCheckpointEnvelope {
         realm_id: realm_id.to_owned(),
         group_id: "test-group".to_owned(),
         epoch: 0,
@@ -186,7 +186,7 @@ fn dummy_mls_checkpoint(realm_id: &str) -> crate::mls::persistence::MlsLocalChec
         recorded_at: chrono::Utc::now(),
         epoch_started_at: chrono::Utc::now(),
         app_messages_observed: 0,
-        aead_version: crate::mls::persistence::AEAD_VERSION_CHACHA20_POLY1305,
+        aead_version: garth::mls::checkpoint::AEAD_VERSION_CHACHA20_POLY1305,
     }
 }
 

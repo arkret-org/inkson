@@ -2227,7 +2227,7 @@ mod removal_schedule_tests {
             arkret_sdk::EventId::new("ak:event:AZEvldDJcWI9IRHqP2BMibDDfc59Ax_LwrbsrQmeD6Ml")
                 .unwrap();
         let mut store = crate::state::isolated_store_for_tests("removal-empty-stamp");
-        let checkpoint = crate::mls::persistence::encrypt_state(
+        let checkpoint = garth::mls::checkpoint::encrypt_state(
             REALM,
             &group_id,
             1,
@@ -3930,7 +3930,7 @@ mod tests {
         }
         cases.push(missing_key);
         let store = crate::state::isolated_store_for_tests("account-unverified-commits");
-        assert!(crate::realm_events_engine::require_exact_claimed_rows(&scanned, &scanned).is_ok());
+        assert!(garth::history_recovery::require_exact_claimed_rows(&scanned, &scanned).is_ok());
         for frame in cases {
             let claimed = frame.realms.as_ref().unwrap().entries[realm_id.as_str()]
                 .committed_events
@@ -3939,7 +3939,7 @@ mod tests {
                 .iter()
                 .collect::<Vec<_>>();
             assert!(
-                crate::realm_events_engine::require_exact_claimed_rows(&claimed, &scanned).is_err()
+                garth::history_recovery::require_exact_claimed_rows(&claimed, &scanned).is_err()
             );
             assert!(store.sync_cursor().is_none());
             assert!(store.load().raw_operations.is_empty());

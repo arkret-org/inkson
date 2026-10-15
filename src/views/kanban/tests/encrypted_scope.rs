@@ -748,7 +748,7 @@ async fn encrypted_private_patch_with_ready_checkpoint_replaces_plaintext() {
         )
         .unwrap();
     let record = group.export_state_record().unwrap();
-    let mut envelope = crate::mls::persistence::encrypt_state(
+    let mut envelope = garth::mls::checkpoint::encrypt_state(
         realm,
         &record.group_id,
         record.epoch,
@@ -1072,7 +1072,7 @@ async fn sidecar_track_patch_encrypts_with_only_the_native_sidecar_snapshot() {
             .unwrap();
     let mut salt = [0_u8; 16];
     getrandom::fill(&mut salt).unwrap();
-    let snapshot = crate::mls::persistence::encrypt_state(
+    let snapshot = garth::mls::checkpoint::encrypt_state(
         realm,
         &post_state.group_id,
         post_state.epoch,
@@ -1093,7 +1093,7 @@ async fn sidecar_track_patch_encrypts_with_only_the_native_sidecar_snapshot() {
     let realm_serialized = serde_json::to_vec(&realm_state).unwrap();
     let mut realm_salt = [0_u8; 16];
     getrandom::fill(&mut realm_salt).unwrap();
-    let realm_snapshot = crate::mls::persistence::encrypt_state(
+    let realm_snapshot = garth::mls::checkpoint::encrypt_state(
         realm,
         &realm_state.group_id,
         realm_state.epoch,

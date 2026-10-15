@@ -1,6 +1,7 @@
 //! Ordinary live projection consumes bound own-Station originals. Subscription
 //! frames are hints; only the independent admitted stream scan moves a cursor.
 use arkret_sdk::http_client::own_station_results::OwnStationResultClient;
+use garth::history_recovery::replay_with_admitted_replica;
 use garth::own_station_results::{OwnStationReplica, OwnStationScanPage};
 
 use super::*;
@@ -208,99 +209,6 @@ async fn replay(
         OwnStationReplica::new(realm.clone()),
     )
     .await
-}
-
-async fn replay_with_admitted_replica(
-    client: &OwnStationResultClient,
-    realm: &arkret_sdk::RealmId,
-    stream: &CommitStreamRef,
-    snapshot: &CreatorOwnSnapshot,
-    saved: Option<&arkret_sdk::CommitStreamHead>,
-    mut replica: OwnStationReplica,
-) -> garth::Result<(OwnStationReplica, Vec<OwnStationScanPage>)> {
-    replica.install_bound_snapshot(snapshot)?;
-    let cap = snapshot
-        .value()?
-        .visible_stream_heads
-        .iter()
-        .find(|h| &h.stream_ref == stream)
-        .ok_or_else(|| protocol("own-Station current omits the followed stream"))?;
-    if let Some(saved) = saved {
-        if saved.stream_position > cap.stream_position
-            || (saved.stream_position == cap.stream_position && saved.commit_id != cap.commit_id)
-        {
-            return Err(protocol(
-                "current cut regresses or forks the durable stream",
-            ));
-        }
-        // Only the same session's admitted original can avoid a new read.
-        // Durable coordinates alone still require exact-original admission.
-        if replica.head(stream) != Some(saved) {
-            replica.restore_checkpoint_head(client, saved).await?;
-        }
-    }
-    if saved.is_none()
-        && snapshot
-            .value()?
-            .retention_and_history_floor
-            .stream_floors
-            .iter()
-            .any(|floor| &floor.stream_ref == stream && floor.oldest_position > 0)
-    {
-        replica.bootstrap_current_head(client, stream).await?;
-        return Ok((replica, Vec::new()));
-    }
-    let mut after = saved.map(|h| h.stream_position);
-    let mut pages = Vec::new();
-    let mut retained_bytes = 0usize;
-    while after != Some(cap.stream_position) {
-        let next = after.map_or(Ok(0), |p| {
-            p.checked_add(1).ok_or_else(|| protocol("stream overflow"))
-        })?;
-        let remaining = cap
-            .stream_position
-            .checked_add(1)
-            .and_then(|end| end.checked_sub(next))
-            .ok_or_else(|| protocol("stream exceeded frozen cut"))?;
-        let request = StreamScanRequest {
-            realm_id: realm.clone(),
-            stream_ref: stream.clone(),
-            direction: arkret_sdk::StreamScanDirection::After(after),
-            limit: remaining.min(u64::from(SCAN_LIMIT)) as u16,
-        };
-        let response = client.scan_commit_stream(&request).await?;
-        if after.is_none()
-            && response
-                .value()?
-                .readable_floor
-                .as_ref()
-                .is_some_and(|f| f.oldest_position > 0)
-        {
-            // Limited history remains preview. Live bootstrap starts at the
-            // verified current cut and admits only its exact original head;
-            // none of the unanchored historical rows becomes display history.
-            replica.bootstrap_current_head(client, stream).await?;
-            break;
-        }
-        let page = replica.apply_bound_scan(client, response).await?;
-        if page.rows()?.is_empty() {
-            return Err(protocol("own-Station scan ended before its frozen head"));
-        }
-        retained_bytes = retained_bytes
-            .checked_add(serde_json::to_vec(page.rows()?).map_err(protocol)?.len())
-            .ok_or_else(|| protocol("live replay capacity overflow"))?;
-        if retained_bytes > MAX_REPLAY_BYTES {
-            return Err(protocol("live replay exceeds bounded candidate capacity"));
-        }
-        after = replica.head(stream).map(|h| h.stream_position);
-        pages.push(page);
-    }
-    if replica.head(stream) != Some(cap) {
-        return Err(protocol(
-            "own-Station replay does not reach the frozen head",
-        ));
-    }
-    Ok((replica, pages))
 }
 
 pub(super) async fn drain<F: Fn() -> bool>(
@@ -691,6 +599,7 @@ pub(super) mod tests {
     use arkret_sdk::http_client::own_station_results::{
         OwnStationSessionSnapshot, OwnStationSessionSource,
     };
+    use garth::history_recovery::replay_with_admitted_replica;
 
     use super::*;
 

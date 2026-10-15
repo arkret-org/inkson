@@ -160,7 +160,7 @@ pub fn encrypt_reaction_with_device_snapshot(
     let mut salt = [0u8; 16];
     getrandom::fill(&mut salt)
         .map_err(|err| MlsRuntimeError::Encrypt(format!("MLS checkpoint salt: {err}")))?;
-    let new_envelope = crate::mls::persistence::encrypt_state(
+    let new_envelope = garth::mls::checkpoint::encrypt_state(
         realm_id,
         &post_state.group_id,
         post_state.epoch,
