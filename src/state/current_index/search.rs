@@ -543,6 +543,7 @@ mod tests {
                 &BTreeMap::from([(realm, snapshot)]),
                 &|| Ok(()),
                 None,
+                None,
             )
             .await
             .unwrap()

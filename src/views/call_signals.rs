@@ -491,6 +491,7 @@ mod tests {
     ) -> anyhow::Result<AdmittedSignal> {
         let bytes = arkret_sdk::canonical::canonical_json_bytes(&plaintext)?;
         Ok(AdmittedSignal {
+            call_invitation: None,
             signer_verification_method: arkret_sdk::DidUrl::new("did:web:alice.example#device-1")
                 .unwrap(),
             product_authority: None,

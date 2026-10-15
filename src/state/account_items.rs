@@ -150,25 +150,41 @@ impl Changes {
                 self.0.last_mut().expect("map marker").value = Some(b"{}".to_vec());
             }
         }
-        let empty = im::OrdMap::new();
-        let old = old.unwrap_or(&empty);
-        let new = new.unwrap_or(&empty);
-        for diff in old.diff(new) {
-            let (key, a, b) = match diff {
-                im::ordmap::DiffItem::Add(k, v) => (k, None, Some(v)),
-                im::ordmap::DiffItem::Remove(k, v) => (k, Some(v), None),
-                im::ordmap::DiffItem::Update {
-                    old: (k, a),
-                    new: (_, b),
-                } => (k, Some(a), Some(b)),
-            };
+        // Constructing an empty persistent tree reserves nodes inline for V.
+        // Large protocol values must not add that frame to every account commit.
+        let mut emit = |key: &K, a: Option<&V>, b: Option<&V>| -> anyhow::Result<()> {
             let key = serde_json::to_value(key)?;
             let key = key
                 .as_str()
                 .ok_or_else(|| anyhow::anyhow!("account map key is not a string"))?;
             let mut entry = path.clone();
             entry.push(key.to_owned());
-            value(self, entry, a, b)?;
+            value(self, entry, a, b)
+        };
+        match (old, new) {
+            (Some(old), Some(new)) => {
+                for diff in old.diff(new) {
+                    match diff {
+                        im::ordmap::DiffItem::Add(key, value) => emit(key, None, Some(value))?,
+                        im::ordmap::DiffItem::Remove(key, value) => emit(key, Some(value), None)?,
+                        im::ordmap::DiffItem::Update {
+                            old: (key, before),
+                            new: (_, after),
+                        } => emit(key, Some(before), Some(after))?,
+                    }
+                }
+            }
+            (Some(old), None) => {
+                for (key, value) in old {
+                    emit(key, Some(value), None)?;
+                }
+            }
+            (None, Some(new)) => {
+                for (key, value) in new {
+                    emit(key, None, Some(value))?;
+                }
+            }
+            (None, None) => {}
         }
         Ok(())
     }

@@ -2062,6 +2062,7 @@ mod tests {
         );
         // Accepted fixture isolates product containment; it claims no transport/MLS proof.
         sink.handle(SignalReceiveOutcome::Accepted {
+            call_invitation: None,
             domain: Box::new(signal.domain),
             authority_commit_id: signal.authority_commit_id,
             parent_realm_authority_commit_id: signal.parent_realm_authority_commit_id,
@@ -2191,6 +2192,7 @@ mod tests {
         )
         .unwrap();
         let outcome = |signal: AdmittedSignal| SignalReceiveOutcome::Accepted {
+            call_invitation: None,
             domain: Box::new(signal.domain),
             authority_commit_id: signal.authority_commit_id,
             parent_realm_authority_commit_id: signal.parent_realm_authority_commit_id,

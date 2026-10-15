@@ -1086,6 +1086,9 @@ mod tests {
             .publish_frame_key(
                 &exporter,
                 "ak:rtc_participant:00000000-0000-7000-8000-000000000001",
+                &"ak:device:01904100-0000-7000-8000-000000000047"
+                    .parse()
+                    .unwrap(),
             )
             .unwrap();
         assert_eq!(key.len(), 32);
