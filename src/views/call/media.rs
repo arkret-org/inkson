@@ -125,7 +125,7 @@ pub(super) async fn submit_call_state_participant(
     realm_id: &str,
     call_id: &str,
     actor: &str,
-    _device: &str,
+    device: &str,
     target_state: arkret_sdk::CallLifecycleState,
     session: &JoinedMediaSession,
 ) -> Result<(), String> {
