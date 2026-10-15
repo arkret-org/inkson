@@ -52,6 +52,49 @@ impl CurrentIndexHarness {
         Ok(generation)
     }
 
+    /// Fixture host for a snapshot already verified by the sync pipeline.
+    pub async fn commit_snapshot(
+        &self,
+        expected: u64,
+        frame: &str,
+        snapshot: &str,
+    ) -> Result<u64, String> {
+        let frame = serde_json::from_str(frame).map_err(message)?;
+        let snapshot: arkret_sdk::RealmStateSnapshot =
+            serde_json::from_str(snapshot).map_err(message)?;
+        let mut stage = self
+            .index
+            .stage_current_install(
+                || Ok(expected),
+                Some(&frame),
+                None,
+                &Default::default(),
+                &std::collections::BTreeMap::from([(snapshot.realm_id.to_string(), &snapshot)]),
+                &|| Ok(()),
+                None,
+                None,
+            )
+            .await
+            .map_err(message)?;
+        let generation = stage.generation();
+        stage.arm_account_commit();
+        stage.persist_for_harness().await.map_err(message)?;
+        stage.finish();
+        Ok(generation)
+    }
+
+    /// Forward to the same bounded candidate filter used by product search.
+    pub async fn search(&self, actor: &str, now: &str) -> Result<String, String> {
+        let actor = serde_json::from_str(actor).map_err(message)?;
+        let now = now.parse().map_err(message)?;
+        let page = self
+            .index
+            .read_search_page(&actor, None, now)
+            .await
+            .map_err(message)?;
+        serde_json::to_string(&page.rows).map_err(message)
+    }
+
     /// Install one frame and abandon it before the account pointer is armed.
     pub async fn abandon(&self, expected: u64, frame: &str) -> Result<(), String> {
         let frame: AccountSubscribeFrame = serde_json::from_str(frame).map_err(message)?;

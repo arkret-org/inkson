@@ -336,6 +336,38 @@ impl CurrentIndex {
             }) = self
                 .ready_selector(
                     realm.as_str(),
+                    &CurrentSelector::Circle {
+                        circle_id: circle_id.clone(),
+                    },
+                    generation,
+                )
+                .await?
+            else {
+                return Ok(false);
+            };
+            let circle: arkret_models_collaboration::governance::circle::Circle =
+                serde_json::from_value(value)?;
+            // Archive preserves historical reads; tombstone makes the scope
+            // unavailable even while its canonical member row remains join.
+            if circle.id.as_ref() != Some(circle_id)
+                || circle.realm_id != *realm
+                || circle.schema != arkret_wire::SchemaId::CIRCLE_V1
+                || source_stream_ref
+                    != (arkret_sdk::CommitStreamRef::Realm {
+                        realm_id: realm.clone(),
+                    })
+                || circle.state
+                    == arkret_models_collaboration::governance::circle::CircleState::Tombstoned
+            {
+                return Ok(false);
+            }
+            let Some(TypedCurrentRow::Value {
+                source_stream_ref,
+                value,
+                ..
+            }) = self
+                .ready_selector(
+                    realm.as_str(),
                     &CurrentSelector::CircleMemberState {
                         circle_id: circle_id.clone(),
                         member_actor_id: actor.clone(),
@@ -464,6 +496,113 @@ pub(crate) mod tests {
     use crate::test_support::committed_event::{
         FixtureStation, fixture_time, verified_realm_fixture_as,
     };
+
+    mod circle_fixture {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/support/search_circle.rs"
+        ));
+    }
+
+    #[tokio::test]
+    async fn search_circle_current_scope_survives_archive_but_not_terminal_or_missing_evidence() {
+        for scenario in circle_fixture::SCENARIOS {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("circle-search.sqlite");
+            let index = super::super::tests::index(&path, 0).await;
+            let mut fixture = circle_fixture::Fixture::new();
+            // Source changes on an existing row are rejected at installation.
+            // A first cut must also refuse to read a misbound Circle source.
+            if scenario == "wrong_source" {
+                fixture.change(scenario);
+            }
+            let frame: arkret_sdk::sync::AccountSubscribeFrame =
+                serde_json::from_str(&fixture.frame(true)).unwrap();
+            let realm = fixture.snapshot.realm_id.to_string();
+            let staged = index
+                .stage_current_install(
+                    || Ok(0),
+                    Some(&frame),
+                    None,
+                    &Default::default(),
+                    &BTreeMap::from([(realm.clone(), &fixture.snapshot)]),
+                    &|| Ok(()),
+                    None,
+                    None,
+                )
+                .await
+                .unwrap();
+            staged.finish();
+            let initial = if scenario == "wrong_source" {
+                vec![]
+            } else {
+                vec![fixture.message.clone()]
+            };
+            assert_eq!(
+                index
+                    .read_search_page(&fixture.actor, None, circle_fixture::at(20))
+                    .await
+                    .unwrap()
+                    .rows,
+                initial,
+                "initial {scenario}"
+            );
+            if scenario == "wrong_source" {
+                drop(index);
+                let reopened = super::super::tests::index(&path, 1).await;
+                assert!(
+                    reopened
+                        .read_search_page(&fixture.actor, None, circle_fixture::at(20))
+                        .await
+                        .unwrap()
+                        .rows
+                        .is_empty()
+                );
+                continue;
+            }
+            fixture.change(scenario);
+            let frame = serde_json::from_str(&fixture.frame(false)).unwrap();
+            index
+                .stage_current_install(
+                    || Ok(1),
+                    Some(&frame),
+                    None,
+                    &Default::default(),
+                    &BTreeMap::from([(realm, &fixture.snapshot)]),
+                    &|| Ok(()),
+                    None,
+                    None,
+                )
+                .await
+                .unwrap()
+                .finish();
+            let expected = if scenario == "archived" {
+                vec![fixture.message.clone()]
+            } else {
+                vec![]
+            };
+            assert_eq!(
+                index
+                    .read_search_page(&fixture.actor, None, circle_fixture::at(20))
+                    .await
+                    .unwrap()
+                    .rows,
+                expected,
+                "live {scenario}"
+            );
+            drop(index);
+            let reopened = super::super::tests::index(&path, 2).await;
+            assert_eq!(
+                reopened
+                    .read_search_page(&fixture.actor, None, circle_fixture::at(20))
+                    .await
+                    .unwrap()
+                    .rows,
+                expected,
+                "reopened {scenario}"
+            );
+        }
+    }
 
     pub(crate) async fn authorized_store() -> (
         tempfile::TempDir,

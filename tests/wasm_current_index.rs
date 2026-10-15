@@ -15,6 +15,77 @@ wasm_bindgen_test_configure!(run_in_browser);
 const REALM: &str = "ak:realm:AY789mrKRCQEVlbVgiTgLdjVO5oCMJiUCrF-D-JlRNxI";
 const COMMIT: &str = "ak:realm_commit:AT33EWBTXdTx5CjY-ogbIIF2T4vh-v7jCMCQ80Fss2Rq";
 
+#[path = "support/search_circle.rs"]
+mod search_circle;
+
+#[wasm_bindgen_test(async)]
+async fn search_circle_current_scope_survives_archive_but_not_terminal_or_missing_evidence() {
+    for scenario in search_circle::SCENARIOS {
+        let id = authority(&format!("search-circle-{scenario}"));
+        let index = CurrentIndexHarness::open(&id, 0).await.unwrap();
+        let mut fixture = search_circle::Fixture::new();
+        if scenario == "wrong_source" {
+            fixture.change(scenario);
+        }
+        let actor = serde_json::to_string(&fixture.actor).unwrap();
+        let now = search_circle::at(20).to_rfc3339();
+        index
+            .commit_snapshot(
+                0,
+                &fixture.frame(true),
+                &serde_json::to_string(&fixture.snapshot).unwrap(),
+            )
+            .await
+            .unwrap();
+        let original = if scenario == "wrong_source" {
+            "[]".to_owned()
+        } else {
+            serde_json::to_string(&vec![fixture.message.clone()]).unwrap()
+        };
+        assert_eq!(
+            index.search(&actor, &now).await.unwrap(),
+            original,
+            "initial {scenario}"
+        );
+        if scenario == "wrong_source" {
+            drop(index);
+            let reopened = CurrentIndexHarness::open(&id, 1).await.unwrap();
+            assert_eq!(
+                reopened.search(&actor, &now).await.unwrap(),
+                "[]",
+                "reopened {scenario}"
+            );
+            continue;
+        }
+        fixture.change(scenario);
+        index
+            .commit_snapshot(
+                1,
+                &fixture.frame(false),
+                &serde_json::to_string(&fixture.snapshot).unwrap(),
+            )
+            .await
+            .unwrap();
+        let expected = if scenario == "archived" {
+            original
+        } else {
+            "[]".into()
+        };
+        assert_eq!(
+            index.search(&actor, &now).await.unwrap(),
+            expected,
+            "live {scenario}"
+        );
+        drop(index);
+        let reopened = CurrentIndexHarness::open(&id, 2).await.unwrap();
+        assert_eq!(
+            reopened.search(&actor, &now).await.unwrap(),
+            expected,
+            "reopened {scenario}"
+        );
+    }
+}
+
 /// One IndexedDB database backs every account, so each test owns an authority
 /// of its own and never reads another test's committed generation.
 fn authority(label: &str) -> String {
