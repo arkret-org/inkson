@@ -93,6 +93,57 @@ pub struct Fixture {
 }
 
 impl Fixture {
+    pub fn change_revision(&mut self, scenario: &str) {
+        let message_id = MessageId::from_event_id(&self.message.event.event_id);
+        let position = self
+            .snapshot
+            .current_state_entries
+            .iter()
+            .position(|current| {
+                matches!(current, TypedCurrentRow::Value {
+                selector: CurrentSelector::MessageRevision { message_id: key }, ..
+            } if key == &message_id)
+            })
+            .unwrap();
+        if scenario == "missing" {
+            self.snapshot.current_state_entries.remove(position);
+        } else {
+            let TypedCurrentRow::Value {
+                selector,
+                source_stream_ref,
+                revision,
+                value,
+            } = &mut self.snapshot.current_state_entries[position];
+            match scenario {
+                "wrong_source" => {
+                    *source_stream_ref = CommitStreamRef::Realm {
+                        realm_id: self.message.event.realm_id.clone(),
+                    }
+                }
+                "wrong_commit" => revision.commit_id = RealmCommitId::from_digest([91; 32]),
+                "wrong_position" => revision.stream_position -= 1,
+                "wrong_payload" => value["content"]["body"] = json!("different current body"),
+                "wrong_target" => {
+                    *selector = CurrentSelector::MessageRevision {
+                        message_id: MessageId::from_event_id(&EventId::from_digest(
+                            DigestSuite::Sha256,
+                            [92; 32],
+                        )),
+                    }
+                }
+                "older_current" => {
+                    self.snapshot.current_state_entries[position] = row(
+                        &self.message,
+                        CurrentSelector::MessageRevision { message_id },
+                        json!(self.message.event.payload),
+                    );
+                }
+                _ => panic!("unknown revision scenario"),
+            }
+        }
+        seal(&mut self.snapshot);
+    }
+
     pub fn revise_message(&mut self) {
         let signer = arkret_test_kit::keys::seeded_signer(
             "did:web:alice.example".parse().unwrap(),
@@ -111,6 +162,13 @@ impl Fixture {
             .unwrap();
         head.stream_position = full.commit.stream_position;
         head.commit_id = full.commit.commit_id.clone();
+        let selector = CurrentSelector::MessageRevision {
+            message_id: MessageId::from_event_id(&self.message.event.event_id),
+        };
+        let current = self.snapshot.current_state_entries.iter_mut().find(|current| {
+            matches!(current, TypedCurrentRow::Value { selector: key, .. } if key == &selector)
+        }).unwrap();
+        *current = row(&full, selector, json!(full.event.payload));
         self.originals.push(full);
         seal(&mut self.snapshot);
     }
@@ -290,6 +348,13 @@ impl Fixture {
                     &strand_create,
                     CurrentSelector::Strand { strand_id },
                     json!(strand),
+                ),
+                row(
+                    &message,
+                    CurrentSelector::MessageRevision {
+                        message_id: MessageId::from_event_id(&message.event.event_id),
+                    },
+                    json!(message.event.payload),
                 ),
             ],
             retention_and_history_floor: RetentionAndHistoryFloor {

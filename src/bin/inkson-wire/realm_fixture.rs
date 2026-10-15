@@ -1069,7 +1069,13 @@ impl Builder {
                     )),
                     "fixture Message requires its exact existing Strand"
                 );
-                // Messages belong to the committed Event stream, not a current selector.
+                self.row(
+                    full,
+                    CurrentSelector::MessageRevision {
+                        message_id: MessageId::from_event_id(&full.event.event_id),
+                    },
+                    payload,
+                )?;
             }
             EventKind::StrandMove => {
                 let payload: StrandMovePayload = serde_json::from_value(payload)?;
@@ -2267,6 +2273,34 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn message_fixture_delivers_exact_current_revision_carrier() -> Result<()> {
+        let fixture: Fixture = serde_json::from_value(build(json!({
+            "salt": 9, "title": "Demo Realm", "demo_notification": true,
+        }))?)?;
+        validate_fixture(&fixture)?;
+        let original = fixture
+            .committed_events
+            .iter()
+            .find(|full| full.event.kind == EventKind::MessageCreate)
+            .expect("message original");
+        let message_id = MessageId::from_event_id(&original.event.event_id);
+        let current = fixture.snapshot.current_state_entries.iter().find(|row| matches!(row,
+            TypedCurrentRow::Value { selector: CurrentSelector::MessageRevision { message_id: key }, .. } if key == &message_id
+        )).expect("message current");
+        let TypedCurrentRow::Value {
+            source_stream_ref,
+            revision,
+            value,
+            ..
+        } = current;
+        assert_eq!(source_stream_ref, &original.commit.stream_ref);
+        assert_eq!(revision.commit_id, original.commit.commit_id);
+        assert_eq!(revision.stream_position, original.commit.stream_position);
+        assert_eq!(value, &serde_json::to_value(&original.event.payload)?);
+        Ok(())
+    }
 
     fn invited_builder() -> Result<Builder> {
         let fixture: Fixture = serde_json::from_value(build(json!({

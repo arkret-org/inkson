@@ -5,6 +5,50 @@ use super::*;
 use crate::state::current_index::search::tests::authorized_store;
 
 #[tokio::test(flavor = "current_thread")]
+async fn native_search_current_revision_hides_stale_body_and_recovers_exact_original() {
+    let (_directory, store, account, original) = authorized_store().await;
+    let (mut dom, harness) = mount(store, account);
+    settle(&mut dom, &harness, 1).await;
+    let (mut context, search) = harness.handles.borrow().unwrap();
+    dom.in_runtime(|| {
+        assert_eq!(
+            search.results.peek()[0]["event_id"],
+            original.event.event_id.as_str()
+        )
+    });
+    let mut updated = dom.in_runtime(|| context.state_store.peek().clone());
+    crate::state::current_index::search::tests::install_search_revision(&mut updated, false).await;
+    dom.in_runtime(|| context.state_store.set(updated));
+    settle(&mut dom, &harness, 0).await;
+    dom.in_runtime(|| harness.retry.borrow().unwrap().call(()));
+    settle(&mut dom, &harness, 0).await;
+    let mut updated = dom.in_runtime(|| context.state_store.peek().clone());
+    let revision =
+        crate::state::current_index::search::tests::install_search_revision(&mut updated, true)
+            .await;
+    dom.in_runtime(|| context.state_store.set(updated));
+    settle(&mut dom, &harness, 1).await;
+    dom.in_runtime(|| {
+        let results = search.results.peek();
+        assert_eq!(results[0]["event_id"], original.event.event_id.as_str());
+        assert_eq!(results[0]["content"]["body"], "current replacement needle");
+        assert_eq!(
+            results[0]["source_event_id"],
+            revision.event.event_id.as_str()
+        );
+        assert_eq!(
+            results[0]["source_commit"],
+            serde_json::to_value(&revision.commit).unwrap()
+        );
+        assert!(search.error_key.peek().is_none());
+        assert_eq!(
+            revision.event.payload["content"]["body"],
+            "current replacement needle"
+        );
+    });
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn native_search_current_only_redaction_removes_visible_body_and_retry_stays_empty() {
     let (_directory, store, account, original) = authorized_store().await;
     let (mut dom, harness) = mount(store, account);

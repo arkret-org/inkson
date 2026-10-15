@@ -308,7 +308,15 @@ impl CurrentIndex {
             let Some(create) = record.create else {
                 continue;
             };
-            if record.redacted || !self.search_visible(&create, actor, generation, now).await? {
+            // A disclosed current can advance before its signed original is
+            // delivered. Never promote the cached prefix to the current body.
+            let carrier = record.revision.as_ref().unwrap_or(&create);
+            if record.redacted
+                || !self
+                    .search_revision_is_current(&message, carrier, generation)
+                    .await?
+                || !self.search_visible(&create, actor, generation, now).await?
+            {
                 continue;
             }
             if let Some(revision) = record.revision {
@@ -330,6 +338,35 @@ impl CurrentIndex {
             next,
             generation,
         })
+    }
+
+    async fn search_revision_is_current(
+        &self,
+        message: &MessageId,
+        carrier: &CommittedEventFullView,
+        generation: u64,
+    ) -> anyhow::Result<bool> {
+        let Some(TypedCurrentRow::Value {
+            source_stream_ref,
+            revision,
+            value,
+            ..
+        }) = self
+            .ready_selector(
+                carrier.event.realm_id.as_str(),
+                &CurrentSelector::MessageRevision {
+                    message_id: message.clone(),
+                },
+                generation,
+            )
+            .await?
+        else {
+            return Ok(false);
+        };
+        Ok(source_stream_ref == carrier.commit.stream_ref
+            && revision.commit_id == carrier.commit.commit_id
+            && revision.stream_position == carrier.commit.stream_position
+            && value == serde_json::to_value(&carrier.event.payload)?)
     }
 
     async fn search_visible(
@@ -636,6 +673,135 @@ pub(crate) mod tests {
             )
             .await
             .unwrap()
+    }
+
+    #[tokio::test]
+    async fn search_revision_current_advance_waits_for_exact_original_across_restart() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("revision.sqlite");
+        let index = super::super::tests::index(&path, 0).await;
+        let mut fixture = circle_fixture::Fixture::new();
+        stage_circle_fixture(&index, &fixture, true, 0)
+            .await
+            .finish();
+        let read = || index.read_search_page(&fixture.actor, None, circle_fixture::at(20));
+        assert_eq!(read().await.unwrap().rows, vec![fixture.message.clone()]);
+        fixture.revise_message();
+        let staged = stage_circle_fixture(&index, &fixture, false, 1).await;
+        drop(staged);
+        assert_eq!(
+            index
+                .read_search_page(&fixture.actor, None, circle_fixture::at(20))
+                .await
+                .unwrap()
+                .rows,
+            vec![fixture.message.clone()],
+            "abandoned current must not affect the published body"
+        );
+        stage_circle_fixture(&index, &fixture, false, 1)
+            .await
+            .finish();
+        assert!(
+            index
+                .read_search_page(&fixture.actor, None, circle_fixture::at(20))
+                .await
+                .unwrap()
+                .rows
+                .is_empty()
+        );
+        // Replaying the old create cannot fill a newer revision's missing body.
+        let revision = fixture.originals.pop().unwrap();
+        stage_circle_fixture(&index, &fixture, true, 2)
+            .await
+            .finish();
+        drop(index);
+        let reopened = super::super::tests::index(&path, 3).await;
+        assert!(
+            reopened
+                .read_search_page(&fixture.actor, None, circle_fixture::at(20))
+                .await
+                .unwrap()
+                .rows
+                .is_empty()
+        );
+        fixture.originals.push(revision.clone());
+        stage_circle_fixture(&reopened, &fixture, true, 3)
+            .await
+            .finish();
+        let expected = vec![fixture.message.clone(), revision];
+        assert_eq!(
+            reopened
+                .read_search_page(&fixture.actor, None, circle_fixture::at(20))
+                .await
+                .unwrap()
+                .rows,
+            expected
+        );
+        drop(reopened);
+        let recovered = super::super::tests::index(&path, 4).await;
+        assert_eq!(
+            recovered
+                .read_search_page(&fixture.actor, None, circle_fixture::at(20))
+                .await
+                .unwrap()
+                .rows,
+            expected
+        );
+    }
+
+    #[tokio::test]
+    async fn search_revision_current_requires_exact_carrier_evidence() {
+        for revised in [false, true] {
+            for scenario in [
+                "missing",
+                "wrong_source",
+                "wrong_commit",
+                "wrong_position",
+                "wrong_payload",
+                "wrong_target",
+                "older_current",
+            ] {
+                if !revised && scenario == "older_current" {
+                    continue;
+                }
+                let directory = tempfile::tempdir().unwrap();
+                let index =
+                    super::super::tests::index(&directory.path().join("revision.sqlite"), 0).await;
+                let mut fixture = circle_fixture::Fixture::new();
+                if revised {
+                    fixture.revise_message();
+                }
+                fixture.change_revision(scenario);
+                let frame = serde_json::from_str(&fixture.frame(true)).unwrap();
+                let staged = index
+                    .stage_current_install(
+                        || Ok(0),
+                        Some(&frame),
+                        None,
+                        &Default::default(),
+                        &BTreeMap::from([(
+                            fixture.snapshot.realm_id.to_string(),
+                            &fixture.snapshot,
+                        )]),
+                        &|| Ok(()),
+                        None,
+                        None,
+                    )
+                    .await;
+                if let Ok(staged) = staged {
+                    staged.finish();
+                }
+                assert!(
+                    index
+                        .read_search_page(&fixture.actor, None, circle_fixture::at(20))
+                        .await
+                        .unwrap()
+                        .rows
+                        .is_empty(),
+                    "{revised} {scenario}"
+                );
+            }
+        }
     }
 
     #[tokio::test]
@@ -1077,6 +1243,74 @@ pub(crate) mod tests {
         store.commit_current_stage_for_test(staged).unwrap();
     }
 
+    pub(crate) async fn install_search_revision(
+        store: &mut crate::state::LocalStateStore,
+        include_original: bool,
+    ) -> CommittedEventFullView {
+        let (_directory, _unused, mut snapshot, originals, _actor) = setup().await;
+        let original = &originals[0];
+        let (_, _, later) = verified_realm_fixture_as(
+            "ak:realm:AY789mrKRCQEVlbVgiTgLdjVO5oCMJiUCrF-D-JlRNxI"
+                .parse()
+                .unwrap(),
+            vec![
+                ("ak.message.create".into(), json!(original.event.payload)),
+                (
+                    "ak.message.revise".into(),
+                    json!({"message_id":MessageId::from_event_id(&original.event.event_id),"content":{"kind":"ak.content.text","format":"plain","body":"current replacement needle"}}),
+                ),
+            ],
+            "alice.example",
+            "ak:device:0196419b-0000-7000-8000-000000000001",
+        );
+        assert_eq!(later[0], *original);
+        let revision = later[1].clone();
+        snapshot.visible_stream_heads[0].stream_position = revision.commit.stream_position;
+        snapshot.visible_stream_heads[0].commit_id = revision.commit.commit_id.clone();
+        let index = CurrentIndex::open(
+            &store.active_authority().unwrap(),
+            store.current_generation(),
+            store.current_index_location(),
+        )
+        .await
+        .unwrap();
+        for current in &mut snapshot.current_state_entries {
+            if matches!(
+                selector_of(current),
+                CurrentSelector::MessageRevision { .. }
+            ) {
+                *current = TypedCurrentRow::Value {
+                    selector: selector_of(current).clone(),
+                    source_stream_ref: revision.commit.stream_ref.clone(),
+                    revision: CurrentRevision {
+                        commit_id: revision.commit.commit_id.clone(),
+                        stream_position: revision.commit.stream_position,
+                    },
+                    value: json!(revision.event.payload),
+                };
+            } else {
+                *current = index
+                    .ready_selector(
+                        snapshot.realm_id.as_str(),
+                        selector_of(current),
+                        store.current_generation(),
+                    )
+                    .await
+                    .unwrap()
+                    .unwrap();
+            }
+        }
+        FixtureStation::did_web().sign_snapshot(&mut snapshot);
+        let rows = if include_original {
+            vec![arkret_sdk::CommittedEventView::Full(revision.clone())]
+        } else {
+            vec![]
+        };
+        let staged = stage(&index, &snapshot, rows, store.current_generation()).await;
+        store.commit_current_stage_for_test(staged).unwrap();
+        revision
+    }
+
     async fn setup() -> (
         tempfile::TempDir,
         CurrentIndex,
@@ -1130,7 +1364,7 @@ pub(crate) mod tests {
                         strand_id: strand.clone(),
                     },
                     source_stream_ref: create.commit.stream_ref.clone(),
-                    revision,
+                    revision: revision.clone(),
                     value: serde_json::to_value(arkret_sdk::Strand::discussion(
                         strand,
                         bundle.realm_id.clone(),
@@ -1138,6 +1372,14 @@ pub(crate) mod tests {
                         actor.clone(),
                     ))
                     .unwrap(),
+                },
+                TypedCurrentRow::Value {
+                    selector: CurrentSelector::MessageRevision {
+                        message_id: MessageId::from_event_id(&create.event.event_id),
+                    },
+                    source_stream_ref: create.commit.stream_ref.clone(),
+                    revision,
+                    value: json!(create.event.payload),
                 },
             ],
             retention_and_history_floor: arkret_sdk::RetentionAndHistoryFloor {
@@ -1295,12 +1537,19 @@ pub(crate) mod tests {
                     ));
                 }
                 "missing_strand" => {
-                    snapshot.current_state_entries.pop();
+                    snapshot.current_state_entries.remove(1);
                 }
                 _ => {}
             }
             // Fresh signed-cut changes must use a newer row coordinate.
             for row in &mut snapshot.current_state_entries {
+                if !matches!(
+                    (scenario, selector_of(row)),
+                    ("leave", CurrentSelector::MemberState { .. })
+                        | ("wrong_scope", CurrentSelector::Strand { .. })
+                ) {
+                    continue;
+                }
                 let TypedCurrentRow::Value { revision, .. } = row;
                 revision.stream_position += 1;
                 revision.commit_id = arkret_sdk::RealmCommitId::from_digest([83; 32]);
@@ -1366,6 +1615,19 @@ pub(crate) mod tests {
         for (generation, row) in later.iter().enumerate().skip(1) {
             snapshot.visible_stream_heads[0].stream_position = row.commit.stream_position;
             snapshot.visible_stream_heads[0].commit_id = row.commit.commit_id.clone();
+            if row.event.kind == EventKind::MessageRevise {
+                snapshot.current_state_entries[2] = TypedCurrentRow::Value {
+                    selector: CurrentSelector::MessageRevision {
+                        message_id: message.clone(),
+                    },
+                    source_stream_ref: row.commit.stream_ref.clone(),
+                    revision: CurrentRevision {
+                        commit_id: row.commit.commit_id.clone(),
+                        stream_position: row.commit.stream_position,
+                    },
+                    value: json!(row.event.payload),
+                };
+            }
             FixtureStation::did_web().sign_snapshot(&mut snapshot);
             stage(
                 &index,

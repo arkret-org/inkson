@@ -19,6 +19,105 @@ const COMMIT: &str = "ak:realm_commit:AT33EWBTXdTx5CjY-ogbIIF2T4vh-v7jCMCQ80Fss2
 mod search_circle;
 
 #[wasm_bindgen_test(async)]
+async fn search_revision_current_advance_waits_for_exact_original_across_restart() {
+    let id = authority("current-revision");
+    let index = CurrentIndexHarness::open(&id, 0).await.unwrap();
+    let mut fixture = search_circle::Fixture::new();
+    let actor = serde_json::to_string(&fixture.actor).unwrap();
+    let now = search_circle::at(20).to_rfc3339();
+    index
+        .commit_snapshot(
+            0,
+            &fixture.frame(true),
+            &serde_json::to_string(&fixture.snapshot).unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        index.search(&actor, &now).await.unwrap(),
+        serde_json::to_string(&vec![fixture.message.clone()]).unwrap()
+    );
+    fixture.revise_message();
+    index
+        .commit_snapshot(
+            1,
+            &fixture.frame(false),
+            &serde_json::to_string(&fixture.snapshot).unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(index.search(&actor, &now).await.unwrap(), "[]");
+    let revision = fixture.originals.pop().unwrap();
+    index
+        .commit_snapshot(
+            2,
+            &fixture.frame(true),
+            &serde_json::to_string(&fixture.snapshot).unwrap(),
+        )
+        .await
+        .unwrap();
+    drop(index);
+    let reopened = CurrentIndexHarness::open(&id, 3).await.unwrap();
+    assert_eq!(reopened.search(&actor, &now).await.unwrap(), "[]");
+    fixture.originals.push(revision.clone());
+    reopened
+        .commit_snapshot(
+            3,
+            &fixture.frame(true),
+            &serde_json::to_string(&fixture.snapshot).unwrap(),
+        )
+        .await
+        .unwrap();
+    let expected = serde_json::to_string(&vec![fixture.message.clone(), revision]).unwrap();
+    assert_eq!(reopened.search(&actor, &now).await.unwrap(), expected);
+    drop(reopened);
+    let recovered = CurrentIndexHarness::open(&id, 4).await.unwrap();
+    assert_eq!(recovered.search(&actor, &now).await.unwrap(), expected);
+}
+
+#[wasm_bindgen_test(async)]
+async fn search_revision_current_requires_exact_carrier_evidence() {
+    for revised in [false, true] {
+        for scenario in [
+            "missing",
+            "wrong_source",
+            "wrong_commit",
+            "wrong_position",
+            "wrong_payload",
+            "wrong_target",
+            "older_current",
+        ] {
+            if !revised && scenario == "older_current" {
+                continue;
+            }
+            let id = authority(&format!("current-revision-{revised}-{scenario}"));
+            let index = CurrentIndexHarness::open(&id, 0).await.unwrap();
+            let mut fixture = search_circle::Fixture::new();
+            if revised {
+                fixture.revise_message();
+            }
+            fixture.change_revision(scenario);
+            let _ = index
+                .commit_snapshot(
+                    0,
+                    &fixture.frame(true),
+                    &serde_json::to_string(&fixture.snapshot).unwrap(),
+                )
+                .await;
+            let actor = serde_json::to_string(&fixture.actor).unwrap();
+            assert_eq!(
+                index
+                    .search(&actor, &search_circle::at(20).to_rfc3339())
+                    .await
+                    .unwrap(),
+                "[]",
+                "{revised} {scenario}"
+            );
+        }
+    }
+}
+
+#[wasm_bindgen_test(async)]
 async fn search_current_message_redaction_is_terminal_without_history_and_scrubs_candidates() {
     for scenario in [
         "redaction_only",
