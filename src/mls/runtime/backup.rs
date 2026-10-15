@@ -41,7 +41,7 @@ pub(crate) fn select_recovery_backup_candidate(
 ///
 /// Takes the higher of the scope's accepted current MLS epoch and this device's
 /// own installed epoch, so a rolled-back or overwritten local checkpoint is
-/// refused by [`crate::mls::persistence::decrypt_with_epoch_check`].
+/// refused by [`garth::mls::checkpoint::decrypt_with_epoch_check`].
 pub fn mls_restore_epoch_floor(state_store: &crate::state::LocalStateStore, realm_id: &str) -> u64 {
     let accepted = accepted_mls_epoch_floor(state_store, realm_id);
     let local = state_store

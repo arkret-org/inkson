@@ -10,7 +10,7 @@ use super::*;
 
 pub(crate) fn creator_cache_belongs_to_closed_attempt(
     record: &arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapRecord,
-    cache: &crate::mls::persistence::MlsLocalCheckpointEnvelope,
+    cache: &garth::mls::checkpoint::MlsLocalCheckpointEnvelope,
     emitted: bool,
     public: &[u8],
     tree: &[u8],
@@ -464,7 +464,7 @@ impl EventSubmitter {
             state.write(|store| -> anyhow::Result<()> {
                 let mut salt = [0u8; 16];
                 getrandom::fill(&mut salt)?;
-                let cache = crate::mls::persistence::encrypt_state(
+                let cache = garth::mls::checkpoint::encrypt_state(
                     scope.realm_id().as_str(),
                     record.intent().mls_group_id().as_str(),
                     0,

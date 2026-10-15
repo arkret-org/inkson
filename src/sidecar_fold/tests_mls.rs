@@ -126,7 +126,7 @@ impl MlsFixture {
         let secret =
             crate::mls::runtime::load_or_create_account_mls_secret(&secure, &controller).unwrap();
         let record = receiver.export_state_record().unwrap();
-        let checkpoint = crate::mls::persistence::encrypt_state(
+        let checkpoint = garth::mls::checkpoint::encrypt_state(
             scope.realm_id_opt().unwrap().as_str(),
             &record.group_id,
             record.epoch,

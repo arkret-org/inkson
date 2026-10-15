@@ -63,7 +63,7 @@ async fn authorized_durable_cut_resolves_history_and_alias_without_a_product_vie
         let authority = state.active_authority().unwrap();
         let group_id = scope.canonical_mls_group_id().unwrap();
         for epoch in 0..2 {
-            let snapshot = crate::mls::persistence::encrypt_state(
+            let snapshot = garth::mls::checkpoint::encrypt_state(
                 scope.realm_id().as_str(),
                 group_id.as_str(),
                 epoch,
@@ -180,7 +180,7 @@ fn real_checkpoint_restore_and_registered_kdf_bind_scope_epoch_account_and_devic
         .unwrap();
         let group = identity.create_group(&scope).unwrap();
         let record = group.export_state_record().unwrap();
-        let snapshot = crate::mls::persistence::encrypt_state(
+        let snapshot = garth::mls::checkpoint::encrypt_state(
             scope.realm_id().as_str(),
             &record.group_id,
             record.epoch,

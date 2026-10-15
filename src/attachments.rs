@@ -36,7 +36,7 @@ pub(crate) struct AttachmentObject {
     pub salt: AttachmentContentKeySalt,
     pub digest_suite: arkret_sdk::DigestSuite,
     pub context: Option<AttachmentContentKeyContext>,
-    pub checkpoint: Option<crate::mls::persistence::MlsLocalCheckpointEnvelope>,
+    pub checkpoint: Option<garth::mls::checkpoint::MlsLocalCheckpointEnvelope>,
     pub state_tree_ref: Option<arkret_sdk::BlobRef>,
     pub nonce_prefix: Option<arkret_sdk::Base64UrlString>,
     pub prepared: Option<PreparedAttachment>,
@@ -246,7 +246,7 @@ pub(crate) async fn file_to_parts(
 }
 
 pub(crate) fn restore_attachment_group(
-    snapshot: &crate::mls::persistence::MlsLocalCheckpointEnvelope,
+    snapshot: &garth::mls::checkpoint::MlsLocalCheckpointEnvelope,
     authority: &AccountId,
     device: &DeviceId,
     context: &AttachmentContentKeyContext,
@@ -256,7 +256,7 @@ pub(crate) fn restore_attachment_group(
 }
 
 fn restore_attachment_group_from_store(
-    snapshot: &crate::mls::persistence::MlsLocalCheckpointEnvelope,
+    snapshot: &garth::mls::checkpoint::MlsLocalCheckpointEnvelope,
     authority: &AccountId,
     device: &DeviceId,
     context: &AttachmentContentKeyContext,
@@ -704,7 +704,7 @@ pub(crate) fn attachment_receive_context(
     descriptor: &EncryptedAttachment,
 ) -> anyhow::Result<(
     AttachmentContentKeyContext,
-    crate::mls::persistence::MlsLocalCheckpointEnvelope,
+    garth::mls::checkpoint::MlsLocalCheckpointEnvelope,
     EventId,
 )> {
     anyhow::ensure!(

@@ -7,7 +7,7 @@ pub(crate) async fn install_welcome_roster_from_service(
     accepted_commit: &arkret_wire::CommittedEventFullView,
     authority: &arkret_sdk::AccountId,
 ) -> Result<(), String> {
-    let transition = crate::mls::accepted_artifact::accepted_mls_transition(accepted_commit)?;
+    let transition = garth::mls::accepted_artifact::accepted_mls_transition(accepted_commit)?;
     let scope = &transition.effective_scope;
     let realm = scope
         .realm_id_opt()

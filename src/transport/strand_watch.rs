@@ -185,7 +185,7 @@ pub(crate) async fn write(
                 },
         "watch producer Actor or effective scope differs from the observed self cell"
     );
-    let accepted = crate::event_submit::EventSubmitter::from_current_session(http.clone())
+    let accepted = crate::app::runtime_adapter::event_submitter(http.clone())
         .submit_sdk_event(&operation)
         .await?;
     anyhow::ensure!(accepted.is_committed(), "watch submission is not committed");

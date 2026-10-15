@@ -139,7 +139,7 @@ impl EventSubmitter {
                 let value = values[0];
                 if let Some(envelope) = value.get("encrypted_metadata") {
                     let envelope = serde_json::from_value(envelope.clone())?;
-                    crate::views::metadata::open_metadata(
+                    crate::identity::metadata::open_metadata(
                         state,
                         realm.as_str(),
                         id,
@@ -780,7 +780,7 @@ mod tests {
         );
         let device =
             arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-000000000002").unwrap();
-        let opened = crate::views::metadata::open_metadata(
+        let opened = crate::identity::metadata::open_metadata(
             &restored,
             REALM,
             &id,
@@ -791,7 +791,7 @@ mod tests {
         .expect("fresh device opens its restored authored metadata without replaying MLS");
         assert_eq!(opened["title"], "Restored board");
         assert!(
-            crate::views::metadata::open_metadata(
+            crate::identity::metadata::open_metadata(
                 &restored,
                 REALM,
                 SPACE,
@@ -807,7 +807,7 @@ mod tests {
             &serde_json::json!({"title":"Another revision"}),
         );
         assert!(
-            crate::views::metadata::open_metadata(
+            crate::identity::metadata::open_metadata(
                 &restored,
                 REALM,
                 &id,

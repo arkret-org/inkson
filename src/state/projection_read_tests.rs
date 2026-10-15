@@ -109,7 +109,7 @@ fn install_empty_signed_cut(store: &mut LocalStateStore) {
 
 #[test]
 fn cache_projection_preserves_exact_receive_bytes_without_copying_account_history() {
-    use crate::mls::persistence::encrypt_state;
+    use garth::mls::checkpoint::encrypt_state;
     let (_directory, mut store) = store();
     add_unrelated_history(&mut store);
     store.cached.mls_private_plaintext.insert(

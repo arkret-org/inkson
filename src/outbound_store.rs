@@ -100,7 +100,7 @@ struct DurableOutboundState {
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     mls_commit_checkpoints: std::collections::BTreeMap<
         arkret_sdk::EventId,
-        crate::mls::persistence::MlsLocalCheckpointEnvelope,
+        garth::mls::checkpoint::MlsLocalCheckpointEnvelope,
     >,
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     mls_rejection_cleanup_intents: std::collections::BTreeMap<arkret_sdk::EventId, String>,
@@ -911,7 +911,7 @@ impl InksonOutboundStore {
     pub(crate) async fn freeze_mls_commit(
         &self,
         submission: garth::QueuedSubmission,
-        checkpoint: crate::mls::persistence::MlsLocalCheckpointEnvelope,
+        checkpoint: garth::mls::checkpoint::MlsLocalCheckpointEnvelope,
     ) -> garth::Result<()> {
         self.mutate_state(|state| {
             let event = submission.primary_event();
@@ -982,7 +982,7 @@ impl InksonOutboundStore {
     pub(crate) async fn mls_commit_checkpoint(
         &self,
         event_id: &arkret_sdk::EventId,
-    ) -> garth::Result<Option<crate::mls::persistence::MlsLocalCheckpointEnvelope>> {
+    ) -> garth::Result<Option<garth::mls::checkpoint::MlsLocalCheckpointEnvelope>> {
         self.mutate_state(|state| Ok(state.mls_commit_checkpoints.get(event_id).cloned()))
             .await
     }
@@ -2413,9 +2413,9 @@ mod tests {
         assert!(next.epoch_zero().is_none());
         assert!(next.queued_genesis().is_none());
         let unit = winner.epoch_zero().unwrap();
-        let mut old_cache: crate::mls::persistence::MlsLocalCheckpointEnvelope =
+        let mut old_cache: garth::mls::checkpoint::MlsLocalCheckpointEnvelope =
             serde_json::from_slice(unit.encrypted_private_state()).unwrap();
-        let matches_cache = |cache: &crate::mls::persistence::MlsLocalCheckpointEnvelope,
+        let matches_cache = |cache: &garth::mls::checkpoint::MlsLocalCheckpointEnvelope,
                              emitted: bool,
                              public: &[u8]| {
             crate::event_submit::creator_cache_belongs_to_closed_attempt(
@@ -2645,7 +2645,7 @@ mod tests {
             let original_private: Vec<u8> =
                 serde_json::from_value(raw["epoch_zero"]["encrypted_private_state"].clone())
                     .unwrap();
-            let mut envelope: crate::mls::persistence::MlsLocalCheckpointEnvelope =
+            let mut envelope: garth::mls::checkpoint::MlsLocalCheckpointEnvelope =
                 serde_json::from_slice(&original_private).unwrap();
             let authority = ready.intent().owner_actor_id().as_account_id().unwrap();
             let secret =
@@ -2658,9 +2658,9 @@ mod tests {
                     "0"
                 };
                 envelope.ciphertext_hex.replace_range(..1, first);
-                assert!(crate::mls::persistence::decrypt_envelope(&envelope, &secret).is_err());
+                assert!(garth::mls::checkpoint::decrypt_envelope(&envelope, &secret).is_err());
             } else {
-                envelope = crate::mls::persistence::encrypt_state(
+                envelope = garth::mls::checkpoint::encrypt_state(
                     &envelope.realm_id,
                     &envelope.group_id,
                     0,
@@ -2668,7 +2668,7 @@ mod tests {
                     &secret,
                     &[19; 32],
                 );
-                assert!(crate::mls::persistence::decrypt_envelope(&envelope, &secret).is_ok());
+                assert!(garth::mls::checkpoint::decrypt_envelope(&envelope, &secret).is_ok());
                 assert!(crate::mls::persistence::restore_envelope(&envelope, &secret, 0).is_err());
             }
             let private = serde_json::to_vec(&envelope).unwrap();
@@ -3427,7 +3427,7 @@ mod tests {
                     peer.endpoint_identity(),
                 ])
                 .unwrap();
-            let advanced = crate::mls::persistence::encrypt_state(
+            let advanced = garth::mls::checkpoint::encrypt_state(
                 intent.effective_scope().realm_id().as_str(),
                 intent.mls_group_id().as_str(),
                 group.epoch(),
@@ -4518,7 +4518,7 @@ mod tests {
         )
         .unwrap();
         let private = serde_json::to_vec(&group.export_state_record().unwrap()).unwrap();
-        let mut checkpoint = crate::mls::persistence::encrypt_state(
+        let mut checkpoint = garth::mls::checkpoint::encrypt_state(
             FIXTURE_REALM,
             group.group_id().as_str(),
             0,

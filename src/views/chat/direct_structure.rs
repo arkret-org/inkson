@@ -409,7 +409,7 @@ pub(super) fn metadata_title(
 ) -> String {
     envelope
         .and_then(|envelope| {
-            crate::views::metadata::open_metadata(store, realm, id, envelope, account, device)
+            crate::identity::metadata::open_metadata(store, realm, id, envelope, account, device)
         })
         .and_then(|metadata| {
             metadata

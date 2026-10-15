@@ -47,7 +47,7 @@ pub(crate) fn prepare_rotation_backup_material(
     recovery_words: &str,
     snapshots: &std::collections::BTreeMap<
         String,
-        crate::mls::persistence::MlsLocalCheckpointEnvelope,
+        garth::mls::checkpoint::MlsLocalCheckpointEnvelope,
     >,
     list_payload: &Value,
     signer: &std::sync::Arc<crate::event_signer::InksonEventSigner>,
@@ -137,7 +137,7 @@ pub(crate) async fn execute_device_revoke_security_rotation(
     recovery_words: &str,
     snapshots: &std::collections::BTreeMap<
         String,
-        crate::mls::persistence::MlsLocalCheckpointEnvelope,
+        garth::mls::checkpoint::MlsLocalCheckpointEnvelope,
     >,
 ) -> Result<CompletedSecurityRotation> {
     if current_device_id == target_device_id {
@@ -504,7 +504,7 @@ struct StagedRotationSecret {
     new_version: u32,
     new_secret: String,
     rewrapped_checkpoints:
-        std::collections::BTreeMap<String, crate::mls::persistence::MlsLocalCheckpointEnvelope>,
+        std::collections::BTreeMap<String, garth::mls::checkpoint::MlsLocalCheckpointEnvelope>,
 }
 
 impl StagedRotationSecret {

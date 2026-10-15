@@ -144,7 +144,7 @@ pub fn projection_events_from_sync_realms(
                             })
                             .and_then(|effective_scope| {
                                 let sender_domain =
-                                    crate::views::chat::verified_chat_sender_domain_for_realm(
+                                    crate::identity::committed_sender::verified_chat_sender_domain_for_realm(
                                         message_realm,
                                         event,
                                         Some(store),

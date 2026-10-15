@@ -514,7 +514,8 @@ fn private_plaintext_sidecar_stays_memory_only_without_secure_store() {
 
 #[test]
 fn e2ee_plaintext_cache_round_trips_through_account_scoped_secure_store() {
-    use crate::mls::persistence::encrypt_state;
+    use garth::mls::checkpoint::encrypt_state;
+
     use crate::secure_key_store::{MemorySecureKeyStore, SecureKeyStore};
 
     let path = temp_state_path("e2ee-secure-cache-roundtrip");
@@ -643,7 +644,8 @@ fn account_switch_and_reload_isolate_private_plaintext_and_user_projections() {
 
 #[test]
 fn receive_snapshot_and_plaintext_share_one_secure_entry() {
-    use crate::mls::persistence::encrypt_state;
+    use garth::mls::checkpoint::encrypt_state;
+
     use crate::secure_key_store::{MemorySecureKeyStore, SecureKeyStore};
 
     let actor = "did:web:alice.example";
@@ -685,7 +687,8 @@ fn receive_snapshot_and_plaintext_share_one_secure_entry() {
 
 #[test]
 fn secure_snapshot_replaces_stale_same_epoch_account_snapshot() {
-    use crate::mls::persistence::encrypt_state;
+    use garth::mls::checkpoint::encrypt_state;
+
     use crate::secure_key_store::MemorySecureKeyStore;
 
     let actor = "did:web:alice.example";
@@ -718,7 +721,8 @@ fn secure_snapshot_replaces_stale_same_epoch_account_snapshot() {
 
 #[test]
 fn missing_secure_checkpoint_rolls_back_to_pre_decrypt_snapshot() {
-    use crate::mls::persistence::encrypt_state;
+    use garth::mls::checkpoint::encrypt_state;
+
     use crate::secure_key_store::MemorySecureKeyStore;
 
     let path = temp_state_path("e2ee-interrupted-checkpoint");
@@ -772,7 +776,7 @@ fn missing_secure_checkpoint_rolls_back_to_pre_decrypt_snapshot() {
 
 #[test]
 fn stale_background_cache_write_cannot_clear_newer_receive_recovery_checkpoint() {
-    use crate::mls::persistence::encrypt_state;
+    use garth::mls::checkpoint::encrypt_state;
 
     let path = temp_state_path("e2ee-background-checkpoint-guard");
     let actor = "did:web:alice.example";
@@ -818,7 +822,8 @@ fn stale_background_cache_write_cannot_clear_newer_receive_recovery_checkpoint()
 
 #[test]
 fn dropping_mls_snapshot_also_drops_receive_recovery_checkpoint() {
-    use crate::mls::persistence::encrypt_state;
+    use garth::mls::checkpoint::encrypt_state;
+
     use crate::secure_key_store::MemorySecureKeyStore;
 
     let path = temp_state_path("e2ee-drop-recovery-checkpoint");
@@ -862,7 +867,8 @@ fn dropping_mls_snapshot_also_drops_receive_recovery_checkpoint() {
 
 #[test]
 fn secure_cache_hydration_fills_gaps_without_overwriting_live_values() {
-    use crate::mls::persistence::encrypt_state;
+    use garth::mls::checkpoint::encrypt_state;
+
     use crate::secure_key_store::MemorySecureKeyStore;
 
     let actor = "did:web:alice.example";
@@ -1003,7 +1009,7 @@ fn mls_plaintext_is_never_written_to_plaintext_state() {
 
 #[test]
 fn e2ee_plaintext_cache_usage_is_grouped_by_realm() {
-    use crate::mls::persistence::encrypt_state;
+    use garth::mls::checkpoint::encrypt_state;
 
     let realm_a = "ak:realm:AXT4J1l4F3ziDJgbW0eaFtcLosoRKMG4tLzy3ImP2xL6";
     let realm_b = "ak:realm:ATI6e10SzOvQlSeBncAyPEeezd2fomt9lrllRopafxxw";
@@ -1033,7 +1039,8 @@ fn e2ee_plaintext_cache_usage_is_grouped_by_realm() {
 
 #[tokio::test]
 async fn explicit_e2ee_plaintext_cleanup_persists_scope_and_keeps_mls_state() {
-    use crate::mls::persistence::encrypt_state;
+    use garth::mls::checkpoint::encrypt_state;
+
     use crate::secure_key_store::{MemorySecureKeyStore, SecureKeyStore};
 
     let actor = "did:web:alice.example";

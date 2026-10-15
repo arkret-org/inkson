@@ -1025,10 +1025,8 @@ mod tests {
     const ACTOR: &str = "did:web:alice.example";
     const REALM: &str = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
 
-    fn epoch_zero_snapshot(
-        group_id: String,
-    ) -> crate::mls::persistence::MlsLocalCheckpointEnvelope {
-        crate::mls::persistence::MlsLocalCheckpointEnvelope {
+    fn epoch_zero_snapshot(group_id: String) -> garth::mls::checkpoint::MlsLocalCheckpointEnvelope {
+        garth::mls::checkpoint::MlsLocalCheckpointEnvelope {
             realm_id: REALM.to_owned(),
             group_id,
             epoch: 0,
@@ -1040,7 +1038,7 @@ mod tests {
             recorded_at: chrono::Utc::now(),
             epoch_started_at: chrono::Utc::now(),
             app_messages_observed: 0,
-            aead_version: crate::mls::persistence::AEAD_VERSION_CHACHA20_POLY1305,
+            aead_version: garth::mls::checkpoint::AEAD_VERSION_CHACHA20_POLY1305,
         }
     }
 

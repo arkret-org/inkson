@@ -12,21 +12,11 @@
 //! rather than applied out of order.
 
 use arkret_wire::{CommittedEventFullView, CommittedEventView};
+pub(crate) use garth::mls::MlsInstallOutcome;
+use garth::mls::accepted_artifact::{AcceptedMlsTransition, accepted_mls_transition};
 
-use crate::mls::accepted_artifact::{AcceptedMlsTransition, accepted_mls_transition};
 use crate::mls::governance_proof::MlsLeafAuthorityHint;
 use crate::runtime::input::StateStoreHandle;
-
-/// What one install attempt did.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum MlsInstallOutcome {
-    /// Provider state advanced and was persisted with its accepted Event.
-    Applied,
-    /// This device already holds an equal-or-newer epoch for the group.
-    AlreadyCurrent,
-    /// The transition's base epoch is not installed yet, so it stays pending.
-    BaseEpochMissing,
-}
 
 fn describe(error: impl std::fmt::Display) -> String {
     error.to_string()
@@ -352,14 +342,59 @@ pub(crate) async fn deliver_owed_keypackage_consumes(
     // Pending intents become visible in memory before their durable barrier
     // resolves. Another convergence pass must not send one during installation.
     let _welcome_install = welcome_install_lock().lock().await;
-    let owed = state.read(|store| store.pending_keypackage_consumes());
+    if !state.read(|store| store.has_staged_keypackage_consumes()) {
+        return;
+    }
+    let session = state.read(|store| {
+        (
+            store.active_authority(),
+            store.current_generation(),
+            crate::identity::device_directory::cache_epoch(),
+        )
+    });
+    let current = |store: &crate::state::LocalStateStore| {
+        store.active_authority() == session.0
+            && store.current_generation() == session.1
+            && crate::identity::device_directory::cache_epoch() == session.2
+    };
+    // A cancelled installer may leave an exact pending tuple in the single-writer
+    // queue. Retry its durable barrier before reading commands from storage.
+    let barrier = match state.read(|store| store.begin_durable_flush()) {
+        Ok(barrier) => barrier,
+        Err(error) => {
+            tracing::warn!(%error, "MLS consume durability remains pending");
+            return;
+        }
+    };
+    if let Err(error) = barrier.wait().await {
+        tracing::warn!(%error, "MLS consume durability remains pending");
+        return;
+    }
+    let owed = match state.read(|store| {
+        if !current(store) {
+            anyhow::bail!("MLS consume belongs to a replaced session");
+        }
+        store.pending_keypackage_consumes()
+    }) {
+        Ok(owed) => owed,
+        Err(error) => {
+            tracing::warn!(%error, "MLS consume durable read remains pending");
+            return;
+        }
+    };
     if owed.is_empty() {
         return;
     }
     let clients = crate::transport::EndpointClients::new(api.clone());
     let attempts = crate::mls::welcome_consume::drain_owed_consumes(owed, |(_, request)| {
         let clients = clients.clone();
+        let active = state.read(&current);
         async move {
+            if !active {
+                return crate::mls::welcome_consume::ConsumeAttempt::Retry(
+                    "session replaced".into(),
+                );
+            }
             crate::mls::welcome_consume::classify_consume_response(
                 &clients.mls().consume_key_package(&request).await,
             )
@@ -377,7 +412,12 @@ pub(crate) async fn deliver_owed_keypackage_consumes(
                 tracing::warn!(%claim_id, %error, "KeyPackage consume was refused");
             }
         }
-        match state.write(|store| store.forget_pending_keypackage_consume(&claim_id)) {
+        match state.write(|store| {
+            if !current(store) {
+                return Err("MLS consume completion belongs to a replaced session".into());
+            }
+            store.forget_pending_keypackage_consume(&claim_id)
+        }) {
             Ok(barrier) => {
                 if let Err(error) = barrier.wait().await {
                     tracing::warn!(%claim_id, %error, "settled KeyPackage consume not forgotten");
@@ -602,7 +642,7 @@ impl OwnRecoveryTail {
         scope: &arkret_sdk::ScopeRef,
         expected_base: &arkret_sdk::EventId,
         expected_epoch: u64,
-        expected_checkpoint: &crate::mls::persistence::MlsLocalCheckpointEnvelope,
+        expected_checkpoint: &garth::mls::checkpoint::MlsLocalCheckpointEnvelope,
     ) -> Result<(), String> {
         self.check_session()?;
         if self.client.session().map_err(describe)?.account_id() != authority
@@ -626,9 +666,9 @@ impl OwnRecoveryTail {
 // receive ratchet. Freeze the latest executable state only after that proof is
 // available; every subsequent installation still uses the full checkpoint CAS.
 pub(super) fn refreeze_recovery_base(
-    actual: &crate::mls::persistence::MlsLocalCheckpointEnvelope,
-    requested: &crate::mls::persistence::MlsLocalCheckpointEnvelope,
-) -> Result<crate::mls::persistence::MlsLocalCheckpointEnvelope, String> {
+    actual: &garth::mls::checkpoint::MlsLocalCheckpointEnvelope,
+    requested: &garth::mls::checkpoint::MlsLocalCheckpointEnvelope,
+) -> Result<garth::mls::checkpoint::MlsLocalCheckpointEnvelope, String> {
     if actual.realm_id != requested.realm_id
         || actual.group_id != requested.group_id
         || actual.epoch != requested.epoch
@@ -643,8 +683,8 @@ pub(super) fn refreeze_recovery_base(
 }
 
 pub(super) fn require_unchanged_recovery_base(
-    actual: &crate::mls::persistence::MlsLocalCheckpointEnvelope,
-    expected: &crate::mls::persistence::MlsLocalCheckpointEnvelope,
+    actual: &garth::mls::checkpoint::MlsLocalCheckpointEnvelope,
+    expected: &garth::mls::checkpoint::MlsLocalCheckpointEnvelope,
     reference: &arkret_sdk::EventId,
     epoch: u64,
 ) -> Result<(), String> {
@@ -1186,19 +1226,26 @@ async fn persist_installed_group(
     accepted_event_id: arkret_sdk::EventId,
 ) -> Result<MlsInstallOutcome, String> {
     let envelope = sealed_checkpoint(transition, group, snapshot_secret)?;
-    let scope = transition.effective_scope.clone();
-    let barrier = state.write(|store| {
-        store.install_accepted_mls_transition(&scope, envelope, &accepted_event_id)
-    })?;
-    let published = barrier.wait().await.map_err(describe);
-    state.write(|_| {});
-    published?;
+    garth::mls::checkpoint_port::install_checkpoint(
+        crate::mls::checkpoint_port::CheckpointPort {
+            state,
+            guard: |_: &crate::state::LocalStateStore| Ok(()),
+        },
+        garth::mls::checkpoint_port::MlsCheckpointInstall {
+            scope: transition.effective_scope.clone(),
+            checkpoint: envelope,
+            accepted_event_id,
+            consume: None,
+        },
+    )
+    .await
+    .map_err(describe)?;
     Ok(MlsInstallOutcome::Applied)
 }
 
 /// Persist the group a Welcome joined together with the consume command it
-/// owes, in one durable flush. A flush that does not resolve drops the
-/// command, so a join that is not durable is never consumed.
+/// owes, in one durable flush. Delivery reads only durable commands; an
+/// interrupted flush retains the exact tuple for retry.
 async fn persist_joined_welcome(
     state: &StateStoreHandle,
     transition: &AcceptedMlsTransition,
@@ -1224,13 +1271,13 @@ async fn persist_joined_welcome(
 }
 
 /// Install a joined Welcome's checkpoint and its owed consume in one flush;
-/// when the flush does not resolve, the consume is dropped again so it is
-/// never sent for a join that is not durable.
+/// a pending tuple is never sent until a durable read confirms it, even if
+/// the installing future is cancelled and another pass resumes the work.
 #[cfg(test)]
 async fn record_joined_welcome(
     state: &StateStoreHandle,
     scope: &arkret_sdk::ScopeRef,
-    envelope: crate::mls::persistence::MlsLocalCheckpointEnvelope,
+    envelope: garth::mls::checkpoint::MlsLocalCheckpointEnvelope,
     accepted_event_id: &arkret_sdk::EventId,
     consume: &arkret_sdk::KeyPackagesConsumeRequestBody,
 ) -> Result<(), String> {
@@ -1243,23 +1290,22 @@ async fn record_joined_welcome(
 async fn record_joined_welcome_guarded(
     state: &StateStoreHandle,
     scope: &arkret_sdk::ScopeRef,
-    envelope: crate::mls::persistence::MlsLocalCheckpointEnvelope,
+    envelope: garth::mls::checkpoint::MlsLocalCheckpointEnvelope,
     accepted_event_id: &arkret_sdk::EventId,
     consume: &arkret_sdk::KeyPackagesConsumeRequestBody,
-    guard: impl FnOnce(&crate::state::LocalStateStore) -> Result<(), String>,
+    guard: impl FnOnce(&crate::state::LocalStateStore) -> Result<(), String> + garth::MaybeSend,
 ) -> Result<(), String> {
-    let barrier = state.write(|store| {
-        guard(store)?;
-        store.install_accepted_mls_welcome(scope, envelope, accepted_event_id, consume)
-    })?;
-    let published = barrier.wait().await;
-    state.write(|_| {});
-    if let Err(error) = published {
-        let claim_id = consume.claim_id.as_str().to_owned();
-        let _ = state.write(|store| store.forget_pending_keypackage_consume(&claim_id));
-        return Err(describe(error));
-    }
-    Ok(())
+    garth::mls::checkpoint_port::install_checkpoint(
+        crate::mls::checkpoint_port::CheckpointPort { state, guard },
+        garth::mls::checkpoint_port::MlsCheckpointInstall {
+            scope: scope.clone(),
+            checkpoint: envelope,
+            accepted_event_id: accepted_event_id.clone(),
+            consume: Some(consume.clone()),
+        },
+    )
+    .await
+    .map_err(describe)
 }
 
 /// The device-secret-encrypted checkpoint of `group` at the accepted
@@ -1268,7 +1314,7 @@ fn sealed_checkpoint(
     transition: &AcceptedMlsTransition,
     group: &arkret_sdk::ArkretMlsGroup,
     snapshot_secret: &str,
-) -> Result<crate::mls::persistence::MlsLocalCheckpointEnvelope, String> {
+) -> Result<garth::mls::checkpoint::MlsLocalCheckpointEnvelope, String> {
     let realm_id = transition
         .effective_scope
         .realm_id_opt()
@@ -1284,7 +1330,7 @@ fn sealed_checkpoint(
     let mut salt = [0_u8; 16];
     getrandom::fill(&mut salt).map_err(describe)?;
     let encoded = serde_json::to_vec(&post_state).map_err(describe)?;
-    Ok(crate::mls::persistence::encrypt_state(
+    Ok(garth::mls::checkpoint::encrypt_state(
         realm_id.as_str(),
         post_state.group_id.as_str(),
         post_state.epoch,
@@ -1481,8 +1527,8 @@ mod tests {
         }
     }
 
-    fn checkpoint() -> crate::mls::persistence::MlsLocalCheckpointEnvelope {
-        crate::mls::persistence::encrypt_state(REALM, "AQID", 1, b"one", "test-secret", &[7; 16])
+    fn checkpoint() -> garth::mls::checkpoint::MlsLocalCheckpointEnvelope {
+        garth::mls::checkpoint::encrypt_state(REALM, "AQID", 1, b"one", "test-secret", &[7; 16])
     }
 
     fn accepted_event() -> arkret_sdk::EventId {
@@ -1518,15 +1564,79 @@ mod tests {
     fn owed_bytes(store: &crate::state::LocalStateStore) -> Vec<String> {
         store
             .pending_keypackage_consumes()
+            .unwrap()
             .into_iter()
             .map(|(_, request)| arkret_sdk::canonical::canonical_json_string(&request).unwrap())
             .collect()
+    }
+
+    #[tokio::test]
+    async fn cancelled_checkpoint_adapter_retains_the_exact_durable_consume_for_restart() {
+        let command = consume_command();
+        let signed = arkret_sdk::canonical::canonical_json_string(&command).unwrap();
+        use garth::mls::checkpoint_port::{MlsCheckpointInstall, MlsCheckpointPort};
+        let path = temp_path("cancelled-adapter").with_extension("json");
+        let (state, shared) = handle(crate::state::LocalStateStore::with_path(&path));
+        let stage = crate::mls::checkpoint_port::CheckpointPort {
+            state: &state,
+            guard: |_: &crate::state::LocalStateStore| Ok(()),
+        }
+        .stage(MlsCheckpointInstall {
+            scope: arkret_sdk::ScopeRef::Realm {
+                realm_id: realm_id(),
+            },
+            checkpoint: checkpoint(),
+            accepted_event_id: accepted_event(),
+            consume: Some(command),
+        })
+        .unwrap();
+        drop(stage);
+        assert_eq!(owed_bytes(&shared.lock().unwrap()), vec![signed]);
+        assert_eq!(
+            owed_bytes(&crate::state::LocalStateStore::with_path(&path)),
+            owed_bytes(&shared.lock().unwrap())
+        );
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn checkpoint_adapter_rejects_late_completion_after_generation_replacement() {
+        use garth::mls::checkpoint_port::{
+            MlsCheckpointInstall, MlsCheckpointPort, MlsCheckpointStage,
+        };
+        let path = temp_path("replaced-adapter").with_extension("json");
+        let (state, _) = handle(crate::state::LocalStateStore::with_path(&path));
+        let mut stage = crate::mls::checkpoint_port::CheckpointPort {
+            state: &state,
+            guard: |_: &crate::state::LocalStateStore| Ok(()),
+        }
+        .stage(MlsCheckpointInstall {
+            scope: arkret_sdk::ScopeRef::Realm {
+                realm_id: realm_id(),
+            },
+            checkpoint: checkpoint(),
+            accepted_event_id: accepted_event(),
+            consume: None,
+        })
+        .unwrap();
+        stage.make_durable().await.unwrap();
+        state.write(|store| store.set_current_generation(store.current_generation() + 1));
+        assert!(
+            stage
+                .publish()
+                .unwrap_err()
+                .to_string()
+                .contains("replaced session")
+        );
+        let _ = std::fs::remove_file(path);
     }
 
     /// decision 0121: a joined Welcome whose checkpoint flush does not
     /// resolve owes no consume, so nothing is ever sent for it.
     #[tokio::test]
     async fn a_join_that_is_not_durable_owes_no_consume() {
+        let command = consume_command();
+        let signed = arkret_sdk::canonical::canonical_json_string(&command).unwrap();
         let blocker = temp_path("blocker");
         std::fs::write(&blocker, b"not a directory").unwrap();
         let (state, shared) = handle(crate::state::LocalStateStore::with_path(
@@ -1536,18 +1646,29 @@ mod tests {
             realm_id: realm_id(),
         };
         assert!(
-            record_joined_welcome(
-                &state,
-                &scope,
-                checkpoint(),
-                &accepted_event(),
-                &consume_command()
-            )
-            .await
-            .is_err()
+            record_joined_welcome(&state, &scope, checkpoint(), &accepted_event(), &command)
+                .await
+                .is_err()
         );
-        assert!(owed_bytes(&shared.lock().unwrap()).is_empty());
-        let _ = std::fs::remove_file(blocker);
+        assert!(
+            shared
+                .lock()
+                .unwrap()
+                .pending_keypackage_consumes()
+                .map(|commands| commands.is_empty())
+                .unwrap_or(true)
+        );
+        std::fs::remove_file(&blocker).unwrap();
+        std::fs::create_dir(&blocker).unwrap();
+        state
+            .read(|store| store.begin_durable_flush())
+            .unwrap()
+            .wait()
+            .await
+            .unwrap();
+        assert_eq!(owed_bytes(&shared.lock().unwrap()), vec![signed]);
+        let _ = std::fs::remove_file(blocker.join("state.json"));
+        let _ = std::fs::remove_dir(blocker);
     }
 
     /// A durable join owes its consume across a restart; a lost response
@@ -1570,7 +1691,7 @@ mod tests {
 
         let sent = std::cell::RefCell::new(Vec::new());
         let lost = crate::mls::welcome_consume::drain_owed_consumes(
-            restarted.pending_keypackage_consumes(),
+            restarted.pending_keypackage_consumes().unwrap(),
             |(_, request)| {
                 sent.borrow_mut()
                     .push(arkret_sdk::canonical::canonical_json_string(&request).unwrap());
@@ -1580,7 +1701,11 @@ mod tests {
         .await;
         assert!(lost.iter().all(|(_, attempt)| !attempt.settled()));
         let (state, shared) = handle(restarted);
-        let pending_consumes = shared.lock().unwrap().pending_keypackage_consumes();
+        let pending_consumes = shared
+            .lock()
+            .unwrap()
+            .pending_keypackage_consumes()
+            .unwrap();
         let consumed =
             crate::mls::welcome_consume::drain_owed_consumes(pending_consumes, |(_, request)| {
                 sent.borrow_mut()
@@ -2217,10 +2342,12 @@ mod tests {
         let scope = arkret_sdk::ScopeRef::Realm {
             realm_id: recovery_realm_id(),
         };
+        let mut staged_checkpoint = checkpoint();
+        staged_checkpoint.realm_id = scope.realm_id().to_string();
         let error = record_joined_welcome_guarded(
             &state,
             &scope,
-            checkpoint(),
+            staged_checkpoint,
             &item.event.event_id,
             &consume_command(),
             |store| accepted.check_install(store, &authority()),

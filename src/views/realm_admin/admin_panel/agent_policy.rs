@@ -333,8 +333,7 @@ fn submit_pending(
         let result =
             crate::transport::auth::with_authed_sdk_client(&base, token(), |http| async move {
                 check_session(&write.current.account, write.current.session_generation)?;
-                let submitter =
-                    crate::event_submit::EventSubmitter::from_current_session(http.clone());
+                let submitter = crate::app::runtime_adapter::event_submitter(http.clone());
                 if write.signed.is_none() {
                     // No queue/network submission exists before this one-shot authoring completes.
                     awaiting.set(None);
