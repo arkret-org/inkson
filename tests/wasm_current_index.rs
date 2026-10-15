@@ -19,6 +19,173 @@ const COMMIT: &str = "ak:realm_commit:AT33EWBTXdTx5CjY-ogbIIF2T4vh-v7jCMCQ80Fss2
 mod search_circle;
 
 #[wasm_bindgen_test(async)]
+async fn search_current_message_redaction_is_terminal_without_history_and_scrubs_candidates() {
+    for scenario in [
+        "redaction_only",
+        "redaction_first",
+        "other_message",
+        "revised",
+    ] {
+        let id = authority(&format!("current-redaction-{scenario}"));
+        let index = CurrentIndexHarness::open(&id, 0).await.unwrap();
+        let mut fixture = search_circle::Fixture::new();
+        if scenario == "revised" {
+            fixture.revise_message();
+        }
+        let message = arkret_sdk::MessageId::from_event_id(&fixture.message.event.event_id);
+        let actor = serde_json::to_string(&fixture.actor).unwrap();
+        let now = search_circle::at(20).to_rfc3339();
+        index
+            .commit_snapshot(
+                0,
+                &fixture.frame(scenario != "redaction_first"),
+                &serde_json::to_string(&fixture.snapshot).unwrap(),
+            )
+            .await
+            .unwrap();
+        let target = if scenario == "other_message" {
+            arkret_sdk::MessageId::from_event_id(&arkret_sdk::EventId::from_digest(
+                arkret_sdk::DigestSuite::Sha256,
+                [101; 32],
+            ))
+        } else {
+            message.clone()
+        };
+        fixture.redact_message_current(target.as_str());
+        index
+            .commit_snapshot(
+                1,
+                &fixture.frame(false),
+                &serde_json::to_string(&fixture.snapshot).unwrap(),
+            )
+            .await
+            .unwrap();
+        index
+            .commit_snapshot(
+                2,
+                &fixture.frame(true),
+                &serde_json::to_string(&fixture.snapshot).unwrap(),
+            )
+            .await
+            .unwrap();
+        let expected = if scenario == "other_message" {
+            serde_json::to_string(&vec![fixture.message.clone()]).unwrap()
+        } else {
+            "[]".into()
+        };
+        assert_eq!(
+            index.search(&actor, &now).await.unwrap(),
+            expected,
+            "{scenario}"
+        );
+        assert_eq!(
+            index
+                .search_originals_present(message.as_str())
+                .await
+                .unwrap(),
+            scenario == "other_message",
+            "retained body {scenario}"
+        );
+        fixture.snapshot.current_state_entries.retain(|row| {
+            !matches!(
+                row,
+                arkret_sdk::TypedCurrentRow::Value {
+                    selector: arkret_sdk::CurrentSelector::ObjectRedaction { .. },
+                    ..
+                }
+            )
+        });
+        fixture.snapshot.created_at = search_circle::at(13);
+        search_circle::seal(&mut fixture.snapshot);
+        index
+            .commit_snapshot(
+                3,
+                &fixture.frame(true),
+                &serde_json::to_string(&fixture.snapshot).unwrap(),
+            )
+            .await
+            .unwrap();
+        drop(index);
+        let reopened = CurrentIndexHarness::open(&id, 4).await.unwrap();
+        assert_eq!(
+            reopened.search(&actor, &now).await.unwrap(),
+            expected,
+            "cold {scenario}"
+        );
+        assert_eq!(
+            reopened
+                .search_originals_present(message.as_str())
+                .await
+                .unwrap(),
+            scenario == "other_message"
+        );
+    }
+}
+
+#[wasm_bindgen_test(async)]
+async fn search_current_message_redaction_rejects_bad_evidence_without_publication() {
+    for scenario in ["empty", "wrong_subject", "wrong_stream"] {
+        let id = authority(&format!("invalid-redaction-{scenario}"));
+        let index = CurrentIndexHarness::open(&id, 0).await.unwrap();
+        let mut fixture = search_circle::Fixture::new();
+        let actor = serde_json::to_string(&fixture.actor).unwrap();
+        let now = search_circle::at(20).to_rfc3339();
+        index
+            .commit_snapshot(
+                0,
+                &fixture.frame(true),
+                &serde_json::to_string(&fixture.snapshot).unwrap(),
+            )
+            .await
+            .unwrap();
+        let target = arkret_sdk::MessageId::from_event_id(&fixture.message.event.event_id);
+        fixture.redact_message_current(target.as_str());
+        let arkret_sdk::TypedCurrentRow::Value {
+            value,
+            source_stream_ref,
+            revision,
+            ..
+        } = fixture.snapshot.current_state_entries.last_mut().unwrap();
+        match scenario {
+            "empty" => value["assertions"] = json!([]),
+            "wrong_subject" => {
+                value["assertions"][0]["value"]["message_id"] = json!(
+                    arkret_sdk::MessageId::from_event_id(&arkret_sdk::EventId::from_digest(
+                        arkret_sdk::DigestSuite::Sha256,
+                        [102; 32]
+                    ))
+                )
+            }
+            _ => {
+                let head = &fixture.snapshot.visible_stream_heads[0];
+                *source_stream_ref = head.stream_ref.clone();
+                *revision = arkret_sdk::CurrentRevision {
+                    commit_id: head.commit_id.clone(),
+                    stream_position: head.stream_position,
+                };
+            }
+        }
+        search_circle::seal(&mut fixture.snapshot);
+        assert!(
+            index
+                .commit_snapshot(
+                    1,
+                    &fixture.frame(false),
+                    &serde_json::to_string(&fixture.snapshot).unwrap()
+                )
+                .await
+                .is_err(),
+            "{scenario}"
+        );
+        assert_eq!(
+            index.search(&actor, &now).await.unwrap(),
+            serde_json::to_string(&vec![fixture.message]).unwrap(),
+            "old cut {scenario}"
+        );
+    }
+}
+
+#[wasm_bindgen_test(async)]
 async fn search_circle_current_scope_survives_archive_but_not_terminal_or_missing_evidence() {
     for scenario in search_circle::SCENARIOS {
         let id = authority(&format!("search-circle-{scenario}"));

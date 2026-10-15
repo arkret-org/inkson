@@ -2589,6 +2589,7 @@ impl CurrentIndex {
                 if !plan.discard_frame && incoming.unavailable.is_none() {
                     self.stage_search_rows(
                         incoming,
+                        snapshot,
                         expected_generation,
                         &suffix,
                         &mut writes,

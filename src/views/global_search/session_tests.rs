@@ -4,6 +4,28 @@ use std::rc::Rc;
 use super::*;
 use crate::state::current_index::search::tests::authorized_store;
 
+#[tokio::test(flavor = "current_thread")]
+async fn native_search_current_only_redaction_removes_visible_body_and_retry_stays_empty() {
+    let (_directory, store, account, original) = authorized_store().await;
+    let (mut dom, harness) = mount(store, account);
+    settle(&mut dom, &harness, 1).await;
+    let (mut context, search) = harness.handles.borrow().unwrap();
+    dom.in_runtime(|| {
+        assert_eq!(
+            search.results.peek()[0]["event_id"],
+            original.event.event_id.as_str()
+        )
+    });
+    let mut updated = dom.in_runtime(|| context.state_store.peek().clone());
+    crate::state::current_index::search::tests::install_current_only_search_redaction(&mut updated)
+        .await;
+    dom.in_runtime(|| context.state_store.set(updated));
+    settle(&mut dom, &harness, 0).await;
+    dom.in_runtime(|| harness.retry.borrow().unwrap().call(()));
+    settle(&mut dom, &harness, 0).await;
+    dom.in_runtime(|| assert!(search.error_key.peek().is_none()));
+}
+
 type Input = (LocalStateStore, crate::config::ActiveAccountContext);
 type Handles = (crate::app::SessionContext, LocalSearchState);
 

@@ -95,6 +95,14 @@ impl CurrentIndexHarness {
         serde_json::to_string(&page.rows).map_err(message)
     }
 
+    /// Observe the current candidate version, including after cold recovery.
+    pub async fn search_originals_present(&self, id: &str) -> Result<bool, String> {
+        self.index
+            .search_originals_present(&id.parse().map_err(message)?)
+            .await
+            .map_err(message)
+    }
+
     /// Install one frame and abandon it before the account pointer is armed.
     pub async fn abandon(&self, expected: u64, frame: &str) -> Result<(), String> {
         let frame: AccountSubscribeFrame = serde_json::from_str(frame).map_err(message)?;

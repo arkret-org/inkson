@@ -61,6 +61,8 @@ struct SearchRecord {
     create: Option<CommittedEventFullView>,
     revision: Option<CommittedEventFullView>,
     redacted: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    redaction_stream: Option<arkret_sdk::CommitStreamRef>,
 }
 
 pub(crate) struct SearchPage {
@@ -98,6 +100,7 @@ impl CurrentIndex {
     pub(super) async fn stage_search_rows(
         &self,
         incoming: &arkret_sdk::sync::RealmSyncEntry,
+        snapshot: Option<&arkret_sdk::RealmStateSnapshot>,
         committed: u64,
         suffix: &str,
         writes: &mut BTreeMap<String, Vec<u8>>,
@@ -132,6 +135,13 @@ impl CurrentIndex {
                 Some(bytes) => serde_json::from_slice(bytes)?,
                 None => self.latest(&prefix, committed).await?.unwrap_or_default(),
             };
+            anyhow::ensure!(
+                record
+                    .redaction_stream
+                    .as_ref()
+                    .is_none_or(|stream| stream == &full.commit.stream_ref),
+                "search original crosses a terminal redaction scope"
+            );
             if let Some(create) = &record.create {
                 anyhow::ensure!(
                     create.event.realm_id == full.event.realm_id
@@ -173,9 +183,76 @@ impl CurrentIndex {
                         record.revision = Some(full.clone());
                     }
                 }
-                EventKind::MessageRedact => record.redacted = true,
+                EventKind::MessageRedact => {
+                    record.redacted = true;
+                    record.redaction_stream = Some(full.commit.stream_ref.clone());
+                }
                 _ => unreachable!(),
             }
+            if record.redacted {
+                record.create = None;
+                record.revision = None;
+            }
+            writes.insert(key, serde_json::to_vec(&record)?);
+            targets.insert(
+                format!("{}search-target/{message}", self.prefix),
+                serde_json::to_vec(&message)?,
+            );
+        }
+        // A snapshot may disclose the terminal current without returning the
+        // redact Event. Fold even unchanged snapshot rows: the candidate may
+        // have arrived later than its already installed redaction evidence.
+        let rows = snapshot
+            .map(|snapshot| snapshot.current_state_entries.as_slice())
+            .or_else(|| {
+                incoming
+                    .current
+                    .as_ref()
+                    .map(|current| current.entries.as_slice())
+            })
+            .unwrap_or_default();
+        for row in rows {
+            let TypedCurrentRow::Value {
+                selector: CurrentSelector::ObjectRedaction { target_ref },
+                source_stream_ref,
+                value,
+                ..
+            } = row
+            else {
+                continue;
+            };
+            // Event spellings are independent field-level assertions; they
+            // must never be retyped into a terminal Message redaction.
+            let Ok(message) = MessageId::new(target_ref.as_str()) else {
+                continue;
+            };
+            let redaction: arkret_models_collaboration::events_payloads::redaction::ObjectRedactionCurrentValue = serde_json::from_value(value.clone())?;
+            redaction.validate_for_subject(target_ref)?;
+            let prefix = format!("{}search/{message}/", self.prefix);
+            let key = format!("{prefix}{suffix}");
+            let mut record: SearchRecord = match writes.get(&key) {
+                Some(bytes) => serde_json::from_slice(bytes)?,
+                None => self.latest(&prefix, committed).await?.unwrap_or_default(),
+            };
+            anyhow::ensure!(
+                record
+                    .create
+                    .as_ref()
+                    .is_none_or(|create| &create.commit.stream_ref == source_stream_ref)
+                    && record
+                        .revision
+                        .as_ref()
+                        .is_none_or(|revision| &revision.commit.stream_ref == source_stream_ref)
+                    && record
+                        .redaction_stream
+                        .as_ref()
+                        .is_none_or(|stream| stream == source_stream_ref),
+                "search current redaction crosses the target security scope"
+            );
+            record.redacted = true;
+            record.redaction_stream = Some(source_stream_ref.clone());
+            record.create = None;
+            record.revision = None;
             writes.insert(key, serde_json::to_vec(&record)?);
             targets.insert(
                 format!("{}search-target/{message}", self.prefix),
@@ -287,6 +364,26 @@ impl CurrentIndex {
         let Some(cut) = &progress.signed_snapshot else {
             return Ok(false);
         };
+        // Recheck the installed current as well as the materialized terminal
+        // bit, including candidates cached before current-redaction folding.
+        let message = match full.event.kind {
+            EventKind::MessageCreate => MessageId::from_event_id(&full.event.event_id),
+            _ => target(full)?.unwrap(),
+        };
+        if let Some(TypedCurrentRow::Value { value, .. }) = self
+            .ready_selector(
+                realm.as_str(),
+                &CurrentSelector::ObjectRedaction {
+                    target_ref: message.to_string(),
+                },
+                generation,
+            )
+            .await?
+        {
+            let redaction: arkret_models_collaboration::events_payloads::redaction::ObjectRedactionCurrentValue = serde_json::from_value(value)?;
+            redaction.validate_for_subject(message.as_str())?;
+            return Ok(false);
+        }
         let (Some(floors), Some(policies)) = (&cut.search_floor, &cut.search_policies) else {
             return Ok(false);
         };
@@ -486,6 +583,21 @@ impl CurrentIndex {
             &active, &operation,
         ))
     }
+
+    #[cfg(target_arch = "wasm32")]
+    pub(super) async fn search_originals_present(
+        &self,
+        message: &MessageId,
+    ) -> anyhow::Result<bool> {
+        let _lease = self.acquire_lease().await?;
+        let record: Option<SearchRecord> = self
+            .latest(
+                &format!("{}search/{message}/", self.prefix),
+                self.generation.load(Ordering::Acquire),
+            )
+            .await?;
+        Ok(record.is_some_and(|record| record.create.is_some() || record.revision.is_some()))
+    }
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -502,6 +614,236 @@ pub(crate) mod tests {
             env!("CARGO_MANIFEST_DIR"),
             "/tests/support/search_circle.rs"
         ));
+    }
+
+    async fn stage_circle_fixture(
+        index: &CurrentIndex,
+        fixture: &circle_fixture::Fixture,
+        originals: bool,
+        generation: u64,
+    ) -> CurrentStage {
+        let frame = serde_json::from_str(&fixture.frame(originals)).unwrap();
+        index
+            .stage_current_install(
+                || Ok(generation),
+                Some(&frame),
+                None,
+                &Default::default(),
+                &BTreeMap::from([(fixture.snapshot.realm_id.to_string(), &fixture.snapshot)]),
+                &|| Ok(()),
+                None,
+                None,
+            )
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn search_current_message_redaction_is_terminal_without_history_and_scrubs_candidates() {
+        for scenario in [
+            "redaction_only",
+            "redaction_first",
+            "other_message",
+            "revised",
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("current-redaction.sqlite");
+            let index = super::super::tests::index(&path, 0).await;
+            let mut fixture = circle_fixture::Fixture::new();
+            if scenario == "revised" {
+                fixture.revise_message();
+            }
+            let message = MessageId::from_event_id(&fixture.message.event.event_id);
+            stage_circle_fixture(&index, &fixture, scenario != "redaction_first", 0)
+                .await
+                .finish();
+            let target = if scenario == "other_message" {
+                MessageId::from_event_id(&arkret_sdk::EventId::from_digest(
+                    arkret_sdk::DigestSuite::Sha256,
+                    [101; 32],
+                ))
+            } else {
+                message.clone()
+            };
+            fixture.redact_message_current(target.as_str());
+            // An abandoned stage must not redact the still committed cut.
+            drop(stage_circle_fixture(&index, &fixture, false, 1).await);
+            assert_eq!(
+                index
+                    .read_search_page(&fixture.actor, None, circle_fixture::at(20))
+                    .await
+                    .unwrap()
+                    .rows
+                    .len(),
+                if scenario == "revised" {
+                    2
+                } else {
+                    usize::from(scenario != "redaction_first")
+                }
+            );
+            stage_circle_fixture(&index, &fixture, false, 1)
+                .await
+                .finish();
+            // A late/replayed original cannot undo a current-only terminal fact.
+            stage_circle_fixture(&index, &fixture, true, 2)
+                .await
+                .finish();
+            let expected = if scenario == "other_message" {
+                vec![fixture.message.clone()]
+            } else {
+                vec![]
+            };
+            assert_eq!(
+                index
+                    .read_search_page(&fixture.actor, None, circle_fixture::at(20))
+                    .await
+                    .unwrap()
+                    .rows,
+                expected,
+                "{scenario}"
+            );
+            let record: SearchRecord = index
+                .latest(&format!("{}search/{message}/", index.prefix), 3)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                record.create.is_some() || record.revision.is_some(),
+                scenario == "other_message",
+                "retained body {scenario}"
+            );
+            // Changing disclosure must not resurrect a known terminal Message.
+            fixture
+                .snapshot
+                .current_state_entries
+                .retain(|row| !matches!(selector_of(row), CurrentSelector::ObjectRedaction { .. }));
+            fixture.snapshot.created_at = circle_fixture::at(13);
+            circle_fixture::seal(&mut fixture.snapshot);
+            stage_circle_fixture(&index, &fixture, true, 3)
+                .await
+                .finish();
+            drop(index);
+            let reopened = super::super::tests::index(&path, 4).await;
+            assert_eq!(
+                reopened
+                    .read_search_page(&fixture.actor, None, circle_fixture::at(20))
+                    .await
+                    .unwrap()
+                    .rows,
+                expected,
+                "cold {scenario}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn search_current_redaction_masks_unfolded_legacy_candidates() {
+        let directory = tempfile::tempdir().unwrap();
+        let index =
+            super::super::tests::index(&directory.path().join("legacy-redaction.sqlite"), 0).await;
+        let mut fixture = circle_fixture::Fixture::new();
+        stage_circle_fixture(&index, &fixture, true, 0)
+            .await
+            .finish();
+        let message = MessageId::from_event_id(&fixture.message.event.event_id);
+        let prefix = format!("{}search/{message}/", index.prefix);
+        let legacy: SearchRecord = index.latest(&prefix, 1).await.unwrap().unwrap();
+        fixture.redact_message_current(message.as_str());
+        stage_circle_fixture(&index, &fixture, false, 1)
+            .await
+            .finish();
+        // The previous production version installed the current row but left
+        // this exact original cached. Reading must reject it without a rewrite.
+        index
+            .backend
+            .apply(
+                vec![],
+                vec![(
+                    format!("{prefix}{}", version(2)),
+                    serde_json::to_vec(&legacy).unwrap(),
+                )],
+            )
+            .await
+            .unwrap();
+        assert!(
+            index
+                .read_search_page(&fixture.actor, None, circle_fixture::at(20))
+                .await
+                .unwrap()
+                .rows
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn search_current_message_redaction_rejects_bad_evidence_without_publication() {
+        for scenario in ["empty", "wrong_subject", "wrong_stream"] {
+            let directory = tempfile::tempdir().unwrap();
+            let index =
+                super::super::tests::index(&directory.path().join("invalid-redaction.sqlite"), 0)
+                    .await;
+            let mut fixture = circle_fixture::Fixture::new();
+            stage_circle_fixture(&index, &fixture, true, 0)
+                .await
+                .finish();
+            let target = MessageId::from_event_id(&fixture.message.event.event_id);
+            fixture.redact_message_current(target.as_str());
+            let TypedCurrentRow::Value {
+                value,
+                source_stream_ref,
+                revision,
+                ..
+            } = fixture.snapshot.current_state_entries.last_mut().unwrap();
+            match scenario {
+                "empty" => value["assertions"] = json!([]),
+                "wrong_subject" => {
+                    value["assertions"][0]["value"]["message_id"] =
+                        json!(MessageId::from_event_id(&arkret_sdk::EventId::from_digest(
+                            arkret_sdk::DigestSuite::Sha256,
+                            [102; 32]
+                        )))
+                }
+                _ => {
+                    let head = &fixture.snapshot.visible_stream_heads[0];
+                    *source_stream_ref = head.stream_ref.clone();
+                    *revision = CurrentRevision {
+                        commit_id: head.commit_id.clone(),
+                        stream_position: head.stream_position,
+                    };
+                }
+            }
+            circle_fixture::seal(&mut fixture.snapshot);
+            let frame = serde_json::from_str(&fixture.frame(false)).unwrap();
+            assert!(
+                index
+                    .stage_current_install(
+                        || Ok(1),
+                        Some(&frame),
+                        None,
+                        &Default::default(),
+                        &BTreeMap::from([(
+                            fixture.snapshot.realm_id.to_string(),
+                            &fixture.snapshot
+                        )]),
+                        &|| Ok(()),
+                        None,
+                        None
+                    )
+                    .await
+                    .is_err(),
+                "{scenario}"
+            );
+            assert_eq!(index.generation.load(Ordering::Acquire), 1);
+            assert_eq!(
+                index
+                    .read_search_page(&fixture.actor, None, circle_fixture::at(20))
+                    .await
+                    .unwrap()
+                    .rows,
+                vec![fixture.message],
+                "old cut {scenario}"
+            );
+        }
     }
 
     #[tokio::test]
@@ -675,6 +1017,64 @@ pub(crate) mod tests {
         .await;
         store.commit_current_stage_for_test(staged).unwrap();
         (directory, store, account, originals[0].clone())
+    }
+
+    pub(crate) async fn install_current_only_search_redaction(
+        store: &mut crate::state::LocalStateStore,
+    ) {
+        let (_directory, _unused, mut snapshot, originals, _actor) = setup().await;
+        let original = &originals[0];
+        let (_, _, later) = verified_realm_fixture_as(
+            "ak:realm:AY789mrKRCQEVlbVgiTgLdjVO5oCMJiUCrF-D-JlRNxI"
+                .parse()
+                .unwrap(),
+            vec![
+                (
+                    "ak.message.create".into(),
+                    serde_json::to_value(&original.event.payload).unwrap(),
+                ),
+                (
+                    "ak.message.redact".into(),
+                    json!({"message_id":MessageId::from_event_id(&original.event.event_id)}),
+                ),
+            ],
+            "alice.example",
+            "ak:device:0196419b-0000-7000-8000-000000000001",
+        );
+        assert_eq!(later[0], *original);
+        let redaction = &later[1];
+        snapshot.visible_stream_heads[0].stream_position = redaction.commit.stream_position;
+        snapshot.visible_stream_heads[0].commit_id = redaction.commit.commit_id.clone();
+        snapshot.current_state_entries.push(TypedCurrentRow::Value {
+            selector: CurrentSelector::ObjectRedaction { target_ref: MessageId::from_event_id(&original.event.event_id).to_string() },
+            source_stream_ref: redaction.commit.stream_ref.clone(),
+            revision: CurrentRevision { commit_id: redaction.commit.commit_id.clone(), stream_position: redaction.commit.stream_position },
+            value: json!({"assertions":[{"tag_id":format!("{}:0",redaction.event.event_id),"value":redaction.event.payload}]}),
+        });
+        let index = CurrentIndex::open(
+            &store.active_authority().unwrap(),
+            store.current_generation(),
+            store.current_index_location(),
+        )
+        .await
+        .unwrap();
+        // Preserve the installed bytes and revision of unchanged currents.
+        for row in &mut snapshot.current_state_entries {
+            if !matches!(selector_of(row), CurrentSelector::ObjectRedaction { .. }) {
+                *row = index
+                    .ready_selector(
+                        snapshot.realm_id.as_str(),
+                        selector_of(row),
+                        store.current_generation(),
+                    )
+                    .await
+                    .unwrap()
+                    .unwrap();
+            }
+        }
+        FixtureStation::did_web().sign_snapshot(&mut snapshot);
+        let staged = stage(&index, &snapshot, vec![], store.current_generation()).await;
+        store.commit_current_stage_for_test(staged).unwrap();
     }
 
     async fn setup() -> (

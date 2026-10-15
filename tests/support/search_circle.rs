@@ -93,6 +93,65 @@ pub struct Fixture {
 }
 
 impl Fixture {
+    pub fn revise_message(&mut self) {
+        let signer = arkret_test_kit::keys::seeded_signer(
+            "did:web:alice.example".parse().unwrap(),
+            DidUrl::new("did:web:alice.example#ak:device:0196419b-0000-7000-8000-000000000001")
+                .unwrap(),
+        );
+        let event = SignedEventFixtureBuilder::new("ak.message.revise", self.message.event.scope_ref.clone(), self.actor.clone(),
+            json!({"message_id":MessageId::from_event_id(&self.message.event.event_id),"content":{"kind":"ak.content.text","format":"plain","body":"revised private circle needle"}}))
+            .with_created_at(at(6)).sign_verifiable(&signer).unwrap().expect_verifiable();
+        let full = accepted(event, Some(&self.message));
+        let head = self
+            .snapshot
+            .visible_stream_heads
+            .iter_mut()
+            .find(|head| head.stream_ref == full.commit.stream_ref)
+            .unwrap();
+        head.stream_position = full.commit.stream_position;
+        head.commit_id = full.commit.commit_id.clone();
+        self.originals.push(full);
+        seal(&mut self.snapshot);
+    }
+
+    pub fn redact_message_current(&mut self, target: &str) {
+        let payload = json!({"message_id":target});
+        let signer = arkret_test_kit::keys::seeded_signer(
+            "did:web:alice.example".parse().unwrap(),
+            DidUrl::new("did:web:alice.example#ak:device:0196419b-0000-7000-8000-000000000001")
+                .unwrap(),
+        );
+        let event = SignedEventFixtureBuilder::new(
+            "ak.message.redact",
+            self.message.event.scope_ref.clone(),
+            self.actor.clone(),
+            payload.clone(),
+        )
+        .with_created_at(at(7))
+        .sign_verifiable(&signer)
+        .unwrap()
+        .expect_verifiable();
+        let full = accepted(event, self.originals.last());
+        let head = self
+            .snapshot
+            .visible_stream_heads
+            .iter_mut()
+            .find(|head| head.stream_ref == full.commit.stream_ref)
+            .unwrap();
+        head.stream_position = full.commit.stream_position;
+        head.commit_id = full.commit.commit_id.clone();
+        self.snapshot.current_state_entries.push(row(
+            &full,
+            CurrentSelector::ObjectRedaction {
+                target_ref: target.to_owned(),
+            },
+            json!({"assertions":[{"tag_id":format!("{}:0",full.event.event_id),"value":payload}]}),
+        ));
+        self.snapshot.created_at = at(12);
+        seal(&mut self.snapshot);
+    }
+
     pub fn new() -> Self {
         let realm: RealmId = "ak:realm:AY789mrKRCQEVlbVgiTgLdjVO5oCMJiUCrF-D-JlRNxI"
             .parse()
