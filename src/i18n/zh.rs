@@ -887,6 +887,10 @@ pub fn chinese_translations() -> TranslationDict {
         "仅联系人",
     );
     dict.set(
+        "settings.privacy.presence_visibility.consent_only",
+        "仅已明确授权的用户",
+    );
+    dict.set(
         "settings.privacy.presence_visibility.nobody",
         "任何人都不可见（显示为离线）",
     );

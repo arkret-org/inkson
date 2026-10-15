@@ -389,15 +389,34 @@ pub(super) async fn emit_signal(
     let material = material.clone();
     let state_store = state_store.clone();
     with_event_submitter(base, api_token.to_owned(), |sub| async move {
-        sub.send_scope_signal(
-            scope_ref,
-            &authority,
-            &device,
-            &material,
+        if matches!(
             &payload,
-            &state_store,
-        )
-        .await
+            crate::signal::SignalPayload::CallSignal {
+                signal: arkret_sdk::CallSignalData::Invite(_),
+                ..
+            }
+        ) {
+            sub.send_call_invitation(
+                scope_ref,
+                &authority,
+                &device,
+                &material,
+                &payload,
+                &state_store,
+            )
+            .await
+        } else {
+            sub.send_scope_signal(
+                scope_ref,
+                &authority,
+                &device,
+                &material,
+                &payload,
+                &state_store,
+            )
+            .await
+            .map(|_| ())
+        }
     })
     .await
     .map(|_| ())

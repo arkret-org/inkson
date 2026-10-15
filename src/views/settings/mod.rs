@@ -1907,6 +1907,12 @@ pub fn SettingsPanel(
                             }
                             SelectOption::<String> {
                                 index: 2usize,
+                                value: "consent_only".to_string(),
+                                text_value: crate::i18n::tr("settings.privacy.presence_visibility.consent_only"),
+                                {crate::i18n::tr("settings.privacy.presence_visibility.consent_only")}
+                            }
+                            SelectOption::<String> {
+                                index: 3usize,
                                 value: "nobody".to_string(),
                                 text_value: crate::i18n::tr("settings.privacy.presence_visibility.nobody"),
                                 {crate::i18n::tr("settings.privacy.presence_visibility.nobody")}

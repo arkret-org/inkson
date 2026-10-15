@@ -86,6 +86,7 @@ pub struct AdmittedSignal {
     pub signer_verification_method: arkret_sdk::DidUrl,
     /// The scope authorization basis retained from the verified envelope.
     pub product_authority: Option<Box<arkret_sdk::SignalProductAuthority>>,
+    pub call_invitation: Option<Box<arkret_sdk::CallInvitationDeliveryView>>,
     pub authority_commit_id: arkret_sdk::RealmCommitId,
     /// Circle authorization separately binds its parent Realm basis.
     pub parent_realm_authority_commit_id: Option<arkret_sdk::RealmCommitId>,

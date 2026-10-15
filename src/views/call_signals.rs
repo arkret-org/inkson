@@ -64,6 +64,7 @@ pub struct CallSignalHub {
     /// Cleared by `CallPanel` once the ring is presented / answered, or when
     /// the call ends.
     pub incoming_call: Signal<Option<IncomingCallInfo>>,
+    pub invitation_contexts: Signal<BTreeMap<String, arkret_sdk::CallInvitationDeliveryView>>,
     /// Per-call FIFO inbox of non-invite signals awaiting `CallPanel`.
     pub inbox: Signal<BTreeMap<String, VecDeque<CallSignalInboxItem>>>,
     /// Processed-signal dedup set.
@@ -81,6 +82,7 @@ impl CallSignalHub {
     pub fn new() -> Self {
         Self {
             incoming_call: Signal::new(None),
+            invitation_contexts: Signal::new(BTreeMap::new()),
             inbox: Signal::new(BTreeMap::new()),
             seen: Signal::new(BTreeSet::new()),
             last_seq: Signal::new(BTreeMap::new()),
@@ -121,6 +123,7 @@ impl CallSignalHub {
     /// Drop all per-call state (inbox + active flag) when a call ends.
     pub fn forget_call(&mut self, call_id: &str) {
         self.inbox.write().remove(call_id);
+        self.invitation_contexts.write().remove(call_id);
         self.active_calls.write().remove(call_id);
         self.last_seq.write().retain(|key, _| key.1 != call_id);
         let clear = self
@@ -164,18 +167,18 @@ pub fn decode_call_signal(signal: &AdmittedSignal) -> Option<DecodedCallSignal> 
     let arkret_sdk::SignalPlaintext::CallSignal(body) = &signal.payload else {
         return None;
     };
-    // Call routing addresses a human device; an Agent-key endpoint has no
-    // device coordinate to ring and is not a call participant.
-    let arkret_sdk::SignalSequenceEndpoint::AccountDevice { device_id } = signal.sender_endpoint()
-    else {
-        return None;
+    let sender_endpoint = match signal.sender_endpoint() {
+        arkret_sdk::SignalSequenceEndpoint::AccountDevice { device_id } => device_id.to_string(),
+        arkret_sdk::SignalSequenceEndpoint::AgentKey { public_key_digest } => {
+            public_key_digest.to_string()
+        }
     };
     Some(DecodedCallSignal {
         realm_id: signal.scope_ref().realm_id().as_str().to_owned(),
         call_id: body.call_id.as_str().to_owned(),
         seq: body.seq,
         sender_actor: signal.actor_id().signing_principal_id().as_str().to_owned(),
-        sender_device: device_id.as_str().to_owned(),
+        sender_device: sender_endpoint,
         signal: body.signal.clone(),
     })
 }
@@ -206,6 +209,23 @@ pub async fn route_decrypted_call_signals(
         // outbound frames and never resolve our own key here).
         if !local_actor.is_empty() && decoded.sender_actor == local_actor {
             continue;
+        }
+        if matches!(&decoded.signal, arkret_sdk::CallSignalData::Invite(_)) {
+            let Some(delivery) = signal.call_invitation.as_deref() else {
+                continue;
+            };
+            if delivery
+                .validate_for_envelope(
+                    &delivery.request.envelope,
+                    &delivery.invitation.holder_account_id,
+                )
+                .is_err()
+            {
+                continue;
+            }
+            hub.invitation_contexts
+                .write()
+                .insert(decoded.call_id.clone(), delivery.clone());
         }
         route_verified_decoded_signal(hub, decoded, local_actor);
     }

@@ -669,6 +669,10 @@ pub fn english_translations() -> TranslationDict {
         "Contacts only",
     );
     dict.set(
+        "settings.privacy.presence_visibility.consent_only",
+        "Only explicitly authorized people",
+    );
+    dict.set(
         "settings.privacy.presence_visibility.nobody",
         "Nobody (appear offline)",
     );

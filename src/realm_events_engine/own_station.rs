@@ -226,7 +226,11 @@ pub(super) async fn account_frame(
             let pages = match cached_pages {
                 Some(pages) => Some(pages),
                 None => {
-                    match window_pages(&client, &realm_id, &response, &mut replica, window).await {
+                    match crate::runtime::boxed_future_from(|| {
+                        window_pages(&client, &realm_id, &response, &mut replica, window)
+                    })
+                    .await
+                    {
                         Err(error) if error.is_stream_interruption() => {
                             accepted.stream_interruption.get_or_insert(error);
                             continue;

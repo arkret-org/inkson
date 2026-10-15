@@ -125,7 +125,7 @@ pub(super) async fn submit_call_state_participant(
     realm_id: &str,
     call_id: &str,
     actor: &str,
-    device: &str,
+    _device: &str,
     target_state: arkret_sdk::CallLifecycleState,
     session: &JoinedMediaSession,
 ) -> Result<(), String> {
@@ -137,14 +137,14 @@ pub(super) async fn submit_call_state_participant(
             _ => return Err("call participant submission requires connecting or active".to_owned()),
         },
         to: target_state,
+        failure_reason_code: None,
     };
     let (focus, roster_delta) = if target_state == arkret_sdk::CallLifecycleState::Connecting {
         let binding = &session.participant_binding;
         let participant_binding = binding.clone();
         let participant = arkret_sdk::CallParticipant {
-            actor_id: crate::mls_api_helpers::local_account_actor_id(actor)
-                .map_err(|err| err.to_string())?,
-            device_id: device.to_owned(),
+            actor_id: session.roster_identity.actor_id.clone(),
+            device_id: session.roster_identity.device_id.to_string(),
             joined_at: None,
             foci_preferred: Some(vec![session.focus_id.clone()]),
             participant_id: Some(session.participant_id.clone()),
@@ -187,11 +187,24 @@ pub(super) async fn submit_call_state_participant(
     .build_sdk_event("inkson")
     .map_err(|err| err.to_string())?;
     with_authed_api(base, api_token.to_owned(), move |api| async move {
-        api.event_submitter()?.submit_sdk_event(&op).await?;
+        let accepted = api.event_submitter()?.submit_sdk_event(&op).await?;
+        anyhow::ensure!(
+            accepted
+                .commit
+                .as_ref()
+                .is_some_and(|commit| commit.event_ref.as_str() == accepted.event_id),
+            "Call roster submission has no accepted Commit"
+        );
         Ok(())
     })
     .await
-    .map_err(|err| err.display())
+    .map_err(|err| err.display())?;
+    if target_state == arkret_sdk::CallLifecycleState::Connecting {
+        crate::media::rtc::persist_accepted_media_receipt(session)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 pub(super) fn media_error_label(err: RtcClientError) -> String {

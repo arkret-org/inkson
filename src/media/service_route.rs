@@ -498,40 +498,45 @@ pub(crate) fn resolve_route_with_material<S: ServiceRouteStateStore>(
 /// Fail-closed: any fetch, verification, method state or quarantine failure is a
 /// hard error — the caller must surface it and refuse the join, never degrade
 /// to an empty route set.
+pub type VerifiedMediaBinding =
+    arkret_sdk::http_client::own_station_results::BoundOwnStationResponse<
+        (
+            arkret_sdk::MediaServiceBindingRequestBody,
+            arkret_sdk::DidCoreId,
+        ),
+        arkret_sdk::MediaServiceBindingOutcome,
+    >;
+
+pub async fn binding_for_http(
+    http: &arkret_sdk::http_client::Client,
+    realm: &arkret_sdk::RealmId,
+    service: &arkret_sdk::DidCoreId,
+) -> anyhow::Result<VerifiedMediaBinding> {
+    let client = crate::transport::own_station_results::client_for_http(http).await?;
+    let request = arkret_sdk::MediaServiceBindingRequestBody {
+        request_id: arkret_sdk::RequestId::new_v7_at(crate::clock::now_unix_ms()),
+        realm_id: realm.clone(),
+    };
+    Ok(client.media_service_binding(&request, service).await?)
+}
+
 pub async fn evaluate_media_routes(
+    own_station_base: &str,
+    realm: &str,
     media_service_ids: &[String],
-    endpoint_origins_by_service: &BTreeMap<String, Vec<String>>,
-) -> anyhow::Result<Vec<RouteResolution>> {
+) -> anyhow::Result<Vec<VerifiedMediaBinding>> {
     anyhow::ensure!(
         !media_service_ids.is_empty(),
-        "realm has no anchored media service"
+        "Realm has no accepted media service"
     );
-    let http = reqwest::Client::new();
-    let mut evaluator = ServiceRouteEvaluator::new(
-        InksonServiceRouteStore::open_default(),
-        chrono::Duration::minutes(5),
-    )
-    .map_err(|error| anyhow::anyhow!("service route evaluator init failed: {error}"))?;
-    let mut routes = Vec::with_capacity(media_service_ids.len());
-    for id in media_service_ids {
-        let service_id = DidCoreId::new(id.clone())
-            .map_err(|error| anyhow::anyhow!("invalid media service id {id}: {error}"))?;
-        let origins = endpoint_origins_by_service
-            .get(id)
-            .cloned()
-            .unwrap_or_default();
-        let now = Utc::now();
-        let material = fetch_route_material(&http, &service_id, &origins, now)
-            .await
-            .with_context(|| format!("media route material fetch failed for {id}"))?;
-        routes.push(resolve_route_with_material(
-            &mut evaluator,
-            &service_id,
-            material,
-            now,
-        )?);
+    let http = crate::identity::session_refresh::provide_authenticated_sdk_client(own_station_base)
+        .await?;
+    let realm = arkret_sdk::RealmId::new(realm.to_owned())?;
+    let mut bindings = Vec::new();
+    for service in media_service_ids {
+        bindings.push(binding_for_http(&http, &realm, &DidCoreId::new(service.clone())?).await?);
     }
-    Ok(routes)
+    Ok(bindings)
 }
 
 /// Fresh method-scoped fetch shared by media and Directory consumers.

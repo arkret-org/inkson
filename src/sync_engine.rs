@@ -386,6 +386,13 @@ pub struct NativeAccountHost {
 
 #[cfg(not(target_arch = "wasm32"))]
 impl NativeAccountHost {
+    pub(crate) fn call_http_client(&self) -> arkret_sdk::http_client::Client {
+        self.http.clone()
+    }
+    pub(crate) fn active_account_context(&self) -> crate::config::ActiveAccountContext {
+        self.projector.ctx.account.clone()
+    }
+
     /// Refresh this host's active endpoint through the ordinary signed keys
     /// directory before rebuilding author-bound private projections.
     pub async fn refresh_authoring_authority(&self) -> anyhow::Result<()> {
@@ -1274,48 +1281,60 @@ impl InksonAccountProjector {
     /// Invite-delivery recovery, MLS reconciliation, calls and to-device
     /// acknowledgement are not covered WebSocket operations, so they always use
     /// the canonical HTTPS client the rail keeps.
-    async fn post_commit(&self, response: &AccountFrameStep) -> garth::Result<()> {
-        let http = self.transport.http().http();
-        if !self
-            .drain_durable_outbound(
-                changed_device_accounts(&response.device_lists())
-                    .contains(&self.ctx.account.authority),
-            )
-            .await?
-        {
-            return Ok(());
-        }
+    fn post_commit<'a>(
+        &'a self,
+        response: &'a AccountFrameStep,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = garth::Result<()>> + 'a>> {
+        crate::runtime::boxed_future_from(|| async move {
+            let http = self.transport.http().http();
+            if !self
+                .drain_durable_outbound(
+                    changed_device_accounts(&response.device_lists())
+                        .contains(&self.ctx.account.authority),
+                )
+                .await?
+            {
+                return Ok(());
+            }
 
-        let agent_evidence_changed =
-            crate::identity::agent_signer_evidence::prefetch_durable_historical_agent_keys(
-                http,
-                &self.ctx.state_store,
-            )
-            .await;
+            let agent_evidence_changed =
+                crate::identity::agent_signer_evidence::prefetch_durable_historical_agent_keys(
+                    http,
+                    &self.ctx.state_store,
+                )
+                .await;
 
-        // A durable frame can contain only batch context. Product projection
-        // remains delta-driven after the outbound retry pass above.
-        if response.is_empty() {
-            self.reconcile_mls_scopes(response).await;
+            // A durable frame can contain only batch context. Product projection
+            // remains delta-driven after the outbound retry pass above.
+            if response.is_empty() {
+                crate::runtime::boxed_future_from(|| self.reconcile_mls_scopes(response)).await;
+                if agent_evidence_changed {
+                    refresh_projection_events_from_sync_response(response, &self.ctx);
+                }
+                return Ok(());
+            }
+            let api = TransportClient::from_http(
+                http.clone(),
+                crate::transport::RequestContext::new(self.ctx.token.get()),
+            );
             if agent_evidence_changed {
                 refresh_projection_events_from_sync_response(response, &self.ctx);
             }
-            return Ok(());
-        }
-        let api = TransportClient::from_http(
-            http.clone(),
-            crate::transport::RequestContext::new(self.ctx.token.get()),
-        );
-        if agent_evidence_changed {
-            refresh_projection_events_from_sync_response(response, &self.ctx);
-        }
-        prefetch_member_identity_proof_keys(&api, response, self.ctx.state_store.clone()).await;
-        if let Err(error) = process_to_device_delivery(&api, response, &self.ctx).await {
-            return self.defer(error);
-        }
+            crate::runtime::boxed_future_from(|| {
+                prefetch_member_identity_proof_keys(&api, response, self.ctx.state_store.clone())
+            })
+            .await;
+            if let Err(error) = crate::runtime::boxed_future_from(|| {
+                process_to_device_delivery(&api, response, &self.ctx)
+            })
+            .await
+            {
+                return self.defer(error);
+            }
 
-        self.reconcile_mls_scopes(response).await;
-        Ok(())
+            crate::runtime::boxed_future_from(|| self.reconcile_mls_scopes(response)).await;
+            Ok(())
+        })
     }
 
     /// Retry durable sends only while the account and local device remain current.
@@ -1341,10 +1360,12 @@ impl InksonAccountProjector {
         }
         let submitter = crate::event_submit::EventSubmitter::new(http.clone())
             .with_state_store(self.ctx.state_store.clone());
-        if let Err(error) = submitter.drain_outbound().await {
+        if let Err(error) = crate::runtime::boxed_future_from(|| submitter.drain_outbound()).await {
             tracing::debug!(?error, "account checkpoint deferred durable outbound drain");
         }
-        if let Err(error) = submitter.drain_mls_outbound().await {
+        if let Err(error) =
+            crate::runtime::boxed_future_from(|| submitter.drain_mls_outbound()).await
+        {
             tracing::debug!(?error, "account checkpoint deferred MLS outbound drain");
         }
 
@@ -1364,18 +1385,22 @@ impl InksonAccountProjector {
             || removal_schedule_lock(&self.removal_schedule)
                 .is_some_and(|schedule| schedule.has_pending())
         {
-            run_circle_scope_rotate_pass(
-                self.start_generation,
-                self.generation.clone(),
-                &self.ctx,
-                &realm_ids,
-                &self.removal_schedule,
-            )
+            crate::runtime::boxed_future_from(|| {
+                run_circle_scope_rotate_pass(
+                    self.start_generation,
+                    self.generation.clone(),
+                    &self.ctx,
+                    &realm_ids,
+                    &self.removal_schedule,
+                )
+            })
             .await;
             // This remains an opportunistic durability pass, driven by new
             // durable Realm work or an explicit pending reconciliation.
-            run_idle_self_update_pass(self.start_generation, self.generation.clone(), &self.ctx)
-                .await;
+            crate::runtime::boxed_future_from(|| {
+                run_idle_self_update_pass(self.start_generation, self.generation.clone(), &self.ctx)
+            })
+            .await;
         }
     }
 
@@ -1496,102 +1521,108 @@ impl AccountBatchProjector for InksonAccountProjector {
 }
 
 impl InksonAccountProjector {
-    async fn project_verified_batch(
-        &self,
-        batch: &AccountSubscribeBatch,
+    fn project_verified_batch<'a>(
+        &'a self,
+        batch: &'a AccountSubscribeBatch,
         next_checkpoint: Option<(garth::CursorScope, garth::AccountCursorCheckpoint)>,
-    ) -> garth::Result<()> {
-        let http = self.transport.http().http();
-        // Verification performs independent reads. A live Realm publisher can
-        // advance the shared pointer while those reads await their responses.
-        // Restart from the durable Account cursor instead of installing an old
-        // cut or classifying this local race as a Station protocol violation.
-        let mut generation = self
-            .ctx
-            .state_store
-            .read(LocalStateStore::current_generation);
-        let mut recovery = self
-            .recovery_history
-            .lock()
-            .await
-            .take()
-            .filter(|(saved_generation, _)| *saved_generation == generation)
-            .map(|(_, history)| history)
-            .unwrap_or_default();
-        let mut verified = Vec::with_capacity(batch.frames.len());
-        for frame in &batch.frames {
-            verified.push(
-                crate::realm_events_engine::verify_account_frame_recovering(
-                    http,
-                    frame,
-                    &mut recovery,
-                )
-                .await?,
-            );
-        }
-        if self
-            .ctx
-            .state_store
-            .read(LocalStateStore::current_generation)
-            != generation
-        {
-            return Err(garth::Error::AuthorityCutBehind);
-        }
-        self.validate_station_cas_batch(batch).await?;
-        let interruption = verified
-            .iter_mut()
-            .find_map(|proof| proof.take_stream_interruption());
-        if let Some(error) = interruption {
-            // Each independent verified prefix can advance its history without
-            // claiming a complete Account cut. Keep current, Account cursor,
-            // Station CAS and recipient ACK untouched until refetch succeeds.
-            if !self.fence() {
-                return Err(garth::Error::AuthorityCutBehind);
-            }
-            self.ctx
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = garth::Result<()>> + 'a>> {
+        crate::runtime::boxed_future_from(|| async move {
+            let http = self.transport.http().http();
+            // Verification performs independent reads. A live Realm publisher can
+            // advance the shared pointer while those reads await their responses.
+            // Restart from the durable Account cursor instead of installing an old
+            // cut or classifying this local race as a Station protocol violation.
+            let mut generation = self
+                .ctx
                 .state_store
-                .write(|store| {
-                    verified[0].project_transaction(store, |store| {
-                        if store.current_generation() != generation {
-                            return Err("current generation changed during stream recovery".into());
-                        }
-                        for proof in &verified {
-                            proof.stage_independent_public_history(store)?;
-                        }
-                        Ok(())
-                    })
-                })
-                .map_err(garth::Error::Storage)?;
-            await_account_state_durable(&self.ctx, "independent stream history")
+                .read(LocalStateStore::current_generation);
+            let mut recovery = self
+                .recovery_history
+                .lock()
                 .await
-                .map_err(|error| garth::Error::Storage(error.to_string()))?;
-            if !self.fence()
-                || self
-                    .ctx
-                    .state_store
-                    .read(LocalStateStore::current_generation)
-                    != generation
+                .take()
+                .filter(|(saved_generation, _)| *saved_generation == generation)
+                .map(|(_, history)| history)
+                .unwrap_or_default();
+            let mut verified = Vec::with_capacity(batch.frames.len());
+            for frame in &batch.frames {
+                verified.push(
+                    crate::runtime::boxed_future_from(|| {
+                        crate::realm_events_engine::verify_account_frame_recovering(
+                            http,
+                            frame,
+                            &mut recovery,
+                        )
+                    })
+                    .await?,
+                );
+            }
+            if self
+                .ctx
+                .state_store
+                .read(LocalStateStore::current_generation)
+                != generation
             {
                 return Err(garth::Error::AuthorityCutBehind);
             }
-            let mut history = crate::realm_events_engine::AccountRecoveryHistory::default();
-            for proof in &mut verified {
-                history.retain(proof)?;
+            self.validate_station_cas_batch(batch).await?;
+            let interruption = verified
+                .iter_mut()
+                .find_map(|proof| proof.take_stream_interruption());
+            if let Some(error) = interruption {
+                // Each independent verified prefix can advance its history without
+                // claiming a complete Account cut. Keep current, Account cursor,
+                // Station CAS and recipient ACK untouched until refetch succeeds.
+                if !self.fence() {
+                    return Err(garth::Error::AuthorityCutBehind);
+                }
+                self.ctx
+                    .state_store
+                    .write(|store| {
+                        verified[0].project_transaction(store, |store| {
+                            if store.current_generation() != generation {
+                                return Err(
+                                    "current generation changed during stream recovery".into()
+                                );
+                            }
+                            for proof in &verified {
+                                proof.stage_independent_public_history(store)?;
+                            }
+                            Ok(())
+                        })
+                    })
+                    .map_err(garth::Error::Storage)?;
+                await_account_state_durable(&self.ctx, "independent stream history")
+                    .await
+                    .map_err(|error| garth::Error::Storage(error.to_string()))?;
+                if !self.fence()
+                    || self
+                        .ctx
+                        .state_store
+                        .read(LocalStateStore::current_generation)
+                        != generation
+                {
+                    return Err(garth::Error::AuthorityCutBehind);
+                }
+                let mut history = crate::realm_events_engine::AccountRecoveryHistory::default();
+                for proof in &mut verified {
+                    history.retain(proof)?;
+                }
+                *self.recovery_history.lock().await = Some((generation, history));
+                return Err(error);
             }
-            *self.recovery_history.lock().await = Some((generation, history));
-            return Err(error);
-        }
-        for (index, (frame, proof)) in batch.frames.iter().zip(verified.iter()).enumerate() {
-            let final_checkpoint = (index + 1 == batch.frames.len())
-                .then_some(next_checkpoint.as_ref())
-                .flatten();
-            self.project_frame(frame, &batch.cursor, proof, final_checkpoint, generation)
-                .await?;
-            generation = generation
-                .checked_add(1)
-                .ok_or_else(|| garth::Error::Protocol("current generation exhausted".into()))?;
-        }
-        Ok(())
+            for (index, (frame, proof)) in batch.frames.iter().zip(verified.iter()).enumerate() {
+                let final_checkpoint = (index + 1 == batch.frames.len())
+                    .then_some(next_checkpoint.as_ref())
+                    .flatten();
+                self.project_frame(frame, &batch.cursor, proof, final_checkpoint, generation)
+                    .await?;
+                generation = generation
+                    .checked_add(1)
+                    .ok_or_else(|| garth::Error::Protocol("current generation exhausted".into()))?;
+            }
+            Ok(())
+        })
     }
 }
 

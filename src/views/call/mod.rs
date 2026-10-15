@@ -22,15 +22,9 @@ mod projection;
 mod signaling;
 mod types;
 
-/// Whether the host can turn an accepted media-service binding into the
-/// authenticated `garth::RouteResolution` required before token exchange.
-///
-/// Inkson now ships that host adapter: `crate::media::service_route` fetches
-/// and verifies the media service's signed resolution + describe material and
-/// runs it through `garth::ServiceRouteEvaluator` (durable anti-rollback
-/// floor, gap/fork quarantine) before any token exchange. The call surface is
-/// therefore reachable; an individual join still fails closed with a visible
-/// error when route evaluation cannot produce verified material.
+/// The host consumes the registered own-Station media binding result, tied
+/// to its active account and the Realm's accepted issuer. Direct DID material
+/// is not media credential authority for the ordinary logged-in client.
 #[must_use]
 pub const fn media_route_adapter_available() -> bool {
     true

@@ -735,6 +735,12 @@ impl LocalStateStore {
         }
     }
 
+    /// Reopen the normal native root to exercise process-restart restoration.
+    #[cfg(all(not(target_arch = "wasm32"), feature = "spec-conformance"))]
+    pub fn conformance_reopen(&self) -> Self {
+        Self::with_path(self.path.clone())
+    }
+
     /// The exact native shard selected by the normal persistence boundary.
     #[cfg(all(not(target_arch = "wasm32"), feature = "spec-conformance"))]
     pub fn conformance_account_state_path(&self) -> PathBuf {

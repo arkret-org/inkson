@@ -206,7 +206,10 @@ fn target_of(selector: &CurrentSelector) -> CurrentTarget {
         | CurrentSelector::CalendarScheduleSource { strand_id } => CurrentTarget::Strand {
             strand_id: strand_id.clone(),
         },
-        CurrentSelector::CallState { call_id } => {
+        CurrentSelector::CallState { call_id }
+        | CurrentSelector::CallFocus { call_id }
+        | CurrentSelector::CallRoster { call_id }
+        | CurrentSelector::CallModeration { call_id } => {
             match arkret_sdk::EventId::from_token_bytes(call_id.token_bytes()) {
                 Ok(event_id) => CurrentTarget::Event { event_id },
                 Err(_) => CurrentTarget::Selector {
@@ -1801,6 +1804,7 @@ impl CurrentIndex {
             &snapshots,
             &|| Ok(()),
             None,
+            None,
         )
         .await
     }
@@ -1858,6 +1862,57 @@ impl CurrentIndex {
             &snapshots,
             &check,
             Some(response.clone()),
+            None,
+        )
+        .await
+    }
+
+    pub(crate) async fn stage_consent_current(
+        &self,
+        committed_generation: impl FnOnce() -> anyhow::Result<u64>,
+        response: &arkret_sdk::http_client::own_station_results::BoundOwnStationResponse<
+            arkret_sdk::ConsentCurrentReadRequestBody,
+            arkret_sdk::ConsentCurrentReadOutcome,
+        >,
+        guard: &dyn Fn() -> anyhow::Result<()>,
+    ) -> anyhow::Result<CurrentStage> {
+        let check = || -> anyhow::Result<()> {
+            guard()?;
+            let value = response.value()?;
+            value.validate_for_request(
+                response.request(),
+                value.governance_generation,
+                crate::clock::now_utc(),
+            )?;
+            Ok(())
+        };
+        check()?;
+        let value = response.value()?;
+        let rows = value
+            .consents
+            .iter()
+            .map(|row| serde_json::from_value::<TypedCurrentRow>(serde_json::to_value(row)?))
+            .collect::<Result<Vec<_>, _>>()?;
+        let entry = arkret_sdk::sync::RealmSyncEntry {
+            current: Some(
+                arkret_models_collaboration::sync_frames::current_results::AccountCurrentView {
+                    realm_id: value.realm_id.clone(),
+                    governance_generation: value.governance_generation,
+                    stream_heads: vec![value.effective_stream_head.clone()],
+                    entries: rows,
+                },
+            ),
+            ..Default::default()
+        };
+        self.stage_current_install(
+            committed_generation,
+            None,
+            Some((value.realm_id.to_string(), entry)),
+            &Default::default(),
+            &Default::default(),
+            &check,
+            None,
+            Some(response.clone()),
         )
         .await
     }
@@ -1874,6 +1929,12 @@ impl CurrentIndex {
             arkret_sdk::http_client::own_station_results::BoundOwnStationResponse<
                 arkret_sdk::RealmId,
                 arkret_sdk::RealmStateSnapshot,
+            >,
+        >,
+        targeted_consent: Option<
+            arkret_sdk::http_client::own_station_results::BoundOwnStationResponse<
+                arkret_sdk::ConsentCurrentReadRequestBody,
+                arkret_sdk::ConsentCurrentReadOutcome,
             >,
         >,
     ) -> anyhow::Result<CurrentStage> {
@@ -1909,6 +1970,7 @@ impl CurrentIndex {
         let gc: GcState = self.load_state(&self.gc_state_key()).await?;
         guard()?;
         if frame.is_none()
+            && targeted_consent.is_none()
             && let Some((realm, _)) = &standalone
         {
             let snapshot = snapshots.get(realm).copied().ok_or_else(|| {
@@ -2129,7 +2191,9 @@ impl CurrentIndex {
                         );
                         if current.governance_generation > installed {
                             anyhow::ensure!(
-                                incoming.baseline.is_some() || snapshot.is_some(),
+                                incoming.baseline.is_some()
+                                    || snapshot.is_some()
+                                    || targeted_consent.is_some(),
                                 "governance generation changed without a fresh baseline"
                             );
                             previous.begin_governance_generation(current.governance_generation);
@@ -2168,7 +2232,7 @@ impl CurrentIndex {
                     .map(|current| current.entries.clone())
                     .unwrap_or_default();
                 anyhow::ensure!(
-                    snapshot.is_some() || entries.len() <= 100,
+                    snapshot.is_some() || targeted_consent.is_some() || entries.len() <= 100,
                     "current selector limit exceeded"
                 );
                 for entry in &entries {
@@ -2356,10 +2420,16 @@ impl CurrentIndex {
         };
         guard()?;
         let stage = complete_independently(async move {
+            if let Some(bound) = &targeted_consent {
+                bound.value()?;
+            }
             if let Some(bound) = &bound {
                 bound.value()?;
             }
             backend.apply(deletes, writes.into_iter().collect()).await?;
+            if let Some(bound) = &targeted_consent {
+                bound.value()?;
+            }
             if let Some(bound) = &bound {
                 bound.value()?;
             }

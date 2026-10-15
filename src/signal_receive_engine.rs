@@ -388,6 +388,8 @@ pub fn live_signal_projection_key(signal: &AdmittedSignal) -> garth::Result<Stri
 
 /// Routes admitted plaintext to the three product consumers.
 pub(crate) struct InksonSignalSink {
+    pub(crate) call_account: Option<crate::config::ActiveAccountContext>,
+    pub(crate) call_http: Option<arkret_sdk::http_client::Client>,
     pub(crate) state_store: crate::runtime::input::StateStoreHandle,
     pub(crate) products: SignalProductRouter,
     pub(crate) live: Mutex<LiveSignalProjection>,
@@ -428,6 +430,7 @@ impl InksonSignalSink {
             authority_commit_id,
             parent_realm_authority_commit_id,
             product_authority,
+            call_invitation,
             signer_verification_method,
         } = outcome
         else {
@@ -439,6 +442,7 @@ impl InksonSignalSink {
             authority_commit_id,
             parent_realm_authority_commit_id,
             product_authority,
+            call_invitation,
             signer_verification_method,
             payload: *plaintext,
         };
@@ -898,11 +902,31 @@ impl InksonSignalSink {
         let same_attempt = self
             .state_store
             .read(|store| call_current_attempt_matches(store, &authority, generation));
-        Ok(current.is_some() && same_attempt)
+        Ok(current.is_some_and(|state| {
+            !matches!(
+                state.to,
+                arkret_sdk::CallLifecycleState::Ended
+                    | arkret_sdk::CallLifecycleState::Failed
+                    | arkret_sdk::CallLifecycleState::Cancelled
+                    | arkret_sdk::CallLifecycleState::Missed
+            )
+        }) && same_attempt)
     }
 
     /// The product boundary runs only after the accepted Call current gate.
     async fn dispatch_call_product(&self, signal: &AdmittedSignal) -> garth::Result<()> {
+        if signal.call_invitation.is_some()
+            && !matches!(&signal.payload, arkret_sdk::SignalPlaintext::CallSignal(call)
+                if matches!(&call.signal, arkret_sdk::CallSignalData::Invite(_)))
+        {
+            return Ok(());
+        }
+        if matches!(&signal.payload, arkret_sdk::SignalPlaintext::CallSignal(call)
+            if matches!(&call.signal, arkret_sdk::CallSignalData::Invite(_)))
+            && !self.call_consent_at_ring(signal).await.unwrap_or(false)
+        {
+            return Ok(());
+        }
         if matches!(&signal.payload, arkret_sdk::SignalPlaintext::CallSignal(call)
             if matches!(&call.signal, arkret_sdk::CallSignalData::Invite(_)))
             && self.state_store.read(|store| {
@@ -918,6 +942,88 @@ impl InksonSignalSink {
             .call_signal(signal, decrypted_body_value(signal)?)
             .await;
         Ok(())
+    }
+
+    async fn call_consent_at_ring(&self, signal: &AdmittedSignal) -> anyhow::Result<bool> {
+        let Some(account) = &self.call_account else {
+            return Ok(false);
+        };
+        let Some(delivery) = &signal.call_invitation else {
+            return Ok(false);
+        };
+        let arkret_sdk::SignalPlaintext::CallSignal(call) = &signal.payload else {
+            return Ok(false);
+        };
+        let arkret_sdk::CallSignalData::Invite(invite) = &call.signal else {
+            return Ok(false);
+        };
+        if delivery.invitation.holder_account_id != account.authority
+            || delivery.invitation.call_id != call.call_id
+            || delivery.invitation.scope_ref != *signal.scope_ref()
+            || delivery.invitation.inviter_actor_id != *signal.actor_id()
+            || delivery.request.subject_device_id != account.device_id
+            || delivery.invitation.media
+                != (arkret_sdk::CallInvitationMedia {
+                    audio: invite.media.audio,
+                    video: invite.media.video,
+                    screen: invite.media.screen.unwrap_or(false),
+                })
+            || delivery.invitation.expires_at <= crate::clock::now_utc()
+            || signal.expires_at <= crate::clock::now_utc()
+        {
+            return Ok(false);
+        }
+        let session_epoch = crate::identity::device_directory::session_cache_epoch();
+        let guard = || -> anyhow::Result<()> {
+            anyhow::ensure!(
+                self.state_store.read(|s| s.active_authority()) == Some(account.authority.clone())
+                    && !self.state_store.read(|s| s.current_reset_required())
+                    && crate::identity::device_directory::session_cache_epoch() == session_epoch,
+                "ring attempt changed its account/device/current session"
+            );
+            Ok(())
+        };
+        guard()?;
+        let http = match &self.call_http {
+            Some(http) => http.clone(),
+            None => {
+                crate::identity::session_refresh::provide_authenticated_sdk_client(
+                    account.server_url.as_str(),
+                )
+                .await?
+            }
+        };
+        let client = crate::transport::own_station_results::client_for_http(&http).await?;
+        let request = arkret_sdk::ConsentCurrentReadRequestBody {
+            holder_account_id: account.authority.clone(),
+            peer: arkret_sdk::ConsentPeer::Actor {
+                actor_id: signal.actor_id().clone(),
+            },
+            consent_scope: delivery.invitation.media.consent_scope(),
+            audience_actor_id: arkret_sdk::ActorId::service(account.authority.station_id.clone()),
+            nonce: crate::random::base64url_token(32, "Consent read nonce unavailable")?,
+        };
+        let response = client.consent_current(&request).await?;
+        guard()?;
+        let permitted = install_call_consent_current(
+            &self.state_store,
+            account,
+            &response,
+            session_epoch,
+            &guard,
+        )
+        .await?;
+        // A fresh holder read cannot rehabilitate product material issued by
+        // a previous authority generation or outside its original window.
+        Ok(permitted
+            && delivery
+                .outcome
+                .validate_for_request(
+                    &delivery.request,
+                    response.value()?.governance_generation,
+                    crate::clock::now_utc(),
+                )
+                .is_ok())
     }
 
     /// Drop presence/typing bodies whose effective TTL has passed.
@@ -1134,6 +1240,8 @@ pub async fn run_signal_receive_engine(
         ctx.account.device_id.clone(),
     );
     let sink = InksonSignalSink {
+        call_account: Some(ctx.account.clone()),
+        call_http: None,
         state_store: ctx.state_store.clone(),
         products: ctx.products.clone(),
         live: Mutex::new(LiveSignalProjection::new()),
@@ -1418,6 +1526,8 @@ mod tests {
         let read = store.clone();
         let write = store.clone();
         let sink = InksonSignalSink {
+            call_account: None,
+            call_http: None,
             state_store: crate::runtime::input::StateStoreHandle::new(
                 move |consume| consume(&read.lock().unwrap()),
                 move |consume| consume(&mut write.lock().unwrap()),
@@ -1460,6 +1570,7 @@ mod tests {
             .expect("test plaintext matches its registered closed profile");
         assert_eq!(payload.kind().as_str(), kind);
         AdmittedSignal {
+            call_invitation: None,
             signer_verification_method: arkret_sdk::DidUrl::new("did:web:alice.example#device-1")
                 .unwrap(),
             product_authority: None,
@@ -1617,6 +1728,8 @@ mod tests {
         let read = store.clone();
         let write = store.clone();
         let sink = InksonSignalSink {
+            call_account: None,
+            call_http: None,
             state_store: crate::runtime::input::StateStoreHandle::new(
                 move |consume| consume(&read.lock().unwrap()),
                 move |consume| consume(&mut write.lock().unwrap()),
@@ -1877,6 +1990,8 @@ mod tests {
         let read = store.clone();
         let write = store.clone();
         let sink = InksonSignalSink {
+            call_account: None,
+            call_http: None,
             state_store: crate::runtime::input::StateStoreHandle::new(
                 move |consume| consume(&read.lock().unwrap()),
                 move |consume| consume(&mut write.lock().unwrap()),
@@ -1926,6 +2041,8 @@ mod tests {
         let read = store.clone();
         let write = store.clone();
         let sink = InksonSignalSink {
+            call_account: None,
+            call_http: None,
             state_store: crate::runtime::input::StateStoreHandle::new(
                 move |consume| consume(&read.lock().unwrap()),
                 move |consume| consume(&mut write.lock().unwrap()),
@@ -1992,6 +2109,8 @@ mod tests {
             let products = SignalProductRouter::default();
             products.install(calls.clone());
             let sink = InksonSignalSink {
+                call_account: None,
+                call_http: None,
                 state_store,
                 products,
                 live: Mutex::new(Default::default()),
@@ -2003,6 +2122,7 @@ mod tests {
                 authority_commit_id,
                 parent_realm_authority_commit_id,
                 product_authority,
+                call_invitation,
                 signer_verification_method,
             } = outcome
             else {
@@ -2013,6 +2133,7 @@ mod tests {
                 authority_commit_id,
                 parent_realm_authority_commit_id,
                 product_authority,
+                call_invitation,
                 signer_verification_method,
                 payload: *plaintext,
                 expires_at: effective_expires_at,
@@ -2224,4 +2345,93 @@ mod tests {
             json!(arkret_sdk::canonical::format_timestamp_canonical(at(30)))
         );
     }
+}
+
+/// Install the sealed complete holder read and enforce its persisted high-water.
+pub(crate) async fn install_call_consent_current(
+    state_store: &crate::runtime::input::StateStoreHandle,
+    account: &crate::config::ActiveAccountContext,
+    response: &arkret_sdk::http_client::own_station_results::BoundOwnStationResponse<
+        arkret_sdk::ConsentCurrentReadRequestBody,
+        arkret_sdk::ConsentCurrentReadOutcome,
+    >,
+    session_epoch: u64,
+    guard: &dyn Fn() -> anyhow::Result<()>,
+) -> anyhow::Result<bool> {
+    install_consent_current_for_holder(
+        state_store,
+        &account.authority,
+        &account.principal_control_realm_id,
+        response,
+        session_epoch,
+        guard,
+    )
+    .await
+}
+
+pub(crate) async fn install_consent_current_for_holder(
+    state_store: &crate::runtime::input::StateStoreHandle,
+    holder: &arkret_sdk::AccountId,
+    pcr_realm: &arkret_sdk::RealmId,
+    response: &arkret_sdk::http_client::own_station_results::BoundOwnStationResponse<
+        arkret_sdk::ConsentCurrentReadRequestBody,
+        arkret_sdk::ConsentCurrentReadOutcome,
+    >,
+    session_epoch: u64,
+    guard: &dyn Fn() -> anyhow::Result<()>,
+) -> anyhow::Result<bool> {
+    guard()?;
+    anyhow::ensure!(
+        response.value()?.realm_id == *pcr_realm,
+        "Consent current differs from accepted holder PCR"
+    );
+    let index = crate::state::CurrentIndex::open_committed(
+        holder,
+        state_store.read(|s| s.current_index_location()),
+        || Ok(state_store.read(|s| s.current_generation())),
+    )
+    .await?;
+    let mut stage = index
+        .stage_consent_current(
+            || Ok(state_store.read(|s| s.current_generation())),
+            &response,
+            &guard,
+        )
+        .await?;
+    state_store
+        .write(|store| {
+            store.verified_projection_transaction(|store| {
+                if store.active_authority() != Some(holder.clone())
+                    || store.current_reset_required()
+                    || crate::identity::device_directory::session_cache_epoch() != session_epoch
+                {
+                    return Err("ring attempt changed before installation".to_owned());
+                }
+                response.value().map_err(|e| e.to_string())?;
+                stage.arm_account_commit();
+                store.set_current_generation(stage.generation());
+                Ok(())
+            })
+        })
+        .map_err(anyhow::Error::msg)?;
+    let durable = state_store.read(|s| s.begin_durable_flush())?.wait().await;
+    if let Err(error) = durable {
+        index.poison();
+        return Err(anyhow::anyhow!(error));
+    }
+    stage.finish();
+    guard()?;
+    let progress = index
+        .read_progress(response.value()?.realm_id.as_str())
+        .await?;
+    if progress.observed_governance_generation != Some(response.value()?.governance_generation)
+        || !progress
+            .observed_heads
+            .contains(&response.value()?.effective_stream_head)
+    {
+        return Ok(false);
+    }
+    Ok(response
+        .value()?
+        .permits(response.request(), crate::clock::now_utc()))
 }

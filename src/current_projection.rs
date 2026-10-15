@@ -90,6 +90,90 @@ impl ScopeMlsCurrent {
 }
 
 impl RealmCurrentView {
+    /// Fold the complete accepted roster, including leave assertions retained
+    /// by a cold snapshot. Raw Event history cannot establish this current.
+    pub(crate) fn call_roster(
+        &self,
+        call: &arkret_sdk::CallId,
+    ) -> anyhow::Result<Option<Vec<arkret_sdk::CallParticipant>>> {
+        use arkret_models_collaboration::events_payloads::call::CallRosterCurrentValue;
+        if !self.complete_cut {
+            return Ok(None);
+        }
+        let Some(TypedCurrentRow::Value {
+            source_stream_ref: call_stream,
+            value: lifecycle,
+            ..
+        }) = entry_for(
+            &self.entries,
+            &CurrentSelector::CallState {
+                call_id: call.clone(),
+            },
+        )
+        else {
+            return Ok(None);
+        };
+        anyhow::ensure!(
+            call_stream.realm_id().as_str() == self.realm_id,
+            "Call current belongs to another Realm"
+        );
+        let lifecycle: arkret_sdk::CallStateCurrentValue =
+            serde_json::from_value(lifecycle.clone())?;
+        lifecycle.validate().map_err(anyhow::Error::msg)?;
+        let Some(TypedCurrentRow::Value {
+            source_stream_ref,
+            revision,
+            value,
+            ..
+        }) = entry_for(
+            &self.entries,
+            &CurrentSelector::CallRoster {
+                call_id: call.clone(),
+            },
+        )
+        else {
+            return Ok(Some(Vec::new()));
+        };
+        anyhow::ensure!(
+            source_stream_ref == call_stream,
+            "Call roster scope differs from its lifecycle"
+        );
+        let roster: CallRosterCurrentValue = serde_json::from_value(value.clone())?;
+        roster.validate_sources(source_stream_ref, revision)?;
+        Ok(Some(
+            roster
+                .active_participants()
+                .into_iter()
+                .map(|(p, _)| p)
+                .collect(),
+        ))
+    }
+
+    pub(crate) fn media_service(
+        &self,
+    ) -> anyhow::Result<Option<arkret_models_collaboration::events_payloads::RealmMediaServiceValue>>
+    {
+        if !self.complete_cut {
+            return Ok(None);
+        }
+        let Some(TypedCurrentRow::Value {
+            source_stream_ref,
+            value,
+            ..
+        }) = entry_for(&self.entries, &CurrentSelector::RealmMediaService)
+        else {
+            return Ok(None);
+        };
+        anyhow::ensure!(
+            source_stream_ref
+                == &arkret_wire::CommitStreamRef::Realm {
+                    realm_id: RealmId::new(self.realm_id.clone())?
+                },
+            "Media service current belongs to another stream"
+        );
+        Ok(Some(serde_json::from_value(value.clone())?))
+    }
+
     pub(crate) fn ready(&self) -> bool {
         self.complete_cut && required_realm_values_ready(&self.entries)
     }
@@ -179,6 +263,65 @@ impl RealmCurrentView {
         }
         Ok(Some(joined))
     }
+    pub(crate) fn complete_joined_members_for_scope(
+        &self,
+        scope: &arkret_sdk::ScopeRef,
+    ) -> anyhow::Result<Option<std::collections::BTreeSet<arkret_sdk::ActorId>>> {
+        if self.realm_id != scope.realm_id().as_str() || !self.complete_cut {
+            return Ok(None);
+        }
+        let Some(parent) = self.complete_joined_members()? else {
+            return Ok(None);
+        };
+        let arkret_sdk::ScopeRef::Circle { circle_id, .. } = scope else {
+            return Ok(Some(parent));
+        };
+        let mut members = std::collections::BTreeSet::new();
+        for entry in &self.entries {
+            if let TypedCurrentRow::Value {
+                selector:
+                    CurrentSelector::CircleMemberState {
+                        circle_id: found,
+                        member_actor_id: actor_id,
+                    },
+                value,
+                ..
+            } = entry
+            {
+                if found != circle_id {
+                    continue;
+                }
+                let state: arkret_wire::CircleMemberStateCurrent =
+                    serde_json::from_value(value.clone())?;
+                if !parent.contains(actor_id) {
+                    continue;
+                }
+                let selector = CurrentSelector::MemberState {
+                    actor_id: actor_id.clone(),
+                };
+                let Some(parent_row) = entry_for(&self.entries, &selector) else {
+                    continue;
+                };
+                let Some(revision) =
+                    parent_row.parent_membership_revision(scope.realm_id(), actor_id)
+                else {
+                    continue;
+                };
+                let TypedCurrentRow::Value {
+                    source_stream_ref, ..
+                } = parent_row;
+                if state.is_effective_under_parent(
+                    scope.realm_id(),
+                    source_stream_ref,
+                    &revision,
+                    arkret_sdk::MembershipState::Join,
+                ) {
+                    members.insert(actor_id.clone());
+                }
+            }
+        }
+        Ok(Some(members))
+    }
 }
 
 /// Write the presentation fields derived from the current Realm profile into a
@@ -256,6 +399,89 @@ mod tests {
     use super::*;
 
     const REALM: &str = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
+
+    #[test]
+    fn cold_call_roster_retains_leave_and_rejects_wrong_axis_provenance() {
+        use serde_json::json;
+        let call = arkret_sdk::CallId::from_event_id(&arkret_sdk::EventId::from_digest(
+            arkret_sdk::canonical::DigestSuite::Sha256,
+            [8; 32],
+        ));
+        let actor = "ak:did_core:web:anonymous.example";
+        let device = "ak:device:01904100-0000-7000-8000-00000000000a";
+        // Trusted-storage fixture: signatures were verified before publication.
+        // This test exercises the consumer fold and provenance, not cryptography.
+        let assertion = |position, value| {
+            let event = arkret_sdk::EventId::from_digest(
+                arkret_sdk::canonical::DigestSuite::Sha256,
+                [position as u8; 32],
+            );
+            let rev = revision(position);
+            json!({"tag_id":format!("{event}:8"),"value":value,"source_commit":{
+                "commit_id":rev.commit_id,"realm_id":REALM,
+                "stream_ref":{"kind":"realm","realm_id":REALM},
+                "stream_position":position,"previous_commit_ref":revision(position-1).commit_id,
+                "event_ref":event,"governance_generation":0,"authority_ref":event,
+                "committed_at":"2026-10-15T00:00:00.000Z",
+                "signature":{"context":"ak.realm_commit_signature.v1","signature_algorithm":"Ed25519",
+                    "verification_method":"did:web:authority.example#key-1",
+                    "signed_digest":format!("sha256:{}","0".repeat(64)),
+                    "created_at":"2026-10-15T00:00:00.000Z",
+                    "sig":arkret_sdk::canonical::base64url_encode(&[0;64])}
+            }})
+        };
+        let mut assertions = vec![
+            assertion(
+                1,
+                json!({"op":"join","participant":{"actor_id":actor,"device_id":device}}),
+            ),
+            assertion(
+                2,
+                json!({"op":"leave","actor_id":actor,"device_id":device,"expected_revision":revision(1)}),
+            ),
+        ];
+        assertions.sort_by_key(|a| a["tag_id"].as_str().unwrap().to_owned());
+        let rows = vec![
+            entry(
+                CurrentSelector::CallState {
+                    call_id: call.clone(),
+                },
+                0,
+                json!({"from":null,"to":"ringing"}),
+            ),
+            entry(
+                CurrentSelector::CallRoster {
+                    call_id: call.clone(),
+                },
+                2,
+                json!({"assertions":assertions}),
+            ),
+        ];
+        assert!(
+            RealmCurrentView::new(REALM, rows.clone(), false)
+                .unwrap()
+                .call_roster(&call)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            RealmCurrentView::new(REALM, rows.clone(), true)
+                .unwrap()
+                .call_roster(&call)
+                .unwrap()
+                .unwrap()
+                .is_empty()
+        );
+        let mut bad = rows;
+        let TypedCurrentRow::Value { value, .. } = &mut bad[1];
+        value["assertions"][0]["tag_id"] = json!("wrong-axis:7");
+        assert!(
+            RealmCurrentView::new(REALM, bad, true)
+                .unwrap()
+                .call_roster(&call)
+                .is_err()
+        );
+    }
 
     #[test]
     fn membership_reconciliation_requires_a_complete_verified_cut() {

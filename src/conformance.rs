@@ -389,13 +389,29 @@ pub async fn observe_native_call_projection(
     host: &crate::sync_engine::NativeAccountHost,
     outcome: garth::signal::SignalReceiveOutcome,
 ) -> anyhow::Result<usize> {
-    observe_call_projection(host.state_store_handle(), outcome).await
+    observe_call_projection_with_account(
+        host.state_store_handle(),
+        outcome,
+        Some(host.active_account_context()),
+        Some(host.call_http_client()),
+    )
+    .await
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) async fn observe_call_projection(
     state_store: crate::runtime::input::StateStoreHandle,
     outcome: garth::signal::SignalReceiveOutcome,
+) -> anyhow::Result<usize> {
+    observe_call_projection_with_account(state_store, outcome, None, None).await
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+async fn observe_call_projection_with_account(
+    state_store: crate::runtime::input::StateStoreHandle,
+    outcome: garth::signal::SignalReceiveOutcome,
+    account: Option<crate::config::ActiveAccountContext>,
+    http: Option<arkret_sdk::http_client::Client>,
 ) -> anyhow::Result<usize> {
     use std::cell::Cell;
     use std::rc::Rc;
@@ -424,6 +440,8 @@ pub(crate) async fn observe_call_projection(
     let products = SignalProductRouter::default();
     products.install(calls.clone());
     let sink = crate::signal_receive_engine::InksonSignalSink {
+        call_account: account,
+        call_http: http,
         state_store,
         products,
         live: std::sync::Mutex::new(Default::default()),
@@ -633,4 +651,122 @@ mod tests {
         description = station(&["ak.operation_bundle.station.unknown.v1"]);
         assert!(!StationFeature::Discussion.ready(Some(&description)));
     }
+}
+
+/// Consume a genuine holder read through the same persistent installation as ringing.
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn consume_native_consent_current(
+    host: &crate::sync_engine::NativeAccountHost,
+    response: &arkret_sdk::http_client::own_station_results::BoundOwnStationResponse<
+        arkret_sdk::ConsentCurrentReadRequestBody,
+        arkret_sdk::ConsentCurrentReadOutcome,
+    >,
+) -> anyhow::Result<bool> {
+    let account = host.active_account_context();
+    let store = host.state_store_handle();
+    let epoch = crate::identity::device_directory::session_cache_epoch();
+    let guard = || -> anyhow::Result<()> {
+        anyhow::ensure!(
+            store.read(|s| s.active_authority()) == Some(account.authority.clone())
+                && !store.read(|s| s.current_reset_required())
+                && crate::identity::device_directory::session_cache_epoch() == epoch,
+            "native Consent attempt changed its session"
+        );
+        Ok(())
+    };
+    crate::signal_receive_engine::install_call_consent_current(
+        &store, &account, response, epoch, &guard,
+    )
+    .await
+}
+
+/// Read genuine holder material using the active Native host's bound transport.
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn read_native_consent_current(
+    host: &crate::sync_engine::NativeAccountHost,
+    peer: arkret_sdk::ActorId,
+    consent_scope: arkret_sdk::ConsentScope,
+) -> anyhow::Result<
+    arkret_sdk::http_client::own_station_results::BoundOwnStationResponse<
+        arkret_sdk::ConsentCurrentReadRequestBody,
+        arkret_sdk::ConsentCurrentReadOutcome,
+    >,
+> {
+    let account = host.active_account_context();
+    let client =
+        crate::transport::own_station_results::client_for_http(&host.call_http_client()).await?;
+    Ok(client
+        .consent_current(&arkret_sdk::ConsentCurrentReadRequestBody {
+            holder_account_id: account.authority.clone(),
+            peer: arkret_sdk::ConsentPeer::Actor { actor_id: peer },
+            consent_scope,
+            audience_actor_id: arkret_sdk::ActorId::service(account.authority.station_id),
+            nonce: crate::random::base64url_token(32, "Consent read nonce unavailable")?,
+        })
+        .await?)
+}
+
+/// Exercise the product's current/checkpoint, own-Station binding and RTC join path.
+#[cfg(all(not(target_arch = "wasm32"), feature = "spec-conformance"))]
+pub async fn join_native_call_media(
+    host: &crate::sync_engine::NativeAccountHost,
+    http: arkret_sdk::http_client::Client,
+    request: &arkret_sdk::CallMediaTokenExchangeRequestBody,
+    issuer: &arkret_sdk::DidCoreId,
+) -> anyhow::Result<crate::media::rtc::JoinedMediaSession> {
+    let account = request
+        .actor_id
+        .as_account_id()
+        .ok_or_else(|| anyhow::anyhow!("media subject is not an Account"))?;
+    let store = host.state_store();
+    let evidence = crate::media::rtc::current_media_governance_evidence(
+        &store,
+        request.realm_id.as_str(),
+        request.device_id.as_str(),
+        false,
+    )
+    .ok_or_else(|| {
+        anyhow::anyhow!("complete current and authenticated checkpoint do not cover media join")
+    })?;
+    let binding =
+        crate::media::service_route::binding_for_http(&http, &request.realm_id, issuer).await?;
+    let checkpoint = store.mls_checkpoint_for(request.realm_id.as_str());
+    let secure = crate::secure_key_store::default_secure_key_store("inkson");
+    let exporter = crate::media::rtc::RealmMlsExporter::for_realm(
+        checkpoint,
+        secure.as_ref(),
+        account,
+        &request.device_id,
+    )
+    .map_err(|e| anyhow::anyhow!("actual MLS exporter: {e:?}"))?;
+    let desired = request
+        .desired_media
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("media selection missing"))?;
+    let join = crate::media::rtc::MediaJoinRequest {
+        account_id: account.clone(),
+        join_context: request.join_context.clone(),
+        realm_id: request.realm_id.to_string(),
+        call_id: request.call_id.to_string(),
+        actor_id: account.principal_id.to_string(),
+        device_id: request.device_id.to_string(),
+        focus_id: request.focus_id.clone(),
+        epoch_id: exporter.epoch(),
+        desired_media: crate::media::rtc::DesiredMedia {
+            audio: desired.audio.unwrap_or(false),
+            video: desired.video.unwrap_or(false),
+            screen: desired.screen.unwrap_or(false),
+        },
+        media_service_ids: vec![issuer.to_string()],
+        verified_media_bindings: vec![binding],
+        governance_evidence: Some(evidence),
+        media_service_decryption_requested: false,
+    };
+    let api = crate::transport::TransportClient::from_http(
+        http,
+        crate::transport::RequestContext::new(""),
+    );
+    crate::media::rtc::join_call_media(&api, &join, &exporter)
+        .await
+        .map_err(|e| anyhow::anyhow!("production native RTC join: {e:?}"))
 }
