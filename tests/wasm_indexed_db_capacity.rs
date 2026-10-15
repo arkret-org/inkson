@@ -274,8 +274,8 @@ async fn account_state_fault_injection_contract_holds_in_browser() {
 
 #[wasm_bindgen_test(async)]
 #[cfg(feature = "wasm-localstorage-secrets-test")]
-async fn retired_account_encrypted_browser_read_and_durable_reopen() {
-    inkson::run_browser_retired_account_contract()
+async fn account_record_corruption_is_retained_and_rejected_on_cold_reopen() {
+    inkson::run_browser_account_record_corruption_contract()
         .await
         .unwrap();
 }

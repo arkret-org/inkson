@@ -568,7 +568,8 @@ pub(super) fn ChatEffects(
             if *shared_pins.peek() != next_shared {
                 event_sink.emit(ChatProjectionEvent::SharedPins(next_shared));
             }
-            let saved_entries = snapshot.saved_account_data;
+            let saved_entries: std::collections::BTreeMap<_, _> =
+                snapshot.saved_account_data.into_iter().collect();
             let next_saved = private_saved_targets_from_account_data(
                 &saved_entries,
                 CHAT_PRIVATE_SAVED_COLLECTION_TITLE,

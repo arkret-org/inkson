@@ -70,7 +70,7 @@ fn fixture() -> (
     // signed complete empty private cut, without rebuilding any MLS history.
     state
         .verified_sidecar_current
-        .insert(realm.to_string(), snapshot);
+        .insert(realm.to_string(), snapshot.into());
     store.save(state);
     (directory, store, authority, device, realm.to_string())
 }

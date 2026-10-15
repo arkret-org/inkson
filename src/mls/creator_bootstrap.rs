@@ -1141,18 +1141,13 @@ mod tests {
                 epoch_zero_snapshot(scope.canonical_mls_group_id().unwrap().to_string()),
             )
             .unwrap();
-        let account_path = std::fs::read_dir(&directory)
-            .unwrap()
-            .map(|entry| entry.unwrap().path())
-            .find(|path| path.extension().is_some_and(|ext| ext == "json"))
-            .unwrap();
-        std::fs::remove_file(&account_path).unwrap();
-        std::fs::create_dir(&account_path).unwrap();
+        let before = store.durable_mls_checkpoint_for_scope(&scope).unwrap();
+        store.conformance_fail_account_commit(true).unwrap();
         let accepted =
             arkret_sdk::EventId::new("ak:event:AXBcp13trH3bPXvj0eHppCpGqJZWL9yqE3cf2Tl43vyk")
                 .unwrap();
         let result = store.mark_mls_genesis_emitted_for_scope_with_event(&scope, &accepted);
-        std::fs::remove_dir(&account_path).unwrap();
+        store.conformance_fail_account_commit(false).unwrap();
         assert!(
             result.is_err(),
             "failed durable publication cannot acknowledge accepted Genesis locally"
@@ -1161,11 +1156,9 @@ mod tests {
             creator_mls_bootstrap_incomplete(&store, REALM),
             "a failed publication remains pending even if its cache was updated"
         );
-        assert!(
-            store
-                .durable_mls_checkpoint_for_scope(&scope)
-                .unwrap()
-                .is_none()
+        assert_eq!(
+            store.durable_mls_checkpoint_for_scope(&scope).unwrap(),
+            before
         );
         store
             .mark_mls_genesis_emitted_for_scope_with_event(&scope, &accepted)

@@ -13,7 +13,10 @@ fn canonical_cache_key(value: &impl serde::Serialize) -> Result<String, String> 
 impl LocalStateStore {
     fn historical_agent_candidate_index(
         &self,
-    ) -> std::borrow::Cow<'_, BTreeMap<String, HistoricalAgentEventCandidate>> {
+    ) -> std::borrow::Cow<
+        '_,
+        im::OrdMap<String, super::account_items::Shared<HistoricalAgentEventCandidate>>,
+    > {
         if self.loaded.load(std::sync::atomic::Ordering::Relaxed)
             && self.cached_account_key.as_deref() == Some(self.effective_account_key().as_str())
         {
@@ -25,13 +28,16 @@ impl LocalStateStore {
 
     fn historical_agent_key_cache(
         &self,
-    ) -> std::borrow::Cow<'_, BTreeMap<String, CachedHistoricalAgentSignerKey>> {
+    ) -> std::borrow::Cow<
+        '_,
+        im::OrdMap<String, super::account_items::Shared<CachedHistoricalAgentSignerKey>>,
+    > {
         if self.loaded.load(std::sync::atomic::Ordering::Relaxed)
             && self.cached_account_key.as_deref() == Some(self.effective_account_key().as_str())
         {
-            std::borrow::Cow::Borrowed(&self.cached.historical_agent_signer_keys_v2)
+            std::borrow::Cow::Borrowed(&self.cached.historical_agent_signer_keys)
         } else {
-            std::borrow::Cow::Owned(self.load().historical_agent_signer_keys_v2)
+            std::borrow::Cow::Owned(self.load().historical_agent_signer_keys)
         }
     }
 
@@ -43,7 +49,7 @@ impl LocalStateStore {
                 entry.authority_chain_verified
                     && recipient.as_ref() == Some(&entry.recipient_account_id)
             })
-            .cloned()
+            .map(|entry| (**entry).clone())
             .collect()
     }
 
@@ -93,7 +99,7 @@ impl LocalStateStore {
         if let Some(previous) = self.cached.historical_agent_event_candidates.get(&key) {
             let mut replay = entry.clone();
             replay.indexed_at_unix_ms = previous.indexed_at_unix_ms;
-            if previous != &replay {
+            if &**previous != &replay {
                 return Err(
                     "historical Agent candidate conflicts at one committed coordinate".to_owned(),
                 );
@@ -102,7 +108,7 @@ impl LocalStateStore {
         }
         self.cached
             .historical_agent_event_candidates
-            .insert(key, entry);
+            .insert(key, entry.into());
         while self.cached.historical_agent_event_candidates.len() > HISTORICAL_AGENT_CANDIDATE_MAX {
             let Some(oldest) = self
                 .cached
@@ -141,7 +147,7 @@ impl LocalStateStore {
                     && entry.verification_method == *method
                     && trusted_targets.contains(&entry.target_ref)
             })
-            .cloned()
+            .map(|entry| (**entry).clone())
             .collect()
     }
 
@@ -163,7 +169,7 @@ impl LocalStateStore {
                     && entry.realm_id.as_str() == realm
                     && trusted_targets.contains(&entry.target_ref)
             })
-            .cloned()
+            .map(|entry| (**entry).clone())
             .collect()
     }
 
@@ -218,10 +224,10 @@ impl LocalStateStore {
         ]);
         let key = canonical_cache_key(&identity)?;
         self.ensure_cached_loaded();
-        if let Some(previous) = self.cached.historical_agent_signer_keys_v2.get(&key) {
+        if let Some(previous) = self.cached.historical_agent_signer_keys.get(&key) {
             let mut replay = entry.clone();
             replay.cached_at_unix_ms = previous.cached_at_unix_ms;
-            if previous != &replay {
+            if &**previous != &replay {
                 return Err(
                     "historical Agent signing result conflicts for the same exact target"
                         .to_owned(),
@@ -230,19 +236,19 @@ impl LocalStateStore {
             return Ok(false);
         }
         self.cached
-            .historical_agent_signer_keys_v2
-            .insert(key, entry);
-        while self.cached.historical_agent_signer_keys_v2.len() > HISTORICAL_AGENT_KEY_CACHE_MAX {
+            .historical_agent_signer_keys
+            .insert(key, entry.into());
+        while self.cached.historical_agent_signer_keys.len() > HISTORICAL_AGENT_KEY_CACHE_MAX {
             let Some(oldest) = self
                 .cached
-                .historical_agent_signer_keys_v2
+                .historical_agent_signer_keys
                 .iter()
                 .min_by_key(|(_, entry)| entry.cached_at_unix_ms)
                 .map(|(key, _)| key.clone())
             else {
                 break;
             };
-            self.cached.historical_agent_signer_keys_v2.remove(&oldest);
+            self.cached.historical_agent_signer_keys.remove(&oldest);
         }
         self.flush()
             .map_err(|error| format!("persist historical Agent key: {error}"))?;

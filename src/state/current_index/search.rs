@@ -177,7 +177,7 @@ impl CurrentIndex {
         after: Option<&str>,
         now: chrono::DateTime<chrono::Utc>,
     ) -> anyhow::Result<SearchPage> {
-        let _lease = self.lease.lock().await;
+        let _lease = self.acquire_lease().await?;
         anyhow::ensure!(
             !self.is_poisoned(),
             "current pointer durability is unresolved"

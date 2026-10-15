@@ -6,10 +6,10 @@
 //! only be collected from a `wasm-bindgen` target running in a real browser,
 //! and such a target is an integration test that cannot reach a crate-private
 //! type. Every method here forwards to the same production entry point the
-//! native regressions drive; the harness adds no behaviour of its own and takes
-//! JSON at its boundary so it never grows a second model of the wire types.
-//! The observation methods only read durable state the native regressions read
-//! directly, such as the reachability cycle position and seen evidence.
+//! native regressions drive; index-only fixtures explicitly commit their prepared
+//! rows in place of the account host. The harness takes JSON at its boundary so it never grows a
+//! second model of the wire types. The observation methods only read durable state the native
+//! regressions read directly, such as the reachability cycle position and seen evidence.
 
 use arkret_sdk::CurrentSelector;
 use arkret_sdk::sync::AccountSubscribeFrame;
@@ -28,9 +28,11 @@ impl CurrentIndexHarness {
     /// Open the index of one account authority at its committed generation.
     pub async fn open(authority: &str, committed_generation: u64) -> Result<Self, String> {
         let authority = serde_json::from_str(authority).map_err(message)?;
-        let index = CurrentIndex::open(&authority, committed_generation, CurrentIndexLocation {})
-            .await
-            .map_err(message)?;
+        let mut index =
+            CurrentIndex::open(&authority, committed_generation, CurrentIndexLocation {})
+                .await
+                .map_err(message)?;
+        index.account_scope = None;
         Ok(Self { index })
     }
 
@@ -45,6 +47,7 @@ impl CurrentIndexHarness {
             .map_err(message)?;
         let generation = stage.generation();
         stage.arm_account_commit();
+        stage.persist_for_harness().await.map_err(message)?;
         stage.finish();
         Ok(generation)
     }
@@ -71,6 +74,21 @@ impl CurrentIndexHarness {
             .await
             .map_err(message)?;
         stage.arm_account_commit();
+        drop(stage);
+        Ok(())
+    }
+
+    /// Fixture host: commit the prepared rows, then lose the acknowledgement.
+    /// The real account/cursor transaction is exercised by the account contract.
+    pub async fn persist_unconfirmed(&self, expected: u64, frame: &str) -> Result<(), String> {
+        let frame: AccountSubscribeFrame = serde_json::from_str(frame).map_err(message)?;
+        let mut stage = self
+            .index
+            .stage_frame(expected, &frame)
+            .await
+            .map_err(message)?;
+        stage.arm_account_commit();
+        stage.persist_for_harness().await.map_err(message)?;
         drop(stage);
         Ok(())
     }

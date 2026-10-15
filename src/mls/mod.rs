@@ -7,6 +7,7 @@
 mod checkpoint_port;
 #[cfg(all(target_arch = "wasm32", feature = "spec-conformance"))]
 pub use checkpoint_port::wasm_harness as checkpoint_harness;
+pub(crate) use checkpoint_port::{read_durable_checkpoint, read_durable_consumes};
 
 pub mod account_recovery;
 pub(crate) mod admission;

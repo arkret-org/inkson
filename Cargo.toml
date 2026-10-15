@@ -192,13 +192,14 @@ futures-util = { workspace = true }
 getrandom = { workspace = true, features = ["sys_rng", "wasm_js"] }
 getrandom_02 = { workspace = true, features = ["js"] }
 hex = "0.4.3"
+im = { version = "15.1", features = ["serde"] }
 hkdf = { workspace = true }
 hmac = { workspace = true }
 image = { workspace = true, default-features = false, features = ["gif", "jpeg", "png", "webp"] }
 pulldown-cmark = { workspace = true, default-features = false, features = ["html"] }
 qrcode = { workspace = true, default-features = false, features = ["svg"] }
 rand_core = { workspace = true }
-serde = { workspace = true, features = ["derive"] }
+serde = { workspace = true, features = ["derive", "rc"] }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
 thiserror = { workspace = true }

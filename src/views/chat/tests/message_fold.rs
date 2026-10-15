@@ -79,7 +79,8 @@ fn restores_messages_from_local_raw_operations() {
             realm_id: Some(realm.to_string()),
             received_at: chrono::Utc::now(),
             payload: serde_json::to_value(&committed.event).unwrap(),
-        }],
+        }]
+        .into(),
         ..ClientLocalState::default()
     };
 
@@ -109,7 +110,8 @@ fn restores_canonical_actor_id_from_local_raw_operations() {
             realm_id: Some(realm.to_string()),
             received_at: chrono::Utc::now(),
             payload: serde_json::to_value(&committed.event).unwrap(),
-        }],
+        }]
+        .into(),
         ..ClientLocalState::default()
     };
 
@@ -152,7 +154,7 @@ fn message_operations_from_events_folds_create_and_renders_local_first() {
     );
 
     let state = ClientLocalState {
-        raw_operations: records,
+        raw_operations: records.into(),
         ..ClientLocalState::default()
     };
     let messages = chat_messages_from_local_state_with_sidecar(&state, None, None);
@@ -260,7 +262,7 @@ fn chat_messages_keep_bare_reaction_events_without_promoting_membership() {
         "create plus reaction add/remove events must survive raw ingest"
     );
     let state = ClientLocalState {
-        raw_operations: records,
+        raw_operations: records.into(),
         ..ClientLocalState::default()
     };
     let restored = chat_messages_from_local_state_with_sidecar(&state, None, None);
@@ -328,7 +330,7 @@ fn chat_messages_do_not_promote_projection_reaction_without_verified_scan() {
         "message create and reaction projection frames must both survive raw ingest"
     );
     let state = ClientLocalState {
-        raw_operations: records,
+        raw_operations: records.into(),
         ..ClientLocalState::default()
     };
     let restored = chat_messages_from_local_state_with_sidecar(&state, None, None);
@@ -376,7 +378,7 @@ fn chat_messages_keep_streamed_reaction_envelope_provisional_without_commit() {
         &events,
     );
     let state = ClientLocalState {
-        raw_operations: records,
+        raw_operations: records.into(),
         ..ClientLocalState::default()
     };
     let messages = chat_messages_from_local_state_with_sidecar(&state, None, None);
@@ -422,7 +424,7 @@ fn bare_reaction_does_not_fold_onto_controller_only_create() {
     let seed = chat_messages_from_events_with_sidecar(realm_id, &events[..1], None, None);
     let reaction_records = message_operations_from_events(realm_id, &events[1..]);
     let state = ClientLocalState {
-        raw_operations: reaction_records,
+        raw_operations: reaction_records.into(),
         ..ClientLocalState::default()
     };
 
@@ -473,7 +475,7 @@ fn durable_redaction_folds_onto_controller_only_create() {
     })];
     sign_chat_fixtures(&mut redactions);
     let state = ClientLocalState {
-        raw_operations: message_operations_from_events(realm_id, &redactions),
+        raw_operations: message_operations_from_events(realm_id, &redactions).into(),
         ..ClientLocalState::default()
     };
 
@@ -568,7 +570,8 @@ fn chat_messages_fold_revision_chain_into_latest_message() {
         raw_operations: message_operations_from_events(
             "ak:realm:ARqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
             &events[..2],
-        ),
+        )
+        .into(),
         ..ClientLocalState::default()
     };
     let optimistic = fold_local_state_into_chat_messages_with_sidecar(
@@ -594,7 +597,7 @@ fn chat_messages_fold_revision_chain_into_latest_message() {
         "create and both revisions must survive raw ingest"
     );
     let state = ClientLocalState {
-        raw_operations: records,
+        raw_operations: records.into(),
         ..ClientLocalState::default()
     };
     let restored = chat_messages_from_local_state_with_sidecar(&state, None, None);
@@ -1171,7 +1174,7 @@ fn message_operations_fold_independent_redaction_event_by_message_id() {
         let records = message_operations_from_events(realm.as_str(), &events);
         assert_eq!(records.len(), 2);
         let state = ClientLocalState {
-            raw_operations: records,
+            raw_operations: records.into(),
             ..ClientLocalState::default()
         };
         let messages = chat_messages_from_local_state_with_sidecar(&state, None, None);
@@ -1360,7 +1363,8 @@ fn local_redaction_tombstone_without_signed_scope_cannot_render_row() {
             realm_id: Some(message.realm_id.clone()),
             received_at: redacted_at,
             payload: tombstone,
-        }],
+        }]
+        .into(),
         ..ClientLocalState::default()
     };
     // This local replacement has no signed scope; it can only suppress an

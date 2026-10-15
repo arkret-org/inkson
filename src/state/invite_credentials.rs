@@ -15,6 +15,7 @@ use arkret_models_collaboration::governance::invite_addressing::{
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
+use super::account_items::MapExt as _;
 use super::{ClientLocalState, LocalStateStore, StoredInviteCredential};
 
 /// Upper bound on locally retained invite credentials; writes evict expired

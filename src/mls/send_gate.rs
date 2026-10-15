@@ -219,9 +219,8 @@ pub(crate) async fn resolve_mls_send_gate(
             .check_creator_ready_slot(scope, &current.genesis_event_ref)
             .await
             .map_err(|error| MlsSendGateBlocked::NotReady(error.to_string()))?;
-        let durable = input
-            .store
-            .read(|state| state.durable_mls_checkpoint_for_scope(scope))
+        let durable = crate::mls::read_durable_checkpoint(&input.store, scope)
+            .await
             .map_err(|error| MlsSendGateBlocked::NotReady(error.to_string()))?;
         if durable.as_ref().is_none_or(|snapshot| {
             snapshot.epoch != current.epoch
@@ -405,15 +404,9 @@ pub(crate) async fn resolve_restorable_mls_send_gate(
             .authority
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("no active account"))?;
-        let snapshot = input.store.read(|state| {
-            anyhow::ensure!(
-                state.active_authority().as_ref() == Some(authority),
-                "active account changed"
-            );
-            state
-                .durable_mls_checkpoint_for_scope(scope)?
-                .ok_or_else(|| anyhow::anyhow!("private MLS group is not installed"))
-        })?;
+        let snapshot = crate::mls::read_durable_checkpoint(&input.store, scope)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("private MLS group is not installed"))?;
         let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
         let secret = crate::mls::runtime::load_device_checkpoint_secret(
             secure_store.as_ref(),

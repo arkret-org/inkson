@@ -186,8 +186,7 @@ pub(super) fn upload_dropped_attachments(
                         (None, None, None, None)
                     }
                     crate::mls::send_gate::MlsSendGate::Encrypted(current) => {
-                        let checkpoint = store
-                            .read(|s| s.durable_mls_checkpoint_for_scope(&scope))?
+                        let checkpoint = crate::mls::read_durable_checkpoint(&store,&scope).await?
                             .ok_or_else(|| {
                                 anyhow::anyhow!("missing durable attachment checkpoint")
                             })?;

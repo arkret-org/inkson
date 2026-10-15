@@ -169,7 +169,7 @@ fn scheduled_send_target_realm(
 }
 
 fn realm_id_for_strand_from_projections(
-    projections: &BTreeMap<String, Value>,
+    projections: &impl crate::state::account_items::ReadMap<Value>,
     strand_id: &str,
 ) -> Option<String> {
     if let Some(body) = projections.get(strand_id)
@@ -177,7 +177,7 @@ fn realm_id_for_strand_from_projections(
     {
         return Some(realm_id.to_owned());
     }
-    for (key, body) in projections {
+    for (key, body) in projections.iter() {
         if !key.starts_with("ak:realm:") {
             continue;
         }

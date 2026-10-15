@@ -453,8 +453,7 @@ fn private_plaintext_sidecar_stays_memory_only_without_secure_store() {
             .cloned()
             .unwrap_or_default();
         assert_eq!(fields.len(), 2);
-        let account_path = store.account_state_path(&store.effective_account_key());
-        let raw = std::fs::read_to_string(&account_path).expect("account state written");
+        let raw = store.persisted_account_records_for_test(&store.effective_account_key());
         assert!(!raw.contains("author body"));
         assert!(!raw.contains("author synthesis"));
         assert!(!raw.contains("mls_private_plaintext"));
@@ -542,8 +541,7 @@ fn e2ee_plaintext_cache_round_trips_through_account_scoped_secure_store() {
         );
 
         let namespace = writer.active_authority_namespace_for_test();
-        let account_path = writer.account_state_path(&namespace);
-        let raw = std::fs::read_to_string(account_path).expect("account state written");
+        let raw = writer.persisted_account_records_for_test(&namespace);
         assert!(!raw.contains("author secret"));
         assert!(!raw.contains("remote secret"));
         assert!(!raw.contains("mls_private_plaintext"));
@@ -983,14 +981,16 @@ fn mls_plaintext_is_never_written_to_plaintext_state() {
         BTreeMap::from([(
             "ak:strand:AXKJvMpMFIFTD9GYNEzOeImU-2ytvLCtsCq3Mrq9-Ci8".to_owned(),
             BTreeMap::from([("body".to_owned(), "\"secret-plaintext-body\"".to_owned())]),
-        )]),
+        )])
+        .into(),
     );
     state.mls_decrypted_plaintext.insert(
         "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19".to_owned(),
         BTreeMap::from([(
             "sha256:6161616161616161616161616161616161616161616161616161616161616161".to_owned(),
             "secret-decrypted-body".to_owned(),
-        )]),
+        )])
+        .into(),
     );
 
     let persisted = e2ee_safe_persist_state(&state);
@@ -1252,7 +1252,7 @@ fn browser_storage_warning_starts_at_eighty_percent() {
 }
 
 #[test]
-fn plain_local_data_persists_as_plaintext() {
+fn plain_local_data_persists_in_encrypted_account_records() {
     let path = temp_state_path("private");
     let mut store = LocalStateStore::with_path(path.clone());
     store.save_plain_local_data("theme", "dark");
@@ -1269,23 +1269,16 @@ fn plain_local_data_persists_as_plaintext() {
     assert!(store.load_plain_local_data("missing").is_none());
     assert_eq!(store.plain_local_data_keys().len(), 2);
 
-    // This channel carries no at-rest protection and must not pretend to.
-    // With per-account isolation the active blob persists to a sibling
-    // `<stem>.account.<sanitized>.json` file (the root `path` now only holds
-    // the small index). Signed out, the namespace is the anonymous sentinel.
-    // Accepted account namespaces are already authority-pair digests; the
-    // reserved anonymous namespace is filesystem safe as-is.
-    let account_file = {
-        let stem = path.file_stem().unwrap().to_str().unwrap();
-        let ext = path.extension().unwrap().to_str().unwrap();
-        path.parent()
-            .unwrap()
-            .join(format!("{stem}.account.anonymous.{ext}"))
-    };
-    let raw = std::fs::read_to_string(&account_file).unwrap();
-    assert!(
-        raw.contains("dark") && raw.contains("party_parrot"),
-        "plain_local_data is stored verbatim; anything needing protection belongs in the secure key store instead"
+    let raw = store.persisted_account_records_for_test(ANONYMOUS_ACCOUNT_NAMESPACE);
+    assert!(raw.contains("dark") && raw.contains("party_parrot"));
+    let reopened = LocalStateStore::with_path(path);
+    assert_eq!(
+        reopened.load_plain_local_data("theme").as_deref(),
+        Some("dark")
+    );
+    assert_eq!(
+        reopened.load_plain_local_data("custom_emoji").as_deref(),
+        Some("party_parrot")
     );
 }
 
@@ -1344,10 +1337,8 @@ async fn composer_drafts_survive_restart_only_in_exact_account_device_realm_stra
             .unwrap();
     }
     writer.flush().unwrap();
-    let raw = std::fs::read_to_string(
-        writer.account_state_path(&writer.active_authority_namespace_for_test()),
-    )
-    .unwrap();
+    let raw =
+        writer.persisted_account_records_for_test(&writer.active_authority_namespace_for_test());
     assert!(!raw.contains("composer_drafts"));
     assert!(!raw.contains("private draft"));
     assert!(

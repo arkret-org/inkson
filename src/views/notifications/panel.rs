@@ -35,7 +35,7 @@ pub(crate) fn rehydrate_notifications(
         .or(account_dnd.as_ref());
     let privacy_gate = crate::sidecar::SidecarPrivacyGate::from_store(store, principal_id);
     hydrate_notifications_with_privacy_gate(
-        local_state.notification_projection.clone(),
+        local_state.notification_projection.to_vec(),
         &local_state,
         Some(&arkret_sdk::ActorId::account(authority.clone())),
         push_rules.as_ref(),
@@ -68,7 +68,7 @@ pub fn NotificationsPanel(
         )
     };
     let initial_notifications = hydrate_notifications_with_privacy_gate(
-        initial_state.notification_projection.clone(),
+        initial_state.notification_projection.to_vec(),
         &initial_state,
         Some(&arkret_sdk::ActorId::account(authority.clone())),
         None,

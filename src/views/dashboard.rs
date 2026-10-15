@@ -1076,7 +1076,8 @@ mod tests {
             literal_body_key.clone(),
             explicit_empty.clone(),
             archived,
-        ];
+        ]
+        .into();
         let rows = dashboard_notification_summaries(&snapshot);
         assert_eq!(
             rows.iter().map(|row| row.id.clone()).collect::<Vec<_>>(),
@@ -1174,7 +1175,7 @@ mod tests {
         )
         .unwrap();
         let mut snapshot = ClientLocalState {
-            notification_projection: raw_notifications_from_sources(Some(&[delta]), &[]),
+            notification_projection: raw_notifications_from_sources(Some(&[delta]), &[]).into(),
             ..Default::default()
         };
         snapshot

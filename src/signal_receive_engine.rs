@@ -1060,7 +1060,7 @@ impl InksonSignalSink {
             .read(|store| store.load().presence_projection);
         // A restarted receiver has no in-memory keys for the prior projection.
         // Its admitted cached bodies still expire without a new network frame.
-        let mut bodies = bodies.unwrap_or_else(|| cached.clone());
+        let mut bodies = bodies.unwrap_or_else(|| cached.to_vec());
         bodies.retain(|body| {
             (body.get("kind").and_then(Value::as_str) != Some("ak.typing")
                 || retained_typing.iter().any(|retained| retained == body))
@@ -1071,7 +1071,7 @@ impl InksonSignalSink {
                     .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
                     .is_some_and(|expiry| expiry > now)
         });
-        if bodies != cached {
+        if bodies != *cached {
             self.state_store
                 .write(|store| store.save_presence_projection(&bodies));
         }
@@ -1808,11 +1808,12 @@ mod tests {
                 }}
             })).unwrap()
         };
-        index
-            .stage_frame(0, &frame(1, rows))
-            .await
+        let stage = index.stage_frame(0, &frame(1, rows)).await.unwrap();
+        store
+            .lock()
             .unwrap()
-            .finish();
+            .commit_current_stage_for_test(stage)
+            .unwrap();
         store.lock().unwrap().set_current_generation(1);
         assert!(sink.strand_target_at_verified_cut(&signal).await.unwrap());
         assert!(sink.apply_live_body(&signal).unwrap());
@@ -1829,11 +1830,12 @@ mod tests {
         assert!(!sink.apply_live_body(&revoked).unwrap());
         // An accepted governance advance invalidates the retained authority cut.
         // No new Typing frame is delivered and the original TTL is still live.
-        index
-            .stage_frame(1, &frame(2, vec![]))
-            .await
+        let stage = index.stage_frame(1, &frame(2, vec![])).await.unwrap();
+        store
+            .lock()
             .unwrap()
-            .finish();
+            .commit_current_stage_for_test(stage)
+            .unwrap();
         store.lock().unwrap().set_current_generation(2);
         assert!(signal.expires_at > crate::clock::now_utc());
         sink.refresh_typing(crate::clock::now_utc()).await;

@@ -52,7 +52,8 @@ fn rebuild_restores_authors_own_encrypted_message_from_sidecar() {
             realm_id: Some("ak:realm:ATwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q".to_owned()),
             received_at: chrono::Utc::now(),
             payload: event,
-        }],
+        }]
+        .into(),
         ..ClientLocalState::default()
     };
 

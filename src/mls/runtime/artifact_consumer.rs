@@ -370,12 +370,10 @@ pub(crate) async fn deliver_owed_keypackage_consumes(
         tracing::warn!(%error, "MLS consume durability remains pending");
         return;
     }
-    let owed = match state.read(|store| {
-        if !current(store) {
-            anyhow::bail!("MLS consume belongs to a replaced session");
-        }
-        store.pending_keypackage_consumes()
-    }) {
+    if !state.read(current) {
+        return;
+    }
+    let owed = match crate::mls::read_durable_consumes(state).await {
         Ok(owed) => owed,
         Err(error) => {
             tracing::warn!(%error, "MLS consume durable read remains pending");

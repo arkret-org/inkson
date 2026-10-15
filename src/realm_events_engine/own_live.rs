@@ -1470,41 +1470,17 @@ pub(super) mod tests {
         local.save_sync_cursor("ak:cursor:retained");
         let store = Arc::new(Mutex::new(local));
         let projector = test_projector(store.clone(), &snapshot.realm_id);
-        // switch_active_account also persists the previous anonymous namespace.
-        // Select the actual durable account blob by the public marker written
-        // above, rather than whichever matching filename read_dir returns first.
-        let account_files = std::fs::read_dir(directory.path())
+        let durable_before = store
+            .lock()
             .unwrap()
-            .map(|entry| entry.unwrap().path())
-            .filter(|path| {
-                path.file_name()
-                    .unwrap()
-                    .to_string_lossy()
-                    .starts_with("failure.account.")
-                    && path
-                        .extension()
-                        .is_some_and(|extension| extension == "json")
-            })
-            .filter(|path| {
-                let state: serde_json::Value =
-                    serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
-                state.get("sync_cursor").and_then(serde_json::Value::as_str)
-                    == Some("ak:cursor:retained")
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(account_files.len(), 1);
-        let account_file = account_files.into_iter().next().unwrap();
-        let backup = account_file.with_extension("saved");
-        std::fs::rename(&account_file, &backup).unwrap();
-        std::fs::create_dir(&account_file).unwrap();
-        let io_failure = match projector
-            .state_store
-            .read(|store| store.begin_durable_flush())
-        {
-            Err(error) => error,
-            Ok(_) => panic!("the active account file must fail its real durable write"),
-        };
-        assert!(io_failure.downcast_ref::<std::io::Error>().is_some());
+            .conformance_account_checkpoint_token()
+            .unwrap();
+        // Fail the actual account-root write inside the shared current transaction.
+        store
+            .lock()
+            .unwrap()
+            .conformance_fail_account_commit(true)
+            .unwrap();
         assert!(
             install_live_current_snapshot(
                 &client,
@@ -1539,7 +1515,18 @@ pub(super) mod tests {
             })
             .await
             .unwrap();
-        assert!(index.is_poisoned());
+        assert_eq!(
+            store
+                .lock()
+                .unwrap()
+                .conformance_account_checkpoint_token()
+                .unwrap(),
+            durable_before
+        );
+        assert!(
+            !index.is_poisoned(),
+            "the old root was independently confirmed after atomic rollback"
+        );
         assert!(
             index
                 .read_selector_ready(
@@ -1547,7 +1534,8 @@ pub(super) mod tests {
                     &arkret_sdk::CurrentSelector::RealmProfile
                 )
                 .await
-                .is_err()
+                .unwrap()
+                .is_none()
         );
         assert!(
             index
@@ -1564,10 +1552,14 @@ pub(super) mod tests {
             index
                 .read_complete_cut(snapshot.realm_id.as_str())
                 .await
-                .is_err()
+                .unwrap()
+                .is_none()
         );
-        std::fs::remove_dir(&account_file).unwrap();
-        std::fs::rename(&backup, &account_file).unwrap();
+        store
+            .lock()
+            .unwrap()
+            .conformance_fail_account_commit(false)
+            .unwrap();
         // The same real live entry recovers its own durable pointer, then
         // retries its real accepted prefix/current transaction.
         install_live_current_snapshot(

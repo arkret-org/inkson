@@ -240,7 +240,7 @@ fn unread_notification_count_ignores_read_and_archived_items() {
         notification.state = arkret_sdk::NotificationState::Archived;
     }
     let mut snapshot = ClientLocalState {
-        notification_projection: projection,
+        notification_projection: projection.into(),
         ..ClientLocalState::default()
     };
     snapshot.notification_client_state.insert(
@@ -296,7 +296,7 @@ fn unread_notification_count_excludes_contact_attention_for_all_three_modes() {
     )
     .unwrap();
     let mut snapshot = ClientLocalState {
-        notification_projection: vec![contact_notification, message_notification],
+        notification_projection: vec![contact_notification, message_notification].into(),
         client_blocklist_revision: 7,
         ..ClientLocalState::default()
     };
@@ -307,7 +307,7 @@ fn unread_notification_count_excludes_contact_attention_for_all_three_modes() {
         AccountBlocklistMode::Mute,
     ] {
         entry.mode = mode;
-        snapshot.client_blocklist = vec![entry.clone()];
+        snapshot.client_blocklist = vec![entry.clone()].into();
         assert_eq!(unread_notification_count(&snapshot), 1);
     }
     snapshot.client_blocklist_revision = 8;

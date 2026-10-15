@@ -77,7 +77,7 @@ impl JoinedRealmIds {
     /// the joined set, so an unreadable roster keeps an invite visible rather
     /// than silently claiming an authorization it cannot prove.
     pub(crate) fn from_local_projections(
-        projections: &BTreeMap<String, Value>,
+        projections: &impl crate::state::account_items::ReadMap<Value>,
         actor: Option<&arkret_sdk::ActorId>,
     ) -> Self {
         let Some(actor) = actor else {
