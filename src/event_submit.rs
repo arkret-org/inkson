@@ -2954,19 +2954,34 @@ impl EventSubmitter {
         loop {
             #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
             trace.stage("preparing");
-            completed =
-                completed.saturating_add(self.cancel_quarantined_creator_items(&outbound).await?);
-            completed =
-                completed.saturating_add(self.recover_accepted_application_items(&outbound).await?);
-            let fence = self.resolve_queue_generation_fence(&outbound).await?;
-            completed = completed
-                .saturating_add(self.quarantine_superseded_items(&outbound, &fence).await?);
+            completed = completed.saturating_add(
+                crate::runtime_helpers::heap_future(|| {
+                    self.cancel_quarantined_creator_items(&outbound)
+                })
+                .await?,
+            );
+            completed = completed.saturating_add(
+                crate::runtime_helpers::heap_future(|| {
+                    self.recover_accepted_application_items(&outbound)
+                })
+                .await?,
+            );
+            let fence = crate::runtime_helpers::heap_future(|| {
+                self.resolve_queue_generation_fence(&outbound)
+            })
+            .await?;
+            completed = completed.saturating_add(
+                crate::runtime_helpers::heap_future(|| {
+                    self.quarantine_superseded_items(&outbound, &fence)
+                })
+                .await?,
+            );
             let options = arkret_sdk::http_client::ClientRequestOptions::new();
             let replay_store = outbound.store().clone();
             #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
             trace.stage("submitting");
-            match outbound
-                .submit_next_checked(&authority_client, &options, |request| async move {
+            match crate::runtime_helpers::heap_future(|| {
+                outbound.submit_next_checked(&authority_client, &options, |request| async move {
                     self.ensure_creator_quarantine_replay_fence(&request)
                         .await
                         .map_err(|error| error.to_string())?;
@@ -2986,8 +3001,9 @@ impl EventSubmitter {
                         .await
                         .map_err(|error| error.to_string())
                 })
-                .await
-                .map_err(anyhow::Error::from)?
+            })
+            .await
+            .map_err(anyhow::Error::from)?
             {
                 OutboundEngineOutcome::Committed { item, .. }
                 | OutboundEngineOutcome::Rejected { item, .. }
@@ -3578,6 +3594,21 @@ impl EventSubmitter {
         arkret_sdk::SignalSubmitOutcome,
         arkret_sdk::http_client::SignalSendTransportObservation,
     )> {
+        let envelope = self
+            .seal_signal(authority, header, material, payload, state_store)
+            .await?;
+        self.submit_signal_envelope_with_transport_observation(&envelope)
+            .await
+    }
+
+    async fn seal_signal(
+        &self,
+        authority: &arkret_sdk::AccountId,
+        header: crate::signal::SignalHeader,
+        material: &crate::signal::SignalKeyMaterial,
+        payload: &crate::signal::SignalPayload,
+        state_store: &crate::runtime::input::StateStoreHandle,
+    ) -> anyhow::Result<arkret_sdk::SignalEnvelope> {
         state_store.read(|store| store.require_blocklist_signal_freshness(payload))?;
         if header.sender_actor_id.as_account_id() != Some(authority) {
             anyhow::bail!("Signal sender does not match the encryption authority");
@@ -3618,8 +3649,127 @@ impl EventSubmitter {
             )
         })?;
         let envelope = crate::signal::seal_signal_envelope(header, encrypted_payload)?;
-        self.submit_signal_envelope_with_transport_observation(&envelope)
+        Ok(envelope)
+    }
+
+    /// Each holder has an independent direction relation and fresh sealed
+    /// envelope. No preflight Consent result authorizes a later receiver cut.
+    pub(crate) async fn send_call_invitation(
+        &self,
+        scope_ref: arkret_sdk::ScopeRef,
+        authority: &arkret_sdk::AccountId,
+        device: &arkret_sdk::DeviceId,
+        holder: arkret_sdk::AccountId,
+        material: &crate::signal::SignalKeyMaterial,
+        payload: &crate::signal::SignalPayload,
+        state_store: &crate::runtime::input::StateStoreHandle,
+    ) -> anyhow::Result<arkret_sdk::CallInvitationSendOutcome> {
+        let request = self
+            .prepare_call_invitation(
+                scope_ref,
+                authority,
+                device,
+                holder,
+                material,
+                payload,
+                state_store,
+            )
+            .await?;
+        self.http
+            .call_invitation_send(&request)
             .await
+            .map_err(anyhow::Error::from)
+    }
+
+    /// Freeze actual sealed bytes after durably burning their nonce. Sending
+    /// later still requires each receiver's fresh admission cut.
+    pub(crate) async fn prepare_call_invitation(
+        &self,
+        scope_ref: arkret_sdk::ScopeRef,
+        authority: &arkret_sdk::AccountId,
+        device: &arkret_sdk::DeviceId,
+        holder: arkret_sdk::AccountId,
+        material: &crate::signal::SignalKeyMaterial,
+        payload: &crate::signal::SignalPayload,
+        state_store: &crate::runtime::input::StateStoreHandle,
+    ) -> anyhow::Result<arkret_sdk::CallInvitationSendRequestBody> {
+        let crate::signal::SignalPayload::CallSignal {
+            call_id,
+            signal: arkret_sdk::CallSignalData::Invite(invite),
+            ..
+        } = payload
+        else {
+            anyhow::bail!("call invitation producer requires an invite plaintext");
+        };
+        let envelope = self
+            .prepare_signal_envelope(
+                scope_ref.clone(),
+                authority,
+                device,
+                material,
+                payload,
+                state_store,
+            )
+            .await?;
+        let signer = crate::event_signer::active_signer()
+            .ok_or_else(|| anyhow::anyhow!("call invitation signer is unavailable"))?;
+        anyhow::ensure!(
+            signer.verification_method() == envelope.proof.verification_method.as_str(),
+            "call invitation signer changed during encryption"
+        );
+        let mut invitation = arkret_sdk::CallInvitationEnvelope {
+            inviter_actor_id: envelope.sender_actor_id.clone(),
+            holder_account_id: holder,
+            scope_ref,
+            call_id: call_id.clone(),
+            media: arkret_sdk::CallInvitationMedia::from_selection(&invite.media),
+            envelope_digest: arkret_sdk::call_invitation_envelope_digest(&envelope)?,
+            expires_at: envelope.expires_at,
+            proof: arkret_sdk::CallInvitationProof {
+                verification_method: envelope.proof.verification_method.clone(),
+                jws: String::new(),
+            },
+        };
+        invitation.proof.jws = signer.detached_jws_over_payload(&invitation.signing_bytes()?)?;
+        Ok(arkret_sdk::CallInvitationSendRequestBody {
+            invitation,
+            envelope,
+        })
+    }
+
+    pub(crate) async fn prepare_signal_envelope(
+        &self,
+        scope_ref: arkret_sdk::ScopeRef,
+        authority: &arkret_sdk::AccountId,
+        device: &arkret_sdk::DeviceId,
+        material: &crate::signal::SignalKeyMaterial,
+        payload: &crate::signal::SignalPayload,
+        state_store: &crate::runtime::input::StateStoreHandle,
+    ) -> anyhow::Result<arkret_wire::SignalEnvelope> {
+        let stream_head_ref = self.current_stream_head_for(&scope_ref).await?;
+        let parent = if matches!(&scope_ref, arkret_sdk::ScopeRef::Circle { .. }) {
+            Some(
+                self.current_stream_head_for(&arkret_sdk::ScopeRef::Realm {
+                    realm_id: scope_ref.realm_id().clone(),
+                })
+                .await?,
+            )
+        } else {
+            None
+        };
+        let header = crate::signal::SignalHeader::new(
+            scope_ref.clone(),
+            arkret_sdk::ActorId::account(authority.clone()),
+            device.clone(),
+            stream_head_ref,
+            parent,
+            payload.signal_class(),
+            crate::clock::now_utc(),
+        );
+        let envelope = self
+            .seal_signal(authority, header, material, payload, state_store)
+            .await?;
+        Ok(envelope)
     }
 
     /// `POST /_arkret/self/signal` — `ak.self.signal.command.send.v1`.

@@ -245,6 +245,7 @@ mod tests {
             signer_verification_method: arkret_sdk::DidUrl::new("did:web:alice.example#device-1")
                 .unwrap(),
             product_authority: None,
+            call_invitation: None,
             authority_commit_id: head.commit_id,
             parent_realm_authority_commit_id: None,
             payload: SignalPlaintext::MessageStream(arkret_sdk::MessageStreamFrame::Keyframe(

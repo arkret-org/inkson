@@ -78,23 +78,13 @@ pub(crate) async fn fetch_did_bytes(
     url: &str,
     max_bytes: usize,
 ) -> Option<(String, Vec<u8>)> {
-    fetch_guarded_bytes(http, url, max_bytes, None).await
-}
-
-pub(crate) async fn fetch_arkret_bytes(
-    http: &reqwest::Client,
-    url: &str,
-    max_bytes: usize,
-    operation: &str,
-) -> Option<(String, Vec<u8>)> {
-    fetch_guarded_bytes(http, url, max_bytes, Some(operation)).await
+    fetch_guarded_bytes(http, url, max_bytes).await
 }
 
 async fn fetch_guarded_bytes(
     http: &reqwest::Client,
     url: &str,
     max_bytes: usize,
-    operation: Option<&str>,
 ) -> Option<(String, Vec<u8>)> {
     // P3.2c SSRF egress guard — fail-closed *before* any outbound request.
     // The `did:web` / `did:webvh` host is taken verbatim from an untrusted
@@ -111,7 +101,7 @@ async fn fetch_guarded_bytes(
         // not reused because DNS pinning is a per-target client property.
         let _ = http;
         let client = locked_did_fetch_client(url).await?;
-        fetch_did_bytes_from_url(&client, url, max_bytes, operation).await
+        fetch_did_bytes_from_url(&client, url, max_bytes).await
     }
     #[cfg(target_arch = "wasm32")]
     {
@@ -120,7 +110,7 @@ async fn fetch_guarded_bytes(
         if !url_host_is_safe(url) {
             return None;
         }
-        fetch_did_bytes_from_url(http, url, max_bytes, operation).await
+        fetch_did_bytes_from_url(http, url, max_bytes).await
     }
 }
 
@@ -128,13 +118,8 @@ async fn fetch_did_bytes_from_url(
     http: &reqwest::Client,
     url: &str,
     max_bytes: usize,
-    operation: Option<&str>,
 ) -> Option<(String, Vec<u8>)> {
-    let mut request = http.get(url);
-    if let Some(operation) = operation {
-        request = request.header("Arkret-Operation", operation);
-    }
-    let response = request.send().await.ok()?;
+    let response = http.get(url).send().await.ok()?;
     if !response.status().is_success() {
         return None;
     }

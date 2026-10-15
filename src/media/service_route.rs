@@ -2,21 +2,15 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Mutex;
 
 use anyhow::Context as _;
-use arkret_models_identity::{
-    AuthenticatedServiceResolution, canonical_service_resolution_path,
-    validate_service_resolution_url,
-};
 use arkret_sdk::identity::{DidResolver as _, DidWebResolver, DidWebvhResolver};
 use arkret_sdk::{Did, DidCoreId};
 use chrono::{DateTime, Utc};
-use garth::{
-    PrefetchedRouteSource, RouteResolution, ServiceDescribeBinding, ServiceRouteCandidate,
-    ServiceRouteDurableSnapshot, ServiceRouteEvaluator, ServiceRouteStateStore,
-};
+use garth::{ServiceRouteCandidate, ServiceRouteDurableSnapshot, ServiceRouteStateStore};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub(crate) const MEDIA_SERVICE_KIND: &str = "media_service";
+#[cfg(test)]
+const MEDIA_SERVICE_KIND: &str = "media_service";
 
 /// Hard byte ceiling for fetched DID route evidence and describe, matching
 /// the SDK service-resolution transport bound (`service-surface.md` §2.6).
@@ -274,111 +268,6 @@ impl ServiceRouteStateStore for InksonServiceRouteStore {
 
 // ─── Route-material fetch (async, SSRF-guarded) ──────────────────────────────
 
-/// Verified inputs for one evaluator run.
-pub(crate) struct FetchedRouteMaterial {
-    pub(crate) candidate: ServiceRouteCandidate,
-    pub(crate) describe: ServiceDescribeBinding,
-}
-
-/// Candidate origins (`https://host[:port]/`) for each anchored media
-/// `service_id`, read from the realm's accepted `ak.realm.media_service`
-/// cell (`ice_config_endpoint` + `foci[].token_endpoint`). Untrusted hints:
-/// the fetched DID evidence is independently verified against current method state.
-pub(crate) fn media_service_route_origins(
-    state: &crate::state::ClientLocalState,
-    realm_id: &str,
-) -> BTreeMap<String, Vec<String>> {
-    let mut origins_by_service: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    for record in &state.raw_operations {
-        let kind = record
-            .payload
-            .get("kind")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        if kind != arkret_wire::event_kind_str::REALM_MEDIA_SERVICE
-            || record.realm_id.as_deref() != Some(realm_id)
-        {
-            continue;
-        }
-        let body = record
-            .payload
-            .get("body")
-            .or_else(|| record.payload.get("payload"))
-            .unwrap_or(&record.payload);
-        let Some(service_id) = body.get("service_id").and_then(Value::as_str) else {
-            continue;
-        };
-        let origins = origins_by_service.entry(service_id.to_owned()).or_default();
-        let mut push_endpoint = |endpoint: &str| {
-            if let Ok(url) = url::Url::parse(endpoint) {
-                let origin = url.origin().ascii_serialization();
-                if origin != "null" {
-                    origins.insert(format!("{origin}/"));
-                }
-            }
-        };
-        if let Some(endpoint) = body.get("ice_config_endpoint").and_then(Value::as_str) {
-            push_endpoint(endpoint);
-        }
-        if let Some(foci) = body.get("foci").and_then(Value::as_array) {
-            for focus in foci {
-                if let Some(endpoint) = focus.get("token_endpoint").and_then(Value::as_str) {
-                    push_endpoint(endpoint);
-                }
-            }
-        }
-    }
-    origins_by_service
-        .into_iter()
-        .map(|(service_id, origins)| (service_id, origins.into_iter().collect()))
-        .collect()
-}
-
-/// Fetch and verify the route material for one media service, trying each
-/// candidate origin in order. Every fetch goes through the shared DID-fetch
-/// SSRF guard (native: DNS-pinned egress-locked client; wasm: static host
-/// classification) and hard byte ceilings.
-pub(crate) async fn fetch_route_material(
-    http: &reqwest::Client,
-    service_id: &DidCoreId,
-    candidate_origins: &[String],
-    now: DateTime<Utc>,
-) -> anyhow::Result<FetchedRouteMaterial> {
-    if let Some(state) = InksonServiceRouteStore::open_default()
-        .load_route_state(service_id, MEDIA_SERVICE_KIND)?
-        .and_then(|snapshot| snapshot.method_state)
-        && let Ok(material) = fetch_route_material_from_did(http, service_id, &state.did, now).await
-    {
-        return Ok(material);
-    }
-    let Some((first_origin, remaining_origins)) = candidate_origins.split_first() else {
-        anyhow::bail!("realm media_service cell carries no endpoint origin for {service_id}");
-    };
-    let mut last_error =
-        match fetch_route_material_from_origin(http, service_id, first_origin, now).await {
-            Ok(material) => return Ok(material),
-            Err(error) => error,
-        };
-    for origin in remaining_origins {
-        match fetch_route_material_from_origin(http, service_id, origin, now).await {
-            Ok(material) => return Ok(material),
-            Err(error) => last_error = error,
-        }
-    }
-    Err(last_error)
-}
-
-async fn fetch_route_material_from_did(
-    http: &reqwest::Client,
-    service_id: &DidCoreId,
-    did: &Did,
-    now: DateTime<Utc>,
-) -> anyhow::Result<FetchedRouteMaterial> {
-    let candidate =
-        authenticated_candidate_from_did(http, service_id, MEDIA_SERVICE_KIND, did, now).await?;
-    fetch_route_describe(http, candidate, now).await
-}
-
 pub(crate) async fn authenticated_candidate_from_did(
     http: &reqwest::Client,
     service_id: &DidCoreId,
@@ -412,126 +301,85 @@ pub(crate) async fn authenticated_candidate_from_did(
     Ok(candidate)
 }
 
-async fn fetch_route_material_from_origin(
-    http: &reqwest::Client,
-    service_id: &DidCoreId,
-    origin: &str,
-    now: DateTime<Utc>,
-) -> anyhow::Result<FetchedRouteMaterial> {
-    let resolution_url = format!(
-        "{}{}",
-        origin.trim_end_matches('/'),
-        canonical_service_resolution_path(service_id)
-    );
-    validate_service_resolution_url(&resolution_url, service_id)?;
-    let (_, resolution_bytes) = super::http_fetch::fetch_arkret_bytes(
-        http,
-        &resolution_url,
-        ROUTE_FETCH_MAX_BYTES,
-        arkret_sdk::ServiceOperationId::OPEN_SERVICE_READ_RESOLUTION_V1,
-    )
-    .await
-    .with_context(|| format!("service resolution fetch refused: {resolution_url}"))?;
-    let resolution: AuthenticatedServiceResolution =
-        arkret_sdk::canonical::canonical::from_canonical_json_slice(&resolution_bytes)?;
-    anyhow::ensure!(
-        &resolution.service_id == service_id && resolution.service_kind == MEDIA_SERVICE_KIND,
-        "service resolution identity mismatch"
-    );
-    let current_document =
-        fetch_current_service_document(http, &resolution.normalized_did_document.id).await?;
-    let candidate = garth::authenticate_fetched_resolution(resolution, current_document, now)?;
-    fetch_route_describe(http, candidate, now).await
-}
-
-async fn fetch_route_describe(
-    http: &reqwest::Client,
-    candidate: ServiceRouteCandidate,
-    now: DateTime<Utc>,
-) -> anyhow::Result<FetchedRouteMaterial> {
-    let projection = candidate.resolution.projection()?;
-    // Second hop: role-scoped describe confirmation from the *verified* base.
-    let describe_url = format!(
-        "{}_arkret/describe?service_kind={MEDIA_SERVICE_KIND}",
-        projection.base_url
-    );
-    let (_, describe_bytes) = super::http_fetch::fetch_arkret_bytes(
-        http,
-        &describe_url,
-        ROUTE_FETCH_MAX_BYTES,
-        arkret_wire::ServiceOperationId::SERVER_READ_DESCRIBE_V1,
-    )
-    .await
-    .with_context(|| format!("service describe fetch refused or failed: {describe_url}"))?;
-    let describe: arkret_models_discovery::ServiceDescribe =
-        serde_json::from_slice(&describe_bytes)
-            .map_err(|error| anyhow::anyhow!("ServiceDescribe parse failed: {error}"))?;
-    let describe = garth::describe_route_binding(&candidate.resolution, &describe, now)
-        .map_err(|error| anyhow::anyhow!("describe reverse binding failed: {error}"))?;
-
-    Ok(FetchedRouteMaterial {
-        candidate,
-        describe,
-    })
-}
-
-// ─── Evaluation ──────────────────────────────────────────────────────────────
-
-/// Run the evaluator (durable method state advance / fork quarantine / describe
-/// reverse binding) over prefetched material for one service.
-pub(crate) fn resolve_route_with_material<S: ServiceRouteStateStore>(
-    evaluator: &mut ServiceRouteEvaluator<S>,
-    service_id: &DidCoreId,
-    material: FetchedRouteMaterial,
-    now: DateTime<Utc>,
-) -> anyhow::Result<RouteResolution> {
-    let mut source = PrefetchedRouteSource::new(Some(material.candidate));
-    source.insert_describe(material.describe);
-    evaluator
-        .resolve(service_id, MEDIA_SERVICE_KIND, now, &mut source)
-        .map_err(|error| anyhow::anyhow!("service route evaluation failed: {error}"))
-}
-
-/// Produce the evaluator-verified route material the RTC token exchange
-/// requires, one [`RouteResolution`] per anchored media `service_id`.
-///
-/// Fail-closed: any fetch, verification, method state or quarantine failure is a
-/// hard error — the caller must surface it and refuse the join, never degrade
-/// to an empty route set.
+/// Consume the accepted Station's bounded result instead of performing DID
+/// discovery from the ordinary media join path.
 pub async fn evaluate_media_routes(
+    base: &str,
+    realm: &str,
     media_service_ids: &[String],
-    endpoint_origins_by_service: &BTreeMap<String, Vec<String>>,
-) -> anyhow::Result<Vec<RouteResolution>> {
+    origins: &BTreeMap<String, Vec<String>>,
+) -> anyhow::Result<Vec<super::rtc::AcceptedMediaBinding>> {
     anyhow::ensure!(
-        !media_service_ids.is_empty(),
-        "realm has no anchored media service"
+        media_service_ids.len() == 1,
+        "one accepted media assignment is required"
     );
-    let http = reqwest::Client::new();
-    let mut evaluator = ServiceRouteEvaluator::new(
-        InksonServiceRouteStore::open_default(),
-        chrono::Duration::minutes(5),
-    )
-    .map_err(|error| anyhow::anyhow!("service route evaluator init failed: {error}"))?;
-    let mut routes = Vec::with_capacity(media_service_ids.len());
-    for id in media_service_ids {
-        let service_id = DidCoreId::new(id.clone())
-            .map_err(|error| anyhow::anyhow!("invalid media service id {id}: {error}"))?;
-        let origins = endpoint_origins_by_service
-            .get(id)
-            .cloned()
-            .unwrap_or_default();
-        let now = Utc::now();
-        let material = fetch_route_material(&http, &service_id, &origins, now)
-            .await
-            .with_context(|| format!("media route material fetch failed for {id}"))?;
-        routes.push(resolve_route_with_material(
-            &mut evaluator,
-            &service_id,
-            material,
-            now,
-        )?);
+    let service: DidCoreId = media_service_ids[0].parse()?;
+    let realm: arkret_sdk::RealmId = realm.parse()?;
+    let expected_origins = origins.get(service.as_str()).cloned().unwrap_or_default();
+    anyhow::ensure!(
+        !expected_origins.is_empty(),
+        "accepted credential endpoints are unavailable"
+    );
+    let http = crate::identity::session_refresh::provide_authenticated_sdk_client(base)
+        .await
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+    {
+        let client = crate::transport::own_station_results::client_for_http(&http).await?;
+        let query = arkret_models_identity::MediaServiceBindingRequestBody {
+            request_id: format!("ak:request:{}", crate::operation::uuid_v7()).parse()?,
+            realm_id: realm,
+        };
+        let response = client.media_service_binding(&query, &service).await?;
+        let route = &response.value()?.route;
+        let base = url::Url::parse(&route.base_url)?;
+        for origin in expected_origins {
+            anyhow::ensure!(
+                url::Url::parse(&origin)?.origin() == base.origin(),
+                "accepted credential endpoint differs from the verified issuer origin"
+            );
+        }
+        Ok(vec![response])
     }
-    Ok(routes)
+}
+
+/// Read only the currently installed accepted typed result, never old Events.
+pub(crate) fn media_service_route_origins(
+    store: &crate::state::LocalStateStore,
+    realm: &str,
+) -> BTreeMap<String, Vec<String>> {
+    let Some(value) = accepted_media_descriptor(store, realm) else {
+        return BTreeMap::new();
+    };
+    let mut origins = BTreeSet::new();
+    for endpoint in value
+        .ice_config_endpoint
+        .iter()
+        .map(String::as_str)
+        .chain(value.foci.iter().map(|focus| focus.token_endpoint.as_str()))
+    {
+        let Ok(url) = url::Url::parse(endpoint) else {
+            return BTreeMap::new();
+        };
+        origins.insert(format!("{}/", url.origin().ascii_serialization()));
+    }
+    BTreeMap::from([(value.service_id.to_string(), origins.into_iter().collect())])
+}
+
+pub(crate) fn accepted_media_descriptor(
+    store: &crate::state::LocalStateStore,
+    realm: &str,
+) -> Option<arkret_models_collaboration::events_payloads::RealmMediaServiceValue> {
+    store
+        .realm_current_state_entries(realm)
+        .into_iter()
+        .find_map(|row| match row {
+            arkret_sdk::TypedCurrentRow::Value {
+                selector: arkret_sdk::CurrentSelector::RealmMediaService,
+                value,
+                ..
+            } => serde_json::from_value(value).ok(),
+            _ => None,
+        })
 }
 
 /// Fresh method-scoped fetch shared by media and Directory consumers.

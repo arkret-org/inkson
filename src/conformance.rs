@@ -383,33 +383,70 @@ pub async fn send_native_automatic_read_receipt(
     .await
 }
 
+/// Capture the real full holder read with the Native host's authenticated
+/// own-Station transport. Delayed consumption still uses the ordinary verifier.
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn read_native_call_consent(
+    host: &crate::sync_engine::NativeAccountHost,
+    invitation: &arkret_sdk::CallInvitationEnvelope,
+) -> anyhow::Result<garth::call_invitation::HolderCallConsent> {
+    let (account, client) = host.call_admission_context().await?;
+    let mut nonce = [0_u8; 32];
+    getrandom::fill(&mut nonce).map_err(|e| anyhow::anyhow!(e))?;
+    Ok(garth::call_invitation::read_holder_call_consent(
+        &client,
+        &account.authority,
+        &account.principal_control_realm_id,
+        invitation,
+        arkret_sdk::canonical::base64url_encode(nonce),
+        None,
+        &[],
+    )
+    .await?)
+}
+
 /// Feed a genuinely admitted Signal through the production product router.
 #[cfg(not(target_arch = "wasm32"))]
 pub async fn observe_native_call_projection(
     host: &crate::sync_engine::NativeAccountHost,
     outcome: garth::signal::SignalReceiveOutcome,
 ) -> anyhow::Result<usize> {
-    observe_call_projection(host.state_store_handle(), outcome).await
+    let (account, client) = host.call_admission_context().await?;
+    observe_call_projection(host.state_store_handle(), account, client, outcome).await
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) async fn observe_call_projection(
     state_store: crate::runtime::input::StateStoreHandle,
+    account: crate::config::ActiveAccountContext,
+    client: arkret_sdk::http_client::own_station_results::OwnStationResultClient,
     outcome: garth::signal::SignalReceiveOutcome,
 ) -> anyhow::Result<usize> {
-    use std::cell::Cell;
+    use std::future::Future as _;
     use std::rc::Rc;
 
+    use dioxus::prelude::ReadableExt as _;
+
     use crate::runtime::projection::{AdmittedSignal, SignalProductRouter, SignalProductSink};
-    struct Calls(Cell<usize>);
+    struct Calls {
+        hub: crate::views::call_signals::CallSignalHub,
+        local_actor: String,
+    }
     impl SignalProductSink for Calls {
         fn call_signal<'a>(
             &'a self,
-            _: &'a AdmittedSignal,
+            signal: &'a AdmittedSignal,
             _: serde_json::Value,
         ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + 'a>> {
-            self.0.set(self.0.get() + 1);
-            Box::pin(async {})
+            Box::pin(async move {
+                let mut hub = self.hub;
+                crate::views::call_signals::route_decrypted_call_signals(
+                    &mut hub,
+                    std::slice::from_ref(signal),
+                    &self.local_actor,
+                )
+                .await;
+            })
         }
         fn message_stream<'a>(
             &'a self,
@@ -420,16 +457,41 @@ pub(crate) async fn observe_call_projection(
         fn read_receipt(&self, _: &AdmittedSignal, _: &arkret_sdk::ReadReceiptPolicy) {}
         fn advance_clock(&self, _: chrono::DateTime<chrono::Utc>) {}
     }
-    let calls = Rc::new(Calls(Cell::new(0)));
+    fn ring_root() -> dioxus::prelude::Element {
+        dioxus::prelude::VNode::empty()
+    }
+    let mut dom = dioxus::prelude::VirtualDom::new(ring_root);
+    dom.rebuild_in_place();
+    let hub = dom.in_runtime(|| {
+        dioxus::core::Runtime::current().in_scope(
+            dioxus::core::ScopeId::ROOT,
+            crate::views::call_signals::CallSignalHub::new,
+        )
+    });
+    let calls = Rc::new(Calls {
+        hub,
+        local_actor: arkret_sdk::ActorId::account(account.authority.clone()).to_string(),
+    });
     let products = SignalProductRouter::default();
-    products.install(calls.clone());
+    products.install(calls);
     let sink = crate::signal_receive_engine::InksonSignalSink {
+        own_station: Some(client),
+        account: Some(account),
         state_store,
         products,
         live: std::sync::Mutex::new(Default::default()),
     };
-    sink.handle(outcome).await?;
-    Ok(calls.0.get())
+    let mut future = Box::pin(sink.handle(outcome));
+    std::future::poll_fn(|cx| {
+        dom.in_runtime(|| {
+            dioxus::core::Runtime::current()
+                .in_scope(dioxus::core::ScopeId::ROOT, || future.as_mut().poll(cx))
+        })
+    })
+    .await?;
+    Ok(usize::from(
+        dom.in_runtime(|| hub.incoming_call.peek().is_some()),
+    ))
 }
 
 /// Exercise the ordinary native send ratchet and authored plaintext retention.

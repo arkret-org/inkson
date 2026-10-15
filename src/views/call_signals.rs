@@ -33,6 +33,7 @@ pub struct IncomingCallInfo {
     pub sender_device: String,
     /// Invite requested video (`payload.data.media.video`).
     pub video: bool,
+    pub call_invitation: Option<Box<arkret_sdk::CallInvitationDeliveryView>>,
 }
 
 /// A non-invite signal queued for the active `CallPanel` to apply.
@@ -149,6 +150,7 @@ pub struct DecodedCallSignal {
     pub sender_actor: String,
     pub sender_device: String,
     pub signal: arkret_sdk::CallSignalData,
+    pub call_invitation: Option<Box<arkret_sdk::CallInvitationDeliveryView>>,
 }
 
 /// Decode one already-decrypted call Signal.
@@ -164,19 +166,27 @@ pub fn decode_call_signal(signal: &AdmittedSignal) -> Option<DecodedCallSignal> 
     let arkret_sdk::SignalPlaintext::CallSignal(body) = &signal.payload else {
         return None;
     };
-    // Call routing addresses a human device; an Agent-key endpoint has no
-    // device coordinate to ring and is not a call participant.
-    let arkret_sdk::SignalSequenceEndpoint::AccountDevice { device_id } = signal.sender_endpoint()
-    else {
-        return None;
+    // An Agent may be an invitation producer without being represented as a
+    // human device participant. Other product messages keep their device gate.
+    let sender_device = match signal.sender_endpoint() {
+        arkret_sdk::SignalSequenceEndpoint::AccountDevice { device_id } => {
+            device_id.as_str().to_owned()
+        }
+        arkret_sdk::SignalSequenceEndpoint::AgentKey { .. }
+            if matches!(&body.signal, arkret_sdk::CallSignalData::Invite(_)) =>
+        {
+            String::new()
+        }
+        _ => return None,
     };
     Some(DecodedCallSignal {
         realm_id: signal.scope_ref().realm_id().as_str().to_owned(),
         call_id: body.call_id.as_str().to_owned(),
         seq: body.seq,
-        sender_actor: signal.actor_id().signing_principal_id().as_str().to_owned(),
-        sender_device: device_id.as_str().to_owned(),
+        sender_actor: signal.actor_id().to_string(),
+        sender_device,
         signal: body.signal.clone(),
+        call_invitation: signal.call_invitation.clone(),
     })
 }
 
@@ -265,6 +275,7 @@ pub fn decide_route(
             peer_actor: decoded.sender_actor.clone(),
             sender_device: decoded.sender_device.clone(),
             video: invite.media.video,
+            call_invitation: None,
         });
     }
 
@@ -366,7 +377,12 @@ pub fn route_decoded_signal(
 
     match decide_route(&decoded, local_actor, is_duplicate, &ring_state) {
         RouteDecision::Drop => {}
-        RouteDecision::Ring(info) => hub.incoming_call.set(Some(info)),
+        RouteDecision::Ring(mut info) => {
+            info.call_invitation = decoded.call_invitation.clone();
+            if info.call_invitation.is_some() {
+                hub.incoming_call.set(Some(info));
+            }
+        }
         RouteDecision::ClearRing => hub.incoming_call.set(None),
         RouteDecision::Enqueue(item) => {
             let call_id = item.call_id.clone();
@@ -474,6 +490,7 @@ mod tests {
             signer_verification_method: arkret_sdk::DidUrl::new("did:web:alice.example#device-1")
                 .unwrap(),
             product_authority: None,
+            call_invitation: None,
             authority_commit_id: envelope.authority_commit_id.clone(),
             parent_realm_authority_commit_id: envelope.parent_realm_authority_commit_id.clone(),
             domain: arkret_sdk::SignalSequenceDomain::from_verified_envelope(envelope, None)?,
@@ -495,7 +512,7 @@ mod tests {
             arkret_sdk::CallSignalData::Invite(_)
         ));
         assert_eq!(decoded.call_id, TEST_CALL);
-        assert_eq!(decoded.sender_actor, "ak:did_core:web:bob.example");
+        assert_eq!(decoded.sender_actor, envelope.sender_actor_id.to_string());
         assert_eq!(decoded.sender_device, PEER_DEVICE);
         assert_eq!(decoded.realm_id, TEST_REALM);
         assert!(matches!(
@@ -561,6 +578,7 @@ mod tests {
 
     fn decoded(signal: arkret_sdk::CallSignalData, seq: u64) -> DecodedCallSignal {
         DecodedCallSignal {
+            call_invitation: None,
             realm_id: "ak:realm:r".into(),
             call_id: "ak:call:1".into(),
             seq,
@@ -652,7 +670,7 @@ mod tests {
         let decoded = decode_call_signal(&admitted).expect("decodes");
         match decide_route(&decoded, "did:web:me", false, &RouteState::default()) {
             RouteDecision::Ring(info) => {
-                assert_eq!(info.peer_actor, "ak:did_core:web:caller.example")
+                assert_eq!(info.peer_actor, envelope.sender_actor_id.to_string())
             }
             other => panic!("expected Ring, got {other:?}"),
         }

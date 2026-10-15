@@ -386,6 +386,82 @@ pub struct NativeAccountHost {
 
 #[cfg(not(target_arch = "wasm32"))]
 impl NativeAccountHost {
+    pub(crate) async fn call_admission_context(
+        &self,
+    ) -> garth::Result<(
+        crate::config::ActiveAccountContext,
+        arkret_sdk::http_client::own_station_results::OwnStationResultClient,
+    )> {
+        Ok((
+            self.projector.ctx.account.clone(),
+            crate::transport::own_station_results::client_for_http(&self.http).await?,
+        ))
+    }
+
+    /// Same production producer and nonce persistence as the app call flow.
+    pub async fn send_call_invitation(
+        &self,
+        holder: arkret_sdk::AccountId,
+        scope: arkret_sdk::ScopeRef,
+        material: &crate::signal::SignalKeyMaterial,
+        payload: &crate::signal::SignalPayload,
+    ) -> anyhow::Result<arkret_sdk::CallInvitationSendOutcome> {
+        let submitter = crate::event_submit::EventSubmitter::new(self.http.clone());
+        submitter
+            .send_call_invitation(
+                scope,
+                &self.projector.ctx.account.authority,
+                &self.projector.ctx.account.device_id,
+                holder,
+                material,
+                payload,
+                &self.state_store_handle(),
+            )
+            .await
+    }
+
+    /// Freeze a production envelope with the ordinary current source cut and
+    /// durable nonce reservation; no receiver admission is cached here.
+    pub async fn prepare_call_invitation(
+        &self,
+        holder: arkret_sdk::AccountId,
+        scope: arkret_sdk::ScopeRef,
+        material: &crate::signal::SignalKeyMaterial,
+        payload: &crate::signal::SignalPayload,
+    ) -> anyhow::Result<arkret_sdk::CallInvitationSendRequestBody> {
+        crate::event_submit::EventSubmitter::new(self.http.clone())
+            .prepare_call_invitation(
+                scope,
+                &self.projector.ctx.account.authority,
+                &self.projector.ctx.account.device_id,
+                holder,
+                material,
+                payload,
+                &self.state_store_handle(),
+            )
+            .await
+    }
+
+    /// Freeze a production envelope with the ordinary current source cut and
+    /// durable nonce reservation; no receiver admission is cached here.
+    pub async fn prepare_signal_envelope(
+        &self,
+        scope: arkret_sdk::ScopeRef,
+        material: &crate::signal::SignalKeyMaterial,
+        payload: &crate::signal::SignalPayload,
+    ) -> anyhow::Result<arkret_wire::SignalEnvelope> {
+        crate::event_submit::EventSubmitter::new(self.http.clone())
+            .prepare_signal_envelope(
+                scope,
+                &self.projector.ctx.account.authority,
+                &self.projector.ctx.account.device_id,
+                material,
+                payload,
+                &self.state_store_handle(),
+            )
+            .await
+    }
+
     /// Refresh this host's active endpoint through the ordinary signed keys
     /// directory before rebuilding author-bound private projections.
     pub async fn refresh_authoring_authority(&self) -> anyhow::Result<()> {
@@ -1266,7 +1342,7 @@ impl InksonAccountProjector {
                 scope: "account".into(),
                 cursor: cursor.to_owned(),
             });
-        self.post_commit(&response).await
+        crate::runtime_helpers::heap_future(|| self.post_commit(&response)).await
     }
 
     /// Product work that runs after the frame is durable.
@@ -1436,7 +1512,7 @@ impl AccountBatchProjector for InksonAccountProjector {
     }
 
     async fn project(&self, batch: &AccountSubscribeBatch) -> garth::Result<()> {
-        self.project_verified_batch(batch, None).await
+        crate::runtime_helpers::heap_future(|| self.project_verified_batch(batch, None)).await
     }
 
     async fn project_and_checkpoint<C: garth::CursorStore>(
@@ -1455,8 +1531,10 @@ impl AccountBatchProjector for InksonAccountProjector {
                 self.project(batch).await?;
                 garth::CursorStore::save_account_checkpoint(cursors, scope, checkpoint).await?;
             } else {
-                self.project_verified_batch(batch, Some((scope, checkpoint)))
-                    .await?;
+                crate::runtime_helpers::heap_future(|| {
+                    self.project_verified_batch(batch, Some((scope, checkpoint)))
+                })
+                .await?;
             }
             Ok(())
         }
@@ -1585,8 +1663,10 @@ impl InksonAccountProjector {
             let final_checkpoint = (index + 1 == batch.frames.len())
                 .then_some(next_checkpoint.as_ref())
                 .flatten();
-            self.project_frame(frame, &batch.cursor, proof, final_checkpoint, generation)
-                .await?;
+            crate::runtime_helpers::heap_future(|| {
+                self.project_frame(frame, &batch.cursor, proof, final_checkpoint, generation)
+            })
+            .await?;
             generation = generation
                 .checked_add(1)
                 .ok_or_else(|| garth::Error::Protocol("current generation exhausted".into()))?;

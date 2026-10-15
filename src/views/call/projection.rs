@@ -15,6 +15,7 @@ pub(super) fn operation_body(payload: &Value) -> &Value {
         .unwrap_or(payload)
 }
 
+#[cfg(test)]
 fn call_state_recording_artifact_boundary(
     body: &Value,
 ) -> Result<(), crate::media::rtc::RtcClientError> {
@@ -35,6 +36,7 @@ fn call_state_recording_artifact_boundary(
         .map_err(|_| crate::media::rtc::RtcClientError::RecordingArtifactPipelineBypassed)
 }
 
+#[cfg(test)]
 fn call_state_transcript_artifact_boundary(
     body: &Value,
 ) -> Result<(), crate::media::rtc::RtcClientError> {
@@ -55,13 +57,7 @@ fn call_state_transcript_artifact_boundary(
         .map_err(|_| crate::media::rtc::RtcClientError::TranscriptionArtifactPipelineBypassed)
 }
 
-fn call_state_media_artifact_boundary(
-    body: &Value,
-) -> Result<(), crate::media::rtc::RtcClientError> {
-    call_state_recording_artifact_boundary(body)?;
-    call_state_transcript_artifact_boundary(body)
-}
-
+#[cfg(test)]
 fn body_mentions_recording_artifact(body: &Value) -> bool {
     body.get("recording_transition")
         .and_then(|transition| transition.get("result"))
@@ -74,6 +70,7 @@ fn body_mentions_recording_artifact(body: &Value) -> bool {
         )
 }
 
+#[cfg(test)]
 fn body_mentions_transcript_artifact(body: &Value) -> bool {
     body.get("transcript_transition")
         .and_then(|transition| transition.get("result"))
@@ -86,6 +83,7 @@ fn body_mentions_transcript_artifact(body: &Value) -> bool {
         )
 }
 
+#[cfg(test)]
 fn value_has_backend_direct_recording_ref(value: &Value) -> bool {
     match value {
         Value::String(value) => {
@@ -109,6 +107,7 @@ fn value_has_backend_direct_recording_ref(value: &Value) -> bool {
     }
 }
 
+#[cfg(test)]
 fn value_has_backend_direct_transcript_ref(value: &Value) -> bool {
     match value {
         Value::String(value) => {
@@ -139,46 +138,6 @@ fn value_has_backend_direct_transcript_ref(value: &Value) -> bool {
 
 /// Derive the realm's anchored media-service IDs and preferred focus from
 /// the local `ak.realm.media_service` projection.
-pub(super) fn media_service_selection(
-    state: &crate::state::ClientLocalState,
-    realm_id: &str,
-) -> (Vec<String>, String) {
-    let mut service_ids = BTreeSet::new();
-    let mut focus_ids = Vec::<String>::new();
-    for record in &state.raw_operations {
-        let kind = record
-            .payload
-            .get("kind")
-            .and_then(|v| v.as_str())
-            .unwrap_or_default();
-        if kind != event_kind_str::REALM_MEDIA_SERVICE
-            || record.realm_id.as_deref() != Some(realm_id)
-        {
-            continue;
-        }
-        let body = operation_body(&record.payload);
-        if let Some(service_id) = body.get("service_id").and_then(|v| v.as_str()) {
-            service_ids.insert(service_id.to_owned());
-        }
-        if let Some(foci) = body.get("foci").and_then(|v| v.as_array()) {
-            for focus in foci {
-                let Some(focus_id) = focus.get("focus_id").and_then(|v| v.as_str()) else {
-                    continue;
-                };
-                if !focus_id.trim().is_empty() && !focus_ids.iter().any(|known| known == focus_id) {
-                    focus_ids.push(focus_id.to_owned());
-                }
-            }
-        }
-    }
-    let media_service_ids: Vec<String> = service_ids.into_iter().collect();
-    let focus_id = focus_ids
-        .into_iter()
-        .next()
-        .unwrap_or_else(|| default_focus_id(&media_service_ids));
-    (media_service_ids, focus_id)
-}
-
 pub(super) fn media_governance_evidence(
     state: &crate::state::ClientLocalState,
     realm_id: &str,
@@ -256,17 +215,6 @@ fn latest_body_for_kind(
         .map(|record| operation_body(&record.payload).clone())
 }
 
-/// Fallback used only before the media-service projection is hydrated. A
-/// real media join still fails closed when the anchored issuer service-ID set is
-/// empty.
-pub(super) fn default_focus_id(media_service_ids: &[String]) -> String {
-    media_service_ids
-        .first()
-        .and_then(|service_id| service_id.rsplit(':').next())
-        .map(|host| host.to_owned())
-        .unwrap_or_else(|| "default".to_owned())
-}
-
 pub(super) fn participant_list_from_input(input: &str) -> Vec<String> {
     let mut seen = BTreeSet::new();
     input
@@ -279,11 +227,11 @@ pub(super) fn participant_list_from_input(input: &str) -> Vec<String> {
 }
 
 pub(super) fn call_state_participant_identities(
-    state: &crate::state::ClientLocalState,
+    rows: &[arkret_wire::TypedCurrentRow],
     realm_id: &str,
     call_id: &str,
 ) -> BTreeSet<String> {
-    call_roster_participants(state, realm_id, call_id)
+    call_roster_participants(rows, realm_id, call_id)
         .filter_map(|participant| {
             participant
                 .get("participant_id")
@@ -294,63 +242,29 @@ pub(super) fn call_state_participant_identities(
         .collect()
 }
 
-/// Fold the roster OR-Set from exact `roster_delta` events. A leave tombstones
-/// its observed add tag so replay order cannot resurrect a removed leg.
-fn call_roster_participants<'a>(
-    state: &'a crate::state::ClientLocalState,
+/// Use only the complete authority-accepted current assertion set.
+fn call_roster_participants(
+    rows: &[arkret_wire::TypedCurrentRow],
     realm_id: &str,
     call_id: &str,
-) -> impl Iterator<Item = &'a Value> {
-    let mut participants = BTreeMap::<String, &'a Value>::new();
-    let mut removed_tags = BTreeSet::<String>::new();
-    for record in &state.raw_operations {
-        let kind = record
-            .payload
-            .get("kind")
-            .and_then(|v| v.as_str())
-            .unwrap_or_default();
-        if kind != event_kind_str::CALL_STATE || record.realm_id.as_deref() != Some(realm_id) {
-            continue;
+) -> impl Iterator<Item = Value> {
+    rows.iter().find_map(|row| match row {
+        arkret_wire::TypedCurrentRow::Value {
+            selector: arkret_wire::CurrentSelector::CallRoster { call_id: current_call },
+            source_stream_ref, revision, value,
+        } if current_call.as_str() == call_id && source_stream_ref.realm_id().as_str() == realm_id => {
+            let current: arkret_models_collaboration::events_payloads::call::CallRosterCurrentValue =
+                serde_json::from_value(value.clone()).ok()?;
+            current.validate_for_axis(source_stream_ref, revision).ok()?;
+            Some(current.effective_participants().ok()?.into_iter()
+                .filter_map(|participant| serde_json::to_value(participant).ok()).collect::<Vec<_>>())
         }
-        let body = operation_body(&record.payload);
-        if call_state_media_artifact_boundary(body).is_err() {
-            continue;
-        }
-        if body.get("call_id").and_then(|v| v.as_str()) != Some(call_id) {
-            continue;
-        }
-        let Some(delta) = body.get("roster_delta") else {
-            continue;
-        };
-        match delta.get("op").and_then(Value::as_str) {
-            Some("join") => {
-                let Some(participant) = delta.get("participant") else {
-                    continue;
-                };
-                let tag = record
-                    .payload
-                    .get("event_id")
-                    .and_then(Value::as_str)
-                    .unwrap_or(record.operation_id.as_str());
-                if !removed_tags.contains(tag) {
-                    participants.insert(tag.to_owned(), participant);
-                }
-            }
-            Some("leave") => {
-                let Some(tag) = delta.get("observed_tag").and_then(Value::as_str) else {
-                    continue;
-                };
-                removed_tags.insert(tag.to_owned());
-                participants.remove(tag);
-            }
-            _ => {}
-        }
-    }
-    participants.into_values()
+        _ => None,
+    }).unwrap_or_default().into_iter()
 }
 
 /// Read the `participant_id → device_id` map from the durable
-/// call roster OR-Set projection for this call. Used to build a
+/// complete Call roster current for this call. Used to build a
 /// remote sender's SFrame [`FrameKeyContext`] (`media-service-binding.md` §8.1
 /// binds the sender's own `(participant_id, device_id)`): when a remote
 /// connects, its `device_id` is looked up here so the receiver can recompute
@@ -358,12 +272,12 @@ fn call_roster_participants<'a>(
 /// field are skipped (the remote's key cannot be derived → fail-closed for that
 /// one remote).
 pub(super) fn call_state_participant_device_map(
-    state: &crate::state::ClientLocalState,
+    rows: &[arkret_wire::TypedCurrentRow],
     realm_id: &str,
     call_id: &str,
 ) -> BTreeMap<String, String> {
     let mut map = BTreeMap::new();
-    for participant in call_roster_participants(state, realm_id, call_id) {
+    for participant in call_roster_participants(rows, realm_id, call_id) {
         let identity = participant
             .get("participant_id")
             .and_then(|v| v.as_str())
@@ -383,12 +297,12 @@ pub(super) fn call_state_participant_device_map(
 /// needed for moderator-forced mute, whose wire shape must target both actor
 /// and device.
 pub(super) fn call_state_participant_actor_device_map(
-    state: &crate::state::ClientLocalState,
+    rows: &[arkret_wire::TypedCurrentRow],
     realm_id: &str,
     call_id: &str,
 ) -> BTreeMap<String, String> {
     let mut map = BTreeMap::new();
-    for participant in call_roster_participants(state, realm_id, call_id) {
+    for participant in call_roster_participants(rows, realm_id, call_id) {
         let actor_id = participant
             .get("actor_id")
             .and_then(|v| v.as_str())
@@ -506,137 +420,83 @@ mod tests {
         assert_eq!(roster[0].actor_id, "ak:did_core:web:alice.example");
     }
 
-    #[test]
-    fn default_focus_id_derives_from_service_id() {
-        assert_eq!(
-            default_focus_id(&["did:web:media.example".to_owned()]),
-            "media.example"
-        );
-        assert_eq!(default_focus_id(&[]), "default");
-    }
-
-    #[test]
-    fn media_service_selection_reads_declared_focus() {
-        let mut state = crate::state::ClientLocalState::default();
-        state.raw_operations.push(crate::state::RawOperationRecord {
-            operation_id: "op-1".to_owned(),
-            realm_id: Some("ak:realm:AVxu7KCm9qmiOqakDKBXUia9rbZ3NBurP875XbqG1rbs".to_owned()),
-            received_at: chrono::Utc::now(),
-            payload: json!({
-                "kind": "ak.realm.media_service",
-                "body": {
-                    "service_id": "ak:did_core:web:media.example",
-                    "foci": [
-                        {"focus_id": "fra-1", "type": "livekit"},
-                        {"focus_id": "us-east-1", "type": "livekit"}
-                    ]
-                }
-            }),
+    fn accepted_roster_rows() -> Vec<arkret_wire::TypedCurrentRow> {
+        let realm = "ak:realm:AVxu7KCm9qmiOqakDKBXUia9rbZ3NBurP875XbqG1rbs";
+        let event = "ak:event:ASm7jqNYNKkkSZtwu8PWbZHjEuA0e0fwxgveLiRW88t5";
+        let mut source = json!({
+            "realm_id":realm, "stream_ref":{"kind":"realm","realm_id":realm},
+            "stream_position":1,
+            "previous_commit_ref":"ak:realm_commit:ARNRmzDi2r78zveOLmoHOb6AephFMwVuGE1fwXmCoeo4",
+            "event_ref":event, "governance_generation":0, "authority_ref":event,
+            "committed_at":"2026-10-15T00:00:00.000Z"
         });
-        let (dids, focus_id) = media_service_selection(
-            &state,
-            "ak:realm:AVxu7KCm9qmiOqakDKBXUia9rbZ3NBurP875XbqG1rbs",
-        );
-        assert_eq!(dids, vec!["ak:did_core:web:media.example"]);
-        assert_eq!(focus_id, "fra-1");
+        let commit_id =
+            arkret_wire::RealmCommitId::from_digest(arkret_sdk::canonical::sha256_bytes(
+                &arkret_sdk::canonical::canonical_json_bytes(&source).unwrap(),
+            ));
+        source["commit_id"] = json!(commit_id);
+        source["signature"] = json!({
+            "context":"ak.realm_commit_signature.v1", "signature_algorithm":"Ed25519",
+            "verification_method":"did:web:station.example#authority",
+            "signed_digest":format!("sha256:{}", "0".repeat(64)),
+            "created_at":"2026-10-15T00:00:00.000Z", "sig":"A".repeat(86)
+        });
+        vec![serde_json::from_value(json!({
+            "selector":{"kind":"call_roster","call_id":"ak:call:AYf05kF8z4cSo8r6qmqXgu4KPuv2YtKBlsE00FOmblaz"},
+            "source_stream_ref":{"kind":"realm","realm_id":realm},
+            "revision":{"commit_id":commit_id,"stream_position":1},
+            "value":{"assertions":[{"tag_id":format!("{event}:7"),"source_commit":source,"value":{
+                "op":"join","participant":{
+                    "actor_id":"ak:did_core:web:anonymous.example",
+                    "device_id":"ak:device:01904100-0000-7000-8000-00000000000a",
+                    "participant_id":"ak:rtc_participant:01904100-0000-7000-8000-00000000000a",
+                    "focus_id":"focus",
+                    "participant_binding":{
+                        "expires_at":"2026-10-15T00:05:00.000Z", "issuer_kid":"did:web:station.example#authority",
+                        "subject_binding_digest":format!("sha256:{}", "0".repeat(64)), "sig":"A".repeat(86)
+                    }
+                }
+            }}]}
+        })).unwrap()]
     }
 
     #[test]
     fn call_state_participant_identities_read_sfu_handles() {
-        let mut state = crate::state::ClientLocalState::default();
-        state.raw_operations.push(crate::state::RawOperationRecord {
-            operation_id: "op-1".to_owned(),
-            realm_id: Some("ak:realm:AVxu7KCm9qmiOqakDKBXUia9rbZ3NBurP875XbqG1rbs".to_owned()),
-            received_at: chrono::Utc::now(),
-            payload: json!({
-                "kind": "ak.call.state",
-                "event_id": "ak:event:ASm7jqNYNKkkSZtwu8PWbZHjEuA0e0fwxgveLiRW88t5",
-                "body": {
-                    "call_id": "ak:call:AYf05kF8z4cSo8r6qmqXgu4KPuv2YtKBlsE00FOmblaz",
-                    "roster_delta": {
-                        "op": "join",
-                        "participant": {
-                            "actor_id": "ak:did_core:web:alice.example",
-                            "participant_id": "ak:rtc_participant:alice"
-                        }
-                    }
-                }
-            }),
-        });
+        let rows = accepted_roster_rows();
         let identities = call_state_participant_identities(
-            &state,
+            &rows,
             "ak:realm:AVxu7KCm9qmiOqakDKBXUia9rbZ3NBurP875XbqG1rbs",
             "ak:call:AYf05kF8z4cSo8r6qmqXgu4KPuv2YtKBlsE00FOmblaz",
         );
-        assert!(identities.contains("ak:rtc_participant:alice"));
-        assert!(!identities.contains("did:web:alice.example"));
+        assert!(identities.contains("ak:rtc_participant:01904100-0000-7000-8000-00000000000a"));
+        assert_eq!(identities.len(), 1);
     }
 
     #[test]
     fn call_state_participant_device_map_pairs_identity_and_device() {
-        let mut state = crate::state::ClientLocalState::default();
-        state.raw_operations.push(crate::state::RawOperationRecord {
-            operation_id: "op-1".to_owned(),
-            realm_id: Some("ak:realm:AVxu7KCm9qmiOqakDKBXUia9rbZ3NBurP875XbqG1rbs".to_owned()),
-            received_at: chrono::Utc::now(),
-            payload: json!({
-                "kind": "ak.call.state",
-                "event_id": "ak:event:Af_bFBCAZvUH8R-cwurL2MobOvPPrqNmLsods7_Ww5RL",
-                "body": {
-                    "call_id": "ak:call:AYf05kF8z4cSo8r6qmqXgu4KPuv2YtKBlsE00FOmblaz",
-                    "roster_delta": {
-                        "op": "join",
-                        "participant": {
-                            "actor_id": "ak:did_core:web:alice.example",
-                            "device_id": "ak:device:01904100-0000-7000-8000-00000000000a",
-                            "participant_id": "ak:rtc_participant:alice"
-                        }
-                    }
-                }
-            }),
-        });
+        let rows = accepted_roster_rows();
         let map = call_state_participant_device_map(
-            &state,
+            &rows,
             "ak:realm:AVxu7KCm9qmiOqakDKBXUia9rbZ3NBurP875XbqG1rbs",
             "ak:call:AYf05kF8z4cSo8r6qmqXgu4KPuv2YtKBlsE00FOmblaz",
         );
         assert_eq!(
-            map.get("ak:rtc_participant:alice").map(String::as_str),
-            Some("ak:device:01904100-0000-7000-8000-00000000000a")
+            map["ak:rtc_participant:01904100-0000-7000-8000-00000000000a"],
+            "ak:device:01904100-0000-7000-8000-00000000000a"
         );
     }
 
     #[test]
     fn call_state_participant_actor_device_map_pairs_actor_and_device() {
-        let mut state = crate::state::ClientLocalState::default();
-        state.raw_operations.push(crate::state::RawOperationRecord {
-            operation_id: "op-1".to_owned(),
-            realm_id: Some("ak:realm:AVxu7KCm9qmiOqakDKBXUia9rbZ3NBurP875XbqG1rbs".to_owned()),
-            received_at: chrono::Utc::now(),
-            payload: json!({
-                "kind": "ak.call.state",
-                "event_id": "ak:event:AdOGA9FXdJkglUZwIc7veJCh_CdvCt3PkUOC-1psvRhF",
-                "body": {
-                    "call_id": "ak:call:AYf05kF8z4cSo8r6qmqXgu4KPuv2YtKBlsE00FOmblaz",
-                    "roster_delta": {
-                        "op": "join",
-                        "participant": {
-                            "actor_id": "ak:did_core:web:alice.example",
-                            "device_id": "ak:device:01904100-0000-7000-8000-00000000000a",
-                            "participant_id": "ak:rtc_participant:alice"
-                        }
-                    }
-                }
-            }),
-        });
+        let rows = accepted_roster_rows();
         let map = call_state_participant_actor_device_map(
-            &state,
+            &rows,
             "ak:realm:AVxu7KCm9qmiOqakDKBXUia9rbZ3NBurP875XbqG1rbs",
             "ak:call:AYf05kF8z4cSo8r6qmqXgu4KPuv2YtKBlsE00FOmblaz",
         );
         assert_eq!(
-            map.get("ak:did_core:web:alice.example").map(String::as_str),
-            Some("ak:device:01904100-0000-7000-8000-00000000000a")
+            map["ak:did_core:web:anonymous.example"],
+            "ak:device:01904100-0000-7000-8000-00000000000a"
         );
     }
 
@@ -686,83 +546,50 @@ mod tests {
     }
 
     #[test]
-    fn call_state_projection_skips_backend_recording_result() {
-        let mut state = crate::state::ClientLocalState::default();
-        state.raw_operations.push(crate::state::RawOperationRecord {
-            operation_id: "op-1".to_owned(),
-            realm_id: Some("ak:realm:AafktYXx8-v8PgfMovcpfbkFAJzUiT8l2GHJJ9UmF3fP".to_owned()),
-            received_at: chrono::Utc::now(),
-            payload: json!({
-                "kind": "ak.call.state",
-                "event_id": "ak:event:AfJbDJqGER5UOnt8W9wrLdj9CgXQ2nZr-dcA7zvYA_Wo",
-                "body": {
-                    "call_id": "ak:call:AWRz9zKjOlGmvDeLp4ws-Eb6jsg4I5jJdj5J8o3cGYz0",
-                    "recording_transition": {
-                        "recording_id": "rtc-recording-019a7360-0000-7000-8000-000000000002",
-                        "from": "stopped",
-                        "to": "ready",
-                        "result": {
-                            "recording_start_event_id": "ak:event:AQ_TuICTz2cVFhqtuEZTue46AK_LsqKsKlTPixxkuedX",
-                            "recording_url": "https://backend.example/egress/out.mp4"
-                        }
-                    },
-                    "roster_delta": {
-                        "op": "join",
-                        "participant": {
-                            "actor_id": "ak:did_core:web:alice.example",
-                            "device_id": "ak:device:019a7360-0000-7000-8000-000000000008",
-                            "participant_id": "ak:rtc_participant:alice"
-                        }
-                    }
-                }
-            }),
-        });
-        let identities = call_state_participant_identities(
-            &state,
-            "ak:realm:AafktYXx8-v8PgfMovcpfbkFAJzUiT8l2GHJJ9UmF3fP",
-            "ak:call:AWRz9zKjOlGmvDeLp4ws-Eb6jsg4I5jJdj5J8o3cGYz0",
+    fn call_current_projection_rejects_unregistered_delta_fields() {
+        let mut rows = accepted_roster_rows();
+        let arkret_wire::TypedCurrentRow::Value { value, .. } = &mut rows[0];
+        value["assertions"][0]["value"]["backend_recording_url"] =
+            json!("https://backend.example/private");
+        assert!(
+            call_state_participant_identities(
+                &rows,
+                "ak:realm:AVxu7KCm9qmiOqakDKBXUia9rbZ3NBurP875XbqG1rbs",
+                "ak:call:AYf05kF8z4cSo8r6qmqXgu4KPuv2YtKBlsE00FOmblaz"
+            )
+            .is_empty()
         );
-        assert!(identities.is_empty());
     }
 
     #[test]
-    fn call_state_projection_skips_backend_transcript_result() {
-        let mut state = crate::state::ClientLocalState::default();
-        state.raw_operations.push(crate::state::RawOperationRecord {
-            operation_id: "op-1".to_owned(),
-            realm_id: Some("ak:realm:AafktYXx8-v8PgfMovcpfbkFAJzUiT8l2GHJJ9UmF3fP".to_owned()),
-            received_at: chrono::Utc::now(),
-            payload: json!({
-                "kind": "ak.call.state",
-                "event_id": "ak:event:ATD6cb_3TgprxaV53cyR2YNads-FjjMmsIfwddWP23Z6",
-                "body": {
-                    "call_id": "ak:call:AWRz9zKjOlGmvDeLp4ws-Eb6jsg4I5jJdj5J8o3cGYz0",
-                    "transcript_transition": {
-                        "recording_id": "rtc-transcript-019a7360-0000-7000-8000-000000000002",
-                        "from": "stopped",
-                        "to": "ready",
-                        "result": {
-                            "transcript_start_event_id": "ak:event:AQ_TuICTz2cVFhqtuEZTue46AK_LsqKsKlTPixxkuedX",
-                            "transcript_artifact_url": "https://backend.example/transcript.vtt"
-                        }
-                    },
-                    "roster_delta": {
-                        "op": "join",
-                        "participant": {
-                            "actor_id": "ak:did_core:web:alice.example",
-                            "device_id": "ak:device:019a7360-0000-7000-8000-000000000008",
-                            "participant_id": "ak:rtc_participant:alice"
-                        }
-                    }
-                }
-            }),
-        });
-        let identities = call_state_participant_identities(
-            &state,
-            "ak:realm:AafktYXx8-v8PgfMovcpfbkFAJzUiT8l2GHJJ9UmF3fP",
-            "ak:call:AWRz9zKjOlGmvDeLp4ws-Eb6jsg4I5jJdj5J8o3cGYz0",
+    fn call_current_projection_requires_exact_realm_and_call() {
+        let mut rows = accepted_roster_rows();
+        assert!(
+            call_state_participant_identities(
+                &rows,
+                "wrong-realm",
+                "ak:call:AYf05kF8z4cSo8r6qmqXgu4KPuv2YtKBlsE00FOmblaz"
+            )
+            .is_empty()
         );
-        assert!(identities.is_empty());
+        assert!(
+            call_state_participant_identities(
+                &rows,
+                "ak:realm:AVxu7KCm9qmiOqakDKBXUia9rbZ3NBurP875XbqG1rbs",
+                "wrong-call"
+            )
+            .is_empty()
+        );
+        let arkret_wire::TypedCurrentRow::Value { revision, .. } = &mut rows[0];
+        revision.stream_position += 1;
+        assert!(
+            call_state_participant_identities(
+                &rows,
+                "ak:realm:AVxu7KCm9qmiOqakDKBXUia9rbZ3NBurP875XbqG1rbs",
+                "ak:call:AYf05kF8z4cSo8r6qmqXgu4KPuv2YtKBlsE00FOmblaz"
+            )
+            .is_empty()
+        );
     }
 
     fn valid_recording_call_state() -> serde_json::Value {

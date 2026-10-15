@@ -8,11 +8,11 @@ use super::moderator::ModeratorControls;
 use super::projection::{
     build_roster, call_state_participant_actor_device_map, call_state_participant_device_map,
     call_state_participant_identities, expected_participant_set, media_governance_evidence,
-    media_service_decrypts_enabled, media_service_selection, participant_list_from_input,
-    set_local_state,
+    media_service_decrypts_enabled, participant_list_from_input, set_local_state,
 };
 use super::signaling::{
-    apply_inbox_items, emit_async, emit_signal, end_call, relay_local_signals, spawn_reject,
+    apply_inbox_items, emit_async, emit_signal, end_call, relay_local_signals,
+    selected_invitation_targets, spawn_reject,
 };
 use super::types::{
     CallParticipantView, CallStage, CallStartMode, RecordingState, SharedTransport,
@@ -55,8 +55,16 @@ pub fn CallPanel(
     // persisted MLS snapshot before submit, so every emit needs the store
     // itself and not just the key-material descriptor.
     let signal_store = crate::app::runtime_adapter::state_store_handle(state_store);
-    let initial_stage = if incoming {
+    let incoming_material = use_signal(|| {
+        CallSignalHub::try_use()
+            .and_then(|hub| hub.incoming_call.peek().clone())
+            .filter(|info| info.call_id == call_id && info.realm_id == selected_realm_id)
+            .and_then(|info| info.call_invitation)
+    });
+    let initial_stage = if incoming && incoming_material.peek().is_some() {
         CallStage::IncomingRinging
+    } else if incoming {
+        CallStage::Idle
     } else if !call_id.is_empty() {
         CallStage::OutgoingRinging
     } else {
@@ -215,6 +223,14 @@ pub fn CallPanel(
                 CallStartMode::Sfu => participant_list_from_input(&group_input()),
             };
 
+            let invitation_targets =
+                match selected_invitation_targets(&state_store.read(), &realm_id, &peers) {
+                    Ok(targets) => targets,
+                    Err(error) => {
+                        last_error.set(error);
+                        return;
+                    }
+                };
             let existing_call = active_call_id();
             let call_create_operation = if existing_call.is_empty() {
                 let payload = arkret_sdk::CallCreatePayload {
@@ -276,31 +292,59 @@ pub fn CallPanel(
                     known_actor_devices,
                     known_participant_identities,
                     known_participant_devices,
-                    governance_evidence,
+                    mut governance_evidence,
                     realm_mls_checkpoint,
                     route_origins,
                 ) = {
                     let store = state_store.read();
                     let snapshot = store.load();
                     let (media_service_ids, focus_id) =
-                        media_service_selection(&snapshot, &realm_id);
+                        crate::media::service_route::accepted_media_descriptor(&store, &realm_id)
+                            .and_then(|value| {
+                                value.foci.first().map(|focus| {
+                                    (
+                                        vec![value.service_id.to_string()],
+                                        focus.focus_id.to_string(),
+                                    )
+                                })
+                            })
+                            .unwrap_or_default();
                     (
                         media_service_ids,
                         focus_id,
-                        call_state_participant_actor_device_map(&snapshot, &realm_id, &call),
-                        call_state_participant_identities(&snapshot, &realm_id, &call),
-                        call_state_participant_device_map(&snapshot, &realm_id, &call),
+                        call_state_participant_actor_device_map(
+                            &store.realm_current_state_entries(&realm_id),
+                            &realm_id,
+                            &call,
+                        ),
+                        call_state_participant_identities(
+                            &store.realm_current_state_entries(&realm_id),
+                            &realm_id,
+                            &call,
+                        ),
+                        call_state_participant_device_map(
+                            &store.realm_current_state_entries(&realm_id),
+                            &realm_id,
+                            &call,
+                        ),
                         media_governance_evidence(
                             &snapshot,
                             &realm_id,
                             media_plaintext_confirmed(),
                         ),
                         store.mls_checkpoint_for(&realm_id),
-                        crate::media::service_route::media_service_route_origins(
-                            &snapshot, &realm_id,
-                        ),
+                        crate::media::service_route::media_service_route_origins(&store, &realm_id),
                     )
                 };
+                if let (Some(evidence), Some(value)) = (
+                    governance_evidence.as_mut(),
+                    crate::media::service_route::accepted_media_descriptor(
+                        &state_store.read(),
+                        &realm_id,
+                    ),
+                ) {
+                    evidence.media_service_payload = serde_json::json!({"value": value});
+                }
                 active_call_id.set(call.clone());
                 call_seq.set(0);
                 let roster = match build_roster(&actor, &peers, &known_actor_devices) {
@@ -315,13 +359,12 @@ pub fn CallPanel(
                 status.set("placing call".to_owned());
                 last_error.set(String::new());
 
-                // Evaluator-produced route material (service-surface.md §2.6
-                // L183): fetch + verify the media service's signed resolution
-                // and run it through the durable-floor / fail-closed route
-                // evaluator. Any failure ends the call attempt visibly — the
-                // token exchange never runs with unverified or empty routes.
+                // Read the own-Station result for the accepted assignment;
+                // ordinary clients do not fetch service DID history.
                 let verified_media_routes =
                     match crate::media::service_route::evaluate_media_routes(
+                        &base,
+                        &realm_id,
                         &media_service_ids,
                         &route_origins,
                     )
@@ -342,6 +385,14 @@ pub fn CallPanel(
                 let media_service_decryption_requested = governance_evidence
                     .as_ref()
                     .is_some_and(|evidence| evidence.media_service_decrypts_enabled());
+                let join_context = match crate::media::rtc::affirmative_call_join_context() {
+                    Ok(context) => context,
+                    Err(error) => {
+                        last_error.set(media_error_label(error));
+                        stage.set(CallStage::Ended);
+                        return;
+                    }
+                };
                 let join = MediaJoinRequest {
                     realm_id: realm_id.clone(),
                     call_id: call.clone(),
@@ -349,6 +400,7 @@ pub fn CallPanel(
                     device_id: device.clone(),
                     focus_id: focus_id.clone(),
                     epoch_id: 0,
+                    join_context,
                     desired_media: if want_video {
                         DesiredMedia::audio_video()
                     } else {
@@ -471,6 +523,7 @@ pub fn CallPanel(
                                         video: want_video,
                                         screen: Some(false),
                                     }),
+                                    invitation_targets.clone(),
                                     &signal_store,
                                 )
                                 .await;
@@ -744,22 +797,24 @@ pub fn CallPanel(
                                             focus_id,
                                             known_participant_identities,
                                             known_participant_devices,
-                                            governance_evidence,
+                                            mut governance_evidence,
                                             realm_mls_checkpoint,
                                             route_origins,
                                         ) = {
                                             let store = state_store.read();
                                             let snapshot = store.load();
                                             let (media_service_ids, focus_id) =
-                                                media_service_selection(&snapshot, &realm_id);
+                                                crate::media::service_route::accepted_media_descriptor(&store, &realm_id)
+                            .and_then(|value| value.foci.first().map(|focus| (vec![value.service_id.to_string()], focus.focus_id.to_string())))
+                            .unwrap_or_default();
                                             (
                                                 media_service_ids,
                                                 focus_id,
                                                 call_state_participant_identities(
-                                                    &snapshot, &realm_id, &call,
+                                                    &store.realm_current_state_entries(&realm_id), &realm_id, &call,
                                                 ),
                                                 call_state_participant_device_map(
-                                                    &snapshot, &realm_id, &call,
+                                                    &store.realm_current_state_entries(&realm_id), &realm_id, &call,
                                                 ),
                                                 media_governance_evidence(
                                                     &snapshot,
@@ -768,18 +823,22 @@ pub fn CallPanel(
                                                 ),
                                                 store.mls_checkpoint_for(&realm_id),
                                                 crate::media::service_route::media_service_route_origins(
-                                                    &snapshot, &realm_id,
+                                                    &store, &realm_id,
                                                 ),
                                             )
                                         };
+                                        if let (Some(evidence), Some(value)) = (governance_evidence.as_mut(),
+                                            crate::media::service_route::accepted_media_descriptor(&state_store.read(), &realm_id)) {
+                                            evidence.media_service_payload = serde_json::json!({"value": value});
+                                        }
                                         let want_video = want_video_signal();
                                         stage.set(CallStage::Connecting);
                                         status.set("answering".to_owned());
                                         spawn(async move {
-                                            // Evaluator-produced route material — same
-                                            // fail-closed gate as the outgoing path.
+                                            // Apply the same own-Station binding gate as outgoing joins.
                                             let verified_media_routes =
                                                 match crate::media::service_route::evaluate_media_routes(
+                                                    &base, &realm_id,
                                                     &media_service_ids,
                                                     &route_origins,
                                                 )
@@ -797,6 +856,9 @@ pub fn CallPanel(
                                             let media_service_decryption_requested = governance_evidence
                                                 .as_ref()
                                                 .is_some_and(|evidence| evidence.media_service_decrypts_enabled());
+                                            let Some(delivery) = incoming_material() else {
+                                                last_error.set("verified invitation material is unavailable".into()); stage.set(CallStage::Ended); return;
+                                            };
                                             let join = MediaJoinRequest {
                                                 realm_id: realm_id.clone(),
                                                 call_id: call.clone(),
@@ -804,6 +866,9 @@ pub fn CallPanel(
                                                 device_id: device.clone(),
                                                 focus_id: focus_id.clone(),
                                                 epoch_id: 0,
+                                                join_context: arkret_sdk::CallJoinContext::Invitation(arkret_sdk::CallInvitationJoinRequestBody {
+                                                    kind: arkret_sdk::CallInvitationJoinKind::Invitation, invitation: delivery.invitation.clone(), envelope: delivery.request.envelope.clone(),
+                                                }),
                                                 desired_media: if want_video { DesiredMedia::audio_video() } else { DesiredMedia::audio_only() },
                                                 media_service_ids,
                                                 verified_media_routes,

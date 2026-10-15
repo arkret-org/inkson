@@ -388,9 +388,51 @@ pub fn live_signal_projection_key(signal: &AdmittedSignal) -> garth::Result<Stri
 
 /// Routes admitted plaintext to the three product consumers.
 pub(crate) struct InksonSignalSink {
+    pub(crate) own_station:
+        Option<arkret_sdk::http_client::own_station_results::OwnStationResultClient>,
+    pub(crate) account: Option<crate::config::ActiveAccountContext>,
     pub(crate) state_store: crate::runtime::input::StateStoreHandle,
     pub(crate) products: SignalProductRouter,
     pub(crate) live: Mutex<LiveSignalProjection>,
+}
+
+async fn rollback_call_consent_pointer(
+    index: &crate::state::CurrentIndex,
+    store: &crate::runtime::input::StateStoreHandle,
+    account: &arkret_sdk::AccountId,
+    previous: u64,
+) -> garth::Result<()> {
+    index.poison();
+    store
+        .write(|state| -> anyhow::Result<()> {
+            anyhow::ensure!(
+                state.active_authority() == Some(account.clone()),
+                "Consent holder changed during rollback"
+            );
+            state.batch(|state| {
+                state.set_current_generation(previous);
+                state.clear_current_product_view();
+            });
+            Ok(())
+        })
+        .map_err(|e| garth::Error::Protocol(e.to_string()))?;
+    let barrier = store
+        .read(|state| state.begin_durable_flush())
+        .map_err(|e| garth::Error::Protocol(e.to_string()))?;
+    barrier
+        .wait()
+        .await
+        .map_err(|e| garth::Error::Protocol(e.to_string()))?;
+    store
+        .read(|state| -> anyhow::Result<()> {
+            anyhow::ensure!(
+                state.active_authority() == Some(account.clone())
+                    && state.current_generation() == previous,
+                "Consent pointer changed during rollback"
+            );
+            index.confirm_durable_pointer(previous)
+        })
+        .map_err(|e| garth::Error::Protocol(e.to_string()))
 }
 
 impl InksonSignalSink {
@@ -429,6 +471,7 @@ impl InksonSignalSink {
             parent_realm_authority_commit_id,
             product_authority,
             signer_verification_method,
+            call_invitation,
         } = outcome
         else {
             return Ok(());
@@ -440,6 +483,7 @@ impl InksonSignalSink {
             parent_realm_authority_commit_id,
             product_authority,
             signer_verification_method,
+            call_invitation,
             payload: plaintext,
         };
         #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
@@ -900,6 +944,15 @@ impl InksonSignalSink {
 
     /// The product boundary runs only after the accepted Call current gate.
     async fn dispatch_call_product(&self, signal: &AdmittedSignal) -> garth::Result<()> {
+        if let arkret_sdk::SignalPlaintext::CallSignal(call) = &signal.payload
+            && matches!(&call.signal, arkret_sdk::CallSignalData::Invite(_))
+            && !self
+                .call_consent_at_ringing_cut(signal, call)
+                .await
+                .unwrap_or(false)
+        {
+            return Ok(());
+        }
         if matches!(&signal.payload, arkret_sdk::SignalPlaintext::CallSignal(call)
             if matches!(&call.signal, arkret_sdk::CallSignalData::Invite(_)))
             && self.state_store.read(|store| {
@@ -915,6 +968,175 @@ impl InksonSignalSink {
             .call_signal(signal, decrypted_body_value(signal)?)
             .await;
         Ok(())
+    }
+
+    async fn call_consent_at_ringing_cut(
+        &self,
+        signal: &AdmittedSignal,
+        call: &arkret_sdk::CallSignalPlaintext,
+    ) -> garth::Result<bool> {
+        let Some(delivery) = &signal.call_invitation else {
+            return Ok(false);
+        };
+        delivery
+            .invitation
+            .validate_plaintext(call)
+            .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+        let Some(account) = self.account.clone() else {
+            return Ok(false);
+        };
+        if delivery.invitation.holder_account_id != account.authority
+            || delivery.invitation.inviter_actor_id != *signal.actor_id()
+            || delivery.invitation.scope_ref != *signal.scope_ref()
+            || delivery.request.subject_device_id != account.device_id
+        {
+            return Ok(false);
+        }
+        let (authority, location, generation, reset) = self.state_store.read(|store| {
+            (
+                store.active_authority(),
+                store.current_index_location(),
+                store.current_generation(),
+                store.current_reset_required(),
+            )
+        });
+        if reset || authority.as_ref() != Some(&account.authority) {
+            return Ok(false);
+        }
+        let index =
+            crate::state::CurrentIndex::open_committed(&account.authority, location, || {
+                Ok(generation)
+            })
+            .await
+            .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+        let pcr = &account.principal_control_realm_id;
+        let (known_generation, known_heads) = index
+            .call_consent_high_water(pcr.as_str())
+            .await
+            .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+        let client = match &self.own_station {
+            Some(client) => client.clone(),
+            None => {
+                let http = crate::identity::session_refresh::provide_authenticated_sdk_client(
+                    account.server_url.as_str(),
+                )
+                .await
+                .map_err(|e| garth::Error::Protocol(e.to_string()))?;
+                crate::transport::own_station_results::client_for_http(&http).await?
+            }
+        };
+        let mut nonce = [0_u8; 32];
+        getrandom::fill(&mut nonce).map_err(|error| garth::Error::Protocol(error.to_string()))?;
+        let consent = garth::call_invitation::read_holder_call_consent(
+            &client,
+            &account.authority,
+            pcr,
+            &delivery.invitation,
+            arkret_sdk::canonical::base64url_encode(nonce),
+            known_generation,
+            &known_heads,
+        )
+        .await?;
+        if consent.authority_generation()? != delivery.outcome.authority_generation {
+            return Ok(false);
+        }
+        delivery
+            .outcome
+            .validate_for_request(
+                &delivery.request,
+                consent.authority_generation()?,
+                crate::clock::now_utc(),
+            )
+            .map_err(|e| garth::Error::Protocol(e.to_string()))?;
+        if !delivery.outcome.admitted
+            || delivery.outcome.proof.verification_method
+                != consent.source().value()?.proof.verification_method
+        {
+            return Ok(false);
+        }
+        let guard = || -> anyhow::Result<()> {
+            anyhow::ensure!(
+                self.state_store.read(|store| store.active_authority())
+                    == Some(account.authority.clone()),
+                "Consent holder changed before install"
+            );
+            consent.source().value()?;
+            Ok(())
+        };
+        let mut staged = index
+            .stage_consent_current(
+                || Ok(self.state_store.read(|store| store.current_generation())),
+                consent.source(),
+                &guard,
+            )
+            .await
+            .map_err(|e| garth::Error::Protocol(e.to_string()))?;
+        let generation = staged.generation();
+        let publication = self.state_store.write(|store| {
+            store.verified_projection_transaction(|store| {
+                if store.active_authority() != Some(account.authority.clone()) {
+                    return Err("Consent holder changed before publication".to_owned());
+                }
+                consent.source().value().map_err(|e| e.to_string())?;
+                staged.arm_account_commit();
+                store.set_current_generation(generation);
+                Ok(())
+            })
+        });
+        if let Err(error) = publication {
+            rollback_call_consent_pointer(
+                &index,
+                &self.state_store,
+                &account.authority,
+                staged.previous_generation(),
+            )
+            .await?;
+            return Err(garth::Error::Protocol(error.to_string()));
+        }
+        let durable = match self.state_store.read(|store| store.begin_durable_flush()) {
+            Ok(barrier) => barrier.wait().await,
+            Err(error) => Err(error),
+        };
+        if let Err(error) = durable {
+            rollback_call_consent_pointer(
+                &index,
+                &self.state_store,
+                &account.authority,
+                staged.previous_generation(),
+            )
+            .await?;
+            return Err(garth::Error::Protocol(error.to_string()));
+        }
+        if let Err(error) = guard() {
+            rollback_call_consent_pointer(
+                &index,
+                &self.state_store,
+                &account.authority,
+                staged.previous_generation(),
+            )
+            .await?;
+            return Err(garth::Error::Protocol(error.to_string()));
+        }
+        staged.finish();
+        let (current_generation, current_heads) = index
+            .call_consent_high_water(pcr.as_str())
+            .await
+            .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+        if !self
+            .state_store
+            .read(|store| call_current_attempt_matches(store, &account.authority, generation))
+        {
+            return Ok(false);
+        }
+        delivery
+            .outcome
+            .validate_for_request(
+                &delivery.request,
+                consent.authority_generation()?,
+                crate::clock::now_utc(),
+            )
+            .map_err(|e| garth::Error::Protocol(e.to_string()))?;
+        consent.permits(current_generation, &current_heads, crate::clock::now_utc())
     }
 
     /// Drop presence/typing bodies whose effective TTL has passed.
@@ -1131,6 +1353,8 @@ pub async fn run_signal_receive_engine(
         ctx.account.device_id.clone(),
     );
     let sink = InksonSignalSink {
+        own_station: None,
+        account: Some(ctx.account.clone()),
         state_store: ctx.state_store.clone(),
         products: ctx.products.clone(),
         live: Mutex::new(LiveSignalProjection::new()),
@@ -1415,6 +1639,8 @@ mod tests {
         let read = store.clone();
         let write = store.clone();
         let sink = InksonSignalSink {
+            own_station: None,
+            account: None,
             state_store: crate::runtime::input::StateStoreHandle::new(
                 move |consume| consume(&read.lock().unwrap()),
                 move |consume| consume(&mut write.lock().unwrap()),
@@ -1460,6 +1686,7 @@ mod tests {
             signer_verification_method: arkret_sdk::DidUrl::new("did:web:alice.example#device-1")
                 .unwrap(),
             product_authority: None,
+            call_invitation: None,
             authority_commit_id: arkret_sdk::RealmCommitId::from_digest([41; 32]),
             parent_realm_authority_commit_id: None,
             expires_at: at(30),
@@ -1614,6 +1841,8 @@ mod tests {
         let read = store.clone();
         let write = store.clone();
         let sink = InksonSignalSink {
+            account: None,
+            own_station: None,
             state_store: crate::runtime::input::StateStoreHandle::new(
                 move |consume| consume(&read.lock().unwrap()),
                 move |consume| consume(&mut write.lock().unwrap()),
@@ -1874,6 +2103,8 @@ mod tests {
         let read = store.clone();
         let write = store.clone();
         let sink = InksonSignalSink {
+            own_station: None,
+            account: None,
             state_store: crate::runtime::input::StateStoreHandle::new(
                 move |consume| consume(&read.lock().unwrap()),
                 move |consume| consume(&mut write.lock().unwrap()),
@@ -1923,6 +2154,8 @@ mod tests {
         let read = store.clone();
         let write = store.clone();
         let sink = InksonSignalSink {
+            own_station: None,
+            account: None,
             state_store: crate::runtime::input::StateStoreHandle::new(
                 move |consume| consume(&read.lock().unwrap()),
                 move |consume| consume(&mut write.lock().unwrap()),
@@ -1945,6 +2178,7 @@ mod tests {
             parent_realm_authority_commit_id: signal.parent_realm_authority_commit_id,
             signer_verification_method: signal.signer_verification_method,
             product_authority: signal.product_authority,
+            call_invitation: signal.call_invitation,
             plaintext: signal.payload,
             effective_expires_at: crate::clock::now_utc() + chrono::Duration::seconds(5),
         })
@@ -1958,7 +2192,7 @@ mod tests {
     // fixture does not claim transport, producer proof or accepted CallCreate.
     #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
-    async fn blocklist_call_invite_product_tracks_private_revision_and_exact_actor() {
+    async fn call_invite_without_admission_never_bypasses_the_private_blocklist_boundary() {
         use std::sync::Arc;
         async fn observe_private_product(
             state_store: crate::runtime::input::StateStoreHandle,
@@ -1989,6 +2223,8 @@ mod tests {
             let products = SignalProductRouter::default();
             products.install(calls.clone());
             let sink = InksonSignalSink {
+                own_station: None,
+                account: None,
                 state_store,
                 products,
                 live: Mutex::new(Default::default()),
@@ -2001,6 +2237,7 @@ mod tests {
                 parent_realm_authority_commit_id,
                 product_authority,
                 signer_verification_method,
+                call_invitation,
             } = outcome
             else {
                 return Ok(0);
@@ -2011,6 +2248,7 @@ mod tests {
                 parent_realm_authority_commit_id,
                 product_authority,
                 signer_verification_method,
+                call_invitation,
                 payload: plaintext,
                 expires_at: effective_expires_at,
             };
@@ -2070,6 +2308,7 @@ mod tests {
             parent_realm_authority_commit_id: signal.parent_realm_authority_commit_id,
             signer_verification_method: signal.signer_verification_method,
             product_authority: signal.product_authority,
+            call_invitation: signal.call_invitation,
             plaintext: signal.payload,
             effective_expires_at: signal.expires_at,
         };
@@ -2083,6 +2322,10 @@ mod tests {
                 .unwrap(),
             0
         );
+        assert!(crate::account_data::blocks_call_invite(
+            &store.lock().unwrap().client_blocklist(),
+            admitted.actor_id()
+        ));
         let mut other_station = admitted.clone();
         other_station.domain.sender_actor_id =
             arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
@@ -2094,11 +2337,15 @@ mod tests {
                     .clone(),
                 arkret_sdk::DidCoreId::new("ak:did_core:web:other.example").unwrap(),
             ));
+        assert!(!crate::account_data::blocks_call_invite(
+            &store.lock().unwrap().client_blocklist(),
+            other_station.actor_id()
+        ));
         assert_eq!(
             observe_private_product(handle.clone(), outcome(other_station))
                 .await
                 .unwrap(),
-            1
+            0
         );
         entry.expires_at = Some(chrono::Utc::now() - chrono::Duration::seconds(1));
         store
@@ -2109,8 +2356,12 @@ mod tests {
             observe_private_product(handle.clone(), outcome(admitted.clone()))
                 .await
                 .unwrap(),
-            1
+            0
         );
+        assert!(!crate::account_data::blocks_call_invite(
+            &store.lock().unwrap().client_blocklist(),
+            admitted.actor_id()
+        ));
         entry.expires_at = None;
         for (revision, mode) in [
             (
@@ -2131,7 +2382,7 @@ mod tests {
                 observe_private_product(handle.clone(), outcome(admitted.clone()))
                     .await
                     .unwrap(),
-                1
+                0
             );
         }
         entry.mode =
@@ -2148,7 +2399,7 @@ mod tests {
             observe_private_product(handle, outcome(admitted))
                 .await
                 .unwrap(),
-            1
+            0
         );
     }
 

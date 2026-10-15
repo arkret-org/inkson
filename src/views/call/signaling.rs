@@ -17,6 +17,7 @@ pub(super) async fn relay_local_signals(
     device: &str,
     mut call_seq: Signal<u64>,
     initial_invite_media: Option<arkret_sdk::CallMediaSelection>,
+    invitation_targets: Vec<arkret_sdk::AccountId>,
     state_store: &crate::runtime::input::StateStoreHandle,
 ) {
     let signals = transport.borrow_mut().drain_local_signals();
@@ -69,7 +70,7 @@ pub(super) async fn relay_local_signals(
                 }],
             }),
         };
-        let _ = emit_signal(
+        let _ = emit_signal_with_targets(
             base,
             api_token,
             realm_id,
@@ -79,6 +80,7 @@ pub(super) async fn relay_local_signals(
             seq,
             signal,
             state_store,
+            Some(&invitation_targets),
         )
         .await;
     }
@@ -240,6 +242,7 @@ pub(super) fn apply_inbox_items(
                 &device,
                 call_seq,
                 None,
+                Vec::new(),
                 &relay_store,
             )
             .await;
@@ -257,12 +260,16 @@ fn apply_peer_state(
     participants: &mut Signal<Vec<CallParticipantView>>,
     item: &CallSignalInboxItem,
 ) {
+    let sender_principal = serde_json::from_str::<arkret_sdk::ActorId>(&item.sender_actor)
+        .ok()
+        .map(|actor| actor.signing_principal_id().to_string());
+    let sender = sender_principal.as_deref().unwrap_or(&item.sender_actor);
     let target = match &item.signal {
         arkret_sdk::CallSignalData::MuteState(data) => data
             .target_actor_id
             .as_ref()
-            .map_or(item.sender_actor.as_str(), arkret_sdk::DidCoreId::as_str),
-        _ => item.sender_actor.as_str(),
+            .map_or(sender, arkret_sdk::DidCoreId::as_str),
+        _ => sender,
     };
     let mut roster = participants();
     let mut changed = false;
@@ -362,6 +369,34 @@ pub(super) async fn emit_signal(
     signal: arkret_sdk::CallSignalData,
     state_store: &crate::runtime::input::StateStoreHandle,
 ) -> Result<(), String> {
+    emit_signal_with_targets(
+        base,
+        api_token,
+        realm_id,
+        call_id,
+        actor,
+        device,
+        seq,
+        signal,
+        state_store,
+        None,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn emit_signal_with_targets(
+    base: &str,
+    api_token: &str,
+    realm_id: &str,
+    call_id: &str,
+    actor: &str,
+    device: &str,
+    seq: u64,
+    signal: arkret_sdk::CallSignalData,
+    state_store: &crate::runtime::input::StateStoreHandle,
+    invitation_targets: Option<&[arkret_sdk::AccountId]>,
+) -> Result<(), String> {
     let account = crate::app::SessionContext::get()
         .active_account()
         .ok_or_else(|| "active account context is unavailable".to_owned())?;
@@ -384,20 +419,54 @@ pub(super) async fn emit_signal(
         seq,
         signal,
     };
+    let holders = if matches!(
+        &payload,
+        crate::signal::SignalPayload::CallSignal {
+            signal: arkret_sdk::CallSignalData::Invite(_),
+            ..
+        }
+    ) {
+        let targets = invitation_targets.ok_or_else(|| {
+            "call invitation has no explicitly selected Account targets".to_owned()
+        })?;
+        if targets.is_empty() {
+            return Err("select a call recipient Account".to_owned());
+        }
+        Some(targets.to_vec())
+    } else {
+        None
+    };
     let authority = account.authority;
     let device = account.device_id;
     let material = material.clone();
     let state_store = state_store.clone();
     with_event_submitter(base, api_token.to_owned(), |sub| async move {
-        sub.send_scope_signal(
-            scope_ref,
-            &authority,
-            &device,
-            &material,
-            &payload,
-            &state_store,
-        )
-        .await
+        if let Some(holders) = holders {
+            for holder in holders {
+                sub.send_call_invitation(
+                    scope_ref.clone(),
+                    &authority,
+                    &device,
+                    holder,
+                    &material,
+                    &payload,
+                    &state_store,
+                )
+                .await?;
+            }
+            Ok(())
+        } else {
+            sub.send_scope_signal(
+                scope_ref,
+                &authority,
+                &device,
+                &material,
+                &payload,
+                &state_store,
+            )
+            .await
+            .map(|_| ())
+        }
     })
     .await
     .map(|_| ())
@@ -463,4 +532,47 @@ pub(super) fn end_call(
         call_seq,
         state_store,
     );
+}
+
+/// Resolve only the user's selected identities. A complete Account is checked
+/// directly; a selected principal must have exactly one eligible Account.
+pub(super) fn selected_invitation_targets(
+    store: &crate::state::LocalStateStore,
+    realm: &str,
+    selected: &[String],
+) -> Result<Vec<arkret_sdk::AccountId>, String> {
+    let joined = crate::state::realm_membership::admission_joined_members_for_realm(store, realm)
+        .into_iter()
+        .filter_map(|actor| serde_json::from_str::<arkret_sdk::ActorId>(&actor).ok())
+        .filter_map(|actor| actor.as_account_id().cloned())
+        .collect::<Vec<_>>();
+    let mut result = Vec::new();
+    for target in selected {
+        let exact = serde_json::from_str::<arkret_sdk::ActorId>(target)
+            .ok()
+            .and_then(|actor| actor.as_account_id().cloned())
+            .or_else(|| serde_json::from_str::<arkret_sdk::AccountId>(target).ok());
+        let matches = if let Some(exact) = exact {
+            joined
+                .iter()
+                .filter(|account| **account == exact)
+                .cloned()
+                .collect::<Vec<_>>()
+        } else {
+            let principal = arkret_sdk::DidCoreId::new(target.trim())
+                .map_err(|_| "select a valid call recipient Account".to_owned())?;
+            joined
+                .iter()
+                .filter(|account| account.principal_id == principal)
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+        if matches.len() != 1 {
+            return Err("the selected identity does not resolve to one joined Account".to_owned());
+        }
+        if !result.contains(&matches[0]) {
+            result.push(matches[0].clone());
+        }
+    }
+    Ok(result)
 }
