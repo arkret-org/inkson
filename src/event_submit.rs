@@ -3781,7 +3781,7 @@ impl EventSubmitter {
         guard()
     }
 
-    /// Submit exact signed invitation relations independently for the known holders.
+    /// Submit an independent exact invitation to each current known holder.
     pub async fn send_call_invitation(
         &self,
         scope_ref: arkret_sdk::ScopeRef,
@@ -3791,20 +3791,100 @@ impl EventSubmitter {
         payload: &crate::signal::SignalPayload,
         state_store: &crate::runtime::input::StateStoreHandle,
     ) -> anyhow::Result<()> {
+        let holders = state_store
+            .read(|store| {
+                store.complete_joined_member_hint_for_realm(scope_ref.realm_id().as_str())
+            })?
+            .ok_or_else(|| anyhow::anyhow!("complete holder membership is unavailable"))?;
+        for actor in holders {
+            let Some(holder) = actor.as_account_id() else {
+                continue;
+            };
+            if holder == authority {
+                continue;
+            }
+            let request = self
+                .prepare_call_invitation(
+                    scope_ref.clone(),
+                    authority,
+                    device,
+                    holder.clone(),
+                    material,
+                    payload,
+                    state_store,
+                )
+                .await?;
+            self.http.call_invitation_send(&request).await?;
+        }
+        Ok(())
+    }
+
+    /// Freeze actual sealed bytes after durably burning their nonce. Sending
+    /// later still requires each receiver's fresh admission cut.
+    pub(crate) async fn prepare_call_invitation(
+        &self,
+        scope_ref: arkret_sdk::ScopeRef,
+        authority: &arkret_sdk::AccountId,
+        device: &arkret_sdk::DeviceId,
+        holder: arkret_sdk::AccountId,
+        material: &crate::signal::SignalKeyMaterial,
+        payload: &crate::signal::SignalPayload,
+        state_store: &crate::runtime::input::StateStoreHandle,
+    ) -> anyhow::Result<arkret_sdk::CallInvitationSendRequestBody> {
         let crate::signal::SignalPayload::CallSignal {
             call_id,
             signal: arkret_sdk::CallSignalData::Invite(invite),
             ..
         } = payload
         else {
-            anyhow::bail!("invitation producer requires an exact typed Invite")
+            anyhow::bail!("call invitation producer requires an invite plaintext");
         };
-        let holders = state_store
-            .read(|store| {
-                store.complete_joined_member_hint_for_realm(scope_ref.realm_id().as_str())
-            })?
-            .ok_or_else(|| anyhow::anyhow!("complete holder membership is unavailable"))?;
-        let stream_head = self.current_stream_head_for(&scope_ref).await?;
+        let envelope = self
+            .prepare_signal_envelope(
+                scope_ref.clone(),
+                authority,
+                device,
+                material,
+                payload,
+                state_store,
+            )
+            .await?;
+        let signer = crate::event_signer::active_signer()
+            .ok_or_else(|| anyhow::anyhow!("call invitation signer is unavailable"))?;
+        anyhow::ensure!(
+            signer.verification_method() == envelope.proof.verification_method.as_str(),
+            "call invitation signer changed during encryption"
+        );
+        let mut invitation = arkret_sdk::CallInvitationEnvelope {
+            inviter_actor_id: envelope.sender_actor_id.clone(),
+            holder_account_id: holder,
+            scope_ref,
+            call_id: call_id.clone(),
+            media: arkret_sdk::CallInvitationMedia::from_selection(&invite.media),
+            envelope_digest: arkret_sdk::call_invitation_envelope_digest(&envelope)?,
+            expires_at: envelope.expires_at,
+            proof: arkret_sdk::CallInvitationProof {
+                verification_method: envelope.proof.verification_method.to_string(),
+                jws: String::new(),
+            },
+        };
+        invitation.proof.jws = signer.detached_jws_over_payload(&invitation.signature_input()?)?;
+        Ok(arkret_sdk::CallInvitationSendRequestBody {
+            invitation,
+            envelope,
+        })
+    }
+
+    pub(crate) async fn prepare_signal_envelope(
+        &self,
+        scope_ref: arkret_sdk::ScopeRef,
+        authority: &arkret_sdk::AccountId,
+        device: &arkret_sdk::DeviceId,
+        material: &crate::signal::SignalKeyMaterial,
+        payload: &crate::signal::SignalPayload,
+        state_store: &crate::runtime::input::StateStoreHandle,
+    ) -> anyhow::Result<arkret_wire::SignalEnvelope> {
+        let stream_head_ref = self.current_stream_head_for(&scope_ref).await?;
         let parent = if matches!(&scope_ref, arkret_sdk::ScopeRef::Circle { .. }) {
             Some(
                 self.current_stream_head_for(&arkret_sdk::ScopeRef::Realm {
@@ -3819,7 +3899,7 @@ impl EventSubmitter {
             scope_ref.clone(),
             arkret_sdk::ActorId::account(authority.clone()),
             device.clone(),
-            stream_head,
+            stream_head_ref,
             parent,
             payload.signal_class(),
             crate::clock::now_utc(),
@@ -3827,51 +3907,7 @@ impl EventSubmitter {
         let envelope = self
             .seal_signal_for_scope(authority, header, material, payload, state_store)
             .await?;
-        let signer = crate::event_signer::active_signer()
-            .ok_or_else(|| anyhow::anyhow!("invitation signer is unavailable"))?;
-        anyhow::ensure!(
-            envelope.proof.verification_method.as_str() == signer.verification_method(),
-            "invitation and envelope signer differ"
-        );
-        for actor in holders {
-            let Some(holder) = actor.as_account_id() else {
-                continue;
-            };
-            if holder == authority {
-                continue;
-            }
-            let mut invitation = arkret_sdk::CallInvitationEnvelope {
-                inviter_actor_id: arkret_sdk::ActorId::account(authority.clone()),
-                holder_account_id: holder.clone(),
-                scope_ref: scope_ref.clone(),
-                call_id: call_id.clone(),
-                media: arkret_sdk::CallInvitationMedia {
-                    audio: invite.media.audio,
-                    video: invite.media.video,
-                    screen: invite.media.screen.unwrap_or(false),
-                },
-                envelope_digest:
-                    arkret_models_collaboration::call_invitation::canonical_request_digest(
-                        &envelope,
-                    )?,
-                expires_at: envelope.expires_at,
-                proof: arkret_sdk::CallInvitationProof {
-                    verification_method: signer.verification_method().to_owned(),
-                    jws: String::new(),
-                },
-            };
-            invitation.proof.jws = signer.detached_jws_over_payload_with_kid(
-                signer.verification_method(),
-                &invitation.signature_input()?,
-            )?;
-            self.http
-                .call_invitation_send(&arkret_sdk::CallInvitationSendRequestBody {
-                    invitation,
-                    envelope: envelope.clone(),
-                })
-                .await?;
-        }
-        Ok(())
+        Ok(envelope)
     }
 
     /// `POST /_arkret/self/signal` — `ak.self.signal.command.send.v1`.

@@ -393,6 +393,62 @@ impl NativeAccountHost {
         self.projector.ctx.account.clone()
     }
 
+    /// Same production producer and nonce persistence as the app call flow.
+    pub async fn send_call_invitation(
+        &self,
+        holder: arkret_sdk::AccountId,
+        scope: arkret_sdk::ScopeRef,
+        material: &crate::signal::SignalKeyMaterial,
+        payload: &crate::signal::SignalPayload,
+    ) -> anyhow::Result<arkret_sdk::CallInvitationSendOutcome> {
+        let request = self
+            .prepare_call_invitation(holder, scope, material, payload)
+            .await?;
+        Ok(self.http.call_invitation_send(&request).await?)
+    }
+
+    /// Freeze a production envelope with the ordinary current source cut and
+    /// durable nonce reservation; no receiver admission is cached here.
+    pub async fn prepare_call_invitation(
+        &self,
+        holder: arkret_sdk::AccountId,
+        scope: arkret_sdk::ScopeRef,
+        material: &crate::signal::SignalKeyMaterial,
+        payload: &crate::signal::SignalPayload,
+    ) -> anyhow::Result<arkret_sdk::CallInvitationSendRequestBody> {
+        crate::event_submit::EventSubmitter::new(self.http.clone())
+            .prepare_call_invitation(
+                scope,
+                &self.projector.ctx.account.authority,
+                &self.projector.ctx.account.device_id,
+                holder,
+                material,
+                payload,
+                &self.state_store_handle(),
+            )
+            .await
+    }
+
+    /// Freeze a production envelope with the ordinary current source cut and
+    /// durable nonce reservation; no receiver admission is cached here.
+    pub async fn prepare_signal_envelope(
+        &self,
+        scope: arkret_sdk::ScopeRef,
+        material: &crate::signal::SignalKeyMaterial,
+        payload: &crate::signal::SignalPayload,
+    ) -> anyhow::Result<arkret_wire::SignalEnvelope> {
+        crate::event_submit::EventSubmitter::new(self.http.clone())
+            .prepare_signal_envelope(
+                scope,
+                &self.projector.ctx.account.authority,
+                &self.projector.ctx.account.device_id,
+                material,
+                payload,
+                &self.state_store_handle(),
+            )
+            .await
+    }
+
     /// Refresh this host's active endpoint through the ordinary signed keys
     /// directory before rebuilding author-bound private projections.
     pub async fn refresh_authoring_authority(&self) -> anyhow::Result<()> {
