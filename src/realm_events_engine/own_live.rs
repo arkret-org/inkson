@@ -347,7 +347,7 @@ async fn install_live_current_snapshot<F: Fn() -> bool>(
         guard().map_err(protocol)?;
     }
     let mut stage = index
-        .stage_committed_own_station_snapshot(
+        .stage_committed_own_station_snapshot_with_history(
             || {
                 guard()?;
                 Ok(projector
@@ -355,6 +355,7 @@ async fn install_live_current_snapshot<F: Fn() -> bool>(
                     .read(|store| store.current_generation()))
             },
             snapshot,
+            pages,
             &guard,
         )
         .await

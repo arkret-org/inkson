@@ -196,3 +196,10 @@ mod tests {
         );
     }
 }
+/// Construct a large child state machine outside its parent's poll frame.
+#[inline(never)]
+pub(crate) fn heap_future<F: std::future::Future>(
+    create: impl FnOnce() -> F,
+) -> std::pin::Pin<Box<F>> {
+    Box::pin(create())
+}

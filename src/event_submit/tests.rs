@@ -311,9 +311,9 @@ async fn device_authoring_requeries_only_across_a_same_session_device_refresh() 
                         "device_authorize_event_id": "ak:event:AfAnsJqSlM9bHVI7P1QBMOEW3p5P1PNQu7BBMpiSnD_e",
                         "authorized_generation_ref": 7,
                         "device_status": "active",
-                        "authorization_window": { "not_before": now, "expires_at": null },
-                        "attested_at": now,
-                        "expires_at": now + chrono::Duration::minutes(5)
+                        "authorization_window": { "not_before": arkret_sdk::canonical::format_timestamp_canonical(now), "expires_at": null },
+                        "attested_at": arkret_sdk::canonical::format_timestamp_canonical(now),
+                        "expires_at": arkret_sdk::canonical::format_timestamp_canonical(now + chrono::Duration::minutes(5))
                     }
                 }
             }}],

@@ -130,6 +130,18 @@ pub(super) async fn submit_call_state_participant(
     session: &JoinedMediaSession,
 ) -> Result<(), String> {
     let call_id = arkret_sdk::CallId::new(call_id.to_owned()).map_err(|err| err.to_string())?;
+    let authenticated_actor =
+        crate::mls_api_helpers::local_account_actor_id(actor).map_err(|err| err.to_string())?;
+    if session.subject_binding.subject_actor_id != authenticated_actor
+        || session.subject_binding.subject_device_id.as_str() != device
+        || session.subject_binding.realm_id.as_str() != realm_id
+        || session.subject_binding.call_id != call_id
+        || session.subject_binding.roster_identity != session.roster_identity
+        || session.subject_binding.participant_id != session.participant_id
+        || session.subject_binding.focus_id != session.focus_id
+    {
+        return Err("call participant session differs from the authenticated leg".to_owned());
+    }
     let state_transition = arkret_sdk::CallStateTransition {
         from: match target_state {
             arkret_sdk::CallLifecycleState::Connecting => arkret_sdk::CallLifecycleState::Ringing,

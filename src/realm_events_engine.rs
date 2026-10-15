@@ -2838,6 +2838,19 @@ mod tests {
             value,
         };
         let mut rows = coland_bootstrap_rows(&bundle, &items[..items.len() - 1]);
+        let media_index = rows.len();
+        rows.push(facet(
+            arkret_wire::CurrentSelector::RealmMediaService,
+            json!({
+                "service_id": "ak:did_core:web:station.example",
+                "foci": [{
+                    "focus_id": "call-focus",
+                    "focus_kind": "livekit",
+                    "token_endpoint": "https://station.example/token",
+                    "connect_url": "wss://station.example/rtc"
+                }]
+            }),
+        ));
         rows.push(facet(
             arkret_wire::CurrentSelector::RealmPlaintextVisibleServices,
             json!({"services": [{
@@ -2882,6 +2895,18 @@ mod tests {
             })
             .unwrap();
         let mut forged = Vec::new();
+        for invalid in [
+            json!({"service_id": "ak:did_core:web:station.example", "foci": []}),
+            json!({"service_id": "ak:did_core:web:station.example", "foci": [], "unknown": true}),
+        ] {
+            let mut invalid_media = rows.clone();
+            set_row_value(&mut invalid_media[media_index], invalid);
+            forged.push(invalid_media);
+        }
+        let mut insecure_media = rows.clone();
+        let TypedCurrentRow::Value { value, .. } = &mut insecure_media[media_index];
+        value["foci"][0]["token_endpoint"] = json!("http://station.example/token");
+        forged.push(insecure_media);
         let mut unknown_strand = rows.clone();
         let TypedCurrentRow::Value { value, .. } = &mut unknown_strand[message_index];
         value["strand_id"] = json!(arkret_sdk::StrandId::from_event_id(

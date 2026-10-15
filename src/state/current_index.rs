@@ -25,9 +25,11 @@ use tokio::sync::{Mutex, OwnedMutexGuard};
 #[cfg(not(target_arch = "wasm32"))]
 #[path = "current_index/native.rs"]
 mod platform;
+
 #[cfg(target_arch = "wasm32")]
 #[path = "current_index/wasm.rs"]
 mod platform;
+mod search;
 
 // The browser regressions of this index are an integration test target, which
 // cannot reach a crate-private type; this is their only entry point.
@@ -268,6 +270,10 @@ pub(crate) struct SignedSnapshotCoverage {
     stream_heads: Vec<arkret_wire::CommitStreamHead>,
     #[serde(default)]
     original_digest: Option<String>,
+    #[serde(default)]
+    search_floor: Option<arkret_sdk::RetentionAndHistoryFloor>,
+    #[serde(default)]
+    search_policies: Option<Vec<arkret_sdk::PolicyId>>,
 }
 
 /// A concurrent own-Station read can install a newer cut while an Account
@@ -693,7 +699,15 @@ struct MetaPosition {
 
 /// Metadata whose historical versions answer no read once a newer committed
 /// version exists. Rotation gives each one a share of every maintenance pass.
-const META_STREAMS: [&str; 5] = ["progress/", "coverage/", "retired/", "refresh/", "reset/"];
+const META_STREAMS: [&str; 7] = [
+    "progress/",
+    "coverage/",
+    "retired/",
+    "refresh/",
+    "reset/",
+    "search/",
+    "search-withheld/",
+];
 /// Root streams of the mark phase: a realm's installed baseline and every
 /// coverage mark a reader can still reach through `strongest_mark`.
 const MARK_STREAMS: [&str; 2] = ["progress/", "coverage/"];
@@ -1653,6 +1667,183 @@ impl CurrentIndex {
         self.progress_at(realm, self.generation.load(Ordering::Acquire))
             .await
     }
+    pub(crate) async fn call_consent_high_water(
+        &self,
+        realm: &str,
+    ) -> anyhow::Result<(Option<u64>, Vec<arkret_wire::CommitStreamHead>)> {
+        let progress = self.read_progress(realm).await?;
+        let mut heads = progress
+            .signed_snapshot
+            .as_ref()
+            .map(|s| s.stream_heads.clone())
+            .or_else(|| {
+                progress
+                    .baseline
+                    .as_ref()
+                    .map(|b| b.coverage.stream_heads.clone())
+            })
+            .unwrap_or_default();
+        heads.extend(progress.observed_heads);
+        Ok((
+            progress
+                .governance_generation
+                .into_iter()
+                .chain(progress.observed_governance_generation)
+                .max(),
+            heads,
+        ))
+    }
+    pub(crate) async fn stage_consent_current(
+        &self,
+        committed_generation: impl FnOnce() -> anyhow::Result<u64>,
+        response: &arkret_sdk::http_client::own_station_results::BoundOwnStationResponse<
+            arkret_models_collaboration::consent_operations::ConsentCurrentReadRequestBody,
+            arkret_models_collaboration::consent_operations::ConsentCurrentReadOutcome,
+        >,
+        guard: &dyn Fn() -> anyhow::Result<()>,
+    ) -> anyhow::Result<CurrentStage> {
+        let lease = self.lease.clone().lock_owned().await;
+        guard()?;
+        let previous = committed_generation()?;
+        anyhow::ensure!(
+            !self.is_poisoned() && self.generation.load(Ordering::Acquire) == previous,
+            "Consent current pointer changed"
+        );
+        let value = response.value()?;
+        value.validate_for_request(response.request(), crate::clock::now_utc())?;
+        let realm = value.realm_id.as_str();
+        let mut progress = self.progress_at(realm, previous).await?;
+        anyhow::ensure!(
+            progress
+                .governance_generation
+                .into_iter()
+                .chain(progress.observed_governance_generation)
+                .all(|g| g <= value.governance_generation),
+            "Consent authority generation rolled back"
+        );
+        for old in progress
+            .observed_heads
+            .iter()
+            .chain(
+                progress
+                    .baseline
+                    .iter()
+                    .flat_map(|b| &b.coverage.stream_heads),
+            )
+            .chain(
+                progress
+                    .signed_snapshot
+                    .iter()
+                    .flat_map(|s| &s.stream_heads),
+            )
+        {
+            if old.stream_ref == value.effective_stream_head.stream_ref {
+                anyhow::ensure!(
+                    old.stream_position <= value.effective_stream_head.stream_position
+                        && (old.stream_position != value.effective_stream_head.stream_position
+                            || old.commit_id == value.effective_stream_head.commit_id),
+                    "Consent read rolled back a known head"
+                );
+            }
+        }
+        let generation = previous
+            .checked_add(1)
+            .ok_or_else(|| anyhow::anyhow!("current generation exhausted"))?;
+        let suffix = version(generation);
+        let manifest_key = format!("{}stage/{suffix}", self.prefix);
+        let deletes: Vec<String> = self
+            .backend
+            .get(&manifest_key)
+            .await?
+            .map(|b| serde_json::from_slice(&b))
+            .transpose()?
+            .unwrap_or_default();
+        let mut writes = BTreeMap::new();
+        let mut unversioned = BTreeMap::new();
+        for row in &value.consents {
+            let selector = CurrentSelector::Consent {
+                consent_id: row.selector.consent_id.clone(),
+            };
+            let entry = TypedCurrentRow::Value {
+                selector: selector.clone(),
+                source_stream_ref: row.source_stream_ref.clone(),
+                revision: row.revision.clone(),
+                value: serde_json::to_value(&row.value)?,
+            };
+            if let Some(old) = self
+                .latest::<TypedCurrentRow>(&self.row_prefix(realm, &selector)?, previous)
+                .await?
+            {
+                anyhow::ensure!(
+                    revision_of(&old).stream_position <= row.revision.stream_position,
+                    "Consent current revision rolled back"
+                );
+                if revision_of(&old).stream_position == row.revision.stream_position {
+                    anyhow::ensure!(
+                        arkret_sdk::canonical::canonical_json_bytes(&old)?
+                            == arkret_sdk::canonical::canonical_json_bytes(&entry)?,
+                        "Consent differs at one accepted revision"
+                    );
+                }
+            }
+            writes.insert(
+                format!("{}{suffix}", self.row_prefix(realm, &selector)?),
+                serde_json::to_vec(&entry)?,
+            );
+            unversioned.insert(
+                format!(
+                    "{}target/{}/{}/{}",
+                    self.prefix,
+                    hash(&realm)?,
+                    target_key(&target_of(&selector))?,
+                    hash(&selector)?
+                ),
+                serde_json::to_vec(&selector)?,
+            );
+        }
+        progress.observed_governance_generation = Some(value.governance_generation);
+        progress
+            .observed_heads
+            .retain(|h| h.stream_ref != value.effective_stream_head.stream_ref);
+        progress
+            .observed_heads
+            .push(value.effective_stream_head.clone());
+        // A targeted read installs rows and high-waters, never a complete PCR
+        // snapshot or an absence assertion for unrelated selectors.
+        writes.insert(
+            format!("{}progress/{}/{suffix}", self.prefix, hash(&realm)?),
+            serde_json::to_vec(&progress)?,
+        );
+        let mut gc: GcState = self.load_state(&self.gc_state_key()).await?;
+        if gc.idle || !gc.dirty {
+            gc.idle = false;
+            gc.dirty = true;
+            unversioned.insert(self.gc_state_key(), serde_json::to_vec(&gc)?);
+        }
+        let mut manifest = writes.keys().cloned().collect::<Vec<_>>();
+        for key in unversioned.keys() {
+            if deletes.contains(key) || self.backend.get(key).await?.is_none() {
+                manifest.push(key.clone());
+            }
+        }
+        writes.insert(manifest_key, serde_json::to_vec(&manifest)?);
+        writes.extend(unversioned);
+        guard()?;
+        response.value()?;
+        let backend = self.backend.clone();
+        complete_independently(async move {
+            backend.apply(deletes, writes.into_iter().collect()).await
+        })
+        .await?;
+        Ok(CurrentStage {
+            index: self.clone(),
+            previous_generation: previous,
+            generation,
+            filtered: None,
+            changed: true,
+            _lease: lease,
+        })
+    }
     #[cfg(test)]
     pub(crate) async fn read_target_page(
         &self,
@@ -1825,6 +2016,7 @@ impl CurrentIndex {
             .await
     }
 
+    #[cfg(test)]
     pub(crate) async fn stage_committed_own_station_snapshot(
         &self,
         committed_generation: impl FnOnce() -> anyhow::Result<u64>,
@@ -1832,6 +2024,25 @@ impl CurrentIndex {
             arkret_sdk::RealmId,
             arkret_sdk::RealmStateSnapshot,
         >,
+        guard: &dyn Fn() -> anyhow::Result<()>,
+    ) -> anyhow::Result<CurrentStage> {
+        self.stage_committed_own_station_snapshot_with_history(
+            committed_generation,
+            response,
+            &[],
+            guard,
+        )
+        .await
+    }
+
+    pub(crate) async fn stage_committed_own_station_snapshot_with_history(
+        &self,
+        committed_generation: impl FnOnce() -> anyhow::Result<u64>,
+        response: &arkret_sdk::http_client::own_station_results::BoundOwnStationResponse<
+            arkret_sdk::RealmId,
+            arkret_sdk::RealmStateSnapshot,
+        >,
+        pages: &[garth::own_station_results::OwnStationScanPage],
         guard: &dyn Fn() -> anyhow::Result<()>,
     ) -> anyhow::Result<CurrentStage> {
         let check = || -> anyhow::Result<()> {
@@ -1842,7 +2053,16 @@ impl CurrentIndex {
         check()?;
         let snapshot = response.value()?;
         let realm = snapshot.realm_id.to_string();
+        let mut originals = Vec::new();
+        for page in pages {
+            anyhow::ensure!(
+                page.session() == response.session(),
+                "search replay belongs to another session"
+            );
+            originals.extend(page.rows()?.iter().cloned());
+        }
         let entry = arkret_sdk::sync::RealmSyncEntry {
+            committed_events: (!originals.is_empty()).then_some(originals),
             current: Some(
                 arkret_models_collaboration::sync_frames::current_results::AccountCurrentView {
                     realm_id: snapshot.realm_id.clone(),
@@ -1971,6 +2191,9 @@ impl CurrentIndex {
         guard()?;
         if frame.is_none()
             && targeted_consent.is_none()
+            && standalone
+                .as_ref()
+                .is_none_or(|(_, entry)| entry.committed_events.as_ref().is_none_or(Vec::is_empty))
             && let Some((realm, _)) = &standalone
         {
             let snapshot = snapshots.get(realm).copied().ok_or_else(|| {
@@ -2214,6 +2437,19 @@ impl CurrentIndex {
                         snapshot_id: snapshot.snapshot_id.clone(),
                         stream_heads: snapshot.visible_stream_heads.clone(),
                         original_digest: Some(hash(snapshot)?),
+                        search_floor: Some(snapshot.retention_and_history_floor.clone()),
+                        search_policies: Some(
+                            snapshot
+                                .current_state_entries
+                                .iter()
+                                .filter_map(|row| match selector_of(row) {
+                                    CurrentSelector::Policy { policy_id } => {
+                                        Some(policy_id.clone())
+                                    }
+                                    _ => None,
+                                })
+                                .collect(),
+                        ),
                     });
                     plan.progress.needs_refresh = false;
                     plan.cleanup = Some(CurrentCoverageCleanup {
@@ -2373,6 +2609,16 @@ impl CurrentIndex {
                             );
                         }
                     }
+                }
+                if !plan.discard_frame && incoming.unavailable.is_none() {
+                    self.stage_search_rows(
+                        incoming,
+                        expected_generation,
+                        &suffix,
+                        &mut writes,
+                        &mut unversioned,
+                    )
+                    .await?;
                 }
                 progress_updates.insert(realm.clone(), plan.progress.clone());
             }
@@ -3238,6 +3484,8 @@ mod tests {
             governance_generation: Some(1),
             signed_snapshot: Some(SignedSnapshotCoverage {
                 original_digest: None,
+                search_floor: None,
+                search_policies: None,
                 snapshot_id: arkret_wire::RealmSnapshotId::from_digest([7; 32]),
                 stream_heads: vec![arkret_wire::CommitStreamHead {
                     stream_ref: arkret_wire::CommitStreamRef::Realm {
@@ -3346,7 +3594,7 @@ mod tests {
             "complete":complete
         })
     }
-    async fn index(path: &std::path::Path, generation: u64) -> CurrentIndex {
+    pub(super) async fn index(path: &std::path::Path, generation: u64) -> CurrentIndex {
         let shared = Arc::new(SharedGeneration {
             generation: Arc::new(AtomicU64::new(generation)),
             lease: Arc::new(Mutex::new(())),

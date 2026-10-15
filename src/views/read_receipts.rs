@@ -357,6 +357,7 @@ mod tests {
             signer_verification_method: arkret_sdk::DidUrl::new("did:web:alice.example#device-1")
                 .unwrap(),
             product_authority: None,
+            call_invitation: None,
             authority_commit_id: arkret_sdk::RealmCommitId::from_digest([41; 32]),
             parent_realm_authority_commit_id: None,
             domain: arkret_sdk::SignalSequenceDomain {

@@ -140,13 +140,7 @@ impl RealmCurrentView {
         );
         let roster: CallRosterCurrentValue = serde_json::from_value(value.clone())?;
         roster.validate_sources(source_stream_ref, revision)?;
-        Ok(Some(
-            roster
-                .active_participants()
-                .into_iter()
-                .map(|(p, _)| p)
-                .collect(),
-        ))
+        Ok(Some(roster.effective_participants()?))
     }
 
     pub(crate) fn media_service(

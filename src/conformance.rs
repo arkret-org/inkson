@@ -770,3 +770,24 @@ pub async fn join_native_call_media(
         .await
         .map_err(|e| anyhow::anyhow!("production native RTC join: {e:?}"))
 }
+
+/// Capture an actual bound holder read for delayed-consumption regressions.
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn read_native_call_consent(
+    host: &crate::sync_engine::NativeAccountHost,
+    invitation: &arkret_sdk::CallInvitationEnvelope,
+) -> anyhow::Result<garth::call_invitation::HolderCallConsent> {
+    let account = host.active_account_context();
+    let client =
+        crate::transport::own_station_results::client_for_http(&host.call_http_client()).await?;
+    Ok(garth::call_invitation::read_holder_call_consent(
+        &client,
+        &account.authority,
+        &account.principal_control_realm_id,
+        invitation,
+        crate::random::base64url_token(32, "Consent read nonce unavailable")?,
+        None,
+        &[],
+    )
+    .await?)
+}

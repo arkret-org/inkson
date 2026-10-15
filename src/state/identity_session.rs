@@ -81,7 +81,7 @@ impl LocalStateStore {
 
     /// Read the persisted coauth `session_grant` if any.
     pub fn session_grant(&self) -> Option<PersistedSessionGrant> {
-        self.load().session_grant
+        self.with_unoverlaid_account_fields(|state| state.session_grant.clone())
     }
 
     /// Publish (or clear via `None`) the live coauth `session_grant`.
@@ -173,7 +173,7 @@ impl LocalStateStore {
 
     /// Load one plaintext device-local record.
     pub fn load_plain_local_data(&self, key: &str) -> Option<String> {
-        self.load().plain_local_data.get(key).cloned()
+        self.with_unoverlaid_account_fields(|state| state.plain_local_data.get(key).cloned())
     }
 
     /// Remove one plaintext device-local record.
@@ -185,6 +185,8 @@ impl LocalStateStore {
 
     /// List every plaintext device-local record key.
     pub fn plain_local_data_keys(&self) -> Vec<String> {
-        self.load().plain_local_data.keys().cloned().collect()
+        self.with_unoverlaid_account_fields(|state| {
+            state.plain_local_data.keys().cloned().collect()
+        })
     }
 }
