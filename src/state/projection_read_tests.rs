@@ -233,6 +233,25 @@ fn admitted_sidecar_cut_reads_do_not_copy_other_account_history() {
 }
 
 #[test]
+fn search_privacy_and_session_reads_do_not_copy_unrelated_history() {
+    let (_directory, mut store) = store();
+    add_unrelated_history(&mut store);
+    store
+        .cached
+        .plain_local_data
+        .insert("ordinary-key".into(), "value".into());
+    FULL_STATE_READ_COPIES.with(|count| count.set(0));
+    let _ = crate::sidecar::SidecarPrivacyGate::from_store(&store, "ak:did_core:web:alice.example");
+    assert_eq!(
+        store.load_plain_local_data("ordinary-key").as_deref(),
+        Some("value")
+    );
+    assert_eq!(store.plain_local_data_keys(), vec!["ordinary-key"]);
+    assert!(store.session_grant().is_none());
+    assert_eq!(FULL_STATE_READ_COPIES.with(|count| count.get()), 0);
+}
+
+#[test]
 fn narrow_projection_reads_follow_active_account_instead_of_a_detached_old_cache() {
     let (_directory, mut store) = store();
     install_empty_signed_cut(&mut store);

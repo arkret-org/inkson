@@ -2382,6 +2382,29 @@ pub(crate) fn chat_messages_from_local_state_with_sidecar(
     )
 }
 
+/// Bounded originals selected by the durable search index at one current cut.
+/// Reuse the renderer's proof/decrypt/revision reducer without consulting the
+/// holder's raw-operation audit or retired timeline projections.
+pub(crate) fn chat_messages_from_search_originals(
+    rows: &[arkret_sdk::CommittedEventFullView],
+    store: &LocalStateStore,
+    authority: &arkret_sdk::AccountId,
+    device: &arkret_sdk::DeviceId,
+) -> Vec<ChatMessage> {
+    let events = rows
+        .iter()
+        .filter_map(|row| serde_json::to_value(&row.event).ok())
+        .collect::<Vec<_>>();
+    fold_event_list_into_chat_messages(
+        Vec::new(),
+        "",
+        &events,
+        None,
+        Some(store),
+        Some((authority, authority.principal_id.as_str(), device)),
+    )
+}
+
 /// Fold durable lifecycle events onto an existing optimistic projection.
 ///
 /// A sender can have its local `ChatMessage` before the canonical create event
