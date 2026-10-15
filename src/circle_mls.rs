@@ -83,7 +83,7 @@ impl MembershipRemovalSnapshot {
 /// will install once the Station accepts it.
 pub struct CircleScopeRotateDraft {
     pub commit_event: crate::operation::LocalOperation,
-    pub staged_checkpoint: crate::mls::persistence::MlsLocalCheckpointEnvelope,
+    pub staged_checkpoint: garth::mls::checkpoint::MlsLocalCheckpointEnvelope,
     pub removed_leaves: Vec<u32>,
     pub removed_actors: Vec<arkret_sdk::ActorId>,
 }
@@ -157,7 +157,7 @@ mod removal_snapshot_tests {
             arkret_sdk::EventId::new("ak:event:AZEvldDJcWI9IRHqP2BMibDDfc59Ax_LwrbsrQmeD6Ml")
                 .unwrap();
         let mut store = crate::state::isolated_store_for_tests("removal-snapshot-fence");
-        let checkpoint = crate::mls::persistence::encrypt_state(
+        let checkpoint = garth::mls::checkpoint::encrypt_state(
             REALM,
             &group_id,
             1,

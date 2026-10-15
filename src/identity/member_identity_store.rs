@@ -766,3 +766,23 @@ mod tests {
         crate::identity::device_directory::invalidate_actor(&actor.to_string());
     }
 }
+
+pub(crate) fn realm_handle_issuer_policies(
+    store: &crate::state::LocalStateStore,
+    realm_id: &str,
+) -> Vec<arkret_sdk::identity::HandleIssuerPolicyEntry> {
+    let Some(value) = store
+        .realm_current_view_entries(realm_id)
+        .and_then(|entries| crate::current_projection::current_realm_policy_bundle_value(&entries))
+    else {
+        return Vec::new();
+    };
+    // The Station selects the current policy value; the published value is
+    // either the bundle payload itself or the generic `{"value": ...}`
+    // envelope it was committed in.
+    let candidate = value.get("value").unwrap_or(&value);
+    serde_json::from_value::<arkret_sdk::RealmPolicyBundlePayload>(candidate.clone())
+        .ok()
+        .and_then(|bundle| bundle.handle_issuer_policies)
+        .unwrap_or_default()
+}

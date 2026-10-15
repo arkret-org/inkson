@@ -109,7 +109,7 @@ fn install_empty_signed_cut(store: &mut LocalStateStore) {
 
 #[test]
 fn cache_projection_preserves_exact_receive_bytes_without_copying_account_history() {
-    use crate::mls::persistence::encrypt_state;
+    use garth::mls::checkpoint::encrypt_state;
     let (_directory, mut store) = store();
     add_unrelated_history(&mut store);
     store.cached.mls_private_plaintext.insert(
@@ -230,6 +230,25 @@ fn admitted_sidecar_cut_reads_do_not_copy_other_account_history() {
     assert_eq!(FULL_STATE_READ_COPIES.with(|count| count.get()), 0);
     store.invalidate_sidecar_current(Some(REALM));
     assert!(store.verified_sidecar_inputs(REALM).is_err());
+}
+
+#[test]
+fn search_privacy_and_session_reads_do_not_copy_unrelated_history() {
+    let (_directory, mut store) = store();
+    add_unrelated_history(&mut store);
+    store
+        .cached
+        .plain_local_data
+        .insert("ordinary-key".into(), "value".into());
+    FULL_STATE_READ_COPIES.with(|count| count.set(0));
+    let _ = crate::sidecar::SidecarPrivacyGate::from_store(&store, "ak:did_core:web:alice.example");
+    assert_eq!(
+        store.load_plain_local_data("ordinary-key").as_deref(),
+        Some("value")
+    );
+    assert_eq!(store.plain_local_data_keys(), vec!["ordinary-key"]);
+    assert!(store.session_grant().is_none());
+    assert_eq!(FULL_STATE_READ_COPIES.with(|count| count.get()), 0);
 }
 
 #[test]

@@ -459,7 +459,7 @@ fn sidecar_withdrawal_keeps_the_other_agent_and_recovers_the_pending_commit() {
     }
     assert_eq!(group.verified_leaf_bindings().unwrap().len(), 3);
     let encoded = serde_json::to_vec(&group.export_state_record().unwrap()).unwrap();
-    let checkpoint = crate::mls::persistence::encrypt_state(
+    let checkpoint = garth::mls::checkpoint::encrypt_state(
         realm.as_str(),
         &group.group_id(),
         group.epoch(),
@@ -544,7 +544,7 @@ fn sidecar_withdrawal_keeps_the_other_agent_and_recovers_the_pending_commit() {
     assert!(leaves.iter().all(|leaf| leaf.actor_id != agent_actors[0]));
     assert!(leaves.iter().any(|leaf| leaf.actor_id == agent_actors[1]));
     let encoded = serde_json::to_vec(&restarted.export_state_record().unwrap()).unwrap();
-    let checkpoint = crate::mls::persistence::encrypt_state(
+    let checkpoint = garth::mls::checkpoint::encrypt_state(
         realm.as_str(),
         &restarted.group_id(),
         3,

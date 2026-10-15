@@ -898,7 +898,7 @@ pub(crate) fn install_current_card_sources(
                 let (account, device) = ctx.identity?;
                 let device = arkret_sdk::DeviceId::new(device.to_owned()).ok()?;
                 let envelope = strand.encrypted_metadata.as_ref()?;
-                let value = crate::views::metadata::open_metadata(
+                let value = crate::identity::metadata::open_metadata(
                     ctx.state_store,
                     ctx.realm_id,
                     &card.id,

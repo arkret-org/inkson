@@ -241,7 +241,7 @@ struct E2eePlaintextCacheV1 {
     // Persisted key, unchanged: this entry is already written in every
     // device's secure store, and an at-rest key is not a wire name.
     #[serde(default, rename = "mls_snapshots")]
-    mls_local_checkpoints: BTreeMap<String, crate::mls::persistence::MlsLocalCheckpointEnvelope>,
+    mls_local_checkpoints: BTreeMap<String, garth::mls::checkpoint::MlsLocalCheckpointEnvelope>,
     #[serde(default)]
     private_plaintext: BTreeMap<String, BTreeMap<String, BTreeMap<String, String>>>,
     #[serde(default)]

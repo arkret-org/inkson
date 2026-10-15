@@ -3,6 +3,7 @@ import {
   assertRealmTreeSeeded,
   dismissBlockingRecoveryModal,
   openSettings,
+  openKanban,
   refreshServer,
   registerStrandsBeforeEach,
 } from "./strandsHarness";
@@ -68,10 +69,11 @@ test("global search empty and no-match states follow the active language", async
 });
 
 test("global search results preserve local text and routes across language changes", async ({ page }) => {
-  test.fail(true, "0540: GlobalSearch still consumes retired timeline.events instead of an authorized committed local message projection; migrate with exact Commit and current read authorization before removing this annotation.");
   const requests = searchSideEffects(page);
-  await refreshServer(page);
-  await assertRealmTreeSeeded(page);
+  // The account list deliberately requests no Realm details. Load this
+  // authorized Realm through the normal product route before searching its
+  // local history; a notification preview is not an accepted message index.
+  await openKanban(page);
   const originalBody = "Alice sent a message in Demo Realm";
   const query = `  ${originalBody}  `;
   let originalHref: string | null = null;
@@ -90,6 +92,7 @@ test("global search results preserve local text and routes across language chang
     await expect(row.locator(".event-head > span").first()).toHaveText(language === "zh" ? "消息" : "Message");
     const link = row.getByTestId("global-search-result-link");
     const seal = row.getByTestId("global-search-result-seal");
+    await expect(row).toHaveAttribute("data-commit-id", /^ak:realm_commit:/);
     const realm = row.getByTestId("global-search-result-realm");
     if (originalHref === null) {
       originalHref = await link.getAttribute("href");
@@ -97,6 +100,7 @@ test("global search results preserve local text and routes across language chang
       originalSeal = await seal.getAttribute("data-seal");
       expect(originalRealm).toMatch(/^ak:realm:/);
       expect(originalSeal).toMatch(/^ak:event:/);
+      await expect(row).toHaveAttribute("data-event-id", originalSeal!);
       const route = new URL(originalHref!, page.url());
       expect(decodeURIComponent(route.pathname)).toBe(`/chat/${originalRealm}`);
       expect(route.searchParams.get("message")).toBe(originalSeal);

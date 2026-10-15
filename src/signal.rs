@@ -593,7 +593,7 @@ pub struct SignalRailUnavailable {
 /// away from.
 pub struct SignalMlsSession {
     pub group: arkret_sdk::ArkretMlsGroup,
-    pub snapshot: crate::mls::persistence::MlsLocalCheckpointEnvelope,
+    pub snapshot: garth::mls::checkpoint::MlsLocalCheckpointEnvelope,
     pub snapshot_secret: String,
 }
 
@@ -717,7 +717,7 @@ pub fn encrypt_signal_payload_with_store(
     let mut salt = [0_u8; 16];
     getrandom::fill(&mut salt)
         .map_err(|error| anyhow::anyhow!("generate Signal snapshot salt: {error}"))?;
-    let updated = crate::mls::persistence::encrypt_state(
+    let updated = garth::mls::checkpoint::encrypt_state(
         realm_id,
         &state.group_id,
         state.epoch,

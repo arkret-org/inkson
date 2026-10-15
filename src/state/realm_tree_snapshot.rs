@@ -10,7 +10,7 @@ impl LocalStateStore {
     /// Borrow fields untouched by receive-chain overlays when the loaded cache
     /// still belongs to the active account. A namespace mismatch must take the
     /// same persistence path as `load`, never read the previous account's cache.
-    pub(super) fn with_unoverlaid_account_fields<R>(
+    pub(crate) fn with_unoverlaid_account_fields<R>(
         &self,
         read: impl FnOnce(&ClientLocalState) -> R,
     ) -> R {

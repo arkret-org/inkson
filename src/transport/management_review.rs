@@ -141,7 +141,7 @@ pub(crate) async fn freeze_and_request<F: FnOnce(PreparedReview)>(
         agent != controller,
         "Select the Agent beneficiary, not its controller"
     );
-    let submitter = crate::event_submit::EventSubmitter::from_current_session(http.clone());
+    let submitter = crate::app::runtime_adapter::event_submitter(http.clone());
     let local = match operation {
         ManagementOperation::Join => {
             let binding = submitter
@@ -645,9 +645,11 @@ pub(crate) async fn submit_approved(
         "Review is not approved"
     );
     let (event, _) = candidate(&review.request)?;
-    let submitter = crate::event_submit::EventSubmitter::from_current_session(http.clone());
+    let submitter = crate::app::runtime_adapter::event_submitter(http.clone());
     let result = submitter
-        .submit_management_review_event(event, current.approval_signatures)
+        .submit_management_review_event(event, current.approval_signatures, || {
+            check_session(&review.account, review.session_generation)
+        })
         .await?;
     check_session(&review.account, review.session_generation)?;
     anyhow::ensure!(

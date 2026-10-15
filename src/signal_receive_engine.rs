@@ -484,7 +484,7 @@ impl InksonSignalSink {
             product_authority,
             signer_verification_method,
             call_invitation,
-            payload: plaintext,
+            payload: *plaintext,
         };
         #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
         let observation_owner = self.state_store.read(|store| store.active_principal_id());
@@ -619,7 +619,7 @@ fn call_current_attempt_matches(
 impl InksonSignalSink {
     fn typing_blocked(&self, signal: &AdmittedSignal, now: DateTime<Utc>) -> bool {
         self.state_store.read(|store| {
-            let row = crate::views::member_display::realm_member_roster(
+            let row = garth::mls::membership::validated_realm_roster_entries(
                 store
                     .realm_tree_projection(signal.scope_ref().realm_id().as_str())
                     .as_ref(),
@@ -631,11 +631,14 @@ impl InksonSignalSink {
                     let Some(account) = row.subject_account_id.as_ref() else {
                         return Vec::new();
                     };
-                    let policies = crate::views::member_display::realm_handle_issuer_policies(
-                        store,
-                        signal.scope_ref().realm_id().as_str(),
-                    );
+                    let policies =
+                        crate::identity::member_identity_store::realm_handle_issuer_policies(
+                            store,
+                            signal.scope_ref().realm_id().as_str(),
+                        );
                     row.handle_claims
+                        .as_deref()
+                        .unwrap_or_default()
                         .iter()
                         .filter_map(|claim| {
                             arkret_sdk::identity::select_primary_handle(
@@ -2179,7 +2182,7 @@ mod tests {
             signer_verification_method: signal.signer_verification_method,
             product_authority: signal.product_authority,
             call_invitation: signal.call_invitation,
-            plaintext: signal.payload,
+            plaintext: Box::new(signal.payload),
             effective_expires_at: crate::clock::now_utc() + chrono::Duration::seconds(5),
         })
         .await
@@ -2249,7 +2252,7 @@ mod tests {
                 product_authority,
                 signer_verification_method,
                 call_invitation,
-                payload: plaintext,
+                payload: *plaintext,
                 expires_at: effective_expires_at,
             };
             // This test isolates the actual private product boundary. Unknown
@@ -2309,7 +2312,7 @@ mod tests {
             signer_verification_method: signal.signer_verification_method,
             product_authority: signal.product_authority,
             call_invitation: signal.call_invitation,
-            plaintext: signal.payload,
+            plaintext: Box::new(signal.payload),
             effective_expires_at: signal.expires_at,
         };
         store

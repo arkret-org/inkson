@@ -494,7 +494,7 @@ impl SidecarPrivacyGate {
     ) -> Self {
         let mut private_identifiers = std::collections::BTreeSet::new();
         let mut verified_publish_targets = std::collections::BTreeSet::new();
-        let state = store.load();
+        store.with_unoverlaid_account_fields(|state| {
         if let Some(local) = &state.device_authoring_authority
             && local.account_id.principal_id.as_str() == controller_principal_id
         {
@@ -540,6 +540,7 @@ impl SidecarPrivacyGate {
                 }
             }
         }
+        });
         for key in store.plain_local_data_keys() {
             let belongs_to_controller = [
                 SIDECAR_EXCHANGE_FOLD_CACHE_PREFIX,

@@ -25,9 +25,11 @@ use tokio::sync::{Mutex, OwnedMutexGuard};
 #[cfg(not(target_arch = "wasm32"))]
 #[path = "current_index/native.rs"]
 mod platform;
+
 #[cfg(target_arch = "wasm32")]
 #[path = "current_index/wasm.rs"]
 mod platform;
+mod search;
 
 // The browser regressions of this index are an integration test target, which
 // cannot reach a crate-private type; this is their only entry point.
@@ -265,6 +267,10 @@ pub(crate) struct SignedSnapshotCoverage {
     stream_heads: Vec<arkret_wire::CommitStreamHead>,
     #[serde(default)]
     original_digest: Option<String>,
+    #[serde(default)]
+    search_floor: Option<arkret_sdk::RetentionAndHistoryFloor>,
+    #[serde(default)]
+    search_policies: Option<Vec<arkret_sdk::PolicyId>>,
 }
 
 /// A concurrent own-Station read can install a newer cut while an Account
@@ -690,7 +696,15 @@ struct MetaPosition {
 
 /// Metadata whose historical versions answer no read once a newer committed
 /// version exists. Rotation gives each one a share of every maintenance pass.
-const META_STREAMS: [&str; 5] = ["progress/", "coverage/", "retired/", "refresh/", "reset/"];
+const META_STREAMS: [&str; 7] = [
+    "progress/",
+    "coverage/",
+    "retired/",
+    "refresh/",
+    "reset/",
+    "search/",
+    "search-withheld/",
+];
 /// Root streams of the mark phase: a realm's installed baseline and every
 /// coverage mark a reader can still reach through `strongest_mark`.
 const MARK_STREAMS: [&str; 2] = ["progress/", "coverage/"];
@@ -1998,6 +2012,7 @@ impl CurrentIndex {
             .await
     }
 
+    #[cfg(test)]
     pub(crate) async fn stage_committed_own_station_snapshot(
         &self,
         committed_generation: impl FnOnce() -> anyhow::Result<u64>,
@@ -2005,6 +2020,25 @@ impl CurrentIndex {
             arkret_sdk::RealmId,
             arkret_sdk::RealmStateSnapshot,
         >,
+        guard: &dyn Fn() -> anyhow::Result<()>,
+    ) -> anyhow::Result<CurrentStage> {
+        self.stage_committed_own_station_snapshot_with_history(
+            committed_generation,
+            response,
+            &[],
+            guard,
+        )
+        .await
+    }
+
+    pub(crate) async fn stage_committed_own_station_snapshot_with_history(
+        &self,
+        committed_generation: impl FnOnce() -> anyhow::Result<u64>,
+        response: &arkret_sdk::http_client::own_station_results::BoundOwnStationResponse<
+            arkret_sdk::RealmId,
+            arkret_sdk::RealmStateSnapshot,
+        >,
+        pages: &[garth::own_station_results::OwnStationScanPage],
         guard: &dyn Fn() -> anyhow::Result<()>,
     ) -> anyhow::Result<CurrentStage> {
         let check = || -> anyhow::Result<()> {
@@ -2015,7 +2049,16 @@ impl CurrentIndex {
         check()?;
         let snapshot = response.value()?;
         let realm = snapshot.realm_id.to_string();
+        let mut originals = Vec::new();
+        for page in pages {
+            anyhow::ensure!(
+                page.session() == response.session(),
+                "search replay belongs to another session"
+            );
+            originals.extend(page.rows()?.iter().cloned());
+        }
         let entry = arkret_sdk::sync::RealmSyncEntry {
+            committed_events: (!originals.is_empty()).then_some(originals),
             current: Some(
                 arkret_models_collaboration::sync_frames::current_results::AccountCurrentView {
                     realm_id: snapshot.realm_id.clone(),
@@ -2086,6 +2129,9 @@ impl CurrentIndex {
         let gc: GcState = self.load_state(&self.gc_state_key()).await?;
         guard()?;
         if frame.is_none()
+            && standalone
+                .as_ref()
+                .is_none_or(|(_, entry)| entry.committed_events.as_ref().is_none_or(Vec::is_empty))
             && let Some((realm, _)) = &standalone
         {
             let snapshot = snapshots.get(realm).copied().ok_or_else(|| {
@@ -2327,6 +2373,19 @@ impl CurrentIndex {
                         snapshot_id: snapshot.snapshot_id.clone(),
                         stream_heads: snapshot.visible_stream_heads.clone(),
                         original_digest: Some(hash(snapshot)?),
+                        search_floor: Some(snapshot.retention_and_history_floor.clone()),
+                        search_policies: Some(
+                            snapshot
+                                .current_state_entries
+                                .iter()
+                                .filter_map(|row| match selector_of(row) {
+                                    CurrentSelector::Policy { policy_id } => {
+                                        Some(policy_id.clone())
+                                    }
+                                    _ => None,
+                                })
+                                .collect(),
+                        ),
                     });
                     plan.progress.needs_refresh = false;
                     plan.cleanup = Some(CurrentCoverageCleanup {
@@ -2486,6 +2545,16 @@ impl CurrentIndex {
                             );
                         }
                     }
+                }
+                if !plan.discard_frame && incoming.unavailable.is_none() {
+                    self.stage_search_rows(
+                        incoming,
+                        expected_generation,
+                        &suffix,
+                        &mut writes,
+                        &mut unversioned,
+                    )
+                    .await?;
                 }
                 progress_updates.insert(realm.clone(), plan.progress.clone());
             }
@@ -3345,6 +3414,8 @@ mod tests {
             governance_generation: Some(1),
             signed_snapshot: Some(SignedSnapshotCoverage {
                 original_digest: None,
+                search_floor: None,
+                search_policies: None,
                 snapshot_id: arkret_wire::RealmSnapshotId::from_digest([7; 32]),
                 stream_heads: vec![arkret_wire::CommitStreamHead {
                     stream_ref: arkret_wire::CommitStreamRef::Realm {
@@ -3453,7 +3524,7 @@ mod tests {
             "complete":complete
         })
     }
-    async fn index(path: &std::path::Path, generation: u64) -> CurrentIndex {
+    pub(super) async fn index(path: &std::path::Path, generation: u64) -> CurrentIndex {
         let shared = Arc::new(SharedGeneration {
             generation: Arc::new(AtomicU64::new(generation)),
             lease: Arc::new(Mutex::new(())),

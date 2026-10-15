@@ -14,10 +14,10 @@ use std::collections::BTreeMap;
 use arkret_sdk::{AccountId, DeviceId};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use garth::mls::checkpoint::{self as persistence, MlsLocalCheckpointEnvelope};
 use garth::{account_id_storage_digest, device_storage_digest};
 
 use super::MlsRuntimeError;
-use crate::mls::persistence::{self, MlsLocalCheckpointEnvelope};
 use crate::secure_key_store::{SecureKeyStore, SecureKeyStoreError};
 
 // Secret-store key prefixes. These are at-rest addresses, not names: every

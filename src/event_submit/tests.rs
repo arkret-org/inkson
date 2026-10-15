@@ -519,7 +519,7 @@ pub(super) fn author_and_sign(
     let mut event = intent
         .author_with_digest_suite(arkret_sdk::DigestSuite::Sha256)
         .unwrap();
-    sign_event_through_message_seam(&mut event, |unsigned| {
+    sign_finalized_event(&mut event, |unsigned| {
         signer
             .sign_sdk_event_with_context(
                 unsigned,
@@ -2101,7 +2101,7 @@ fn message_seam_rejects_a_proof_callback_that_changes_the_body() {
     .unwrap();
     let original = event.event().clone();
     let signer = test_signer();
-    let result = sign_event_through_message_seam(&mut event, |unsigned| {
+    let result = sign_finalized_event(&mut event, |unsigned| {
         let mut rewritten = unsigned.event().clone();
         rewritten.payload.insert(
             "content".to_owned(),
@@ -2228,7 +2228,7 @@ pub(crate) fn queue_message_operation_for_test(operation: &LocalOperation) -> Qu
         .author_with_digest_suite(arkret_sdk::DigestSuite::Sha256)
         .unwrap();
     let mut sign_count = 0;
-    sign_event_through_message_seam(&mut event, |unsigned| {
+    sign_finalized_event(&mut event, |unsigned| {
         sign_count += 1;
         test_signer()
             .sign_sdk_event_with_context(unsigned, crate::event_signer::ProducerProofContext::new())

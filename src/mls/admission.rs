@@ -13,8 +13,8 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use garth::mls::checkpoint::MlsLocalCheckpointEnvelope;
 
-use crate::mls::persistence::MlsLocalCheckpointEnvelope;
 use crate::operation::trim_realm_id;
 use crate::secure_key_store::SecureKeyStore;
 use crate::state::LocalStateStore;

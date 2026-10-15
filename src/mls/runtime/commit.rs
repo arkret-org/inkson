@@ -24,14 +24,14 @@ pub struct StagedMlsCommit {
     pub envelope: arkret_sdk::MlsCommitEnvelope,
     /// The encrypted group state holding the pending commit, persisted before
     /// submission so acceptance can always be merged.
-    pub staged_checkpoint: crate::mls::persistence::MlsLocalCheckpointEnvelope,
+    pub staged_checkpoint: garth::mls::checkpoint::MlsLocalCheckpointEnvelope,
 }
 
 fn staged_checkpoint(
     group: &arkret_sdk::ArkretMlsGroup,
     realm_id: &str,
     secret: &str,
-) -> Result<crate::mls::persistence::MlsLocalCheckpointEnvelope, MlsRuntimeError> {
+) -> Result<garth::mls::checkpoint::MlsLocalCheckpointEnvelope, MlsRuntimeError> {
     let post_state = group
         .export_state_record()
         .map_err(|err| MlsRuntimeError::Export(err.to_string()))?;
@@ -40,7 +40,7 @@ fn staged_checkpoint(
     let mut salt = [0_u8; 16];
     getrandom::fill(&mut salt)
         .map_err(|err| MlsRuntimeError::Commit(format!("MLS checkpoint salt: {err}")))?;
-    Ok(crate::mls::persistence::encrypt_state(
+    Ok(garth::mls::checkpoint::encrypt_state(
         realm_id,
         &post_state.group_id,
         post_state.epoch,

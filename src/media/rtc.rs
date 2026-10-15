@@ -846,7 +846,7 @@ impl RealmMlsExporter {
     /// Restore the realm's live, synchronised MLS group from this device's
     /// persisted snapshot so the SFrame exporter secret matches every other
     /// member's. `snapshot` is the per-realm
-    /// [`crate::mls::persistence::MlsLocalCheckpointEnvelope`] the caller reads from
+    /// [`garth::mls::checkpoint::MlsLocalCheckpointEnvelope`] the caller reads from
     /// `LocalStateStore::mls_checkpoint_for` (passed by value so the caller can
     /// drop the store read-guard before this synchronous KDF runs, never
     /// holding it across an `.await`); `secure_store` provides the account
@@ -862,7 +862,7 @@ impl RealmMlsExporter {
     /// group has not synced on this device yet, so no media key can be
     /// derived".
     pub fn for_realm(
-        snapshot: Option<crate::mls::persistence::MlsLocalCheckpointEnvelope>,
+        snapshot: Option<garth::mls::checkpoint::MlsLocalCheckpointEnvelope>,
         secure_store: &dyn crate::secure_key_store::SecureKeyStore,
         authority: &arkret_sdk::AccountId,
         device_id: &arkret_sdk::DeviceId,
@@ -1336,7 +1336,7 @@ mod tests {
     /// construction `crate::mls::runtime` uses for chat/reaction restore.
     fn seed_realm_snapshot(
         store: &crate::secure_key_store::MemorySecureKeyStore,
-    ) -> crate::mls::persistence::MlsLocalCheckpointEnvelope {
+    ) -> garth::mls::checkpoint::MlsLocalCheckpointEnvelope {
         use arkret_sdk::{ArkretMlsIdentity, DeviceId};
 
         let secret = crate::mls::runtime::load_or_create_account_mls_secret(
@@ -1355,7 +1355,7 @@ mod tests {
         let group = identity.create_group(&effective_scope).unwrap();
         let record = group.export_state_record().unwrap();
         let bytes = serde_json::to_vec(&record).unwrap();
-        crate::mls::persistence::encrypt_state(
+        garth::mls::checkpoint::encrypt_state(
             EXPORTER_REALM,
             &record.group_id,
             record.epoch,
@@ -1486,7 +1486,7 @@ mod tests {
         .unwrap();
         let record = group.export_state_record().unwrap();
         let bytes = serde_json::to_vec(&record).unwrap();
-        let envelope = crate::mls::persistence::encrypt_state(
+        let envelope = garth::mls::checkpoint::encrypt_state(
             INTEROP_REALM,
             &record.group_id,
             record.epoch,

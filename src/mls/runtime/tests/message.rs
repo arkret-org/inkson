@@ -925,7 +925,7 @@ fn two_member_group_with_bob_snapshot(
     let serialized = serde_json::to_vec(&post_state).unwrap();
     let mut salt = [0u8; 16];
     getrandom::fill(&mut salt).unwrap();
-    let envelope = crate::mls::persistence::encrypt_state(
+    let envelope = garth::mls::checkpoint::encrypt_state(
         realm,
         &post_state.group_id,
         post_state.epoch,
@@ -979,7 +979,7 @@ fn committed_sender_credential_reconstructs_real_standard_mls_content_aad() {
     )
     .unwrap()
     .expect_verifiable();
-    let sender = crate::views::chat::verified_chat_sender_domain_for_realm(
+    let sender = crate::identity::committed_sender::verified_chat_sender_domain_for_realm(
         realm,
         &serde_json::to_value(&event).unwrap(),
         None,
@@ -1110,7 +1110,7 @@ fn historical_author_view_survives_epoch_rotation() {
     let serialized = serde_json::to_vec(&post_state).unwrap();
     let mut salt = [0u8; 16];
     getrandom::fill(&mut salt).unwrap();
-    let epoch_two_snapshot = crate::mls::persistence::encrypt_state(
+    let epoch_two_snapshot = garth::mls::checkpoint::encrypt_state(
         realm,
         &post_state.group_id,
         post_state.epoch,
@@ -1195,7 +1195,7 @@ fn sidecar_author_leaf_view_preserves_exact_scope_and_historical_epoch() {
     let secret = load_or_create_account_mls_secret(&secure, &authority).unwrap();
     let checkpoint = |group: &arkret_sdk::ArkretMlsGroup| {
         let record = group.export_state_record().unwrap();
-        crate::mls::persistence::encrypt_state(
+        garth::mls::checkpoint::encrypt_state(
             realm.as_str(),
             &record.group_id,
             record.epoch,
@@ -1672,7 +1672,7 @@ fn encrypted_write_without_current_mls_group_is_fail_closed() {
 fn encrypted_write_with_snapshot_requires_existing_device_secret() {
     let mut state = temp_state_store("missing-secret");
     let store = MemorySecureKeyStore::new();
-    let envelope = crate::mls::persistence::encrypt_state(
+    let envelope = garth::mls::checkpoint::encrypt_state(
         "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
         "group-for-missing-secret-test",
         1,
@@ -1739,7 +1739,7 @@ fn encrypted_write_uses_device_key_snapshot_when_ready() {
         .unwrap();
     let record = group.export_state_record().unwrap();
     let bytes = serde_json::to_vec(&record).unwrap();
-    let envelope = crate::mls::persistence::encrypt_state(
+    let envelope = garth::mls::checkpoint::encrypt_state(
         realm,
         &record.group_id,
         record.epoch,
@@ -2052,7 +2052,7 @@ fn calendar_current_source_opens_metadata_without_old_events_or_plaintext_cache(
             .is_none()
     );
     let open = |state: &crate::state::LocalStateStore, keys: &MemorySecureKeyStore| {
-        crate::views::metadata::open_metadata_with_secure_store(
+        crate::identity::metadata::open_metadata_with_secure_store(
             state,
             realm,
             strand_id.as_str(),
@@ -2108,7 +2108,7 @@ fn ordinary_recovery_refreezes_received_private_base_after_proof() {
     // A legitimate receive runs while the bounded source proof is in flight.
     assert_eq!(bob.decrypt_payload(&second).unwrap(), b"second");
     let received_state = bob.export_state_record().unwrap();
-    let mut received = crate::mls::persistence::encrypt_state(
+    let mut received = garth::mls::checkpoint::encrypt_state(
         realm,
         &received_state.group_id,
         received_state.epoch,
@@ -2125,7 +2125,7 @@ fn ordinary_recovery_refreezes_received_private_base_after_proof() {
     // The newer provider retains its skipped receive key after serialization.
     assert_eq!(recovered.decrypt_payload(&first).unwrap(), b"first");
     let changed_state = recovered.export_state_record().unwrap();
-    let mut changed = crate::mls::persistence::encrypt_state(
+    let mut changed = garth::mls::checkpoint::encrypt_state(
         realm,
         &changed_state.group_id,
         changed_state.epoch,

@@ -179,7 +179,7 @@ async fn ensure_sidecar_mls_genesis(
             .commit()
             .ok_or_else(|| anyhow::anyhow!("Sidecar Genesis submission is not committed yet"))?;
         let transition =
-            crate::mls::accepted_artifact::accepted_from_submission(event.clone(), commit.clone())
+            garth::mls::accepted_artifact::accepted_from_submission(event.clone(), commit.clone())
                 .map_err(anyhow::Error::msg)?;
         anyhow::ensure!(
             transition.effective_scope == scope
@@ -1134,9 +1134,9 @@ pub(crate) mod tests {
         group: &ArkretMlsGroup,
         scope: &ScopeRef,
         secret: &str,
-    ) -> crate::mls::persistence::MlsLocalCheckpointEnvelope {
+    ) -> garth::mls::checkpoint::MlsLocalCheckpointEnvelope {
         let record = group.export_state_record().unwrap();
-        crate::mls::persistence::encrypt_state(
+        garth::mls::checkpoint::encrypt_state(
             scope.realm_id().as_str(),
             &record.group_id,
             record.epoch,

@@ -22,7 +22,7 @@ pub(super) async fn join_and_build_transport(
     join: &MediaJoinRequest,
     authority: &arkret_sdk::AccountId,
     device: &arkret_sdk::DeviceId,
-    realm_mls_checkpoint: Option<crate::mls::persistence::MlsLocalCheckpointEnvelope>,
+    realm_mls_checkpoint: Option<garth::mls::checkpoint::MlsLocalCheckpointEnvelope>,
 ) -> Result<(JoinedMediaSession, SharedTransport, Rc<PerSenderFrameKeys>), RtcClientError> {
     let (session, per_sender_keys) = join_via_api(
         base,
@@ -61,7 +61,7 @@ async fn join_via_api(
     join: &MediaJoinRequest,
     authority: &arkret_sdk::AccountId,
     device: &arkret_sdk::DeviceId,
-    realm_mls_checkpoint: Option<crate::mls::persistence::MlsLocalCheckpointEnvelope>,
+    realm_mls_checkpoint: Option<garth::mls::checkpoint::MlsLocalCheckpointEnvelope>,
 ) -> Result<(JoinedMediaSession, PerSenderFrameKeys), RtcClientError> {
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let exporter = crate::media::rtc::RealmMlsExporter::for_realm(

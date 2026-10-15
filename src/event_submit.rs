@@ -26,7 +26,7 @@ use garth::{
 use serde_json::Value;
 use tokio::sync::OnceCell;
 
-use crate::ephemeral::{ensure_authority_accepted, validate_outgoing_registered_event_payload};
+use crate::ephemeral::ensure_authority_accepted;
 use crate::identity::authoring_generation::{
     GenerationFenceDecision, ResolvedQueueGenerationFence,
 };
@@ -912,21 +912,6 @@ impl EventSubmitter {
         self
     }
 
-    pub(crate) fn from_current_session(http: arkret_sdk::http_client::Client) -> Self {
-        match dioxus::prelude::try_consume_context::<crate::app::SessionContext>() {
-            Some(context) => {
-                // Accepted onboarding promotes the secure authoring scope and
-                // account store before publishing the runtime account. The UI
-                // may still retain the previous account until recovery is ready;
-                // it must not replace the exact scope captured by `new`.
-                Self::new(http).with_state_store(crate::app::runtime_adapter::state_store_handle(
-                    context.state_store,
-                ))
-            }
-            None => Self::new(http),
-        }
-    }
-
     pub(crate) fn authority(&self) -> anyhow::Result<&arkret_sdk::AccountId> {
         self.authority.as_ref().ok_or_else(|| {
             anyhow::anyhow!(
@@ -1465,7 +1450,7 @@ impl EventSubmitter {
                 "retired minimal-metadata Realm marker requires verified current governance genesis and schema"
             );
         }
-        sign_event_through_message_seam(event, |unsigned| {
+        sign_finalized_event(event, |unsigned| {
             crate::event_signer::sign_sdk_event_with_active_context(unsigned, proof_context)
                 .map_err(|error| anyhow::anyhow!("sign SDK Event: {error}"))
         })
@@ -1724,10 +1709,10 @@ impl EventSubmitter {
         &self,
         event: &arkret_sdk::Event,
         approvals: Vec<arkret_sdk::ApprovalSignature>,
+        check_session: impl Fn() -> anyhow::Result<()>,
     ) -> anyhow::Result<SubmitEventResult> {
         let account = self.authority()?.clone();
-        let generation = (crate::app::SessionContext::get().session_generation)();
-        crate::transport::management_review::check_session(&account, generation)?;
+        check_session()?;
         anyhow::ensure!(
             event.actor_id == arkret_sdk::ActorId::account(account.clone())
                 && event.executed_by.is_none(),
@@ -1787,7 +1772,7 @@ impl EventSubmitter {
         let _single_writer = outbound_submit_lock().lock().await;
         self.ensure_realm_detail_current(event.realm_id.as_str())
             .await?;
-        crate::transport::management_review::check_session(&account, generation)?;
+        check_session()?;
         // Original Event/proof and approval set are retained byte-for-byte.
         // Unknown delivery retries this queue item; it never reauthors intent.
         let submission = QueuedSubmission::new(arkret_wire::AuthoritySubmitRequest::Event(
@@ -1805,7 +1790,7 @@ impl EventSubmitter {
                 retry_scope: InteractiveRetryScope::Ordinary,
             })
             .await?;
-        crate::transport::management_review::check_session(&account, generation)?;
+        check_session()?;
         settled_outbound_result(&item)
     }
 
@@ -2111,7 +2096,7 @@ impl EventSubmitter {
         device_id: arkret_sdk::DeviceId,
         authority_hints: Vec<crate::mls::governance_proof::MlsLeafAuthorityHint>,
         state_store: &crate::runtime::input::StateStoreHandle,
-        mut staged_checkpoint: crate::mls::persistence::MlsLocalCheckpointEnvelope,
+        mut staged_checkpoint: garth::mls::checkpoint::MlsLocalCheckpointEnvelope,
     ) -> anyhow::Result<SubmitEventResult> {
         anyhow::ensure!(
             commit.kind == arkret_sdk::EventKind::MlsCommit,
@@ -2208,14 +2193,14 @@ impl EventSubmitter {
         )?;
         let group = crate::mls::persistence::restore_envelope(&local, &secret, local.epoch)?;
         let frozen: arkret_models_crypto::MlsGroupStateRecord = serde_json::from_slice(
-            &crate::mls::persistence::decrypt_envelope(&checkpoint, &secret)?,
+            &garth::mls::checkpoint::decrypt_envelope(&checkpoint, &secret)?,
         )?;
         let resumed =
             group.resume_frozen_pending_commit(&frozen, &payload.commit_envelope()?, binding)?;
         let record = resumed.export_state_record()?;
         let mut salt = [0_u8; 16];
         getrandom::fill(&mut salt)?;
-        let mut checkpoint = crate::mls::persistence::encrypt_state(
+        let mut checkpoint = garth::mls::checkpoint::encrypt_state(
             &checkpoint.realm_id,
             &record.group_id,
             record.epoch,
@@ -2849,7 +2834,7 @@ impl EventSubmitter {
         getrandom::fill(&mut salt)
             .map_err(|error| anyhow::anyhow!("MLS checkpoint salt: {error}"))?;
         let record = group.export_state_record()?;
-        let mut checkpoint = crate::mls::persistence::encrypt_state(
+        let mut checkpoint = garth::mls::checkpoint::encrypt_state(
             &local.realm_id,
             &local.group_id,
             local.epoch,
@@ -3910,52 +3895,19 @@ fn ensure_exact_queued_request(
     Ok(())
 }
 
-/// Every message producer, including poll, scheduled and confirmed Sidecar
-/// writes, enters the same consuming proof-only session. Other Event kinds
-/// retain their domain-specific signing path.
-fn sign_event_through_message_seam(
+/// The host supplies the signer; the shared engine freezes every Event kind.
+fn sign_finalized_event(
     event: &mut arkret_sdk::AuthoredEvent,
     sign: impl FnOnce(&mut arkret_sdk::AuthoredEvent) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
-    if event.kind != arkret_sdk::EventKind::MessageCreate {
-        return sign(event);
-    }
-    let frozen = garth::MessageAuthoringSession::from_authored_event(event.clone())?.sign_with(
-        |unsigned| sign(unsigned).map_err(|error| garth::Error::Protocol(error.to_string())),
-    )?;
-    event.attach_proof(
-        frozen
-            .request()
-            .submission
-            .event
-            .producer_proof
-            .clone()
-            .ok_or_else(|| anyhow::anyhow!("message signer produced no producer proof"))?,
-    );
+    *event =
+        garth::event_authoring::EventAuthoringSession::new(event.clone())?.sign_with(|event| {
+            sign(event).map_err(|error| garth::Error::Protocol(error.to_string()))
+        })?;
     Ok(())
 }
 
-/// Freeze one signed producer Event as an authority submission.
-pub(crate) fn event_submission(
-    event: &arkret_sdk::AuthoredEvent,
-) -> anyhow::Result<QueuedSubmission> {
-    validate_signed_sdk_event_for_submit(event.event(), event.digest_suite())?;
-    let request = arkret_wire::EventAdmissionSubmission {
-        event: event.event().clone(),
-        approval_signatures: None,
-    };
-    if event.kind == arkret_sdk::EventKind::MessageCreate {
-        return garth::FrozenMessageSubmission::from_signed_request(
-            garth::MessageSubmitRequestBody {
-                submission: request,
-            },
-        )
-        .map(garth::FrozenMessageSubmission::into_queued_submission)
-        .map_err(anyhow::Error::from);
-    }
-    QueuedSubmission::new(arkret_wire::AuthoritySubmitRequest::Event(request))
-        .map_err(anyhow::Error::from)
-}
+pub(crate) use garth::event_authoring::event_submission;
 
 fn account_authority_http_client(
     authority_origin: &str,
@@ -3991,24 +3943,7 @@ pub(crate) fn validate_capability_grant_payload(intent: &EventIntent) -> anyhow:
     Ok(())
 }
 
-fn validate_signed_sdk_event_for_submit(
-    event: &arkret_sdk::Event,
-    digest_suite: arkret_sdk::DigestSuite,
-) -> anyhow::Result<()> {
-    let Some(_producer) = event.producer_proof.as_ref() else {
-        anyhow::bail!(
-            "submit requires exactly one producer proof (event_id={}, kind={})",
-            event.event_id,
-            event.kind.as_str()
-        );
-    };
-    event
-        .validate_proof_bindings_with_digest_suite(digest_suite)
-        .map_err(|err| {
-            anyhow::anyhow!("event proof binding invalid for {}: {err}", event.event_id)
-        })?;
-    validate_outgoing_registered_event_payload(event.kind.as_str(), &event.payload)
-}
+use garth::event_authoring::validate_signed_event as validate_signed_sdk_event_for_submit;
 
 fn mls_genesis_event_id_from_events(
     events: &[arkret_sdk::Event],
