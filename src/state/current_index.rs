@@ -30,7 +30,7 @@ pub(super) mod platform;
 #[path = "current_index/wasm.rs"]
 pub(super) mod platform;
 pub(super) mod publication_lock;
-mod search;
+pub(crate) mod search;
 
 // The browser regressions of this index are an integration test target, which
 // cannot reach a crate-private type; this is their only entry point.

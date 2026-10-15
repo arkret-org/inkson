@@ -11,31 +11,47 @@ impl super::super::LocalStateStore {
         account: &AccountId,
         device: &arkret_sdk::DeviceId,
     ) -> bool {
+        self.search_session_valid_until(account, device, chrono::Utc::now())
+            .is_some()
+    }
+
+    /// A displayed result cannot outlive any part of its current holder evidence.
+    pub(crate) fn search_session_valid_until(
+        &self,
+        account: &AccountId,
+        device: &arkret_sdk::DeviceId,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Option<chrono::DateTime<chrono::Utc>> {
         if self.active_authority().as_ref() != Some(account)
             || self.current_reset_required()
             || self.persist_error().is_some()
         {
-            return false;
+            return None;
         }
         self.with_unoverlaid_account_fields(|state| {
-            let now = chrono::Utc::now();
-            state.session_grant.as_ref().is_some_and(|grant| {
-                grant.account_id == *account
-                    && grant.device_id == *device
-                    && grant.grant_expires_at.is_some_and(|expiry| expiry > now)
-            }) && state
-                .device_authoring_authority
-                .as_ref()
-                .is_some_and(|authority| {
-                    authority.account_id == *account
-                        && authority.device_id == *device
-                        && authority.device_projection.device_status.is_active()
-                        && authority.device_projection.attested_at <= now
-                        && authority.device_projection.expires_at > now
-                        && authority.device_projection.authorization_window.not_before <= now
-                        && authority.device_projection.authorization_window.expires_at.is_none_or(|expiry| expiry > now)
-                        && crate::identity::authoring_generation::cached_principal_authoring_generation(account, device.as_str()).is_none_or(|generation| generation == authority.authoring_generation)
-                })
+            let grant = state.session_grant.as_ref()?;
+            let authority = state.device_authoring_authority.as_ref()?;
+            let projection = &authority.device_projection;
+            let expiry = grant.grant_expires_at?.min(projection.expires_at).min(
+                projection
+                    .authorization_window
+                    .expires_at
+                    .unwrap_or(projection.expires_at),
+            );
+            (grant.account_id == *account
+                && grant.device_id == *device
+                && authority.account_id == *account
+                && authority.device_id == *device
+                && projection.device_status.is_active()
+                && projection.attested_at <= now
+                && projection.authorization_window.not_before <= now
+                && expiry > now
+                && crate::identity::authoring_generation::cached_principal_authoring_generation(
+                    account,
+                    device.as_str(),
+                )
+                .is_none_or(|generation| generation == authority.authoring_generation))
+            .then_some(expiry)
         })
     }
 }
@@ -441,13 +457,86 @@ impl CurrentIndex {
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
-mod tests {
+pub(crate) mod tests {
     use serde_json::json;
 
     use super::*;
     use crate::test_support::committed_event::{
         FixtureStation, fixture_time, verified_realm_fixture_as,
     };
+
+    pub(crate) async fn authorized_store() -> (
+        tempfile::TempDir,
+        crate::state::LocalStateStore,
+        crate::config::ActiveAccountContext,
+        CommittedEventFullView,
+    ) {
+        let (directory, _, snapshot, originals, actor) = setup().await;
+        let account = crate::test_support::AccountFixture::new("did:web:alice.example")
+            .station(actor.as_account_id().unwrap().station_id.as_str())
+            .device("ak:device:0196419b-0000-7000-8000-000000000001")
+            .build();
+        let mut store =
+            crate::state::LocalStateStore::with_path(directory.path().join("holder.json"));
+        store.switch_active_account(&account).unwrap();
+        store.set_current_reset_required(false);
+        let now = chrono::Utc::now();
+        store.set_session_grant(Some(crate::state::PersistedSessionGrant {
+            grant_jwt: "fixture-grant".into(),
+            session_private_key_pem: String::new(),
+            grant_id: "fixture-grant-id".into(),
+            audience_id: account.authority.station_id.clone(),
+            granted_scope: Vec::new(),
+            account_id: account.authority.clone(),
+            device_id: account.device_id.clone(),
+            station_url: account.server_url.clone(),
+            grant_expires_at: Some(now + chrono::Duration::hours(1)),
+            stored_at: now,
+        }));
+        store
+            .set_device_authoring_authority(Some(crate::state::PersistedDeviceAuthoringAuthority {
+            account_id: account.authority.clone(),
+            device_id: account.device_id.clone(),
+            device_projection: arkret_models_crypto::VerifiedDeviceProjection {
+                device_signing_key_did: arkret_sdk::DidKey::new(
+                    "did:key:z6MkhHrTbtosB4xyyJM217fS4ry35F7JhZ5oA9uVHErBJDL5",
+                )
+                .unwrap(),
+                hpke_key: arkret_sdk::NonEmptyString::new("fixture-hpke").unwrap(),
+                device_authorize_event_id: originals[0].event.event_id.clone(),
+                authorized_generation_ref: 0,
+                device_status: arkret_models_crypto::DeviceStatus::Active,
+                authorization_window: arkret_models_crypto::DeviceAuthorizationWindow {
+                    not_before: now - chrono::Duration::hours(1),
+                    expires_at: None,
+                },
+                attested_at: now - chrono::Duration::seconds(1),
+                expires_at: now + chrono::Duration::minutes(10),
+            },
+            authoring_generation: crate::identity::authoring_generation::AuthoringGeneration {
+                authority_model:
+                    crate::identity::authoring_generation::AuthoringAuthorityModel::AcceptedDevice,
+                authority_principal_id: account.authority.principal_id.clone(),
+                generation_ref: "generation-0".into(),
+            },
+        }));
+        let index = CurrentIndex::open(&account.authority, 0, store.current_index_location())
+            .await
+            .unwrap();
+        let staged = stage(
+            &index,
+            &snapshot,
+            originals
+                .iter()
+                .cloned()
+                .map(arkret_sdk::CommittedEventView::Full)
+                .collect(),
+            0,
+        )
+        .await;
+        store.commit_current_stage_for_test(staged).unwrap();
+        (directory, store, account, originals[0].clone())
+    }
 
     async fn setup() -> (
         tempfile::TempDir,

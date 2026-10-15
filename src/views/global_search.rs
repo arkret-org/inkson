@@ -314,41 +314,85 @@ pub fn result_destination(result: &Value) -> Option<SearchDestination> {
 // lives in `crate::realm_tree`.
 use crate::realm_tree::string_field;
 
-#[component]
-pub fn GlobalSearchPanel(
-    principal_id: Signal<Option<arkret_sdk::DidCoreId>>,
-    device_id: Signal<String>,
-    initial_query: String,
-) -> Element {
+#[derive(Clone, Copy)]
+struct LocalSearchState {
+    results: Signal<ResultRows>,
+    loading: Signal<bool>,
+    search_epoch: Signal<u64>,
+    last_search: Signal<Option<SearchRequest>>,
+    error_key: Signal<Option<&'static str>>,
+    has_searched: Signal<bool>,
+}
+
+fn search_holder_ready(session: crate::app::SessionContext) -> bool {
+    session
+        .active_account
+        .read()
+        .as_ref()
+        .is_some_and(|account| {
+            session
+                .state_store
+                .read()
+                .search_session_matches(&account.authority, &account.device_id)
+        })
+}
+
+fn use_local_search(initial_query: String) -> LocalSearchState {
     // A4 — state_store from session context instead of a prop.
     let session = crate::app::SessionContext::get();
     let state_store = session.state_store;
     let active_account = session.active_account;
-    let mut query = use_signal(|| initial_query.clone());
     let mut results = use_signal(ResultRows::new);
     let mut loading = use_signal(|| false);
     let mut search_epoch = use_signal(|| 0u64);
     let mut last_search = use_signal(|| None::<SearchRequest>);
     let mut error_key = use_signal(|| None::<&'static str>);
     let mut has_searched = use_signal(|| false);
-    let navigator = use_navigator();
+    let mut clock_revision = use_signal(|| 0_u64);
     let security_fence = use_memo(move || {
+        let _ = clock_revision.read();
+        // A query after not_before must both release the now-valid result and
+        // arm its expiry task, even when persisted evidence has not changed.
+        let _ = search_epoch.read();
         let store = state_store.read();
         let account = active_account
             .read()
             .as_ref()
             .map(|account| (account.authority.clone(), account.device_id.clone()));
-        let ready = account
-            .as_ref()
-            .is_some_and(|(account, device)| store.search_session_matches(account, device));
+        let valid_until = account.as_ref().and_then(|(account, device)| {
+            store.search_session_valid_until(account, device, chrono::Utc::now())
+        });
         (
             account,
             *session.session_generation.read(),
             store.current_generation(),
             store.current_reset_required(),
             store.session_grant(),
-            ready,
+            valid_until,
         )
+    });
+    // Resource dependencies cancel the previous timer when holder evidence is
+    // renewed or replaced. Recheck wall time after waking, including suspend.
+    let _expiry = use_resource(move || {
+        let valid_until = security_fence.read().5;
+        async move {
+            if let Some(expiry) = valid_until {
+                loop {
+                    let remaining = expiry.signed_duration_since(chrono::Utc::now());
+                    if remaining <= chrono::TimeDelta::zero() {
+                        clock_revision.with_mut(|revision| *revision = revision.wrapping_add(1));
+                        break;
+                    }
+                    crate::runtime_helpers::sleep_for(
+                        remaining
+                            .to_std()
+                            .unwrap()
+                            .min(std::time::Duration::from_secs(60)),
+                    )
+                    .await;
+                }
+            }
+        }
     });
     use_effect(move || {
         let _ = security_fence.read();
@@ -405,6 +449,39 @@ pub fn GlobalSearchPanel(
             );
         }
     });
+
+    LocalSearchState {
+        results,
+        loading,
+        search_epoch,
+        last_search,
+        error_key,
+        has_searched,
+    }
+}
+
+#[component]
+pub fn GlobalSearchPanel(
+    principal_id: Signal<Option<arkret_sdk::DidCoreId>>,
+    device_id: Signal<String>,
+    initial_query: String,
+) -> Element {
+    let session = crate::app::SessionContext::get();
+    let state_store = session.state_store;
+    let active_account = session.active_account;
+    let mut query = use_signal(|| initial_query.clone());
+    let navigator = use_navigator();
+    let LocalSearchState {
+        results,
+        loading,
+        search_epoch,
+        last_search,
+        mut error_key,
+        has_searched,
+    } = use_local_search(initial_query);
+    // Rendering must use current wall time too: a new query can become valid
+    // after not_before without changing any persisted holder evidence.
+    let ready = search_holder_ready(session);
 
     rsx! {
         div { class: "timeline", "data-testid": "global-search-panel", role: "region", "aria-label": tr("search.title"),
@@ -470,7 +547,7 @@ pub fn GlobalSearchPanel(
                 div { class: "event", "data-testid": "global-search-results-empty",
                     div { class: "muted", {tr("search.results.empty")} }
                 }
-            } else if results().is_empty() {
+            } else if !ready || results().is_empty() {
                 div { class: "event", "data-testid": "global-search-results-no-results",
                     div { class: "muted", {tr("search.no_results")} }
                 }
@@ -746,6 +823,10 @@ mod tests {
         assert!(response.results.is_empty());
     }
 }
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[path = "global_search/session_tests.rs"]
+mod session_tests;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod locale_tests {

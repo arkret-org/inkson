@@ -532,7 +532,7 @@ export async function dismissMlsBackupModal(
   }
 }
 
-export function registerStrandsBeforeEach() {
+export function registerStrandsBeforeEach(apiOptions: Parameters<typeof mockArkretApi>[1] = {}) {
   test.beforeEach(async ({ page }, testInfo) => {
     const observations: ApiObservation[] = [];
     apiObservations.set(page, observations);
@@ -712,6 +712,7 @@ export function registerStrandsBeforeEach() {
       )
         ? 750
         : undefined,
+      ...apiOptions,
     });
     scenarioRealms.set(page, scenario);
     if (testInfo.title.startsWith("login page")) {

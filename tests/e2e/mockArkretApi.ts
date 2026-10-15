@@ -119,6 +119,8 @@ type MockArkretApiOptions = {
   invitePreviewDelayMs?: number;
   contactRequestOutcome?: "failed" | "tampered";
   contactCeremony?: Record<string, any>;
+  deviceProjectionValidityMs?: number;
+  deviceAuthorizationValidityMs?: number;
 };
 
 type MockAccountDevice = {
@@ -632,6 +634,9 @@ export async function mockArkretApi(
   page: Page,
   options: MockArkretApiOptions = {},
 ) {
+  const deviceProjectionExpiresAt = new Date(Date.now() + (options.deviceProjectionValidityMs ?? 600_000)).toISOString();
+  const deviceAuthorizationExpiresAt = options.deviceAuthorizationValidityMs === undefined
+    ? null : new Date(Date.now() + options.deviceAuthorizationValidityMs).toISOString();
   const accountPrincipalId =
     options.accountPrincipalId ?? CURRENT_PRINCIPAL_DID;
   const accountPrincipalCoreId = didCoreId(accountPrincipalId);
@@ -3089,10 +3094,10 @@ export async function mockArkretApi(
                   device_status: "active",
                   authorization_window: {
                     not_before: attestedAt,
-                    expires_at: null,
+                    expires_at: deviceAuthorizationExpiresAt,
                   },
                   attested_at: attestedAt,
-                  expires_at: new Date(Date.now() + 600000).toISOString(),
+                  expires_at: deviceProjectionExpiresAt,
               },
           }])),
         })),

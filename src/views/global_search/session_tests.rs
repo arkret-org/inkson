@@ -1,0 +1,250 @@
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use super::*;
+use crate::state::current_index::search::tests::authorized_store;
+
+type Input = (LocalStateStore, crate::config::ActiveAccountContext);
+type Handles = (crate::app::SessionContext, LocalSearchState);
+
+#[derive(Clone)]
+struct Harness {
+    input: Rc<RefCell<Option<Input>>>,
+    handles: Rc<RefCell<Option<Handles>>>,
+    retry: Rc<RefCell<Option<EventHandler<()>>>>,
+}
+
+fn surface(harness: Harness) -> Element {
+    let (store, account) = use_hook(|| harness.input.borrow_mut().take().unwrap());
+    let state_store = use_signal_sync(|| store);
+    let active_account = use_signal(|| Some(account));
+    let base_url = use_signal(String::new);
+    let session_generation = use_signal(|| 0);
+    let owned_agents_rev = use_signal(|| 0);
+    let context = use_context_provider(|| crate::app::SessionContext {
+        active_account,
+        state_store,
+        base_url,
+        session_generation,
+        owned_agents_rev,
+    });
+    let search = use_local_search("needle".into());
+    let retry = use_callback(move |()| {
+        let account = context.active_account.peek().clone().unwrap();
+        run_search(
+            "needle".into(),
+            context.state_store,
+            account.authority,
+            account.device_id,
+            search.results,
+            search.loading,
+            search.error_key,
+            search.has_searched,
+            search.search_epoch,
+            search.last_search,
+        );
+    });
+    *harness.handles.borrow_mut() = Some((context, search));
+    *harness.retry.borrow_mut() = Some(retry);
+    rsx! {}
+}
+
+fn mount(
+    store: LocalStateStore,
+    account: crate::config::ActiveAccountContext,
+) -> (VirtualDom, Harness) {
+    let harness = Harness {
+        input: Rc::new(RefCell::new(Some((store, account)))),
+        handles: Rc::new(RefCell::new(None)),
+        retry: Rc::new(RefCell::new(None)),
+    };
+    let mut dom = VirtualDom::new_with_props(surface, harness.clone());
+    dom.rebuild_in_place();
+    (dom, harness)
+}
+
+async fn settle(dom: &mut VirtualDom, harness: &Harness, expected: usize) {
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            dom.render_immediate_to_vec();
+            let (_, search) = harness.handles.borrow().unwrap();
+            if dom.in_runtime(|| {
+                *search.has_searched.peek()
+                    && !*search.loading.peek()
+                    && search.results.peek().len() == expected
+            }) {
+                return;
+            }
+            crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(2)).await;
+        }
+    })
+    .await
+    .expect("production search must settle at the expected authorization cut");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn native_search_visible_results_expire_at_each_holder_deadline() {
+    for boundary in ["session", "projection", "authorization"] {
+        let (_directory, mut store, account, original) = authorized_store().await;
+        let expiry = chrono::Utc::now() + chrono::Duration::seconds(2);
+        let mut state = store.load();
+        match boundary {
+            "session" => state.session_grant.as_mut().unwrap().grant_expires_at = Some(expiry),
+            "projection" => {
+                state
+                    .device_authoring_authority
+                    .as_mut()
+                    .unwrap()
+                    .device_projection
+                    .expires_at = expiry
+            }
+            _ => {
+                state
+                    .device_authoring_authority
+                    .as_mut()
+                    .unwrap()
+                    .device_projection
+                    .authorization_window
+                    .expires_at = Some(expiry)
+            }
+        }
+        store.save(state);
+        assert_eq!(
+            store.search_session_valid_until(
+                &account.authority,
+                &account.device_id,
+                expiry - chrono::Duration::milliseconds(1)
+            ),
+            Some(expiry)
+        );
+        assert_eq!(
+            store.search_session_valid_until(&account.authority, &account.device_id, expiry),
+            None
+        );
+        let (mut dom, harness) = mount(store, account);
+        settle(&mut dom, &harness, 1).await;
+        let (_, search) = harness.handles.borrow().unwrap();
+        dom.in_runtime(|| {
+            let rows = search.results.peek();
+            assert_eq!(rows[0]["event_id"], json!(original.event.event_id));
+            assert_eq!(rows[0]["covering_commit"], json!(original.commit));
+            assert_eq!(rows[0]["content"]["body"], "exact original needle");
+        });
+        // No store mutation, query or generation change triggers this removal.
+        settle(&mut dom, &harness, 0).await;
+        let (context, _) = harness.handles.borrow().unwrap();
+        dom.in_runtime(|| assert!(!search_holder_ready(context)));
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn native_search_new_query_becomes_readable_after_not_before_without_store_change() {
+    let (_directory, mut store, account, _) = authorized_store().await;
+    let not_before = chrono::Utc::now() + chrono::Duration::seconds(1);
+    let mut state = store.load();
+    state
+        .device_authoring_authority
+        .as_mut()
+        .unwrap()
+        .device_projection
+        .authorization_window
+        .not_before = not_before;
+    state
+        .device_authoring_authority
+        .as_mut()
+        .unwrap()
+        .device_projection
+        .authorization_window
+        .expires_at = Some(not_before + chrono::Duration::seconds(2));
+    store.save(state);
+    let (mut dom, harness) = mount(store, account);
+    settle(&mut dom, &harness, 0).await;
+    let (context, _) = harness.handles.borrow().unwrap();
+    dom.in_runtime(|| assert!(!search_holder_ready(context)));
+    while chrono::Utc::now() <= not_before {
+        crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(10)).await;
+    }
+    // The original evidence is unchanged. The real form callback must now
+    // accept a new query, and its render gate must use current wall time.
+    dom.in_runtime(|| harness.retry.borrow().unwrap().call(()));
+    settle(&mut dom, &harness, 1).await;
+    dom.in_runtime(|| assert!(search_holder_ready(context)));
+    settle(&mut dom, &harness, 0).await;
+    dom.in_runtime(|| assert!(!search_holder_ready(context)));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn native_search_renewed_holder_cancels_old_expiry_and_rechecks_new_expiry() {
+    let (_directory, mut store, account, _) = authorized_store().await;
+    let old_expiry = chrono::Utc::now() + chrono::Duration::seconds(2);
+    let mut grant = store.session_grant().unwrap();
+    grant.grant_expires_at = Some(old_expiry);
+    store.set_session_grant(Some(grant));
+    let (mut dom, harness) = mount(store, account);
+    settle(&mut dom, &harness, 1).await;
+    let (mut context, search) = harness.handles.borrow().unwrap();
+    dom.in_runtime(|| {
+        let mut grant = context.state_store.peek().session_grant().unwrap();
+        grant.grant_expires_at = Some(old_expiry + chrono::Duration::seconds(2));
+        context.state_store.write().set_session_grant(Some(grant));
+    });
+    settle(&mut dom, &harness, 1).await;
+    while chrono::Utc::now() < old_expiry + chrono::Duration::milliseconds(100) {
+        dom.render_immediate_to_vec();
+        crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(10)).await;
+    }
+    dom.in_runtime(|| {
+        assert_eq!(
+            search.results.peek().len(),
+            1,
+            "old timer must not clear a renewed holder"
+        )
+    });
+    settle(&mut dom, &harness, 0).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn native_search_holder_replacement_revocation_and_late_request_fail_closed() {
+    for boundary in ["device", "account", "grant", "revoked", "session_epoch"] {
+        let (_directory, store, account, _) = authorized_store().await;
+        let (mut dom, harness) = mount(store, account.clone());
+        settle(&mut dom, &harness, 1).await;
+        let (mut context, search) = harness.handles.borrow().unwrap();
+        dom.in_runtime(|| {
+            // Call the scope-bound event handler just like the product form,
+            // then replace its holder before Dioxus polls candidate reads.
+            harness.retry.borrow().unwrap().call(());
+            match boundary {
+                "device" => {
+                    context.active_account.write().as_mut().unwrap().device_id =
+                        crate::test_support::device_id(
+                            "ak:device:0196419b-0000-7000-8000-000000000099",
+                        )
+                }
+                "account" => context.active_account.set(None),
+                "grant" => context.state_store.write().set_session_grant(None),
+                "revoked" => {
+                    let mut state = context.state_store.peek().load();
+                    state
+                        .device_authoring_authority
+                        .as_mut()
+                        .unwrap()
+                        .device_projection
+                        .device_status = arkret_models_crypto::DeviceStatus::Revoked;
+                    context.state_store.write().save(state);
+                }
+                _ => context.session_generation.with_mut(|epoch| *epoch += 1),
+            }
+        });
+        for _ in 0..50 {
+            dom.render_immediate_to_vec();
+            crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(2)).await;
+        }
+        dom.in_runtime(|| {
+            assert!(
+                search.results.peek().is_empty(),
+                "{boundary} must not release late plaintext"
+            )
+        });
+    }
+}
