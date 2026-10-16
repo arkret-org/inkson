@@ -154,13 +154,24 @@ pub fn load_account_mls_secret(
     store: &dyn SecureKeyStore,
     authority: &AccountId,
 ) -> Result<Option<StoredAccountMlsSecret>, SecureKeyStoreError> {
-    for version in (1..=ACCOUNT_MLS_SECRET_MAX_SCAN_VERSION).rev() {
-        let key = account_mls_secret_key_for_version(authority, version)?;
-        if let Some(secret) = store.get_secret(&key)?
-            && !secret.trim().is_empty()
-        {
+    let keys = (1..=ACCOUNT_MLS_SECRET_MAX_SCAN_VERSION)
+        .rev()
+        .map(|version| account_mls_secret_key_for_version(authority, version))
+        .collect::<Result<Vec<_>, _>>()?;
+    let key_refs = keys.iter().map(String::as_str).collect::<Vec<_>>();
+    let mut offset = 0;
+    while let Some((index, secret)) = store.get_first_secret(&key_refs[offset..])? {
+        if index >= key_refs.len() - offset {
+            return Err(SecureKeyStoreError::Backend(
+                "priority secret index is out of bounds".to_owned(),
+            ));
+        }
+        let position = offset + index;
+        let version = ACCOUNT_MLS_SECRET_MAX_SCAN_VERSION - position as u32;
+        if !secret.trim().is_empty() {
             return Ok(Some(StoredAccountMlsSecret { version, secret }));
         }
+        offset = position + 1;
     }
     Ok(None)
 }
@@ -681,6 +692,42 @@ mod tests {
 
     fn device(number: u8) -> DeviceId {
         DeviceId::new(format!("ak:device:01904100-0000-7000-8000-{number:012}")).unwrap()
+    }
+
+    #[test]
+    fn account_secret_priority_preserves_nonempty_utf8_and_missing_semantics() {
+        let store = MemorySecureKeyStore::new();
+        let authority = authority(
+            "did:webvh:z6mkalice:alice.example",
+            "ak:did_core:web:server.example",
+        );
+        assert!(
+            load_account_mls_secret(&store, &authority)
+                .unwrap()
+                .is_none()
+        );
+        let high = account_mls_secret_key_for_version(&authority, 32).unwrap();
+        let middle = account_mls_secret_key_for_version(&authority, 7).unwrap();
+        let low = account_mls_secret_key_for_version(&authority, 1).unwrap();
+        store.store_secret(&high, " \t").unwrap();
+        store.store_secret(&middle, "current").unwrap();
+        store.store_secret_bytes(&low, &[0xff]).unwrap();
+        assert_eq!(
+            load_account_mls_secret(&store, &authority).unwrap(),
+            Some(StoredAccountMlsSecret {
+                version: 7,
+                secret: "current".to_owned()
+            })
+        );
+        store.delete_secret(&middle).unwrap();
+        assert!(load_account_mls_secret(&store, &authority).is_err());
+        store.delete_secret(&low).unwrap();
+        assert!(
+            load_account_mls_secret(&store, &authority)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(store.get_secret(&high).unwrap().as_deref(), Some(" \t"));
     }
 
     #[test]

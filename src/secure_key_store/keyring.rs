@@ -39,6 +39,10 @@ impl fmt::Debug for PlatformKeyStore {
 }
 
 impl KeyStore for PlatformKeyStore {
+    fn load_first(&self, ids: &[&str]) -> Result<Option<(usize, KeyBytes)>, KeyStoreError> {
+        platform_backend_call(|| self.0.load_first(ids))
+    }
+
     fn load(&self, id: &str) -> Result<KeyBytes, KeyStoreError> {
         platform_backend_call(|| self.0.load(id))
     }
@@ -275,6 +279,13 @@ mod linux_runtime_tests {
 }
 
 impl SecureKeyStore for KeyringSecureKeyStore {
+    fn get_first_secret_bytes(
+        &self,
+        keys: &[&str],
+    ) -> Result<Option<(usize, KeyBytes)>, SecureKeyStoreError> {
+        self.inner()?.get_first_secret_bytes(keys)
+    }
+
     fn store_secret_bytes(&self, key: &str, value: &[u8]) -> Result<(), SecureKeyStoreError> {
         self.inner()?.store_secret_bytes(key, value)
     }

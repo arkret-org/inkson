@@ -868,6 +868,8 @@ impl InksonSignalSink {
     }
 
     async fn call_exists_at_verified_cut(&self, signal: &AdmittedSignal) -> garth::Result<bool> {
+        #[cfg(feature = "spec-conformance")]
+        let started = std::time::Instant::now();
         let arkret_sdk::SignalPlaintext::CallSignal(call) = &signal.payload else {
             return Ok(false);
         };
@@ -879,9 +881,13 @@ impl InksonSignalSink {
             )
         });
         let Some(authority) = authority else {
+            #[cfg(feature = "spec-conformance")]
+            eprintln!("[call-product-cut] active_authority=false");
             return Ok(false);
         };
         if reset {
+            #[cfg(feature = "spec-conformance")]
+            eprintln!("[call-product-cut] current_reset_required=true");
             return Ok(false);
         }
         let mut generation = 0;
@@ -897,12 +903,18 @@ impl InksonSignalSink {
             .map_err(|error| {
                 garth::Error::Protocol(format!("Call current is not ready: {error}"))
             })?;
+        #[cfg(feature = "spec-conformance")]
+        eprintln!(
+            "[call-product-cut] call_current_millis={} signal_live={}",
+            started.elapsed().as_millis(),
+            signal.expires_at > crate::clock::now_utc()
+        );
         // A store await cannot carry the previous account's permission across
         // an account switch, current reset or a newly installed generation.
         let same_attempt = self
             .state_store
             .read(|store| call_current_attempt_matches(store, &authority, generation));
-        Ok(current.is_some_and(|state| {
+        let ready = current.as_ref().is_some_and(|state| {
             !matches!(
                 state.to,
                 arkret_sdk::CallLifecycleState::Ended
@@ -910,7 +922,15 @@ impl InksonSignalSink {
                     | arkret_sdk::CallLifecycleState::Cancelled
                     | arkret_sdk::CallLifecycleState::Missed
             )
-        }) && same_attempt)
+        }) && same_attempt;
+        #[cfg(feature = "spec-conformance")]
+        if !ready {
+            eprintln!(
+                "[call-product-cut] call_current_present={} same_attempt={same_attempt}",
+                current.is_some()
+            );
+        }
+        Ok(ready)
     }
 
     /// The product boundary runs only after the accepted Call current gate.
@@ -923,9 +943,15 @@ impl InksonSignalSink {
         }
         if matches!(&signal.payload, arkret_sdk::SignalPlaintext::CallSignal(call)
             if matches!(&call.signal, arkret_sdk::CallSignalData::Invite(_)))
-            && !self.call_consent_at_ring(signal).await.unwrap_or(false)
         {
-            return Ok(());
+            let consent = self.call_consent_at_ring(signal).await;
+            #[cfg(feature = "spec-conformance")]
+            if !matches!(&consent, Ok(true)) {
+                eprintln!("[call-product-cut] holder_consent={consent:?}");
+            }
+            if !consent.unwrap_or(false) {
+                return Ok(());
+            }
         }
         if matches!(&signal.payload, arkret_sdk::SignalPlaintext::CallSignal(call)
             if matches!(&call.signal, arkret_sdk::CallSignalData::Invite(_)))
@@ -971,6 +997,23 @@ impl InksonSignalSink {
             || delivery.invitation.expires_at <= crate::clock::now_utc()
             || signal.expires_at <= crate::clock::now_utc()
         {
+            #[cfg(feature = "spec-conformance")]
+            eprintln!(
+                "[call-product-cut] holder_matches={} call_matches={} scope_matches={} inviter_matches={} device_matches={} media_matches={} invitation_live={} signal_live={}",
+                delivery.invitation.holder_account_id == account.authority,
+                delivery.invitation.call_id == call.call_id,
+                delivery.invitation.scope_ref == *signal.scope_ref(),
+                delivery.invitation.inviter_actor_id == *signal.actor_id(),
+                delivery.request.subject_device_id == account.device_id,
+                delivery.invitation.media
+                    == (arkret_sdk::CallInvitationMedia {
+                        audio: invite.media.audio,
+                        video: invite.media.video,
+                        screen: invite.media.screen.unwrap_or(false)
+                    }),
+                delivery.invitation.expires_at > crate::clock::now_utc(),
+                signal.expires_at > crate::clock::now_utc(),
+            );
             return Ok(false);
         }
         let session_epoch = crate::identity::device_directory::session_cache_epoch();
@@ -1015,15 +1058,21 @@ impl InksonSignalSink {
         .await?;
         // A fresh holder read cannot rehabilitate product material issued by
         // a previous authority generation or outside its original window.
-        Ok(permitted
-            && delivery
-                .outcome
-                .validate_for_request(
-                    &delivery.request,
-                    response.value()?.governance_generation,
-                    crate::clock::now_utc(),
-                )
-                .is_ok())
+        if !permitted {
+            #[cfg(feature = "spec-conformance")]
+            eprintln!("[call-product-cut] private_current_permitted=false");
+            return Ok(false);
+        }
+        let delivery_current = delivery.outcome.validate_for_request(
+            &delivery.request,
+            response.value()?.governance_generation,
+            crate::clock::now_utc(),
+        );
+        #[cfg(feature = "spec-conformance")]
+        if delivery_current.is_err() {
+            eprintln!("[call-product-cut] delivery_current={delivery_current:?}");
+        }
+        Ok(delivery_current.is_ok())
     }
 
     /// Drop presence/typing bodies whose effective TTL has passed.
