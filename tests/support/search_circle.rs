@@ -92,6 +92,123 @@ pub struct Fixture {
     pub message: CommittedEventFullView,
 }
 
+pub struct DisclosureStep {
+    pub frame: String,
+    pub snapshot: String,
+    pub expected: Vec<CommittedEventFullView>,
+}
+
+/// Identical signed inputs and observations for SQLite and IndexedDB.
+pub fn disclosure_cases() -> Vec<(&'static str, Vec<DisclosureStep>)> {
+    let mut cases = Vec::new();
+    for scenario in ["create", "withheld_first", "revised_create", "revision"] {
+        let mut fixture = Fixture::new();
+        if matches!(scenario, "revised_create" | "revision") {
+            fixture.revise_message();
+        }
+        let expected = fixture
+            .originals
+            .iter()
+            .filter(|full| {
+                matches!(
+                    full.event.kind,
+                    EventKind::MessageCreate | EventKind::MessageRevise
+                )
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        let target = if scenario == "revision" {
+            expected.last().unwrap().clone()
+        } else {
+            fixture.message.clone()
+        };
+        let full = CommittedEventView::Full(target.clone());
+        let withheld: CommittedEventView = serde_json::from_value(json!({
+            "commit":target.commit,"event_disclosure":{"status":"withheld"}
+        }))
+        .unwrap();
+        let unrelated = fixture
+            .originals
+            .iter()
+            .filter(|row| row.event.event_id != target.event.event_id)
+            .cloned()
+            .map(CommittedEventView::Full)
+            .collect::<Vec<_>>();
+        let mut steps = Vec::new();
+        let mut push = |views: Vec<CommittedEventView>, visible: bool| {
+            let mut frame: Value = serde_json::from_str(&fixture.frame(false)).unwrap();
+            frame["realms"][fixture.snapshot.realm_id.as_str()]["committed_events"] = json!(views);
+            steps.push(DisclosureStep {
+                frame: frame.to_string(),
+                snapshot: serde_json::to_string(&fixture.snapshot).unwrap(),
+                expected: if visible { expected.clone() } else { vec![] },
+            });
+        };
+        if scenario == "withheld_first" {
+            let mut first = unrelated.clone();
+            first.push(withheld.clone());
+            push(first, false);
+        } else {
+            push(
+                fixture
+                    .originals
+                    .iter()
+                    .cloned()
+                    .map(CommittedEventView::Full)
+                    .collect(),
+                true,
+            );
+        }
+        push(vec![withheld.clone()], false);
+        push(vec![], false);
+        push(unrelated, false);
+        push(vec![full.clone()], true);
+        push(vec![full.clone()], true);
+        push(vec![full.clone(), withheld.clone()], false);
+        push(vec![full.clone()], true);
+        push(vec![withheld.clone(), full.clone()], false);
+        push(vec![full.clone()], true);
+        push(vec![withheld], false);
+        drop(push);
+
+        // A legitimate Full backfill cannot reopen a tightened history floor.
+        fixture
+            .snapshot
+            .retention_and_history_floor
+            .stream_floors
+            .iter_mut()
+            .find(|floor| floor.stream_ref == target.commit.stream_ref)
+            .unwrap()
+            .oldest_position = fixture.originals.last().unwrap().commit.stream_position + 1;
+        seal(&mut fixture.snapshot);
+        let mut frame: Value = serde_json::from_str(&fixture.frame(true)).unwrap();
+        steps.push(DisclosureStep {
+            frame: frame.to_string(),
+            snapshot: serde_json::to_string(&fixture.snapshot).unwrap(),
+            expected: vec![],
+        });
+        // Even a later disclosure under a readable floor cannot undo redaction.
+        fixture
+            .snapshot
+            .retention_and_history_floor
+            .stream_floors
+            .iter_mut()
+            .find(|floor| floor.stream_ref == target.commit.stream_ref)
+            .unwrap()
+            .oldest_position = 0;
+        let message = MessageId::from_event_id(&fixture.message.event.event_id);
+        fixture.redact_message_current(message.as_str());
+        frame = serde_json::from_str(&fixture.frame(true)).unwrap();
+        steps.push(DisclosureStep {
+            frame: frame.to_string(),
+            snapshot: serde_json::to_string(&fixture.snapshot).unwrap(),
+            expected: vec![],
+        });
+        cases.push((scenario, steps));
+    }
+    cases
+}
+
 impl Fixture {
     pub fn change_revision(&mut self, scenario: &str) {
         let message_id = MessageId::from_event_id(&self.message.event.event_id);

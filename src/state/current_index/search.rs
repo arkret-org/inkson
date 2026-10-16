@@ -129,6 +129,17 @@ impl CurrentIndex {
             ) {
                 continue;
             }
+            // Disclosure is a current read outcome, not a terminal redaction.
+            // A newly verified Full can replace an older withheld outcome for
+            // this exact Event. Within one installation, withheld wins in
+            // either input order. Publication shares the candidate transaction;
+            // the current authorization and revision gates still apply below.
+            writes
+                .entry(format!(
+                    "{}search-withheld/{}/{suffix}",
+                    self.prefix, full.event.event_id
+                ))
+                .or_insert_with(|| b"false".to_vec());
             let prefix = format!("{}search/{}/", self.prefix, message);
             let key = format!("{prefix}{suffix}");
             let mut record: SearchRecord = match writes.get(&key) {
@@ -676,6 +687,55 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
+    async fn search_disclosure_backfill_recovers_exact_original_without_reopening_other_gates() {
+        for (scenario, steps) in circle_fixture::disclosure_cases() {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("disclosure.sqlite");
+            let actor = circle_fixture::Fixture::new().actor;
+            for (generation, step) in steps.into_iter().enumerate() {
+                let index = super::super::tests::index(&path, generation as u64).await;
+                let frame = serde_json::from_str(&step.frame).unwrap();
+                let snapshot: arkret_sdk::RealmStateSnapshot =
+                    serde_json::from_str(&step.snapshot).unwrap();
+                index
+                    .stage_current_install(
+                        || Ok(generation as u64),
+                        Some(&frame),
+                        None,
+                        &Default::default(),
+                        &BTreeMap::from([(snapshot.realm_id.to_string(), &snapshot)]),
+                        &|| Ok(()),
+                        None,
+                        None,
+                    )
+                    .await
+                    .unwrap()
+                    .finish();
+                assert_eq!(
+                    index
+                        .read_search_page(&actor, None, circle_fixture::at(20))
+                        .await
+                        .unwrap()
+                        .rows,
+                    step.expected,
+                    "{scenario} {generation}"
+                );
+                drop(index);
+                let reopened = super::super::tests::index(&path, generation as u64 + 1).await;
+                assert_eq!(
+                    reopened
+                        .read_search_page(&actor, None, circle_fixture::at(20))
+                        .await
+                        .unwrap()
+                        .rows,
+                    step.expected,
+                    "cold {scenario} {generation}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn search_revision_current_advance_waits_for_exact_original_across_restart() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("revision.sqlite");
@@ -1183,6 +1243,49 @@ pub(crate) mod tests {
         .await;
         store.commit_current_stage_for_test(staged).unwrap();
         (directory, store, account, originals[0].clone())
+    }
+
+    pub(crate) async fn install_search_disclosure(
+        store: &mut crate::state::LocalStateStore,
+        full: bool,
+        abandon: bool,
+    ) {
+        let (_directory, _unused, mut snapshot, originals, _actor) = setup().await;
+        let index = CurrentIndex::open(
+            &store.active_authority().unwrap(),
+            store.current_generation(),
+            store.current_index_location(),
+        )
+        .await
+        .unwrap();
+        for row in &mut snapshot.current_state_entries {
+            *row = index
+                .ready_selector(
+                    snapshot.realm_id.as_str(),
+                    selector_of(row),
+                    store.current_generation(),
+                )
+                .await
+                .unwrap()
+                .unwrap();
+        }
+        FixtureStation::did_web().sign_snapshot(&mut snapshot);
+        let rows = if full {
+            vec![arkret_sdk::CommittedEventView::Full(originals[0].clone())]
+        } else {
+            vec![
+                serde_json::from_value(json!({
+                    "commit":originals[0].commit,"event_disclosure":{"status":"withheld"}
+                }))
+                .unwrap(),
+            ]
+        };
+        let staged = stage(&index, &snapshot, rows, store.current_generation()).await;
+        if abandon {
+            drop(staged);
+        } else {
+            store.commit_current_stage_for_test(staged).unwrap();
+        }
     }
 
     pub(crate) async fn install_current_only_search_redaction(
