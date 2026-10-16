@@ -2000,20 +2000,21 @@ mod tests {
             let (key, accepted_at) = recovery_original_source(&row.event, &row.commit);
             let human = row.event.human_device_producer().unwrap().unwrap();
             assert_eq!(human.account_id.station_id, authority().station_id);
-            let fact = arkret_models_collaboration::authority_commit::HumanHistoricalSignerFact {
-                event_id: row.event.event_id.clone(),
-                actor: row.event.actual_signer().clone(),
-                device_id: human.device_id,
-                verification_method: row
-                    .event
-                    .producer_proof
-                    .as_ref()
-                    .unwrap()
-                    .verification_method
-                    .clone(),
-                key,
-                accepted_at,
-            };
+            let fact =
+                arkret_models_collaboration::authority_commit::AccountDeviceHistoricalSignerFact {
+                    event_id: row.event.event_id.clone(),
+                    actor: row.event.actual_signer().clone(),
+                    device_id: human.device_id,
+                    verification_method: row
+                        .event
+                        .producer_proof
+                        .as_ref()
+                        .unwrap()
+                        .verification_method
+                        .clone(),
+                    key,
+                    accepted_at,
+                };
             fact.validate_event_binding(&row.event, arkret_sdk::DigestSuite::Sha256)
                 .unwrap();
             row.commit.producer_signer_fact_digest = Some(fact.digest().unwrap());

@@ -41,7 +41,8 @@ struct BuildInput {
 struct Fixture {
     snapshot: RealmStateSnapshot,
     committed_events: Vec<CommittedEventFullView>,
-    signer_facts: Vec<arkret_models_collaboration::authority_commit::HumanHistoricalSignerFact>,
+    signer_facts:
+        Vec<arkret_models_collaboration::authority_commit::AccountDeviceHistoricalSignerFact>,
     source_create: CommittedEventFullView,
     source_authorization: CommittedEventFullView,
     identity: FixtureIdentity,
@@ -163,7 +164,7 @@ struct Builder {
     source_authorization: CommittedEventFullView,
     identity: FixtureIdentity,
     events: Vec<CommittedEventFullView>,
-    facts: Vec<arkret_models_collaboration::authority_commit::HumanHistoricalSignerFact>,
+    facts: Vec<arkret_models_collaboration::authority_commit::AccountDeviceHistoricalSignerFact>,
     rows: Vec<TypedCurrentRow>,
     ids: BTreeMap<String, String>,
     public_blobs: BTreeMap<String, Base64UrlString>,
@@ -475,17 +476,18 @@ impl Builder {
             },
             DigestSuite::Sha256,
         )?;
-        let fact = arkret_models_collaboration::authority_commit::HumanHistoricalSignerFact {
-            event_id: event.event_id.clone(),
-            actor: self.actor.clone(),
-            device_id: self.source_authorization.event.payload["device_id"]
-                .as_str()
-                .ok_or_else(|| anyhow::anyhow!("controller device missing"))?
-                .parse()?,
-            verification_method: proof.verification_method.clone(),
-            key: self.key.clone(),
-            accepted_at: event.created_at,
-        };
+        let fact =
+            arkret_models_collaboration::authority_commit::AccountDeviceHistoricalSignerFact {
+                event_id: event.event_id.clone(),
+                actor: self.actor.clone(),
+                device_id: self.source_authorization.event.payload["device_id"]
+                    .as_str()
+                    .ok_or_else(|| anyhow::anyhow!("controller device missing"))?
+                    .parse()?,
+                verification_method: proof.verification_method.clone(),
+                key: self.key.clone(),
+                accepted_at: event.created_at,
+            };
         fact.validate_event_binding(&event, DigestSuite::Sha256)?;
         let accepted = commit(
             &self.authority.verification_method,
@@ -849,17 +851,18 @@ impl Builder {
             .producer_proof
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("fixture Event omits its producer proof"))?;
-        let fact = arkret_models_collaboration::authority_commit::HumanHistoricalSignerFact {
-            event_id: event.event_id.clone(),
-            actor: event.actor_id.clone(),
-            device_id: producer.source_authorization.event.payload["device_id"]
-                .as_str()
-                .ok_or_else(|| anyhow::anyhow!("authorization device missing"))?
-                .parse()?,
-            verification_method: proof.verification_method.clone(),
-            key: producer.key.clone(),
-            accepted_at,
-        };
+        let fact =
+            arkret_models_collaboration::authority_commit::AccountDeviceHistoricalSignerFact {
+                event_id: event.event_id.clone(),
+                actor: event.actor_id.clone(),
+                device_id: producer.source_authorization.event.payload["device_id"]
+                    .as_str()
+                    .ok_or_else(|| anyhow::anyhow!("authorization device missing"))?
+                    .parse()?,
+                verification_method: proof.verification_method.clone(),
+                key: producer.key.clone(),
+                accepted_at,
+            };
         fact.validate_event_binding(&event, DigestSuite::Sha256)?;
         let predecessor = self.events.last().map(|view| view.commit.commit_id.clone());
         let genesis = self
