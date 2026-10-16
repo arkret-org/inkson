@@ -5,6 +5,146 @@ use super::*;
 use crate::state::current_index::search::tests::authorized_store;
 
 #[tokio::test(flavor = "current_thread")]
+async fn native_search_local_block_withdraws_visible_body_and_unblock_restores_retained_original() {
+    let (directory, store, account, original) = authorized_store().await;
+    let (mut dom, harness) = mount(store, account.clone());
+    settle(&mut dom, &harness, 1).await;
+    let (mut context, search) = harness.handles.borrow().unwrap();
+    let actor = original.event.actor_id.to_string();
+    let (generation, revision) = dom.in_runtime(|| {
+        let store = context.state_store.peek();
+        (
+            store.current_generation(),
+            store.client_blocklist_revision(),
+        )
+    });
+    dom.in_runtime(|| {
+        assert!(context.state_store.write().block_target(
+            crate::account_data::BlocklistUiTargetKind::Actor, &actor, None,
+            vec![arkret_models_collaboration::objects::productivity::AccountBlocklistSurface::Messages], None,
+        ));
+        let store = context.state_store.peek();
+        assert_eq!(store.current_generation(), generation);
+        assert_eq!(store.client_blocklist_revision(), revision);
+    });
+    settle(&mut dom, &harness, 0).await;
+    dom.in_runtime(|| harness.retry.borrow().unwrap().call(()));
+    settle(&mut dom, &harness, 0).await;
+    let mut recovered = LocalStateStore::with_path(directory.path().join("holder.json"));
+    recovered.switch_active_account(&account).unwrap();
+    assert!(
+        local_decrypted_index_search(
+            &recovered,
+            &account.authority,
+            &account.device_id,
+            "needle",
+            &[],
+            None,
+            50
+        )
+        .await
+        .unwrap()
+        .results
+        .is_empty()
+    );
+    dom.in_runtime(|| {
+        context.state_store.set(recovered);
+        assert!(context.state_store.write().unblock_user(&actor));
+    });
+    settle(&mut dom, &harness, 1).await;
+    dom.in_runtime(|| {
+        let results = search.results.peek();
+        assert_eq!(results[0]["event_id"], original.event.event_id.as_str());
+        assert_eq!(
+            results[0]["covering_commit"],
+            serde_json::to_value(&original.commit).unwrap()
+        );
+        assert_eq!(results[0]["content"]["body"], "exact original needle");
+        assert!(search.error_key.peek().is_none());
+    });
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn native_search_blocklist_uses_exact_actor_mode_surface_and_expiry() {
+    use arkret_models_collaboration::objects::productivity::{
+        AccountBlocklistMode as Mode, AccountBlocklistSurface as Surface,
+    };
+    for scenario in [
+        "block",
+        "hide",
+        "mute",
+        "other_surface",
+        "expired",
+        "other_station",
+    ] {
+        let (_directory, store, account, original) = authorized_store().await;
+        let (mut dom, harness) = mount(store, account);
+        settle(&mut dom, &harness, 1).await;
+        let (mut context, search) = harness.handles.borrow().unwrap();
+        let actor = if scenario == "other_station" {
+            arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+                original.event.actor_id.signing_principal_id().clone(),
+                "ak:did_core:web:other.example".parse().unwrap(),
+            ))
+        } else {
+            original.event.actor_id.clone()
+        };
+        let mut entry = crate::account_data::new_blocklist_entry(
+            crate::account_data::BlocklistUiTargetKind::Actor,
+            &actor.to_string(),
+            None,
+            vec![if scenario == "other_surface" {
+                Surface::Calls
+            } else {
+                Surface::Messages
+            }],
+            (scenario == "expired").then(|| chrono::Utc::now() - chrono::Duration::seconds(1)),
+            chrono::Utc::now() - chrono::Duration::minutes(1),
+        )
+        .unwrap();
+        entry.mode = match scenario {
+            "hide" => Mode::Hide,
+            "mute" => Mode::Mute,
+            _ => Mode::Block,
+        };
+        dom.in_runtime(|| {
+            context
+                .state_store
+                .write()
+                .set_client_blocklist(1, vec![entry])
+        });
+        let expected = usize::from(!matches!(scenario, "block" | "hide"));
+        // The explicit query also proves unchanged effective predicates remain
+        // searchable when a mute, another surface or another Station is edited.
+        dom.in_runtime(|| harness.retry.borrow().unwrap().call(()));
+        settle(&mut dom, &harness, expected).await;
+        dom.in_runtime(|| assert!(search.error_key.peek().is_none(), "{scenario}"));
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn native_search_pending_request_cannot_republish_a_newly_blocked_sender() {
+    let (_directory, store, account, original) = authorized_store().await;
+    let (mut dom, harness) = mount(store, account);
+    settle(&mut dom, &harness, 1).await;
+    let (mut context, search) = harness.handles.borrow().unwrap();
+    dom.in_runtime(|| {
+        harness.retry.borrow().unwrap().call(());
+        assert!(*search.loading.peek());
+        assert!(context.state_store.write().block_target(
+            crate::account_data::BlocklistUiTargetKind::Actor, original.event.actor_id.to_string(), None,
+            vec![arkret_models_collaboration::objects::productivity::AccountBlocklistSurface::Messages], None,
+        ));
+    });
+    settle(&mut dom, &harness, 0).await;
+    for _ in 0..10 {
+        dom.render_immediate_to_vec();
+        crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(2)).await;
+        dom.in_runtime(|| assert!(search.results.peek().is_empty()));
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn native_search_current_revision_hides_stale_body_and_recovers_exact_original() {
     let (_directory, store, account, original) = authorized_store().await;
     let (mut dom, harness) = mount(store, account);

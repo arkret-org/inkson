@@ -103,6 +103,10 @@ impl SearchSource<'_> {
     }
 }
 
+fn search_blocked_actors(store: &LocalStateStore) -> std::collections::BTreeSet<String> {
+    crate::account_data::blocked_message_actor_ids(&store.client_blocklist())
+}
+
 #[cfg(test)]
 async fn local_decrypted_index_search(
     store: &LocalStateStore,
@@ -156,6 +160,7 @@ async fn search_local(
     let generation = source.with_store(|store| store.current_generation());
     let needle = query.to_lowercase();
     let actor = arkret_sdk::ActorId::account(authority.clone());
+    let blocked = source.with_store(search_blocked_actors);
 
     let mut after = None;
     loop {
@@ -164,6 +169,7 @@ async fn search_local(
             .await?;
         if page.generation != generation
             || !source.with_store(|store| store.search_session_matches(authority, device_id))
+            || source.with_store(search_blocked_actors) != blocked
         {
             response.results.clear();
             return Ok(response);
@@ -180,6 +186,18 @@ async fn search_local(
             )
         });
         for message in messages {
+            let Some(original) = page
+                .rows
+                .iter()
+                .find(|full| full.event.event_id.as_str() == message.id)
+            else {
+                continue;
+            };
+            // Personal filtering uses the authenticated complete sender ActorId,
+            // independently of membership and the shared Message lifecycle.
+            if crate::account_data::message_actor_is_blocked(&original.event.actor_id, &blocked) {
+                continue;
+            }
             if message.crypto_state != crate::views::chat::model::MessageCryptoState::Plaintext
                 || message.pending
                 || message.failed
@@ -202,13 +220,6 @@ async fn search_local(
             {
                 continue;
             }
-            let Some(original) = page
-                .rows
-                .iter()
-                .find(|full| full.event.event_id.as_str() == message.id)
-            else {
-                continue;
-            };
             let body_source = message
                 .protocol_content
                 .as_ref()
@@ -238,6 +249,7 @@ async fn search_local(
     }
     if source.with_store(|store| store.current_generation()) != generation
         || !source.with_store(|store| store.search_session_matches(authority, device_id))
+        || source.with_store(search_blocked_actors) != blocked
     {
         response.results.clear()
     }
@@ -369,6 +381,9 @@ fn use_local_search(initial_query: String) -> LocalSearchState {
             store.current_reset_required(),
             store.session_grant(),
             valid_until,
+            // Local edits do not advance the accepted account-data revision or
+            // current generation. Compare the actual private view predicate.
+            search_blocked_actors(&store),
         )
     });
     // Resource dependencies cancel the previous timer when holder evidence is
@@ -482,6 +497,22 @@ pub fn GlobalSearchPanel(
     // Rendering must use current wall time too: a new query can become valid
     // after not_before without changing any persisted holder evidence.
     let ready = search_holder_ready(session);
+    let blocked = search_blocked_actors(&state_store.read());
+    // Apply the current private view during rendering too, before the effect
+    // invalidates a retained result or an asynchronous query can finish.
+    let visible_results: ResultRows = results
+        .read()
+        .iter()
+        .filter(|result| {
+            result
+                .get("actor_id")
+                .and_then(|value| serde_json::from_value::<arkret_sdk::ActorId>(value.clone()).ok())
+                .is_some_and(|actor| {
+                    !crate::account_data::message_actor_is_blocked(&actor, &blocked)
+                })
+        })
+        .cloned()
+        .collect();
 
     rsx! {
         div { class: "timeline", "data-testid": "global-search-panel", role: "region", "aria-label": tr("search.title"),
@@ -547,13 +578,13 @@ pub fn GlobalSearchPanel(
                 div { class: "event", "data-testid": "global-search-results-empty",
                     div { class: "muted", {tr("search.results.empty")} }
                 }
-            } else if !ready || results().is_empty() {
+            } else if !ready || visible_results.is_empty() {
                 div { class: "event", "data-testid": "global-search-results-no-results",
                     div { class: "muted", {tr("search.no_results")} }
                 }
             } else {
                 div { "data-testid": "global-search-results",
-                    for (idx, result) in results().into_iter().enumerate() {
+                    for (idx, result) in visible_results.into_iter().enumerate() {
                         {
                             let snippet = render_result_snippet(&result);
                             let destination = result_destination(&result);
@@ -658,6 +689,7 @@ fn run_search(
         *epoch
     });
     let generation = state_store.peek().current_generation();
+    let blocked = search_blocked_actors(&state_store.peek());
     let session_generation = crate::app::SessionContext::get().session_generation;
     let session_epoch = *session_generation.peek();
     last_search.set(Some((
@@ -684,6 +716,7 @@ fn run_search(
         if *session_generation.peek() != session_epoch
             || current.current_generation() != generation
             || !current.search_session_matches(&authority, &device_id)
+            || search_blocked_actors(&current) != blocked
         {
             results.clear();
         } else {
