@@ -43,14 +43,20 @@ impl SignalProductSink for AppSignalProductSink {
     ) -> LocalBoxFuture<'a> {
         Box::pin(async move {
             let mut hub = self.call_hub;
-            let local_actor = crate::app::SessionContext::get()
+            let (local_actor, local_device) = crate::app::SessionContext::get()
                 .active_account()
-                .map(|account| arkret_sdk::ActorId::account(account.authority).to_string())
+                .map(|account| {
+                    (
+                        arkret_sdk::ActorId::account(account.authority).to_string(),
+                        account.device_id.to_string(),
+                    )
+                })
                 .unwrap_or_default();
             crate::views::call_signals::route_decrypted_call_signals(
                 &mut hub,
                 std::slice::from_ref(signal),
                 &local_actor,
+                &local_device,
             )
             .await;
         })

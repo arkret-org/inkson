@@ -188,7 +188,8 @@ pub fn decode_call_signal(signal: &AdmittedSignal) -> Option<DecodedCallSignal> 
 /// call) → everything else queues into the per-call inbox.
 ///
 /// `local_actor` is this device's canonical complete ActorId; signals this client itself
-/// emitted (echoed back through sync) are skipped so we never self-drive.
+/// emitted on `local_device` are skipped. Other devices of the same Account
+/// still deliver multi-device stop-ring and peer state.
 ///
 /// Envelope admission belongs exclusively to [`garth::SignalReceiver`] and
 /// Inkson's verified-governance receive gate. In particular, moderation has
@@ -200,6 +201,7 @@ pub async fn route_decrypted_call_signals(
     hub: &mut CallSignalHub,
     signals: &[AdmittedSignal],
     local_actor: &str,
+    local_device: &str,
 ) {
     for signal in signals {
         let Some(decoded) = decode_call_signal(signal) else {
@@ -207,7 +209,7 @@ pub async fn route_decrypted_call_signals(
         };
         // Self-echo: skip verification + routing entirely (we trust our own
         // outbound frames and never resolve our own key here).
-        if !local_actor.is_empty() && decoded.sender_actor == local_actor {
+        if is_local_echo(&decoded, local_actor, local_device) {
             continue;
         }
         if matches!(&decoded.signal, arkret_sdk::CallSignalData::Invite(_)) {
@@ -227,8 +229,15 @@ pub async fn route_decrypted_call_signals(
                 .write()
                 .insert(decoded.call_id.clone(), delivery.clone());
         }
-        route_verified_decoded_signal(hub, decoded, local_actor);
+        route_verified_decoded_signal(hub, decoded, local_actor, local_device);
     }
+}
+
+fn is_local_echo(decoded: &DecodedCallSignal, local_actor: &str, local_device: &str) -> bool {
+    !local_actor.is_empty()
+        && !local_device.is_empty()
+        && decoded.sender_actor == local_actor
+        && decoded.sender_device == local_device
 }
 
 /// Current ring/active snapshot a routing decision is taken against. Pulled
@@ -262,10 +271,11 @@ pub enum RouteDecision {
 pub fn decide_route(
     decoded: &DecodedCallSignal,
     local_actor: &str,
+    local_device: &str,
     is_duplicate: bool,
     state: &RouteState,
 ) -> RouteDecision {
-    if !local_actor.is_empty() && decoded.sender_actor == local_actor {
+    if is_local_echo(decoded, local_actor, local_device) {
         return RouteDecision::Drop;
     }
     if is_duplicate {
@@ -321,19 +331,21 @@ fn route_verified_decoded_signal(
     hub: &mut CallSignalHub,
     decoded: DecodedCallSignal,
     local_actor: &str,
+    local_device: &str,
 ) {
-    if !advance_signal_seq(hub, &decoded, local_actor) {
+    if !advance_signal_seq(hub, &decoded, local_actor, local_device) {
         return;
     }
-    route_decoded_signal(hub, decoded, local_actor);
+    route_decoded_signal(hub, decoded, local_actor, local_device);
 }
 
 fn advance_signal_seq(
     hub: &mut CallSignalHub,
     decoded: &DecodedCallSignal,
     local_actor: &str,
+    local_device: &str,
 ) -> bool {
-    if !local_actor.is_empty() && decoded.sender_actor == local_actor {
+    if is_local_echo(decoded, local_actor, local_device) {
         return true;
     }
     let key: SignalSeqKey = (
@@ -356,6 +368,7 @@ pub fn route_decoded_signal(
     hub: &mut CallSignalHub,
     decoded: DecodedCallSignal,
     local_actor: &str,
+    local_device: &str,
 ) {
     let key: SignalDedupKey = (
         decoded.realm_id.clone(),
@@ -367,7 +380,7 @@ pub fn route_decoded_signal(
     // Compute duplicate status and insert atomically: a self-echo never
     // reaches here as a duplicate (it is dropped first), so only genuine
     // routable signals consume a dedup slot.
-    let is_self_echo = !local_actor.is_empty() && decoded.sender_actor == local_actor;
+    let is_self_echo = is_local_echo(&decoded, local_actor, local_device);
     let is_duplicate = if is_self_echo {
         false
     } else {
@@ -384,7 +397,13 @@ pub fn route_decoded_signal(
         }
     };
 
-    match decide_route(&decoded, local_actor, is_duplicate, &ring_state) {
+    match decide_route(
+        &decoded,
+        local_actor,
+        local_device,
+        is_duplicate,
+        &ring_state,
+    ) {
         RouteDecision::Drop => {}
         RouteDecision::Ring(info) => hub.incoming_call.set(Some(info)),
         RouteDecision::ClearRing => hub.incoming_call.set(None),
@@ -595,7 +614,7 @@ mod tests {
     fn invite_decides_ring_then_dedup_drops() {
         let d = decoded(invite(true), 1);
         let fresh = RouteState::default();
-        match decide_route(&d, "did:web:alice", false, &fresh) {
+        match decide_route(&d, "did:web:alice", "dev-a", false, &fresh) {
             RouteDecision::Ring(info) => {
                 assert_eq!(info.call_id, "ak:call:1");
                 assert_eq!(info.peer_actor, "did:web:bob");
@@ -605,7 +624,7 @@ mod tests {
         }
         // Duplicate (already in `seen`) → dropped even with fresh ring state.
         assert_eq!(
-            decide_route(&d, "did:web:alice", true, &fresh),
+            decide_route(&d, "did:web:alice", "dev-a", true, &fresh),
             RouteDecision::Drop
         );
     }
@@ -613,7 +632,7 @@ mod tests {
     #[test]
     fn non_invite_enqueues() {
         let d = decoded(candidate(), 2);
-        match decide_route(&d, "did:web:alice", false, &RouteState::default()) {
+        match decide_route(&d, "did:web:alice", "dev-a", false, &RouteState::default()) {
             RouteDecision::Enqueue(item) => {
                 assert!(matches!(
                     item.signal,
@@ -629,8 +648,42 @@ mod tests {
     fn self_echo_dropped() {
         let mut d = decoded(answer(), 1);
         d.sender_actor = "did:web:alice".into();
+        d.sender_device = "dev-a".into();
         assert_eq!(
-            decide_route(&d, "did:web:alice", false, &RouteState::default()),
+            decide_route(&d, "did:web:alice", "dev-a", false, &RouteState::default()),
+            RouteDecision::Drop
+        );
+    }
+
+    #[test]
+    fn full_account_echo_filter_keeps_other_devices_and_stations() {
+        let actor = |station: &str| {
+            arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+                "ak:did_core:web:alice.example".parse().unwrap(),
+                station.parse().unwrap(),
+            ))
+            .to_string()
+        };
+        let local = actor("ak:did_core:web:station-a.example");
+        let mut d = decoded(answer(), 1);
+        d.sender_actor = local.clone();
+        let state = RouteState {
+            ringing_call: Some(d.call_id.clone()),
+            ringing_answered_here: false,
+        };
+        assert_eq!(
+            decide_route(&d, &local, "dev-a", false, &state),
+            RouteDecision::ClearRing
+        );
+        d.sender_device = "dev-a".into();
+        d.sender_actor = actor("ak:did_core:web:station-b.example");
+        assert_eq!(
+            decide_route(&d, &local, "dev-a", false, &state),
+            RouteDecision::ClearRing
+        );
+        d.sender_actor = local.clone();
+        assert_eq!(
+            decide_route(&d, &local, "dev-a", false, &state),
             RouteDecision::Drop
         );
     }
@@ -643,7 +696,7 @@ mod tests {
             ringing_answered_here: true,
         };
         assert_eq!(
-            decide_route(&d, "did:web:alice", false, &state),
+            decide_route(&d, "did:web:alice", "dev-a", false, &state),
             RouteDecision::Drop
         );
     }
@@ -656,7 +709,7 @@ mod tests {
             ringing_answered_here: false,
         };
         assert_eq!(
-            decide_route(&d, "did:web:alice", false, &state),
+            decide_route(&d, "did:web:alice", "dev-a", false, &state),
             RouteDecision::ClearRing
         );
     }
@@ -671,7 +724,13 @@ mod tests {
         // already-opened body. Cryptographic admission was completed by garth.
         let admitted = admitted_signal(&envelope, plaintext).expect("admitted fixture");
         let decoded = decode_call_signal(&admitted).expect("decodes");
-        match decide_route(&decoded, "did:web:me", false, &RouteState::default()) {
+        match decide_route(
+            &decoded,
+            "did:web:me",
+            "dev-a",
+            false,
+            &RouteState::default(),
+        ) {
             RouteDecision::Ring(info) => {
                 assert_eq!(info.peer_actor, envelope.sender_actor_id.to_string())
             }
@@ -689,7 +748,7 @@ mod tests {
             ringing_answered_here: true,
         };
         assert!(matches!(
-            decide_route(&d, "did:web:alice", false, &state),
+            decide_route(&d, "did:web:alice", "dev-a", false, &state),
             RouteDecision::Enqueue(_)
         ));
     }
