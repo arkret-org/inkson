@@ -195,15 +195,18 @@ pub(super) fn apply_inbox_items(
                 let target = data.target_actor_id.as_ref();
                 let self_targeted = match data.action {
                     arkret_sdk::CallModerationAction::Kick => {
-                        target.is_some_and(|target| target.as_str() == actor)
-                            && data
-                                .target_device_id
-                                .as_ref()
-                                .is_some_and(|target| target.as_str() == device)
+                        target.is_some_and(|target| {
+                            crate::mls_api_helpers::local_account_actor_id(&actor)
+                                .is_ok_and(|local| *target == local)
+                        }) && data
+                            .target_device_id
+                            .as_ref()
+                            .is_some_and(|target| target.as_str() == device)
                     }
-                    arkret_sdk::CallModerationAction::Ban => {
-                        target.is_some_and(|target| target.as_str() == actor)
-                    }
+                    arkret_sdk::CallModerationAction::Ban => target.is_some_and(|target| {
+                        crate::mls_api_helpers::local_account_actor_id(&actor)
+                            .is_ok_and(|local| *target == local)
+                    }),
                     arkret_sdk::CallModerationAction::EndForAll => true,
                 };
                 if self_targeted {
@@ -215,7 +218,7 @@ pub(super) fn apply_inbox_items(
                 } else if let Some(target) = target {
                     // A peer was kicked/banned — drop their roster tile.
                     let mut roster = participants();
-                    roster.retain(|p| p.actor_id != target.as_str());
+                    roster.retain(|p| p.actor_id != target.to_string());
                     participants.set(roster);
                 }
             }
@@ -257,13 +260,7 @@ fn apply_peer_state(
     participants: &mut Signal<Vec<CallParticipantView>>,
     item: &CallSignalInboxItem,
 ) {
-    let target = match &item.signal {
-        arkret_sdk::CallSignalData::MuteState(data) => data
-            .target_actor_id
-            .as_ref()
-            .map_or(item.sender_actor.as_str(), arkret_sdk::DidCoreId::as_str),
-        _ => item.sender_actor.as_str(),
-    };
+    let target = item.sender_actor.as_str();
     let mut roster = participants();
     let mut changed = false;
     for p in &mut roster {

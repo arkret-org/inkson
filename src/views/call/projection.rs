@@ -170,6 +170,28 @@ pub(super) fn media_service_decrypts_enabled(
 }
 
 pub(super) fn participant_list_from_input(input: &str) -> Vec<String> {
+    if let Ok(actors) = serde_json::from_str::<Vec<arkret_sdk::ActorId>>(input) {
+        return actors
+            .into_iter()
+            .map(|actor| actor.to_string())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+    }
+    if let Ok(actor) = serde_json::from_str::<arkret_sdk::ActorId>(input) {
+        return vec![actor.to_string()];
+    }
+    if input.lines().all(|line| {
+        line.trim().is_empty() || serde_json::from_str::<arkret_sdk::ActorId>(line).is_ok()
+    }) {
+        return input
+            .lines()
+            .filter_map(|line| serde_json::from_str::<arkret_sdk::ActorId>(line).ok())
+            .map(|actor| actor.to_string())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+    }
     let mut seen = BTreeSet::new();
     input
         .split(['\n', ',', ';'])
@@ -213,9 +235,8 @@ fn call_roster_participants(
     view.call_roster(&arkret_sdk::CallId::new(call_id.to_owned())?)
 }
 
-/// A refresh resumes only a receipt committed by an active public roster leg.
-/// Looking up by the authenticated private subject never reveals another
-/// participant's mapping from the public aliases.
+/// A refresh resumes only an active accepted public roster leg.
+/// Resolve this authenticated full Account/device from a complete accepted roster.
 pub(super) fn accepted_refresh_context(
     store: &crate::state::LocalStateStore,
     account: &arkret_sdk::AccountId,
@@ -224,37 +245,25 @@ pub(super) fn accepted_refresh_context(
     call: &str,
     focus: &str,
 ) -> anyhow::Result<Option<arkret_sdk::CallMediaJoinContext>> {
-    let realm_id = arkret_sdk::RealmId::new(realm.to_owned())?;
-    let call_id = arkret_sdk::CallId::new(call.to_owned())?;
+    let actor = arkret_sdk::ActorId::account(account.clone());
     let roster = call_roster_participants(store, realm, call)?
         .ok_or_else(|| anyhow::anyhow!("accepted Call current is not ready for media join"))?;
     for participant in roster {
-        let Some(binding) = participant.participant_binding.as_ref() else {
+        if participant.actor_id != actor
+            || participant.device_id != device.as_str()
+            || participant.focus_id.as_deref() != Some(focus)
+            || participant.participant_binding.is_none()
+        {
             continue;
-        };
-        let Some(context) = crate::media::rtc::restore_refresh_context(
-            account,
-            device,
-            &realm_id,
-            &call_id,
-            &binding.subject_binding_digest,
-        )?
-        else {
-            continue;
-        };
-        let arkret_sdk::CallMediaJoinContext::Refresh(refresh) = &context else {
-            unreachable!()
-        };
-        let private = &refresh.subject_binding;
-        anyhow::ensure!(
-            private.roster_identity.actor_id == participant.actor_id
-                && private.roster_identity.device_id.as_str() == participant.device_id
-                && participant.participant_id.as_ref() == Some(&private.participant_id)
-                && participant.focus_id.as_deref() == Some(focus)
-                && private.focus_id == focus,
-            "accepted roster differs from its private refresh receipt"
-        );
-        return Ok(Some(context));
+        }
+        if let Some(participant_id) = participant.participant_id {
+            return Ok(Some(arkret_sdk::CallMediaJoinContext::Refresh(
+                arkret_sdk::CallRefreshJoinContext {
+                    kind: arkret_sdk::CallRefreshJoinKind::Refresh,
+                    participant_id,
+                },
+            )));
+        }
     }
     Ok(None)
 }
@@ -331,13 +340,29 @@ pub(super) fn build_roster(
     let mut ids = BTreeSet::new();
     let mut roster = Vec::new();
     for actor_id in std::iter::once(actor).chain(peers.iter().map(String::as_str)) {
-        let actor_id = arkret_sdk::DidCoreId::new(actor_id.trim().to_owned())?.to_string();
+        let complete = serde_json::from_str::<arkret_sdk::ActorId>(actor_id)
+            .ok()
+            .or_else(|| {
+                crate::mls_api_helpers::account_id_from_selector(actor_id)
+                    .map(arkret_sdk::ActorId::account)
+            })
+            .or_else(|| {
+                (actor_id == actor)
+                    .then(|| crate::mls_api_helpers::local_account_actor_id(actor_id).ok())
+                    .flatten()
+            })
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Call participant requires a complete ActorId including its Station"
+                )
+            })?;
+        let actor_id = complete.to_string();
         if !ids.insert(actor_id.clone()) {
             continue;
         }
         roster.push(CallParticipantView {
             device_id: actor_devices.get(&actor_id).cloned(),
-            display_name: short_protocol_id(&actor_id),
+            display_name: short_protocol_id(complete.signing_principal_id().as_str()),
             actor_id,
             muted: false,
             speaking: false,
@@ -353,12 +378,15 @@ pub(super) fn set_local_state(
     muted: bool,
     sharing: bool,
 ) {
-    let Ok(actor) = arkret_sdk::DidCoreId::new(actor.trim().to_owned()) else {
+    let Some(actor) = serde_json::from_str::<arkret_sdk::ActorId>(actor)
+        .ok()
+        .or_else(|| crate::mls_api_helpers::local_account_actor_id(actor).ok())
+    else {
         return;
     };
     let mut roster = participants();
     for p in &mut roster {
-        if p.actor_id == actor.as_str() {
+        if p.actor_id == actor.to_string() {
             p.muted = muted;
             p.screen_sharing = sharing;
         }
@@ -397,18 +425,29 @@ mod tests {
     }
 
     #[test]
-    fn roster_includes_actor_once() {
-        let roster = build_roster(
-            "ak:did_core:web:alice.example",
-            &[
-                "ak:did_core:web:bob.example".to_owned(),
-                "ak:did_core:web:alice.example".to_owned(),
-            ],
-            &BTreeMap::new(),
-        )
-        .unwrap();
+    fn roster_keeps_complete_accounts_and_deduplicates_exact_actor() {
+        let actor = |station: &str| {
+            arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+                "ak:did_core:web:alice.example".parse().unwrap(),
+                station.parse().unwrap(),
+            ))
+            .to_string()
+        };
+        let local = actor("ak:did_core:web:station-a.example");
+        let remote = actor("ak:did_core:web:station-b.example");
+        let roster =
+            build_roster(&local, &[remote.clone(), local.clone()], &BTreeMap::new()).unwrap();
         assert_eq!(roster.len(), 2);
-        assert_eq!(roster[0].actor_id, "ak:did_core:web:alice.example");
+        assert_eq!(roster[0].actor_id, local);
+        assert_eq!(roster[1].actor_id, remote);
+        assert!(
+            build_roster(
+                &local,
+                &["ak:did_core:web:alice.example".to_owned()],
+                &BTreeMap::new()
+            )
+            .is_err()
+        );
     }
 
     #[test]

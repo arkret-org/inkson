@@ -14,7 +14,7 @@ fn moderation_signal(
             action,
             target_actor_id: target_actor_id
                 .as_deref()
-                .map(crate::mls_api_helpers::principal_core_id)
+                .map(serde_json::from_str::<arkret_sdk::ActorId>)
                 .transpose()
                 .ok()?,
             target_device_id: target_device_id

@@ -132,13 +132,10 @@ pub(super) async fn submit_call_state_participant(
     let call_id = arkret_sdk::CallId::new(call_id.to_owned()).map_err(|err| err.to_string())?;
     let authenticated_actor =
         crate::mls_api_helpers::local_account_actor_id(actor).map_err(|err| err.to_string())?;
-    if session.subject_binding.subject_actor_id != authenticated_actor
-        || session.subject_binding.subject_device_id.as_str() != device
-        || session.subject_binding.realm_id.as_str() != realm_id
-        || session.subject_binding.call_id != call_id
-        || session.subject_binding.roster_identity != session.roster_identity
-        || session.subject_binding.participant_id != session.participant_id
-        || session.subject_binding.focus_id != session.focus_id
+    if session.actor_id != authenticated_actor
+        || session.device_id != device
+        || session.realm_id != realm_id
+        || session.call_id != call_id.as_str()
     {
         return Err("call participant session differs from the authenticated leg".to_owned());
     }
@@ -155,8 +152,8 @@ pub(super) async fn submit_call_state_participant(
         let binding = &session.participant_binding;
         let participant_binding = binding.clone();
         let participant = arkret_sdk::CallParticipant {
-            actor_id: session.roster_identity.actor_id.clone(),
-            device_id: session.roster_identity.device_id.to_string(),
+            actor_id: session.actor_id.clone(),
+            device_id: session.device_id.clone(),
             joined_at: None,
             foci_preferred: Some(vec![session.focus_id.clone()]),
             participant_id: Some(session.participant_id.clone()),
@@ -211,11 +208,6 @@ pub(super) async fn submit_call_state_participant(
     })
     .await
     .map_err(|err| err.display())?;
-    if target_state == arkret_sdk::CallLifecycleState::Connecting {
-        crate::media::rtc::persist_accepted_media_receipt(session)
-            .await
-            .map_err(|e| e.to_string())?;
-    }
     Ok(())
 }
 

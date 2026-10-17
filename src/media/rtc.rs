@@ -530,8 +530,7 @@ struct TypedJoinIds {
 /// keyprovider.
 #[derive(Clone, Debug)]
 pub struct JoinedMediaSession {
-    pub roster_identity: arkret_sdk::CallMediaRosterIdentity,
-    pub subject_binding: arkret_sdk::CallMediaSubjectBinding,
+    pub actor_id: arkret_sdk::ActorId,
     /// SFU backend type (`livekit` / `mediasoup` / …) — already checked
     /// against [`ALLOWED_FOCUS_TYPES`].
     pub backend_kind: String,
@@ -733,12 +732,11 @@ pub async fn join_call_media(
     let frame_key = authorization.publish_frame_key(
         mls_exporter,
         &verification.participant_id,
-        &outcome.roster_identity.device_id,
+        &outcome.device_id,
     )?;
 
     Ok(JoinedMediaSession {
-        roster_identity: outcome.roster_identity.clone(),
-        subject_binding: outcome.subject_binding,
+        actor_id: outcome.actor_id.clone(),
         backend_kind: "livekit".to_owned(),
         focus_id: outcome.focus_id,
         connect_url: outcome.connect_url,
@@ -748,7 +746,7 @@ pub async fn join_call_media(
         ice_config,
         frame_key,
         desired_media: request.desired_media,
-        device_id: outcome.roster_identity.device_id.to_string(),
+        device_id: outcome.device_id.to_string(),
         realm_id: request.realm_id.clone(),
         call_id: request.call_id.clone(),
         epoch_id: request.epoch_id,
@@ -1636,80 +1634,6 @@ pub fn voluntary_join_context(
         .detached_jws_over_payload_with_kid(signer.verification_method(), &input)
         .map_err(|_| RtcClientError::ParticipantBindingInvalid)?;
     Ok(CallMediaJoinContext::Voluntary(context))
-}
-
-fn private_receipt_key(receipt: &arkret_sdk::CallMediaSubjectBinding) -> anyhow::Result<String> {
-    let subject = arkret_models_collaboration::call_invitation::canonical_request_digest(&(
-        &receipt.subject_actor_id,
-        &receipt.subject_device_id,
-        &receipt.realm_id,
-        &receipt.call_id,
-    ))?;
-    let digest = arkret_models_collaboration::call_invitation::canonical_request_digest(receipt)?;
-    Ok(format!("call-media.receipt.v1/{subject}/{digest}"))
-}
-
-/// Store only the private signed receipt after its matching roster join is accepted.
-/// The immutable public digest addresses it, so a delayed write cannot replace a
-/// newer mapping. No backend bearer or Consent decision is persisted here.
-pub async fn persist_accepted_media_receipt(session: &JoinedMediaSession) -> anyhow::Result<()> {
-    let receipt = &session.subject_binding;
-    anyhow::ensure!(
-        receipt.roster_identity == session.roster_identity
-            && receipt.participant_id == session.participant_id
-            && receipt.focus_id == session.focus_id
-            && arkret_models_collaboration::call_invitation::canonical_request_digest(receipt)?
-                == session.participant_binding.subject_binding_digest,
-        "private receipt differs from the accepted local roster binding"
-    );
-    receipt.signature_input()?;
-    let store = crate::secure_key_store::default_secure_key_store("inkson");
-    let bytes = zeroize::Zeroizing::new(serde_json::to_vec(receipt)?);
-    store
-        .store_secret_bytes_durable(&private_receipt_key(receipt)?, &bytes)
-        .await?;
-    Ok(())
-}
-
-/// Restore a receipt by the exact public commitment of an accepted active leg.
-/// This creates refresh material only; the issuer rechecks its signature,
-/// authenticated subject, accepted roster and current independent permissions.
-pub fn restore_refresh_context(
-    account: &arkret_sdk::AccountId,
-    device: &DeviceId,
-    realm: &RealmId,
-    call: &CallId,
-    public_binding_digest: &str,
-) -> anyhow::Result<Option<arkret_sdk::CallMediaJoinContext>> {
-    let subject = arkret_models_collaboration::call_invitation::canonical_request_digest(&(
-        &arkret_sdk::ActorId::account(account.clone()),
-        device,
-        realm,
-        call,
-    ))?;
-    let key = format!("call-media.receipt.v1/{subject}/{public_binding_digest}");
-    let store = crate::secure_key_store::default_secure_key_store("inkson");
-    let Some(bytes) = store.get_secret_bytes(&key)? else {
-        return Ok(None);
-    };
-    let receipt: arkret_sdk::CallMediaSubjectBinding = serde_json::from_slice(&bytes)?;
-    anyhow::ensure!(
-        receipt.subject_actor_id == arkret_sdk::ActorId::account(account.clone())
-            && receipt.subject_device_id == *device
-            && receipt.realm_id == *realm
-            && receipt.call_id == *call
-            && arkret_models_collaboration::call_invitation::canonical_request_digest(&receipt)?
-                == public_binding_digest,
-        "restored media receipt commitment or subject differs"
-    );
-    receipt.signature_input()?;
-    Ok(Some(arkret_sdk::CallMediaJoinContext::Refresh(
-        arkret_sdk::CallRefreshJoinContext {
-            kind: arkret_sdk::CallRefreshJoinKind::Refresh,
-            participant_id: receipt.participant_id.clone(),
-            subject_binding: receipt,
-        },
-    )))
 }
 
 pub(crate) fn current_media_governance_evidence(

@@ -41,7 +41,7 @@ pub struct CallSignalInboxItem {
     pub realm_id: String,
     pub call_id: String,
     pub seq: u64,
-    /// Sender actor DID (`envelope.actor_id`).
+    /// Canonical complete sender ActorId (`envelope.actor_id`).
     pub sender_actor: String,
     /// Sender device id (`envelope.device_id`).
     pub sender_device: String,
@@ -177,7 +177,7 @@ pub fn decode_call_signal(signal: &AdmittedSignal) -> Option<DecodedCallSignal> 
         realm_id: signal.scope_ref().realm_id().as_str().to_owned(),
         call_id: body.call_id.as_str().to_owned(),
         seq: body.seq,
-        sender_actor: signal.actor_id().signing_principal_id().as_str().to_owned(),
+        sender_actor: signal.actor_id().to_string(),
         sender_device: sender_endpoint,
         signal: body.signal.clone(),
     })
@@ -187,7 +187,7 @@ pub fn decode_call_signal(signal: &AdmittedSignal) -> Option<DecodedCallSignal> 
 /// dedup → `invite` raises `incoming_call` (when no active session owns the
 /// call) → everything else queues into the per-call inbox.
 ///
-/// `local_actor` is this device's account DID; signals this client itself
+/// `local_actor` is this device's canonical complete ActorId; signals this client itself
 /// emitted (echoed back through sync) are skipped so we never self-drive.
 ///
 /// Envelope admission belongs exclusively to [`garth::SignalReceiver`] and
@@ -516,7 +516,7 @@ mod tests {
             arkret_sdk::CallSignalData::Invite(_)
         ));
         assert_eq!(decoded.call_id, TEST_CALL);
-        assert_eq!(decoded.sender_actor, "ak:did_core:web:bob.example");
+        assert_eq!(decoded.sender_actor, envelope.sender_actor_id.to_string());
         assert_eq!(decoded.sender_device, PEER_DEVICE);
         assert_eq!(decoded.realm_id, TEST_REALM);
         assert!(matches!(
@@ -673,7 +673,7 @@ mod tests {
         let decoded = decode_call_signal(&admitted).expect("decodes");
         match decide_route(&decoded, "did:web:me", false, &RouteState::default()) {
             RouteDecision::Ring(info) => {
-                assert_eq!(info.peer_actor, "ak:did_core:web:caller.example")
+                assert_eq!(info.peer_actor, envelope.sender_actor_id.to_string())
             }
             other => panic!("expected Ring, got {other:?}"),
         }

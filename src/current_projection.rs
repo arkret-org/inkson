@@ -401,7 +401,7 @@ mod tests {
             arkret_sdk::canonical::DigestSuite::Sha256,
             [8; 32],
         ));
-        let actor = "ak:did_core:web:anonymous.example";
+        let actor = json!({"kind":"account","account_id":{"principal_id":"ak:did_core:web:participant.example","station_id":"ak:did_core:web:station.example"}});
         let device = "ak:device:01904100-0000-7000-8000-00000000000a";
         // Trusted-storage fixture: signatures were verified before publication.
         // This test exercises the consumer fold and provenance, not cryptography.
