@@ -88,7 +88,10 @@ async fn commit(
         credential.to_owned(),
         move |http| async move {
             check_holder(&owned, &check)?;
-            Ok(http.agent_provision(&body).await?)
+            let actor = arkret_sdk::ActorId::account(owned.authority.clone());
+            let producer = check.signer.publication_context(&actor)?;
+            let verified = arkret_sdk::VerifiedSubmission::verify(body, |_| Ok(producer.clone()))?;
+            Ok(http.agent_provision(&verified).await?)
         },
     )
     .await
@@ -189,7 +192,12 @@ pub(crate) async fn resume_ceremony(
         let preparation =
             with_authed_sdk_client(&base, credential.clone(), move |http| async move {
                 check_holder(&owned, &check)?;
-                Ok(http.agent_provision(&prepare).await?)
+                Ok(http
+                    .agent_provision(&arkret_sdk::VerifiedSubmission::from_verified_events(
+                        prepare,
+                        &[],
+                    )?)
+                    .await?)
             })
             .await
             .map_err(|error| anyhow::anyhow!(error.display()))?;

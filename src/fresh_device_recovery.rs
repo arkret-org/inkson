@@ -9,8 +9,8 @@
 use arkret_models_crypto::{
     BackupObjectRef, BackupRotationBinding, BackupRotationKind, BackupRotationPlan,
     ClientStepAttestation, ClientStepAttestationArtifact, ClientStepAttestationAuthData,
-    PreparedEventBatchRequest, PreparedEventUnit, RecoveryBackupUnlocked, RecoveryProofSummary,
-    RecoveryReceipt, RecoveryReceiptAuthData, RecoveryReceiptOutcome, RecoveryTerminalCommit,
+    PreparedEventUnit, RecoveryBackupUnlocked, RecoveryProofSummary, RecoveryReceipt,
+    RecoveryReceiptAuthData, RecoveryReceiptOutcome, RecoveryTerminalCommit,
     RecoveryTransactionCreateRequest, RecoveryWelcomeRealmSummary,
     SecurityRotationTransactionCreateRequest, SecurityTransaction,
     SecurityTransactionContinueRequest, SecurityTransactionCreateRequest,
@@ -115,6 +115,7 @@ pub fn sign_recovery_terminal_commit_continue(
     anyhow::ensure!(
         signer.device_id() == Some(binding.replacement_device_id.as_str())
             && authorize
+                .event
                 .payload
                 .get("device_public_key_did")
                 .and_then(serde_json::Value::as_str)
@@ -233,12 +234,15 @@ where
         &self,
         request: RecoveryTransactionCreateRequest,
         encrypted_staged_material_ref: Option<String>,
+        context: &arkret_sdk::ProducerVerificationContext,
     ) -> garth::Result<SecurityTransaction> {
+        let request = arkret_sdk::VerifiedSubmission::verify(
+            SecurityTransactionCreateRequest::Recovery(request),
+            |_| Ok(context.clone()),
+        )
+        .map_err(|error| garth::Error::Protocol(error.to_string()))?;
         self.engine
-            .create_or_resume(
-                &SecurityTransactionCreateRequest::Recovery(request),
-                encrypted_staged_material_ref,
-            )
+            .create_or_resume(&request, encrypted_staged_material_ref)
             .await
     }
 
@@ -365,7 +369,7 @@ impl SecurityRotationDraft {
     pub fn into_create_request(self) -> anyhow::Result<SecurityRotationTransactionCreateRequest> {
         let revoke_unit = PreparedEventUnit::new(
             arkret_sdk::canonical::DigestSuite::Sha256,
-            prepared_event_batch(self.revoke_submission),
+            self.revoke_submission,
         )?;
         let mut prepared = Vec::with_capacity(self.backup_rotations.len());
         for mut draft in self.backup_rotations {
@@ -396,7 +400,7 @@ impl SecurityRotationDraft {
                 new_backup_envelopes: draft.new_backup_bodies,
                 active_series_unit: PreparedEventUnit::new(
                     arkret_sdk::canonical::DigestSuite::Sha256,
-                    prepared_event_batch(draft.active_series_submission),
+                    draft.active_series_submission,
                 )?,
             });
         }
@@ -410,16 +414,6 @@ impl SecurityRotationDraft {
             prepared,
         )
         .map_err(anyhow::Error::from)
-    }
-}
-
-fn prepared_event_batch(submission: EventsSubmitBatchRequestBody) -> PreparedEventBatchRequest {
-    PreparedEventBatchRequest {
-        events: submission
-            .events
-            .into_iter()
-            .map(|submission| submission.event)
-            .collect(),
     }
 }
 
@@ -457,12 +451,15 @@ where
         &self,
         request: SecurityRotationTransactionCreateRequest,
         encrypted_staged_material_ref: String,
+        context: &arkret_sdk::ProducerVerificationContext,
     ) -> garth::Result<SecurityTransaction> {
+        let request = arkret_sdk::VerifiedSubmission::verify(
+            SecurityTransactionCreateRequest::SecurityRotation(request),
+            |_| Ok(context.clone()),
+        )
+        .map_err(|error| garth::Error::Protocol(error.to_string()))?;
         self.engine
-            .create_or_resume(
-                &SecurityTransactionCreateRequest::SecurityRotation(request),
-                Some(encrypted_staged_material_ref),
-            )
+            .create_or_resume(&request, Some(encrypted_staged_material_ref))
             .await
     }
 

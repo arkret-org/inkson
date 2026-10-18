@@ -314,6 +314,9 @@ mod historical_result_tests {
                 ),
             ),
             "did:web:agent.example".to_owned(),
+            arkret_sdk::signatures::PublicKeyMaterial::Ed25519Raw {
+                bytes: public_key.to_vec(),
+            },
         );
         signer.sign_envelope(&mut authored).unwrap();
         let event = authored.into_event();
@@ -910,6 +913,9 @@ mod historical_result_tests {
                 ),
             ),
             "did:web:agent.example".to_owned(),
+            arkret_sdk::signatures::PublicKeyMaterial::Ed25519Raw {
+                bytes: key.to_vec(),
+            },
         );
         signer.sign_envelope(&mut authored).unwrap();
         selector.accepted_event = authored.into_event();

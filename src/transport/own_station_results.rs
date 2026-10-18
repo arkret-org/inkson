@@ -45,6 +45,20 @@ pub(crate) async fn client_for_http(
         .map_err(|error| garth::Error::Protocol(error.to_string()))
 }
 
+pub(crate) async fn verify_local_publication<T: arkret_sdk::PublicationRequest>(
+    http: &arkret_sdk::http_client::Client,
+    request: T,
+) -> anyhow::Result<arkret_sdk::VerifiedSubmission<T>> {
+    let client = client_for_http(http).await?;
+    let actor = arkret_sdk::ActorId::account(client.session()?.account_id().clone());
+    let signer = crate::event_signer::active_signer()
+        .ok_or_else(|| anyhow::anyhow!("producer signing context is unavailable"))?;
+    let context = signer.publication_context(&actor)?;
+    Ok(arkret_sdk::VerifiedSubmission::verify(request, |_| {
+        Ok(context.clone())
+    })?)
+}
+
 /// Read the immutable founding original only when the authenticated Station
 /// discloses it. A withheld result never becomes a synthetic Genesis Event.
 pub(crate) async fn accepted_genesis(

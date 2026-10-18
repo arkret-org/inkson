@@ -143,23 +143,21 @@ async fn run_contact_commit(
     context: ContactCommitContext,
     commit: &ContactCommitRequestBody,
 ) -> anyhow::Result<ContactOperationOutcome> {
-    let endpoint = match commit.signed_event.kind.as_str() {
-        arkret_wire::event_kind_str::CONTACT_REQUESTED => "/_arkret/self/contacts/request",
-        arkret_wire::event_kind_str::CONTACT_ACCEPTED => "/_arkret/self/contacts/respond",
-        arkret_wire::event_kind_str::CONTACT_REJECTED => "/_arkret/self/contacts/reject",
-        arkret_wire::event_kind_str::CONTACT_SCOPE_UPDATE => "/_arkret/self/contacts/scope-update",
-        arkret_wire::event_kind_str::CONTACT_TOMBSTONE => "/_arkret/self/contacts/tombstone",
-        _ => anyhow::bail!("unregistered Contact commit Event"),
-    };
     let fence = context.fence.clone();
     anyhow::ensure!(
         commit.signed_event.actor_id == context.actor_id
             && commit.signed_event.realm_id == context.control_realm,
         "Contact Event differs from the frozen account/Realm"
     );
+    let producer = context
+        .fence
+        .signer
+        .publication_context(&context.actor_id)?;
+    let verified =
+        arkret_sdk::VerifiedSubmission::verify(commit.clone(), |_| Ok(producer.clone()))?;
     let result = drive_contact_commit(
         || fence.check(),
-        || http.post(endpoint, commit),
+        || http.submit_contact_event(&verified),
         |outcome| {
             validate_contact_commit_outcome(
                 outcome,
@@ -579,8 +577,13 @@ impl crate::transport::TransportClient {
                 .filter(|message| !message.is_empty())
                 .map(ToOwned::to_owned),
         });
-        let (prepared_operation_id, reservation_handle, event_draft) =
-            prepared_contact_request(http.contacts_request(&prepare).await?)?;
+        let (prepared_operation_id, reservation_handle, event_draft) = prepared_contact_request(
+            http.contacts_request(&arkret_sdk::VerifiedSubmission::from_verified_events(
+                prepare,
+                &[],
+            )?)
+            .await?,
+        )?;
         session.check()?;
         if prepared_operation_id != operation_id {
             anyhow::bail!("Contact prepare changed operation_id");

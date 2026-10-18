@@ -579,6 +579,9 @@ impl AuthoredEventExt for AuthoredEvent {
         let signer = crate::event_signer::InksonEventSigner::from_dyn_signer(
             Arc::new(sdk_signer),
             signer_did.clone(),
+            arkret_sdk::signatures::PublicKeyMaterial::Ed25519Raw {
+                bytes: signing_key.verifying_key().to_bytes().to_vec(),
+            },
         );
         signer
             .sign_envelope_with_context(

@@ -99,7 +99,7 @@ pub(super) fn CircleSelfMembership(
                         let body = arkret_sdk::CircleMemberRequestBody {
                             member_event: arkret_wire::EventAdmissionSubmission::new(submitter.author_for_direct_submission(&event).await?.into_event()),
                         };
-                        api.http().circle_member_add(&circle_id, &body).await?;
+                        api.http().circle_member_add(&circle_id, &submitter.verify_publication(body)?).await?;
                         Ok::<_, anyhow::Error>(())
                     }).await;
                     match outcome {

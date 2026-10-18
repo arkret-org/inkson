@@ -376,7 +376,11 @@ pub async fn approve_device_pairing(
     let authority_http = http.with_base_url(url::Url::parse(
         &authority_base.origin().ascii_serialization(),
     )?)?;
-    let outcome = authority_http.account_device_pair(&body).await?;
+    let outcome = authority_http
+        .account_device_pair(
+            &crate::transport::own_station_results::verify_local_publication(&http, body).await?,
+        )
+        .await?;
     if outcome.authorized_event_ref.event_id != authorize_event.event_id {
         anyhow::bail!("device-pair gate returned another authorize Event reference");
     }

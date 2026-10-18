@@ -305,8 +305,9 @@ pub(crate) async fn execute_device_revoke_security_rotation(
     );
     let workflow = crate::fresh_device_recovery::DeviceRevokeSecurityRotation::new(engine);
     basis.check()?;
+    let context = signer.publication_context(&arkret_sdk::ActorId::account(authority.clone()))?;
     let mut transaction = workflow
-        .create_or_resume(create, staged_ref)
+        .create_or_resume(create, staged_ref, &context)
         .await
         .map_err(anyhow::Error::from)?;
     basis.check()?;

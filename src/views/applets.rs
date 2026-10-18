@@ -901,7 +901,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                                        authoring_request_basis: snapshot.basis,
                                                        plan_digest: snapshot.preview.plan.plan_digest,
                                                    };
-                                                   http.applet_install(&idem, &body)
+                                                   http.applet_install(&idem, &crate::transport::own_station_results::verify_local_publication(&http, body).await?)
                                                        .await
                                                        .map_err(anyhow::Error::from)
                                                })
@@ -1060,7 +1060,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                                                submitter.http().applet_revoke(
                                                                    &aid,
                                                                    &idempotency_key,
-                                                                   &body,
+                                                                   &submitter.verify_publication(body)?,
                                                                ).await.map_err(anyhow::Error::from)
                                                            })
                                                            .await;

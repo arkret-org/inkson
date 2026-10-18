@@ -1305,6 +1305,33 @@ fn queued_and_forwarding_items_never_report_realm_commit_acceptance() {
 
 // ───────────────────── durable submission state transitions ────────────────
 
+async fn verify_test_publication(
+    request: arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest,
+) -> Result<
+    arkret_sdk::VerifiedSubmission<
+        arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest,
+    >,
+    String,
+> {
+    let signer = test_signer();
+    let allowed = [
+        account_actor(),
+        arkret_sdk::ActorId::account(test_authority()),
+    ];
+    arkret_sdk::VerifiedSubmission::verify(request, |event| {
+        let actor = allowed
+            .iter()
+            .find(|actor| *actor == event.actual_signer())
+            .ok_or_else(|| {
+                arkret_sdk::identity::IdentityError::Protocol("unknown fixture producer".into())
+            })?;
+        signer
+            .publication_context(actor)
+            .map_err(|error| arkret_sdk::identity::IdentityError::Protocol(error.to_string()))
+    })
+    .map_err(|error| error.to_string())
+}
+
 /// One scripted governance-authority transport.
 ///
 /// It answers exactly one submit per queued Event, so a test can observe the
@@ -1322,7 +1349,7 @@ struct ScriptedAuthority {
 impl garth::AuthorityTransport for ScriptedAuthority {
     async fn submit(
         &self,
-        _request: &arkret_wire::AuthoritySubmitRequest,
+        _request: &arkret_sdk::VerifiedSubmission<arkret_wire::AuthoritySubmitRequest>,
         _options: &arkret_sdk::http_client::ClientRequestOptions,
     ) -> garth::Result<arkret_wire::AuthoritySubmitOutcome> {
         self.submits
@@ -1332,7 +1359,9 @@ impl garth::AuthorityTransport for ScriptedAuthority {
 
     async fn submit_self(
         &self,
-        request: &arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest,
+        request: &arkret_sdk::VerifiedSubmission<
+            arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest,
+        >,
         options: &arkret_sdk::http_client::ClientRequestOptions,
     ) -> garth::Result<arkret_models_collaboration::authority_commit::SelfAuthoritySubmitOutcome>
     {
@@ -1340,8 +1369,8 @@ impl garth::AuthorityTransport for ScriptedAuthority {
             SelfAuthoritySubmitOutcome, SelfAuthoritySubmitRequest,
         };
         if let Some(outcome) = &self.unit_outcome {
-            assert_eq!(Some(request), self.expected_unit.as_ref());
-            let key = match request {
+            assert_eq!(Some(request.wire()), self.expected_unit.as_ref());
+            let key = match request.wire() {
                 SelfAuthoritySubmitRequest::OrdinaryRealmBootstrap(unit) => {
                     unit.idempotency_key.as_uuid().to_string()
                 }
@@ -1355,7 +1384,7 @@ impl garth::AuthorityTransport for ScriptedAuthority {
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             return Ok(outcome.clone());
         }
-        let ordinary = match request {
+        let ordinary = match request.wire() {
             SelfAuthoritySubmitRequest::Event(value) => {
                 arkret_wire::AuthoritySubmitRequest::Event(value.clone())
             }
@@ -1364,7 +1393,7 @@ impl garth::AuthorityTransport for ScriptedAuthority {
             }
             _ => panic!("unexpected atomic unit"),
         };
-        self.submit(&ordinary, options)
+        self.submit(&request.rebind(ordinary).unwrap(), options)
             .await
             .map(SelfAuthoritySubmitOutcome::Ordinary)
     }
@@ -1451,6 +1480,7 @@ async fn a_queued_write_reaches_committed_through_the_durable_engine() {
         .submit_next(
             &authority,
             &arkret_sdk::http_client::ClientRequestOptions::new(),
+            verify_test_publication,
         )
         .await
         .unwrap();
@@ -1468,7 +1498,8 @@ async fn a_queued_write_reaches_committed_through_the_durable_engine() {
         engine
             .submit_next(
                 &authority,
-                &arkret_sdk::http_client::ClientRequestOptions::new()
+                &arkret_sdk::http_client::ClientRequestOptions::new(),
+                verify_test_publication
             )
             .await
             .unwrap(),
@@ -1500,6 +1531,7 @@ async fn a_station_refusal_settles_the_item_with_its_exact_reason_code() {
         .submit_next(
             &authority,
             &arkret_sdk::http_client::ClientRequestOptions::new(),
+            verify_test_publication,
         )
         .await
         .unwrap();
@@ -1615,6 +1647,7 @@ async fn one_mls_commit_and_its_welcomes_are_a_single_atomic_submission() {
         .submit_next(
             &authority,
             &arkret_sdk::http_client::ClientRequestOptions::new(),
+            verify_test_publication,
         )
         .await
         .unwrap();
@@ -1751,7 +1784,8 @@ async fn a_quarantined_item_is_withdrawn_instead_of_forwarded() {
         engine
             .submit_next(
                 &authority,
-                &arkret_sdk::http_client::ClientRequestOptions::new()
+                &arkret_sdk::http_client::ClientRequestOptions::new(),
+                verify_test_publication
             )
             .await
             .unwrap(),
@@ -1854,6 +1888,7 @@ async fn realm_bootstrap_queue_restores_the_whole_unit_and_rejects_partial_recei
             &authority,
             &arkret_sdk::http_client::ClientRequestOptions::new()
                 .idempotency_key("unrelated-current-ui-write"),
+            verify_test_publication,
         )
         .await
         .unwrap();
@@ -1871,7 +1906,7 @@ async fn realm_bootstrap_queue_restores_the_whole_unit_and_rejects_partial_recei
     );
     assert!(matches!(
         engine
-            .submit_next(&authority, &Default::default())
+            .submit_next(&authority, &Default::default(), verify_test_publication)
             .await
             .unwrap(),
         OutboundEngineOutcome::Idle
@@ -2062,6 +2097,7 @@ async fn direct_founding_queue_restores_all_events_and_binds_every_receipt() {
                 &authority,
                 &arkret_sdk::http_client::ClientRequestOptions::new()
                     .idempotency_key("new-ui-write"),
+                verify_test_publication
             )
             .await
             .unwrap(),
@@ -2076,7 +2112,7 @@ async fn direct_founding_queue_restores_all_events_and_binds_every_receipt() {
             if **stored == SelfAuthoritySubmitOutcome::DirectConversationFounding(outcome.clone())));
     assert!(matches!(
         engine
-            .submit_next(&authority, &Default::default())
+            .submit_next(&authority, &Default::default(), verify_test_publication)
             .await
             .unwrap(),
         OutboundEngineOutcome::Idle
@@ -2173,6 +2209,7 @@ async fn retryable_authority_answer_is_durable_and_really_resubmits_after_restar
         .submit_next(
             &refusing,
             &arkret_sdk::http_client::ClientRequestOptions::new(),
+            verify_test_publication,
         )
         .await
         .unwrap();
@@ -2209,7 +2246,8 @@ async fn retryable_authority_answer_is_durable_and_really_resubmits_after_restar
         resumed
             .submit_next(
                 &accepting,
-                &arkret_sdk::http_client::ClientRequestOptions::new()
+                &arkret_sdk::http_client::ClientRequestOptions::new(),
+                verify_test_publication
             )
             .await
             .unwrap(),

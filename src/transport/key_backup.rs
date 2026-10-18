@@ -154,7 +154,13 @@ impl crate::transport::TransportClient {
         body: &arkret_wire::EventAdmissionSubmission,
     ) -> anyhow::Result<arkret_sdk::RecoveryPolicyPublishOutcome> {
         self.sdk_http_client()?
-            .post("/_arkret/root/identity/recovery-policy", body)
+            .publish_recovery_policy(
+                &super::own_station_results::verify_local_publication(
+                    &self.sdk_http_client()?,
+                    body.clone(),
+                )
+                .await?,
+            )
             .await
             .map_err(anyhow::Error::from)
     }
@@ -170,7 +176,7 @@ impl crate::transport::TransportClient {
         body: &arkret_models_crypto::RecoverySessionCreateRequestBody,
     ) -> anyhow::Result<arkret_sdk::RecoverySession> {
         self.sdk_http_client()?
-            .post("/_arkret/root/identity/recovery-sessions", body)
+            .create_recovery_session(body)
             .await
             .map_err(anyhow::Error::from)
     }
@@ -197,10 +203,7 @@ impl crate::transport::TransportClient {
         body: &arkret_models_crypto::RecoverySessionProofSubmitRequestBody,
     ) -> anyhow::Result<arkret_sdk::RecoverySessionProofSubmitOutcome> {
         self.sdk_http_client()?
-            .post(
-                &format!("/_arkret/root/identity/recovery-sessions/{recovery_session_id}/proofs"),
-                body,
-            )
+            .submit_recovery_proof(recovery_session_id, body)
             .await
             .map_err(anyhow::Error::from)
     }

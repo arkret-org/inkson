@@ -82,7 +82,7 @@ pub(crate) async fn submit_circle_member_with_parent_revision(
     };
     submitter
         .http()
-        .circle_member_add(circle_id, &body)
+        .circle_member_add(circle_id, &submitter.verify_publication(body)?)
         .await
         .map_err(anyhow::Error::from)
 }
@@ -116,7 +116,11 @@ pub async fn remove_circle_member(
     };
     submitter
         .http()
-        .circle_member_remove(circle_id, target_actor, &body)
+        .circle_member_remove(
+            circle_id,
+            target_actor,
+            &submitter.verify_publication(body)?,
+        )
         .await
         .map_err(anyhow::Error::from)
 }

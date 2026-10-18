@@ -9,14 +9,11 @@ pub(super) async fn issue_invite_locator(
     client: arkret_sdk::http_client::Client,
 ) -> anyhow::Result<arkret_sdk::InviteLocatorIssueOutcome> {
     client
-        .post(
-            arkret_sdk::INVITE_LOCATOR_ISSUE_PATH,
-            &arkret_sdk::InviteLocatorIssueRequestBody {
-                ttl_seconds: Some(arkret_sdk::INVITE_LOCATOR_DEFAULT_TTL_SECONDS),
-                one_time_use: Some(false),
-                display_hint: None,
-            },
-        )
+        .issue_invite_locator(&arkret_sdk::InviteLocatorIssueRequestBody {
+            ttl_seconds: Some(arkret_sdk::INVITE_LOCATOR_DEFAULT_TTL_SECONDS),
+            one_time_use: Some(false),
+            display_hint: None,
+        })
         .await
         .map_err(anyhow::Error::from)
 }
@@ -26,15 +23,12 @@ pub(super) async fn rotate_invite_locator(
     locator_id: String,
 ) -> anyhow::Result<arkret_sdk::InviteLocatorIssueOutcome> {
     let result = client
-        .post(
-            arkret_sdk::INVITE_LOCATOR_ROTATE_PATH,
-            &arkret_sdk::InviteLocatorRotateRequestBody {
-                locator_id: arkret_identifiers::InviteLocatorId::new(locator_id)?,
-                ttl_seconds: Some(arkret_sdk::INVITE_LOCATOR_DEFAULT_TTL_SECONDS),
-                one_time_use: Some(false),
-                display_hint: None,
-            },
-        )
+        .rotate_invite_locator(&arkret_sdk::InviteLocatorRotateRequestBody {
+            locator_id: arkret_identifiers::InviteLocatorId::new(locator_id)?,
+            ttl_seconds: Some(arkret_sdk::INVITE_LOCATOR_DEFAULT_TTL_SECONDS),
+            one_time_use: Some(false),
+            display_hint: None,
+        })
         .await;
     match result {
         // Expired/revoked locators cannot be rotated. Issue a fresh one only

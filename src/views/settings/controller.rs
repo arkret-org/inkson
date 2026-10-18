@@ -666,12 +666,9 @@ impl SettingsController {
                     ),
                     proofs: Vec::new(),
                 };
-                http.post::<_, arkret_sdk::MimiIdentifierQueryOutcome>(
-                    "/_arkret/open/mimi/identifiers/query",
-                    &request,
-                )
-                .await
-                .map_err(anyhow::Error::from)
+                http.mimi_identifier_query(&request)
+                    .await
+                    .map_err(anyhow::Error::from)
             })
             .await;
             if !settings_session.is_current(&started_session) {
@@ -750,10 +747,7 @@ impl SettingsController {
                     epoch: None,
                     associated_data: None,
                 };
-                http.post::<_, arkret_sdk::MimiSubmitMessageOutcome>(
-                    "/_arkret/open/mimi/strands/01JSMIMI/messages",
-                    &request,
-                )
+                http.mimi_submit_message("01JSMIMI", &request)
                 .await
                 .map_err(anyhow::Error::from)
             })
@@ -815,10 +809,7 @@ impl SettingsController {
                     ohttp_context: None,
                     range: None,
                 };
-                http.post::<_, arkret_sdk::MimiProxyDownloadOutcome>(
-                    "/_arkret/open/mimi/proxy-download",
-                    &request,
-                )
+                http.mimi_proxy_download(&request)
                 .await
                 .map_err(anyhow::Error::from)
             })

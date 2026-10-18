@@ -265,7 +265,7 @@ pub async fn update_profile(
     body.validate()?;
     submitter
         .http()
-        .account_update_profile(&body)
+        .account_update_profile(&submitter.verify_publication(body)?)
         .await
         .map_err(Into::into)
 }
@@ -374,7 +374,12 @@ async fn submit_contact_response(
             action: ContactAcceptAction::Accept,
             granted_to_peer_scopes: crate::transport::contacts::default_contact_scopes(),
         });
-        let prepared = http.contacts_respond(&prepare).await?;
+        let prepared = http
+            .contacts_respond(&arkret_sdk::VerifiedSubmission::from_verified_events(
+                prepare,
+                &[],
+            )?)
+            .await?;
         let (returned_operation_id, reservation_handle, event_draft) = match prepared {
             ContactOperationOutcome::Prepared {
                 outcome:
@@ -442,8 +447,12 @@ async fn submit_contact_response(
             request_event_ref: request_event_ref.clone(),
             action: ContactRejectAction::Reject,
         });
-        let prepared: ContactOperationOutcome =
-            http.post("/_arkret/self/contacts/reject", &prepare).await?;
+        let prepared: ContactOperationOutcome = http
+            .contacts_reject(&arkret_sdk::VerifiedSubmission::from_verified_events(
+                prepare,
+                &[],
+            )?)
+            .await?;
         let (returned_operation_id, reservation_handle, event_draft) = match prepared {
             ContactOperationOutcome::Prepared {
                 outcome:
@@ -540,9 +549,8 @@ pub async fn set_invite_receive_policy(
     http: &arkret_sdk::http_client::Client,
     policy: &crate::models::InviteReceivePolicy,
 ) -> anyhow::Result<crate::models::InviteReceivePolicy> {
-    let stored: crate::models::InviteReceivePolicy = http
-        .put("/_arkret/self/invite-receive-policy", policy)
-        .await?;
+    let stored: crate::models::InviteReceivePolicy =
+        http.replace_invite_receive_policy(policy).await?;
     if stored.account_id != policy.account_id {
         anyhow::bail!("saved invite receive policy belongs to a different account");
     }
@@ -1039,7 +1047,10 @@ pub async fn update_contact_scopes(
         idempotency_key.clone(),
     )?;
     let prepared: ContactOperationOutcome = http
-        .post("/_arkret/self/contacts/scope-update", &prepare)
+        .contacts_scope_update(&arkret_sdk::VerifiedSubmission::from_verified_events(
+            prepare,
+            &[],
+        )?)
         .await?;
     let (returned_operation_id, reservation_handle, event_draft) = match prepared {
         ContactOperationOutcome::Prepared {
@@ -1140,7 +1151,12 @@ pub async fn tombstone_contact(
         predecessor_event_ref: next.predecessor_event_ref,
         block_peer,
     });
-    let prepared = http.contacts_tombstone(&prepare).await?;
+    let prepared = http
+        .contacts_tombstone(&arkret_sdk::VerifiedSubmission::from_verified_events(
+            prepare,
+            &[],
+        )?)
+        .await?;
     let (returned_operation_id, reservation_handle, event_draft) = match prepared {
         ContactOperationOutcome::Prepared {
             outcome:
@@ -1230,7 +1246,7 @@ pub async fn grant_consent(
     body.validate()?;
     let view: arkret_sdk::ConsentView = submitter
         .http()
-        .post(arkret_wire::PATH_SELF_CONSENT_RESULTS_GRANT, &body)
+        .consent_grant(&submitter.verify_publication(body)?)
         .await
         .map_err(anyhow::Error::from)?;
     view.validate()?;
@@ -1295,7 +1311,7 @@ pub async fn revoke_consent(
     body.validate()?;
     let view: arkret_sdk::ConsentView = submitter
         .http()
-        .post(arkret_wire::PATH_SELF_CONSENT_RESULTS_REVOKE, &body)
+        .consent_revoke(&submitter.verify_publication(body)?)
         .await
         .map_err(anyhow::Error::from)?;
     view.validate()?;
@@ -1322,7 +1338,7 @@ pub async fn request_consent(
         holder_account_id: holder.clone(),
         consent_scope: scope.trim().parse()?,
     };
-    http.post(arkret_wire::PATH_SELF_CONSENT_REQUEST, &body)
+    http.consent_request(&body)
         .await
         .map_err(anyhow::Error::from)
 }
@@ -1513,9 +1529,9 @@ where
                 .http()
                 .account_data_delete(
                     type_key,
-                    &arkret_sdk::AccountDataDeleteRequestBody {
+                    &submitter.verify_publication(arkret_sdk::AccountDataDeleteRequestBody {
                         set_event: arkret_wire::EventAdmissionSubmission::new(set_event),
-                    },
+                    })?,
                 )
                 .await
                 .map(|_| None)
@@ -1524,9 +1540,9 @@ where
                 .http()
                 .account_data_replace(
                     type_key,
-                    &arkret_sdk::AccountDataReplaceRequestBody {
+                    &submitter.verify_publication(arkret_sdk::AccountDataReplaceRequestBody {
                         set_event: arkret_wire::EventAdmissionSubmission::new(set_event),
-                    },
+                    })?,
                 )
                 .await
                 .map(Some)
@@ -1675,7 +1691,11 @@ pub async fn delete_account_data(submitter: &EventSubmitter, type_key: &str) -> 
                 account_data_set_submission(submitter, type_key, None, snapshot.revision).await?,
             ),
         };
-        match submitter.http().account_data_delete(type_key, &body).await {
+        match submitter
+            .http()
+            .account_data_delete(type_key, &submitter.verify_publication(body)?)
+            .await
+        {
             Ok(_) => return Ok(()),
             Err(error) => {
                 let Some(current) = account_data_conflict_snapshot(type_key, &error)? else {
@@ -1769,7 +1789,7 @@ pub async fn submit_read_cursor_advance(
     let body = arkret_sdk::ReadCursorAdvanceRequestBody { advance_event };
     submitter
         .http()
-        .post("/_arkret/self/read-cursors", &body)
+        .advance_read_cursor(&submitter.verify_publication(body)?)
         .await
         .map_err(anyhow::Error::from)
 }

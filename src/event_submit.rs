@@ -1055,6 +1055,19 @@ impl EventSubmitter {
         ))
     }
 
+    pub(crate) fn verify_publication<T: arkret_sdk::PublicationRequest>(
+        &self,
+        request: T,
+    ) -> anyhow::Result<arkret_sdk::VerifiedSubmission<T>> {
+        let actor = arkret_sdk::ActorId::account(self.authority()?.clone());
+        let signer = crate::event_signer::active_signer()
+            .context("outbound producer signing context is unavailable")?;
+        let context = signer.publication_context(&actor)?;
+        Ok(arkret_sdk::VerifiedSubmission::verify(request, |_| {
+            Ok(context.clone())
+        })?)
+    }
+
     fn outbound(&self, lane: OutboundLane) -> anyhow::Result<InksonOutboundEngine> {
         Ok(OutboundEngine::new(
             InksonOutboundStore::open(self.authority()?, lane)?,
@@ -2510,6 +2523,8 @@ impl EventSubmitter {
                     }
                     self.ensure_queued_application_send_gate(&request)
                         .await
+                        .map_err(|error| error.to_string())?;
+                    self.verify_publication(request)
                         .map_err(|error| error.to_string())
                 })
                 .await
@@ -2999,7 +3014,9 @@ impl EventSubmitter {
                                 self.ensure_queued_application_send_gate(&request)
                             })
                             .await
-                            .map_err(|error| error.to_string())
+                            .map_err(|error| error.to_string())?;
+                            self.verify_publication(request)
+                                .map_err(|error| error.to_string())
                         },
                     )
                 })
@@ -3949,7 +3966,7 @@ impl EventSubmitter {
         let authority_origin = gate_account_base_url.origin().ascii_serialization();
         let authority_http = account_authority_http_client(&authority_origin)?;
         authority_http
-            .agent_key_pair(body)
+            .agent_key_pair(&self.verify_publication(body.clone())?)
             .await
             .map_err(anyhow::Error::from)
             .with_context(|| format!("pair Agent key at {authority_origin}"))

@@ -878,7 +878,7 @@ async fn ensure_owned_agent_sidecar(
                 (pending.expected_phase, pending.sidecar_id, pending.request, pending.expires_at)
             } else {
                 let prepared = http
-                    .agent_sidecar_ensure(&prepare)
+                    .agent_sidecar_ensure(&arkret_sdk::VerifiedSubmission::from_verified_events(prepare, &[])?)
                     .await
                     .map_err(anyhow::Error::from)?;
                 ceremony_fence.check()?;
@@ -1043,11 +1043,15 @@ async fn ensure_owned_agent_sidecar(
                         }
                 }
             };
+            let producer = ceremony_fence.signer.publication_context(
+                &arkret_sdk::ActorId::account(ceremony_controller_account_id.clone()),
+            )?;
+            let verified = arkret_sdk::VerifiedSubmission::verify(request.clone(), |_| Ok(producer.clone()))?;
             let accepted = submit_frozen_sidecar_ensure(
                 &request,
                 expires_at,
                 || ceremony_fence.check(),
-                |request| http.agent_sidecar_ensure(request),
+                |_| http.agent_sidecar_ensure(&verified),
             ).await?;
             let sidecar_id = accepted_native_sidecar_id(
                 &accepted,

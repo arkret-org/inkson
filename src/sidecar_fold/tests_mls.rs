@@ -219,6 +219,12 @@ impl MlsFixture {
                 ),
             ),
             AGENT_DID.to_owned(),
+            arkret_sdk::signatures::PublicKeyMaterial::Ed25519Raw {
+                bytes: ed25519_dalek::SigningKey::from_bytes(&proof_seed)
+                    .verifying_key()
+                    .to_bytes()
+                    .to_vec(),
+            },
         );
         signer.sign_envelope(&mut authored).unwrap();
         let event = authored.into_event();

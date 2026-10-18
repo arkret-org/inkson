@@ -348,7 +348,9 @@ impl InksonSecurityTransactionTransport {
 impl garth::SecurityTransactionTransport for InksonSecurityTransactionTransport {
     async fn create(
         &self,
-        request: &arkret_models_crypto::SecurityTransactionCreateRequest,
+        request: &arkret_sdk::VerifiedSubmission<
+            arkret_models_crypto::SecurityTransactionCreateRequest,
+        >,
     ) -> garth::Result<arkret_models_crypto::SecurityTransaction> {
         self.client
             .create_security_transaction(request)

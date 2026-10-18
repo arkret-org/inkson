@@ -5673,7 +5673,7 @@ mod tests {
     impl garth::AuthorityTransport for FrameStation {
         async fn submit(
             &self,
-            _request: &arkret_wire::AuthoritySubmitRequest,
+            _request: &arkret_sdk::VerifiedSubmission<arkret_wire::AuthoritySubmitRequest>,
             _options: &arkret_sdk::http_client::ClientRequestOptions,
         ) -> garth::Result<arkret_wire::AuthoritySubmitOutcome> {
             unreachable!("frame verification never submits")

@@ -11,7 +11,7 @@ use arkret_models_collaboration::events_payloads::device_identity::{
     DeviceReanchorPayload, device_authorize_payload_digest,
 };
 use arkret_models_crypto::{
-    PreparedEventBatchRequest, RecoveryAuthorityKind, RecoveryCommitIntent, RecoveryProofKind,
+    RecoveryAuthorityKind, RecoveryCommitIntent, RecoveryProofKind,
     SecurityTransactionTerminalOutcome,
 };
 use arkret_sdk::{
@@ -27,6 +27,7 @@ fn non_empty(value: String) -> anyhow::Result<NonEmptyString> {
 
 pub(crate) struct PreparedPcrPolicyRecovery {
     pub create_request: RecoveryTransactionCreateRequest,
+    pub publication_context: arkret_sdk::ProducerVerificationContext,
     pub proof_summary: arkret_models_crypto::RecoverySessionProofSummary,
     pub recovery_private_key: Zeroizing<[u8; 32]>,
     pub verified_session: arkret_sdk::RecoverySession,
@@ -288,8 +289,11 @@ pub(crate) async fn prepare_pcr_policy_recovery(
         Hash::new(reanchor.event_digest_with_digest_suite(digest_suite)?)?,
         Hash::new(authorize.event_digest_with_digest_suite(digest_suite)?)?,
     ];
-    let reanchor_submission = PreparedEventBatchRequest {
-        events: vec![reanchor, authorize],
+    let reanchor_submission = arkret_wire::EventsSubmitBatchRequestBody {
+        events: (vec![reanchor, authorize])
+            .into_iter()
+            .map(arkret_wire::EventAdmissionSubmission::new)
+            .collect(),
     };
 
     let expected_stream_ref = CommitStreamRef::Realm {
@@ -325,6 +329,9 @@ pub(crate) async fn prepare_pcr_policy_recovery(
         recovery_intent,
     )?;
     Ok(PreparedPcrPolicyRecovery {
+        publication_context: device_signer.publication_context(&arkret_sdk::ActorId::account(
+            verified_session.account_id.clone(),
+        ))?,
         create_request,
         proof_summary,
         recovery_private_key: Zeroizing::new(backup_material.backup_hpke_serialized_private_key),
@@ -466,7 +473,7 @@ pub(crate) async fn execute_pcr_policy_recovery(
     );
     let workflow = crate::fresh_device_recovery::FreshDeviceRecovery::new(engine);
     let mut transaction = workflow
-        .create_or_resume(prepared.create_request, None)
+        .create_or_resume(prepared.create_request, None, &prepared.publication_context)
         .await?;
     if let Some(retried) = workflow
         .retry_byte_identical_pending(&transaction_id)
@@ -550,8 +557,16 @@ pub(crate) async fn resume_pending_pcr_policy_recovery(
         secure_store.clone(),
     );
     let workflow = crate::fresh_device_recovery::FreshDeviceRecovery::new(engine);
+    let signer = crate::event_signer::active_signer()
+        .ok_or_else(|| anyhow::anyhow!("replacement device signer is unavailable"))?;
+    anyhow::ensure!(
+        signer.device_id() == Some(expected_device.as_str()),
+        "pending recovery signer belongs to another device"
+    );
+    let context =
+        signer.publication_context(&arkret_sdk::ActorId::account(expected_account.clone()))?;
     let mut transaction = workflow
-        .create_or_resume(create, local.staged_secret_ref)
+        .create_or_resume(create, local.staged_secret_ref, &context)
         .await?;
     if let Some(retried) = workflow
         .retry_byte_identical_pending(&transaction_id)

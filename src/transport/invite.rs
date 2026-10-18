@@ -172,7 +172,7 @@ async fn resolve_principal_locator_url(
     body.validate_minimal()
         .map_err(|err| anyhow::anyhow!("invalid invite locator token: {err}"))?;
     let locator: arkret_sdk::PrincipalLocator = resolver
-        .post(arkret_sdk::INVITE_LOCATOR_RESOLVE_PATH, &body)
+        .resolve_invite_locator(&body)
         .await
         .map_err(|error| {
             let unavailable = matches!(
@@ -260,7 +260,7 @@ impl crate::transport::TransportClient {
             .validate_minimal()
             .map_err(|error| anyhow::anyhow!("invite delivery request is invalid: {error}"))?;
         self.sdk_http_client()?
-            .post("/_arkret/self/invites/dispatch", &delivery)
+            .dispatch_invite(&delivery)
             .await
             .map_err(Into::into)
     }

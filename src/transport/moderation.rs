@@ -44,7 +44,7 @@ pub async fn report(
     )?;
     submitter
         .http()
-        .moderation_report(&body)
+        .moderation_report(&submitter.verify_publication(body)?)
         .await
         .map_err(anyhow::Error::from)
 }

@@ -348,7 +348,7 @@ impl AgentAdminController {
                     let body = AgentResumeRequestBody { lifecycle_event };
                     submitter
                         .http()
-                        .agent_resume(&id, &body)
+                        .agent_resume(&id, &submitter.verify_publication(body)?)
                         .await
                         .map_err(anyhow::Error::from)?
                 } else {
@@ -361,7 +361,7 @@ impl AgentAdminController {
                     };
                     submitter
                         .http()
-                        .agent_pause(&id, &body)
+                        .agent_pause(&id, &submitter.verify_publication(body)?)
                         .await
                         .map_err(anyhow::Error::from)?
                 };
@@ -500,7 +500,7 @@ impl AgentAdminController {
                 };
                 let outcome = submitter
                     .http()
-                    .agent_deactivate(&id, &body)
+                    .agent_deactivate(&id, &submitter.verify_publication(body)?)
                     .await
                     .map_err(anyhow::Error::from)?;
                 Ok(outcome)
