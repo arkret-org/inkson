@@ -410,7 +410,7 @@ mod historical_result_tests {
             "did:web:agent.example#ak:device:0196419b-0000-7000-8000-0000000000f1".to_owned(),
         )
         .unwrap();
-        assert!(device.human_device_producer().unwrap().is_some());
+        assert!(device.account_device_producer().unwrap().is_some());
         assert!(event_agent_identity(&serde_json::to_value(device).unwrap()).is_none());
         let mut service = selector.accepted_event;
         service.actor_id = arkret_sdk::ActorId::service(selector.agent_id);

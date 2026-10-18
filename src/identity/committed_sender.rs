@@ -77,7 +77,7 @@ pub(crate) fn verify_committed_chat_producer_proof(event: &Value) -> ChatProofVe
 /// self-consistency check under the Realm's digest suite.
 fn committed_human_device_producer(
     envelope: &Value,
-) -> Result<Option<arkret_wire::HumanDeviceProducer>, ()> {
+) -> Result<Option<arkret_wire::AccountDeviceProducer>, ()> {
     let event = serde_json::from_value::<arkret_sdk::Event>(envelope.clone()).map_err(|_| ())?;
     let digest_suite = event.realm_id.digest_suite_code().digest_suite();
     event

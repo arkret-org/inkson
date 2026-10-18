@@ -142,7 +142,7 @@ pub(crate) fn accepted_direct_message_final<'a>(
     {
         return None;
     }
-    if event.human_device_producer().ok().flatten().is_none() {
+    if event.account_device_producer().ok().flatten().is_none() {
         let endpoint =
             crate::identity::agent_signer_evidence::verified_cached_agent_event_endpoint(
                 event, store,

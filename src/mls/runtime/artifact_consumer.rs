@@ -1998,7 +1998,7 @@ mod tests {
         for row in &mut rows {
             row.commit.previous_commit_ref = Some(previous);
             let (key, accepted_at) = recovery_original_source(&row.event, &row.commit);
-            let human = row.event.human_device_producer().unwrap().unwrap();
+            let human = row.event.account_device_producer().unwrap().unwrap();
             assert_eq!(human.account_id.station_id, authority().station_id);
             let fact =
                 arkret_models_collaboration::authority_commit::AccountDeviceHistoricalSignerFact {

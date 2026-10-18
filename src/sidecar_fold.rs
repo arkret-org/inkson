@@ -139,7 +139,7 @@ fn decrypt_with_secure_store(
         "Sidecar fold belongs to another controller Account"
     );
     let sender = arkret_sdk::mls_basic_credential_identity(event.actual_signer())?;
-    if event.human_device_producer()?.is_none() {
+    if event.account_device_producer()?.is_none() {
         let group_id = event.scope_ref.canonical_mls_group_id()?;
         let key = FoldValidationCache::key(event, envelope)?;
         let view = if let Some(view) = validation.agents.get(&key) {
