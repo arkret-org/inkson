@@ -163,16 +163,62 @@ async fn follow_once<F: Fn() -> bool>(
 ) -> garth::Result<()> {
     client.check_session()?;
     let mut streams = garth::discover_realm_streams(client, realm).await?;
+    let snapshot = client.snapshot_head(realm).await?;
+    let heads = snapshot
+        .value()?
+        .visible_stream_heads
+        .iter()
+        .map(|head| (&head.stream_ref, head))
+        .collect::<BTreeMap<_, _>>();
     // Prioritize the selected Realm's live tail; this is scheduling only,
     // never an ordering or position comparison between independent streams.
-    streams.sort_by_key(|row| !matches!(row.stream_ref, CommitStreamRef::Realm { .. }));
+    // New/changed streams precede rechecking already admitted heads so an
+    // outside-page update need not wait behind a full unchanged prefix.
+    // Bound-cut and admitted-original requirements remain independent per stream.
+    streams.sort_by_key(|row| {
+        (
+            !matches!(row.stream_ref, CommitStreamRef::Realm { .. }),
+            heads
+                .get(&row.stream_ref)
+                .is_some_and(|head| current.head(&row.stream_ref) == Some(*head)),
+        )
+    });
     let private = streams
         .iter()
         .any(|s| matches!(s.stream_ref, CommitStreamRef::Sidecar { .. }));
-    let snapshot = client.snapshot_head(realm).await?;
+    let mut installed_generation = None;
     for row in streams {
         if !is_active() {
             return Ok(());
+        }
+        if let Some(generation) = installed_generation
+            && let Some(expected) = heads.get(&row.stream_ref).copied()
+            && current.head(&row.stream_ref) == Some(expected)
+        {
+            // The complete current cut has already committed in this pass.
+            // Reuse only an original admitted in this live session AND its
+            // exact durable checkpoint. Bare coordinates after a restart,
+            // a changed head or a concurrent current transaction still drain.
+            let retained = projector
+                .state_store
+                .read(|store| -> Result<bool, String> {
+                    if store.active_authority().as_ref() != Some(snapshot.session().account_id()) {
+                        return Err(
+                            "live current account changed before retained-head reuse".into()
+                        );
+                    }
+                    Ok(store.current_generation() == generation
+                        && store
+                            .verified_commit_stream_cursor(&row.stream_ref)?
+                            .as_ref()
+                            == Some(expected))
+                })
+                .map_err(protocol)?;
+            if retained {
+                client.check_session()?;
+                snapshot.value()?;
+                continue;
+            }
         }
         drain_from_snapshot(
             client,
@@ -185,6 +231,11 @@ async fn follow_once<F: Fn() -> bool>(
             current,
         )
         .await?;
+        installed_generation = Some(
+            projector
+                .state_store
+                .read(|store| store.current_generation()),
+        );
     }
     if private && is_active() {
         refresh_sidecars(client, http, realm, projector, is_active, current).await?;

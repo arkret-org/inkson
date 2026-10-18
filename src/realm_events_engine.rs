@@ -259,7 +259,7 @@ pub async fn run_realm_events_engine_with_transport<P, F>(
         let http = match provide(ctx.base_url.get()).await {
             Ok(http) => http,
             Err(error) => {
-                if !retry_after(&mut backoff, is_active(), &error.to_string()).await {
+                if !retry_after(&mut backoff, &is_active, &error.to_string()).await {
                     break;
                 }
                 continue;
@@ -268,7 +268,7 @@ pub async fn run_realm_events_engine_with_transport<P, F>(
         let own = match crate::transport::own_station_results::client_for_http(&http).await {
             Ok(own) => own,
             Err(error) => {
-                if !retry_after(&mut backoff, is_active(), &error.to_string()).await {
+                if !retry_after(&mut backoff, &is_active, &error.to_string()).await {
                     break;
                 }
                 continue;
@@ -277,7 +277,7 @@ pub async fn run_realm_events_engine_with_transport<P, F>(
         let session = match own.session() {
             Ok(session) => session.clone(),
             Err(error) => {
-                if !retry_after(&mut backoff, is_active(), &error.to_string()).await {
+                if !retry_after(&mut backoff, &is_active, &error.to_string()).await {
                     break;
                 }
                 continue;
@@ -317,7 +317,7 @@ pub async fn run_realm_events_engine_with_transport<P, F>(
                             break;
                         }
                         Err(refresh_error) => {
-                            if !retry_after(&mut backoff, is_active(), &refresh_error.to_string())
+                            if !retry_after(&mut backoff, &is_active, &refresh_error.to_string())
                                 .await
                             {
                                 break;
@@ -326,7 +326,7 @@ pub async fn run_realm_events_engine_with_transport<P, F>(
                         }
                     }
                 }
-                if !retry_after(&mut backoff, is_active(), &error.to_string()).await {
+                if !retry_after(&mut backoff, &is_active, &error.to_string()).await {
                     break;
                 }
             }
@@ -334,8 +334,12 @@ pub async fn run_realm_events_engine_with_transport<P, F>(
     }
 }
 
-async fn retry_after(backoff: &mut RetrySchedule, active: bool, reason: &str) -> bool {
-    let Some(delay) = crate::runtime_helpers::next_reconnect_delay(active, backoff) else {
+async fn retry_after<F: Fn() -> bool>(
+    backoff: &mut RetrySchedule,
+    is_active: &F,
+    reason: &str,
+) -> bool {
+    let Some(delay) = crate::runtime_helpers::next_reconnect_delay(is_active(), backoff) else {
         return false;
     };
     tracing::warn!(
@@ -343,8 +347,19 @@ async fn retry_after(backoff: &mut RetrySchedule, active: bool, reason: &str) ->
         retry_delay_ms = delay.as_millis(),
         "Realm stream follow interrupted; retrying"
     );
-    crate::runtime_helpers::sleep_for(delay).await;
-    true
+    let mut waiting = Box::pin(crate::runtime_helpers::sleep_for(delay));
+    while is_active() {
+        match futures_util::future::select(
+            &mut waiting,
+            Box::pin(crate::runtime_helpers::sleep_for(SUBSCRIBE_CANCEL_POLL)),
+        )
+        .await
+        {
+            futures_util::future::Either::Left(_) => return is_active(),
+            futures_util::future::Either::Right(_) => {}
+        }
+    }
+    false
 }
 
 /// Read the private scope's MLS current from a complete authority-signed cut.
@@ -1903,6 +1918,24 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[tokio::test]
+    async fn retry_backoff_stops_after_route_cancellation() {
+        let active = std::cell::Cell::new(true);
+        let mut backoff = RetrySchedule::new(Duration::from_secs(10), Duration::from_secs(10));
+        let waiting =
+            async { retry_after(&mut backoff, &|| active.get(), "cancelled route").await };
+        let cancel = async {
+            crate::runtime_helpers::sleep_for(Duration::from_millis(25)).await;
+            active.set(false);
+        };
+        let (continued, ()) = tokio::time::timeout(Duration::from_secs(2), async {
+            futures_util::future::join(waiting, cancel).await
+        })
+        .await
+        .expect("route cancellation must not wait for a ten-second reconnect backoff");
+        assert!(!continued);
+    }
 
     const REALM_ID: &str = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
     const STRAND_ID: &str = "ak:strand:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1";

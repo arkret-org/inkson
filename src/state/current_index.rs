@@ -2020,9 +2020,14 @@ impl CurrentIndex {
         pages: &[garth::own_station_results::OwnStationScanPage],
         guard: &dyn Fn() -> anyhow::Result<()>,
     ) -> anyhow::Result<CurrentStage> {
+        guard()?;
+        // The authenticated carrier owns an immutable Snapshot. Validate its
+        // complete structure/content address once; every later guard still
+        // checks the live provider, session and caller's installation fence.
+        garth::own_station_results::consume_bound_snapshot(response, response.request())?;
         let check = || -> anyhow::Result<()> {
             guard()?;
-            garth::own_station_results::consume_bound_snapshot(response, response.request())?;
+            response.value()?;
             Ok(())
         };
         check()?;
