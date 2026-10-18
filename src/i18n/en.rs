@@ -4612,6 +4612,10 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
     );
     dict.set("agent_runtime.permission_read", "Read authorized content");
     dict.set(
+        "agent_runtime.permission_metadata",
+        "Read authorized object metadata",
+    );
+    dict.set(
         "agent_runtime.permission_post",
         "Send messages in authorized conversations",
     );

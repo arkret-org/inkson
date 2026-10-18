@@ -122,6 +122,42 @@ mod agent_tests {
     }
 
     #[test]
+    fn encrypted_runtime_candidate_requests_metadata_without_widening_read_preset() {
+        assert_eq!(AgentGrantPreset::Read.actions(), &["ak.event.read"]);
+        let encrypted = requested_scope_for_presets(
+            &[AgentGrantPreset::Read],
+            &[AgentServiceScopePreset::SecureMessaging],
+        )
+        .expect("encrypted runtime has an explicit metadata ceiling");
+        assert!(
+            encrypted
+                .actions
+                .iter()
+                .any(|action| action == "ak.object.read")
+        );
+        assert!(encrypted.resources.iter().all(|resource| {
+            resource.kind == arkret_sdk::AgentKeyScopeResourceKind::Operation
+                && resource.realm_id.is_none()
+                && resource.resource_ref.is_none()
+                && resource.operation.as_deref().is_some_and(|operation| {
+                    arkret_sdk::ServiceOperationId::from_wire(operation).is_some()
+                })
+        }));
+        let stream_only = requested_scope_for_presets(
+            &[AgentGrantPreset::Read],
+            &[AgentServiceScopePreset::SubscribeEvents],
+        )
+        .unwrap();
+        assert!(
+            !stream_only
+                .actions
+                .iter()
+                .any(|action| action == "ak.object.read")
+        );
+        assert!(encrypted.constraints.is_empty());
+    }
+
+    #[test]
     fn requested_scope_is_global_ceiling_without_realm_grants() {
         assert!(requested_scope_for_presets(&[], &[]).is_none());
         assert!(requested_scope_for_presets(&[AgentGrantPreset::Read], &[]).is_none());
@@ -137,10 +173,12 @@ mod agent_tests {
                 "ak.event.read",
                 "ak.message.create",
                 "ak.reaction.add",
+                "ak.object.read",
                 "ak.self.committed_event.read.scan.v1",
                 "ak.self.committed_event.stream.subscribe.v1",
                 "ak.self.events.command.submit.v1",
                 "ak.self.keys.keypackages.upload.create.v1",
+                "ak.self.direct_conversation.read.resolve.v1",
                 "ak.self.signer_keys.read.resolve.v1",
                 "ak.self.keys.keypackages.command.consume.v1",
                 "ak.self.keys.keypackages.read.claim.v1",
@@ -171,6 +209,10 @@ mod agent_tests {
                 {
                     "kind": "operation",
                     "operation": "ak.self.keys.keypackages.upload.create.v1"
+                },
+                {
+                    "kind": "operation",
+                    "operation": "ak.self.direct_conversation.read.resolve.v1"
                 },
                 {
                     "kind": "operation",
@@ -230,6 +272,7 @@ mod agent_tests {
                 "ak.self.committed_event.read.scan.v1".to_owned(),
                 "ak.self.committed_event.stream.subscribe.v1".to_owned(),
                 "ak.self.events.command.submit.v1".to_owned(),
+                "ak.self.direct_conversation.read.resolve.v1".to_owned(),
                 "ak.self.signer_keys.read.resolve.v1".to_owned(),
             ]
         );

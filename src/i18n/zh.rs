@@ -3942,6 +3942,10 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
     dict.set("agent_runtime.requested_scope", "完整权限范围");
     dict.set("agent_runtime.replaced_authorizations", "被替换的连接");
     dict.set("agent_runtime.permission_read", "读取已授权的内容");
+    dict.set(
+        "agent_runtime.permission_metadata",
+        "读取已授权对象的元数据",
+    );
     dict.set("agent_runtime.permission_post", "在已授权的对话中发送消息");
     dict.set("agent_runtime.permission_react", "回应消息");
     dict.set("agent_runtime.permission_draft", "提交草稿和操作供你批准");

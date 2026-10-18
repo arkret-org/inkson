@@ -203,7 +203,7 @@ impl AgentServiceScopePreset {
                 "Submit approved durable Events for governing Station acceptance."
             }
             Self::SecureMessaging => {
-                "Publish and consume MLS key packages, verify encrypted conversation membership, receive encrypted messages, and send encrypted live presence."
+                "Read authorized conversation metadata, publish and consume MLS key packages, verify encrypted conversation membership, receive encrypted messages, and send encrypted live presence."
             }
             Self::ResolveResources => "Fetch event resources referenced by allowed payloads.",
         }
@@ -215,7 +215,10 @@ impl AgentServiceScopePreset {
             // The canonical registry selects capabilities from this draft and
             // `service_actions_for_presets` completes the atomic runtime floor.
             Self::SubscribeEvents => {
-                &[ServiceOperationId::SELF_COMMITTED_EVENT_STREAM_SUBSCRIBE_V1]
+                &[
+                    ServiceOperationId::SELF_DIRECT_CONVERSATION_READ_RESOLVE_V1,
+                    ServiceOperationId::SELF_COMMITTED_EVENT_STREAM_SUBSCRIBE_V1,
+                ]
             }
             Self::ScanCatchUp => &[
                 ServiceOperationId::SELF_COMMITTED_EVENT_READ_SCAN_V1,
@@ -299,7 +302,12 @@ pub fn requested_scope_for_presets(
     content_presets: &[AgentGrantPreset],
     service_presets: &[AgentServiceScopePreset],
 ) -> Option<AgentKeyScope> {
-    let content_actions = content_actions_for_presets(content_presets);
+    let mut content_actions = content_actions_for_presets(content_presets);
+    // Snapshot/current bootstrap needs its own content action in the new
+    // immutable ceiling. Service operation selectors never imply this action.
+    if service_presets.contains(&AgentServiceScopePreset::SecureMessaging) {
+        push_unique_action(&mut content_actions, CapabilityActionId::OBJECT_READ);
+    }
     let service_actions = match service_actions_for_presets(service_presets) {
         Ok(actions) => actions,
         Err(error) => {

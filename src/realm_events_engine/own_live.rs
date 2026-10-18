@@ -414,6 +414,10 @@ async fn install_live_current_snapshot<F: Fn() -> bool>(
     let generation = stage.previous_generation();
     guard().map_err(protocol)?;
     let current_changed = stage.changed();
+    projector
+        .state_store
+        .write(|store| store.require_sidecar_current_not_superseded(snapshot.value()?))
+        .map_err(crate::state::current_index::current_stage_error)?;
     let transaction = projector.state_store.write(|store| {
         store.verified_projection_transaction(|store| {
             source_guard().map_err(|error| error.to_string())?;
@@ -552,7 +556,8 @@ pub(super) async fn refresh_sidecars<F: Fn() -> bool>(
     current: &mut OwnStationReplica,
 ) -> garth::Result<()> {
     let snapshot = client.snapshot_head(realm).await?;
-    current.install_bound_snapshot(&snapshot)?;
+    let mut candidate = current.clone();
+    candidate.install_bound_snapshot(&snapshot)?;
     own_station::validate_current_product(snapshot.value()?, realm)?;
     let mut pages = Vec::new();
     let mut retained_bytes = 0usize;
@@ -595,6 +600,10 @@ pub(super) async fn refresh_sidecars<F: Fn() -> bool>(
         return Ok(());
     }
     client.check_session()?;
+    projector
+        .state_store
+        .write(|store| store.require_sidecar_current_not_superseded(snapshot.value()?))
+        .map_err(crate::state::current_index::current_stage_error)?;
     let changed = projector
         .state_store
         .write(|store| {
@@ -629,6 +638,7 @@ pub(super) async fn refresh_sidecars<F: Fn() -> bool>(
     if !is_active() {
         return Ok(());
     }
+    *current = candidate;
     let evidence = resolve_stream_agent_keys(http, &projector.state_store, changed > 0).await?;
     client.check_session()?;
     if !is_active() {
@@ -1150,6 +1160,59 @@ pub(super) mod tests {
         assert_eq!(pages.len(), 1);
         assert_eq!(pages[0].rows().unwrap(), &[next]);
         server.join().unwrap();
+    }
+
+    #[tokio::test]
+    async fn late_live_cut_retries_before_arming_without_poisoning_or_cursor_advance() {
+        let first = withheld(0, None);
+        let second = withheld(1, Some(first.commit().commit_id.clone()));
+        let realm = first.commit().realm_id.clone();
+        let stream = first.commit().stream_ref.clone();
+        let newer = current_snapshot(&[first.clone(), second], 2);
+        let older = current_snapshot(&[first], 1);
+        let directory = tempfile::tempdir().unwrap();
+        let account = crate::test_support::AccountFixture::new("did:web:alice.example")
+            .station("ak:did_core:web:station.example")
+            .build();
+        let mut local =
+            crate::state::LocalStateStore::with_path(directory.path().join("late.json"));
+        local.switch_active_account(&account).unwrap();
+        local.save_sync_cursor("ak:cursor:unchanged-account");
+        let (client, _, server) = http(vec![serde_json::to_value(&older).unwrap()]);
+        let inflight = client.snapshot_head(&realm).await.unwrap();
+        server.join().unwrap();
+        let (published, _) = bound_snapshot(&newer).await;
+        local
+            .install_own_station_sidecar_current(&published)
+            .unwrap();
+        let location = local.current_index_location();
+        let before = serde_json::to_value(local.load()).unwrap();
+        let store = Arc::new(Mutex::new(local));
+        let projector = test_projector(store.clone(), &realm);
+        let mut replica = OwnStationReplica::new(realm.clone());
+        replica.install_bound_snapshot(&inflight).unwrap();
+        let refused = install_live_current_snapshot(
+            &client,
+            &inflight,
+            &realm,
+            &stream,
+            &projector,
+            &replica,
+            &[],
+            &[],
+            &|| true,
+        )
+        .await;
+        assert!(matches!(refused, Err(garth::Error::AuthorityCutBehind)));
+        assert_eq!(
+            serde_json::to_value(store.lock().unwrap().load()).unwrap(),
+            before
+        );
+        let index =
+            crate::state::CurrentIndex::open_committed(&account.authority, location, || Ok(0))
+                .await
+                .unwrap();
+        assert!(!index.is_poisoned());
     }
 
     #[tokio::test]

@@ -13,13 +13,13 @@ pub(crate) enum ChatProofVerdict {
     /// Non-persistent system row with no attributed actor. Persistent actor
     /// messages without proofs are rejected before projection.
     Unattributed,
-    /// Human-device producer proof is self-consistent, or an Agent producer
+    /// Account Device producer proof is self-consistent, or an Agent producer
     /// verified against its historical signer evidence.
     Verified,
     /// Proof present but not self-consistent, or Agent evidence failed. The
     /// message MUST be dropped (fail-closed).
     Rejected,
-    /// Proof is self-consistent but the producer is not a human device and its
+    /// Proof is self-consistent but the producer is not an Account Device and its
     /// Agent signer evidence is not available yet. The message is shown
     /// flagged (`NeedsVerification`) rather than trusted.
     Unresolved,
@@ -34,8 +34,9 @@ pub(crate) enum ChatProofVerdict {
 /// admitted the Event, so the client only checks that the proof is
 /// self-consistent (`server-trusted-results.md` §2, `federation.md` §3): the
 /// digest covers the exact canonical Event bytes, the verification method
-/// projects to the actual signer and a human device fragment is a complete
-/// device id. A human-device producer is then [`ChatProofVerdict::Verified`];
+/// projects to the actual signer and an Account Device fragment is a complete
+/// device id. An Account Device producer is then [`ChatProofVerdict::Verified`];
+/// this shape does not independently establish native or managed authority.
 /// other producers keep their own evidence rule and stay
 /// [`ChatProofVerdict::Unresolved`] here.
 pub(crate) fn verify_committed_chat_producer_proof(event: &Value) -> ChatProofVerdict {
@@ -66,16 +67,16 @@ pub(crate) fn verify_committed_chat_producer_proof(event: &Value) -> ChatProofVe
             ChatProofVerdict::Unattributed
         };
     };
-    match committed_human_device_producer(envelope) {
+    match committed_account_device_producer(envelope) {
         Ok(Some(_)) => ChatProofVerdict::Verified,
         Ok(None) => ChatProofVerdict::Unresolved,
         Err(()) => ChatProofVerdict::Rejected,
     }
 }
 
-/// The human-device producer of one exact committed Event, after the key-free
+/// The Account Device producer of one exact committed Event, after the key-free
 /// self-consistency check under the Realm's digest suite.
-fn committed_human_device_producer(
+fn committed_account_device_producer(
     envelope: &Value,
 ) -> Result<Option<arkret_wire::AccountDeviceProducer>, ()> {
     let event = serde_json::from_value::<arkret_sdk::Event>(envelope.clone()).map_err(|_| ())?;

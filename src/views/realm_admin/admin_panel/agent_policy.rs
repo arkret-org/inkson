@@ -355,9 +355,7 @@ fn submit_pending(
                     Ok(mut results) => results
                         .pop()
                         .ok_or_else(|| anyhow::anyhow!("Submission omits its final result"))?,
-                    Err(error)
-                        if crate::ephemeral::authority_rejection_reason(&error).is_some() =>
-                    {
+                    Err(error) if definitive_policy_refusal(&error) => {
                         awaiting.set(None);
                         return Ok(None);
                     }
@@ -417,6 +415,25 @@ fn submit_pending(
         }
         busy.set(false);
     });
+}
+
+fn definitive_policy_refusal(error: &anyhow::Error) -> bool {
+    if crate::ephemeral::authority_rejection_reason(error).is_some() {
+        return true;
+    }
+    error.chain().any(|cause| {
+        let Some(arkret_sdk::http_client::Error::Api { status, error }) =
+            cause.downcast_ref::<arkret_sdk::http_client::Error>()
+        else {
+            return false;
+        };
+        use arkret_sdk::ErrorCode as Code;
+        matches!(
+            (*status, error.error_code().map(|code| code.as_str())),
+            (409, Some(Code::FAILED_PRECONDITION))
+                | (403, Some(Code::CAPABILITY_DENIED | Code::POLICY_VIOLATION))
+        )
+    })
 }
 
 #[cfg(test)]
@@ -483,6 +500,25 @@ mod tests {
         )
         .unwrap();
         event
+    }
+
+    #[test]
+    fn explicit_policy_cas_refusal_is_terminal_but_unavailability_is_unknown() {
+        for (status, code, expected) in [
+            (409, "failed_precondition", true),
+            (403, "capability_denied", true),
+            (503, "policy_unavailable", false),
+        ] {
+            let error = anyhow::Error::new(arkret_sdk::http_client::Error::Api {
+                status,
+                error: Box::new(arkret_sdk::Problem::new(code, status, "test refusal")),
+            })
+            .context("original signed Policy request");
+            assert_eq!(definitive_policy_refusal(&error), expected);
+        }
+        assert!(!definitive_policy_refusal(&anyhow::anyhow!(
+            "failed_precondition"
+        )));
     }
 
     #[test]

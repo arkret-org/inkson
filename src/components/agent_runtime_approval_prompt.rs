@@ -23,6 +23,7 @@ fn approval_scope_summary(scope: &arkret_sdk::AgentKeyScope) -> Vec<String> {
     for action in &scope.actions {
         let key = match action.as_str() {
             arkret_wire::CapabilityActionId::EVENT_READ => "agent_runtime.permission_read",
+            arkret_wire::CapabilityActionId::OBJECT_READ => "agent_runtime.permission_metadata",
             arkret_wire::CapabilityActionId::MESSAGE_CREATE => "agent_runtime.permission_post",
             arkret_wire::CapabilityActionId::REACTION_ADD => "agent_runtime.permission_react",
             arkret_wire::CapabilityActionId::AGENT_DRAFT_PROPOSE
@@ -35,7 +36,8 @@ fn approval_scope_summary(scope: &arkret_sdk::AgentKeyScope) -> Vec<String> {
                 "agent_runtime.permission_organize"
             }
             arkret_wire::CapabilityActionId::SELF_COMMITTED_EVENT_READ_SCAN_V1
-            | arkret_wire::CapabilityActionId::SELF_COMMITTED_EVENT_STREAM_SUBSCRIBE_V1 => {
+            | arkret_wire::CapabilityActionId::SELF_COMMITTED_EVENT_STREAM_SUBSCRIBE_V1
+            | arkret_wire::ServiceOperationId::SELF_DIRECT_CONVERSATION_READ_RESOLVE_V1 => {
                 "agent_runtime.permission_sync"
             }
             arkret_wire::ServiceOperationId::SELF_EVENTS_COMMAND_SUBMIT_V1 => {

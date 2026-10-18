@@ -1216,6 +1216,15 @@ impl InksonAccountProjector {
         if !self.fence() {
             return Ok(());
         }
+        self.ctx
+            .state_store
+            .write(|store| -> anyhow::Result<()> {
+                for snapshot in verified.current_snapshots().values() {
+                    store.require_sidecar_current_not_superseded(snapshot.snapshot())?;
+                }
+                Ok(())
+            })
+            .map_err(crate::state::current_index::current_stage_error)?;
         current_stage.arm_account_commit();
         let local_account = self.ctx.account.authority.clone();
         let installed = self.ctx.state_store.write(|store| {

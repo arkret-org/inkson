@@ -186,6 +186,38 @@ impl LocalStateStore {
         &mut self,
         incoming: &arkret_sdk::RealmStateSnapshot,
     ) -> Result<usize, String> {
+        let watermark = self
+            .next_sidecar_current_watermark(incoming)
+            .map_err(|error| error.to_string())?;
+        let changed = usize::from(
+            self.cached
+                .verified_sidecar_current
+                .get(incoming.realm_id.as_str())
+                .map(|snapshot| &**snapshot)
+                != Some(incoming),
+        );
+        self.cached
+            .verified_sidecar_current_watermarks
+            .insert(incoming.realm_id.to_string(), watermark);
+        self.cached
+            .verified_sidecar_current
+            .insert(incoming.realm_id.to_string(), incoming.clone().into());
+        Ok(changed)
+    }
+
+    /// Check immediately before arming a publication, without adopting any
+    /// bytes. A superseded response needs a fresh read; a fork stays terminal.
+    pub(crate) fn require_sidecar_current_not_superseded(
+        &mut self,
+        incoming: &arkret_sdk::RealmStateSnapshot,
+    ) -> anyhow::Result<()> {
+        self.next_sidecar_current_watermark(incoming).map(|_| ())
+    }
+
+    fn next_sidecar_current_watermark(
+        &mut self,
+        incoming: &arkret_sdk::RealmStateSnapshot,
+    ) -> anyhow::Result<super::types::ObservedSidecarCurrentWatermark> {
         self.ensure_cached_loaded();
         let prior = self
             .cached
@@ -215,64 +247,30 @@ impl LocalStateStore {
                 }
             }
         }
-        if incoming.governance_generation < generation {
-            return Err(
-                "Sidecar current regresses a previously observed governance generation".into(),
-            );
-        }
+        anyhow::ensure!(
+            incoming.governance_generation >= generation,
+            "Sidecar current regresses a previously observed governance generation"
+        );
         generation = incoming.governance_generation;
+        let mut superseded = false;
         for head in &incoming.visible_stream_heads {
-            if observed.get(&head.stream_ref).is_some_and(|known| {
-                head.stream_position < known.stream_position
-                    || (head.stream_position == known.stream_position
-                        && head.commit_id != known.commit_id)
-            }) {
-                return Err(
-                    "Sidecar current regresses or forks a previously observed hidden stream".into(),
+            if let Some(known) = observed.get(&head.stream_ref) {
+                anyhow::ensure!(
+                    head.stream_position != known.stream_position
+                        || head.commit_id == known.commit_id,
+                    "Sidecar current forks a previously observed hidden stream"
                 );
+                superseded |= head.stream_position < known.stream_position;
             }
             observed.insert(head.stream_ref.clone(), head.clone());
         }
-
-        if let Some(old) = self
-            .cached
-            .verified_sidecar_current
-            .get(incoming.realm_id.as_str())
-        {
-            if incoming.governance_generation < old.governance_generation {
-                return Err("Sidecar current authority generation regressed".into());
-            }
-            for old_head in &old.visible_stream_heads {
-                if let Some(new_head) = incoming
-                    .visible_stream_heads
-                    .iter()
-                    .find(|head| head.stream_ref == old_head.stream_ref)
-                    && (new_head.stream_position < old_head.stream_position
-                        || (new_head.stream_position == old_head.stream_position
-                            && new_head.commit_id != old_head.commit_id))
-                {
-                    return Err("Sidecar current Snapshot regresses or forks a held head".into());
-                }
-            }
+        if superseded {
+            return Err(super::current_index::CurrentCutSuperseded.into());
         }
-        let changed = usize::from(
-            self.cached
-                .verified_sidecar_current
-                .get(incoming.realm_id.as_str())
-                .map(|snapshot| &**snapshot)
-                != Some(incoming),
-        );
-        self.cached.verified_sidecar_current_watermarks.insert(
-            incoming.realm_id.to_string(),
-            super::types::ObservedSidecarCurrentWatermark {
-                governance_generation: generation,
-                stream_heads: observed.into_values().collect(),
-            },
-        );
-        self.cached
-            .verified_sidecar_current
-            .insert(incoming.realm_id.to_string(), incoming.clone().into());
-        Ok(changed)
+        Ok(super::types::ObservedSidecarCurrentWatermark {
+            governance_generation: generation,
+            stream_heads: observed.into_values().collect(),
+        })
     }
 
     pub(crate) fn invalidate_sidecar_current(&mut self, realm: Option<&str>) {
@@ -528,8 +526,18 @@ mod tests {
         reopened.switch_active_account(&account).unwrap();
         reopened.invalidate_sidecar_current(Some(realm.as_str()));
         let original = serde_json::to_value(reopened.load()).unwrap();
-        for _ in 0..3 {
+        for superseded in [true, false, false] {
             let response = client.snapshot_head(&realm).await.unwrap();
+            let refused = reopened
+                .require_sidecar_current_not_superseded(response.value().unwrap())
+                .unwrap_err();
+            let classified = super::super::current_index::current_stage_error(refused);
+            assert_eq!(
+                matches!(classified, garth::Error::AuthorityCutBehind),
+                superseded,
+                "only an older cut retries; a fork or older governance remains terminal"
+            );
+            assert_eq!(serde_json::to_value(reopened.load()).unwrap(), original);
             assert!(
                 reopened
                     .verified_projection_transaction(

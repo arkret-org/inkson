@@ -432,6 +432,76 @@ fn retained_owned_grant_ids(
     ids.into_iter().collect()
 }
 
+async fn withdraw_owned_grant(
+    base: &str,
+    credential: String,
+    realm: String,
+    account: arkret_sdk::AccountId,
+    id: arkret_sdk::GrantId,
+) -> Result<(), crate::transport::auth::ApiCallError> {
+    use crate::transport::auth::{ApiCallError, AuthoringSessionFence, with_authed_sdk_client};
+
+    let fence = AuthoringSessionFence::capture().map_err(ApiCallError::Failed)?;
+    let send_realm = realm.clone();
+    let send_account = account.clone();
+    let send_id = id.clone();
+    let send_fence = fence.clone();
+    let submitted = with_authed_sdk_client(base, credential.clone(), |http| async move {
+        session_matches(&send_account)?;
+        let realm = arkret_sdk::RealmId::new(send_realm)?;
+        let current = exact_grant(&http, &realm, &send_id).await?;
+        send_fence.check_session_identity()?;
+        let event = ak_ops::capability_revoke_from_owned_current(
+            realm.as_str(),
+            send_account.principal_id.as_str(),
+            &current,
+            Some("controller_withdrawal"),
+        )?
+        .build_sdk_event("inkson")?;
+        let accepted = crate::app::runtime_adapter::event_submitter(http)
+            .submit_sdk_event(&event)
+            .await?;
+        anyhow::ensure!(
+            accepted.is_committed(),
+            "撤回未接纳：{:?}",
+            accepted.rejection_reason_code
+        );
+        Ok(())
+    })
+    .await;
+    fence
+        .check_session_identity()
+        .map_err(ApiCallError::Failed)?;
+
+    // A lost response or a rotated transport can leave the submission unknown
+    // after the Station committed it. The original issuer's exact current is
+    // independently readable after leaving; use a fresh provider transport.
+    // This confirms the target state, never manufactures an Event receipt or
+    // changes the durable submission's outcome, and never signs another Event.
+    let revoked = with_authed_sdk_client(base, credential, |http| async move {
+        session_matches(&account)?;
+        let realm = arkret_sdk::RealmId::new(realm)?;
+        let current = exact_grant(&http, &realm, &id).await?;
+        session_matches(&account)?;
+        anyhow::ensure!(
+            current.value.owned_agent_issuer() == Some(&account),
+            "Original issuer differs from withdrawal target"
+        );
+        Ok(current.value.status == arkret_sdk::CapabilityGrantStatus::Revoked)
+    })
+    .await;
+    fence
+        .check_session_identity()
+        .map_err(ApiCallError::Failed)?;
+    match revoked {
+        Ok(true) => Ok(()),
+        Ok(false) => {
+            submitted.and_then(|()| Err(ApiCallError::Failed(anyhow::anyhow!("撤回结果尚未确认"))))
+        }
+        Err(error) => Err(error),
+    }
+}
+
 /// Kept outside the currently joined Agent roster: leaving or deactivation
 /// must not hide the original issuer's withdrawal surface.
 #[component]
@@ -493,16 +563,7 @@ pub(super) fn OwnedAgentWithdrawal(realm_id: String, token: Signal<String>) -> E
                                 let Some(account) = account.clone() else { return }; let realm = realm.clone(); let id = id.clone(); pending.set(true);
                                 spawn(async move {
                                     let base = crate::app::SessionContext::base_url_string();
-                                    let result = crate::transport::auth::with_authed_sdk_client(&base, token(), |http| async move {
-                                        session_matches(&account)?;
-                                        let realm = arkret_sdk::RealmId::new(realm)?;
-                                        let current = exact_grant(&http, &realm, &id).await?;
-                                        let event = ak_ops::capability_revoke_from_owned_current(realm.as_str(), account.principal_id.as_str(), &current, Some("controller_withdrawal"))?.build_sdk_event("inkson")?;
-                                        let accepted = crate::app::runtime_adapter::event_submitter(http.clone()).submit_sdk_event(&event).await?;
-                                        anyhow::ensure!(accepted.is_committed(), "撤回未接纳：{:?}", accepted.rejection_reason_code);
-                                        anyhow::ensure!(exact_grant(&http, &realm, &id).await?.value.status == arkret_sdk::CapabilityGrantStatus::Revoked, "撤回结果尚未确认");
-                                        Ok(())
-                                    }).await;
+                                    let result = withdraw_owned_grant(&base, token(), realm, account, id).await;
                                     match result { Ok(()) => { message.set("已撤回。旧记录不会恢复；重新授权需明确确认新的记录".into()); refresh += 1; }, Err(e) => message.set(e.display()) }
                                     pending.set(false);
                                 });
@@ -821,17 +882,7 @@ pub(super) fn OwnedAgentAuthority(
                                     let id = id.clone(); let realm = realm.clone(); pending.set(true);
                                     spawn(async move {
                                         let base = crate::app::SessionContext::base_url_string();
-                                        let result = crate::transport::auth::with_authed_sdk_client(&base, token(), |http| async move {
-                                            session_matches(&account)?;
-                                            let realm = arkret_sdk::RealmId::new(realm)?;
-                                            let row = exact_grant(&http, &realm, &id).await?;
-                                            let event = ak_ops::capability_revoke_from_owned_current(realm.as_str(), account.principal_id.as_str(), &row, Some("controller_withdrawal"))?.build_sdk_event("inkson")?;
-                                            let accepted = crate::app::runtime_adapter::event_submitter(http.clone()).submit_sdk_event(&event).await?;
-                                            anyhow::ensure!(accepted.is_committed(), "撤回未接纳：{:?}", accepted.rejection_reason_code);
-                                            let current = exact_grant(&http, &realm, &id).await?;
-                                            anyhow::ensure!(current.value.status == arkret_sdk::CapabilityGrantStatus::Revoked, "撤回结果尚未确认");
-                                            Ok(())
-                                        }).await;
+                                        let result = withdraw_owned_grant(&base, token(), realm, account, id).await;
                                         match result { Ok(()) => { message.set("已撤回；再次授权需要重新确认并签发新记录".into()); refresh += 1; }, Err(e) => message.set(e.display()) }
                                         pending.set(false);
                                     });
