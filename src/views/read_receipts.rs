@@ -57,6 +57,7 @@ struct ReadPosition {
 struct ReadReceiptProjection {
     positions: BTreeMap<(arkret_sdk::ActorId, ReadPositionKey), ReadPosition>,
     stored_counter: u64,
+    generation: Option<(arkret_sdk::ActorId, u64)>,
 }
 
 impl ReadReceiptProjection {
@@ -152,7 +153,7 @@ impl ReadReceiptHub {
     /// pointing at a different surface must not be silently re-attributed to a
     /// Strand.
     ///
-    /// `policy` is the Realm's accepted `ak.realm.read_receipt_policy`.
+    /// `policy` is the exact scope's accepted `ak.scope.read_receipt_policy`.
     /// `read-receipts.md` §2.5 puts the `disclosure="disabled"` and
     /// `visibility="private"` enforcement point on the **client**: a Sync
     /// Service cannot read a receipt at all, so a compliant receiver is what
@@ -192,6 +193,11 @@ impl ReadReceiptHub {
         if !read_receipt_is_displayable(policy, local_actor, &target.actor_id) {
             return false;
         }
+        self.retain_generation(
+            Some(local_actor),
+            state.current_generation,
+            state.current_reset_required,
+        );
         self.projection.write().apply(
             key,
             message_id,
@@ -199,6 +205,42 @@ impl ReadReceiptHub {
             local_actor.clone(),
             target.actor_id.clone(),
         )
+    }
+
+    /// A new account/current cut never revives hints retained at an older cut.
+    pub(crate) fn retain_generation(
+        &mut self,
+        viewer: Option<&arkret_sdk::ActorId>,
+        generation: u64,
+        reset: bool,
+    ) {
+        let next = viewer.map(|viewer| (viewer.clone(), generation));
+        let changed = self.projection.peek().generation != next;
+        if changed || (reset && !self.projection.peek().positions.is_empty()) {
+            let mut projection = self.projection.write();
+            projection.positions.clear();
+            projection.generation = next;
+        }
+    }
+
+    fn retract_target(&mut self, realm: &str, strand: &str, message: Option<&str>) {
+        let remove = |key: &ReadPositionKey, position: &ReadPosition| {
+            key.realm_id == realm
+                && key.scope_ref == strand
+                && message.is_none_or(|message| position.message_id == message)
+        };
+        if self
+            .projection
+            .peek()
+            .positions
+            .iter()
+            .any(|((_, key), position)| remove(key, position))
+        {
+            self.projection
+                .write()
+                .positions
+                .retain(|(_, key), position| !remove(key, position));
+        }
     }
 
     /// Actors whose read position lands exactly on `message_id`.
@@ -232,8 +274,8 @@ impl Default for ReadReceiptHub {
 /// Both rules are client-side by construction: the receipt travels as Signal
 /// plaintext inside the ciphertext, so no service can apply them.
 ///
-/// - `disclosure="disabled"`: the Realm generates no receipts, so an arriving one is non-compliant.
-///   Rendering it would leak a read position the Realm said would not exist.
+/// - `disclosure="disabled"`: the scope generates no receipts, so an arriving one is non-compliant.
+///   Rendering it would leak a read position the scope said would not exist.
 /// - `visibility="private"`: only the full ActorId of the target Message's author may observe the
 ///   receipt; its reader is a different identity.
 fn read_receipt_is_displayable(
@@ -289,6 +331,24 @@ pub fn ReadReceiptIndicator(
     display: bool,
     policy: Option<arkret_sdk::ReadReceiptPolicy>,
 ) -> Element {
+    let hub = ReadReceiptHub::try_use();
+    let allowed = display
+        && target_author.as_ref().is_some_and(|author| {
+            policy
+                .as_ref()
+                .is_some_and(|policy| read_receipt_is_displayable(policy, &viewer, author))
+        });
+    let retract_realm = realm_id.clone();
+    let retract_strand = strand_id.clone();
+    let retract_message = message_id.clone();
+    use_effect(use_reactive(
+        (&allowed, &retract_realm, &retract_strand, &retract_message),
+        move |(allowed, realm, strand, message)| {
+            if !allowed && let Some(mut hub) = hub {
+                hub.retract_target(&realm, &strand, message.as_deref());
+            }
+        },
+    ));
     let readers = match (ReadReceiptHub::try_use(), message_id, target_author, policy) {
         (Some(hub), Some(message), Some(author), Some(policy))
             if display && read_receipt_is_displayable(&policy, &viewer, &author) =>

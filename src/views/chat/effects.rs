@@ -716,10 +716,12 @@ pub(super) fn ChatEffects(
             let Some(material) = plan.material else {
                 return;
             };
+            let Some(receipt_scope) = plan.scope else {
+                return;
+            };
             let strand_id = strand;
             let api_token = token();
             let base = base.clone();
-            let realm = realm.clone();
             let authority = authority_for_receipt.clone();
             let device = device.clone();
             // The seal burns the SDK-owned nonce counter into the persisted
@@ -733,9 +735,7 @@ pub(super) fn ChatEffects(
                     |submitter| async move {
                         submitter
                             .send_scope_signal(
-                                arkret_sdk::ScopeRef::Realm {
-                                    realm_id: arkret_sdk::RealmId::new(realm.clone())?,
-                                },
+                                receipt_scope,
                                 &authority,
                                 &device,
                                 &material,

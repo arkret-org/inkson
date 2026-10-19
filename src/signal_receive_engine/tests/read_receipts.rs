@@ -48,15 +48,6 @@ async fn routed_policy(value: Option<Value>, complete: bool) -> Vec<arkret_sdk::
     let realm: arkret_sdk::RealmId = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
         .parse()
         .unwrap();
-    // This obsolete cache deliberately contradicts accepted current. Routing
-    // must ignore it, rather than consuming a test-only policy setter.
-    local.set_read_receipt_policy_snapshot(
-        realm.to_string(),
-        Some(crate::state::ReadReceiptPolicySnapshot {
-            disclosure: "optional".to_owned(),
-            visibility: Some("public".to_owned()),
-        }),
-    );
     let index = crate::state::CurrentIndex::open(&account, 0, local.current_index_location())
         .await
         .unwrap();
@@ -116,9 +107,17 @@ async fn routed_policy(value: Option<Value>, complete: bool) -> Vec<arkret_sdk::
         ))
         .unwrap(),
     )];
+    entries.push(row(
+        arkret_sdk::CurrentSelector::MemberState {
+            actor_id: signal.actor_id().clone(),
+        },
+        json!({"membership":"join"}),
+    ));
     if let Some(value) = value {
         entries.push(row(
-            arkret_sdk::CurrentSelector::RealmReadReceiptPolicy,
+            arkret_sdk::CurrentSelector::ScopeReadReceiptPolicy {
+                scope_ref: signal.scope_ref().clone(),
+            },
             value,
         ));
     }
@@ -142,7 +141,7 @@ async fn routed_policy(value: Option<Value>, complete: bool) -> Vec<arkret_sdk::
         .unwrap();
     store.lock().unwrap().set_current_generation(1);
     assert_eq!(
-        sink.realm_read_receipt_policy(&signal).await.is_some(),
+        sink.scope_read_receipt_policy(&signal).await.is_some(),
         complete
     );
     sink.handle(received(&signal)).await.unwrap();
@@ -151,7 +150,7 @@ async fn routed_policy(value: Option<Value>, complete: bool) -> Vec<arkret_sdk::
 }
 
 #[tokio::test]
-async fn read_receipt_route_consumes_private_typed_current_instead_of_legacy_cache() {
+async fn read_receipt_route_consumes_private_scoped_current() {
     let observed = routed_policy(Some(json!({"visibility":"private"})), true).await;
     assert_eq!(observed.len(), 1);
     assert_eq!(
@@ -163,7 +162,7 @@ async fn read_receipt_route_consumes_private_typed_current_instead_of_legacy_cac
 }
 
 #[tokio::test]
-async fn read_receipt_route_discards_without_complete_current_even_with_legacy_policy() {
+async fn read_receipt_route_discards_without_complete_scope_current() {
     assert!(
         routed_policy(Some(json!({"visibility":"private"})), false)
             .await

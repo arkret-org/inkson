@@ -72,7 +72,7 @@ pub(crate) fn read_receipt_policy_from_current(
     entries: &[TypedCurrentRow],
     complete_cut: bool,
 ) -> anyhow::Result<arkret_sdk::ReadReceiptPolicy> {
-    let realm = scope
+    let _realm = scope
         .realm_id_opt()
         .ok_or_else(|| anyhow::anyhow!("receipt scope has no Realm"))?;
     anyhow::ensure!(
@@ -86,13 +86,15 @@ pub(crate) fn read_receipt_policy_from_current(
         ),
         "unsupported receipt scope"
     );
-    let selector = CurrentSelector::RealmReadReceiptPolicy;
+    let selector = CurrentSelector::ScopeReadReceiptPolicy {
+        scope_ref: scope.clone(),
+    };
     let mut matching = entries
         .iter()
         .filter(|entry| selector_of(entry) == &selector);
-    let mut policy = arkret_sdk::ReadReceiptPolicy::default();
-    if let Some(TypedCurrentRow::Value {
+    let policy = if let Some(TypedCurrentRow::Value {
         source_stream_ref,
+        revision,
         value,
         ..
     }) = matching.next()
@@ -101,34 +103,17 @@ pub(crate) fn read_receipt_policy_from_current(
             matching.next().is_none(),
             "duplicate receipt-policy current"
         );
-        anyhow::ensure!(
-            source_stream_ref
-                == &arkret_sdk::CommitStreamRef::Realm {
-                    realm_id: realm.clone()
-                },
-            "receipt-policy current has another source stream"
-        );
-        let payload: arkret_sdk::ReadReceiptPolicyPayload = serde_json::from_value(value.clone())?;
-        payload.validate()?;
-        if let Some(disclosure) = payload.disclosure {
-            policy.disclosure = disclosure;
-        }
-        if let Some(visibility) = payload.visibility {
-            policy.visibility = visibility;
-        }
-        if let Some(allowed) = payload.scope_overrides_allowed {
-            policy.scope_overrides_allowed = allowed;
-        }
-    }
-    // Circle has no registered independent receipt-policy carrier in the
-    // current schema. Only a parent forbidding overrides can prove its floor;
-    // disabled already requires every receipt to be discarded.
-    anyhow::ensure!(
-        !matches!(scope, arkret_sdk::ScopeRef::Circle { .. })
-            || !policy.scope_overrides_allowed
-            || policy.disclosure == arkret_sdk::ReadReceiptDisclosure::Disabled,
-        "Circle receipt-policy floor is unavailable"
-    );
+        let current = arkret_sdk::ScopeReadReceiptPolicyCurrent {
+            selector,
+            source_stream_ref: source_stream_ref.clone(),
+            revision: revision.clone(),
+            value: serde_json::from_value(value.clone())?,
+        };
+        current.validate()?;
+        current.value.resolved()
+    } else {
+        arkret_sdk::ReadReceiptPolicy::default()
+    };
     Ok(policy)
 }
 
@@ -358,10 +343,15 @@ impl RealmCurrentView {
                         circle_id: found,
                         member_actor_id: actor_id,
                     },
+                source_stream_ref,
                 value,
                 ..
             } = entry
             {
+                anyhow::ensure!(
+                    source_stream_ref.scope_ref() == *scope || found != circle_id,
+                    "Circle membership source differs from scope"
+                );
                 if found != circle_id {
                     continue;
                 }

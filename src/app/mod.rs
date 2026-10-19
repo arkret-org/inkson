@@ -676,6 +676,19 @@ fn AppBootstrap() -> Element {
     let message_stream_hub =
         use_context_provider(crate::views::message_streams::MessageStreamHub::new);
     let read_receipt_hub = use_context_provider(crate::views::read_receipts::ReadReceiptHub::new);
+    use_effect(move || {
+        let session = SessionContext::get();
+        let viewer = session
+            .active_account()
+            .map(|account| arkret_sdk::ActorId::account(account.authority));
+        let store = session.state_store.read();
+        let mut hub = read_receipt_hub;
+        hub.retain_generation(
+            viewer.as_ref(),
+            store.current_generation(),
+            store.current_reset_required(),
+        );
+    });
     {
         let signal_product_router = runtime_services.signal_product_sink.clone();
         use_hook(move || {

@@ -1316,7 +1316,25 @@ impl CurrentIndex {
             progress_is_complete_cut(&progress, realm),
             "receipt policy requires a complete verified cut"
         );
-        let selector = CurrentSelector::RealmReadReceiptPolicy;
+        let covered = progress
+            .signed_snapshot
+            .as_ref()
+            .map(|cut| &cut.stream_heads)
+            .or_else(|| {
+                progress
+                    .baseline
+                    .as_ref()
+                    .map(|baseline| &baseline.coverage.stream_heads)
+            });
+        anyhow::ensure!(
+            covered.is_some_and(|heads| heads
+                .iter()
+                .any(|head| head.stream_ref.scope_ref() == *scope)),
+            "receipt policy scope is not covered by this authorized cut"
+        );
+        let selector = CurrentSelector::ScopeReadReceiptPolicy {
+            scope_ref: scope.clone(),
+        };
         let row = self
             .ready_selector(realm.as_str(), &selector, generation)
             .await?;

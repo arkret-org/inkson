@@ -310,7 +310,6 @@ impl super::ClientLocalState {
             read_receipt_realm_display_overrides: _,
             read_receipt_strand_overrides: _,
             read_receipt_strand_display_overrides: _,
-            read_receipt_policy_snapshots: _,
             stream_cursors: _,
             realm_authority_basis: _,
             push_registration: _,
@@ -681,15 +680,6 @@ impl super::ClientLocalState {
             vec!["read_receipt_strand_display_overrides".into()],
             Some(&old.read_receipt_strand_display_overrides),
             Some(&self.read_receipt_strand_display_overrides),
-            |changes, p, a, b| {
-                changes.scalar(p, a, b)?;
-                Ok(())
-            },
-        )?;
-        changes.map(
-            vec!["read_receipt_policy_snapshots".into()],
-            Some(&old.read_receipt_policy_snapshots),
-            Some(&self.read_receipt_policy_snapshots),
             |changes, p, a, b| {
                 changes.scalar(p, a, b)?;
                 Ok(())

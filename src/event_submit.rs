@@ -3660,9 +3660,25 @@ impl EventSubmitter {
             })
             .await?;
         }
+        if let crate::signal::SignalPayload::ReadReceipt {
+            strand_id,
+            event_id,
+        } = payload
+        {
+            state_store.read(|store| {
+                store.require_read_receipt_send(&header.scope_ref, strand_id, event_id)
+            })?;
+        }
         let plaintext = payload.to_plaintext(&header.sender_actor_id, sequence)?;
         let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
         let encrypted_payload = state_store.write(|store| {
+            if let crate::signal::SignalPayload::ReadReceipt {
+                strand_id,
+                event_id,
+            } = payload
+            {
+                store.require_read_receipt_send(&header.scope_ref, strand_id, event_id)?;
+            }
             store.signal_sequence_store_context(&header.sender_actor_id)?;
             crate::signal::encrypt_signal_payload_with_store(
                 store,
