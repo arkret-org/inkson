@@ -214,12 +214,10 @@ impl AgentServiceScopePreset {
             // Each preset declares only the operation it directly authors.
             // The canonical registry selects capabilities from this draft and
             // `service_actions_for_presets` completes the atomic runtime floor.
-            Self::SubscribeEvents => {
-                &[
-                    ServiceOperationId::SELF_DIRECT_CONVERSATION_READ_RESOLVE_V1,
-                    ServiceOperationId::SELF_COMMITTED_EVENT_STREAM_SUBSCRIBE_V1,
-                ]
-            }
+            Self::SubscribeEvents => &[
+                ServiceOperationId::SELF_DIRECT_CONVERSATION_READ_RESOLVE_V1,
+                ServiceOperationId::SELF_COMMITTED_EVENT_STREAM_SUBSCRIBE_V1,
+            ],
             Self::ScanCatchUp => &[
                 ServiceOperationId::SELF_COMMITTED_EVENT_READ_SCAN_V1,
                 ServiceOperationId::SELF_SIGNER_KEYS_READ_RESOLVE_V1,

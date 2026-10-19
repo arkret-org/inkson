@@ -52,7 +52,7 @@ hkdf = "0.13"
 hmac = "0.13"
 image = { version = "0.25.10", default-features = false }
 js-sys = "0.3"
-jsonschema = { version = "0.52.1", default-features = false }
+jsonschema = { version = "0.59.0", default-features = false }
 pulldown-cmark = { version = "0.13", default-features = false }
 qrcode = { version = "0.14", default-features = false }
 rand_core = "0.10"

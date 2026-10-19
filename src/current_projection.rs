@@ -90,8 +90,8 @@ impl ScopeMlsCurrent {
 }
 
 impl RealmCurrentView {
-    /// Fold the complete accepted roster, including leave assertions retained
-    /// by a cold snapshot. Raw Event history cannot establish this current.
+    /// Consume complete effective entries and the exact last source from the
+    /// accepted Snapshot. Raw Event history cannot establish this current.
     pub(crate) fn call_roster(
         &self,
         call: &arkret_sdk::CallId,
@@ -140,6 +140,7 @@ impl RealmCurrentView {
         );
         let roster: CallRosterCurrentValue = serde_json::from_value(value.clone())?;
         roster.validate_sources(source_stream_ref, revision)?;
+        arkret_sdk::verify_call_roster_bindings(source_stream_ref.realm_id(), call, &roster)?;
         Ok(Some(roster.effective_participants()?))
     }
 
@@ -452,8 +453,6 @@ mod tests {
             commit_id: serde_json::from_value(left["source_commit"]["commit_id"].clone()).unwrap(),
             stream_position: 2,
         };
-        let mut assertions = vec![joined, left];
-        assertions.sort_by_key(|a| a["tag_id"].as_str().unwrap().to_owned());
         let mut rows = vec![
             entry(
                 CurrentSelector::CallState {
@@ -467,7 +466,7 @@ mod tests {
                     call_id: call.clone(),
                 },
                 2,
-                json!({"assertions":assertions}),
+                json!({"entries":[],"last_source":left}),
             ),
         ];
         let TypedCurrentRow::Value { revision, .. } = &mut rows[1];
@@ -489,7 +488,7 @@ mod tests {
         );
         let mut bad = rows;
         let TypedCurrentRow::Value { value, .. } = &mut bad[1];
-        value["assertions"][0]["tag_id"] = json!("wrong-axis:7");
+        value["last_source"]["tag_id"] = json!("wrong-axis:7");
         assert!(
             RealmCurrentView::new(REALM, bad, true)
                 .unwrap()
