@@ -503,7 +503,7 @@ impl InksonSignalSink {
                 // `disabled` / `private` discard on the receiving client:
                 // the receipt is inside the ciphertext, so the Station
                 // could not have filtered it.
-                if let Some(policy) = self.realm_read_receipt_policy(&signal).await {
+                if let Some(policy) = self.scope_read_receipt_policy(&signal).await {
                     self.products.read_receipt(&signal, &policy);
                 }
             }
@@ -1127,12 +1127,12 @@ impl InksonSignalSink {
         }
     }
 
-    /// The Realm's accepted `ak.realm.read_receipt_policy` at the account's
+    /// The Realm's accepted `ak.scope.read_receipt_policy` at the account's
     /// current committed generation.
     ///
     /// Only an accepted complete current cut can prove an undeclared policy.
     /// Legacy presentation snapshots never establish this privacy boundary.
-    async fn realm_read_receipt_policy(
+    async fn scope_read_receipt_policy(
         &self,
         signal: &AdmittedSignal,
     ) -> Option<arkret_sdk::ReadReceiptPolicy> {

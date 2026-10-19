@@ -9,7 +9,7 @@ fn scope() -> arkret_sdk::ScopeRef {
 
 fn policy_row(value: serde_json::Value) -> TypedCurrentRow {
     TypedCurrentRow::Value {
-        selector: CurrentSelector::RealmReadReceiptPolicy,
+        selector: CurrentSelector::ScopeReadReceiptPolicy { scope_ref: scope() },
         source_stream_ref: arkret_sdk::CommitStreamRef::Realm {
             realm_id: REALM.parse().unwrap(),
         },
@@ -100,7 +100,7 @@ async fn read_receipt_policy_consumes_typed_current_and_closes_unprovable_circle
         )),
     };
     assert!(store.read_read_receipt_policy_ready(&circle).await.is_err());
-    let mut explicit = policy_row(json!({"visibility":"private", "scope_overrides_allowed":false}));
+    let mut explicit = policy_row(json!({"visibility":"private"}));
     let TypedCurrentRow::Value { revision, .. } = &mut explicit;
     revision.stream_position = 2;
     store
@@ -111,12 +111,7 @@ async fn read_receipt_policy_consumes_typed_current_and_closes_unprovable_circle
         .await
         .unwrap()
         .finish();
-    let closed = store.read_read_receipt_policy_ready(&circle).await.unwrap();
-    assert_eq!(
-        closed.visibility,
-        arkret_sdk::ReadReceiptVisibility::Private
-    );
-    assert!(!closed.scope_overrides_allowed);
+    assert!(store.read_read_receipt_policy_ready(&circle).await.is_err());
 }
 
 #[tokio::test]

@@ -451,7 +451,7 @@ impl LocalStateStore {
     /// realm → default). Mirror of
     /// `arkret_sdk::ReadReceiptPreferences::effective_send` extended with
     /// server-declared policy lock: when the Realm publishes a
-    /// `ak.realm.read_receipt_policy` with `disclosure="required"` the
+    /// `ak.scope.read_receipt_policy` with `disclosure="required"` the
     /// answer is forced `true`; with `disclosure="disabled"` it's forced
     /// `false`. User-level overrides are ignored in those cases (matching
     /// the lock UI in settings).

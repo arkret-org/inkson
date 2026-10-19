@@ -118,7 +118,11 @@ async fn routed_policy(value: Option<Value>, complete: bool) -> Vec<arkret_sdk::
     )];
     if let Some(value) = value {
         entries.push(row(
-            arkret_sdk::CurrentSelector::RealmReadReceiptPolicy,
+            arkret_sdk::CurrentSelector::ScopeReadReceiptPolicy {
+                scope_ref: arkret_sdk::ScopeRef::Realm {
+                    realm_id: realm.clone(),
+                },
+            },
             value,
         ));
     }
@@ -142,7 +146,7 @@ async fn routed_policy(value: Option<Value>, complete: bool) -> Vec<arkret_sdk::
         .unwrap();
     store.lock().unwrap().set_current_generation(1);
     assert_eq!(
-        sink.realm_read_receipt_policy(&signal).await.is_some(),
+        sink.scope_read_receipt_policy(&signal).await.is_some(),
         complete
     );
     sink.handle(received(&signal)).await.unwrap();

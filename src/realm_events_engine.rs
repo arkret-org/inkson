@@ -3902,9 +3902,13 @@ mod tests {
             let commit = &item.commit;
             rows.push(match item.event.kind.as_str() {
                 "ak.realm.profile" => row(CurrentSelector::RealmProfile, commit, payload),
-                "ak.realm.read_receipt_policy" => {
-                    row(CurrentSelector::RealmReadReceiptPolicy, commit, payload)
-                }
+                "ak.scope.read_receipt_policy" => row(
+                    CurrentSelector::ScopeReadReceiptPolicy {
+                        scope_ref: item.event.scope_ref.clone(),
+                    },
+                    commit,
+                    payload,
+                ),
                 "ak.realm.policy_bundle" => {
                     row(CurrentSelector::RealmPolicyBundle, commit, payload)
                 }
@@ -5022,10 +5026,10 @@ mod tests {
         ));
         for policy in [
             json!({"disclosure":"disabled"}),
-            json!({"disclosure":"required","visibility":"private","scope_overrides_allowed":false}),
+            json!({"disclosure":"required","visibility":"private"}),
         ] {
             let mut entries = ordinary_bootstrap_entries(&creator);
-            entries.push(("ak.realm.read_receipt_policy".to_owned(), policy.clone()));
+            entries.push(("ak.scope.read_receipt_policy".to_owned(), policy.clone()));
             let (bundle, _, items) =
                 crate::test_support::committed_event::verified_realm_fixture_signed_by(
                     &crate::test_support::committed_event::FixtureStation::did_web(),
@@ -5052,7 +5056,7 @@ mod tests {
                     matches!(
                         row,
                         arkret_wire::TypedCurrentRow::Value {
-                            selector: arkret_wire::CurrentSelector::RealmReadReceiptPolicy,
+                            selector: arkret_wire::CurrentSelector::ScopeReadReceiptPolicy { .. },
                             ..
                         }
                     )

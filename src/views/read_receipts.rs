@@ -152,7 +152,7 @@ impl ReadReceiptHub {
     /// pointing at a different surface must not be silently re-attributed to a
     /// Strand.
     ///
-    /// `policy` is the Realm's accepted `ak.realm.read_receipt_policy`.
+    /// `policy` is the Realm's accepted `ak.scope.read_receipt_policy`.
     /// `read-receipts.md` §2.5 puts the `disclosure="disabled"` and
     /// `visibility="private"` enforcement point on the **client**: a Sync
     /// Service cannot read a receipt at all, so a compliant receiver is what

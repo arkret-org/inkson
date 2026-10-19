@@ -346,7 +346,7 @@ pub struct ReadMarkerRecord {
     pub updated_at: DateTime<Utc>,
 }
 
-/// Server-declared `ak.realm.read_receipt_policy` snapshot for a Realm, as
+/// Server-declared `ak.scope.read_receipt_policy` snapshot for a Realm, as
 /// surfaced to clients via the Seal view (P0 M3) once sync.rs lands.
 /// Locks the per-scope toggle in the settings UI when `disclosure` is
 /// `required` (server forces send) or `disabled` (server forbids send).
@@ -1068,7 +1068,7 @@ pub struct ClientLocalState {
     pub read_receipt_strand_overrides: im::OrdMap<String, bool>,
     #[serde(default)]
     pub read_receipt_strand_display_overrides: im::OrdMap<String, bool>,
-    /// Server-declared `ak.realm.read_receipt_policy` snapshots, keyed by
+    /// Server-declared `ak.scope.read_receipt_policy` snapshots, keyed by
     /// realm id. Populated when sync (P0 M3) lands — surfaces the
     /// disclosure / visibility values from the
     /// `ak.component.realm.read_receipt_policy.v1` sequenced-state cell so

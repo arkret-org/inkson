@@ -72,7 +72,7 @@ pub(crate) fn read_receipt_policy_from_current(
     entries: &[TypedCurrentRow],
     complete_cut: bool,
 ) -> anyhow::Result<arkret_sdk::ReadReceiptPolicy> {
-    let realm = scope
+    scope
         .realm_id_opt()
         .ok_or_else(|| anyhow::anyhow!("receipt scope has no Realm"))?;
     anyhow::ensure!(
@@ -86,11 +86,14 @@ pub(crate) fn read_receipt_policy_from_current(
         ),
         "unsupported receipt scope"
     );
-    let selector = CurrentSelector::RealmReadReceiptPolicy;
+    let selector = CurrentSelector::ScopeReadReceiptPolicy {
+        scope_ref: scope.clone(),
+    };
     let mut matching = entries
         .iter()
         .filter(|entry| selector_of(entry) == &selector);
     let mut policy = arkret_sdk::ReadReceiptPolicy::default();
+    let mut present = false;
     if let Some(TypedCurrentRow::Value {
         source_stream_ref,
         value,
@@ -102,10 +105,7 @@ pub(crate) fn read_receipt_policy_from_current(
             "duplicate receipt-policy current"
         );
         anyhow::ensure!(
-            source_stream_ref
-                == &arkret_sdk::CommitStreamRef::Realm {
-                    realm_id: realm.clone()
-                },
+            &source_stream_ref.scope_ref() == scope,
             "receipt-policy current has another source stream"
         );
         let payload: arkret_sdk::ReadReceiptPolicyPayload = serde_json::from_value(value.clone())?;
@@ -116,18 +116,13 @@ pub(crate) fn read_receipt_policy_from_current(
         if let Some(visibility) = payload.visibility {
             policy.visibility = visibility;
         }
-        if let Some(allowed) = payload.scope_overrides_allowed {
-            policy.scope_overrides_allowed = allowed;
-        }
+        present = true;
     }
-    // Circle has no registered independent receipt-policy carrier in the
-    // current schema. Only a parent forbidding overrides can prove its floor;
-    // disabled already requires every receipt to be discarded.
+    // This view proves Realm absence. A Circle needs its own accepted row;
+    // never substitute the parent Realm policy for a missing scope proof.
     anyhow::ensure!(
-        !matches!(scope, arkret_sdk::ScopeRef::Circle { .. })
-            || !policy.scope_overrides_allowed
-            || policy.disclosure == arkret_sdk::ReadReceiptDisclosure::Disabled,
-        "Circle receipt-policy floor is unavailable"
+        !matches!(scope, arkret_sdk::ScopeRef::Circle { .. }) || present,
+        "Circle receipt-policy current proof is unavailable"
     );
     Ok(policy)
 }

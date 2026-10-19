@@ -1316,7 +1316,9 @@ impl CurrentIndex {
             progress_is_complete_cut(&progress, realm),
             "receipt policy requires a complete verified cut"
         );
-        let selector = CurrentSelector::RealmReadReceiptPolicy;
+        let selector = CurrentSelector::ScopeReadReceiptPolicy {
+            scope_ref: scope.clone(),
+        };
         let row = self
             .ready_selector(realm.as_str(), &selector, generation)
             .await?;

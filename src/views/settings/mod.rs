@@ -2132,7 +2132,7 @@ pub fn SettingsPanel(
                     }
                     for (realm_id, send) in read_receipt_realm_overrides() {
                             // Policy lock — when coland publishes a
-                            // ak.realm.read_receipt_policy with disclosure=
+                            // ak.scope.read_receipt_policy with disclosure=
                             // required|disabled, the toggle is disabled and
                             // we show a lock badge with the reason. Until
                             // sync (P0 M3) wires the snapshot, this returns
