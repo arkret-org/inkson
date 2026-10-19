@@ -2265,7 +2265,7 @@ export async function mockArkretApi(
         if (!options.demoNotification || !demoNative.ids.review || options.demoEventRedaction) {
           throw new Error("Search Policy requires the independent signed board Message fixture");
         }
-        const starts = Date.now() + 45_000;
+        const starts = Date.now() + 90_000;
         const policy = {
           id: "ak:policy:0198ff00-0000-7000-8000-000000000001",
           schema: "ak.schema.policy.v1", realm_id: DEMO_REALM,

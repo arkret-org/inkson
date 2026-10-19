@@ -56,6 +56,12 @@ test("current retention Policy withdraws and restores the same search body at it
   await submit.click();
   await expect(row).toHaveCount(1);
   await expect(row).toHaveAttribute("data-event-id", original!);
+  const startsAt = Date.parse(policy.not_before);
+  expect(Date.now()).toBeLessThan(startsAt);
+  // Synchronize to the declared input time on fast and slow fixture hosts.
+  // The subsequent UI withdrawal assertion keeps its ordinary 20-second limit.
+  await expect.poll(() => Date.now(), { timeout: 90_000, intervals: [1_000] })
+    .toBeGreaterThanOrEqual(startsAt - 5_000);
   await expect(row).toHaveCount(0);
   await expect(panel.getByTestId("global-search-results-no-results")).toBeVisible();
   observed.hiddenAt = Date.now();
