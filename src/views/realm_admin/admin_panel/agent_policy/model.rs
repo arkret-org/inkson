@@ -1,8 +1,7 @@
 //! Form state only; all serialized policy and current records come from the SDK.
 use arkret_models_collaboration::governance::operation_wire::{
-    AgentPolicyOperation, AgentPolicyTarget, ManagementOperation, ManagementReviewRequirement,
-    Policy, PolicyResourceKind, PolicyResourceSelector, PolicyRule, PolicyRuleKind,
-    PolicySetStatePayload, PolicySetValue,
+    AgentPolicyTarget, ManagementOperation, ManagementReviewRequirement, Policy,
+    PolicyResourceSelector, PolicyRule, PolicyRuleKind, PolicySetStatePayload, PolicySetValue,
 };
 use arkret_sdk::{AccountId, ActorId, CurrentRevision, PolicyId, RealmId, ScopeRef};
 use arkret_wire::{PolicyEffect, PolicyKind};
@@ -377,79 +376,10 @@ pub(super) fn supported_by_current_backend(
     let PolicySetValue::Governance(document) = &payload.value else {
         return false;
     };
-    if document.policy_kind != PolicyKind::Agent {
-        return false;
-    }
-    if document.validate().is_err() {
-        return false;
-    }
-    if !matches!(scope,
-        arkret_wire::ScopeRef::Realm { realm_id }
-        | arkret_wire::ScopeRef::Circle { realm_id, .. }
-        if document.realm_id.as_ref() == Some(realm_id))
-    {
-        return false;
-    }
-    let circle = matches!(scope, arkret_wire::ScopeRef::Circle { .. });
-    if (circle && document.default_effect == PolicyEffect::RequireReview)
-        || document.rules.iter().any(|rule| {
-            rule.kind != PolicyRuleKind::Agent
-                || (circle && rule.effect == PolicyEffect::RequireReview)
-                || rule.actions.as_ref().is_some_and(|actions| {
-                    actions.iter().any(|action| {
-                        arkret_schema::capability_action(action).is_none_or(|descriptor| {
-                            descriptor.event_mapping_kind == "aggregate_admin"
-                        }) || arkret_wire::ServiceOperationId::from_wire(action).is_some()
-                    })
-                })
-                || (rule.actions.is_some()
-                    && rule.agent_operations.as_ref().is_some_and(|ops| {
-                        ops.iter().any(|op| {
-                            matches!(
-                                op,
-                                AgentPolicyOperation::Join | AgentPolicyOperation::Publish
-                            )
-                        })
-                    }))
-                || rule.resources.as_ref().is_some_and(|resources| {
-                    resources.iter().any(|resource| {
-                        resource
-                            .realm_id
-                            .as_ref()
-                            .is_some_and(|realm| document.realm_id.as_ref() != Some(realm))
-                            || match resource.kind {
-                                PolicyResourceKind::Realm => {
-                                    resource.resource_ref.as_ref().is_some_and(|id| {
-                                        document
-                                            .realm_id
-                                            .as_ref()
-                                            .is_none_or(|realm| realm.as_str() != id)
-                                    })
-                                }
-                                PolicyResourceKind::Strand => resource
-                                    .resource_ref
-                                    .as_ref()
-                                    .is_some_and(|id| id.parse::<arkret_wire::StrandId>().is_err()),
-                                PolicyResourceKind::Space => resource
-                                    .resource_ref
-                                    .as_ref()
-                                    .is_some_and(|id| id.parse::<arkret_wire::SpaceId>().is_err()),
-                                PolicyResourceKind::Object => resource
-                                    .resource_ref
-                                    .as_ref()
-                                    .is_some_and(|id| !arkret_wire::is_object_ref(id)),
-                                // Service scope cannot be used as a content-resource selector.
-                                // No registered Agent management service matcher supplies its
-                                // facts.
-                                PolicyResourceKind::Service => true,
-                            }
-                    })
-                })
-        })
-    {
-        return false;
-    }
-    true
+    use arkret_policy::agent_policy_support::{
+        REFERENCE_AGENT_POLICY_SUPPORT, validate_agent_policy_support,
+    };
+    validate_agent_policy_support(document, scope, &REFERENCE_AGENT_POLICY_SUPPORT).is_ok()
 }
 
 #[cfg(test)]
@@ -551,99 +481,6 @@ mod tests {
         assert_eq!(policy.updated_by, Some(ActorId::account(updater)));
         draft.policy_id = format!("ak:policy:{}", crate::operation::uuid_v7());
         assert!(draft.build(&realm(), &creator, Some(&old), None).is_err());
-    }
-    #[test]
-    fn all_registered_operations_and_default_deny_match_the_station_configuration_matrix() {
-        let mut draft = Draft::default();
-        let actor = account("admin", "home");
-        let scope = ScopeRef::Realm { realm_id: realm() };
-        for op in [
-            "join",
-            "authorize",
-            "execute",
-            "read",
-            "deliver",
-            "publish",
-            "serve",
-        ] {
-            draft.rules[0].operations = vec![op.into()];
-            for effect in ["allow", "deny", "quarantine"] {
-                draft.rules[0].effect = effect.into();
-                let p = draft.build(&realm(), &actor, None, None).unwrap();
-                assert!(
-                    supported_by_current_backend(&p, &scope),
-                    "registered operation {op}, effect {effect}"
-                );
-                let circle = arkret_sdk::CircleId::from_event_id(
-                    &arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [14; 32]),
-                );
-                assert!(supported_by_current_backend(
-                    &p,
-                    &ScopeRef::Circle {
-                        realm_id: realm(),
-                        circle_id: circle
-                    }
-                ));
-            }
-        }
-        draft.rules[0].effect = "deny".into();
-        draft.rules[0].operations = vec!["join".into()];
-        draft.default_effect = "deny".into();
-        assert!(supported_by_current_backend(
-            &draft.build(&realm(), &actor, None, None).unwrap(),
-            &scope
-        ));
-        draft.default_effect = "allow".into();
-        draft.rules[0].actions = "ak.message.create".into();
-        assert!(!supported_by_current_backend(
-            &draft.build(&realm(), &actor, None, None).unwrap(),
-            &scope
-        ));
-        draft.rules[0].operations = vec!["execute".into()];
-        assert!(supported_by_current_backend(
-            &draft.build(&realm(), &actor, None, None).unwrap(),
-            &scope
-        ));
-        draft.rules[0].actions.clear();
-        let event_id = arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [15; 32]);
-        for (kind, reference) in [
-            ("realm", realm().to_string()),
-            (
-                "strand",
-                arkret_sdk::StrandId::from_event_id(&event_id).to_string(),
-            ),
-            (
-                "space",
-                arkret_sdk::SpaceId::from_event_id(&event_id).to_string(),
-            ),
-            ("object", realm().to_string()),
-        ] {
-            draft.rules[0].resources = vec![ResourceDraft {
-                kind: kind.into(),
-                realm: realm().to_string(),
-                reference,
-            }];
-            assert!(
-                supported_by_current_backend(
-                    &draft.build(&realm(), &actor, None, None).unwrap(),
-                    &scope
-                ),
-                "registered resource {kind}"
-            );
-        }
-        let mut payload = draft.build(&realm(), &actor, None, None).unwrap();
-        let PolicySetValue::Governance(policy) = &mut payload.value else {
-            panic!()
-        };
-        policy.rules[0].resources.as_mut().unwrap()[0].kind = PolicyResourceKind::Service;
-        assert!(!supported_by_current_backend(&payload, &scope));
-        let PolicySetValue::Governance(policy) = &mut payload.value else {
-            panic!()
-        };
-        policy.rules[0].resources.as_mut().unwrap()[0].kind = PolicyResourceKind::Object;
-        policy.rules[0].resources.as_mut().unwrap()[0].realm_id =
-            Some(RealmId::from_event_id(&event_id));
-        assert!(!supported_by_current_backend(&payload, &scope));
     }
     #[test]
     fn review_uses_sdk_requirements_and_rejects_unregistered_execute_review() {
