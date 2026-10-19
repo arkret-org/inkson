@@ -80,6 +80,7 @@ pub(crate) struct SearchPage {
     pub rows: Vec<CommittedEventFullView>,
     pub next: Option<String>,
     pub generation: u64,
+    pub recheck_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 fn target(full: &CommittedEventFullView) -> anyhow::Result<Option<MessageId>> {
@@ -364,6 +365,7 @@ impl CurrentIndex {
         let entries = self.backend.scan(&prefix, None, after, 32).await?;
         let mut next = (entries.len() == 32).then(|| entries.last().unwrap().0.clone());
         let mut rows = Vec::new();
+        let mut recheck_at = None;
         let mut used = 0;
         let mut consumed = after.map(str::to_owned);
         for (key, bytes) in entries {
@@ -395,14 +397,16 @@ impl CurrentIndex {
                 || !self
                     .search_revision_is_current(&message, carrier, generation)
                     .await?
-                || !self.search_visible(&create, actor, generation, now).await?
+                || !self
+                    .search_visible(&create, actor, generation, now, &mut recheck_at)
+                    .await?
             {
                 continue;
             }
             if let Some(revision) = record.revision {
                 if revision.commit.stream_position <= create.commit.stream_position
                     || !self
-                        .search_visible(&revision, actor, generation, now)
+                        .search_visible(&revision, actor, generation, now, &mut recheck_at)
                         .await?
                 {
                     continue;
@@ -417,6 +421,7 @@ impl CurrentIndex {
             rows,
             next,
             generation,
+            recheck_at,
         })
     }
 
@@ -455,6 +460,7 @@ impl CurrentIndex {
         actor: &arkret_sdk::ActorId,
         generation: u64,
         now: chrono::DateTime<chrono::Utc>,
+        recheck_at: &mut Option<chrono::DateTime<chrono::Utc>>,
     ) -> anyhow::Result<bool> {
         let realm = &full.event.realm_id;
         if full
@@ -677,14 +683,26 @@ impl CurrentIndex {
             };
             let policy: arkret_models_collaboration::governance::operation_wire::Policy =
                 serde_json::from_value(value)?;
-            // Unknown expiry semantics cannot release a retained plaintext.
-            if policy.policy_kind == arkret_wire::PolicyKind::Retention {
-                return Ok(false);
-            }
             if matches!(
                 policy.policy_kind,
-                arkret_wire::PolicyKind::Access | arkret_wire::PolicyKind::Moderation
+                arkret_wire::PolicyKind::Access
+                    | arkret_wire::PolicyKind::Moderation
+                    | arkret_wire::PolicyKind::Retention
             ) {
+                // These are Policy validity boundaries, never message TTLs.
+                // Include inactive deny policies so a displayed body is
+                // rechecked when they become effective without a new cut.
+                for boundary in [
+                    Some(policy.created_at),
+                    policy.not_before,
+                    policy.expires_at,
+                ]
+                .into_iter()
+                .flatten()
+                .filter(|boundary| *boundary > now)
+                {
+                    *recheck_at = Some(recheck_at.map_or(boundary, |held| held.min(boundary)));
+                }
                 active.push(policy)
             }
         }
@@ -760,6 +778,42 @@ pub(crate) mod tests {
             )
             .await
             .unwrap()
+    }
+
+    #[tokio::test]
+    async fn search_retention_policy_and_validity_boundaries_use_the_same_durable_cut() {
+        for (scenario, fixture, checks) in circle_fixture::policy_cases() {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("retention-policy.sqlite");
+            let index = super::super::tests::index(&path, 0).await;
+            stage_circle_fixture(&index, &fixture, true, 0)
+                .await
+                .finish();
+            drop(index);
+            for check in checks {
+                let reopened = super::super::tests::index(&path, 1).await;
+                let page = reopened
+                    .read_search_page(&fixture.actor, None, check.now)
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    page.rows,
+                    if check.visible {
+                        vec![fixture.message.clone()]
+                    } else {
+                        vec![]
+                    },
+                    "{scenario} {}",
+                    check.now
+                );
+                assert_eq!(
+                    page.recheck_at, check.recheck_at,
+                    "{scenario} {}",
+                    check.now
+                );
+                assert_eq!(page.generation, 1);
+            }
+        }
     }
 
     #[tokio::test]
@@ -1458,6 +1512,101 @@ pub(crate) mod tests {
         store: &mut crate::state::LocalStateStore,
     ) {
         install_current_only_redaction(store, false).await;
+    }
+
+    pub(crate) fn search_policy(
+        original: &CommittedEventFullView,
+        kind: arkret_wire::PolicyKind,
+        not_before: Option<chrono::DateTime<chrono::Utc>>,
+        expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> arkret_models_collaboration::governance::operation_wire::Policy {
+        let policy: arkret_models_collaboration::governance::operation_wire::Policy =
+            serde_json::from_value(json!({
+                "id":"ak:policy:0198ff00-0000-7000-8000-000000000001",
+                "schema":"ak.schema.policy.v1", "realm_id":original.event.realm_id,
+                "policy_kind":kind,"default_effect":"allow",
+                "rules":[{"rule_id":"read","kind":"action","effect":"deny","actions":["ak.strand.read"]}],
+                "created_by":original.event.actor_id,
+                "created_at":arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now() - chrono::Duration::hours(1)),
+                "not_before":not_before.map(arkret_sdk::canonical::format_timestamp_canonical),
+                "expires_at":expires_at.map(arkret_sdk::canonical::format_timestamp_canonical),
+            })).unwrap();
+        policy.validate().unwrap();
+        policy
+    }
+
+    pub(crate) async fn install_search_policies(
+        store: &mut crate::state::LocalStateStore,
+        policies: &[arkret_models_collaboration::governance::operation_wire::Policy],
+    ) {
+        assert!(!policies.is_empty());
+        let (_directory, _unused, mut snapshot, originals, _actor) = setup().await;
+        let original = &originals[0];
+        let mut entries = vec![("ak.message.create".into(), json!(original.event.payload))];
+        entries.extend(policies.iter().map(|policy| {
+            policy.validate().unwrap();
+            assert_eq!(policy.realm_id.as_ref(), Some(&snapshot.realm_id));
+            (
+                "ak.policy.set".into(),
+                json!({"policy_id":policy.id,"value":policy}),
+            )
+        }));
+        let (_, _, later) = verified_realm_fixture_as(
+            "ak:realm:AY789mrKRCQEVlbVgiTgLdjVO5oCMJiUCrF-D-JlRNxI"
+                .parse()
+                .unwrap(),
+            entries,
+            "alice.example",
+            "ak:device:0196419b-0000-7000-8000-000000000001",
+        );
+        assert_eq!(later[0], *original);
+        let index = CurrentIndex::open(
+            &store.active_authority().unwrap(),
+            store.current_generation(),
+            store.current_index_location(),
+        )
+        .await
+        .unwrap();
+        let previous = &later[later.len() - 2];
+        assert_eq!(
+            index
+                .progress_at(snapshot.realm_id.as_str(), store.current_generation())
+                .await
+                .unwrap()
+                .signed_snapshot
+                .unwrap()
+                .stream_heads[0]
+                .commit_id,
+            previous.commit.commit_id
+        );
+        for row in &mut snapshot.current_state_entries {
+            *row = index
+                .ready_selector(
+                    snapshot.realm_id.as_str(),
+                    selector_of(row),
+                    store.current_generation(),
+                )
+                .await
+                .unwrap()
+                .unwrap();
+        }
+        let full = later.last().unwrap();
+        snapshot.visible_stream_heads[0].stream_position = full.commit.stream_position;
+        snapshot.visible_stream_heads[0].commit_id = full.commit.commit_id.clone();
+        snapshot.current_state_entries.push(TypedCurrentRow::Value {
+            selector: CurrentSelector::Policy {
+                policy_id: policies.last().unwrap().id.clone(),
+            },
+            source_stream_ref: full.commit.stream_ref.clone(),
+            revision: CurrentRevision {
+                commit_id: full.commit.commit_id.clone(),
+                stream_position: full.commit.stream_position,
+            },
+            value: json!(policies.last().unwrap()),
+        });
+        FixtureStation::did_web().sign_snapshot(&mut snapshot);
+        let staged = stage(&index, &snapshot, vec![], store.current_generation()).await;
+        store.commit_current_stage_for_test(staged).unwrap();
     }
 
     pub(crate) async fn install_current_only_search_event_redaction(

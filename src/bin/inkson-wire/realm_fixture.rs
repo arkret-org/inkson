@@ -33,6 +33,8 @@ struct BuildInput {
     #[serde(default)]
     demo_event_redaction: bool,
     #[serde(default)]
+    demo_search_policy: Option<arkret_models_collaboration::governance::operation_wire::Policy>,
+    #[serde(default)]
     directed_invite: bool,
     #[serde(default)]
     plaintext_visible_services: Option<PlaintextVisibleServicesPayload>,
@@ -445,6 +447,7 @@ impl Builder {
                 encrypted: false,
                 demo_notification: false,
                 demo_event_redaction: false,
+                demo_search_policy: None,
                 directed_invite: false,
                 plaintext_visible_services: None,
             };
@@ -1083,6 +1086,24 @@ impl Builder {
                     payload,
                 )?;
             }
+            EventKind::PolicySet => {
+                let policy = full.event.typed_payload::<event_spec::PolicySet>()?;
+                policy.validate()?;
+                let arkret_sdk::PolicySetValue::Governance(value) = policy.value else {
+                    anyhow::bail!("fixture Policy must be a governance document");
+                };
+                ensure!(
+                    value.realm_id.as_ref() == Some(&full.event.realm_id),
+                    "fixture Policy Realm differs"
+                );
+                self.row(
+                    full,
+                    CurrentSelector::Policy {
+                        policy_id: policy.policy_id,
+                    },
+                    value,
+                )?;
+            }
             EventKind::Redaction => {
                 let redaction = full.event.typed_payload::<event_spec::Redaction>()?;
                 ensure!(
@@ -1525,6 +1546,11 @@ pub(super) fn build(input: Value) -> Result<Value> {
         "Event crop requires its demo Message"
     );
     ensure!(
+        input.demo_search_policy.is_none()
+            || (input.demo_notification && !input.demo_event_redaction),
+        "Search Policy requires its independent demo Message fixture"
+    );
+    ensure!(
         [9, 10, 11, 12, 13].contains(&input.salt),
         "fixture salt is not registered"
     );
@@ -1844,6 +1870,38 @@ pub(super) fn build(input: Value) -> Result<Value> {
                 ),
             )?;
         }
+        if let Some(policy) = input.demo_search_policy.as_ref() {
+            policy.validate()?;
+            ensure!(
+                policy.realm_id.as_ref() == Some(&realm) && policy.created_by == builder.actor,
+                "search Policy differs from its accepted Realm/creator"
+            );
+            builder.author::<event_spec::PolicySet>(
+                &realm,
+                arkret_sdk::PolicySetStatePayload {
+                    policy_id: policy.id.clone(),
+                    expected_revision: None,
+                    value: arkret_sdk::PolicySetValue::Governance(Box::new(policy.clone())),
+                },
+            )?;
+            let mut strand =
+                Strand::new_create(realm.clone(), "Policy control", builder.actor.clone());
+            strand.created_at = at(builder.events.len() + 10);
+            strand.state = Some(ObjectState::Active);
+            strand.tracks = serde_json::from_value(json!({"discussion":{}}))?;
+            let source = builder.author::<event_spec::StrandCreate>(
+                &realm,
+                StrandCreatePayload { object: strand },
+            )?;
+            builder.author::<event_spec::MessageCreate>(
+                &realm,
+                MessageCreatePayload::with_content(
+                    StrandId::from_event_id(&source.event_id),
+                    "discussion",
+                    ContentBlock::text("Independent policy control needle"),
+                ),
+            )?;
+        }
     }
     if let Some(recipient) = builder.invite_recipient.as_deref() {
         let account = recipient.identity.account_id.clone();
@@ -1905,6 +1963,7 @@ fn validate_fixture(fixture: &Fixture) -> Result<Fixture> {
         encrypted: false,
         demo_notification: false,
         demo_event_redaction: false,
+        demo_search_policy: None,
         directed_invite: fixture.invite_recipient.is_some(),
         plaintext_visible_services: None,
     };
@@ -2206,6 +2265,7 @@ pub(super) fn submit(input: Value) -> Result<Value> {
         encrypted: false,
         demo_notification: false,
         demo_event_redaction: false,
+        demo_search_policy: None,
         directed_invite: false,
         plaintext_visible_services: None,
     };
@@ -2227,6 +2287,7 @@ pub(super) fn submit(input: Value) -> Result<Value> {
                 encrypted: false,
                 demo_notification: false,
                 demo_event_redaction: false,
+                demo_search_policy: None,
                 directed_invite: true,
                 plaintext_visible_services: None,
             };

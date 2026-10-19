@@ -5,6 +5,104 @@ use super::*;
 use crate::state::current_index::search::tests::authorized_store;
 
 #[tokio::test(flavor = "current_thread")]
+async fn native_search_policy_window_withdraws_and_restores_without_a_new_cut() {
+    use crate::state::current_index::search::tests::{install_search_policies, search_policy};
+    for kind in [
+        arkret_wire::PolicyKind::Access,
+        arkret_wire::PolicyKind::Moderation,
+        arkret_wire::PolicyKind::Retention,
+    ] {
+        let (_directory, mut store, account, original) = authorized_store().await;
+        let starts = chrono::DateTime::from_timestamp_millis(chrono::Utc::now().timestamp_millis())
+            .unwrap()
+            + chrono::Duration::seconds(2);
+        let ends = starts + chrono::Duration::seconds(2);
+        let policy = search_policy(&original, kind, Some(starts), Some(ends));
+        install_search_policies(&mut store, &[policy]).await;
+        let generation = store.current_generation();
+        let (mut dom, harness) = mount(store, account);
+        settle(&mut dom, &harness, 1).await;
+        let (context, search) = harness.handles.borrow().unwrap();
+        dom.in_runtime(|| assert_eq!(*search.recheck_at.peek(), Some(starts)));
+        settle(&mut dom, &harness, 0).await;
+        dom.in_runtime(|| {
+            assert_eq!(*search.recheck_at.peek(), Some(ends));
+            assert_eq!(context.state_store.peek().current_generation(), generation);
+            assert!(search_holder_ready(context));
+        });
+        settle(&mut dom, &harness, 1).await;
+        dom.in_runtime(|| {
+            assert_eq!(*search.recheck_at.peek(), None);
+            assert_eq!(context.state_store.peek().current_generation(), generation);
+            assert_eq!(
+                search.results.peek()[0]["event_id"],
+                json!(original.event.event_id)
+            );
+            assert_eq!(
+                search.results.peek()[0]["covering_commit"],
+                json!(original.commit)
+            );
+            assert_eq!(
+                search.results.peek()[0]["content"]["body"],
+                "exact original needle"
+            );
+            assert!(search.error_key.peek().is_none());
+        });
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn native_search_policy_replacement_cancels_the_old_boundary_and_cold_read_rechecks() {
+    use crate::state::current_index::search::tests::{install_search_policies, search_policy};
+    let (directory, mut store, account, original) = authorized_store().await;
+    let old_start = chrono::DateTime::from_timestamp_millis(chrono::Utc::now().timestamp_millis())
+        .unwrap()
+        + chrono::Duration::seconds(2);
+    let first = search_policy(
+        &original,
+        arkret_wire::PolicyKind::Retention,
+        Some(old_start),
+        None,
+    );
+    install_search_policies(&mut store, &[first.clone()]).await;
+    let (mut dom, harness) = mount(store, account.clone());
+    settle(&mut dom, &harness, 1).await;
+    let (mut context, search) = harness.handles.borrow().unwrap();
+    let mut replacement = first.clone();
+    replacement.not_before = Some(old_start + chrono::Duration::seconds(2));
+    let mut updated = dom.in_runtime(|| context.state_store.peek().clone());
+    install_search_policies(&mut updated, &[first, replacement.clone()]).await;
+    dom.in_runtime(|| context.state_store.set(updated));
+    settle(&mut dom, &harness, 1).await;
+    while chrono::Utc::now() < old_start + chrono::Duration::milliseconds(100) {
+        dom.render_immediate_to_vec();
+        crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(10)).await;
+    }
+    dom.in_runtime(|| {
+        assert_eq!(search.results.peek().len(), 1);
+        assert_eq!(*search.recheck_at.peek(), replacement.not_before);
+    });
+    settle(&mut dom, &harness, 0).await;
+    let mut reopened = LocalStateStore::with_path(directory.path().join("holder.json"));
+    reopened.switch_active_account(&account).unwrap();
+    assert!(
+        local_decrypted_index_search(
+            &reopened,
+            &account.authority,
+            &account.device_id,
+            "needle",
+            &[],
+            None,
+            50
+        )
+        .await
+        .unwrap()
+        .results
+        .is_empty()
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn native_search_event_crop_withdraws_visible_body_and_full_replay_cannot_restore_it() {
     use crate::state::current_index::search::tests::{
         install_current_only_search_event_redaction, install_search_disclosure,
@@ -313,6 +411,7 @@ fn surface(harness: Harness) -> Element {
             search.has_searched,
             search.search_epoch,
             search.last_search,
+            search.recheck_at,
         );
     });
     *harness.handles.borrow_mut() = Some((context, search));

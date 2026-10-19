@@ -116,6 +116,7 @@ type MockArkretApiOptions = {
   encryptedDemoRealm?: boolean;
   demoNotification?: boolean;
   demoEventRedaction?: () => boolean;
+  demoSearchPolicy?: () => boolean;
   invitePreview?: "disclosed" | "restricted" | "retry_once";
   invitePreviewDelayMs?: number;
   contactRequestOutcome?: "failed" | "tampered";
@@ -314,8 +315,10 @@ type NativeRealmFixture = {
 const nativeRealm = (
   salt: number, title: string, board = false, empty_board = false,
   encrypted = false, demo_notification = false, demo_event_redaction = false,
+  demo_search_policy?: Record<string, unknown>,
 ) => inksonWire<NativeRealmFixture>("mock-realm-fixture", {
   salt, title, board, empty_board, encrypted, demo_notification, demo_event_redaction,
+  ...(demo_search_policy ? { demo_search_policy } : {}),
 });
 const DEMO_REALM_FIXTURE = nativeRealm(9, "Arkret Demo Realm", true);
 const INVITED_NATIVE_FIXTURE = inksonWire<NativeRealmFixture>("mock-realm-fixture", {
@@ -929,6 +932,7 @@ export async function mockArkretApi(
     : DEMO_REALM_FIXTURE;
   const DEMO_REALM = String(demoNative.snapshot.realm_id);
   let croppedDemo: NativeRealmFixture | undefined;
+  let policyDemo: NativeRealmFixture | undefined;
   const DEMO_BOARD_SPACE = demoNative.ids.board;
   const DEMO_SECOND_BOARD_SPACE = demoNative.ids.second_board;
   const DEMO_TODO_LIST = demoNative.ids.todo;
@@ -2257,6 +2261,32 @@ export async function mockArkretApi(
       url.pathname === "/_arkret/self/account/subscribe" &&
       route.request().method() === "GET"
     ) {
+      if (options.demoSearchPolicy?.() && !policyDemo) {
+        if (!options.demoNotification || !demoNative.ids.review || options.demoEventRedaction) {
+          throw new Error("Search Policy requires the independent signed board Message fixture");
+        }
+        const starts = Date.now() + 45_000;
+        const policy = {
+          id: "ak:policy:0198ff00-0000-7000-8000-000000000001",
+          schema: "ak.schema.policy.v1", realm_id: DEMO_REALM,
+          policy_kind: "retention", default_effect: "allow",
+          created_by: { kind: "account", account_id: demoNative.identity.account_id },
+          created_at: "2026-09-19T00:00:00.000Z",
+          not_before: new Date(starts).toISOString(),
+          expires_at: new Date(starts + 15_000).toISOString(),
+          rules: [{ rule_id: "read", kind: "action", effect: "deny", actions: ["ak.strand.read"],
+            resources: [{ kind: "strand", realm_id: DEMO_REALM, resource_ref: demoNative.ids.review }] }],
+        };
+        policyDemo = nativeRealm(9, "Arkret Demo Realm", true, false, false, true, false, policy);
+        if (canonicalJson(policyDemo.committed_events.slice(0, demoNative.committed_events.length))
+          !== canonicalJson(demoNative.committed_events)) {
+          throw new Error("Search Policy changed an existing signed source");
+        }
+        nativeFixtures.set(DEMO_REALM, policyDemo);
+        for (const full of policyDemo.committed_events.slice(demoNative.committed_events.length)) {
+          projectionEvents.push(structuredClone(full.event));
+        }
+      }
       if (options.demoEventRedaction?.() && !croppedDemo) {
         if (!options.demoNotification) throw new Error("Event crop requires a signed demo Message");
         croppedDemo = nativeRealm(9, "Arkret Demo Realm", true,

@@ -36,6 +36,14 @@ use crate::views::helpers::{actor_display_label, short_protocol_id};
 /// signature compact.
 type ResultRows = Vec<Value>;
 type SearchRequest = (String, arkret_sdk::AccountId, arkret_sdk::DeviceId, u64);
+type SearchDeadline = Option<chrono::DateTime<chrono::Utc>>;
+
+fn earliest_deadline(left: SearchDeadline, right: SearchDeadline) -> SearchDeadline {
+    match (left, right) {
+        (Some(left), Some(right)) => Some(left.min(right)),
+        (left, right) => left.or(right),
+    }
+}
 
 /// Extract literal snippet text without interpreting it as a translation key.
 /// `None` marks metadata-only rows; explicit empty text remains `Some`.
@@ -127,6 +135,7 @@ async fn local_decrypted_index_search(
         limit,
     )
     .await
+    .map(|(view, _)| view)
 }
 
 async fn search_local(
@@ -137,7 +146,7 @@ async fn search_local(
     realm_ids: &[String],
     object_kinds: Option<&[&str]>,
     limit: usize,
-) -> anyhow::Result<IndexSearchView> {
+) -> anyhow::Result<(IndexSearchView, SearchDeadline)> {
     let query = query.trim();
     let mut response = IndexSearchView {
         query: query.to_owned(),
@@ -149,7 +158,7 @@ async fn search_local(
         || object_kinds.is_some_and(|kinds| !kinds.contains(&"message"))
         || !source.with_store(|store| store.search_session_matches(authority, device_id))
     {
-        return Ok(response);
+        return Ok((response, None));
     }
     let index = crate::state::CurrentIndex::open_committed(
         authority,
@@ -163,6 +172,7 @@ async fn search_local(
     let blocked = source.with_store(search_blocked_actors);
 
     let mut after = None;
+    let mut recheck_at = None;
     loop {
         let page = index
             .read_search_page(&actor, after.as_deref(), chrono::Utc::now())
@@ -172,8 +182,9 @@ async fn search_local(
             || source.with_store(search_blocked_actors) != blocked
         {
             response.results.clear();
-            return Ok(response);
+            return Ok((response, None));
         }
+        recheck_at = earliest_deadline(recheck_at, page.recheck_at);
         let (messages, privacy) = source.with_store(|store| {
             (
                 crate::views::chat::model::chat_messages_from_search_originals(
@@ -250,10 +261,11 @@ async fn search_local(
     if source.with_store(|store| store.current_generation()) != generation
         || !source.with_store(|store| store.search_session_matches(authority, device_id))
         || source.with_store(search_blocked_actors) != blocked
+        || recheck_at.is_some_and(|deadline| deadline <= chrono::Utc::now())
     {
         response.results.clear()
     }
-    Ok(response)
+    Ok((response, recheck_at))
 }
 
 fn searchable_message_body(body: &str, redacted: bool) -> Option<&str> {
@@ -334,6 +346,7 @@ struct LocalSearchState {
     last_search: Signal<Option<SearchRequest>>,
     error_key: Signal<Option<&'static str>>,
     has_searched: Signal<bool>,
+    recheck_at: Signal<SearchDeadline>,
 }
 
 fn search_holder_ready(session: crate::app::SessionContext) -> bool {
@@ -361,8 +374,9 @@ fn use_local_search(initial_query: String) -> LocalSearchState {
     let mut error_key = use_signal(|| None::<&'static str>);
     let mut has_searched = use_signal(|| false);
     let mut clock_revision = use_signal(|| 0_u64);
+    let mut recheck_at = use_signal(|| None);
     let security_fence = use_memo(move || {
-        let _ = clock_revision.read();
+        let clock = *clock_revision.read();
         // A query after not_before must both release the now-valid result and
         // arm its expiry task, even when persisted evidence has not changed.
         let _ = search_epoch.read();
@@ -384,17 +398,23 @@ fn use_local_search(initial_query: String) -> LocalSearchState {
             // Local edits do not advance the accepted account-data revision or
             // current generation. Compare the actual private view predicate.
             search_blocked_actors(&store),
+            clock,
         )
     });
     // Resource dependencies cancel the previous timer when holder evidence is
     // renewed or replaced. Recheck wall time after waking, including suspend.
     let _expiry = use_resource(move || {
-        let valid_until = security_fence.read().5;
+        let valid_until = earliest_deadline(security_fence.read().5, *recheck_at.read());
         async move {
             if let Some(expiry) = valid_until {
                 loop {
                     let remaining = expiry.signed_duration_since(chrono::Utc::now());
                     if remaining <= chrono::TimeDelta::zero() {
+                        results.clear();
+                        loading.set(true);
+                        // Consume this deadline before invalidating the query;
+                        // its next evaluation will discover the next boundary.
+                        recheck_at.set(None);
                         clock_revision.with_mut(|revision| *revision = revision.wrapping_add(1));
                         break;
                     }
@@ -432,10 +452,12 @@ fn use_local_search(initial_query: String) -> LocalSearchState {
                     has_searched,
                     search_epoch,
                     last_search,
+                    recheck_at,
                 );
             } else {
                 last_search.set(None);
                 has_searched.set(false);
+                recheck_at.set(None);
             }
         }
     });
@@ -461,6 +483,7 @@ fn use_local_search(initial_query: String) -> LocalSearchState {
                 has_searched,
                 search_epoch,
                 last_search,
+                recheck_at,
             );
         }
     });
@@ -472,6 +495,7 @@ fn use_local_search(initial_query: String) -> LocalSearchState {
         last_search,
         error_key,
         has_searched,
+        recheck_at,
     }
 }
 
@@ -493,10 +517,14 @@ pub fn GlobalSearchPanel(
         last_search,
         mut error_key,
         has_searched,
+        recheck_at,
     } = use_local_search(initial_query);
     // Rendering must use current wall time too: a new query can become valid
     // after not_before without changing any persisted holder evidence.
-    let ready = search_holder_ready(session);
+    let ready = search_holder_ready(session)
+        && recheck_at
+            .read()
+            .is_none_or(|deadline| deadline > chrono::Utc::now());
     let blocked = search_blocked_actors(&state_store.read());
     // Apply the current private view during rendering too, before the effect
     // invalidates a retained result or an asynchronous query can finish.
@@ -541,6 +569,7 @@ pub fn GlobalSearchPanel(
                             has_searched,
                             search_epoch,
                             last_search,
+                            recheck_at,
                         );
                     },
                     div { class: "actions", style: "gap: 8px;",
@@ -675,6 +704,7 @@ fn run_search(
     mut has_searched: Signal<bool>,
     mut search_epoch: Signal<u64>,
     mut last_search: Signal<Option<SearchRequest>>,
+    mut recheck_at: Signal<SearchDeadline>,
 ) {
     let query_trimmed = q.trim().to_owned();
     if query_trimmed.is_empty() {
@@ -719,10 +749,18 @@ fn run_search(
             || search_blocked_actors(&current) != blocked
         {
             results.clear();
+            recheck_at.set(None);
         } else {
             match response {
-                Ok(response) => results.set(response.results),
+                Ok((mut response, deadline)) => {
+                    if deadline.is_some_and(|deadline| deadline <= chrono::Utc::now()) {
+                        response.results.clear();
+                    }
+                    recheck_at.set(deadline);
+                    results.set(response.results);
+                }
                 Err(error) => {
+                    recheck_at.set(None);
                     tracing::warn!(%error, "local committed search failed closed");
                     error_key.set(Some("search.account_unavailable"));
                 }

@@ -95,6 +95,22 @@ impl CurrentIndexHarness {
         serde_json::to_string(&page.rows).map_err(message)
     }
 
+    /// The production page's next authorization boundary, not a message TTL.
+    pub async fn search_recheck_at(
+        &self,
+        actor: &str,
+        now: &str,
+    ) -> Result<Option<String>, String> {
+        let actor = serde_json::from_str(actor).map_err(message)?;
+        let now = now.parse().map_err(message)?;
+        let page = self
+            .index
+            .read_search_page(&actor, None, now)
+            .await
+            .map_err(message)?;
+        Ok(page.recheck_at.map(|time| time.to_rfc3339()))
+    }
+
     /// Observe the current candidate version, including after cold recovery.
     pub async fn search_originals_present(&self, id: &str) -> Result<bool, String> {
         self.index

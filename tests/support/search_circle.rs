@@ -98,6 +98,102 @@ pub struct DisclosureStep {
     pub expected: Vec<CommittedEventFullView>,
 }
 
+pub struct PolicyCheck {
+    pub now: chrono::DateTime<Utc>,
+    pub visible: bool,
+    pub recheck_at: Option<chrono::DateTime<Utc>>,
+}
+
+pub fn policy_cases() -> Vec<(&'static str, Fixture, Vec<PolicyCheck>)> {
+    let mut cases = Vec::new();
+    for scenario in [
+        "allow",
+        "deny",
+        "unknown",
+        "other_action",
+        "other_strand",
+        "equal_priority",
+        "quarantine",
+        "review",
+        "window",
+        "history_floor",
+    ] {
+        let mut fixture = Fixture::new();
+        let mut value = json!({
+            "id":"ak:policy:0198ff00-0000-7000-8000-000000000001",
+            "schema":"ak.schema.policy.v1", "realm_id":fixture.snapshot.realm_id,
+            "policy_kind":"retention", "default_effect":"allow",
+            "created_by":fixture.actor, "created_at":canonical::format_timestamp_canonical(at(6)),
+            "rules":[{"rule_id":"read","kind":"action","effect":"deny","actions":["ak.strand.read"]}]
+        });
+        match scenario {
+            "allow" | "history_floor" => {
+                value["default_effect"] = json!("deny");
+                value["rules"][0]["effect"] = json!("allow");
+            }
+            "unknown" => value["rules"][0]["conditions"] = json!({"unavailable_fact":true}),
+            "other_action" => value["rules"][0]["actions"] = json!(["ak.message.create"]),
+            "other_strand" => {
+                value["rules"][0]["resources"] = json!([{
+                    "kind":"strand", "realm_id":fixture.snapshot.realm_id,
+                    "resource_ref":StrandId::from_event_id(&fixture.originals[0].event.event_id)
+                }])
+            }
+            "equal_priority" => value["rules"].as_array_mut().unwrap().push(json!({
+                "rule_id":"also_allow","kind":"action","effect":"allow","actions":["ak.strand.read"]
+            })),
+            "quarantine" => value["rules"][0]["effect"] = json!("quarantine"),
+            "review" => value["rules"][0]["effect"] = json!("require_review"),
+            "window" => {
+                value["not_before"] = json!(canonical::format_timestamp_canonical(at(20)));
+                value["expires_at"] = json!(canonical::format_timestamp_canonical(at(30)));
+            }
+            _ => {}
+        }
+        let policy: arkret_models_collaboration::governance::operation_wire::Policy =
+            serde_json::from_value(value).unwrap();
+        policy.validate().unwrap();
+        fixture.install_policy(&policy);
+        if scenario == "history_floor" {
+            // A real later revision advances the Circle stream. A repeated
+            // join would be an illegal same-state membership transition.
+            fixture.revise_message();
+            fixture
+                .snapshot
+                .retention_and_history_floor
+                .stream_floors
+                .iter_mut()
+                .find(|floor| floor.stream_ref == fixture.message.commit.stream_ref)
+                .unwrap()
+                .oldest_position = fixture.message.commit.stream_position + 1;
+            seal(&mut fixture.snapshot);
+        }
+        let checks = if scenario == "window" {
+            [
+                (19, true, Some(20)),
+                (20, false, Some(30)),
+                (29, false, Some(30)),
+                (30, true, None),
+            ]
+            .into_iter()
+            .map(|(now, visible, next)| PolicyCheck {
+                now: at(now),
+                visible,
+                recheck_at: next.map(at),
+            })
+            .collect()
+        } else {
+            vec![PolicyCheck {
+                now: at(20),
+                visible: matches!(scenario, "allow" | "other_action" | "other_strand"),
+                recheck_at: None,
+            }]
+        };
+        cases.push((scenario, fixture, checks));
+    }
+    cases
+}
+
 /// Event cropping is independent of the Message terminal state. The client
 /// omits an unavailable complete signed source rather than editing its bytes.
 pub fn event_redaction_cases() -> Vec<(&'static str, Vec<DisclosureStep>)> {
@@ -294,6 +390,53 @@ pub fn disclosure_cases() -> Vec<(&'static str, Vec<DisclosureStep>)> {
 }
 
 impl Fixture {
+    pub fn install_policy(
+        &mut self,
+        policy: &arkret_models_collaboration::governance::operation_wire::Policy,
+    ) {
+        let signer = arkret_test_kit::keys::seeded_signer(
+            "did:web:alice.example".parse().unwrap(),
+            DidUrl::new("did:web:alice.example#ak:device:0196419b-0000-7000-8000-000000000001")
+                .unwrap(),
+        );
+        let event = SignedEventFixtureBuilder::new(
+            "ak.policy.set",
+            ScopeRef::Realm {
+                realm_id: self.snapshot.realm_id.clone(),
+            },
+            self.actor.clone(),
+            json!({"policy_id":policy.id,"value":policy}),
+        )
+        .with_created_at(at(6))
+        .sign_verifiable(&signer)
+        .unwrap()
+        .expect_verifiable();
+        let previous = self
+            .originals
+            .iter()
+            .rev()
+            .find(|full| matches!(full.commit.stream_ref, CommitStreamRef::Realm { .. }))
+            .unwrap();
+        let full = accepted(event, Some(previous));
+        let head = self
+            .snapshot
+            .visible_stream_heads
+            .iter_mut()
+            .find(|head| head.stream_ref == full.commit.stream_ref)
+            .unwrap();
+        head.stream_position = full.commit.stream_position;
+        head.commit_id = full.commit.commit_id.clone();
+        self.snapshot.current_state_entries.push(row(
+            &full,
+            CurrentSelector::Policy {
+                policy_id: policy.id.clone(),
+            },
+            json!(policy),
+        ));
+        self.originals.push(full);
+        seal(&mut self.snapshot);
+    }
+
     pub fn redact_event_current(&mut self, target: &EventId, preserve: Option<Vec<String>>) {
         let signer = arkret_test_kit::keys::seeded_signer(
             "did:web:alice.example".parse().unwrap(),

@@ -19,6 +19,43 @@ const COMMIT: &str = "ak:realm_commit:AT33EWBTXdTx5CjY-ogbIIF2T4vh-v7jCMCQ80Fss2
 mod search_circle;
 
 #[wasm_bindgen_test(async)]
+async fn search_retention_policy_and_validity_boundaries_survive_restart() {
+    for (scenario, fixture, checks) in search_circle::policy_cases() {
+        let id = authority(&format!("retention-policy-{scenario}"));
+        let actor = serde_json::to_string(&fixture.actor).unwrap();
+        let index = CurrentIndexHarness::open(&id, 0).await.unwrap();
+        index
+            .commit_snapshot(
+                0,
+                &fixture.frame(true),
+                &serde_json::to_string(&fixture.snapshot).unwrap(),
+            )
+            .await
+            .unwrap();
+        drop(index);
+        for check in checks {
+            let reopened = CurrentIndexHarness::open(&id, 1).await.unwrap();
+            let now = check.now.to_rfc3339();
+            let expected = if check.visible {
+                vec![fixture.message.clone()]
+            } else {
+                vec![]
+            };
+            assert_eq!(
+                reopened.search(&actor, &now).await.unwrap(),
+                serde_json::to_string(&expected).unwrap(),
+                "{scenario} {now}"
+            );
+            assert_eq!(
+                reopened.search_recheck_at(&actor, &now).await.unwrap(),
+                check.recheck_at.map(|time| time.to_rfc3339()),
+                "{scenario} {now}"
+            );
+        }
+    }
+}
+
+#[wasm_bindgen_test(async)]
 async fn search_event_redaction_never_releases_cached_full_across_restart() {
     for (scenario, steps) in search_circle::event_redaction_cases() {
         let id = authority(&format!("event-redaction-{scenario}"));
