@@ -42,8 +42,7 @@
   box-sizing: border-box;
 }
 .write-state-icon.is-queued,
-.write-state-icon.is-submitted,
-.write-state-icon.is-pending {
+.write-state-icon.is-submitted {
   border: 2px solid currentColor;
   border-right-color: transparent;
   animation: message-send-spin 760ms linear infinite;
@@ -75,14 +74,12 @@
 }
 .write-state-icon.is-soft-failed,
 .write-state-icon.is-conflict,
-.write-state-icon.is-quarantined,
-.write-state-icon.is-failed {
+.write-state-icon.is-quarantined {
   background: currentColor;
   color: var(--surface);
 }
 .write-state-icon.is-soft-failed::before,
-.write-state-icon.is-quarantined::before,
-.write-state-icon.is-failed::before {
+.write-state-icon.is-quarantined::before {
   content: "!";
   color: var(--surface);
 }

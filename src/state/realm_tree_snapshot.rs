@@ -97,6 +97,7 @@ impl LocalStateStore {
         *self.current_view.lock().unwrap_or_else(|p| p.into_inner()) =
             Some(super::CurrentProductView {
                 account_key,
+                generation: self.current_generation(),
                 view,
                 required_ready,
             });
@@ -168,6 +169,31 @@ impl LocalStateStore {
             .as_ref()
             .filter(|view| view.account_key == self.cached_account_key)
             .map(|view| view.view.clone())
+    }
+
+    /// Receipt rendering must retract old hints while the accepted generation
+    /// advances or the selected account's product view is being refreshed.
+    pub(crate) fn current_read_receipt_policy(
+        &self,
+        scope: &arkret_sdk::ScopeRef,
+    ) -> anyhow::Result<arkret_sdk::ReadReceiptPolicy> {
+        anyhow::ensure!(
+            !self.current_reset_required()
+                && self.cached_account_key.as_deref()
+                    == Some(self.effective_account_key().as_str()),
+            "receipt-policy account view is unavailable"
+        );
+        let current = self.current_view.lock().unwrap_or_else(|p| p.into_inner());
+        let view = current
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("receipt-policy view is unavailable"))?;
+        anyhow::ensure!(
+            view.account_key == self.cached_account_key
+                && view.generation == self.current_generation()
+                && view.required_ready,
+            "receipt-policy view is stale or belongs to another account"
+        );
+        view.view.read_receipt_policy(scope)
     }
 
     /// Whether the installed view of `realm_id` carries every required value.
@@ -449,5 +475,57 @@ pub(super) fn invalidate_current_view(
         .filter(|view| view.view.realm_id == realm_id.trim())
     {
         view.required_ready = false;
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod read_receipt_tests {
+    use super::*;
+
+    #[test]
+    fn read_receipt_render_policy_retracts_at_generation_change_reset_and_account_switch() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut store = LocalStateStore::with_path(directory.path().join("receipt-render.json"));
+        store.promote_accepted_context_for_test(&"did:web:alice.example".parse().unwrap());
+        let realm: arkret_sdk::RealmId = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
+            .parse()
+            .unwrap();
+        let scope = arkret_sdk::ScopeRef::Realm {
+            realm_id: realm.clone(),
+        };
+        *store.current_view.lock().unwrap() = Some(super::super::CurrentProductView {
+            account_key: store.cached_account_key.clone(),
+            generation: 0,
+            required_ready: true,
+            view: crate::current_projection::RealmCurrentView {
+                realm_id: realm.to_string(),
+                entries: vec![],
+                complete_cut: true,
+            },
+        });
+        assert!(store.current_read_receipt_policy(&scope).is_ok());
+        store.set_current_generation(1);
+        assert!(store.current_read_receipt_policy(&scope).is_err());
+        store
+            .current_view
+            .lock()
+            .unwrap()
+            .as_mut()
+            .unwrap()
+            .generation = 1;
+        assert!(store.current_read_receipt_policy(&scope).is_ok());
+        invalidate_current_view(&store.current_view, realm.as_str());
+        assert!(store.current_read_receipt_policy(&scope).is_err());
+        store
+            .current_view
+            .lock()
+            .unwrap()
+            .as_mut()
+            .unwrap()
+            .required_ready = true;
+        store.set_current_reset_required(true);
+        assert!(store.current_read_receipt_policy(&scope).is_err());
+        store.promote_accepted_context_for_test(&"did:web:bob.example".parse().unwrap());
+        assert!(store.current_read_receipt_policy(&scope).is_err());
     }
 }

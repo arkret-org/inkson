@@ -1288,6 +1288,45 @@ impl CurrentIndex {
         self.ready_selector(realm, selector, generation).await
     }
 
+    /// Resolve receipt disclosure from the accepted current index at one
+    /// complete account cut. Missing delivery policy means the spec default
+    /// only when this cut proves absence, never while synchronizing.
+    pub(crate) async fn read_read_receipt_policy_ready(
+        &self,
+        scope: &arkret_sdk::ScopeRef,
+    ) -> anyhow::Result<arkret_sdk::ReadReceiptPolicy> {
+        let realm = scope
+            .realm_id_opt()
+            .ok_or_else(|| anyhow::anyhow!("receipt scope has no Realm"))?;
+        anyhow::ensure!(
+            matches!(
+                scope,
+                arkret_sdk::ScopeRef::Realm { .. } | arkret_sdk::ScopeRef::Circle { .. }
+            ),
+            "unsupported receipt scope"
+        );
+        let _lease = self.acquire_lease().await?;
+        anyhow::ensure!(
+            !self.is_poisoned(),
+            "current pointer durability is unresolved"
+        );
+        let generation = self.generation.load(Ordering::Acquire);
+        let progress = self.progress_at(realm.as_str(), generation).await?;
+        anyhow::ensure!(
+            progress_is_complete_cut(&progress, realm),
+            "receipt policy requires a complete verified cut"
+        );
+        let selector = CurrentSelector::RealmReadReceiptPolicy;
+        let row = self
+            .ready_selector(realm.as_str(), &selector, generation)
+            .await?;
+        crate::current_projection::read_receipt_policy_from_current(
+            scope,
+            &row.into_iter().collect::<Vec<_>>(),
+            true,
+        )
+    }
+
     /// The durable generation at which `realm` holds a complete verified cut:
     /// an installed baseline covering every authorized stream, no pending
     /// refresh, and a verified governance generation. `None` while any of that
@@ -3102,6 +3141,8 @@ impl CurrentIndex {
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
+    mod read_receipts;
+
     use serde_json::json;
 
     use super::*;

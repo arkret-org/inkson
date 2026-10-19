@@ -65,6 +65,73 @@ pub(crate) struct RealmCurrentView {
     pub complete_cut: bool,
 }
 
+/// Decode receipt delivery policy from the existing accepted current carriers.
+/// Missing selectors are defaults only when a complete cut proves absence.
+pub(crate) fn read_receipt_policy_from_current(
+    scope: &arkret_sdk::ScopeRef,
+    entries: &[TypedCurrentRow],
+    complete_cut: bool,
+) -> anyhow::Result<arkret_sdk::ReadReceiptPolicy> {
+    let realm = scope
+        .realm_id_opt()
+        .ok_or_else(|| anyhow::anyhow!("receipt scope has no Realm"))?;
+    anyhow::ensure!(
+        complete_cut,
+        "receipt policy requires a complete verified cut"
+    );
+    anyhow::ensure!(
+        matches!(
+            scope,
+            arkret_sdk::ScopeRef::Realm { .. } | arkret_sdk::ScopeRef::Circle { .. }
+        ),
+        "unsupported receipt scope"
+    );
+    let selector = CurrentSelector::RealmReadReceiptPolicy;
+    let mut matching = entries
+        .iter()
+        .filter(|entry| selector_of(entry) == &selector);
+    let mut policy = arkret_sdk::ReadReceiptPolicy::default();
+    if let Some(TypedCurrentRow::Value {
+        source_stream_ref,
+        value,
+        ..
+    }) = matching.next()
+    {
+        anyhow::ensure!(
+            matching.next().is_none(),
+            "duplicate receipt-policy current"
+        );
+        anyhow::ensure!(
+            source_stream_ref
+                == &arkret_sdk::CommitStreamRef::Realm {
+                    realm_id: realm.clone()
+                },
+            "receipt-policy current has another source stream"
+        );
+        let payload: arkret_sdk::ReadReceiptPolicyPayload = serde_json::from_value(value.clone())?;
+        payload.validate()?;
+        if let Some(disclosure) = payload.disclosure {
+            policy.disclosure = disclosure;
+        }
+        if let Some(visibility) = payload.visibility {
+            policy.visibility = visibility;
+        }
+        if let Some(allowed) = payload.scope_overrides_allowed {
+            policy.scope_overrides_allowed = allowed;
+        }
+    }
+    // Circle has no registered independent receipt-policy carrier in the
+    // current schema. Only a parent forbidding overrides can prove its floor;
+    // disabled already requires every receipt to be discarded.
+    anyhow::ensure!(
+        !matches!(scope, arkret_sdk::ScopeRef::Circle { .. })
+            || !policy.scope_overrides_allowed
+            || policy.disclosure == arkret_sdk::ReadReceiptDisclosure::Disabled,
+        "Circle receipt-policy floor is unavailable"
+    );
+    Ok(policy)
+}
+
 /// What an installed current view says about one scope's MLS activation.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum ScopeMlsCurrent {
@@ -90,6 +157,19 @@ impl ScopeMlsCurrent {
 }
 
 impl RealmCurrentView {
+    pub(crate) fn read_receipt_policy(
+        &self,
+        scope: &arkret_sdk::ScopeRef,
+    ) -> anyhow::Result<arkret_sdk::ReadReceiptPolicy> {
+        anyhow::ensure!(
+            scope
+                .realm_id_opt()
+                .is_some_and(|realm| realm.as_str() == self.realm_id),
+            "receipt-policy view belongs to another Realm"
+        );
+        read_receipt_policy_from_current(scope, &self.entries, self.complete_cut)
+    }
+
     /// Fold the complete accepted roster, including leave assertions retained
     /// by a cold snapshot. Raw Event history cannot establish this current.
     pub(crate) fn call_roster(

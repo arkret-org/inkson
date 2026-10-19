@@ -290,6 +290,66 @@ fn pending_board_create_derives_title_and_write_state_from_the_op_log() {
 }
 
 #[test]
+fn pending_card_lifecycle_survives_reopen_without_claiming_acceptance() {
+    let path = std::env::temp_dir().join(format!(
+        "inkson-write-state-{}.json",
+        crate::operation::uuid_v7()
+    ));
+    let mut store = LocalStateStore::with_path(&path);
+    let local_id = "01904100-0000-7000-8000-000000000099";
+    let event_id = "ak:event:AV624IkuHj3HmxAYE6uyYmBa4Est3gGGdnOsjn71z5L2";
+    let list_id = "ak:space:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL";
+    store.upsert_raw_operation(local_id, Some(PENDING_TEST_REALM.to_owned()), json!({
+        "kind":"ak.strand.create", "operation_id":local_id, "local_target_ref":local_id,
+        "write_state":"queued", "effect":{"strand_id":local_id,"board_space_id":PENDING_TEST_SPACE,
+        "list_space_id":list_id,"title":"Recoverable card","rank":"U"}
+    }));
+    for (tag, expected, settled) in [
+        ("queued", CardState::Queued, false),
+        ("submitting", CardState::Submitted, false),
+        ("pending", CardState::Submitted, false),
+        ("pending_commit", CardState::Submitted, false),
+        ("cas_conflict", CardState::Conflict, false),
+        ("rejected", CardState::SoftFailed, false),
+        ("queued", CardState::Queued, false),
+        ("accepted", CardState::Accepted, true),
+        ("synced", CardState::Synced, true),
+    ] {
+        assert!(store.update_raw_operation_write_state(
+            local_id,
+            tag,
+            Some(event_id.to_owned()),
+            None
+        ));
+        let reopened = LocalStateStore::with_path(&path);
+        let rows = reopened.load().raw_operations;
+        let state = raw_operation_card_state(&rows[0].payload);
+        assert_eq!(state, expected, "reopened {tag}");
+        assert_eq!(state.is_settled(), settled, "reopened {tag}");
+        let card = local_card_create_from_raw_operation(&rows[0]);
+        if matches!(state, CardState::Conflict | CardState::SoftFailed) {
+            assert!(card.is_none(), "refused write must not overlay current");
+        } else {
+            assert_eq!(card.unwrap().card.state, expected);
+        }
+        assert_eq!(
+            raw_operation_accepted_create_target_id(&rows[0].payload).is_some(),
+            settled,
+            "{tag}"
+        );
+        let mut dom = VirtualDom::new_with_props(
+            |state: CardState| rsx! { WriteStateBadge { state } },
+            state,
+        );
+        let edits = dom.rebuild_to_vec();
+        assert!(edits.edits.iter().any(|edit| matches!(edit,
+            dioxus::core::Mutation::SetAttribute { name: "data-write-state", value: dioxus::core::AttributeValue::Text(value), .. }
+                    if value.as_str() == expected.write_state().data_state()
+        )), "real card badge {tag}");
+    }
+}
+
+#[test]
 fn stamped_create_identity_stays_pending_until_submit_acceptance() {
     for write_state in [
         "queued",
@@ -698,47 +758,6 @@ fn terminal_current_suppresses_history_when_projection_omits_the_board() {
 }
 
 #[test]
-fn local_space_create_state_becomes_synced_once_projection_contains_target() {
-    let board_id = "ak:space:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-";
-    let raw_operations = vec![RawOperationRecord {
-        operation_id: "sha256:local-board-create".to_owned(),
-        realm_id: Some("ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk".to_owned()),
-        received_at: chrono::Utc::now(),
-        payload: json!({
-            "kind": "ak.space.create",
-            "operation_id": "sha256:local-board-create",
-            "body": {
-                "object": {
-                    "id": board_id,
-                    "schema": "ak.schema.space.v1",
-                    "kind": "board",
-                    "title": "Design board"
-                }
-            },
-            "write_state": "queued"
-        }),
-    }];
-    let projected_ids = BTreeSet::from([board_id.to_owned()]);
-
-    let state = local_space_create_state_for_target(&raw_operations, &projected_ids, board_id);
-
-    assert_eq!(state, Some(CardState::Synced));
-}
-
-#[test]
-fn displayed_card_state_uses_server_strand_projection_over_local_queue() {
-    let strand_id = "ak:strand:AV624IkuHj3HmxAYE6uyYmBa4Est3gGGdnOsjn71z5L2";
-    let mut card = test_card(strand_id, "U");
-    card.state = CardState::Queued;
-    let projected_strand_ids = BTreeSet::from([strand_id.to_owned()]);
-
-    assert_eq!(
-        displayed_card_state(&card, &projected_strand_ids),
-        CardState::Synced
-    );
-}
-
-#[test]
 fn lifecycle_projection_builds_persisted_board_columns_and_cards() {
     let board_id = "ak:space:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-";
     let list_id = "ak:space:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL";
@@ -960,7 +979,7 @@ fn stamped_pending_card_has_exact_holder_local_render_evidence_without_acceptanc
         ));
         assert!(raw_operation_accepted_create_target_id(&rows[0].payload).is_none());
         assert!(event_derived_target_aliases(&rows).is_empty());
-        assert!(!displayed_card_state(&card, &BTreeSet::new()).is_settled());
+        assert!(!card.state.is_settled());
     }
     for state in [
         "failed",
@@ -1053,7 +1072,7 @@ fn card_create_stays_visible_through_commit_and_backfill_until_placement() {
     for (write_state, expected_id, expected_state) in [
         ("queued", local_id, CardState::Queued),
         ("pending_commit", strand_id, CardState::Submitted),
-        ("effective", strand_id, CardState::Synced),
+        ("accepted", strand_id, CardState::Accepted),
     ] {
         store.update_raw_operation_write_state(
             local_id,

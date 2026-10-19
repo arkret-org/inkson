@@ -695,6 +695,9 @@ pub(super) async fn dispatch_card_detail_update(
                     }
                 }
             }
+            Err(err) if crate::event_submit::is_durably_queued_error(err.inner()) => {
+                tracing::debug!(%operation_id, "encrypted card update remains durably queued");
+            }
             Err(err) => {
                 let error = err.display().to_string();
                 submit_state_store.write(|store| {

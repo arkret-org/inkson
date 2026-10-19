@@ -8,6 +8,51 @@ use super::{TranslationDict, UiLocale};
 /// Build the default English translation dictionary.
 pub fn english_translations() -> TranslationDict {
     let mut dict = TranslationDict::new(UiLocale::En);
+    for (state, label, description) in [
+        (
+            "synced",
+            "Synced",
+            "The accepted write is reflected in the local view.",
+        ),
+        (
+            "optimistic",
+            "Draft",
+            "Saved locally; not yet queued for sending.",
+        ),
+        (
+            "queued",
+            "Queued",
+            "Saved in the offline queue, waiting for the network.",
+        ),
+        (
+            "submitted",
+            "Sending",
+            "Sent for processing; waiting for confirmation.",
+        ),
+        (
+            "accepted",
+            "Accepted",
+            "The server accepted this write; the local view is catching up.",
+        ),
+        (
+            "soft_failed",
+            "Failed",
+            "The write did not succeed. Review the error before retrying.",
+        ),
+        (
+            "cas_conflict",
+            "Conflict",
+            "The write's expected state changed. Refresh and retry.",
+        ),
+        (
+            "quarantined",
+            "Under review",
+            "This write is waiting for moderation review.",
+        ),
+    ] {
+        dict.set(format!("write_state.{state}.label"), label);
+        dict.set(format!("write_state.{state}.description"), description);
+    }
     dict.set("kanban.ui.members_loading", "Loading member identities…");
     dict.set(
         "kanban.ui.members_unavailable",

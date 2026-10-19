@@ -6,7 +6,7 @@
 //! authorization each profile requires before a body may drive UI, and the
 //! handoff into the two Dioxus hubs mounted at the app root.
 
-use dioxus::prelude::*;
+use dioxus::prelude::ReadableExt;
 
 use crate::runtime::projection::SignalProductSink;
 
@@ -14,7 +14,7 @@ pub(super) struct AppSignalProductSink {
     call_hub: crate::views::call_signals::CallSignalHub,
     message_hub: crate::views::message_streams::MessageStreamHub,
     read_receipt_hub: crate::views::read_receipts::ReadReceiptHub,
-    principal_id: Signal<Option<arkret_sdk::DidCoreId>>,
+    session: crate::app::SessionContext,
 }
 
 impl AppSignalProductSink {
@@ -22,13 +22,13 @@ impl AppSignalProductSink {
         call_hub: crate::views::call_signals::CallSignalHub,
         message_hub: crate::views::message_streams::MessageStreamHub,
         read_receipt_hub: crate::views::read_receipts::ReadReceiptHub,
-        principal_id: Signal<Option<arkret_sdk::DidCoreId>>,
+        session: crate::app::SessionContext,
     ) -> Self {
         Self {
             call_hub,
             message_hub,
             read_receipt_hub,
-            principal_id,
+            session,
         }
     }
 }
@@ -79,18 +79,13 @@ impl SignalProductSink for AppSignalProductSink {
         signal: &crate::runtime::projection::AdmittedSignal,
         policy: &arkret_sdk::ReadReceiptPolicy,
     ) {
-        // No further authorization probe: unlike a message-stream preview, a
-        // read receipt discloses no Message body, and `read-receipts.md` §2.4
-        // makes display a local preference rather than a protocol gate. The
-        // envelope admission already proved the sending device and bound the
-        // plaintext `actor_id` to the authenticated `sender_actor_id`.
-        //
-        // §2.5 is the exception and is enforced inside the hub: `disabled` and
-        // `private` are client-side discards, because a Sync Service cannot
-        // read the receipt to apply them.
-        let local_actor = self.principal_id.peek().clone();
+        let Some(account) = self.session.active_account() else {
+            return;
+        };
+        let local_actor = arkret_sdk::ActorId::account(account.authority);
+        let state = self.session.state_store.peek().load();
         let mut hub = self.read_receipt_hub;
-        hub.apply_authorized(signal, policy, crate::app::principal_id_text(&local_actor));
+        hub.apply_authorized(signal, policy, &local_actor, &state);
     }
 
     fn retained_message_streams(&self) -> Vec<crate::runtime::projection::AdmittedSignal> {
@@ -106,3 +101,6 @@ impl SignalProductSink for AppSignalProductSink {
         hub.maintain(now);
     }
 }
+
+#[cfg(test)]
+mod tests;
