@@ -3003,7 +3003,6 @@ fn add_feedback_keys(dict: &mut TranslationDict) {
         "feedback.read_receipt_override_inherit",
         "Read receipts for {realm}: inherit default",
     );
-    dict.set("feedback.enter_realm_id", "Enter a Realm ID first");
     dict.set(
         "feedback.realm_remark_saved",
         "Realm remark saved: {realm} \u{2192} {name}",
@@ -3014,7 +3013,7 @@ fn add_feedback_keys(dict: &mut TranslationDict) {
     );
     dict.set(
         "feedback.enter_realm_and_name",
-        "Enter both a Realm ID and a local name",
+        "Choose a Realm and enter a local name",
     );
     dict.set(
         "feedback.invalid_realm_id",

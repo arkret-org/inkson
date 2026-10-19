@@ -523,7 +523,7 @@ mod agent_tests {
             "controller_authorization_ref": "did:web:controller.example#controller-authorization",
             "pairing_request_id": "agent_pairing_request:01999999-0000-7000-8000-00000000feed",
             "pairing_code": "01234567",
-            "pairing_expires_at": expires_at,
+            "pairing_expires_at": arkret_sdk::canonical::format_timestamp_canonical(expires_at),
             "requested_scope": scope,
         }))
         .unwrap();

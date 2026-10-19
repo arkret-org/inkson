@@ -493,6 +493,18 @@ impl LocalStateStore {
     pub(crate) fn sync_realm_list_after(&self) -> Option<Cursor> {
         self.cached.demand_sync.list_after.clone()
     }
+
+    /// Current joined rows from the accepted account list, independent of
+    /// navigation projections and retained holder-private preferences.
+    pub(crate) fn sync_joined_realm_ids(&self) -> std::collections::BTreeSet<String> {
+        self.load()
+            .demand_sync
+            .summaries
+            .iter()
+            .filter(|(_, row)| row.membership == arkret_wire::MembershipState::Join)
+            .map(|(id, _)| id.clone())
+            .collect()
+    }
     pub(crate) fn realm_detail_invalidated(&self, realm_id: &str) -> bool {
         if self.current_product_view_ready(realm_id) {
             return false;

@@ -115,3 +115,113 @@ fn presence_expiry_choice_resolves_to_future_clears_at() {
 fn blocklist_account_data_key_matches_spec() {
     assert_eq!(AccountDataKey::ACCOUNT_BLOCKLIST, "ak.account.blocklist");
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+fn picker_store() -> crate::state::LocalStateStore {
+    crate::state::LocalStateStore::with_path(std::env::temp_dir().join(format!(
+            "inkson-realm-picker-{}.json",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        )))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn picker_realm(byte: u8) -> String {
+    arkret_sdk::RealmId::from_event_id(&arkret_sdk::EventId::from_digest(
+        arkret_sdk::DigestSuite::Sha256,
+        [byte; 32],
+    ))
+    .to_string()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn apply_picker_rows(store: &mut crate::state::LocalStateStore, rows: Vec<Value>) {
+    let frame = serde_json::from_value(json!({
+        "kind": "delta", "cursor": "ak:cursor:YQ",
+        "realm_list_changes": {"upserts": rows, "removals": []}
+    }))
+    .unwrap();
+    let accepted = store.prepare_account_demand_frame(&frame).unwrap();
+    store.finish_account_demand_frame(&accepted).unwrap();
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn realm_picker_uses_current_joined_rows_and_distinguishes_same_names() {
+    let mut store = picker_store();
+    let realm_a = picker_realm(1);
+    let realm_b = picker_realm(2);
+    let realm_historical = picker_realm(3);
+    let (a, b, historical) = (
+        realm_a.as_str(),
+        realm_b.as_str(),
+        realm_historical.as_str(),
+    );
+    store.set_realm_watch_level(historical.to_owned(), WatchLevel::Muted);
+    store.set_read_receipt_realm_override(historical.to_owned(), Some(false));
+    apply_picker_rows(
+        &mut store,
+        vec![a, b]
+            .into_iter()
+            .map(|id| {
+                json!({
+                    "realm_id": id, "revision": 1, "activity_position": 1,
+                    "membership": "join", "title": "Engineering"
+                })
+            })
+            .collect(),
+    );
+    let options = preference_realm_options(&store);
+    assert_eq!(options.len(), 2);
+    assert_ne!(options[0].1, options[1].1);
+    for (id, label) in &options {
+        assert!(label.contains("Engineering"));
+        assert!(label.contains(id));
+    }
+    assert!(selected_realm_id(&options, historical).is_none());
+    assert!(
+        store
+            .read_receipt_realm_overrides()
+            .contains_key(historical)
+    );
+    assert!(selected_realm_id(&options, a).is_some());
+    assert!(selected_realm_id(&options, "Engineering").is_none());
+    assert!(selected_realm_id(&options, "0").is_none());
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn realm_picker_does_not_replace_selection_after_membership_changes() {
+    let mut store = picker_store();
+    let realm_a = picker_realm(1);
+    let realm_b = picker_realm(2);
+    let (a, b) = (realm_a.as_str(), realm_b.as_str());
+    apply_picker_rows(
+        &mut store,
+        vec![a, b]
+            .into_iter()
+            .map(|id| {
+                json!({
+                    "realm_id": id, "revision": 1, "activity_position": 1,
+                    "membership": "join", "title": "Realm"
+                })
+            })
+            .collect(),
+    );
+    assert!(selected_realm_id(&preference_realm_options(&store), a).is_some());
+    apply_picker_rows(
+        &mut store,
+        vec![json!({
+            "realm_id": a, "revision": 2, "activity_position": 1,
+            "membership": "knock", "title": "Realm"
+        })],
+    );
+    let options = preference_realm_options(&store);
+    assert_eq!(options.len(), 1);
+    assert_eq!(options[0].0, b);
+    assert!(selected_realm_id(&options, a).is_none());
+    assert!(selected_realm_id(&options, "").is_none());
+    assert!(preference_realm_options(&picker_store()).is_empty());
+}

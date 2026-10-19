@@ -2736,7 +2736,6 @@ fn add_feedback_keys_zh(dict: &mut TranslationDict) {
         "feedback.read_receipt_override_inherit",
         "{realm} 的已读回执:跟随默认",
     );
-    dict.set("feedback.enter_realm_id", "请先输入 Realm ID");
     dict.set(
         "feedback.realm_remark_saved",
         "Realm 备注已保存:{realm} \u{2192} {name}",
@@ -2747,7 +2746,7 @@ fn add_feedback_keys_zh(dict: &mut TranslationDict) {
     );
     dict.set(
         "feedback.enter_realm_and_name",
-        "请同时输入 Realm ID 和本地名称",
+        "请选择 Realm 并输入本地名称",
     );
     dict.set(
         "feedback.invalid_realm_id",

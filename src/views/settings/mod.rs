@@ -20,6 +20,7 @@ mod controller;
 mod invite_locator;
 mod model;
 mod profile_helpers;
+pub mod realm_picker;
 mod sections;
 mod widgets;
 
@@ -32,6 +33,7 @@ use dioxus_router::Link;
 use dioxus_router::hooks::use_route;
 use invite_locator::*;
 use profile_helpers::*;
+use realm_picker::{RealmPreferencePicker, preference_realm_options, selected_realm_id};
 use sections::*;
 use serde_json::{Map, Value, json};
 use widgets::*;
@@ -545,9 +547,7 @@ pub fn SettingsPanel(
     // `realm_remarks_snapshot` is the resolved BTreeMap rendered for the
     // list; `realm_remark_inputs` keeps unsaved text edits keyed by
     // realm_id so users can type without round-tripping through coland.
-    // `new_realm_remark_id` / `new_realm_remark_name` drive the "Add by
-    // Realm ID" row for Realms the user has joined but isn't yet
-    // tracking locally.
+    // The add row retains an exact Realm selection separately from its label.
     let mut realm_remarks_snapshot = use_signal(|| state_store.read().realm_remarks());
     let mut realm_remark_inputs = use_signal(|| {
         state_store
@@ -595,6 +595,7 @@ pub fn SettingsPanel(
     let mimi_proxy_receipt = use_signal(|| crate::i18n::tr("settings.mimi.no_receipt"));
     let realm_watch_overrides = state_store.read().realm_watch_levels();
     let known_realms = known_realm_options(&state_store.read());
+    let preference_realms = preference_realm_options(&state_store.read());
     let active_locale = locale();
     let active_direction = active_locale.direction().as_str();
     let push_registration = state_store.read().push_registration();
@@ -2241,21 +2242,21 @@ pub fn SettingsPanel(
                             }
                         }
                     div { class: "actions", "data-testid": "read-receipt-add-override",
-                        Input {
-                            r#type: "text",
-                            placeholder: "ak:realm:ANdHzqrrf1Z2KXHMDZ24Qwje2JXNuOzgDexjxj3KVNBY",
-                            value: "{read_receipt_override_input()}",
-                            oninput: move |event: FormEvent| read_receipt_override_input.set(event.value()),
+                        RealmPreferencePicker {
+                            options: preference_realms.clone(),
+                            selected: read_receipt_override_input,
+                            test_id: "read-receipt-realm-select",
                         }
                         Button {
                             variant: ButtonVariant::Secondary,
                             "data-testid": "read-receipt-add-override-skip",
+                            disabled: selected_realm_id(&preference_realms, &read_receipt_override_input()).is_none(),
                             onclick: move |_| {
-                                let realm_id = read_receipt_override_input().trim().to_owned();
-                                if realm_id.is_empty() {
-                                    crate::components::feedback::toast_info("feedback.enter_realm_id", vec![]);
+                                let Some(realm_id) = selected_realm_id(&preference_realm_options(&state_store.read()), &read_receipt_override_input()) else {
+                                    crate::components::feedback::toast_info("settings.notifications.select_realm", vec![]);
                                     return;
-                                }
+                                };
+                                let realm_id = realm_id.to_string();
                                 state_store.write().set_read_receipt_realm_override(
                                     realm_id.clone(),
                                     Some(false),
@@ -2279,12 +2280,13 @@ pub fn SettingsPanel(
                         Button {
                             variant: ButtonVariant::Secondary,
                             "data-testid": "read-receipt-add-override-send",
+                            disabled: selected_realm_id(&preference_realms, &read_receipt_override_input()).is_none(),
                             onclick: move |_| {
-                                let realm_id = read_receipt_override_input().trim().to_owned();
-                                if realm_id.is_empty() {
-                                    crate::components::feedback::toast_info("feedback.enter_realm_id", vec![]);
+                                let Some(realm_id) = selected_realm_id(&preference_realm_options(&state_store.read()), &read_receipt_override_input()) else {
+                                    crate::components::feedback::toast_info("settings.notifications.select_realm", vec![]);
                                     return;
-                                }
+                                };
+                                let realm_id = realm_id.to_string();
                                 state_store.write().set_read_receipt_realm_override(
                                     realm_id.clone(),
                                     Some(true),
@@ -2492,12 +2494,10 @@ pub fn SettingsPanel(
                         }
                     }
                     div { class: "actions", "data-testid": "realm-remark-add-row",
-                        Input {
-                            r#type: "text",
-                            "data-testid": "realm-remark-add-id",
-                            placeholder: "ak:realm:ANdHzqrrf1Z2KXHMDZ24Qwje2JXNuOzgDexjxj3KVNBY",
-                            value: "{new_realm_remark_id()}",
-                            oninput: move |event: FormEvent| new_realm_remark_id.set(event.value()),
+                        RealmPreferencePicker {
+                            options: preference_realms.clone(),
+                            selected: new_realm_remark_id,
+                            test_id: "realm-remark-realm-select",
                         }
                         Input {
                             r#type: "text",
@@ -2509,19 +2509,18 @@ pub fn SettingsPanel(
                         Button {
                             variant: ButtonVariant::Secondary,
                             "data-testid": "realm-remark-add-save",
+                            disabled: selected_realm_id(&preference_realms, &new_realm_remark_id()).is_none() || new_realm_remark_name().trim().is_empty(),
                             onclick: move |_| {
-                                let realm_id = new_realm_remark_id().trim().to_owned();
+                                let Some(typed_realm_id) = selected_realm_id(&preference_realm_options(&state_store.read()), &new_realm_remark_id()) else {
+                                    crate::components::feedback::toast_info("settings.notifications.select_realm", vec![]);
+                                    return;
+                                };
+                                let realm_id = typed_realm_id.to_string();
                                 let local_name = new_realm_remark_name().trim().to_owned();
                                 if realm_id.is_empty() || local_name.is_empty() {
                                     crate::components::feedback::toast_info("feedback.enter_realm_and_name", vec![]);
                                     return;
                                 }
-                                let Ok(typed_realm_id) =
-                                    arkret_sdk::RealmId::new(realm_id.clone())
-                                else {
-                                    crate::components::feedback::toast_error("feedback.invalid_realm_id", vec![], None);
-                                    return;
-                                };
                                 let now = chrono::Utc::now();
                                 let mut remark = crate::account_data::RealmRemark::new(
                                     typed_realm_id,
