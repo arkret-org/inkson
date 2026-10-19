@@ -683,9 +683,8 @@ impl NativeAccountHost {
         };
         submitter
             .send_scope_signal(
-                arkret_sdk::ScopeRef::Realm {
-                    realm_id: arkret_sdk::RealmId::new(realm)?,
-                },
+                plan.scope
+                    .ok_or_else(|| anyhow::anyhow!("receipt scope is unavailable"))?,
                 account,
                 device,
                 &material,

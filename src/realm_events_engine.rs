@@ -3904,7 +3904,7 @@ mod tests {
                 "ak.realm.profile" => row(CurrentSelector::RealmProfile, commit, payload),
                 "ak.scope.read_receipt_policy" => row(
                     CurrentSelector::ScopeReadReceiptPolicy {
-                        scope_ref: item.event.scope_ref.clone(),
+                        scope_ref: commit.stream_ref.scope_ref(),
                     },
                     commit,
                     payload,

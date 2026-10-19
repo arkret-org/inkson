@@ -149,7 +149,7 @@ pub trait SignalProductSink {
     /// UI hint whose only gate is the envelope admission that already ran, and
     /// `read-receipts.md` §2.4 makes rendering it depend on a local display
     /// preference rather than on any further authorization round trip.
-    /// `policy` is the Realm's accepted `ak.scope.read_receipt_policy`.
+    /// `policy` is the exact scope's accepted `ak.scope.read_receipt_policy`.
     /// `read-receipts.md` §2.5 makes the `disclosure="disabled"` /
     /// `visibility="private"` discard a **client** obligation — the receipt is
     /// Signal plaintext, so no service can apply it — which is why the sink

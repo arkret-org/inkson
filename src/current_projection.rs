@@ -72,7 +72,7 @@ pub(crate) fn read_receipt_policy_from_current(
     entries: &[TypedCurrentRow],
     complete_cut: bool,
 ) -> anyhow::Result<arkret_sdk::ReadReceiptPolicy> {
-    scope
+    let _realm = scope
         .realm_id_opt()
         .ok_or_else(|| anyhow::anyhow!("receipt scope has no Realm"))?;
     anyhow::ensure!(
@@ -92,10 +92,9 @@ pub(crate) fn read_receipt_policy_from_current(
     let mut matching = entries
         .iter()
         .filter(|entry| selector_of(entry) == &selector);
-    let mut policy = arkret_sdk::ReadReceiptPolicy::default();
-    let mut present = false;
-    if let Some(TypedCurrentRow::Value {
+    let policy = if let Some(TypedCurrentRow::Value {
         source_stream_ref,
+        revision,
         value,
         ..
     }) = matching.next()
@@ -104,26 +103,17 @@ pub(crate) fn read_receipt_policy_from_current(
             matching.next().is_none(),
             "duplicate receipt-policy current"
         );
-        anyhow::ensure!(
-            &source_stream_ref.scope_ref() == scope,
-            "receipt-policy current has another source stream"
-        );
-        let payload: arkret_sdk::ReadReceiptPolicyPayload = serde_json::from_value(value.clone())?;
-        payload.validate()?;
-        if let Some(disclosure) = payload.disclosure {
-            policy.disclosure = disclosure;
-        }
-        if let Some(visibility) = payload.visibility {
-            policy.visibility = visibility;
-        }
-        present = true;
-    }
-    // This view proves Realm absence. A Circle needs its own accepted row;
-    // never substitute the parent Realm policy for a missing scope proof.
-    anyhow::ensure!(
-        !matches!(scope, arkret_sdk::ScopeRef::Circle { .. }) || present,
-        "Circle receipt-policy current proof is unavailable"
-    );
+        let current = arkret_sdk::ScopeReadReceiptPolicyCurrent {
+            selector,
+            source_stream_ref: source_stream_ref.clone(),
+            revision: revision.clone(),
+            value: serde_json::from_value(value.clone())?,
+        };
+        current.validate()?;
+        current.value.resolved()
+    } else {
+        arkret_sdk::ReadReceiptPolicy::default()
+    };
     Ok(policy)
 }
 
@@ -354,10 +344,15 @@ impl RealmCurrentView {
                         circle_id: found,
                         member_actor_id: actor_id,
                     },
+                source_stream_ref,
                 value,
                 ..
             } = entry
             {
+                anyhow::ensure!(
+                    source_stream_ref.scope_ref() == *scope || found != circle_id,
+                    "Circle membership source differs from scope"
+                );
                 if found != circle_id {
                     continue;
                 }

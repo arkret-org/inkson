@@ -402,74 +402,24 @@ impl LocalStateStore {
 
     // ── Realm remarks (spec client-preferences.md §3.7) ─
 
-    /// Get the server-declared read-receipt policy for a Realm (when known).
-    /// `None` means the client hasn't synced a policy snapshot yet and the
-    /// user's override is still authoritative.
+    /// Settings display only: authoritative policy from the installed complete cut.
     pub fn read_receipt_policy_for_realm(
         &self,
         realm_id: &str,
-    ) -> Option<ReadReceiptPolicySnapshot> {
-        self.load()
-            .read_receipt_policy_snapshots
-            .get(realm_id)
-            .cloned()
+    ) -> Option<arkret_sdk::ReadReceiptPolicy> {
+        let scope = arkret_sdk::ScopeRef::Realm {
+            realm_id: realm_id.parse().ok()?,
+        };
+        self.current_read_receipt_policy(&scope).ok()
     }
 
-    /// Replace the server-declared policy snapshot for a Realm. Called from
-    /// the sync path once the Seal view (P0 M3) surfaces
-    /// `ak.component.realm.read_receipt_policy.v1` cell value; tests use
-    /// this to seed lock-state UI behavior.
-    pub fn set_read_receipt_policy_snapshot(
-        &mut self,
-        realm_id: impl Into<String>,
-        snapshot: Option<ReadReceiptPolicySnapshot>,
-    ) {
-        self.ensure_cached_loaded();
-        let realm_id = realm_id.into();
-        match snapshot {
-            Some(value) => {
-                self.cached
-                    .read_receipt_policy_snapshots
-                    .insert(realm_id, value);
-            }
-            None => {
-                self.cached.read_receipt_policy_snapshots.remove(&realm_id);
-            }
-        }
-        let _ = self.flush();
-    }
-
-    /// All known server-declared read-receipt policy snapshots.
-    pub fn read_receipt_policy_snapshots(&self) -> BTreeMap<String, ReadReceiptPolicySnapshot> {
-        self.load()
-            .read_receipt_policy_snapshots
-            .into_iter()
-            .collect()
-    }
-
-    /// Resolve effective send preference per spec (server policy → strand →
-    /// realm → default). Mirror of
-    /// `arkret_sdk::ReadReceiptPreferences::effective_send` extended with
-    /// server-declared policy lock: when the Realm publishes a
-    /// `ak.scope.read_receipt_policy` with `disclosure="required"` the
-    /// answer is forced `true`; with `disclosure="disabled"` it's forced
-    /// `false`. User-level overrides are ignored in those cases (matching
-    /// the lock UI in settings).
+    /// Resolve the holder's preference; scope disclosure is checked at sending.
     pub fn read_receipt_should_send(
         &self,
         strand_id: Option<&str>,
         realm_id: Option<&str>,
     ) -> bool {
         let snapshot = self.load();
-        if let Some(rid) = realm_id
-            && let Some(policy) = snapshot.read_receipt_policy_snapshots.get(rid)
-        {
-            match policy.disclosure.as_str() {
-                "required" => return true,
-                "disabled" => return false,
-                _ => {}
-            }
-        }
         if let Some(fid) = strand_id
             && let Some(value) = snapshot.read_receipt_strand_overrides.get(fid)
         {
@@ -481,6 +431,35 @@ impl LocalStateStore {
             return *value;
         }
         snapshot.read_receipt_default_send
+    }
+
+    /// Recheck disclosure, exact target and holder qualification immediately before sealing.
+    pub(crate) fn require_read_receipt_send(
+        &self,
+        scope: &arkret_sdk::ScopeRef,
+        strand: &arkret_sdk::StrandId,
+        event: &arkret_sdk::EventId,
+    ) -> anyhow::Result<()> {
+        let state = self.load();
+        anyhow::ensure!(
+            state
+                .verified_message_commits
+                .iter()
+                .any(|target| target.accepted_ref.event_id == *event
+                    && target.scope_ref == *scope
+                    && target.strand_id == *strand
+                    && target.track_name == "discussion"),
+            "receipt target has no verified exact scope/Strand/track author"
+        );
+        let policy = self.current_read_receipt_policy(scope)?;
+        let allowed = match policy.disclosure {
+            arkret_sdk::ReadReceiptDisclosure::Disabled => false,
+            arkret_sdk::ReadReceiptDisclosure::Required => true,
+            arkret_sdk::ReadReceiptDisclosure::Optional => self
+                .read_receipt_should_send(Some(strand.as_str()), Some(scope.realm_id().as_str())),
+        };
+        anyhow::ensure!(allowed, "receipt sending is disabled for this scope");
+        Ok(())
     }
 
     pub fn read_receipt_should_display(

@@ -2131,23 +2131,17 @@ pub fn SettingsPanel(
                         span { "{read_receipt_realm_overrides().len()} configured" }
                     }
                     for (realm_id, send) in read_receipt_realm_overrides() {
-                            // Policy lock — when coland publishes a
-                            // ak.scope.read_receipt_policy with disclosure=
-                            // required|disabled, the toggle is disabled and
-                            // we show a lock badge with the reason. Until
-                            // sync (P0 M3) wires the snapshot, this returns
-                            // `None` for every realm and the row stays
-                            // editable.
+                            // Show the exact Realm-scope current lock when verified.
                             {
                                 let policy = state_store
                                     .read()
                                     .read_receipt_policy_for_realm(&realm_id);
                                 let locked = policy
                                     .as_ref()
-                                    .is_some_and(|p| p.locks_user_choice());
+                                    .is_some_and(|p| p.disclosure != arkret_sdk::ReadReceiptDisclosure::Optional);
                                 let lock_reason = policy
                                     .as_ref()
-                                    .map(|p| p.lock_reason())
+                                    .map(|p| match p.disclosure { arkret_sdk::ReadReceiptDisclosure::Required => "Read receipts are required in this scope.".to_owned(), arkret_sdk::ReadReceiptDisclosure::Disabled => "Read receipts are disabled in this scope.".to_owned(), _ => String::new() })
                                     .unwrap_or_default();
                                 let realm_id_label = short_protocol_id(&realm_id);
                                 rsx! {

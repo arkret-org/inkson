@@ -499,7 +499,7 @@ impl InksonSignalSink {
                 // after the receipt that carried it expires
                 // (`read-receipts.md` §1.1).
                 //
-                // The Realm policy travels with it because §2.5 puts the
+                // The scope policy travels with it because §2.5 puts the
                 // `disabled` / `private` discard on the receiving client:
                 // the receipt is inside the ciphertext, so the Station
                 // could not have filtered it.
@@ -1127,7 +1127,7 @@ impl InksonSignalSink {
         }
     }
 
-    /// The Realm's accepted `ak.scope.read_receipt_policy` at the account's
+    /// The exact scope's accepted `ak.scope.read_receipt_policy` at the account's
     /// current committed generation.
     ///
     /// Only an accepted complete current cut can prove an undeclared policy.
@@ -1155,6 +1155,17 @@ impl InksonSignalSink {
         })
         .await
         .ok()?;
+        let holder = arkret_sdk::ActorId::account(authority.clone());
+        index
+            .read_parent_membership_revision_at_complete_cut(signal.scope_ref().realm_id(), &holder)
+            .await
+            .ok()??;
+        if matches!(signal.scope_ref(), arkret_sdk::ScopeRef::Circle { .. }) {
+            index
+                .read_mls_group_ready(signal.scope_ref(), &holder)
+                .await
+                .ok()?;
+        }
         let policy = match index
             .read_read_receipt_policy_ready(signal.scope_ref())
             .await

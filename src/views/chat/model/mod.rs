@@ -58,6 +58,7 @@ pub(crate) fn visible_read_receipt_event(
 pub(crate) struct AutomaticReadReceiptPlan {
     pub event_id: String,
     pub material: Option<crate::signal::SignalKeyMaterial>,
+    pub scope: Option<arkret_sdk::ScopeRef>,
 }
 
 pub(crate) fn automatic_read_receipt_plan(
@@ -69,12 +70,39 @@ pub(crate) fn automatic_read_receipt_plan(
 ) -> Option<AutomaticReadReceiptPlan> {
     let blocked = crate::account_data::blocked_message_actor_ids(&store.client_blocklist());
     let event_id = visible_read_receipt_event(messages, realm, strand, &blocked)?;
+    let state = store.load();
+    let target = state.verified_message_commits.iter().find(|target| {
+        (target.accepted_ref.event_id.as_str() == event_id
+            || arkret_sdk::MessageId::from_event_id(&target.accepted_ref.event_id).as_str()
+                == event_id)
+            && target.scope_ref.realm_id().as_str() == realm
+            && target.strand_id.as_str() == strand
+            && target.track_name == "discussion"
+    });
+    let scope = target.map(|target| target.scope_ref.clone());
+    let event_id = target
+        .map(|target| target.accepted_ref.event_id.to_string())
+        .unwrap_or(event_id);
     if latest_cursor == event_id {
         return None;
     }
-    let material = (super::chat_visible_read_receipt_should_send(store, strand, realm)
-        && !strand.trim().is_empty())
-    .then(|| crate::signal::key_material_for_scope(store, realm, None).ok())
-    .flatten();
-    Some(AutomaticReadReceiptPlan { event_id, material })
+    let material = target.and_then(|target| {
+        store
+            .require_read_receipt_send(
+                &target.scope_ref,
+                &target.strand_id,
+                &target.accepted_ref.event_id,
+            )
+            .ok()?;
+        let circle = match &target.scope_ref {
+            arkret_sdk::ScopeRef::Circle { circle_id, .. } => Some(circle_id.as_str()),
+            _ => None,
+        };
+        crate::signal::key_material_for_scope(store, realm, circle).ok()
+    });
+    Some(AutomaticReadReceiptPlan {
+        event_id,
+        material,
+        scope,
+    })
 }

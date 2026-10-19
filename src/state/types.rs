@@ -346,46 +346,6 @@ pub struct ReadMarkerRecord {
     pub updated_at: DateTime<Utc>,
 }
 
-/// Server-declared `ak.scope.read_receipt_policy` snapshot for a Realm, as
-/// surfaced to clients via the Seal view (P0 M3) once sync.rs lands.
-/// Locks the per-scope toggle in the settings UI when `disclosure` is
-/// `required` (server forces send) or `disabled` (server forbids send).
-///
-/// Until the sync wires the policy from coland's `ak.component.realm.read_receipt_policy.v1`
-/// sequenced-state cell, this is populated by tests / dev tooling only.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ReadReceiptPolicySnapshot {
-    /// Disclosure mode — `optional` (default), `required`, or `disabled`.
-    /// `required` and `disabled` lock the user's per-Realm override.
-    pub disclosure: String,
-    /// Visibility scope — `public`, `private`, `track_scoped`. Surfaced
-    /// in the lock-reason text so the user knows why the toggle is locked.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub visibility: Option<String>,
-}
-
-impl ReadReceiptPolicySnapshot {
-    /// True when `disclosure` is one of the spec's lock-mandating values.
-    pub fn locks_user_choice(&self) -> bool {
-        matches!(self.disclosure.as_str(), "required" | "disabled")
-    }
-
-    /// Human-readable reason for showing the lock UI; empty when not locked.
-    pub fn lock_reason(&self) -> String {
-        match self.disclosure.as_str() {
-            "required" => format!(
-                "Realm policy: read receipts are REQUIRED ({}). User-level skip is disabled.",
-                self.visibility.as_deref().unwrap_or("public")
-            ),
-            "disabled" => format!(
-                "Realm policy: read receipts are DISABLED ({}). User-level send is disabled.",
-                self.visibility.as_deref().unwrap_or("public")
-            ),
-            _ => String::new(),
-        }
-    }
-}
-
 fn default_true() -> bool {
     true
 }
@@ -1068,14 +1028,6 @@ pub struct ClientLocalState {
     pub read_receipt_strand_overrides: im::OrdMap<String, bool>,
     #[serde(default)]
     pub read_receipt_strand_display_overrides: im::OrdMap<String, bool>,
-    /// Server-declared `ak.scope.read_receipt_policy` snapshots, keyed by
-    /// realm id. Populated when sync (P0 M3) lands — surfaces the
-    /// disclosure / visibility values from the
-    /// `ak.component.realm.read_receipt_policy.v1` sequenced-state cell so
-    /// the settings UI can lock per-Realm toggles when the server's
-    /// policy is `required` or `disabled`.
-    #[serde(default)]
-    pub read_receipt_policy_snapshots: im::OrdMap<String, ReadReceiptPolicySnapshot>,
     /// Per-commit-stream read cursors, keyed by [`commit_stream_key`].
     ///
     /// A Realm, each Circle and each Sidecar own separate linear streams and
@@ -1585,7 +1537,6 @@ impl Default for ClientLocalState {
             read_receipt_realm_display_overrides: im::OrdMap::new(),
             read_receipt_strand_overrides: im::OrdMap::new(),
             read_receipt_strand_display_overrides: im::OrdMap::new(),
-            read_receipt_policy_snapshots: im::OrdMap::new(),
             stream_cursors: im::OrdMap::new(),
             realm_authority_basis: im::OrdMap::new(),
             push_registration: None,

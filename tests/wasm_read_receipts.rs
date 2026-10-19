@@ -102,6 +102,7 @@ struct Case {
     visible_author: Option<arkret_sdk::ActorId>,
     policy: arkret_sdk::ReadReceiptPolicy,
     display: bool,
+    scope: arkret_sdk::ScopeRef,
     control: Control,
 }
 
@@ -116,6 +117,7 @@ impl Default for Case {
                 ..Default::default()
             },
             display: true,
+            scope: signal().domain.scope_ref,
             control: Control::default(),
         }
     }
@@ -125,13 +127,26 @@ fn receipt_page(case: Case) -> Element {
     let viewer = use_signal(|| case.viewer.clone());
     let policy = use_signal(|| Some(case.policy.clone()));
     *case.control.policy.borrow_mut() = Some(policy);
+    let mut admitted = signal();
+    admitted.domain.scope_ref = case.scope.clone();
+    let mut state = serde_json::to_value(accepted_state(case.target)).unwrap();
+    if case.target {
+        state["verified_message_commits"][0]["scope_ref"] =
+            serde_json::to_value(&case.scope).unwrap();
+        state["verified_message_commits"][0]["accepted_ref"]["stream_ref"] = serde_json::to_value(
+            arkret_sdk::CommitStreamRef::from_scope(&case.scope, Some(REALM.parse().unwrap()))
+                .unwrap(),
+        )
+        .unwrap();
+    }
+    let state: ClientLocalState = serde_json::from_value(state).unwrap();
     let mut hub = use_context_provider(ReadReceiptHub::new);
     use_hook(|| {
         case.control.applied.set(Some(hub.apply_authorized(
-            &signal(),
+            &admitted,
             &case.policy,
             &case.viewer,
-            &accepted_state(case.target),
+            &state,
         )));
     });
     *case.control.handles.borrow_mut() = Some((viewer, hub));
@@ -285,9 +300,13 @@ async fn browser_receipt_disappears_when_current_account_changes_station() {
 }
 
 #[wasm_bindgen_test(async)]
-async fn browser_receipt_retracts_retained_members_hint_after_policy_tightens() {
+async fn browser_circle_receipt_retracts_without_resurrection_after_policy_tightens() {
     let case = Case {
         viewer: reader(),
+        scope: arkret_sdk::ScopeRef::Circle {
+            realm_id: REALM.parse().unwrap(),
+            circle_id: arkret_sdk::CircleId::from_event_id(&EVENT.parse().unwrap()),
+        },
         policy: arkret_sdk::ReadReceiptPolicy::default(),
         ..Default::default()
     };
@@ -327,5 +346,16 @@ async fn browser_receipt_retracts_retained_members_hint_after_policy_tightens() 
                 .is_none()
         );
     }
+    gloo_timers::future::TimeoutFuture::new(30).await;
+    runtime.in_scope(ScopeId::ROOT, || {
+        policy.set(Some(arkret_sdk::ReadReceiptPolicy::default()))
+    });
+    gloo_timers::future::TimeoutFuture::new(30).await;
+    assert!(
+        root.query_selector("[data-testid='read-receipt-indicator']")
+            .unwrap()
+            .is_none(),
+        "discarded hint must not revive after policy relaxes"
+    );
     unmount(root, abort).await;
 }
