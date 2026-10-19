@@ -5,6 +5,33 @@ use super::*;
 use crate::state::current_index::search::tests::authorized_store;
 
 #[tokio::test(flavor = "current_thread")]
+async fn native_search_event_crop_withdraws_visible_body_and_full_replay_cannot_restore_it() {
+    use crate::state::current_index::search::tests::{
+        install_current_only_search_event_redaction, install_search_disclosure,
+    };
+    let (directory, store, account, _) = authorized_store().await;
+    let (mut dom, harness) = mount(store, account.clone());
+    settle(&mut dom, &harness, 1).await;
+    let (mut context, search) = harness.handles.borrow().unwrap();
+    let mut updated = dom.in_runtime(|| context.state_store.peek().clone());
+    install_current_only_search_event_redaction(&mut updated).await;
+    dom.in_runtime(|| {
+        harness.retry.borrow().unwrap().call(());
+        context.state_store.set(updated);
+    });
+    settle(&mut dom, &harness, 0).await;
+    let mut recovered = LocalStateStore::with_path(directory.path().join("holder.json"));
+    recovered.switch_active_account(&account).unwrap();
+    install_search_disclosure(&mut recovered, true, false).await;
+    dom.in_runtime(|| {
+        context.state_store.set(recovered);
+        harness.retry.borrow().unwrap().call(());
+    });
+    settle(&mut dom, &harness, 0).await;
+    dom.in_runtime(|| assert!(search.error_key.peek().is_none()));
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn native_search_disclosure_withdraws_and_recovers_only_after_durable_full_publication() {
     use crate::state::current_index::search::tests::install_search_disclosure;
     let (directory, store, account, original) = authorized_store().await;

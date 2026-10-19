@@ -1345,7 +1345,7 @@ fn protocol(error: impl std::fmt::Display) -> garth::Error {
 ///   member state, Realm-scoped Strand and the default-Strand pointer, which must name a Strand in
 ///   the same signed cut, the `message_revision` of each message (a create carrier's Strand must be
 ///   present in the cut; its mutable current revision is not its creation Commit), and the
-///   `object_redaction` of a redacted Message, whose every assertion redacts that Message.
+///   `object_redaction` of a Message or Event, whose every assertion names that exact subject.
 ///
 /// MLS, Space structural siblings, placement, Invite registers and grants
 /// use their existing SDK value types and retain their exact Realm subjects.
@@ -3438,8 +3438,9 @@ mod tests {
     /// Message's `message_revision` is the revise carrier naming that Message,
     /// and a retracted Message is disclosed as its `object_redaction` row, each
     /// assertion redacting exactly that Message. A revise naming another
-    /// Message, an open or foreign redaction and a non-Message redaction
-    /// subject reject the whole snapshot.
+    /// Message, an open or foreign redaction and an unsupported object
+    /// subject reject the whole snapshot. Event crops remain independent of
+    /// the Message lifecycle and preserve their exact assertion.
     #[test]
     fn signed_floor_snapshot_installs_message_revise_and_redaction() {
         let realm_id = collaboration_fixture_realm_id();
@@ -3571,7 +3572,32 @@ mod tests {
                 "value": {"target_ref": event_target}
             }]}),
         );
-        forged.push(event_subject);
+        validate_signed_floor_rows(&realm_id, &bundle, &head, since_join, &event_subject).unwrap();
+        let mut wrong_event_target = event_subject.clone();
+        set_row_value(
+            &mut wrong_event_target[redaction_index],
+            json!({"assertions":[{
+                "tag_id":redaction_tag,"value":{"target_ref":items[4].event.event_id}
+            }]}),
+        );
+        forged.push(wrong_event_target);
+        let mut event_with_message_payload = event_subject.clone();
+        set_row_value(
+            &mut event_with_message_payload[redaction_index],
+            json!({"assertions":[{
+                "tag_id":redaction_tag,"value":{"message_id":retracted}
+            }]}),
+        );
+        forged.push(event_with_message_payload);
+        let mut unsupported_subject = event_subject;
+        let target = arkret_wire::MorphId::from_event_id(&items[5].event.event_id).to_string();
+        unsupported_subject[redaction_index] = redaction(
+            &target,
+            json!({"assertions":[{
+                "tag_id":redaction_tag,"value":{"target_ref":target}
+            }]}),
+        );
+        forged.push(unsupported_subject);
         for rows in forged {
             assert!(
                 validate_signed_floor_rows(&realm_id, &bundle, &head, since_join, &rows).is_err(),

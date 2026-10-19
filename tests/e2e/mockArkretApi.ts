@@ -115,6 +115,7 @@ type MockArkretApiOptions = {
   emptyBoard?: boolean;
   encryptedDemoRealm?: boolean;
   demoNotification?: boolean;
+  demoEventRedaction?: () => boolean;
   invitePreview?: "disclosed" | "restricted" | "retry_once";
   invitePreviewDelayMs?: number;
   contactRequestOutcome?: "failed" | "tampered";
@@ -312,9 +313,9 @@ type NativeRealmFixture = {
 };
 const nativeRealm = (
   salt: number, title: string, board = false, empty_board = false,
-  encrypted = false, demo_notification = false,
+  encrypted = false, demo_notification = false, demo_event_redaction = false,
 ) => inksonWire<NativeRealmFixture>("mock-realm-fixture", {
-  salt, title, board, empty_board, encrypted, demo_notification,
+  salt, title, board, empty_board, encrypted, demo_notification, demo_event_redaction,
 });
 const DEMO_REALM_FIXTURE = nativeRealm(9, "Arkret Demo Realm", true);
 const INVITED_NATIVE_FIXTURE = inksonWire<NativeRealmFixture>("mock-realm-fixture", {
@@ -927,6 +928,7 @@ export async function mockArkretApi(
       )
     : DEMO_REALM_FIXTURE;
   const DEMO_REALM = String(demoNative.snapshot.realm_id);
+  let croppedDemo: NativeRealmFixture | undefined;
   const DEMO_BOARD_SPACE = demoNative.ids.board;
   const DEMO_SECOND_BOARD_SPACE = demoNative.ids.second_board;
   const DEMO_TODO_LIST = demoNative.ids.todo;
@@ -2255,6 +2257,19 @@ export async function mockArkretApi(
       url.pathname === "/_arkret/self/account/subscribe" &&
       route.request().method() === "GET"
     ) {
+      if (options.demoEventRedaction?.() && !croppedDemo) {
+        if (!options.demoNotification) throw new Error("Event crop requires a signed demo Message");
+        croppedDemo = nativeRealm(9, "Arkret Demo Realm", true,
+          options.emptyBoard ?? false, false, true, true);
+        if (canonicalJson(croppedDemo.committed_events.slice(0, demoNative.committed_events.length))
+          !== canonicalJson(demoNative.committed_events)) {
+          throw new Error("Event crop changed an existing signed source");
+        }
+        nativeFixtures.set(DEMO_REALM, croppedDemo);
+        for (const full of croppedDemo.committed_events.slice(demoNative.committed_events.length)) {
+          projectionEvents.push(structuredClone(full.event));
+        }
+      }
       const catchup = url.searchParams.get("catchup") === "true";
       const filter = JSON.parse(url.searchParams.get("filter") ?? "{}");
       const requestedRealms: string[] | undefined = filter.realm_ids;
@@ -2733,7 +2748,9 @@ export async function mockArkretApi(
       // Cache only identical source facts and query bindings. Request IDs are
       // correlation, while every historical proof still reaches the verifier.
       const { request_id, ...binding } = request;
-      const cacheKey = canonicalJson({ fixture, binding });
+      // This is an internal cache key, never signed or sent on the wire.
+      // Property-order differences may miss the cache but cannot merge facts.
+      const cacheKey = JSON.stringify({ fixture, binding });
       let outcome = historicalSignerResponses.get(cacheKey);
       if (!outcome) {
         outcome = inksonWire<Record<string, any>>("mock-realm-signer-keys", { fixture, request });

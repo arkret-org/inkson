@@ -31,6 +31,8 @@ struct BuildInput {
     #[serde(default)]
     demo_notification: bool,
     #[serde(default)]
+    demo_event_redaction: bool,
+    #[serde(default)]
     directed_invite: bool,
     #[serde(default)]
     plaintext_visible_services: Option<PlaintextVisibleServicesPayload>,
@@ -442,6 +444,7 @@ impl Builder {
                 empty_board: true,
                 encrypted: false,
                 demo_notification: false,
+                demo_event_redaction: false,
                 directed_invite: false,
                 plaintext_visible_services: None,
             };
@@ -1080,6 +1083,32 @@ impl Builder {
                     payload,
                 )?;
             }
+            EventKind::Redaction => {
+                let redaction = full.event.typed_payload::<event_spec::Redaction>()?;
+                ensure!(
+                    redaction.target_ref.as_str().starts_with("ak:event:"),
+                    "fixture supports exact Event cropping only"
+                );
+                let mut value: arkret_models_collaboration::events_payloads::redaction::ObjectRedactionCurrentValue = serde_json::from_value(json!({"assertions":[{
+                    "tag_id":format!("{}:0",full.event.event_id),"value":redaction
+                }]}))?;
+                let selector = CurrentSelector::ObjectRedaction {
+                    target_ref: redaction.target_ref.to_string(),
+                };
+                if let Some(TypedCurrentRow::Value {
+                    value: previous, ..
+                }) = self.rows.iter().find(|row| {
+                    matches!(row,
+                        TypedCurrentRow::Value { selector: held, .. } if held == &selector
+                    )
+                }) {
+                    let previous: arkret_models_collaboration::events_payloads::redaction::ObjectRedactionCurrentValue = serde_json::from_value(previous.clone())?;
+                    value.assertions.extend(previous.assertions);
+                    value.assertions.sort_by(|a, b| a.tag_id.cmp(&b.tag_id));
+                }
+                value.validate_for_subject(redaction.target_ref.as_str())?;
+                self.row(full, selector, value)?;
+            }
             EventKind::StrandMove => {
                 let payload: StrandMovePayload = serde_json::from_value(payload)?;
                 self.row(
@@ -1492,6 +1521,10 @@ pub(super) fn realm_list(input: Value) -> Result<Value> {
 pub(super) fn build(input: Value) -> Result<Value> {
     let mut input: BuildInput = serde_json::from_value(input)?;
     ensure!(
+        !input.demo_event_redaction || input.demo_notification,
+        "Event crop requires its demo Message"
+    );
+    ensure!(
         [9, 10, 11, 12, 13].contains(&input.salt),
         "fixture salt is not registered"
     );
@@ -1783,7 +1816,7 @@ pub(super) fn build(input: Value) -> Result<Value> {
                 StrandId::from_event_id(&source.event_id)
             }
         };
-        builder.author::<event_spec::MessageCreate>(
+        let message = builder.author::<event_spec::MessageCreate>(
             &realm,
             MessageCreatePayload::with_content(
                 strand_id,
@@ -1791,6 +1824,26 @@ pub(super) fn build(input: Value) -> Result<Value> {
                 ContentBlock::text(DEMO_NOTIFICATION_BODY),
             ),
         )?;
+        if input.demo_event_redaction {
+            builder.author::<event_spec::Redaction>(
+                &realm,
+                arkret_models_collaboration::events_payloads::redaction::CrossObjectRedactionPayload {
+                    target_ref: message.event_id.to_string().parse()?, reason: None,
+                    preserve: Some(vec!["kind".into(), "actor_id".into(), "created_at".into()]),
+                },
+            )?;
+            let payload = message.typed_payload::<event_spec::MessageCreate>()?;
+            // This new source proves the consumer installed the newer cut and
+            // stayed authorized, rather than hiding everything after an error.
+            builder.author::<event_spec::MessageCreate>(
+                &realm,
+                MessageCreatePayload::with_content(
+                    payload.strand_id,
+                    "discussion",
+                    ContentBlock::text("Independent current control needle"),
+                ),
+            )?;
+        }
     }
     if let Some(recipient) = builder.invite_recipient.as_deref() {
         let account = recipient.identity.account_id.clone();
@@ -1851,6 +1904,7 @@ fn validate_fixture(fixture: &Fixture) -> Result<Fixture> {
         empty_board: true,
         encrypted: false,
         demo_notification: false,
+        demo_event_redaction: false,
         directed_invite: fixture.invite_recipient.is_some(),
         plaintext_visible_services: None,
     };
@@ -2151,6 +2205,7 @@ pub(super) fn submit(input: Value) -> Result<Value> {
         empty_board: true,
         encrypted: false,
         demo_notification: false,
+        demo_event_redaction: false,
         directed_invite: false,
         plaintext_visible_services: None,
     };
@@ -2171,6 +2226,7 @@ pub(super) fn submit(input: Value) -> Result<Value> {
                 empty_board: true,
                 encrypted: false,
                 demo_notification: false,
+                demo_event_redaction: false,
                 directed_invite: true,
                 plaintext_visible_services: None,
             };

@@ -19,6 +19,39 @@ const COMMIT: &str = "ak:realm_commit:AT33EWBTXdTx5CjY-ogbIIF2T4vh-v7jCMCQ80Fss2
 mod search_circle;
 
 #[wasm_bindgen_test(async)]
+async fn search_event_redaction_never_releases_cached_full_across_restart() {
+    for (scenario, steps) in search_circle::event_redaction_cases() {
+        let id = authority(&format!("event-redaction-{scenario}"));
+        let actor = serde_json::to_string(&search_circle::Fixture::new().actor).unwrap();
+        let now = search_circle::at(20).to_rfc3339();
+        for (generation, step) in steps.into_iter().enumerate() {
+            let index = CurrentIndexHarness::open(&id, generation as u64)
+                .await
+                .unwrap();
+            index
+                .commit_snapshot(generation as u64, &step.frame, &step.snapshot)
+                .await
+                .unwrap();
+            let expected = serde_json::to_string(&step.expected).unwrap();
+            assert_eq!(
+                index.search(&actor, &now).await.unwrap(),
+                expected,
+                "{scenario} {generation}"
+            );
+            drop(index);
+            let reopened = CurrentIndexHarness::open(&id, generation as u64 + 1)
+                .await
+                .unwrap();
+            assert_eq!(
+                reopened.search(&actor, &now).await.unwrap(),
+                expected,
+                "cold {scenario} {generation}"
+            );
+        }
+    }
+}
+
+#[wasm_bindgen_test(async)]
 async fn search_disclosure_backfill_recovers_exact_original_without_reopening_other_gates() {
     for (scenario, steps) in search_circle::disclosure_cases() {
         let id = authority(&format!("disclosure-{scenario}"));

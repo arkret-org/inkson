@@ -65,6 +65,17 @@ struct SearchRecord {
     redaction_stream: Option<arkret_sdk::CommitStreamRef>,
 }
 
+// Keep the existing boolean disclosure bytes and physical key. Event cropping
+// is terminal for that exact signed source, unlike a temporary withheld read.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+enum SearchDisclosure {
+    Withheld(bool),
+    Redacted {
+        source_stream_ref: arkret_sdk::CommitStreamRef,
+    },
+}
+
 pub(crate) struct SearchPage {
     pub rows: Vec<CommittedEventFullView>,
     pub next: Option<String>,
@@ -97,6 +108,47 @@ fn target(full: &CommittedEventFullView) -> anyhow::Result<Option<MessageId>> {
 }
 
 impl CurrentIndex {
+    async fn stage_search_disclosure(
+        &self,
+        event: &arkret_sdk::EventId,
+        disclosure: SearchDisclosure,
+        committed: u64,
+        suffix: &str,
+        writes: &mut BTreeMap<String, Vec<u8>>,
+    ) -> anyhow::Result<()> {
+        let prefix = format!("{}search-withheld/{event}/", self.prefix);
+        let key = format!("{prefix}{suffix}");
+        let staged: Option<SearchDisclosure> = writes
+            .get(&key)
+            .map(|bytes| serde_json::from_slice(bytes))
+            .transpose()?;
+        let previous: Option<SearchDisclosure> = match staged.as_ref() {
+            Some(value) => Some(value.clone()),
+            None => self.latest(&prefix, committed).await?,
+        };
+        let disclosure = match (previous, disclosure) {
+            (
+                Some(SearchDisclosure::Redacted { source_stream_ref }),
+                SearchDisclosure::Redacted {
+                    source_stream_ref: incoming,
+                },
+            ) => {
+                anyhow::ensure!(
+                    source_stream_ref == incoming,
+                    "Event crop crosses its original stream"
+                );
+                SearchDisclosure::Redacted { source_stream_ref }
+            }
+            (Some(terminal @ SearchDisclosure::Redacted { .. }), _) => terminal,
+            (_, terminal @ SearchDisclosure::Redacted { .. }) => terminal,
+            (_, SearchDisclosure::Withheld(withheld)) => SearchDisclosure::Withheld(
+                withheld || matches!(staged, Some(SearchDisclosure::Withheld(true))),
+            ),
+        };
+        writes.insert(key, serde_json::to_vec(&disclosure)?);
+        Ok(())
+    }
+
     pub(super) async fn stage_search_rows(
         &self,
         incoming: &arkret_sdk::sync::RealmSyncEntry,
@@ -108,14 +160,14 @@ impl CurrentIndex {
     ) -> anyhow::Result<()> {
         for view in incoming.committed_events.iter().flatten() {
             let arkret_sdk::CommittedEventView::Full(full) = view else {
-                writes.insert(
-                    format!(
-                        "{}search-withheld/{}/{suffix}",
-                        self.prefix,
-                        view.commit().event_ref
-                    ),
-                    serde_json::to_vec(&true)?,
-                );
+                self.stage_search_disclosure(
+                    &view.commit().event_ref,
+                    SearchDisclosure::Withheld(true),
+                    committed,
+                    suffix,
+                    writes,
+                )
+                .await?;
                 continue;
             };
             let Some(message) = target(full)? else {
@@ -134,12 +186,14 @@ impl CurrentIndex {
             // this exact Event. Within one installation, withheld wins in
             // either input order. Publication shares the candidate transaction;
             // the current authorization and revision gates still apply below.
-            writes
-                .entry(format!(
-                    "{}search-withheld/{}/{suffix}",
-                    self.prefix, full.event.event_id
-                ))
-                .or_insert_with(|| b"false".to_vec());
+            self.stage_search_disclosure(
+                &full.event.event_id,
+                SearchDisclosure::Withheld(false),
+                committed,
+                suffix,
+                writes,
+            )
+            .await?;
             let prefix = format!("{}search/{}/", self.prefix, message);
             let key = format!("{prefix}{suffix}");
             let mut record: SearchRecord = match writes.get(&key) {
@@ -232,13 +286,28 @@ impl CurrentIndex {
             else {
                 continue;
             };
-            // Event spellings are independent field-level assertions; they
-            // must never be retyped into a terminal Message redaction.
-            let Ok(message) = MessageId::new(target_ref.as_str()) else {
+            let event = target_ref.parse::<arkret_sdk::EventId>().ok();
+            let message = MessageId::new(target_ref.as_str()).ok();
+            if event.is_none() && message.is_none() {
                 continue;
-            };
+            }
             let redaction: arkret_models_collaboration::events_payloads::redaction::ObjectRedactionCurrentValue = serde_json::from_value(value.clone())?;
             redaction.validate_for_subject(target_ref)?;
+            if let Some(event) = event {
+                self.stage_search_disclosure(
+                    &event,
+                    SearchDisclosure::Redacted {
+                        source_stream_ref: source_stream_ref.clone(),
+                    },
+                    committed,
+                    suffix,
+                    writes,
+                )
+                .await?;
+                continue;
+            }
+            // Event spellings must never become terminal Message state.
+            let message = message.unwrap();
             let prefix = format!("{}search/{message}/", self.prefix);
             let key = format!("{prefix}{suffix}");
             let mut record: SearchRecord = match writes.get(&key) {
@@ -396,12 +465,12 @@ impl CurrentIndex {
             return Ok(false);
         }
         if self
-            .latest::<bool>(
+            .latest::<SearchDisclosure>(
                 &format!("{}search-withheld/{}/", self.prefix, full.event.event_id),
                 generation,
             )
             .await?
-            .unwrap_or(false)
+            .is_some_and(|disclosure| !matches!(disclosure, SearchDisclosure::Withheld(false)))
         {
             return Ok(false);
         }
@@ -418,19 +487,26 @@ impl CurrentIndex {
             EventKind::MessageCreate => MessageId::from_event_id(&full.event.event_id),
             _ => target(full)?.unwrap(),
         };
-        if let Some(TypedCurrentRow::Value { value, .. }) = self
-            .ready_selector(
-                realm.as_str(),
-                &CurrentSelector::ObjectRedaction {
-                    target_ref: message.to_string(),
-                },
-                generation,
-            )
-            .await?
-        {
-            let redaction: arkret_models_collaboration::events_payloads::redaction::ObjectRedactionCurrentValue = serde_json::from_value(value)?;
-            redaction.validate_for_subject(message.as_str())?;
-            return Ok(false);
+        // The Event spelling is an independent field-cropping assertion, not
+        // the terminal Message state. An intact cached signed Event cannot be
+        // presented as a cropped Full original. Omit that candidate just like
+        // the Station's canonical-byte disclosure gate, without manufacturing
+        // a Message tombstone or rewriting the producer's signed payload.
+        for subject in [message.to_string(), full.event.event_id.to_string()] {
+            if let Some(TypedCurrentRow::Value { value, .. }) = self
+                .ready_selector(
+                    realm.as_str(),
+                    &CurrentSelector::ObjectRedaction {
+                        target_ref: subject.clone(),
+                    },
+                    generation,
+                )
+                .await?
+            {
+                let redaction: arkret_models_collaboration::events_payloads::redaction::ObjectRedactionCurrentValue = serde_json::from_value(value)?;
+                redaction.validate_for_subject(&subject)?;
+                return Ok(false);
+            }
         }
         let (Some(floors), Some(policies)) = (&cut.search_floor, &cut.search_policies) else {
             return Ok(false);
@@ -684,6 +760,87 @@ pub(crate) mod tests {
             )
             .await
             .unwrap()
+    }
+
+    #[tokio::test]
+    async fn search_event_redaction_never_releases_cached_full_or_creates_a_message_tombstone() {
+        for (scenario, steps) in circle_fixture::event_redaction_cases() {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("event-redaction.sqlite");
+            let fixture = circle_fixture::Fixture::new();
+            for (generation, step) in steps.into_iter().enumerate() {
+                let index = super::super::tests::index(&path, generation as u64).await;
+                let frame = serde_json::from_str(&step.frame).unwrap();
+                let snapshot: arkret_sdk::RealmStateSnapshot =
+                    serde_json::from_str(&step.snapshot).unwrap();
+                let mut stage = index
+                    .stage_current_install(
+                        || Ok(generation as u64),
+                        Some(&frame),
+                        None,
+                        &Default::default(),
+                        &BTreeMap::from([(snapshot.realm_id.to_string(), &snapshot)]),
+                        &|| Ok(()),
+                        None,
+                        None,
+                    )
+                    .await
+                    .unwrap();
+                if generation == 1 {
+                    // Abandoning the crop must leave the durable cut readable.
+                    drop(stage);
+                    assert_eq!(
+                        index
+                            .read_search_page(&fixture.actor, None, circle_fixture::at(20))
+                            .await
+                            .unwrap()
+                            .rows
+                            .len(),
+                        if scenario == "redaction_first" {
+                            0
+                        } else if matches!(scenario, "revision" | "revised_create") {
+                            2
+                        } else {
+                            1
+                        }
+                    );
+                    stage = self::stage(&index, &snapshot, vec![], generation as u64).await;
+                }
+                stage.finish();
+                assert_eq!(
+                    index
+                        .read_search_page(&fixture.actor, None, circle_fixture::at(20))
+                        .await
+                        .unwrap()
+                        .rows,
+                    step.expected,
+                    "{scenario} {generation}"
+                );
+                let message = MessageId::from_event_id(&fixture.message.event.event_id);
+                let record: Option<SearchRecord> = index
+                    .latest(
+                        &format!("{}search/{message}/", index.prefix),
+                        generation as u64 + 1,
+                    )
+                    .await
+                    .unwrap();
+                assert!(
+                    !record.as_ref().is_some_and(|record| record.redacted),
+                    "Event crop is not Message terminal state"
+                );
+                drop(index);
+                let reopened = super::super::tests::index(&path, generation as u64 + 1).await;
+                assert_eq!(
+                    reopened
+                        .read_search_page(&fixture.actor, None, circle_fixture::at(20))
+                        .await
+                        .unwrap()
+                        .rows,
+                    step.expected,
+                    "cold {scenario} {generation}"
+                );
+            }
+        }
     }
 
     #[tokio::test]
@@ -1269,6 +1426,15 @@ pub(crate) mod tests {
                 .unwrap()
                 .unwrap();
         }
+        // Replaying a Full changes disclosure, not the already observed head.
+        // Keep the latest accepted cut even when exercising an omitted crop.
+        snapshot.visible_stream_heads = index
+            .progress_at(snapshot.realm_id.as_str(), store.current_generation())
+            .await
+            .unwrap()
+            .signed_snapshot
+            .unwrap()
+            .stream_heads;
         FixtureStation::did_web().sign_snapshot(&mut snapshot);
         let rows = if full {
             vec![arkret_sdk::CommittedEventView::Full(originals[0].clone())]
@@ -1291,8 +1457,26 @@ pub(crate) mod tests {
     pub(crate) async fn install_current_only_search_redaction(
         store: &mut crate::state::LocalStateStore,
     ) {
+        install_current_only_redaction(store, false).await;
+    }
+
+    pub(crate) async fn install_current_only_search_event_redaction(
+        store: &mut crate::state::LocalStateStore,
+    ) {
+        install_current_only_redaction(store, true).await;
+    }
+
+    async fn install_current_only_redaction(
+        store: &mut crate::state::LocalStateStore,
+        event_target: bool,
+    ) {
         let (_directory, _unused, mut snapshot, originals, _actor) = setup().await;
         let original = &originals[0];
+        let subject = if event_target {
+            original.event.event_id.to_string()
+        } else {
+            MessageId::from_event_id(&original.event.event_id).to_string()
+        };
         let (_, _, later) = verified_realm_fixture_as(
             "ak:realm:AY789mrKRCQEVlbVgiTgLdjVO5oCMJiUCrF-D-JlRNxI"
                 .parse()
@@ -1303,8 +1487,17 @@ pub(crate) mod tests {
                     serde_json::to_value(&original.event.payload).unwrap(),
                 ),
                 (
-                    "ak.message.redact".into(),
-                    json!({"message_id":MessageId::from_event_id(&original.event.event_id)}),
+                    if event_target {
+                        "ak.redaction"
+                    } else {
+                        "ak.message.redact"
+                    }
+                    .into(),
+                    if event_target {
+                        json!({"target_ref":subject,"preserve":["kind","actor_id","created_at"]})
+                    } else {
+                        json!({"message_id":subject})
+                    },
                 ),
             ],
             "alice.example",
@@ -1315,7 +1508,7 @@ pub(crate) mod tests {
         snapshot.visible_stream_heads[0].stream_position = redaction.commit.stream_position;
         snapshot.visible_stream_heads[0].commit_id = redaction.commit.commit_id.clone();
         snapshot.current_state_entries.push(TypedCurrentRow::Value {
-            selector: CurrentSelector::ObjectRedaction { target_ref: MessageId::from_event_id(&original.event.event_id).to_string() },
+            selector: CurrentSelector::ObjectRedaction { target_ref: subject },
             source_stream_ref: redaction.commit.stream_ref.clone(),
             revision: CurrentRevision { commit_id: redaction.commit.commit_id.clone(), stream_position: redaction.commit.stream_position },
             value: json!({"assertions":[{"tag_id":format!("{}:0",redaction.event.event_id),"value":redaction.event.payload}]}),

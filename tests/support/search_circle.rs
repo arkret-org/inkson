@@ -98,6 +98,90 @@ pub struct DisclosureStep {
     pub expected: Vec<CommittedEventFullView>,
 }
 
+/// Event cropping is independent of the Message terminal state. The client
+/// omits an unavailable complete signed source rather than editing its bytes.
+pub fn event_redaction_cases() -> Vec<(&'static str, Vec<DisclosureStep>)> {
+    let mut cases = Vec::new();
+    for scenario in [
+        "create",
+        "create_empty_preserve",
+        "create_metadata_preserve",
+        "redaction_first",
+        "revised_create",
+        "revision",
+        "other_event",
+    ] {
+        let mut fixture = Fixture::new();
+        if matches!(scenario, "revised_create" | "revision") {
+            fixture.revise_message();
+        }
+        let originals = fixture
+            .originals
+            .iter()
+            .filter(|full| {
+                matches!(
+                    full.event.kind,
+                    EventKind::MessageCreate | EventKind::MessageRevise
+                )
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        let target = match scenario {
+            "revision" => originals.last().unwrap().event.event_id.clone(),
+            "other_event" => EventId::from_digest(DigestSuite::Sha256, [111; 32]),
+            _ => fixture.message.event.event_id.clone(),
+        };
+        let preserve = match scenario {
+            "create_empty_preserve" => Some(vec![]),
+            "create_metadata_preserve" => {
+                Some(vec!["kind".into(), "actor_id".into(), "created_at".into()])
+            }
+            _ => None,
+        };
+        let mut steps = vec![DisclosureStep {
+            frame: fixture.frame(scenario != "redaction_first"),
+            snapshot: serde_json::to_string(&fixture.snapshot).unwrap(),
+            expected: if scenario == "redaction_first" {
+                vec![]
+            } else {
+                originals.clone()
+            },
+        }];
+        fixture.redact_event_current(&target, preserve);
+        let expected = if scenario == "other_event" {
+            originals
+        } else {
+            vec![]
+        };
+        for full in [false, true, true] {
+            steps.push(DisclosureStep {
+                frame: fixture.frame(full),
+                snapshot: serde_json::to_string(&fixture.snapshot).unwrap(),
+                expected: expected.clone(),
+            });
+        }
+        // Even a stale cut omitting the assertion cannot reopen an already
+        // observed terminal crop when its old Full source is replayed.
+        fixture.snapshot.current_state_entries.retain(|row| {
+            !matches!(
+                row,
+                TypedCurrentRow::Value {
+                    selector: CurrentSelector::ObjectRedaction { .. },
+                    ..
+                }
+            )
+        });
+        seal(&mut fixture.snapshot);
+        steps.push(DisclosureStep {
+            frame: fixture.frame(true),
+            snapshot: serde_json::to_string(&fixture.snapshot).unwrap(),
+            expected,
+        });
+        cases.push((scenario, steps));
+    }
+    cases
+}
+
 /// Identical signed inputs and observations for SQLite and IndexedDB.
 pub fn disclosure_cases() -> Vec<(&'static str, Vec<DisclosureStep>)> {
     let mut cases = Vec::new();
@@ -210,6 +294,45 @@ pub fn disclosure_cases() -> Vec<(&'static str, Vec<DisclosureStep>)> {
 }
 
 impl Fixture {
+    pub fn redact_event_current(&mut self, target: &EventId, preserve: Option<Vec<String>>) {
+        let signer = arkret_test_kit::keys::seeded_signer(
+            "did:web:alice.example".parse().unwrap(),
+            DidUrl::new("did:web:alice.example#ak:device:0196419b-0000-7000-8000-000000000001")
+                .unwrap(),
+        );
+        let mut payload = json!({"target_ref": target});
+        if let Some(preserve) = preserve {
+            payload["preserve"] = json!(preserve);
+        }
+        let event = SignedEventFixtureBuilder::new(
+            "ak.redaction",
+            self.message.event.scope_ref.clone(),
+            self.actor.clone(),
+            payload.clone(),
+        )
+        .with_created_at(at(7))
+        .sign_verifiable(&signer)
+        .unwrap()
+        .expect_verifiable();
+        let full = accepted(event, self.originals.last());
+        let head = self
+            .snapshot
+            .visible_stream_heads
+            .iter_mut()
+            .find(|head| head.stream_ref == full.commit.stream_ref)
+            .unwrap();
+        head.stream_position = full.commit.stream_position;
+        head.commit_id = full.commit.commit_id.clone();
+        self.snapshot.current_state_entries.push(row(
+            &full,
+            CurrentSelector::ObjectRedaction {
+                target_ref: target.to_string(),
+            },
+            json!({"assertions":[{"tag_id":format!("{}:0",full.event.event_id),"value":payload}]}),
+        ));
+        seal(&mut self.snapshot);
+    }
+
     pub fn change_revision(&mut self, scenario: &str) {
         let message_id = MessageId::from_event_id(&self.message.event.event_id);
         let position = self
