@@ -1444,9 +1444,9 @@ fn signal_engine_is_active(
     start_generation: u64,
     start_profile_id: Option<&str>,
 ) -> bool {
-    generation.get() == start_generation
+    !ctx.effect.is_cancelled()
+        && generation.get() == start_generation
         && ctx.profiles.get().active_profile_id.as_deref() == start_profile_id
-        && !ctx.effect.is_cancelled()
         && !ctx.token.get().trim().is_empty()
 }
 

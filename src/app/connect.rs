@@ -224,10 +224,10 @@ pub(super) async fn refresh_session_credential_for_active_context(
     mut token: Signal<String>,
     config_store: Signal<LocalConfigStore>,
     session_generation: Signal<u64>,
+    active_account: Signal<Option<crate::config::ActiveAccountContext>>,
 ) -> crate::runtime::session::CurrentSessionRefresh {
     let base = base_url();
     let generation = session_generation();
-    let active_account = SessionContext::get().active_account;
     let Some(account) = active_account.peek().clone() else {
         // A newly registered account writes its accepted grant durably before
         // publishing the matching ActiveAccountContext. That short commit

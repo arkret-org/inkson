@@ -235,11 +235,11 @@ pub async fn run_realm_events_engine_with_transport<P, F>(
         }
     };
     let is_active = || {
-        generation.get() == start_generation
+        !ctx.effect.is_cancelled()
+            && generation.get() == start_generation
             && ctx.profiles.get().active_profile_id == start_profile_id
             && ctx.selected_realm_id.get() == realm_id
             && ctx.route_enabled.get()
-            && !ctx.effect.is_cancelled()
             && !ctx.base_url.get().trim().is_empty()
             && !ctx.token.get().trim().is_empty()
     };

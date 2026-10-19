@@ -3906,6 +3906,18 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
     dict.set("app.account.server", "服务器");
     dict.set("app.account.refresh_session", "刷新会话");
     dict.set("app.account.log_out", "退出登录");
+    dict.set("app.account.switching", "正在切换账号…");
+    dict.set("app.account.switch", "切换账号");
+    dict.set("app.account.choose", "选择已保存的账号");
+    dict.set("app.account.add", "添加账号");
+    dict.set(
+        "app.account.saved_unavailable",
+        "无法读取已保存的账号，数据已保留。",
+    );
+    dict.set(
+        "app.account.switch_failed",
+        "账号切换失败，已保存的账号已保留，请重试。",
+    );
     dict.set("theme.switch_to_light", "切换到浅色主题");
     dict.set("theme.switch_to_night", "切换到深色主题");
     dict.set("account.not_signed_in", "尚未登录");

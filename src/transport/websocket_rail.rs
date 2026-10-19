@@ -421,6 +421,15 @@ impl WebSocketRail {
             }
         });
     }
+    /// Account selection retires both the connection and its Station route.
+    pub(crate) fn reset_for_account_switch(&self) {
+        self.with(|state| {
+            if let Some(connection) = state.connection.take() {
+                connection.close();
+            }
+            state.selector = None;
+        });
+    }
     pub fn is_live(&self) -> bool {
         self.connection()
             .is_some_and(|c| c.with(|q| q.ready && !q.closed))

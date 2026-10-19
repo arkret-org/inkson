@@ -4583,6 +4583,18 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
     dict.set("app.account.server", "Server");
     dict.set("app.account.refresh_session", "Refresh session");
     dict.set("app.account.log_out", "Log out");
+    dict.set("app.account.switching", "Switching account…");
+    dict.set("app.account.switch", "Switch account");
+    dict.set("app.account.choose", "Choose a saved account");
+    dict.set("app.account.add", "Add account");
+    dict.set(
+        "app.account.saved_unavailable",
+        "Saved accounts could not be loaded. Your data has been retained.",
+    );
+    dict.set(
+        "app.account.switch_failed",
+        "Account switching failed. Your saved accounts have been retained. Please retry.",
+    );
     dict.set("theme.switch_to_light", "Switch to light theme");
     dict.set("theme.switch_to_night", "Switch to night theme");
     dict.set("account.not_signed_in", "Not signed in");

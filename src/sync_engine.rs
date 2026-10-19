@@ -338,8 +338,8 @@ impl AccountTransportProvider {
     }
 
     fn is_active(&self) -> bool {
-        self.generation.get() == self.start_generation
-            && !self.ctx.effect.is_cancelled()
+        !self.ctx.effect.is_cancelled()
+            && self.generation.get() == self.start_generation
             && !self.ctx.token.get().trim().is_empty()
     }
 }
@@ -358,6 +358,7 @@ struct InksonAccountProjector {
     ctx: SyncEngineContext,
     generation: crate::runtime::input::ValueReader<u64>,
     start_generation: u64,
+    session_generation: u64,
     /// The demand this run subscribed with. A navigation that changes it ends
     /// the run so the next attempt resubscribes with the current demand.
     request_filter: Option<AccountFilter>,
@@ -561,6 +562,7 @@ impl NativeAccountHost {
             .state_store
             .read(|store| store.realm_detail_invalidation_revision(&ctx.selected_realm_id.get()));
         let projector = InksonAccountProjector {
+            session_generation: ctx.session.generation(),
             blocklist_catchup,
             ctx,
             generation: ValueReader::new(|| 1),
@@ -941,7 +943,9 @@ fn to_device_window_safe_for_ingest_ack(window: Option<(bool, bool)>) -> bool {
 
 impl InksonAccountProjector {
     fn active(&self) -> bool {
-        self.generation.get() == self.start_generation && !self.ctx.effect.is_cancelled()
+        !self.ctx.effect.is_cancelled()
+            && self.ctx.session.generation() == self.session_generation
+            && self.generation.get() == self.start_generation
     }
 
     /// Stop the run when the session, the account, or the subscribed demand is
@@ -1515,7 +1519,9 @@ impl InksonAccountProjector {
     /// authorization failure ends the run instead.
     fn defer(&self, error: anyhow::Error) -> garth::Result<()> {
         if is_auth_expired_error(&error) || is_terminal_session_grant_error(&error) {
-            self.ctx.session.invalidate(error.to_string());
+            self.ctx
+                .session
+                .invalidate_if_generation(self.session_generation, error.to_string());
             self.control.cancel();
             return Err(garth::Error::Http(error.to_string()));
         }
@@ -1765,6 +1771,7 @@ pub async fn run_sync_engine(
         let subscription =
             AccountSubscription::new(ctx.client_runtime.executor(), ctx.client_runtime.cursors());
         let projector = InksonAccountProjector {
+            session_generation: ctx.session.generation(),
             blocklist_catchup,
             ctx: ctx.clone(),
             generation: generation.clone(),
@@ -3555,6 +3562,103 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    fn retired_account_attempt() -> (InksonAccountProjector, AccountTransportProvider) {
+        use crate::runtime::input::{StateStoreHandle, ValueCell, ValueReader};
+        let store = crate::state::isolated_store_for_tests("retired-account-attempt");
+        let blocklist_catchup = store.begin_blocklist_catchup();
+        let shared = std::sync::Arc::new(std::sync::Mutex::new(store));
+        let read = shared.clone();
+        let write = shared.clone();
+        let state_store = StateStoreHandle::new(
+            move |read_fn| read_fn(&read.lock().unwrap()),
+            move |write_fn| write_fn(&mut write.lock().unwrap()),
+        );
+        let account =
+            crate::test_support::AccountFixture::new("ak:did_core:web:retired-sync.example")
+                .build();
+        let session =
+            crate::runtime::session::SessionCoordinator::new(|| Box::pin(std::future::pending()));
+        let effect = crate::runtime::effects::EffectRegistry::default().register(
+            crate::runtime::effects::EffectKey {
+                owner: crate::runtime::effects::EffectOwner::Session,
+                name: "retired-sync-reader".into(),
+                generation: 1,
+            },
+        );
+        let ctx = SyncEngineContext {
+            token: ValueReader::new(|| panic!("retired token reader was evaluated")),
+            state_store,
+            principal_id: account.principal_id().clone(),
+            device_id: account.device_id.to_string(),
+            account,
+            live_device_id: ValueCell::new(|| panic!("retired device"), |_| {}, |_| {}),
+            selected_realm_id: ValueReader::new(|| panic!("retired Realm")),
+            websocket_rail: Default::default(),
+            realm_live_epoch: ValueCell::new(|| panic!("retired epoch"), |_| {}, |_| {}),
+            session,
+            client_runtime: crate::client_core::InksonClientRuntime::from_state_adapter(
+                crate::client_core::InksonLocalStateStoreAdapter::from_shared_store(shared),
+            ),
+            effect,
+            projection_sink: Default::default(),
+        };
+        let provider = AccountTransportProvider {
+            ctx: ctx.clone(),
+            generation: ValueReader::new(|| panic!("disposed generation reader")),
+            start_generation: 1,
+        };
+        let http = TransportClient::unauthenticated("https://retired-sync.example")
+            .unwrap()
+            .sdk_http_client()
+            .unwrap();
+        let projector = InksonAccountProjector {
+            blocklist_catchup,
+            session_generation: ctx.session.generation(),
+            ctx,
+            generation: ValueReader::new(|| panic!("disposed generation reader")),
+            start_generation: 1,
+            request_filter: None,
+            selected_detail_invalidation_revision: 0,
+            control: SubscriptionControl::default(),
+            current_index: tokio::sync::Mutex::new(None),
+            station_cas_projection: std::sync::Arc::new(
+                tokio::sync::Mutex::new(Default::default()),
+            ),
+            removal_schedule: std::sync::Mutex::new(Default::default()),
+            recovery_history: tokio::sync::Mutex::new(None),
+            transport: crate::transport::websocket_rail::StreamRail::select(
+                &crate::transport::websocket_rail::WebSocketRail::default(),
+                crate::client_core::InksonAccountTransport::new(http),
+            ),
+        };
+        (projector, provider)
+    }
+
+    #[test]
+    fn cancelled_account_attempt_never_reads_disposed_view_signals() {
+        let (projector, provider) = retired_account_attempt();
+        projector.ctx.effect.cancel();
+        assert!(!projector.active());
+        assert!(!provider.is_active());
+    }
+
+    #[test]
+    fn delayed_post_commit_denial_cannot_invalidate_a_replacement_session() {
+        let (projector, _) = retired_account_attempt();
+        let session = projector.ctx.session.clone();
+        session.replace("replacement");
+        let error = anyhow::Error::new(arkret_sdk::http_client::Error::Api {
+            status: 401,
+            error: Box::new(arkret_sdk::Problem::from_code(
+                "auth_expired",
+                "old account denial",
+            )),
+        });
+        assert!(projector.defer(error).is_err());
+        assert_eq!(session.credential().as_deref(), Some("replacement"));
+        assert!(!projector.active());
+    }
 
     #[test]
     fn cancelled_sync_run_never_overwrites_the_replacement_connection_status() {

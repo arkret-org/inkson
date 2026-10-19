@@ -127,6 +127,22 @@ impl EffectRegistry {
         }
     }
 
+    /// The account subtree is being destroyed. Keep cancellation visible to
+    /// detached work, but do not make a later logout await futures whose
+    /// component-scoped owner has already dropped them.
+    pub(crate) fn retire_all(&self) {
+        let handles: Vec<_> = self
+            .effects
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .drain()
+            .map(|(_, handle)| handle)
+            .collect();
+        for handle in handles {
+            handle.cancel();
+        }
+    }
+
     pub fn request_cancel_all(&self) {
         let effects = self.effects.lock().unwrap_or_else(PoisonError::into_inner);
         for handle in effects.values() {

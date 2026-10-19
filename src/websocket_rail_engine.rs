@@ -56,9 +56,9 @@ pub async fn run_websocket_rail_engine(
 ) {
     let start_profile_id = ctx.profiles.get().active_profile_id;
     let is_active = || {
-        generation.get() == start_generation
+        !ctx.effect.is_cancelled()
+            && generation.get() == start_generation
             && ctx.profiles.get().active_profile_id == start_profile_id
-            && !ctx.effect.is_cancelled()
             && !ctx.base_url.get().trim().is_empty()
             && !ctx.token.get().trim().is_empty()
     };
