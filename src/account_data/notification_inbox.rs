@@ -88,25 +88,59 @@ pub fn merge_notification_inbox_account_data(
     super::encrypt_account_data_value(authority, account_data_key, &serde_json::to_value(&winner)?)
 }
 
-/// Inbox states carried by the `ak.account_data.set` Events in a sync frame.
-///
-/// Entries that do not decrypt or do not bind their own key are skipped: a
-/// foreign or corrupt inbox record must never silently archive a notification.
-pub fn notification_inbox_states_from_account_data_events(
+/// Validate an inbox Event's existing account-data revision, without decrypting.
+pub(crate) fn notification_inbox_event_revision(
+    event: &arkret_sdk::Event,
+) -> anyhow::Result<Option<u64>> {
+    let Some(key) = event.payload.get("key").and_then(Value::as_str) else {
+        return Ok(None);
+    };
+    if arkret_sdk::notification_inbox_account_data_key_notification_id(key).is_none_or(|id| {
+        id.as_str()
+            .parse::<arkret_wire::NotificationProjectionId>()
+            .is_err()
+    }) {
+        return Ok(None);
+    }
+    anyhow::ensure!(
+        event.kind.as_str() == "ak.account_data.set",
+        "inbox update is not account data"
+    );
+    let payload: arkret_sdk::AccountDataSetPayload =
+        serde_json::from_value(serde_json::to_value(&event.payload)?)?;
+    Ok(Some(
+        payload
+            .expected_server_revision
+            .checked_add(1)
+            .ok_or_else(|| anyhow::anyhow!("inbox revision overflow"))?,
+    ))
+}
+
+/// Decode one accepted holder update. A physical deletion clears only the
+/// derived inbox disposition; it never supplies notification content.
+pub(crate) fn notification_inbox_update(
     authority: &arkret_sdk::AccountId,
-    events: &[arkret_sdk::Event],
-) -> Vec<NotificationInboxValue> {
-    events
-        .iter()
-        .filter_map(|event| {
-            let account_data_key = event.payload.get("key")?.as_str()?;
-            arkret_sdk::notification_inbox_account_data_key_notification_id(account_data_key)?;
-            let plaintext =
-                super::decrypt_account_data_entry(authority, account_data_key, &event.payload)
-                    .ok()?;
-            notification_inbox_value_from_plaintext(account_data_key, &plaintext).ok()
-        })
-        .collect()
+    event: &arkret_sdk::Event,
+) -> anyhow::Result<Option<(String, bool)>> {
+    if notification_inbox_event_revision(event)?.is_none() {
+        return Ok(None);
+    }
+    anyhow::ensure!(
+        event.actor_id == arkret_sdk::ActorId::account(authority.clone()),
+        "inbox update belongs to another account"
+    );
+    let payload: arkret_sdk::AccountDataSetPayload =
+        serde_json::from_value(serde_json::to_value(&event.payload)?)?;
+    let id = arkret_sdk::notification_inbox_account_data_key_notification_id(payload.key.as_str())
+        .ok_or_else(|| anyhow::anyhow!("invalid inbox key"))?
+        .to_string();
+    if payload.tombstone {
+        return Ok(Some((id, false)));
+    }
+    let plaintext =
+        super::decrypt_account_data_entry(authority, payload.key.as_str(), &event.payload)?;
+    notification_inbox_value_from_plaintext(payload.key.as_str(), &plaintext)?;
+    Ok(Some((id, true)))
 }
 
 #[cfg(test)]

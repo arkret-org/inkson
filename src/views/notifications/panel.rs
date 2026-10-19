@@ -7,7 +7,7 @@ use dioxus::prelude::*;
 
 use super::actions::{
     mark_all_notifications_read, mark_notification_read_state, refresh_notifications,
-    run_notification_action, set_notification_inbox_state,
+    restore_notification_inbox, run_notification_action, set_notification_inbox_state,
 };
 use super::model::{
     NotificationFeedback, UiNotificationGroup, hydrate_notifications_with_privacy_gate,
@@ -81,6 +81,7 @@ pub fn NotificationsPanel(
     let mut show_archived = use_signal(|| false);
     let mut did_bootstrap = use_signal(|| false);
     let mut status_msg = use_signal(NotificationFeedback::default);
+    let restoring = use_signal(std::collections::BTreeSet::<String>::new);
 
     if !did_bootstrap() {
         did_bootstrap.set(true);
@@ -389,7 +390,24 @@ pub fn NotificationsPanel(
                                 UiIcon { name: "bell" }
                             }
                         }
-                        if !notification.archived {
+                        if notification.archived && notification.id.parse::<arkret_wire::NotificationProjectionId>().is_ok() {
+                            Button {
+                                variant: ButtonVariant::Ghost,
+                                size: ButtonSize::Sm,
+                                class: "btn icon",
+                                "data-testid": "unarchive-button",
+                                disabled: restoring.read().contains(&notification.id),
+                                title: crate::i18n::tr("notifications.tooltip.restore"),
+                                "aria-label": crate::i18n::tr("notifications.tooltip.restore"),
+                                onclick: {
+                                    let base_url = base_url.clone();
+                                    let authority = authority.clone();
+                                    let notification_id = notification.id.clone();
+                                    move |_| restore_notification_inbox(base_url.clone(), token(), authority.clone(), notification_id.clone(), state_store, notifications, status_msg, restoring)
+                                },
+                                UiIcon { name: "archive" }
+                            }
+                        } else if !notification.archived {
                             Button {
                                 variant: ButtonVariant::Ghost,
                                 size: ButtonSize::Sm,

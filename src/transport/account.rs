@@ -1684,19 +1684,36 @@ pub async fn set_account_data(
 
 /// Delete an account-data entry through the versioned physical-delete binding.
 pub async fn delete_account_data(submitter: &EventSubmitter, type_key: &str) -> anyhow::Result<()> {
+    delete_account_data_event(submitter, type_key)
+        .await
+        .map(|_| ())
+}
+
+/// Return the exact original Event only after its physical deletion is accepted.
+pub(crate) async fn delete_account_data_event(
+    submitter: &EventSubmitter,
+    type_key: &str,
+) -> anyhow::Result<arkret_sdk::Event> {
     let mut snapshot = account_data_snapshot(submitter.http(), type_key).await?;
     for attempt in 1..=MAX_ACCOUNT_DATA_CAS_ATTEMPTS {
+        let event =
+            account_data_set_submission(submitter, type_key, None, snapshot.revision).await?;
         let body = arkret_sdk::AccountDataDeleteRequestBody {
-            set_event: arkret_wire::EventAdmissionSubmission::new(
-                account_data_set_submission(submitter, type_key, None, snapshot.revision).await?,
-            ),
+            set_event: arkret_wire::EventAdmissionSubmission::new(event.clone()),
         };
         match submitter
             .http()
             .account_data_delete(type_key, &submitter.verify_publication(body)?)
             .await
         {
-            Ok(_) => return Ok(()),
+            Ok(outcome) => {
+                anyhow::ensure!(
+                    outcome.account_data_key == type_key
+                        && Some(outcome.revision) == snapshot.revision.checked_add(1),
+                    "account_data delete outcome does not match the accepted Event"
+                );
+                return Ok(event);
+            }
             Err(error) => {
                 let Some(current) = account_data_conflict_snapshot(type_key, &error)? else {
                     return Err(error.into());

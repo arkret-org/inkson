@@ -1788,6 +1788,16 @@ pub fn english_translations() -> TranslationDict {
     dict.set("notifications.tooltip.mark_read", "Mark read");
     dict.set("notifications.tooltip.mark_unread", "Mark unread");
     dict.set("notifications.tooltip.archive", "Archive");
+    dict.set("notifications.tooltip.restore", "Unarchive");
+    dict.set(
+        "notifications.feedback.restoring",
+        "Restoring notification…",
+    );
+    dict.set("notifications.feedback.restored", "Notification restored");
+    dict.set(
+        "notifications.feedback.restore_failed",
+        "Could not restore notification. Retry: {error}",
+    );
     dict.set("notifications.tooltip.mute_realm", "Mute this realm");
     dict.set(
         "notifications.feedback.refresh_failed",

@@ -3341,6 +3341,12 @@ pub(crate) fn apply_account_data_entries(
         let Some(account_data_key) = entry.payload.get("key").and_then(Value::as_str) else {
             continue;
         };
+        if arkret_sdk::notification_inbox_account_data_key_notification_id(account_data_key)
+            .is_some()
+        {
+            store.apply_notification_inbox_event(authority, entry)?;
+            continue;
+        }
         match crate::sidecar::ingest_sidecar_view_state_account_data(
             store,
             authority,

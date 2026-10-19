@@ -1700,6 +1700,13 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("notifications.tooltip.mark_read", "标为已读");
     dict.set("notifications.tooltip.mark_unread", "标为未读");
     dict.set("notifications.tooltip.archive", "归档");
+    dict.set("notifications.tooltip.restore", "撤销归档");
+    dict.set("notifications.feedback.restoring", "正在恢复通知…");
+    dict.set("notifications.feedback.restored", "已恢复通知");
+    dict.set(
+        "notifications.feedback.restore_failed",
+        "恢复通知失败，可重试：{error}",
+    );
     dict.set("notifications.tooltip.mute_realm", "静音此 Realm");
     dict.set(
         "notifications.feedback.refresh_failed",

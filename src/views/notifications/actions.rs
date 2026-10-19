@@ -22,11 +22,11 @@ pub(crate) fn refresh_notifications(
     mut notifications: Signal<Vec<UiNotification>>,
     mut status_msg: Signal<NotificationFeedback>,
 ) {
+    let epoch = crate::identity::device_directory::session_cache_epoch();
     spawn(async move {
         let session_credential = session_credential();
         match with_authed_api(&base_url, session_credential, |api| async move {
             let http = api.sdk_http_client()?;
-            let account_data = state_store.write().current_account_data_events();
             // `invite-addressing.md` §7 - the notify branch's durable carrier is
             // the holder-private `ak.account.invite_delivery` cell, and the
             // account-subscribe stream may race with this refresh. The live
@@ -48,27 +48,33 @@ pub(crate) fn refresh_notifications(
                     None
                 }
             };
-            Ok((account_data, delivery_cell))
+            Ok(delivery_cell)
         })
         .await
         {
-            Ok((account_data, delivery_cell)) => {
+            Ok(delivery_cell) => {
+                if epoch != crate::identity::device_directory::session_cache_epoch()
+                    || state_store.read().active_authority().as_ref() != Some(&authority)
+                {
+                    return;
+                }
+                let account_data = state_store.read().current_account_data_events();
                 let principal_id = state_store.read().active_principal_id().unwrap_or_default();
                 let push_rules = push_rules_from_account_data(&authority, &account_data);
                 let account_dnd = dnd_settings_from_account_data(&authority, &account_data);
                 let account_actor = arkret_sdk::ActorId::account(authority.clone());
-                let inbox_states =
-                    crate::account_data::notification_inbox_states_from_account_data_events(
-                        &authority,
-                        &account_data,
-                    );
                 let hydrated = {
                     let mut store = state_store.write();
                     if let Some(content) = &delivery_cell {
                         store.save_invite_delivery_cell(content);
                     }
                     let raw_notifications = store.notification_projection();
-                    apply_notification_inbox_states(&mut store, &inbox_states);
+                    for event in &account_data {
+                        if let Err(error) = store.apply_notification_inbox_event(&authority, event)
+                        {
+                            tracing::warn!(%error, "notification inbox refresh retained its last accepted disposition");
+                        }
+                    }
                     let local_state = store.load();
                     let effective_dnd = local_state
                         .notification_dnd_settings
@@ -324,7 +330,12 @@ pub(crate) fn set_notification_inbox_state(
         .write()
         .set_notification_archived(notification_id.clone(), true);
 
-    if actor_id.trim().is_empty() || device_id.trim().is_empty() {
+    if notification_id
+        .parse::<arkret_wire::NotificationProjectionId>()
+        .is_err()
+        || actor_id.trim().is_empty()
+        || device_id.trim().is_empty()
+    {
         return;
     }
     spawn(async move {
@@ -370,17 +381,90 @@ pub(crate) fn set_notification_inbox_state(
     });
 }
 
-/// Fold the holder's cross-device inbox states into the local projection.
-///
-/// Both `dismissed` and `archived` hide the row here; the distinction the key
-/// carries is preserved on the wire for clients that render them apart.
-fn apply_notification_inbox_states(
-    store: &mut LocalStateStore,
-    inbox_states: &[arkret_sdk::NotificationInboxValue],
+/// A restore is visible only after the holder's exact deletion is accepted.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn restore_notification_inbox(
+    base_url: String,
+    session_credential: String,
+    authority: arkret_sdk::AccountId,
+    notification_id: String,
+    mut state_store: SyncSignal<LocalStateStore>,
+    mut notifications: Signal<Vec<UiNotification>>,
+    mut status_msg: Signal<NotificationFeedback>,
+    mut restoring: Signal<std::collections::BTreeSet<String>>,
 ) {
-    store.batch(|store| {
-        for value in inbox_states {
-            store.set_notification_archived(value.notification_id.as_str().to_owned(), true);
+    if restoring.read().contains(&notification_id) {
+        return;
+    }
+    if notification_id
+        .parse::<arkret_wire::NotificationProjectionId>()
+        .is_err()
+    {
+        return;
+    }
+    let Ok(key) = crate::account_data::notification_inbox_account_data_key(&notification_id) else {
+        return;
+    };
+    if state_store.read().active_authority().as_ref() != Some(&authority) {
+        return;
+    }
+    let guard = match crate::transport::auth::AuthoringSessionFence::capture() {
+        Ok(guard) => guard,
+        Err(error) => {
+            status_msg.set(
+                NotificationFeedback::new("notifications.feedback.restore_failed")
+                    .with("error", format!("{error:#}")),
+            );
+            return;
+        }
+    };
+    restoring.write().insert(notification_id.clone());
+    status_msg.set(NotificationFeedback::new(
+        "notifications.feedback.restoring",
+    ));
+    spawn(async move {
+        if guard.check().is_err() {
+            restoring.write().remove(&notification_id);
+            return;
+        }
+        let expected = authority.clone();
+        let outcome = with_event_submitter(&base_url, session_credential, |submitter| async move {
+            anyhow::ensure!(
+                submitter.authority()? == &expected,
+                "notification restore account changed"
+            );
+            crate::transport::account::delete_account_data_event(&submitter, &key).await
+        })
+        .await
+        .map_err(|error| anyhow::anyhow!(error.display()));
+        restoring.write().remove(&notification_id);
+        if guard.check_session_identity().is_err()
+            || state_store.read().active_authority().as_ref() != Some(&authority)
+        {
+            return;
+        }
+        let outcome = outcome.and_then(|event| {
+            anyhow::ensure!(
+                state_store
+                    .write()
+                    .apply_confirmed_notification_inbox_delete(&authority, &event)?,
+                "a newer inbox disposition superseded this restore"
+            );
+            Ok(())
+        });
+        match outcome {
+            Ok(()) => {
+                notifications.set(super::panel::rehydrate_notifications(
+                    &state_store.read(),
+                    &authority,
+                    authority.principal_id.as_str(),
+                ));
+                status_msg.set(NotificationFeedback::new("notifications.feedback.restored"));
+            }
+            Err(error) => status_msg.set(
+                NotificationFeedback::new("notifications.feedback.restore_failed")
+                    .with("error", format!("{error:#}")),
+            ),
         }
     });
 }

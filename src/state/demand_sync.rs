@@ -181,7 +181,7 @@ pub(crate) struct DemandSyncState {
     summary_removals: im::OrdMap<String, u64>,
     global_snapshot: Option<String>,
     channels: im::OrdMap<Channel, BaselineChannelState>,
-    account_events: im::OrdMap<String, Event>,
+    account_events: im::OrdMap<String, Box<Event>>,
     device_ids: im::OrdSet<String>,
     #[serde(default)]
     agent_draft_pending_intents: im::OrdMap<String, StoredAgentDraftPendingIntent>,
@@ -436,7 +436,68 @@ impl LocalStateStore {
             .demand_sync
             .account_events
             .into_values()
+            .map(|event| *event)
             .collect()
+    }
+
+    /// Install an accepted inbox Event, including our own confirmed DELETE,
+    /// into the existing account current and its derived local disposition.
+    pub(crate) fn apply_notification_inbox_event(
+        &mut self,
+        authority: &arkret_sdk::AccountId,
+        event: &Event,
+    ) -> anyhow::Result<bool> {
+        self.install_notification_inbox_event(authority, event, false)
+    }
+
+    pub(crate) fn apply_confirmed_notification_inbox_delete(
+        &mut self,
+        authority: &arkret_sdk::AccountId,
+        event: &Event,
+    ) -> anyhow::Result<bool> {
+        anyhow::ensure!(
+            event.payload.get("tombstone").and_then(Value::as_bool) == Some(true),
+            "confirmed inbox deletion is not a tombstone"
+        );
+        self.install_notification_inbox_event(authority, event, true)
+    }
+
+    fn install_notification_inbox_event(
+        &mut self,
+        authority: &arkret_sdk::AccountId,
+        event: &Event,
+        live_confirmation: bool,
+    ) -> anyhow::Result<bool> {
+        self.ensure_cached_loaded();
+        let Some((id, archived)) =
+            crate::account_data::notification_inbox_update(authority, event)?
+        else {
+            return Ok(false);
+        };
+        let revision = crate::account_data::notification_inbox_event_revision(event)?.unwrap();
+        let key = event.payload.get("key").and_then(Value::as_str).unwrap();
+        if let Some(current) = self.cached.demand_sync.account_events.get(key) {
+            let previous = crate::account_data::notification_inbox_event_revision(current)?
+                .ok_or_else(|| anyhow::anyhow!("inbox current has no revision"))?;
+            if previous > revision {
+                return Ok(false);
+            }
+            anyhow::ensure!(
+                previous != revision || current.event_id == event.event_id,
+                "inbox Event changed at the same revision"
+            );
+        }
+        if live_confirmation {
+            self.cached
+                .demand_sync
+                .accepts(Channel::AccountDataEvents, key, false);
+        }
+        self.cached
+            .demand_sync
+            .account_events
+            .insert(key.to_owned(), Box::new(event.clone()));
+        self.set_notification_archived(id, archived);
+        Ok(true)
     }
     /// Dedicated controller-private Agent draft projection. Values have already
     /// passed the SDK's closed live | terminal-redacted decoder; removal
@@ -546,6 +607,41 @@ impl LocalStateStore {
         frame.validate()?;
         self.ensure_cached_loaded();
         let views = FrameViews::decode(frame)?;
+        let mut stale_inbox = std::collections::BTreeSet::new();
+        let mut inbox_heads = std::collections::BTreeMap::new();
+        for event in frame
+            .account_data
+            .as_ref()
+            .into_iter()
+            .flat_map(|data| &data.events)
+        {
+            let Some(revision) = crate::account_data::notification_inbox_event_revision(event)?
+            else {
+                continue;
+            };
+            let key = event.payload.get("key").and_then(Value::as_str).unwrap();
+            let current = inbox_heads.get(key).or_else(|| {
+                self.cached
+                    .demand_sync
+                    .account_events
+                    .get(key)
+                    .map(Box::as_ref)
+            });
+            if let Some(current) = current
+                && let Some(previous) =
+                    crate::account_data::notification_inbox_event_revision(current)?
+            {
+                anyhow::ensure!(
+                    previous != revision || current.event_id == event.event_id,
+                    "inbox Event changed at the same revision"
+                );
+                if previous > revision {
+                    stale_inbox.insert(event.event_id.clone());
+                    continue;
+                }
+            }
+            inbox_heads.insert(key.to_owned(), event.clone());
+        }
         // Validate every conflict before mutating the cache: LocalStateStore::batch coalesces
         // writes but does not roll back a returned error.
         if let Some(page) = &views.realm_list
@@ -727,10 +823,13 @@ impl LocalStateStore {
                 ) {
                     return false;
                 }
+                if stale_inbox.contains(&event.event_id) {
+                    return false;
+                }
                 self.cached
                     .demand_sync
                     .account_events
-                    .insert(key.to_owned(), event.clone());
+                    .insert(key.to_owned(), Box::new(event.clone()));
                 true
             });
             if let Some(cas) = &mut data.station_cas {
@@ -992,6 +1091,25 @@ impl LocalStateStore {
                             self.cached.realm_remarks.remove(realm);
                         }
                     }
+                    // Absence is authoritative only after this complete channel
+                    // baseline. Keep runtime approval's local dismiss separate.
+                    let absent_inbox = self
+                        .cached
+                        .notification_client_state
+                        .keys()
+                        .filter_map(|id| {
+                            id.parse::<arkret_wire::NotificationProjectionId>().ok()?;
+                            let key = crate::account_data::notification_inbox_account_data_key(id)
+                                .ok()?;
+                            (!self.cached.demand_sync.account_events.contains_key(&key))
+                                .then(|| id.clone())
+                        })
+                        .collect::<Vec<_>>();
+                    for id in absent_inbox {
+                        if let Some(state) = self.cached.notification_client_state.get_mut(&id) {
+                            state.archived = false;
+                        }
+                    }
                 }
                 Channel::Notifications => {
                     self.cached.notification_projection.retain(|item| {
@@ -1186,6 +1304,241 @@ mod tests {
                     .unwrap()
                     .as_nanos()
             )))
+    }
+    fn inbox_fixture() -> (arkret_sdk::AccountId, String, String) {
+        use base64::Engine as _;
+        let authority = crate::test_support::authority(&format!(
+            "ak:did_core:web:inbox-{}.example",
+            crate::operation::uuid_v7()
+        ));
+        let secret = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([39; 32]);
+        let secure = crate::secure_key_store::default_secure_key_store("inkson");
+        crate::mls::runtime::store_account_mls_secret(secure.as_ref(), &authority, &secret)
+            .unwrap();
+        let id = arkret_sdk::derive_notification_projection_id(
+            &authority,
+            &REALM.parse().unwrap(),
+            &EVENT.parse().unwrap(),
+            arkret_sdk::OrdinaryNotificationKind::Message,
+        )
+        .unwrap()
+        .to_string();
+        let key = crate::account_data::notification_inbox_account_data_key(&id).unwrap();
+        (authority, id, key)
+    }
+    fn inbox_event(
+        authority: &arkret_sdk::AccountId,
+        key: &str,
+        revision: u64,
+        deleted: bool,
+    ) -> Event {
+        let mut payload = json!({"key":key,"expected_server_revision":revision-1});
+        if deleted {
+            payload["tombstone"] = json!(true);
+        } else {
+            let id = arkret_sdk::notification_inbox_account_data_key_notification_id(key).unwrap();
+            let value = crate::account_data::notification_inbox_value(
+                id.as_str(),
+                arkret_sdk::NotificationInboxState::Archived,
+                "01970e589d21-0001-a13f9c2e",
+                "ak:device:01904100-0000-7000-8000-000000000001",
+            )
+            .unwrap();
+            payload["encrypted_payload"] = crate::account_data::encrypt_account_data_value(
+                authority,
+                key,
+                &serde_json::to_value(value).unwrap(),
+            )
+            .unwrap();
+        }
+        arkret_wire::test_support::raw_event_for_actor_at(
+            "ak.account_data.set",
+            arkret_wire::ScopeRef::Realm {
+                realm_id: REALM.parse().unwrap(),
+            },
+            arkret_sdk::ActorId::account(authority.clone()),
+            payload,
+            "2026-10-19T00:00:00.000Z".parse().unwrap(),
+        )
+        .unwrap()
+    }
+    fn apply_inbox_frame(
+        store: &mut LocalStateStore,
+        authority: &arkret_sdk::AccountId,
+        input: Value,
+    ) -> anyhow::Result<AccountSubscribeFrame> {
+        let incoming = frame(input);
+        let accepted = store.prepare_account_demand_frame(&incoming)?;
+        if let Some(data) = &accepted.account_data {
+            crate::sync_engine::apply_account_data_entries(store, &data.events, authority)?;
+        }
+        store.finish_account_demand_frame(&accepted)?;
+        store.flush()?;
+        Ok(accepted)
+    }
+    #[inline(never)]
+    fn inbox_store() -> Box<LocalStateStore> {
+        Box::new(store())
+    }
+    #[inline(never)]
+    fn inbox_flags(device: &LocalStateStore, id: &str) -> (bool, bool) {
+        let state = device.load();
+        let disposition = &state.notification_client_state[id];
+        (disposition.read, disposition.archived)
+    }
+    fn inbox_baseline(complete: bool) -> Value {
+        json!({"kind":"delta","cursor":"ak:cursor:YQ","baseline":{"snapshot_cursor":"ak:cursor:cw","channels":["account_data_events"],"completed_channels":if complete {json!(["account_data_events"])} else {json!([])}},"account_data":{"events":[]}})
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn notification_inbox_delete_recovers_two_devices_and_cold_restart_without_changing_read() {
+        let (authority, id, key) = inbox_fixture();
+        let archive = inbox_event(&authority, &key, 1, false);
+        let deletion = inbox_event(&authority, &key, 2, true);
+        let mut first = inbox_store();
+        let mut second = inbox_store();
+        let second_path = second.path.clone();
+        for device in [&mut first, &mut second] {
+            device.set_notification_read(id.clone(), true);
+            apply_inbox_frame(
+                device,
+                &authority,
+                json!({"kind":"delta","cursor":"ak:cursor:YQ","account_data":{"events":[archive]}}),
+            )
+            .unwrap();
+            assert!(inbox_flags(device, &id).1);
+        }
+        assert!(
+            first
+                .apply_confirmed_notification_inbox_delete(&authority, &deletion)
+                .unwrap()
+        );
+        apply_inbox_frame(
+            &mut second,
+            &authority,
+            json!({"kind":"delta","cursor":"ak:cursor:Yg","account_data":{"events":[deletion]}}),
+        )
+        .unwrap();
+        drop(second);
+        let second = Box::new(LocalStateStore::with_path(second_path));
+        for device in [&first, &second] {
+            let state = device.load();
+            assert!(!state.notification_client_state[&id].archived);
+            assert!(state.notification_client_state[&id].read);
+            assert!(
+                state.notification_projection.is_empty(),
+                "an inbox deletion cannot recreate content"
+            );
+            assert_eq!(
+                device.current_account_data_events()[0].event_id,
+                deletion.event_id
+            );
+        }
+    }
+    #[test]
+    fn notification_inbox_old_archive_cannot_replace_delete_but_new_archive_can() {
+        let (authority, id, key) = inbox_fixture();
+        let mut device = inbox_store();
+        let deletion = inbox_event(&authority, &key, 2, true);
+        device
+            .apply_confirmed_notification_inbox_delete(&authority, &deletion)
+            .unwrap();
+        let old = inbox_event(&authority, &key, 1, false);
+        let accepted = apply_inbox_frame(
+            &mut device,
+            &authority,
+            json!({"kind":"delta","cursor":"ak:cursor:YQ","account_data":{"events":[old]}}),
+        )
+        .unwrap();
+        assert!(accepted.account_data.unwrap().events.is_empty());
+        assert!(!inbox_flags(&device, &id).1);
+        let new = inbox_event(&authority, &key, 3, false);
+        apply_inbox_frame(
+            &mut device,
+            &authority,
+            json!({"kind":"delta","cursor":"ak:cursor:Yg","account_data":{"events":[new]}}),
+        )
+        .unwrap();
+        assert!(inbox_flags(&device, &id).1);
+        assert!(
+            !device
+                .apply_confirmed_notification_inbox_delete(&authority, &deletion)
+                .unwrap()
+        );
+        assert!(inbox_flags(&device, &id).1);
+    }
+    #[test]
+    fn notification_inbox_baseline_absence_only_clears_on_completion() {
+        let (authority, id, key) = inbox_fixture();
+        let mut device = inbox_store();
+        device.set_notification_read(id.clone(), true);
+        device
+            .apply_notification_inbox_event(&authority, &inbox_event(&authority, &key, 1, false))
+            .unwrap();
+        let approval = "ak:notification:01904100-0000-7000-8000-848727f328fe";
+        device.set_notification_archived(approval, true);
+        apply_inbox_frame(&mut device, &authority, inbox_baseline(false)).unwrap();
+        assert!(inbox_flags(&device, &id).1);
+        apply_inbox_frame(&mut device, &authority, inbox_baseline(true)).unwrap();
+        assert_eq!(inbox_flags(&device, &id), (true, false));
+        assert!(inbox_flags(&device, approval).1);
+    }
+    #[test]
+    fn notification_inbox_live_delete_survives_inflight_baseline() {
+        let (authority, _, key) = inbox_fixture();
+        let mut another = inbox_store();
+        apply_inbox_frame(&mut another, &authority, inbox_baseline(false)).unwrap();
+        let deletion = inbox_event(&authority, &key, 2, true);
+        another
+            .apply_confirmed_notification_inbox_delete(&authority, &deletion)
+            .unwrap();
+        apply_inbox_frame(&mut another, &authority, inbox_baseline(true)).unwrap();
+        assert_eq!(
+            another.current_account_data_events()[0].event_id,
+            deletion.event_id
+        );
+    }
+    #[test]
+    fn notification_inbox_foreign_corrupt_and_same_revision_updates_do_not_unhide() {
+        let (authority, id, key) = inbox_fixture();
+        let mut device = inbox_store();
+        let archive = inbox_event(&authority, &key, 1, false);
+        device
+            .apply_notification_inbox_event(&authority, &archive)
+            .unwrap();
+        let other = crate::test_support::authority("ak:did_core:web:other-inbox.example");
+        assert!(
+            device
+                .apply_confirmed_notification_inbox_delete(
+                    &other,
+                    &inbox_event(&authority, &key, 2, true)
+                )
+                .is_err()
+        );
+        let mut corrupt = inbox_event(&authority, &key, 2, false);
+        corrupt
+            .payload
+            .insert("encrypted_payload".into(), json!({"ciphertext":"invalid"}));
+        assert!(
+            device
+                .apply_notification_inbox_event(&authority, &corrupt)
+                .is_err()
+        );
+        let conflict = inbox_event(&authority, &key, 1, true);
+        let before = device.current_account_data_events();
+        assert!(
+            apply_inbox_frame(
+                &mut device,
+                &authority,
+                json!({"kind":"delta","cursor":"ak:cursor:YQ","account_data":{"events":[conflict]}})
+            )
+            .is_err()
+        );
+        assert_eq!(
+            device.current_account_data_events()[0].event_id,
+            before[0].event_id
+        );
+        assert!(inbox_flags(&device, &id).1);
     }
     fn apply(store: &mut LocalStateStore, frame: &AccountSubscribeFrame) -> AccountSubscribeFrame {
         let accepted = store.prepare_account_demand_frame(frame).unwrap();
