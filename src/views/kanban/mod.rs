@@ -7,7 +7,7 @@ use dioxus_router::hooks::{use_navigator, use_route};
 use serde_json::{Map, Value, json};
 
 use crate::components::{
-    ActorIdentityLabel, EmptyState, EmptyStateKind, SecurityStateBadge, UiIcon, WriteStateIcon,
+    ActorIdentityLabel, EmptyState, EmptyStateKind, SecurityStateBadge, UiIcon,
 };
 use crate::rank::rank_for_drop;
 use crate::routes::Route;
@@ -842,23 +842,11 @@ fn toast_editor_cleanup_script(host_id: &str) -> Option<String> {
 
 #[component]
 fn WriteStateBadge(state: CardState, icon_only: Option<bool>) -> Element {
-    let icon_only = icon_only.unwrap_or(false);
-    let class_name = if icon_only {
-        format!("{} write-state-badge is-icon-only", state.class_name())
-    } else {
-        format!("{} write-state-badge", state.class_name())
-    };
-    let data_state = state.data_state();
-    let title = format!("{} - {}", state.label(), state.status_title());
     let write_state = state.write_state();
     rsx! {
-        span {
-            class: "{class_name}",
-            "data-testid": "write-state-badge",
-            "data-write-state": "{data_state}",
-            title: "{title}",
-            WriteStateIcon { state: write_state }
-            span { class: "write-state-label", "{state.label()}" }
+        crate::components::write_state::WriteStateBadge {
+            state: write_state,
+            icon_only,
         }
     }
 }
@@ -1234,10 +1222,6 @@ pub fn KanbanPanel(
     // plaintext branch. Known-plaintext (`Some(false)`) stays `false`.
     let selected_scope_security_encrypted_or_secure =
         selected_scope_security_encrypted.unwrap_or(true);
-    let projected_strand_ids = lifecycle_strand_projection()
-        .into_iter()
-        .map(|view| view.strand_id)
-        .collect::<BTreeSet<_>>();
     if !state_store.read().realm_allows_spaces(&selected_realm_id) {
         return rsx! {
             div { class: "timeline kanban-panel", "data-testid": "direct-conversation-board-unavailable",
@@ -2047,7 +2031,7 @@ pub fn KanbanPanel(
                                     {
                                         classes.push_str(" dragging-source");
                                     }
-                                    if !displayed_card_state(card, &projected_strand_ids)
+                                    if !card.state
                                         .is_settled()
                                     {
                                         classes.push_str(" is-draft");
@@ -2060,8 +2044,8 @@ pub fn KanbanPanel(
                                 // distinguishable from a server-synced one. The
                                 // archive-then-recreate promote pattern waits on
                                 // this leaving the draft state.
-                                "data-card-state": displayed_card_state(card, &projected_strand_ids).data_state(),
-                                "data-card-draft": if displayed_card_state(card, &projected_strand_ids).is_settled() { "false" } else { "true" },
+                                "data-card-state": card.state.data_state(),
+                                "data-card-draft": if card.state.is_settled() { "false" } else { "true" },
                                 draggable: "true",
                                 // Card-level drop target: drop on this card
                                 // means "insert above this card". The
@@ -2177,7 +2161,7 @@ pub fn KanbanPanel(
                                         title: kanban_title_label(&card.title, &card.id, &crate::i18n::tr("kanban.title_pending")),
                                         {kanban_title_label(&card.title, &card.id, &crate::i18n::tr("kanban.title_pending"))}
                                     }
-                                    if !displayed_card_state(card, &projected_strand_ids).is_settled() {
+                                    if !card.state.is_settled() {
                                         span {
                                             class: "badge blue board-card-draft-badge",
                                             "data-testid": "kanban-card-draft-badge",
@@ -2247,7 +2231,7 @@ pub fn KanbanPanel(
                                         // draft card would just round-trip to a
                                         // rejection; we fail closed locally and tell
                                         // the user to wait for the draft to settle.
-                                        let card_settled = displayed_card_state(card, &projected_strand_ids)
+                                        let card_settled = card.state
                                             .is_settled();
                                         let archive_enabled = card_settled;
                                         let title_text = if !card_settled {
@@ -2930,7 +2914,6 @@ pub fn KanbanPanel(
                     selected_scope_security_encrypted,
                     selected_scope_security_encrypted_or_secure,
                     realm_content_write_ready: card_write_ready,
-                    projected_strand_ids: projected_strand_ids.clone(),
                 }
             }
         }

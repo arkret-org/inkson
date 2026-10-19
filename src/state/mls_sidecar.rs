@@ -1564,6 +1564,7 @@ mod tests {
         store.cached_account_key = Some("another-account".to_owned());
         *store.current_view.lock().unwrap() = Some(super::super::CurrentProductView {
             account_key: store.cached_account_key.clone(),
+            generation: store.current_generation(),
             view: crate::current_projection::RealmCurrentView {
                 realm_id: REALM.to_owned(),
                 entries: Vec::new(),

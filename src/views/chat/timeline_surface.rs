@@ -1022,47 +1022,26 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                 // receive path, so a reader appears only after
                                 // their device proof and the MLS AEAD verified.
                                 {
-                                    let readers: Vec<String> = msg
-                                        .protocol_message_id
-                                        .as_deref()
-                                        .map(str::trim)
-                                        .filter(|value| !value.is_empty())
-                                        .and_then(|message_id| {
-                                            let hub =
-                                                crate::views::read_receipts::ReadReceiptHub::try_use()?;
-                                            Some(hub.readers_of(
-                                                &selected_realm_id,
-                                                &selected_channel_value,
-                                                message_id,
-                                            ))
-                                        })
-                                        .unwrap_or_default();
-                                    let should_display = {
+                                    let (should_display, receipt_policy) = {
                                         let store = state_store.read();
-                                        chat_visible_read_receipt_should_display(
-                                            &store,
-                                            &selected_channel_value,
-                                            &selected_realm_id,
-                                        )
+                                        let display = chat_visible_read_receipt_should_display(
+                                            &store, &selected_channel_value, &selected_realm_id,
+                                        );
+                                        let policy = msg.protocol_content.as_ref().and_then(|target| {
+                                            store.current_read_receipt_policy(&target.scope).ok()
+                                        });
+                                        (display, policy)
                                     };
-                                    if should_display && !readers.is_empty() {
-                                        let attr = readers.join(",");
-                                        rsx! {
-                                            div {
-                                                class: "read-receipt-indicator",
-                                                "data-testid": "read-receipt-indicator",
-                                                "data-readers": "{attr}",
-                                                for did in &readers {
-                                                    crate::components::IdentityAvatar {
-                                                        seed: did.clone(),
-                                                        alt_text: did.clone(),
-                                                        class: "read-receipt-avatar avatar-img".to_owned(),
-                                                    }
-                                                }
-                                            }
+                                    rsx! {
+                                        crate::views::read_receipts::ReadReceiptIndicator {
+                                            realm_id: selected_realm_id.clone(),
+                                            strand_id: selected_channel_value.clone(),
+                                            message_id: msg.protocol_message_id.clone(),
+                                            target_author: msg.actor_id.clone(),
+                                            viewer: arkret_sdk::ActorId::account(command_context.authority.clone()),
+                                            display: should_display,
+                                            policy: receipt_policy,
                                         }
-                                    } else {
-                                        rsx! {}
                                     }
                                 }
                                 // G3.Y2 — poll card. If this message

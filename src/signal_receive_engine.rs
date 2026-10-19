@@ -503,8 +503,9 @@ impl InksonSignalSink {
                 // `disabled` / `private` discard on the receiving client:
                 // the receipt is inside the ciphertext, so the Station
                 // could not have filtered it.
-                let policy = self.realm_read_receipt_policy(&signal);
-                self.products.read_receipt(&signal, &policy);
+                if let Some(policy) = self.realm_read_receipt_policy(&signal).await {
+                    self.products.read_receipt(&signal, &policy);
+                }
             }
         }
         Ok(())
@@ -1126,35 +1127,49 @@ impl InksonSignalSink {
         }
     }
 
-    /// The Realm's accepted `ak.realm.read_receipt_policy`, as last projected
-    /// from the Seal view.
+    /// The Realm's accepted `ak.realm.read_receipt_policy` at the account's
+    /// current committed generation.
     ///
-    /// A Realm with no projected snapshot resolves to the spec default
-    /// (`disclosure=optional`, `visibility=members`), which is what
-    /// `read-receipts.md` §2.5 says an undeclared policy means.
-    fn realm_read_receipt_policy(&self, signal: &AdmittedSignal) -> arkret_sdk::ReadReceiptPolicy {
-        let realm_id = signal.scope_ref().realm_id().as_str().to_owned();
-        let snapshot = self
+    /// Only an accepted complete current cut can prove an undeclared policy.
+    /// Legacy presentation snapshots never establish this privacy boundary.
+    async fn realm_read_receipt_policy(
+        &self,
+        signal: &AdmittedSignal,
+    ) -> Option<arkret_sdk::ReadReceiptPolicy> {
+        let (authority, reset, location) = self.state_store.read(|store| {
+            (
+                store.active_authority(),
+                store.current_reset_required(),
+                store.current_index_location(),
+            )
+        });
+        let authority = authority?;
+        if reset {
+            return None;
+        }
+        let epoch = crate::identity::device_directory::session_cache_epoch();
+        let mut generation = 0;
+        let index = crate::state::CurrentIndex::open_committed(&authority, location, || {
+            generation = self.state_store.read(|store| store.current_generation());
+            Ok(generation)
+        })
+        .await
+        .ok()?;
+        let policy = match index
+            .read_read_receipt_policy_ready(signal.scope_ref())
+            .await
+        {
+            Ok(policy) => policy,
+            Err(error) => {
+                tracing::debug!(%error, "receipt policy current is unavailable; receipt discarded");
+                return None;
+            }
+        };
+        let same_attempt = self
             .state_store
-            .read(|store| store.read_receipt_policy_for_realm(&realm_id));
-        let mut policy = arkret_sdk::ReadReceiptPolicy::default();
-        let Some(snapshot) = snapshot else {
-            return policy;
-        };
-        // An unrecognized wire value is NOT silently treated as the default:
-        // a value this build cannot parse is one whose privacy meaning it does
-        // not know, so it falls closed to the strictest reading.
-        policy.disclosure = match snapshot.disclosure.as_str() {
-            "optional" => arkret_sdk::ReadReceiptDisclosure::Optional,
-            "required" => arkret_sdk::ReadReceiptDisclosure::Required,
-            _ => arkret_sdk::ReadReceiptDisclosure::Disabled,
-        };
-        policy.visibility = match snapshot.visibility.as_deref() {
-            Some("public") => arkret_sdk::ReadReceiptVisibility::Public,
-            Some("members") | None => arkret_sdk::ReadReceiptVisibility::Members,
-            _ => arkret_sdk::ReadReceiptVisibility::Private,
-        };
-        policy
+            .read(|store| call_current_attempt_matches(store, &authority, generation))
+            && epoch == crate::identity::device_directory::session_cache_epoch();
+        same_attempt.then_some(policy)
     }
 
     fn apply_live_body(&self, signal: &AdmittedSignal) -> garth::Result<bool> {
@@ -1514,6 +1529,9 @@ async fn run_signal_receive_attempt(
 
 #[cfg(test)]
 mod tests {
+    #[cfg(not(target_arch = "wasm32"))]
+    mod read_receipts;
+
     use serde_json::json;
 
     use super::*;

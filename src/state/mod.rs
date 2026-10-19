@@ -244,6 +244,8 @@ pub(crate) struct CurrentProductView {
     /// The account namespace of the store that installed the view; a clone
     /// hydrated for another account never reads it.
     account_key: Option<String>,
+    /// Committed account generation from which this in-memory view was read.
+    generation: u64,
     view: crate::current_projection::RealmCurrentView,
     required_ready: bool,
 }

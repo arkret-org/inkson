@@ -26,6 +26,7 @@ mod patch_synthesis;
 mod projection_overlays;
 mod roster;
 mod strand_mls;
+mod submit_outcomes;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) trait TestEventPayloadView {

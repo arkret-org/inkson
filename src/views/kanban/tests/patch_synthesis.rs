@@ -38,9 +38,15 @@ fn saved_card_content_never_rolls_back_between_receipt_backfill_and_current() {
             }),
         };
         let old = vec![current(1, json!({"id": id}))];
-        for state in ["queued", "accepted", "synced"] {
+        for (state, expected, has_commit) in [
+            ("queued", CardState::Queued, false),
+            ("pending", CardState::Submitted, false),
+            ("accepted", CardState::Accepted, true),
+            ("effective", CardState::Accepted, true),
+            ("synced", CardState::Accepted, true),
+        ] {
             record.payload["write_state"] = json!(state);
-            if state != "queued" {
+            if has_commit {
                 record.payload["card_display_commit"] = json!({
                     "stream_ref": stream, "revision": revision(2),
                 });
@@ -52,6 +58,18 @@ fn saved_card_content_never_rolls_back_between_receipt_backfill_and_current() {
                 "{state}"
             );
             assert_eq!(displayed[0].cards[0].synthesis, "after edit", "{state}");
+            assert_eq!(
+                displayed[0].cards[0].state, expected,
+                "an existing Strand does not confirm its next edit: {state}"
+            );
+            let mut dom = VirtualDom::new_with_props(
+                |state: CardState| rsx! { WriteStateBadge { state } },
+                displayed[0].cards[0].state,
+            );
+            assert!(dom.rebuild_to_vec().edits.iter().any(|edit| matches!(edit,
+                dioxus::core::Mutation::SetAttribute { name: "data-write-state", value: dioxus::core::AttributeValue::Text(value), .. }
+                    if value.as_str() == expected.write_state().data_state()
+            )));
             assert!(card_detail_edit_ready(&displayed[0].cards[0]));
             assert!(!card_detail_write_ready(&displayed[0].cards[0]));
         }
@@ -67,6 +85,7 @@ fn saved_card_content_never_rolls_back_between_receipt_backfill_and_current() {
         let settled =
             overlay_pending_card_updates(columns.clone(), &[record.clone()], &caught_up, None);
         assert_eq!(settled[0].cards[0].description_body, "after edit");
+        assert_eq!(settled[0].cards[0].state, CardState::Synced);
         assert!(card_detail_write_ready(&settled[0].cards[0]));
         assert!(card_detail_edit_ready(&settled[0].cards[0]));
 

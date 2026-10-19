@@ -171,7 +171,9 @@ pub(crate) fn raw_operation_allows_overlay(payload: &Value) -> bool {
         write_state.as_str(),
         "queued"
             | "submitting"
+            | "forwarding"
             | "submitted"
+            | "pending"
             | "pending_commit"
             | "accepted"
             | "effective"
@@ -203,65 +205,13 @@ pub(crate) fn raw_operation_strand_update_target_id(payload: &Value) -> Option<S
         .or_else(|| json_path_string(Some(body), &["target_ref"]))
 }
 
-#[cfg(test)]
-pub(crate) fn local_operation_state_for_target(
-    raw_operations: &[RawOperationRecord],
-    kind: &str,
-    target_id: &str,
-) -> Option<CardState> {
-    raw_operations.iter().rev().find_map(|record| {
-        if !raw_operation_kind_matches(&record.payload, kind) {
-            return None;
-        }
-        let payload = &record.payload;
-        let body = payload.get("body").or_else(|| payload.get("payload"));
-        let effect = payload.get("effect");
-        let matches_target = json_path_string(body, &["object", "id"])
-            .or_else(|| json_path_string(body, &["strand_id"]))
-            .or_else(|| json_path_string(body, &["target_ref"]))
-            .or_else(|| json_path_string(effect, &["strand_id"]))
-            .or_else(|| json_path_string(Some(payload), &["strand_id"]))
-            .as_deref()
-            == Some(target_id);
-        matches_target.then(|| raw_operation_card_state(payload))
-    })
-}
-
-#[cfg(test)]
-pub(crate) fn local_space_create_state_for_target(
-    raw_operations: &[RawOperationRecord],
-    projected_space_container_ids: &BTreeSet<String>,
-    target_id: &str,
-) -> Option<CardState> {
-    let state =
-        local_operation_state_for_target(raw_operations, event_kind_str::SPACE_CREATE, target_id)?;
-    if projected_space_container_ids.contains(target_id) {
-        Some(CardState::Synced)
-    } else {
-        Some(state)
-    }
-}
-
-pub(crate) fn displayed_card_state(
-    card: &KanbanCard,
-    projected_strand_ids: &BTreeSet<String>,
-) -> CardState {
-    if projected_strand_ids.contains(&card.id)
-        || projected_strand_ids.contains(&card.primary_strand_id)
-    {
-        CardState::Synced
-    } else {
-        card.state
-    }
-}
-
 /// Re-apply locally-queued `ak.strand.update` patches on top of the
 /// server projection. Without this overlay, optimistic edits to a
 /// card's title / summary / body / fields would vanish on page reload
 /// because the server projection is refetched but the local mutation
-/// lived only in the in-memory `columns` signal. The reducer copy of
-/// each Move is the source of truth once the server confirms, but in
-/// the meantime we keep the user's edit visible by replaying the
+/// lived only in the in-memory `columns` signal. The accepted current result
+/// takes over once it covers the write's exact revision. Until then,
+/// we keep the user's edit visible by replaying the
 /// queued payload here. Ops marked as terminally-failed are skipped
 /// so a rejected edit doesn't keep clobbering the projection.
 pub(crate) fn overlay_local_card_update_records(
@@ -297,7 +247,9 @@ pub(crate) fn overlay_pending_card_updates(
     for record in operations {
         let state = record.payload.get("write_state").and_then(Value::as_str);
         let waiting = match state {
-            Some("queued" | "submitting" | "submitted" | "pending_commit") => true,
+            Some(
+                "queued" | "submitting" | "forwarding" | "submitted" | "pending" | "pending_commit",
+            ) => true,
             Some("accepted" | "effective" | "synced") => {
                 let Some(marker) = record.payload.get("card_display_commit") else {
                     continue;
@@ -943,7 +895,9 @@ pub(crate) fn holder_local_pending_card_create(
         let payload = &record.payload;
         if !matches!(
             payload.get("write_state").and_then(Value::as_str),
-            Some("queued" | "submitting" | "submitted" | "pending_commit")
+            Some(
+                "queued" | "submitting" | "forwarding" | "submitted" | "pending" | "pending_commit"
+            )
         ) {
             return false;
         }

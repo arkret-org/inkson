@@ -22,6 +22,13 @@ use std::collections::BTreeMap;
 
 use dioxus::prelude::*;
 
+// Integration tests exercise the admitted product boundary using its existing
+// host carriers, without exposing a second decoder or a verification bypass.
+#[cfg(feature = "spec-conformance")]
+pub use crate::runtime::projection::AdmittedSignal;
+#[cfg(feature = "spec-conformance")]
+pub use crate::state::ClientLocalState;
+
 /// Upper bound on retained read positions. Each entry is one
 /// `(realm, strand, actor)` triple, so this only bites in a very large Realm
 /// with a very long session; the least recently updated entry is dropped first.
@@ -32,7 +39,7 @@ struct ReadPositionKey {
     realm_id: String,
     /// `read_scope.object_ref` — the Strand for a `kind="strand"` receipt.
     scope_ref: String,
-    actor_id: String,
+    actor_id: arkret_sdk::ActorId,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -41,20 +48,29 @@ struct ReadPosition {
     /// timeline can compare it to `protocol_message_id` directly.
     message_id: String,
     payload_sequence: u64,
+    target_author: arkret_sdk::ActorId,
     /// Insertion order counter, used only for bounded eviction.
     stored_at: u64,
 }
 
 #[derive(Debug, Default)]
 struct ReadReceiptProjection {
-    positions: BTreeMap<ReadPositionKey, ReadPosition>,
+    positions: BTreeMap<(arkret_sdk::ActorId, ReadPositionKey), ReadPosition>,
     stored_counter: u64,
 }
 
 impl ReadReceiptProjection {
     /// Fold one authenticated receipt in. Returns `true` when the stored set
     /// changed.
-    fn apply(&mut self, key: ReadPositionKey, message_id: String, payload_sequence: u64) -> bool {
+    fn apply(
+        &mut self,
+        key: ReadPositionKey,
+        message_id: String,
+        payload_sequence: u64,
+        viewer: arkret_sdk::ActorId,
+        target_author: arkret_sdk::ActorId,
+    ) -> bool {
+        let key = (viewer, key);
         if let Some(existing) = self.positions.get(&key)
             && existing.payload_sequence >= payload_sequence
         {
@@ -68,6 +84,7 @@ impl ReadReceiptProjection {
             ReadPosition {
                 message_id,
                 payload_sequence,
+                target_author,
                 stored_at: self.stored_counter,
             },
         );
@@ -85,15 +102,24 @@ impl ReadReceiptProjection {
         true
     }
 
-    fn readers_of(&self, realm_id: &str, scope_ref: &str, message_id: &str) -> Vec<String> {
+    fn readers_of(
+        &self,
+        realm_id: &str,
+        scope_ref: &str,
+        message_id: &str,
+        viewer: &arkret_sdk::ActorId,
+        target_author: &arkret_sdk::ActorId,
+    ) -> Vec<arkret_sdk::ActorId> {
         self.positions
             .iter()
-            .filter(|(key, position)| {
-                key.realm_id == realm_id
+            .filter(|((owner, key), position)| {
+                owner == viewer
+                    && key.realm_id == realm_id
                     && key.scope_ref == scope_ref
                     && position.message_id == message_id
+                    && &position.target_author == target_author
             })
-            .map(|(key, _)| key.actor_id.clone())
+            .map(|((_, key), _)| key.actor_id.clone())
             .collect()
     }
 }
@@ -136,7 +162,8 @@ impl ReadReceiptHub {
         &mut self,
         signal: &crate::runtime::projection::AdmittedSignal,
         policy: &arkret_sdk::ReadReceiptPolicy,
-        local_actor_id: &str,
+        local_actor: &arkret_sdk::ActorId,
+        state: &crate::state::ClientLocalState,
     ) -> bool {
         // The typed closed profile the receiver already selected. No
         // field-name parse: `signal.md` §1.1 forbids it, and a receipt that did
@@ -144,15 +171,34 @@ impl ReadReceiptHub {
         let arkret_sdk::SignalPlaintext::ReadReceipt(receipt) = &signal.payload else {
             return false;
         };
-        if !read_receipt_is_displayable(receipt, policy, local_actor_id) {
-            return false;
-        }
         let Some((key, message_id)) = strand_read_position(signal, receipt) else {
             return false;
         };
-        self.projection
-            .write()
-            .apply(key, message_id, receipt.payload_sequence)
+        // Only a verified accepted MessageCreate can establish the target's
+        // author. The signed scope and exact Strand/track must also agree;
+        // neither a cached sender label nor the receipt's reader is evidence.
+        let Some(target) = state.verified_message_commits.iter().find(|target| {
+            target.accepted_ref.event_id == receipt.event_id
+                && target.scope_ref == *signal.scope_ref()
+                && target.strand_id.as_str() == key.scope_ref
+                && receipt
+                    .read_scope
+                    .track
+                    .as_deref()
+                    .is_none_or(|track| track == target.track_name)
+        }) else {
+            return false;
+        };
+        if !read_receipt_is_displayable(policy, local_actor, &target.actor_id) {
+            return false;
+        }
+        self.projection.write().apply(
+            key,
+            message_id,
+            receipt.payload_sequence,
+            local_actor.clone(),
+            target.actor_id.clone(),
+        )
     }
 
     /// Actors whose read position lands exactly on `message_id`.
@@ -161,10 +207,17 @@ impl ReadReceiptHub {
     /// named position is read too — but the avatar row deliberately renders on
     /// the *latest* message each actor reported, which is what a reader expects
     /// to see and what keeps one receipt from decorating a whole timeline.
-    pub fn readers_of(&self, realm_id: &str, strand_id: &str, message_id: &str) -> Vec<String> {
+    pub fn readers_of(
+        &self,
+        realm_id: &str,
+        strand_id: &str,
+        message_id: &str,
+        viewer: &arkret_sdk::ActorId,
+        target_author: &arkret_sdk::ActorId,
+    ) -> Vec<arkret_sdk::ActorId> {
         self.projection
             .read()
-            .readers_of(realm_id, strand_id, message_id)
+            .readers_of(realm_id, strand_id, message_id, viewer, target_author)
     }
 }
 
@@ -181,22 +234,16 @@ impl Default for ReadReceiptHub {
 ///
 /// - `disclosure="disabled"`: the Realm generates no receipts, so an arriving one is non-compliant.
 ///   Rendering it would leak a read position the Realm said would not exist.
-/// - `visibility="private"`: a receipt is only for the actor who authored the read *target*'s
-///   audience of one — the reader themself. Everyone else drops it.
+/// - `visibility="private"`: only the full ActorId of the target Message's author may observe the
+///   receipt; its reader is a different identity.
 fn read_receipt_is_displayable(
-    receipt: &arkret_sdk::ReadReceipt,
     policy: &arkret_sdk::ReadReceiptPolicy,
-    local_actor_id: &str,
+    local_actor: &arkret_sdk::ActorId,
+    target_author: &arkret_sdk::ActorId,
 ) -> bool {
-    if policy.disclosure == arkret_sdk::ReadReceiptDisclosure::Disabled {
-        return false;
-    }
-    if policy.visibility == arkret_sdk::ReadReceiptVisibility::Private
-        && receipt.actor_id.signing_principal_id().as_str() != local_actor_id
-    {
-        return false;
-    }
-    true
+    policy.disclosure != arkret_sdk::ReadReceiptDisclosure::Disabled
+        && (policy.visibility != arkret_sdk::ReadReceiptVisibility::Private
+            || target_author == local_actor)
 }
 
 /// The Strand read position one decrypted receipt names, or `None` when it does
@@ -222,7 +269,7 @@ fn strand_read_position(
         ReadPositionKey {
             realm_id: signal.scope_ref().realm_id().as_str().to_owned(),
             scope_ref: scope_ref.to_owned(),
-            actor_id: receipt.actor_id.signing_principal_id().as_str().to_owned(),
+            actor_id: receipt.actor_id.clone(),
         },
         arkret_sdk::MessageId::from_event_id(&receipt.event_id)
             .as_str()
@@ -230,196 +277,185 @@ fn strand_read_position(
     ))
 }
 
+/// The timeline's receipt row. Both the current viewer and locally visible
+/// Message author must still match the evidence accepted with the receipt.
+#[component]
+pub fn ReadReceiptIndicator(
+    realm_id: String,
+    strand_id: String,
+    message_id: Option<String>,
+    target_author: Option<arkret_sdk::ActorId>,
+    viewer: arkret_sdk::ActorId,
+    display: bool,
+    policy: Option<arkret_sdk::ReadReceiptPolicy>,
+) -> Element {
+    let readers = match (ReadReceiptHub::try_use(), message_id, target_author, policy) {
+        (Some(hub), Some(message), Some(author), Some(policy))
+            if display && read_receipt_is_displayable(&policy, &viewer, &author) =>
+        {
+            hub.readers_of(&realm_id, &strand_id, &message, &viewer, &author)
+        }
+        _ => Vec::new(),
+    };
+    if readers.is_empty() {
+        return rsx! {};
+    }
+    let attr = serde_json::to_string(&readers).unwrap_or_default();
+    rsx! {
+        div {
+            class: "read-receipt-indicator",
+            "data-testid": "read-receipt-indicator",
+            "data-readers": "{attr}",
+            for actor in &readers {
+                crate::components::IdentityAvatar {
+                    seed: actor.signing_principal_id().to_string(),
+                    alt_text: actor.to_string(),
+                    class: "read-receipt-avatar avatar-img".to_owned(),
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
-
     use super::*;
 
-    const EVENT_ID: &str = "ak:event:ATOz4l-vKJUCGZDmS_knGS9TjZ64pkOzx-HNGAgY5RGJ";
-    const MESSAGE_ID: &str = "ak:message:ATOz4l-vKJUCGZDmS_knGS9TjZ64pkOzx-HNGAgY5RGJ";
+    fn actor(principal: &str, station: &str) -> arkret_sdk::ActorId {
+        arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            format!("ak:did_core:web:{principal}").parse().unwrap(),
+            format!("ak:did_core:web:{station}").parse().unwrap(),
+        ))
+    }
 
-    fn key(actor: &str) -> ReadPositionKey {
+    fn key(reader: arkret_sdk::ActorId) -> ReadPositionKey {
         ReadPositionKey {
-            realm_id: "ak:realm:AtlzwcCCnyKBD2b_hQX9YJKlbvZu2jVHq9qsQsIaBWHI".to_owned(),
-            scope_ref: "ak:strand:ADwF2djA89rz9_4IdkNGlnaJ5yxcM3Vl64T-npVeF8-M".to_owned(),
-            actor_id: actor.to_owned(),
+            realm_id: "realm".to_owned(),
+            scope_ref: "strand".to_owned(),
+            actor_id: reader,
         }
     }
 
     #[test]
-    fn a_reordered_receipt_does_not_move_a_read_position_backwards() {
+    fn reordered_receipts_do_not_move_a_position_backwards() {
         let mut projection = ReadReceiptProjection::default();
+        let reader = actor("reader", "station-a");
+        let author = actor("author", "station-a");
         assert!(projection.apply(
-            key("did:web:a"),
-            "ak:message:AFrxbbWNTU3fu27uUUMC3ilKugGpnApLyJXvm-E-33Mo".to_owned(),
-            7
+            key(reader.clone()),
+            "latest".to_owned(),
+            7,
+            author.clone(),
+            author.clone()
         ));
-        assert!(!projection.apply(
-            key("did:web:a"),
-            "ak:message:AZhIGxyGMJYSpWhMOugJZewLoNM88CzSBohQQRpKgw1c".to_owned(),
-            6
-        ));
+        for sequence in [6, 7] {
+            assert!(!projection.apply(
+                key(reader.clone()),
+                "older".to_owned(),
+                sequence,
+                author.clone(),
+                author.clone()
+            ));
+        }
         assert_eq!(
-            projection.readers_of(
-                "ak:realm:AtlzwcCCnyKBD2b_hQX9YJKlbvZu2jVHq9qsQsIaBWHI",
-                "ak:strand:ADwF2djA89rz9_4IdkNGlnaJ5yxcM3Vl64T-npVeF8-M",
-                "ak:message:AFrxbbWNTU3fu27uUUMC3ilKugGpnApLyJXvm-E-33Mo"
-            ),
-            vec!["did:web:a".to_owned()]
+            projection.readers_of("realm", "strand", "latest", &author, &author),
+            vec![reader]
+        );
+        assert!(
+            projection
+                .readers_of("realm", "strand", "older", &author, &author)
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn reader_accounts_at_different_stations_have_distinct_positions() {
+        let mut projection = ReadReceiptProjection::default();
+        let author = actor("author", "station-a");
+        let first = actor("reader", "station-a");
+        let second = actor("reader", "station-b");
+        for reader in [&first, &second] {
+            assert!(projection.apply(
+                key(reader.clone()),
+                "message".to_owned(),
+                1,
+                author.clone(),
+                author.clone()
+            ));
+        }
+        assert_eq!(
+            projection.readers_of("realm", "strand", "message", &author, &author),
+            vec![first, second]
+        );
+        for (realm, strand) in [("other", "strand"), ("realm", "other")] {
+            assert!(
+                projection
+                    .readers_of(realm, strand, "message", &author, &author)
+                    .is_empty()
+            );
+        }
+        assert!(
+            projection
+                .readers_of(
+                    "realm",
+                    "strand",
+                    "message",
+                    &actor("author", "station-b"),
+                    &author
+                )
+                .is_empty()
         );
         assert!(
             projection
                 .readers_of(
-                    "ak:realm:AtlzwcCCnyKBD2b_hQX9YJKlbvZu2jVHq9qsQsIaBWHI",
-                    "ak:strand:ADwF2djA89rz9_4IdkNGlnaJ5yxcM3Vl64T-npVeF8-M",
-                    "ak:message:AZhIGxyGMJYSpWhMOugJZewLoNM88CzSBohQQRpKgw1c"
+                    "realm",
+                    "strand",
+                    "message",
+                    &author,
+                    &actor("other", "station-a")
                 )
                 .is_empty()
         );
     }
 
     #[test]
-    fn readers_are_scoped_to_the_realm_and_strand() {
+    fn projection_remains_bounded_and_evicts_oldest_position() {
         let mut projection = ReadReceiptProjection::default();
-        projection.apply(
-            key("did:web:a"),
-            "ak:message:AFrxbbWNTU3fu27uUUMC3ilKugGpnApLyJXvm-E-33Mo".to_owned(),
-            1,
-        );
-        projection.apply(
-            ReadPositionKey {
-                realm_id: "ak:realm:ALxDZio2znRUoLNW5_OmFXNttc8yHs8Jw8_b6vk0QYXo".to_owned(),
-                scope_ref: "ak:strand:ADwF2djA89rz9_4IdkNGlnaJ5yxcM3Vl64T-npVeF8-M".to_owned(),
-                actor_id: "ak:did_core:web:b".to_owned(),
-            },
-            "ak:message:AFrxbbWNTU3fu27uUUMC3ilKugGpnApLyJXvm-E-33Mo".to_owned(),
-            1,
-        );
-        assert_eq!(
-            projection.readers_of(
-                "ak:realm:AtlzwcCCnyKBD2b_hQX9YJKlbvZu2jVHq9qsQsIaBWHI",
-                "ak:strand:ADwF2djA89rz9_4IdkNGlnaJ5yxcM3Vl64T-npVeF8-M",
-                "ak:message:AFrxbbWNTU3fu27uUUMC3ilKugGpnApLyJXvm-E-33Mo"
-            ),
-            vec!["did:web:a".to_owned()]
-        );
-    }
-
-    #[test]
-    fn the_projection_stays_bounded_by_dropping_the_oldest_position() {
-        let mut projection = ReadReceiptProjection::default();
-        for index in 0..(MAX_READ_POSITIONS + 5) {
+        let author = actor("author", "station-a");
+        for index in 0..MAX_READ_POSITIONS + 5 {
             projection.apply(
-                key(&format!("did:web:a{index}")),
-                "ak:message:AFrxbbWNTU3fu27uUUMC3ilKugGpnApLyJXvm-E-33Mo".to_owned(),
+                key(actor(&format!("reader{index}"), "station-a")),
+                "message".to_owned(),
                 1,
+                author.clone(),
+                author.clone(),
             );
         }
         assert_eq!(projection.positions.len(), MAX_READ_POSITIONS);
-        assert!(!projection.positions.contains_key(&key("did:web:a0")));
-    }
-
-    /// The closed receipt a body stands for. `read_scope` comes from the body
-    /// so a scope-varying test exercises the real routing input.
-    fn receipt_of(signal: &crate::runtime::projection::AdmittedSignal) -> &arkret_sdk::ReadReceipt {
-        match &signal.payload {
-            arkret_sdk::SignalPlaintext::ReadReceipt(receipt) => receipt,
-            other => unreachable!("the fixture builds a read receipt, not {other:?}"),
-        }
-    }
-
-    fn typed_receipt(body: &serde_json::Map<String, serde_json::Value>) -> arkret_sdk::ReadReceipt {
-        let read_scope = body
-            .get("read_scope")
-            .cloned()
-            .map(|scope| serde_json::from_value(scope).expect("read_scope is a scope"))
-            .unwrap_or_else(arkret_sdk::ReadReceiptScope::realm);
-        let event_id = body
-            .get("event_id")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or(EVENT_ID);
-        arkret_sdk::ReadReceipt::new(
-            3,
-            crate::mls_api_helpers::local_account_actor_id("did:web:a").unwrap(),
-            arkret_sdk::EventId::new(event_id).unwrap(),
-            read_scope,
-        )
-        .expect("a minimal read receipt is valid")
-    }
-
-    fn receipt(body: serde_json::Value) -> crate::runtime::projection::AdmittedSignal {
-        let serde_json::Value::Object(body) = body else {
-            unreachable!("test body must be an object");
-        };
-        let at = chrono::DateTime::from_timestamp(1_800_000_000, 0).unwrap();
-        crate::runtime::projection::AdmittedSignal {
-            signer_verification_method: arkret_sdk::DidUrl::new("did:web:alice.example#device-1")
-                .unwrap(),
-            product_authority: None,
-            call_invitation: None,
-            authority_commit_id: arkret_sdk::RealmCommitId::from_digest([41; 32]),
-            parent_realm_authority_commit_id: None,
-            domain: arkret_sdk::SignalSequenceDomain {
-                sender_actor_id: crate::mls_api_helpers::local_account_actor_id("did:web:a")
-                    .unwrap(),
-                endpoint: arkret_sdk::SignalSequenceEndpoint::AccountDevice {
-                    device_id: arkret_sdk::DeviceId::new(
-                        "ak:device:01904100-0000-7000-8000-000000000002",
-                    )
-                    .unwrap(),
-                },
-                scope_ref: arkret_sdk::ScopeRef::Realm {
-                    realm_id: arkret_sdk::RealmId::new(
-                        "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-                    )
-                    .unwrap(),
-                },
-            },
-            // The parsed profile is what the routing reads, so it has to carry
-            // the same `read_scope` the test body varies rather than a fixed one.
-            payload: arkret_sdk::SignalPlaintext::ReadReceipt(typed_receipt(&body)),
-            expires_at: at + chrono::Duration::seconds(30),
-        }
-    }
-
-    /// A Realm-scoped receipt carries no Strand and a thread receipt points at a
-    /// root message; neither may be re-attributed to a Strand timeline.
-    ///
-    /// A `strand` scope without a usable `object_ref` is not tested here any
-    /// more: the adjudicated closed `ReadReceipt` rejects it at construction
-    /// (`read_scope.object_ref is required when kind is not realm`), so it is
-    /// not a state this routing can be reached in.
-    #[test]
-    fn only_strand_scoped_receipts_have_a_timeline_to_land_on() {
-        for scope in [
-            json!({"kind": "realm"}),
-            json!({"kind": "thread", "object_ref": "ak:message:AyjAZDA-2_qXaYrBETl9zMunOsBPfG7IvtEWwgzr984I"}),
-        ] {
-            let plaintext = receipt(json!({
-                "kind": "ak.receipt.read",
-                "read_scope": scope,
-                "event_id": EVENT_ID,
-            }));
-            assert!(strand_read_position(&plaintext, receipt_of(&plaintext)).is_none());
-        }
-
-        let strand = "ak:strand:ASyFf0qTUQ55a2qZp5fuTXRnIgf3ovKChQZ_XSkxdIPK";
-        let plaintext = receipt(json!({
-            "kind": "ak.receipt.read",
-            "read_scope": {"kind": "strand", "object_ref": strand, "track_name": "discussion"},
-            "event_id": EVENT_ID,
-        }));
-        let (key, message_id) =
-            strand_read_position(&plaintext, receipt_of(&plaintext)).expect("strand receipt");
-        assert_eq!(key.scope_ref, strand);
-        assert_eq!(key.actor_id, "ak:did_core:web:a");
-        assert_eq!(
-            key.realm_id,
-            "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
+        assert!(
+            !projection
+                .positions
+                .contains_key(&(author.clone(), key(actor("reader0", "station-a"))))
         );
-        // The receipt names an Event id; the timeline is keyed by the same
-        // full Event identity retyped as a Message id.
-        assert_eq!(message_id, MESSAGE_ID);
+    }
+    #[test]
+    fn receipt_positions_do_not_share_sequence_state_between_local_accounts() {
+        let mut projection = ReadReceiptProjection::default();
+        let reader = actor("reader", "station-a");
+        let author = actor("author", "station-a");
+        let other_account = actor("author", "station-b");
+        for viewer in [&author, &other_account] {
+            assert!(projection.apply(
+                key(reader.clone()),
+                "message".to_owned(),
+                7,
+                viewer.clone(),
+                author.clone()
+            ));
+            assert_eq!(
+                projection.readers_of("realm", "strand", "message", viewer, &author),
+                vec![reader.clone()]
+            );
+        }
     }
 }

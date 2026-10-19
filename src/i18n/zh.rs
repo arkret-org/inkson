@@ -174,6 +174,31 @@ fn add_generic_error_keys_zh(dict: &mut TranslationDict) {
 /// Build Chinese translation dictionary.
 pub fn chinese_translations() -> TranslationDict {
     let mut dict = TranslationDict::new(UiLocale::Zh);
+    for (state, label, description) in [
+        ("synced", "已同步", "已接受的修改已显示在本地视图中。"),
+        ("optimistic", "草稿", "已保存在本地，尚未加入发送队列。"),
+        ("queued", "排队中", "已保存在离线队列中，等待网络恢复。"),
+        ("submitted", "发送中", "已提交处理，正在等待确认。"),
+        (
+            "accepted",
+            "已接受",
+            "服务器已接受此次修改，本地视图正在同步。",
+        ),
+        (
+            "soft_failed",
+            "未成功",
+            "此次修改未成功，请查看错误后重试。",
+        ),
+        (
+            "cas_conflict",
+            "修改冲突",
+            "修改所依据的状态已变化，请刷新后重试。",
+        ),
+        ("quarantined", "审核中", "此次修改正在等待审核。"),
+    ] {
+        dict.set(format!("write_state.{state}.label"), label);
+        dict.set(format!("write_state.{state}.description"), description);
+    }
     dict.set("kanban.ui.members_loading", "正在加载成员身份…");
     dict.set("kanban.ui.members_unavailable", "暂时无法读取成员身份。");
     dict.set("circles.feedback.account_required", "请先登录账号。");
