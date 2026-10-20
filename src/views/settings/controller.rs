@@ -627,9 +627,22 @@ impl SettingsController {
                 return;
             }
             let result = with_authed_sdk_client(&base, api_token, |http| async move {
-                http.mimi_provider_directory(None, &[])
-                    .await
-                    .map_err(anyhow::Error::from)
+                let binding =
+                    crate::station_connection::load_accepted(http.base_url().as_str()).await?;
+                // The user-selected own Station is an explicit target scope.
+                // No remote directory can choose a transport or trust anchor.
+                // This only reads the accepted own Station; no remote provider
+                // target is fetched. HTTPS and metadata/link-local refusal remain.
+                let policy = arkret_sdk::network_policy::OutboundPolicy::controlled_network(false);
+                Ok(http
+                    .mimi_provider_directory_from_own_station(
+                        &binding,
+                        None,
+                        &[],
+                        chrono::Duration::minutes(5),
+                        policy,
+                    )
+                    .await?)
             })
             .await;
             if !settings_session.is_current(&started_session) {
@@ -637,6 +650,7 @@ impl SettingsController {
             }
             match result {
                 Ok(directory) => {
+                    let directory = directory.directory();
                     let features = serde_json::to_string_pretty(&directory.mimi.features)
                         .unwrap_or_else(|_| "[]".to_owned());
                     mimi_directory.set(format!(
