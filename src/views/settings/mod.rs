@@ -17,7 +17,7 @@ pub mod storage;
 
 pub(crate) mod account_data;
 mod controller;
-mod invite_locator;
+pub mod invite_locator;
 mod model;
 mod profile_helpers;
 pub mod realm_picker;
@@ -38,7 +38,7 @@ use sections::*;
 use serde_json::{Map, Value, json};
 use widgets::*;
 
-use crate::components::{HelpTip, QrSharePanel, UiIcon};
+use crate::components::{HelpTip, UiIcon};
 use crate::config::LocalConfigStore;
 use crate::i18n::UiLocale;
 use crate::notification_rules::WatchLevel;
@@ -601,16 +601,11 @@ pub fn SettingsPanel(
     let push_registration = state_store.read().push_registration();
     let push_label = crate::push::push_status_label(push_registration.as_ref());
     let has_session = !token().trim().is_empty();
-    let mut invite_locator_subject = use_signal(String::new);
-    let mut invite_locator_id = use_signal(String::new);
-    let mut invite_locator_token = use_signal(String::new);
-    let mut invite_locator_status = use_signal(String::new);
+    let invite_locator = use_signal(InviteLocatorState::default);
     // One bundle for every write below, so the rsx decides only when a
     // command runs — never how it is issued or where its outcome lands.
     let controller = controller::SettingsController {
-        invite_locator_id,
-        invite_locator_token,
-        invite_locator_status,
+        invite_locator,
         profile_avatar_blob_ref,
         avatar_upload_status,
         avatar_uploading,
@@ -646,6 +641,16 @@ pub fn SettingsPanel(
         state_store,
     };
     controller::use_avatar_selection_boundary(controller);
+    use_effect(move || {
+        let current = controller.settings_session.capture();
+        let mut state = controller.invite_locator;
+        if state.peek().session.as_ref() != Some(&current) {
+            state.set(InviteLocatorState {
+                session: Some(current),
+                ..Default::default()
+            });
+        }
+    });
     {
         let current_account = principal_id();
         let current_token = token();
@@ -689,35 +694,14 @@ pub fn SettingsPanel(
             });
         });
     }
-    {
-        let current_account = principal_id();
-        let current_token = token();
-        let current_base_url = base_url();
-        use_effect(move || {
-            if current_account.trim().is_empty() || current_token.trim().is_empty() {
-                invite_locator_subject.set(String::new());
-                invite_locator_id.set(String::new());
-                invite_locator_token.set(String::new());
-                return;
-            }
-            if current_account == invite_locator_subject() {
-                return;
-            }
-            invite_locator_subject.set(current_account.clone());
-            invite_locator_id.set(String::new());
-            invite_locator_token.set(String::new());
-            invite_locator_status.set(crate::i18n::tr("settings.invite_locator.issuing"));
-            let base = current_base_url.clone();
-            let api_token = current_token.clone();
-            controller.issue_first_invite_locator(base, api_token);
-        });
-    }
-    let invite_locator_url = if has_session && !invite_locator_token().trim().is_empty() {
-        build_invite_locator_url(&base_url(), &invite_locator_token())
+    let locator_state = invite_locator();
+    let locator_current =
+        locator_state.session.as_ref() == Some(&controller.settings_session.capture());
+    let invite_locator_url = if has_session && locator_current && !locator_state.token.is_empty() {
+        build_invite_locator_url(&base_url(), &locator_state.token)
     } else {
         String::new()
     };
-    let invite_locator_qr_svg = render_invite_locator_qr_svg(&invite_locator_url);
     let model::SessionIdentityLabels {
         principal: principal_label,
         device: device_label,
@@ -1217,55 +1201,14 @@ pub fn SettingsPanel(
                                 }
                             }
 
-                            div { class: "event settings-card-span-2 invite-locator-card", "data-testid": "settings-invite-locator-card",
-                                div { class: "event-head invite-locator-head",
-                                    span { {crate::i18n::tr("settings.invite_locator.title")} }
-                                    if has_session {
-                                        div { class: "invite-locator-head-actions",
-                                            span { class: "invite-locator-expiry", {crate::i18n::tr("settings.invite_locator.expiry")} }
-                                            Button {
-                                                variant: ButtonVariant::Secondary,
-                                                size: ButtonSize::Sm,
-                                                class: "btn invite-locator-action",
-                                                "data-testid": "settings-invite-locator-refresh",
-                                                onclick: move |_| {
-                                                    let base = base_url();
-                                                    let api_token = token();
-                                                    let old_locator_id = invite_locator_id();
-                                                    invite_locator_status.set(crate::i18n::tr("settings.invite_locator.rotating"));
-                                                    controller.rotate_invite_locator(base, api_token, old_locator_id);
-                                                },
-                                                UiIcon { name: "refresh" }
-                                                span { {crate::i18n::tr("common.refresh")} }
-                                            }
-                                        }
-                                    } else {
-                                        span { {crate::i18n::tr("common.offline")} }
-                                    }
-                                }
-                                if has_session {
-                                    if !invite_locator_status().is_empty() {
-                                        div { class: "muted", "data-testid": "settings-invite-locator-status", "{invite_locator_status}" }
-                                    }
-                                    div { "data-testid": "settings-invite-locator-url-pane",
-                                        QrSharePanel {
-                                            qr_svg: invite_locator_qr_svg,
-                                            url: invite_locator_url,
-                                            qr_aria_label: crate::i18n::tr("settings.invite_locator.qr_aria"),
-                                            url_aria_label: crate::i18n::tr("settings.invite_locator.url_aria"),
-                                            qr_test_id: "settings-invite-locator-qr".to_owned(),
-                                            url_test_id: "settings-invite-locator-url".to_owned(),
-                                            copy_test_id: "settings-invite-locator-copy".to_owned(),
-                                            url_rows: 4,
-                                        }
-                                    }
-                                } else {
-                                    div {
-                                        class: "muted",
-                                        "data-testid": "settings-invite-locator-signed-out",
-                                        {crate::i18n::tr("settings.invite_locator.sign_in")}
-                                    }
-                                }
+                            invite_locator::InviteLocatorCard {
+                                has_session,
+                                url: invite_locator_url,
+                                status: if locator_current { locator_state.status.clone() } else { String::new() },
+                                busy: locator_current && locator_state.busy,
+                                has_locator: locator_current && !locator_state.id.is_empty(),
+                                onrefresh: move |_| controller.change_invite_locator(false),
+                                onrevoke: move |_| controller.change_invite_locator(true),
                             }
 
                         }

@@ -109,6 +109,8 @@ test("settings language selector offers only English and Chinese", async ({ page
 
 test("account invite locator stays contained and follows the active locale", async ({ page }) => {
   await gotoAndDismissRecovery(page, "/settings/account");
+  await expect(page.getByTestId("settings-invite-locator-url-pane")).toHaveCount(0);
+  await page.getByTestId("settings-invite-locator-refresh").click();
   await expect(page.getByTestId("settings-invite-locator-url")).not.toHaveValue("");
 
   const share = page.getByTestId("settings-invite-locator-url-pane");
@@ -144,6 +146,7 @@ test("account invite locator stays contained and follows the active locale", asy
   await gotoAndDismissRecovery(page, "/settings/theme");
   await page.getByTestId("language-zh").click();
   await gotoAndDismissRecovery(page, "/settings/account");
+  await page.getByTestId("settings-invite-locator-refresh").click();
   await expect(page.getByTestId("realm-title")).toHaveText("设置");
   await expect(page.getByTestId("sidebar")).toContainText("主页");
   await expect(page.getByTestId("realm-sidebar-tab-collaboration")).toHaveText("协作");
@@ -400,6 +403,7 @@ test("account settings split account/server info and surface Agents", async ({ p
     CURRENT_PRINCIPAL_CORE_ID,
   );
   await expect(page.getByTestId("settings-account-did")).not.toHaveText("@alice:local.host");
+  await page.getByTestId("settings-invite-locator-refresh").click();
   const inviteLocatorUrl = page.getByTestId("settings-invite-locator-url");
   const inviteLocatorQr = page.getByTestId("settings-invite-locator-qr");
   const inviteLocatorUrlPane = page.getByTestId("settings-invite-locator-url-pane");

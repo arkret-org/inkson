@@ -2184,6 +2184,18 @@ pub fn english_translations() -> TranslationDict {
     dict.set("settings.account.copy_did", "Copy DID");
     dict.set("settings.account.copy_handles", "Copy handles");
     dict.set("settings.account.copy_device_id", "Copy device ID");
+    dict.set("settings.invite_locator.generate", "Generate link");
+    dict.set("settings.invite_locator.revoke", "Revoke link");
+    dict.set("settings.invite_locator.revoking", "Revoking link…");
+    dict.set(
+        "settings.invite_locator.revoked",
+        "Link revoked. Generate a new link to share again.",
+    );
+    dict.set(
+        "settings.invite_locator.revoke_failed",
+        "Revocation could not be confirmed; retry revocation",
+    );
+    dict.set("settings.invite_locator.scope", "Applies to this link only. Other links remain active until revoked or expired. Closing settings hides this link; reopening does not generate another.");
     dict.set("settings.invite_locator.title", "Invite locator");
     dict.set("settings.invite_locator.expiry", "Expires in 15 min");
     dict.set("settings.invite_locator.issuing", "Issuing secure locator…");

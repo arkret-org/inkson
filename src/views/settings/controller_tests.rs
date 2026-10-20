@@ -24,9 +24,7 @@ fn harness(control: Control) -> Element {
     let token = use_signal(String::new);
     let generation = use_signal(|| 0_u64);
     let controller = SettingsController {
-        invite_locator_id: use_signal(String::new),
-        invite_locator_token: use_signal(String::new),
-        invite_locator_status: use_signal(String::new),
+        invite_locator: use_signal(InviteLocatorState::default),
         profile_avatar_blob_ref: use_signal(String::new),
         avatar_upload_status: use_signal(String::new),
         avatar_uploading: use_signal(|| false),
@@ -317,5 +315,115 @@ async fn upload_first_poll_rejects_old_session_before_synchronous_crop_failure()
             "original-session-upload"
         );
         assert!(*controller.avatar_uploading.peek());
+    });
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn invite_writes_serialize_hide_secret_and_retain_failed_revoke_for_retry() {
+    let (_directory, mut dom, mut controller, _) = mounted().await;
+    let (send, receive) = tokio::sync::oneshot::channel();
+    dom.in_scope(controller.invite_locator.origin_scope(), || {
+        let stamp = controller.settings_session.capture();
+        controller.invite_locator.set(InviteLocatorState {
+            session: Some(stamp),
+            id: "owned-locator".into(),
+            token: "secret".into(),
+            ..Default::default()
+        });
+        controller.run_invite_locator(true, |id| async move {
+            assert_eq!(id, "owned-locator");
+            receive.await.unwrap()
+        });
+        controller.run_invite_locator(false, |_| async { panic!("overlapping write") });
+        let state = controller.invite_locator.peek();
+        assert!(state.busy);
+        assert!(state.token.is_empty());
+    });
+    settle(&mut dom).await;
+    send.send(Err("response lost".into())).unwrap();
+    settle(&mut dom).await;
+    dom.in_scope(controller.invite_locator.origin_scope(), || {
+        assert_eq!(controller.invite_locator.peek().id, "owned-locator");
+        assert!(!controller.invite_locator.peek().busy);
+        controller.run_invite_locator(true, |_| async { Ok(None) });
+    });
+    settle(&mut dom).await;
+    dom.in_scope(controller.invite_locator.origin_scope(), || {
+        let state = controller.invite_locator.peek();
+        assert!(state.id.is_empty());
+        assert!(state.token.is_empty());
+        assert!(!state.busy);
+    });
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn invite_delayed_completion_cannot_cross_any_session_coordinate() {
+    for change in 0..8 {
+        let (_directory, mut dom, controller, (mut account, mut base, mut token, mut generation)) =
+            mounted_with_cleanup(false).await;
+        let (send, receive) = tokio::sync::oneshot::channel();
+        dom.in_scope(controller.invite_locator.origin_scope(), || {
+            account.set(Some(
+                crate::test_support::AccountFixture::new("ak:did_core:web:alice.example").build(),
+            ));
+            controller.run_invite_locator(false, |_| async move { receive.await.unwrap() });
+        });
+        settle(&mut dom).await;
+        dom.in_scope(controller.invite_locator.origin_scope(), || match change {
+            0 => account.set(None),
+            1 => account.set(Some(
+                crate::test_support::AccountFixture::new("ak:did_core:web:bob.example").build(),
+            )),
+            2 => account.set(Some(
+                crate::test_support::AccountFixture::new("ak:did_core:web:alice.example")
+                    .station("ak:did_core:web:another.example")
+                    .build(),
+            )),
+            3 => base.set("https://another-route.example".into()),
+            4 => token.set("new-session".into()),
+            5 => account.set(Some(
+                crate::test_support::AccountFixture::new("ak:did_core:web:alice.example")
+                    .device("ak:device:01964137-0000-7000-8000-000000000002")
+                    .build(),
+            )),
+            6 => account.set(Some(
+                crate::test_support::AccountFixture::new("ak:did_core:web:alice.example")
+                    .server_url("https://other-server.example")
+                    .build(),
+            )),
+            _ => generation.set(1),
+        });
+        send.send(Ok(Some(arkret_sdk::InviteLocatorIssueOutcome {
+            locator_id: arkret_sdk::InviteLocatorId::new(
+                "ak:invite_locator:0196419b-0000-7000-8000-000000000000",
+            )
+            .unwrap(),
+            locator_token: "old-account-secret".into(),
+            expires_at: chrono::Utc::now(),
+            one_time_use: false,
+        })))
+        .unwrap();
+        settle(&mut dom).await;
+        dom.in_scope(controller.invite_locator.origin_scope(), || {
+            assert!(
+                controller.invite_locator.peek().token.is_empty(),
+                "coordinate {change}"
+            );
+        });
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn invite_switch_before_first_poll_does_not_dispatch_old_operation() {
+    let (_directory, mut dom, controller, (mut account, ..)) = mounted_with_cleanup(false).await;
+    dom.in_scope(controller.invite_locator.origin_scope(), || {
+        controller.run_invite_locator(false, |_| async { panic!("stale invite dispatch") });
+        account.set(Some(
+            crate::test_support::AccountFixture::new("ak:did_core:web:bob.example").build(),
+        ));
+    });
+    settle(&mut dom).await;
+    dom.in_scope(controller.invite_locator.origin_scope(), || {
+        assert!(controller.invite_locator.peek().token.is_empty());
     });
 }

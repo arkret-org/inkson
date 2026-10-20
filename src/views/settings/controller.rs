@@ -15,9 +15,7 @@ use super::*;
 /// Signals the settings writes fold their outcome back into.
 #[derive(Clone, Copy, PartialEq)]
 pub(super) struct SettingsController {
-    pub invite_locator_id: Signal<String>,
-    pub invite_locator_token: Signal<String>,
-    pub invite_locator_status: Signal<String>,
+    pub invite_locator: Signal<InviteLocatorState>,
     pub profile_avatar_blob_ref: Signal<String>,
     pub avatar_upload_status: Signal<String>,
     pub avatar_uploading: Signal<bool>,
@@ -192,37 +190,6 @@ impl SettingsController {
                     profile_text_status.set(format!(
                         "{}: {error}",
                         crate::i18n::tr("settings.profile.save_failed")
-                    ));
-                }
-            }
-        });
-    }
-
-    /// Issue the account's first invite locator when the panel opens for a
-    /// signed-in account that has none.
-    pub(super) fn issue_first_invite_locator(self, base: String, api_token: String) {
-        let SettingsController {
-            mut invite_locator_id,
-            mut invite_locator_token,
-            mut invite_locator_status,
-            ..
-        } = self;
-        spawn(async move {
-            match with_authed_sdk_client(&base, api_token, |client| async move {
-                issue_invite_locator(client).await
-            })
-            .await
-            {
-                Ok(outcome) => {
-                    invite_locator_id.set(outcome.locator_id.as_str().to_owned());
-                    invite_locator_token.set(outcome.locator_token);
-                    invite_locator_status.set(String::new());
-                }
-                Err(error) => {
-                    invite_locator_status.set(format!(
-                        "{}: {}",
-                        crate::i18n::tr("settings.invite_locator.unavailable"),
-                        error.display()
                     ));
                 }
             }
@@ -544,43 +511,100 @@ impl SettingsController {
         });
     }
 
-    /// Rotate the invite locator, or issue the first one when none exists.
-    pub(super) fn rotate_invite_locator(
-        self,
-        base: String,
-        api_token: String,
-        old_locator_id: String,
-    ) {
-        let SettingsController {
-            mut invite_locator_id,
-            mut invite_locator_token,
-            mut invite_locator_status,
-            ..
-        } = self;
-        spawn(async move {
-            let result = with_authed_sdk_client(&base, api_token, |client| async move {
-                if old_locator_id.is_empty() {
-                    issue_invite_locator(client).await
+    /// Serialize writes and fence their completion against the live session roots.
+    pub(super) fn change_invite_locator(self, revoke: bool) {
+        let started = self.settings_session.capture();
+        let base = started.base_url.clone();
+        let token = started.token.clone();
+        if token.trim().is_empty() || started.account.is_none() {
+            return;
+        }
+        let session = self.settings_session;
+        self.run_invite_locator(revoke, move |old| async move {
+            with_authed_sdk_client(&base, token, |client| async move {
+                // Authentication preparation may await a different active account.
+                if !session.is_current(&started) {
+                    anyhow::bail!("invite locator session changed before dispatch");
+                }
+                if revoke {
+                    client
+                        .revoke_invite_locator(&arkret_sdk::InviteLocatorRevokeRequestBody {
+                            locator_id: arkret_sdk::InviteLocatorId::new(old)?,
+                        })
+                        .await?;
+                    Ok(None)
+                } else if old.is_empty() {
+                    issue_invite_locator(client).await.map(Some)
                 } else {
-                    rotate_invite_locator(client, old_locator_id).await
+                    rotate_invite_locator(client, old).await.map(Some)
                 }
             })
-            .await;
+            .await
+            .map_err(|e| e.display())
+        });
+    }
+
+    pub(super) fn run_invite_locator<F, Fut>(mut self, revoke: bool, operation: F)
+    where
+        F: FnOnce(String) -> Fut + 'static,
+        Fut: std::future::Future<
+                Output = Result<Option<arkret_sdk::InviteLocatorIssueOutcome>, String>,
+            > + 'static,
+    {
+        let started = self.settings_session.capture();
+        let old = {
+            let mut state = self.invite_locator.write();
+            if state.session.as_ref() != Some(&started) {
+                *state = InviteLocatorState {
+                    session: Some(started.clone()),
+                    ..Default::default()
+                };
+            }
+            if state.busy || (revoke && state.id.is_empty()) {
+                return;
+            }
+            state.busy = true;
+            state.token.clear();
+            state.status = crate::i18n::tr(if revoke {
+                "settings.invite_locator.revoking"
+            } else if state.id.is_empty() {
+                "settings.invite_locator.issuing"
+            } else {
+                "settings.invite_locator.rotating"
+            });
+            state.id.clone()
+        };
+        spawn(async move {
+            if !self.settings_session.is_current(&started) {
+                return;
+            }
+            let result = operation(old).await;
+            if !self.settings_session.is_current(&started) {
+                return;
+            }
+            let mut state = self.invite_locator.write();
+            state.busy = false;
             match result {
-                Ok(outcome) => {
-                    invite_locator_id.set(outcome.locator_id.as_str().to_owned());
-                    invite_locator_token.set(outcome.locator_token);
-                    invite_locator_status.set(String::new());
-                    crate::components::feedback::toast_success(
-                        "feedback.invite_locator_refreshed",
-                        vec![],
+                Ok(Some(outcome)) => {
+                    state.id = outcome.locator_id.to_string();
+                    state.token = outcome.locator_token;
+                    state.status.clear();
+                }
+                Ok(None) => {
+                    state.id.clear();
+                    state.token.clear();
+                    state.status = crate::i18n::tr("settings.invite_locator.revoked");
+                }
+                Err(error) => {
+                    state.status = format!(
+                        "{}: {error}",
+                        crate::i18n::tr(if revoke {
+                            "settings.invite_locator.revoke_failed"
+                        } else {
+                            "settings.invite_locator.refresh_failed"
+                        })
                     );
                 }
-                Err(error) => invite_locator_status.set(format!(
-                    "{}: {}",
-                    crate::i18n::tr("settings.invite_locator.refresh_failed"),
-                    error.display()
-                )),
             }
         });
     }

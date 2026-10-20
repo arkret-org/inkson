@@ -653,6 +653,18 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("settings.account.copy_did", "复制 DID");
     dict.set("settings.account.copy_handles", "复制账号标识");
     dict.set("settings.account.copy_device_id", "复制设备 ID");
+    dict.set("settings.invite_locator.generate", "生成链接");
+    dict.set("settings.invite_locator.revoke", "撤销链接");
+    dict.set("settings.invite_locator.revoking", "正在撤销链接…");
+    dict.set(
+        "settings.invite_locator.revoked",
+        "链接已撤销，需要分享时请重新生成。",
+    );
+    dict.set(
+        "settings.invite_locator.revoke_failed",
+        "尚未确认撤销成功，请重试撤销",
+    );
+    dict.set("settings.invite_locator.scope", "仅作用于当前链接，其他链接仍有效，直至被撤销或过期。关闭设置后将隐藏当前链接，再次打开不会自动生成。");
     dict.set("settings.invite_locator.title", "安全邀请链接");
     dict.set("settings.invite_locator.expiry", "15 分钟后过期");
     dict.set("settings.invite_locator.issuing", "正在生成安全邀请链接…");
