@@ -163,6 +163,8 @@ pub mod telemetry;
 #[cfg(test)]
 pub(crate) mod test_support;
 pub(crate) mod transport;
+#[cfg(all(target_arch = "wasm32", feature = "spec-conformance"))]
+pub use transport::checkpoint_journal_browser_recovery;
 pub(crate) mod ui_signal;
 pub use transport::realm_write::{
     relinquish_capability, reset_realm_authority, transfer_realm_owner,

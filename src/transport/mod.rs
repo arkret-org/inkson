@@ -7,7 +7,7 @@ mod contacts;
 pub(crate) use contacts::DEFAULT_CONTACT_SCOPE_NAMES;
 #[cfg(any(target_arch = "wasm32", test))]
 pub(crate) use contacts::pending::SECRET_KEY as CONTACT_PENDING_COMMIT_SECRET_KEY;
-pub(crate) use contacts::pending::resume_pending_contact;
+pub(crate) use contacts::pending::{compact_contact_history, resume_pending_contact};
 mod context;
 pub(crate) mod describe_cache;
 pub mod directory;
@@ -34,3 +34,7 @@ pub use media::MediaEndpoints;
 
 #[cfg(test)]
 mod tests;
+
+// Conformance-only probe: uses the production journal and IndexedDB backend.
+#[cfg(all(target_arch = "wasm32", feature = "spec-conformance"))]
+pub use contacts::pending::checkpoint_journal_browser_recovery;
