@@ -211,7 +211,7 @@ async fn nested_empty_collections_and_deletes_round_trip_without_resurrecting_ch
         );
     initial
         .member_identity_events
-        .insert("empty-realm".into(), im::OrdMap::new());
+        .insert("empty-realm".into(), imbl::OrdMap::new());
     initial.mls_genesis_emitted.insert("scope".into());
     put(&backend, "account", initial.clone());
     assert_eq!(load(&backend, "account").unwrap().state, initial);

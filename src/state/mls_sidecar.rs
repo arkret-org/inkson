@@ -1529,8 +1529,8 @@ mod tests {
         );
         store.cached.mls_private_plaintext.insert(
             REALM.to_owned(),
-            im::ordmap! {
-                "strand".to_owned() => im::ordmap! {
+            imbl::ordmap! {
+                "strand".to_owned() => imbl::ordmap! {
                     "body".to_owned() => "author text".to_owned()
                 }
             },

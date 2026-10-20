@@ -28,10 +28,10 @@ pub(crate) struct E2eePlaintextCacheUsage {
 pub(crate) struct PendingE2eePlaintextClear {
     key: String,
     json: String,
-    previous_private: im::OrdMap<String, im::OrdMap<String, im::OrdMap<String, String>>>,
-    previous_decrypted: im::OrdMap<String, im::OrdMap<String, String>>,
-    previous_identity_links: im::OrdMap<String, LocallyAuthenticatedIdentityLink>,
-    previous_drafts: im::OrdMap<String, im::OrdMap<String, im::OrdMap<String, String>>>,
+    previous_private: imbl::OrdMap<String, imbl::OrdMap<String, imbl::OrdMap<String, String>>>,
+    previous_decrypted: imbl::OrdMap<String, imbl::OrdMap<String, String>>,
+    previous_identity_links: imbl::OrdMap<String, LocallyAuthenticatedIdentityLink>,
+    previous_drafts: imbl::OrdMap<String, imbl::OrdMap<String, imbl::OrdMap<String, String>>>,
     hydration_fence: Arc<CacheClearFence>,
     lifecycle_epoch: Arc<()>,
     registry: Arc<Mutex<CacheClearFences>>,
@@ -241,22 +241,22 @@ struct E2eePlaintextCacheV1 {
     // Persisted key, unchanged: this entry is already written in every
     // device's secure store, and an at-rest key is not a wire name.
     #[serde(default, rename = "mls_snapshots")]
-    mls_local_checkpoints: im::OrdMap<String, garth::mls::checkpoint::MlsLocalCheckpointEnvelope>,
+    mls_local_checkpoints: imbl::OrdMap<String, garth::mls::checkpoint::MlsLocalCheckpointEnvelope>,
     #[serde(default)]
-    private_plaintext: im::OrdMap<String, im::OrdMap<String, im::OrdMap<String, String>>>,
+    private_plaintext: imbl::OrdMap<String, imbl::OrdMap<String, imbl::OrdMap<String, String>>>,
     #[serde(default)]
-    decrypted_plaintext: im::OrdMap<String, im::OrdMap<String, String>>,
+    decrypted_plaintext: imbl::OrdMap<String, imbl::OrdMap<String, String>>,
     #[serde(default)]
-    authenticated_identity_links: im::OrdMap<String, LocallyAuthenticatedIdentityLink>,
+    authenticated_identity_links: imbl::OrdMap<String, LocallyAuthenticatedIdentityLink>,
     #[serde(default)]
-    composer_drafts: im::OrdMap<String, im::OrdMap<String, im::OrdMap<String, String>>>,
+    composer_drafts: imbl::OrdMap<String, imbl::OrdMap<String, imbl::OrdMap<String, String>>>,
 }
 
 impl E2eePlaintextCacheV1 {
     fn retain_committed_fields(&mut self, current: &Self) {
         fn nested(
-            old: &mut im::OrdMap<String, im::OrdMap<String, im::OrdMap<String, String>>>,
-            current: &im::OrdMap<String, im::OrdMap<String, im::OrdMap<String, String>>>,
+            old: &mut imbl::OrdMap<String, imbl::OrdMap<String, imbl::OrdMap<String, String>>>,
+            current: &imbl::OrdMap<String, imbl::OrdMap<String, imbl::OrdMap<String, String>>>,
         ) {
             old.retain(|outer, middle| {
                 let Some(now) = current.get(outer) else {
@@ -447,11 +447,11 @@ impl E2eePlaintextCacheV1 {
         let mut changed = false;
         for (realm_id, snapshot) in self.mls_local_checkpoints {
             match state.mls_local_checkpoints.entry(realm_id.clone()) {
-                im::ordmap::Entry::Vacant(entry) => {
+                imbl::ordmap::Entry::Vacant(entry) => {
                     entry.insert(snapshot);
                     changed = true;
                 }
-                im::ordmap::Entry::Occupied(mut entry) => {
+                imbl::ordmap::Entry::Occupied(mut entry) => {
                     let current = entry.get();
                     let keep_live = live_receive_snapshot_keys.contains(&realm_id);
                     let secure_checkpoint_is_authoritative =

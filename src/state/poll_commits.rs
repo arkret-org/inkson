@@ -584,7 +584,7 @@ impl LocalStateStore {
 // and conflict handling without constructing a public trust-token shortcut.
 fn merge_verified_poll_page(
     inputs: &mut Vec<VerifiedPollInput>,
-    prefixes: &mut im::OrdMap<String, VerifiedPollPrefix>,
+    prefixes: &mut imbl::OrdMap<String, VerifiedPollPrefix>,
     rows: &[arkret_sdk::CommittedEventView],
 ) -> Result<(), String> {
     let mut next_inputs = inputs.clone();

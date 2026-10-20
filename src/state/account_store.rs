@@ -65,8 +65,8 @@ pub(super) struct Checkpoint {
     pub incarnation: String,
     root: Option<Vec<u8>>,
     pub state: ClientLocalState,
-    records: im::OrdMap<Vec<String>, Record>,
-    physical: im::OrdMap<String, Vec<String>>,
+    records: imbl::OrdMap<Vec<String>, Record>,
+    physical: imbl::OrdMap<String, Vec<String>>,
     tree: record_tree::Tree,
 }
 
@@ -311,8 +311,8 @@ fn decode_records(
 ) -> anyhow::Result<Checkpoint> {
     records.sort_by_key(|(_, record, _)| record.path.len());
     let mut value = serde_json::to_value(ClientLocalState::default())?;
-    let mut entries = im::OrdMap::new();
-    let mut physical = im::OrdMap::new();
+    let mut entries = imbl::OrdMap::new();
+    let mut physical = imbl::OrdMap::new();
     let mut tree = record_tree::Tree::default();
     for (key, record, bytes) in records {
         anyhow::ensure!(
@@ -1017,21 +1017,21 @@ pub(super) fn committed_map<T: serde::de::DeserializeOwned + Clone>(
     field: &str,
     scope_key: Option<&str>,
     expected: &Checkpoint,
-) -> anyhow::Result<im::OrdMap<String, T>> {
+) -> anyhow::Result<imbl::OrdMap<String, T>> {
     backend.snapshot(|snapshot| {
         anyhow::ensure!(
             snapshot.get_sync(&root_key(scope))? == expected.root,
             "account checkpoint changed before committed read"
         );
         if expected.incarnation.is_empty() {
-            return Ok(im::OrdMap::new());
+            return Ok(imbl::OrdMap::new());
         }
         let data_scope = item_scope(scope, &expected.incarnation)?;
         let mut prefix = record_field_prefix(&data_scope, field);
         if let Some(key) = scope_key {
             prefix.push_str(&scope_bucket(key)?);
         }
-        let mut result = im::OrdMap::new();
+        let mut result = imbl::OrdMap::new();
         for (key, path) in expected
             .physical
             .range(prefix.clone()..format!("{prefix}~"))

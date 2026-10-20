@@ -40,6 +40,7 @@ def renderer_ids():
 private_directory = tempfile.TemporaryDirectory(prefix='inkson-desktop-runtime-')
 with private_directory as private:
     env = dict(os.environ)
+    env['RUST_LOG'] = 'inkson=info,dioxus_desktop=debug,warn'
     env.update(HOME=private, APPDATA=private + '/roaming', LOCALAPPDATA=private + '/local',
                XDG_CONFIG_HOME=private + '/config', XDG_DATA_HOME=private + '/data',
                XDG_CACHE_HOME=private + '/cache')
@@ -51,9 +52,9 @@ with private_directory as private:
         source.write_text('''import Foundation
 import CoreGraphics
 let pid = Int(CommandLine.arguments[1])!
-let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
-let own = windows.filter { ($0[kCGWindowOwnerPID as String] as? Int) == pid && ($0[kCGWindowLayer as String] as? Int) == 0 }
-let rows = own.map { ["id": $0[kCGWindowNumber as String] ?? 0, "title": $0[kCGWindowName as String] ?? ""] }
+let windows = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+let own = windows.filter { ($0[kCGWindowOwnerPID as String] as? Int) == pid }
+let rows = own.map { ["id": $0[kCGWindowNumber as String] ?? 0, "title": $0[kCGWindowName as String] ?? "", "layer": $0[kCGWindowLayer as String] ?? -1, "onscreen": $0[kCGWindowIsOnscreen as String] ?? false, "bounds": $0[kCGWindowBounds as String] ?? [:]] }
 print(String(data: try JSONSerialization.data(withJSONObject: rows), encoding: .utf8)!)
 ''')
         probe = Path(private) / 'windows-probe'
@@ -69,7 +70,15 @@ print(String(data: try JSONSerialization.data(withJSONObject: rows), encoding: .
 
     def own_windows(pid):
         if platform == 'darwin':
-            return json.loads(subprocess.check_output([str(probe), str(pid)], text=True))
+            rows = json.loads(subprocess.check_output([str(probe), str(pid)], text=True))
+            result['macos_owned_window_inventory'] = rows
+            # Floating application windows can have a nonzero layer on macOS.
+            # Identify the actual app window, excluding its hidden helper windows.
+            # macOS may omit titles when screen recording access is unavailable.
+            return [row for row in rows if row['onscreen']
+                    and (not row['title'] or 'Inkson' in row['title'] or 'Arkret' in row['title'])
+                    and row['bounds'].get('Width', 0) >= 200
+                    and row['bounds'].get('Height', 0) >= 100]
         windows = []
         @callback_type
         def visit(hwnd, unused):
@@ -85,16 +94,20 @@ print(String(data: try JSONSerialization.data(withJSONObject: rows), encoding: .
         return windows
 
     baseline = renderer_ids()
+    result['baseline_renderer_pids'] = sorted(baseline)
     app = None
     try:
         with (out / (platform + '-application.log')).open('w') as app_output:
             app = subprocess.Popen([str(binary)], env=env, stdout=app_output, stderr=subprocess.STDOUT)
+            result['application_pid'] = app.pid
             deadline = time.monotonic() + 90
             while time.monotonic() < deadline:
                 if app.poll() is not None:
                     raise RuntimeError('desktop exited before real window initialization: ' + str(app.returncode))
                 windows = own_windows(app.pid)
                 renderers = renderer_ids() - baseline
+                result['last_window_observation'] = windows
+                result['last_new_renderer_pids'] = sorted(renderers)
                 if windows and renderers:
                     break
                 time.sleep(0.5)

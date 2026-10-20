@@ -291,6 +291,6 @@ fn narrow_projection_reads_follow_active_account_instead_of_a_detached_old_cache
     assert_eq!(stale.e2ee_plaintext_cache_usage().entry_count(), 0);
 }
 
-fn persistent_map<V: Clone, const N: usize>(entries: [(String, V); N]) -> im::OrdMap<String, V> {
+fn persistent_map<V: Clone, const N: usize>(entries: [(String, V); N]) -> imbl::OrdMap<String, V> {
     entries.into_iter().collect()
 }

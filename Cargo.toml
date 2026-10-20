@@ -14,7 +14,8 @@ resolver = "3"
 # renderer's PHF 0.8 API while resolving rand to a patched registry release.
 # Both crates must share a source so phf_codegen uses the same PhfHash trait.
 [patch.crates-io]
-dioxus-desktop = { path = "vendor/dioxus-desktop" }
+dioxus-desktop = { git = "https://github.com/arkret-org/dioxus", rev = "0c19002e89ab70729bf6fbeda24e98eafb861cb9" }
+ksni = { git = "https://github.com/arkret-org/ksni", rev = "c95fc5ba94780c2376ee8b89ad91f7412abd3966" }
 phf_generator = { git = "https://github.com/rust-phf/rust-phf", rev = "6d5bfb4a377270d2ae69e05347044b1a95499973" }
 phf_shared = { git = "https://github.com/rust-phf/rust-phf", rev = "6d5bfb4a377270d2ae69e05347044b1a95499973" }
 
@@ -192,7 +193,7 @@ futures-util = { workspace = true }
 getrandom = { workspace = true, features = ["sys_rng", "wasm_js"] }
 getrandom_02 = { workspace = true, features = ["js"] }
 hex = "0.4.3"
-im = { version = "15.1", features = ["serde"] }
+imbl = { version = "7.0.2", features = ["serde"] }
 hkdf = { workspace = true }
 hmac = { workspace = true }
 image = { workspace = true, default-features = false, features = ["gif", "jpeg", "png", "webp"] }

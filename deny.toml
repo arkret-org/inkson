@@ -51,6 +51,10 @@ unknown-registry = "warn"
 unknown-git = "warn"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 allow-git = [
+    # Reviewed dependency fixes live in organization forks, pinned by full revision.
+    "https://github.com/arkret-org/dioxus",
+    "https://github.com/arkret-org/ksni",
+    "https://github.com/arkret-org/secret-service-rs",
     "https://github.com/DioxusLabs/components",
     # Official PHF 0.8 caller migration to the patched rand 0.8 registry line.
     "https://github.com/rust-phf/rust-phf",

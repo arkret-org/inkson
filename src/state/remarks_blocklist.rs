@@ -203,7 +203,7 @@ impl LocalStateStore {
             }
             // A local writer may have accepted a newer value before its Account
             // delta arrives. Retained older evidence cannot overwrite it.
-            if let im::ordmap::Entry::Vacant(slot) = self
+            if let imbl::ordmap::Entry::Vacant(slot) = self
                 .cached
                 .contact_remarks
                 .entry(remark.subject.principal_id.to_string())

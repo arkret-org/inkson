@@ -88,7 +88,7 @@ pub(super) trait MapExt<K, V> {
     fn for_each_mut(&mut self, visit: impl FnMut(&K, &mut V));
     fn into_values(self) -> impl Iterator<Item = V>;
 }
-impl<K: Ord + Clone, V: Clone> MapExt<K, V> for im::OrdMap<K, V> {
+impl<K: Ord + Clone, V: Clone> MapExt<K, V> for imbl::OrdMap<K, V> {
     fn retain(&mut self, mut keep: impl FnMut(&K, &mut V) -> bool) {
         let keys: Vec<_> = self.keys().cloned().collect();
         for key in keys {
@@ -134,8 +134,8 @@ impl Changes {
     pub fn map<K: Ord + Clone + Serialize, V: Clone + PartialEq>(
         &mut self,
         path: Vec<String>,
-        old: Option<&im::OrdMap<K, V>>,
-        new: Option<&im::OrdMap<K, V>>,
+        old: Option<&imbl::OrdMap<K, V>>,
+        new: Option<&imbl::OrdMap<K, V>>,
         mut value: impl FnMut(&mut Self, Vec<String>, Option<&V>, Option<&V>) -> anyhow::Result<()>,
     ) -> anyhow::Result<()> {
         if old.is_none() != new.is_none() {
@@ -165,9 +165,9 @@ impl Changes {
             (Some(old), Some(new)) => {
                 for diff in old.diff(new) {
                     match diff {
-                        im::ordmap::DiffItem::Add(key, value) => emit(key, None, Some(value))?,
-                        im::ordmap::DiffItem::Remove(key, value) => emit(key, Some(value), None)?,
-                        im::ordmap::DiffItem::Update {
+                        imbl::ordmap::DiffItem::Add(key, value) => emit(key, None, Some(value))?,
+                        imbl::ordmap::DiffItem::Remove(key, value) => emit(key, Some(value), None)?,
+                        imbl::ordmap::DiffItem::Update {
                             old: (key, before),
                             new: (_, after),
                         } => emit(key, Some(before), Some(after))?,
@@ -191,16 +191,16 @@ impl Changes {
     pub fn set<K: Ord + Clone + Serialize>(
         &mut self,
         path: Vec<String>,
-        old: &im::OrdSet<K>,
-        new: &im::OrdSet<K>,
+        old: &imbl::OrdSet<K>,
+        new: &imbl::OrdSet<K>,
     ) -> anyhow::Result<()> {
         self.set_optional(path, Some(old), Some(new))
     }
     pub fn set_optional<K: Ord + Clone + Serialize>(
         &mut self,
         path: Vec<String>,
-        old: Option<&im::OrdSet<K>>,
-        new: Option<&im::OrdSet<K>>,
+        old: Option<&imbl::OrdSet<K>>,
+        new: Option<&imbl::OrdSet<K>>,
     ) -> anyhow::Result<()> {
         if old.is_none() != new.is_none() {
             self.0.push(Change {
@@ -208,7 +208,7 @@ impl Changes {
                 value: new.map(|_| b"[]".to_vec()),
             });
         }
-        let empty = im::OrdSet::new();
+        let empty = imbl::OrdSet::new();
         let old = old.unwrap_or(&empty);
         let new = new.unwrap_or(&empty);
         if old.ptr_eq(new) {
@@ -980,7 +980,7 @@ impl<V: 'static> ReadMap<V> for std::collections::BTreeMap<String, V> {
         self.iter()
     }
 }
-impl<V: Clone + 'static> ReadMap<V> for im::OrdMap<String, V> {
+impl<V: Clone + 'static> ReadMap<V> for imbl::OrdMap<String, V> {
     fn iter(&self) -> impl Iterator<Item = (&String, &V)> {
         self.iter()
     }
@@ -1018,7 +1018,7 @@ impl<V> Lookup<V> for std::collections::BTreeMap<String, V> {
         self.get(key)
     }
 }
-impl<V: Clone> Lookup<V> for im::OrdMap<String, V> {
+impl<V: Clone> Lookup<V> for imbl::OrdMap<String, V> {
     fn get(&self, key: &str) -> Option<&V> {
         self.get(key)
     }

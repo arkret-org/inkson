@@ -160,7 +160,7 @@ pub struct LocalStateStore {
     /// through [`Self::read_root`] and updated atomically through
     /// [`Self::mutate_root`] so every clone observes one shared source of truth.
     cached: ClientLocalState,
-    account_checkpoints: Mutex<im::OrdMap<String, Arc<account_store::CachedCheckpoint>>>,
+    account_checkpoints: Mutex<imbl::OrdMap<String, Arc<account_store::CachedCheckpoint>>>,
     #[cfg(not(target_arch = "wasm32"))]
     account_backend: Mutex<Option<current_index::platform::Backend>>,
     /// Principal storage scope bound to `cached`. The root index is shared by every
@@ -214,8 +214,8 @@ pub struct LocalStateStore {
     /// Shared by clones and bound to the exact account cache key.
     e2ee_cache_clears: Arc<Mutex<e2ee_secure_cache::CacheClearFences>>,
     /// Per-clone reconciliation already absorbed into this live cache.
-    e2ee_cache_reconciliations_seen: im::OrdSet<String>,
-    e2ee_cache_clear_generations_seen: im::OrdMap<String, u64>,
+    e2ee_cache_reconciliations_seen: imbl::OrdSet<String>,
+    e2ee_cache_clear_generations_seen: imbl::OrdMap<String, u64>,
     /// Serialization lock for the MLS "decrypt → state
     /// write-back" critical section. Multiple views (chat / kanban) can
     /// trigger decrypt-on-read for the same realm; holding this
@@ -342,7 +342,7 @@ impl Default for LocalStateStore {
     fn default() -> Self {
         Self {
             cached: ClientLocalState::default(),
-            account_checkpoints: Mutex::new(im::OrdMap::new()),
+            account_checkpoints: Mutex::new(imbl::OrdMap::new()),
             #[cfg(not(target_arch = "wasm32"))]
             account_backend: Mutex::new(None),
             cached_account_key: None,
@@ -357,8 +357,8 @@ impl Default for LocalStateStore {
             corrupt_account_scopes: Arc::new(Mutex::new(std::collections::BTreeSet::new())),
             mls_receive_overlay: Arc::new(Mutex::new(MlsReceiveOverlay::default())),
             e2ee_cache_clears: Arc::new(Mutex::new(Default::default())),
-            e2ee_cache_reconciliations_seen: im::OrdSet::new(),
-            e2ee_cache_clear_generations_seen: im::OrdMap::new(),
+            e2ee_cache_reconciliations_seen: imbl::OrdSet::new(),
+            e2ee_cache_clear_generations_seen: imbl::OrdMap::new(),
             mls_decrypt_serial: Arc::new(Mutex::new(())),
             sidecar_projection_fold: crate::sidecar::SidecarProjectionFold::default().into(),
             blocklist_projection_cache: Mutex::new(BlocklistProjectionCache::default()),
@@ -659,7 +659,7 @@ impl LocalStateStore {
     pub fn with_path(path: impl Into<PathBuf>) -> Self {
         Self {
             cached: ClientLocalState::default(),
-            account_checkpoints: Mutex::new(im::OrdMap::new()),
+            account_checkpoints: Mutex::new(imbl::OrdMap::new()),
             #[cfg(not(target_arch = "wasm32"))]
             account_backend: Mutex::new(None),
             cached_account_key: None,
@@ -674,8 +674,8 @@ impl LocalStateStore {
             corrupt_account_scopes: Arc::new(Mutex::new(std::collections::BTreeSet::new())),
             mls_receive_overlay: Arc::new(Mutex::new(MlsReceiveOverlay::default())),
             e2ee_cache_clears: Arc::new(Mutex::new(Default::default())),
-            e2ee_cache_reconciliations_seen: im::OrdSet::new(),
-            e2ee_cache_clear_generations_seen: im::OrdMap::new(),
+            e2ee_cache_reconciliations_seen: imbl::OrdSet::new(),
+            e2ee_cache_clear_generations_seen: imbl::OrdMap::new(),
             mls_decrypt_serial: Arc::new(Mutex::new(())),
             sidecar_projection_fold: crate::sidecar::SidecarProjectionFold::default().into(),
             blocklist_projection_cache: Mutex::new(BlocklistProjectionCache::default()),

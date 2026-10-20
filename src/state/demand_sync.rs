@@ -176,22 +176,22 @@ pub(crate) struct DemandSyncState {
     list_snapshot: Option<String>,
     list_revision: u64,
     list_complete: bool,
-    list_seen: im::OrdSet<String>,
-    summaries: im::OrdMap<String, RealmRow>,
-    summary_removals: im::OrdMap<String, u64>,
+    list_seen: imbl::OrdSet<String>,
+    summaries: imbl::OrdMap<String, RealmRow>,
+    summary_removals: imbl::OrdMap<String, u64>,
     global_snapshot: Option<String>,
-    channels: im::OrdMap<Channel, BaselineChannelState>,
-    account_events: im::OrdMap<String, Box<Event>>,
-    device_ids: im::OrdSet<String>,
+    channels: imbl::OrdMap<Channel, BaselineChannelState>,
+    account_events: imbl::OrdMap<String, Box<Event>>,
+    device_ids: imbl::OrdSet<String>,
     #[serde(default)]
-    agent_draft_pending_intents: im::OrdMap<String, StoredAgentDraftPendingIntent>,
+    agent_draft_pending_intents: imbl::OrdMap<String, StoredAgentDraftPendingIntent>,
     #[serde(default)]
     agent_draft_pending_projection_position: Option<u64>,
     #[serde(default)]
     agent_draft_pending_delta_fingerprint: Option<String>,
     #[serde(default)]
     agent_draft_pending_baseline: Option<AgentDraftPendingBaselineState>,
-    details: im::OrdMap<String, DetailState>,
+    details: imbl::OrdMap<String, DetailState>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -212,8 +212,8 @@ struct AgentDraftPendingBaselineState {
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 struct BaselineChannelState {
-    seen: im::OrdSet<String>,
-    mutated: im::OrdSet<String>,
+    seen: imbl::OrdSet<String>,
+    mutated: imbl::OrdSet<String>,
     complete: bool,
 }
 
@@ -307,7 +307,7 @@ fn pending_intent_change_parts(
 }
 
 fn install_pending_intent_change(
-    records: &mut im::OrdMap<String, StoredAgentDraftPendingIntent>,
+    records: &mut imbl::OrdMap<String, StoredAgentDraftPendingIntent>,
     key: String,
     value: Value,
     removed: bool,

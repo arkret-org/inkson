@@ -37,7 +37,7 @@ impl CommittedAccountRead {
     ) -> anyhow::Result<Option<garth::mls::checkpoint::MlsLocalCheckpointEnvelope>> {
         let key =
             garth::mls::checkpoint_port::scope_checkpoint_key(scope).map_err(anyhow::Error::msg)?;
-        let rows: im::OrdMap<String, garth::mls::checkpoint::MlsLocalCheckpointEnvelope> =
+        let rows: imbl::OrdMap<String, garth::mls::checkpoint::MlsLocalCheckpointEnvelope> =
             self.map("mls_snapshots", Some(&key)).await?;
         Ok(if matches!(scope, arkret_sdk::ScopeRef::Sidecar { .. }) {
             rows.into_iter()
@@ -50,7 +50,7 @@ impl CommittedAccountRead {
     pub(crate) async fn pending_consumes(
         &self,
     ) -> anyhow::Result<Vec<(String, arkret_sdk::KeyPackagesConsumeRequestBody)>> {
-        let rows: im::OrdMap<String, String> =
+        let rows: imbl::OrdMap<String, String> =
             self.map("mls_pending_keypackage_consumes", None).await?;
         rows.into_iter()
             .map(|(key, value)| Ok((key, serde_json::from_str(&value)?)))
@@ -60,7 +60,7 @@ impl CommittedAccountRead {
         &self,
         field: &str,
         key: Option<&str>,
-    ) -> anyhow::Result<im::OrdMap<String, T>> {
+    ) -> anyhow::Result<imbl::OrdMap<String, T>> {
         let backend = Backend::open(self.location.clone()).await?;
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -85,20 +85,20 @@ pub(super) async fn committed_map_async<T: serde::de::DeserializeOwned + Clone>(
     field: &str,
     scope_key: Option<&str>,
     expected: &Checkpoint,
-) -> anyhow::Result<im::OrdMap<String, T>> {
+) -> anyhow::Result<imbl::OrdMap<String, T>> {
     anyhow::ensure!(
         backend.get(&root_key(scope)).await? == expected.root,
         "account checkpoint changed before committed read"
     );
     if expected.incarnation.is_empty() {
-        return Ok(im::OrdMap::new());
+        return Ok(imbl::OrdMap::new());
     }
     let data_scope = item_scope(scope, &expected.incarnation)?;
     let mut prefix = record_field_prefix(&data_scope, field);
     if let Some(key) = scope_key {
         prefix.push_str(&scope_bucket(key)?);
     }
-    let mut result = im::OrdMap::new();
+    let mut result = imbl::OrdMap::new();
     for (key, path) in expected
         .physical
         .range(prefix.clone()..format!("{prefix}~"))
