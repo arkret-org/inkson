@@ -16,3 +16,6 @@ _*.md
 .codex*
 .agent*
 .*.log
+
+# The patched renderer is resolved by the application workspace lock.
+/vendor/dioxus-desktop/Cargo.lock
