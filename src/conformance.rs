@@ -695,13 +695,26 @@ pub async fn read_native_consent_current(
     let account = host.active_account_context();
     let client =
         crate::transport::own_station_results::client_for_http(&host.call_http_client()).await?;
+    let authority = crate::transport::own_station_results::consent_authority(
+        &host.call_http_client(),
+        &client,
+        &account.authority,
+        &account.principal_control_realm_id,
+    )
+    .await?;
     Ok(client
-        .consent_current(&arkret_sdk::ConsentCurrentReadRequestBody {
-            holder_account_id: account.authority.clone(),
-            peer: arkret_sdk::ConsentPeer::Actor { actor_id: peer },
-            audience_actor_id: arkret_sdk::ActorId::service(account.authority.station_id),
-            nonce: crate::random::base64url_token(32, "Consent read nonce unavailable")?,
-        })
+        .consent_current(
+            &arkret_sdk::ConsentCurrentReadRequestBody {
+                holder_account_id: account.authority.clone(),
+                peer: arkret_sdk::ConsentPeer::Actor { actor_id: peer },
+                audience_actor_id: arkret_sdk::ActorId::service(
+                    account.authority.station_id.clone(),
+                ),
+                nonce: crate::random::base64url_token(32, "Consent read nonce unavailable")?,
+            },
+            &account.principal_control_realm_id,
+            &authority,
+        )
         .await?)
 }
 
@@ -779,10 +792,18 @@ pub async fn read_native_call_consent(
     let account = host.active_account_context();
     let client =
         crate::transport::own_station_results::client_for_http(&host.call_http_client()).await?;
+    let authority = crate::transport::own_station_results::consent_authority(
+        &host.call_http_client(),
+        &client,
+        &account.authority,
+        &account.principal_control_realm_id,
+    )
+    .await?;
     Ok(garth::call_invitation::read_holder_call_consent(
         &client,
         &account.authority,
         &account.principal_control_realm_id,
+        &authority,
         invitation,
         crate::random::base64url_token(32, "Consent read nonce unavailable")?,
         None,

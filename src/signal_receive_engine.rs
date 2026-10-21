@@ -1046,7 +1046,16 @@ impl InksonSignalSink {
             audience_actor_id: arkret_sdk::ActorId::service(account.authority.station_id.clone()),
             nonce: crate::random::base64url_token(32, "Consent read nonce unavailable")?,
         };
-        let response = client.consent_current(&request).await?;
+        let authority = crate::transport::own_station_results::consent_authority(
+            &http,
+            &client,
+            &account.authority,
+            &account.principal_control_realm_id,
+        )
+        .await?;
+        let response = client
+            .consent_current(&request, &account.principal_control_realm_id, &authority)
+            .await?;
         guard()?;
         let permitted = install_call_consent_current(
             &self.state_store,

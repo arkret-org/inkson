@@ -1217,21 +1217,19 @@ impl ConsentEditingSession {
     }
     pub fn permissions(&self) -> anyhow::Result<Vec<arkret_sdk::ConsentPermission>> {
         Ok(match &self.source.value()?.current {
-            arkret_sdk::ConsentCurrentReadState::Present { result } => {
-                result.value.permissions.clone()
-            }
-            arkret_sdk::ConsentCurrentReadState::NeverWritten {} => Vec::new(),
+            arkret_sdk::ConsentCurrentState::Present { result } => result.value.permissions.clone(),
+            arkret_sdk::ConsentCurrentState::NeverWritten => Vec::new(),
         })
     }
     pub fn expected_current(&self) -> anyhow::Result<arkret_sdk::ConsentExpectedCurrent> {
         Ok(match &self.source.value()?.current {
-            arkret_sdk::ConsentCurrentReadState::Present { result } => {
+            arkret_sdk::ConsentCurrentState::Present { result } => {
                 arkret_sdk::ConsentExpectedCurrent::Present {
                     revision: result.revision.clone(),
                 }
             }
-            arkret_sdk::ConsentCurrentReadState::NeverWritten {} => {
-                arkret_sdk::ConsentExpectedCurrent::NeverWritten {}
+            arkret_sdk::ConsentCurrentState::NeverWritten => {
+                arkret_sdk::ConsentExpectedCurrent::NeverWritten
             }
         })
     }
@@ -1255,13 +1253,13 @@ pub(crate) async fn read_consent_editing_session(
         audience_actor_id: arkret_sdk::ActorId::service(holder.station_id.clone()),
         nonce: crate::random::base64url_token(32, "Consent edit nonce unavailable")?,
     };
-    let source = client.consent_current(&request).await?;
+    let authority =
+        crate::transport::own_station_results::consent_authority(http, &client, &holder, &realm_id)
+            .await?;
+    let source = client
+        .consent_current(&request, &realm_id, &authority)
+        .await?;
     let value = source.value()?;
-    value.validate_for_request(
-        &request,
-        value.governance_generation,
-        crate::clock::now_utc(),
-    )?;
     anyhow::ensure!(
         value.realm_id == realm_id,
         "Consent edit prestate belongs to another inception PCR"

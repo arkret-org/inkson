@@ -136,6 +136,77 @@ pub(crate) async fn genesis_response(
     Ok(response)
 }
 
+/// Anchor private Consent independently of the read's claimed signer and tenure.
+pub(crate) async fn consent_authority(
+    http: &arkret_sdk::http_client::Client,
+    client: &OwnStationResultClient,
+    holder: &arkret_sdk::AccountId,
+    registered_pcr: &arkret_sdk::RealmId,
+) -> anyhow::Result<arkret_sdk::http_client::own_station_results::ConsentCurrentReadAuthority> {
+    use arkret_sdk::http_client::own_station_results::ConsentCurrentReadAuthority;
+    anyhow::ensure!(
+        client.session()?.account_id() == holder,
+        "Consent holder session changed"
+    );
+    let principal =
+        crate::transport::account::current_principal_for_authority(http, holder).await?;
+    anyhow::ensure!(
+        principal.account_id == *holder && principal.principal_control_realm_id == *registered_pcr,
+        "Consent authority differs from the registered holder PCR"
+    );
+    // The SDK Human constructor accepts the original disclosed by this exact
+    // live own-Station session. PCR Genesis is not an ordinary collaboration
+    // signer source and must not be routed through that separate verifier.
+    let genesis_id = arkret_sdk::EventId::from_digest(
+        registered_pcr.digest_suite_code().digest_suite(),
+        registered_pcr.digest_bytes(),
+    );
+    let original = client.committed_event_get(&genesis_id).await?;
+    let arkret_sdk::CommittedEventView::Full(full) = original.value()? else {
+        anyhow::bail!("Consent authority requires the accepted PCR Genesis original");
+    };
+    let governance = arkret_sdk::GenesisGovernance::from_genesis(&full.event)?;
+    if matches!(governance, arkret_sdk::GenesisGovernance::Human(_)) {
+        return Ok(ConsentCurrentReadAuthority::from_human_genesis(
+            holder,
+            registered_pcr,
+            &original,
+        )?);
+    }
+    anyhow::ensure!(
+        governance.is_principal_control(),
+        "Consent authority is not a principal-control Realm"
+    );
+    let request = arkret_sdk::AuthorityBundleRequest {
+        realm_id: registered_pcr.clone(),
+        nonce: arkret_sdk::Base64UrlString::new(crate::random::base64url_token(
+            32,
+            "Consent authority nonce unavailable",
+        )?)
+        .map_err(|error| anyhow::anyhow!(error))?,
+    };
+    let bundle = garth::AuthorityClient::new(http.clone())
+        .resolve_authority(&request)
+        .await?;
+    anyhow::ensure!(
+        bundle.realm_id == *registered_pcr && bundle.genesis_event == full.event,
+        "Consent authority chain differs from accepted holder inception"
+    );
+    let keys = garth::fetch_historical_station_key_directory(http, &bundle, None, None).await?;
+    let verified = arkret_identity::verify_realm_authority_bundle(
+        &bundle,
+        &arkret_identity::RealmAuthorityFreshness::new(crate::clock::now_utc(), request.nonce),
+        &keys,
+    )?;
+    let route = http
+        .open_service_resolution(verified.current_service_id())
+        .await?;
+    client.check_session()?;
+    Ok(ConsentCurrentReadAuthority::from_verified_realm(
+        &verified, &route,
+    )?)
+}
+
 /// A holder's closed self-principal result pins its immutable PCR. Its lifetime
 /// root reference is the Genesis Event identity from which that PCR is derived;
 /// no private PCR Event is reclassified as a collaboration signing-key source.

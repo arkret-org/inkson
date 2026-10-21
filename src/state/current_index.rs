@@ -2146,12 +2146,12 @@ impl CurrentIndex {
         check()?;
         let value = response.value()?;
         let rows = match &value.current {
-            arkret_sdk::ConsentCurrentReadState::Present { result } => {
+            arkret_sdk::ConsentCurrentState::Present { result } => {
                 vec![serde_json::from_value::<TypedCurrentRow>(
                     serde_json::to_value(result)?,
                 )?]
             }
-            arkret_sdk::ConsentCurrentReadState::NeverWritten {} => Vec::new(),
+            arkret_sdk::ConsentCurrentState::NeverWritten => Vec::new(),
         };
         let entry = arkret_sdk::sync::RealmSyncEntry {
             current: Some(

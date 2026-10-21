@@ -3759,21 +3759,32 @@ impl EventSubmitter {
             crate::transport::account::current_principal_for_authority(&self.http, holder).await?;
         guard()?;
         let client = crate::transport::own_station_results::client_for_http(&self.http).await?;
+        let authority = crate::transport::own_station_results::consent_authority(
+            &self.http,
+            &client,
+            holder,
+            &principal.principal_control_realm_id,
+        )
+        .await?;
         let mut responses = Vec::new();
         for peer in members.iter().filter(|peer| *peer != &own_actor) {
             guard()?;
             let response = client
-                .consent_current(&arkret_sdk::ConsentCurrentReadRequestBody {
-                    holder_account_id: holder.clone(),
-                    peer: arkret_sdk::ConsentPeer::Actor {
-                        actor_id: peer.clone(),
+                .consent_current(
+                    &arkret_sdk::ConsentCurrentReadRequestBody {
+                        holder_account_id: holder.clone(),
+                        peer: arkret_sdk::ConsentPeer::Actor {
+                            actor_id: peer.clone(),
+                        },
+                        audience_actor_id: arkret_sdk::ActorId::service(holder.station_id.clone()),
+                        nonce: crate::random::base64url_token(
+                            32,
+                            "Presence Consent nonce unavailable",
+                        )?,
                     },
-                    audience_actor_id: arkret_sdk::ActorId::service(holder.station_id.clone()),
-                    nonce: crate::random::base64url_token(
-                        32,
-                        "Presence Consent nonce unavailable",
-                    )?,
-                })
+                    &principal.principal_control_realm_id,
+                    &authority,
+                )
                 .await?;
             anyhow::ensure!(
                 crate::signal_receive_engine::install_consent_current_for_holder(
