@@ -165,6 +165,7 @@ type InksonWireCommand =
   | "mock-realm-scan"
   | "mock-exact-current"
   | "mock-realm-signer-keys"
+  | "mock-realm-list"
   | "mock-realm-submit";
 type InksonWireCanonicalJson = { canonical: string };
 type InksonWireDigest = { digest: string };

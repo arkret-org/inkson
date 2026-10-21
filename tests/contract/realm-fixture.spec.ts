@@ -509,7 +509,9 @@ test("Mock account and committed Event streams retain the native Realm cut witho
   });
   expect(account?.status).toBe(200);
   const accountFrames = decodeStreamFrames(account?.body);
-  const realm = accountFrames.find(frame => frame.kind === "delta").realms[fixture.snapshot.realm_id];
+  const delta = accountFrames.find(frame => frame.kind === "delta");
+  if (!delta) throw new Error("native Account stream has no delta frame");
+  const realm = delta.realms[fixture.snapshot.realm_id];
   expect(realm.committed_events).toEqual(fixture.committed_events);
   expect(realm.current).toEqual(fixture.account_entry.current);
   const stream = await driveOnce(route, {
