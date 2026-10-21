@@ -1459,7 +1459,7 @@ mod genesis_authority_tests {
         assert!(
             events
                 .iter()
-                .all(|event| event.actor_id.route_service_id() == &station_id)
+                .all(|event| event.actor_id.fixed_route_service_id() == Some(&station_id))
         );
     }
 

@@ -2205,6 +2205,7 @@ mod tests {
                     assert_eq!(request.queries.len(), 1);
                     assert!(request.queries[0].committed_event_ref().is_some());
                     serde_json::to_value(arkret_sdk::SignerKeysQueryOutcome {
+                        recipient_actor_id: None,
                         request_id: request.request_id,
                         realm_id: request.realm_id,
                         recipient_account_id: request.recipient_account_id,

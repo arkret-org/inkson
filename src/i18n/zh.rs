@@ -2837,22 +2837,6 @@ fn add_contacts_keys_zh(dict: &mut TranslationDict) {
     dict.set("contacts.scope.presence", "在线状态");
     dict.set("contacts.shared_scopes", "共享权限:");
     dict.set("contacts.scope_update.label", "你授予此联系人的权限");
-    dict.set("contacts.history.compact", "整理联系历史");
-    dict.set("contacts.history.retry", "重试历史确认");
-    dict.set(
-        "contacts.history.hint",
-        "反复重新联系需要恢复历史时可使用；现有联系人关系会保留。",
-    );
-    dict.set("contacts.history.submitting", "正在提交历史整理请求…");
-    dict.set(
-        "contacts.history.pending",
-        "正在等待对方服务器确认，可稍后重试。",
-    );
-    dict.set("contacts.history.committed", "联系历史已整理。");
-    dict.set(
-        "contacts.history.session_changed",
-        "账号会话已变化，请重新打开页面后重试。",
-    );
     dict.set("contacts.scope_update.save", "保存权限");
     dict.set("contacts.scope_update.saving", "正在保存权限…");
     dict.set(

@@ -307,14 +307,8 @@ impl LocalOperation {
     }
 
     /// Record the principal that executes this write on the actor's behalf.
-    pub fn with_executed_by(mut self, executed_by: arkret_sdk::DidCoreId) -> Self {
-        let account_id = arkret_sdk::AccountId::new(
-            executed_by,
-            self.intent.actor_id().route_service_id().clone(),
-        );
-        self.intent = self
-            .intent
-            .with_executed_by(arkret_sdk::ActorId::account(account_id));
+    pub fn with_executed_by(mut self, executed_by: arkret_sdk::ActorId) -> Self {
+        self.intent = self.intent.with_executed_by(executed_by);
         self
     }
 
@@ -468,7 +462,15 @@ impl TypedOperationBuilder {
                 .map_err(|err| anyhow::anyhow!("invalid executed_by core_id: {err}"))?;
             let account_id = arkret_sdk::AccountId::new(
                 principal_id,
-                intent.actor_id().route_service_id().clone(),
+                intent
+                    .actor_id()
+                    .fixed_route_service_id()
+                    .cloned()
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "Realm execution requires an explicitly resolved current Station"
+                        )
+                    })?,
             );
             Ok(intent.with_executed_by(arkret_sdk::ActorId::account(account_id)))
         })

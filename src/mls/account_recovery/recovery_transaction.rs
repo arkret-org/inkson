@@ -219,6 +219,8 @@ pub(crate) async fn prepare_pcr_policy_recovery(
         recovery_session_id: Some(verified_session.recovery_session_id.clone()),
         pairing_challenge_transcript_digest: None,
         applet_id: None,
+        expected_control_revision: None,
+        expected_device_revision: None,
     };
     authorize_payload
         .validate_wire_constraints()

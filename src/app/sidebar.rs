@@ -649,6 +649,12 @@ pub(super) fn delete_sidebar_contact(
             arkret_sdk::ActorId::Service { service_id } => {
                 crate::views::helpers::actor_display_label(&state_store.read(), service_id.as_str())
             }
+            arkret_sdk::ActorId::Realm { realm_actor_id } => {
+                crate::views::helpers::actor_display_label(
+                    &state_store.read(),
+                    &realm_actor_id.to_string(),
+                )
+            }
         })
         .unwrap_or_else(|_| crate::views::helpers::short_protocol_id(&peer));
     crate::components::feedback::toast_info(

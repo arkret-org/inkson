@@ -18,7 +18,7 @@ const build = () => inksonWire<Record<string, any>>("contact-ceremony-fixture", 
     verification_method: `${CURRENT_PRINCIPAL_DID}#${device}`, seed_b64url: seed },
 });
 
-test("bilateral Contact origins and complete successor history verify with real SDK consumers", () => {
+test("bounded Contact current and original scope grants verify with real SDK consumers", () => {
   expect(inksonWire("contact-ceremony-verify", build())).toEqual({
     verified: true, response: true, reject: true, scope_update: true, tombstone: true,
   });

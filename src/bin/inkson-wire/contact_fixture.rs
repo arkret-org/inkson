@@ -97,113 +97,100 @@ fn authority(at: DateTime<Utc>) -> Result<ServiceIdentityFixture> {
 
 fn verify_material(material: &Material) -> Result<Value> {
     use arkret_sdk::contact_authorization::{
-        authenticate_contact_event_carrier, verify_contact_direction_history,
-        verify_contact_round_origins,
+        authenticate_contact_event_carrier, verify_contact_current_material,
+        verify_contact_founding_bundle,
     };
     let f = &material.ceremony;
-    let authenticate = |carrier, holder| {
-        authenticate_contact_event_carrier(
-            carrier,
-            holder,
-            arkret_sdk::DigestSuite::Sha256,
-            material.observed_at,
-            material,
-        )
-    };
-    let request = authenticate(&f.request, &material.requester)?;
-    let response = authenticate(&f.response, &material.responder)?;
-    let round = verify_contact_round_origins(
-        &f.round,
-        &[request.clone(), response],
-        material.observed_at,
-        material,
-    )?;
-    let reject = authenticate(&f.reject, &material.responder)?;
-    ensure!(
-        reject.kind() == arkret_sdk::EventKind::ContactRejected,
-        "reject fixture kind"
-    );
-    let initial = verify_contact_direction_history(
-        &round,
-        &material.responder,
-        &[],
-        &f.round.current_proofs[1],
-        material.observed_at,
-        material,
-        None,
-    )?;
-    let requester = verify_contact_direction_history(
-        &round,
-        &material.requester,
-        &[],
-        &f.round.current_proofs[0],
-        material.observed_at,
-        material,
-        None,
-    )?;
-    ensure!(
-        requester
-            .open_interval(ContactScope::DirectMessage)
-            .is_some(),
-        "request direction lost grant"
-    );
-    ensure!(
-        initial.open_interval(ContactScope::Invite).is_some(),
-        "accept direction lost grant"
-    );
-    let updated = authenticate(&f.scope_update, &material.responder)?;
-    let PeerContactSubmitRequestBody::ScopeUpdate { current_proof, .. } = &f.scope_update else {
+    let suite = arkret_sdk::DigestSuite::Sha256;
+    let domain = &f.round.initial_identity.trust_domain_id;
+    verify_contact_founding_bundle(&f.round, domain, suite, material.observed_at, material)?;
+    for (carrier, holder) in [
+        (&f.request, &material.requester),
+        (&f.response, &material.responder),
+        (&f.reject, &material.responder),
+        (&f.scope_update, &material.responder),
+        (&f.tombstone, &material.responder),
+    ] {
+        authenticate_contact_event_carrier(carrier, holder, suite, material.observed_at, material)?;
+    }
+    let mut state = ContactPrivateState::default();
+    for op in &f.round.current_operations {
+        state.apply_confirmed(op.clone())?;
+    }
+    state.establish(f.round.basis(), f.round.round_events.clone())?;
+    let verify_direction =
+        |state: &ContactPrivateState, proof: &ContactCurrentProof| -> Result<_> {
+            let direction = state
+                .direction(&proof.holder)
+                .context("original current direction")?;
+            Ok(verify_contact_current_material(
+                &ContactCurrentMaterial {
+                    initial_identity: state.initial_identity.clone(),
+                    round_evidence: state.round_basis.clone(),
+                    round_events: Some(state.round_events.clone()),
+                    head_operation: direction.head_operation.clone(),
+                    scope_grants: direction.scope_grants.clone(),
+                    historical_intervals: vec![],
+                    current_proof: proof.clone(),
+                },
+                &proof.holder,
+                &proof.peer,
+                domain,
+                suite,
+                material.observed_at,
+                material,
+            )?)
+        };
+    let PeerContactSubmitRequestBody::ScopeUpdate {
+        signed_event,
+        lineage,
+        current_proof,
+        ..
+    } = &f.scope_update
+    else {
         anyhow::bail!("scope carrier")
     };
-    let direction = verify_contact_direction_history(
-        &round,
-        &material.responder,
-        &[updated.clone()],
-        current_proof,
-        material.observed_at,
-        material,
-        None,
-    )?;
+    state.apply_confirmed(ContactOperationEvidence::ScopeUpdate {
+        signed_event: signed_event.clone(),
+        lineage: lineage.clone(),
+    })?;
+    let narrowed = verify_direction(&state, current_proof)?;
+    let narrowed = narrowed.direction().context("narrowed current direction")?;
     ensure!(
-        direction.open_interval(ContactScope::Invite).is_none()
-            && direction
+        narrowed.open_interval(ContactScope::Invite).is_none()
+            && narrowed
                 .open_interval(ContactScope::DirectMessage)
                 .is_some(),
         "scope narrowing mismatch"
     );
-    let terminal = authenticate(&f.tombstone, &material.responder)?;
-    let PeerContactSubmitRequestBody::Tombstone { current_proof, .. } = &f.tombstone else {
-        anyhow::bail!("terminal carrier")
-    };
-    let closed = verify_contact_direction_history(
-        &round,
-        &material.responder,
-        &[updated, terminal.clone()],
+    let PeerContactSubmitRequestBody::Tombstone {
+        signed_event,
+        lineage,
         current_proof,
-        material.observed_at,
-        material,
-        None,
-    )?;
+        ..
+    } = &f.tombstone
+    else {
+        anyhow::bail!("tombstone carrier")
+    };
+    state.apply_confirmed(ContactOperationEvidence::Tombstone {
+        signed_event: signed_event.clone(),
+        lineage: lineage.clone(),
+    })?;
+    let closure = current_proof
+        .closed_round
+        .as_deref()
+        .context("original closure missing")?;
+    state.close_round(closure.clone())?;
+    let closed = verify_direction(&state, current_proof)?;
+    let opposite = verify_direction(&state, &f.terminal_acknowledgement)?;
     ensure!(
-        closed.open_interval(ContactScope::DirectMessage).is_none(),
-        "terminal retained grant"
-    );
-    // A terminal fence closes the opposite direction without inventing its own successor.
-    let fence = terminal.terminal_fence().context("terminal fence")?;
-    let opposite = verify_contact_direction_history(
-        &round,
-        &material.requester,
-        &[],
-        &f.terminal_acknowledgement,
-        material.observed_at,
-        material,
-        Some(&fence),
-    )?;
-    ensure!(
-        opposite
-            .open_interval(ContactScope::DirectMessage)
-            .is_none(),
-        "terminal lost bilateral fence"
+        closed
+            .direction()
+            .is_none_or(|d| d.open_interval(ContactScope::DirectMessage).is_none())
+            && opposite
+                .direction()
+                .is_none_or(|d| d.open_interval(ContactScope::DirectMessage).is_none()),
+        "original closure retained a grant"
     );
     let PeerContactSubmitRequestBody::Response {
         response_receipt, ..
@@ -215,12 +202,11 @@ fn verify_material(material: &Material) -> Result<Value> {
         .verify_digest(&response_receipt.outgoing_slot_absence_digest)?;
     ensure!(
         f.response_lineage.event_ref == response_receipt.response_event_ref
-            && f.response_lineage.contact_round_id == f.round.contact_round_id
+            && f.response_lineage.contact_round_id.as_ref() == Some(&f.round.contact_round_id)
             && f.response_lineage.issuer == material.responder
             && f.response_lineage.peer == material.requester
             && f.response_lineage.version == 1
             && f.response_lineage.predecessor_event_ref.is_none()
-            && f.response_lineage.terminal.is_none()
             && f.response_lineage.producer_signer == response_receipt.producer_signer
             && f.response_lineage.granted_to_peer_scopes
                 == [ContactScope::Invite, ContactScope::DirectMessage],
@@ -484,6 +470,7 @@ pub fn operation(input: Value) -> Result<Value> {
     // receipt only after verifying the actual holder proof, at this commit.
     let authority = authority(accepted_at)?;
     let refresh_current = |proof: &mut ContactCurrentProof| -> Result<()> {
+        proof.issued_at = accepted_at;
         proof.fresh_until = accepted_at + chrono::Duration::minutes(15);
         proof.signature = authority.sign(&proof.canonical_signing_bytes()?, accepted_at)?;
         Ok(())
@@ -514,6 +501,7 @@ pub fn operation(input: Value) -> Result<Value> {
             current_proof,
             ..
         } => {
+            lineage.accepted_at = accepted_at;
             lineage.signature = authority.sign(&lineage.canonical_signing_bytes()?, accepted_at)?;
             refresh_current(current_proof)?;
         }
@@ -528,6 +516,7 @@ pub fn operation(input: Value) -> Result<Value> {
     )?;
     operation_id = body.operation_id;
     let mut response_lineage = f.response_lineage.clone();
+    response_lineage.accepted_at = accepted_at;
     response_lineage.signature =
         authority.sign(&response_lineage.canonical_signing_bytes()?, accepted_at)?;
     let outcome = match signed_carrier {

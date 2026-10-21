@@ -1743,6 +1743,7 @@ impl EventSubmitter {
             anyhow::bail!("Reviewed Event requires management approvals")
         };
         let request = arkret_sdk::ManagementReviewRequestBody {
+            configuration_ref: None,
             request_id: request_id.clone(),
             effective_scope: effective_scope.clone(),
             management_operation: *management_operation,

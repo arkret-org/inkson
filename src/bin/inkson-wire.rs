@@ -161,11 +161,10 @@ fn contact_request_prepare(input: Value) -> Result<Value> {
         !input.body.granted_to_peer_scopes.is_empty(),
         "Contact scopes must not be empty"
     );
-    anyhow::ensure!(
-        input.body.continuity_evidence.is_none(),
-        "mock request supports only a first Contact round"
-    );
     let payload = arkret_sdk::ContactRequestedPayload {
+        trust_domain_id: arkret_sdk::TrustDomainId::new("ak:trust_domain:mock.test")?,
+        version: 1,
+        predecessor_event_ref: None,
         peer: input.body.peer,
         granted_to_peer_scopes: input.body.granted_to_peer_scopes,
         introduction_evidence_digest: arkret_sdk::Hash::new(
@@ -174,7 +173,7 @@ fn contact_request_prepare(input: Value) -> Result<Value> {
                 &input.body.introduction_evidence,
             )?,
         )?,
-        previous_terminal_contact_round_id: None,
+        initial_contact_round_id: None,
         message: input
             .body
             .message
@@ -300,14 +299,18 @@ fn contact_request_commit(input: Value) -> Result<Value> {
         RequestAcceptanceReceiptCore {
             holder,
             peer: payload.peer,
-            slot_version: 1,
-            slot_predecessor: None,
-            previous_terminal_contact_round_id: None,
+            trust_domain_id: arkret_sdk::TrustDomainId::new("ak:trust_domain:mock.test")?,
+            version: 1,
+            predecessor_event_ref: None,
+            initial_contact_round_id: None,
             request_event_ref: event.event_id.clone(),
             producer_signer: producer,
-            source_checkpoint: arkret_sdk::Hash::new(arkret_sdk::canonical::canonical_sha256(
-                &event,
-            )?)?,
+            source_checkpoint: arkret_sdk::Hash::new(
+                arkret_sdk::canonical::domain_prefixed_canonical_sha256(
+                    arkret_wire::DomainSeparationId::CONTACT_REQUEST_SOURCE_CHECKPOINT_V1,
+                    &json!({"event_ref":event.event_id,"event_digest":event.event_id.event_digest()}),
+                )?,
+            )?,
             accepted_at,
             issuer_id: authority.service_id,
         },
@@ -340,7 +343,6 @@ fn contact_request_commit(input: Value) -> Result<Value> {
         granted_by_peer_scopes: Vec::new(),
         bidirectional_scopes: Vec::new(),
         effective_scopes: None,
-        continuity_evidence: None,
         direct_conversation: None,
         contact_agent_projections: Vec::new(),
         peer_endpoint: None,

@@ -375,6 +375,41 @@ fn validate_contact_commit_outcome(
         kind == expected && returned_operation == operation_id && event_ref == &event.event_id,
         "Contact accepted result changed the operation, branch or exact Event"
     );
+    if let ContactOperationOutcome::Accepted { outcome } = outcome {
+        use arkret_sdk::contact_operations::ContactOperationEvidence as Evidence;
+        let original = match outcome {
+            Accepted::Request {
+                request_acceptance_receipt,
+                ..
+            } => Evidence::Request {
+                signed_event: event.clone(),
+                request_receipt: request_acceptance_receipt.clone(),
+            },
+            Accepted::Response {
+                normal_response_acceptance_receipt,
+                ..
+            } => Evidence::Response {
+                signed_event: event.clone(),
+                response_receipt: normal_response_acceptance_receipt.clone(),
+            },
+            Accepted::Reject {
+                reject_acceptance_receipt,
+                ..
+            } => Evidence::Reject {
+                signed_event: event.clone(),
+                reject_receipt: reject_acceptance_receipt.clone(),
+            },
+            Accepted::ScopeUpdate { lineage, .. } => Evidence::ScopeUpdate {
+                signed_event: event.clone(),
+                lineage: lineage.clone(),
+            },
+            Accepted::Tombstone { lineage, .. } => Evidence::Tombstone {
+                signed_event: event.clone(),
+                lineage: lineage.clone(),
+            },
+        };
+        original.validate_shape()?;
+    }
     Ok(())
 }
 
@@ -433,8 +468,21 @@ fn validate_contact_current_result(
             && current.contact_round_id == lineage.contact_round_id,
         "Contact current result changed its full actor, peer, issuer or round"
     );
-    // The authenticated own Station validates the complete successor chain.
-    // A later current head does not alter the exact receipt/lineage being returned.
+    current.validate_shape()?;
+    anyhow::ensure!(
+        current.holder.contact_actor_id() == event.actor_id
+            && current.trust_domain_id == lineage.trust_domain_id
+            && (if lineage.initial_contact_round_id.is_some() {
+                current.initial_contact_round_id == lineage.initial_contact_round_id
+            } else {
+                current.initial_contact_round_id == current.contact_round_id
+            })
+            && current.version >= lineage.version
+            && (current.version != lineage.version || current.head_event_ref == event.event_id),
+        "Contact current result conflicts with its immutable original operation"
+    );
+    // The authenticated own Station attests the later current head. A frozen
+    // result remains replayable after its lease expires; this is not a grant.
     Ok(())
 }
 
@@ -571,7 +619,6 @@ impl crate::transport::TransportClient {
             },
             granted_to_peer_scopes,
             introduction_evidence: addressing.introduction_evidence,
-            continuity_evidence: None,
             message: message
                 .map(str::trim)
                 .filter(|message| !message.is_empty())

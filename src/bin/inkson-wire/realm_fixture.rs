@@ -262,6 +262,8 @@ impl Builder {
         let multibase =
             ed25519_pubkey_to_did_key_multibase(producer_key.verifying_key().as_bytes());
         let mut authorize = DeviceAuthorizePayload {
+            expected_control_revision: None,
+            expected_device_revision: None,
             device_id: device_id.clone(),
             device_public_key_did: NonEmptyString::new(format!("did:key:{multibase}"))
                 .map_err(anyhow::Error::msg)?,
@@ -2123,14 +2125,15 @@ pub(super) fn signer_keys(input: Value) -> Result<Value> {
         "signer query fixture Realm mismatch"
     );
     ensure!(
-        input.request.recipient_account_id
-            == fixture
-                .invite_recipient
-                .as_ref()
-                .map_or(&fixture.identity.account_id, |source| &source
-                    .identity
-                    .account_id)
-                .clone(),
+        input.request.recipient_account_id.as_ref()
+            == Some(
+                fixture
+                    .invite_recipient
+                    .as_ref()
+                    .map_or(&fixture.identity.account_id, |source| &source
+                        .identity
+                        .account_id)
+            ),
         "signer query fixture recipient Account mismatch"
     );
     let mut results = Vec::new();
@@ -2171,6 +2174,7 @@ pub(super) fn signer_keys(input: Value) -> Result<Value> {
         });
     }
     let outcome = SignerKeysQueryOutcome {
+        recipient_actor_id: input.request.recipient_actor_id.clone(),
         request_id: input.request.request_id.clone(),
         realm_id: input.request.realm_id.clone(),
         recipient_account_id: input.request.recipient_account_id.clone(),

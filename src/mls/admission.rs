@@ -585,6 +585,8 @@ mod tests {
         let mls_group_id = garth::mls::mls_group_id_for_realm(&intended_realm_id)
             .expect("test Realm scope must derive a canonical MLS group id");
         let request = arkret_sdk::PeerKeyPackagesClaimUnsignedRequest {
+            target_actor_id: None,
+            requester_actor_id: None,
             claim_request_id: arkret_sdk::Base64UrlString::new(claim_request_id.to_owned())
                 .unwrap(),
             target_account_id: Some(claim.actor_id.as_account_id().unwrap().clone()),
@@ -620,6 +622,7 @@ mod tests {
         .unwrap();
         let authority = arkret_sdk::DidCoreId::new("ak:did_core:web:ps.example").unwrap();
         arkret_sdk::PeerKeyPackageClaimReceipt {
+            claim_authority_ref: None,
             claim_request_id: request.claim_request_id.clone(),
             request_digest,
             claims_digest,
