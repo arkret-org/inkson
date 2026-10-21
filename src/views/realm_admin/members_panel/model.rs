@@ -510,75 +510,11 @@ pub(super) fn local_terminal_invite_ids_for_realm(
                     raw_operation_invite_ref(payload)
                 }
                 Some(event_kind_str::INVITE_CANCEL) => raw_operation_invite_ref(payload),
-                // `send_failed` is the one `ak.invite.revoke` target that is not
-                // terminal: the invite stays inside the live set and keeps the
-                // Realm live-target slot claimed
-                // (`governance-objects.md` section 5.3). Hiding it here would
-                // tell the operator the account is free to re-invite when it
-                // still needs a revoke first.
-                Some(event_kind_str::INVITE_REVOKE)
-                    if raw_operation_invite_target_state(payload).as_deref()
-                        != Some(INVITE_STATE_SEND_FAILED) =>
-                {
-                    raw_operation_invite_ref(payload)
-                }
+                Some(event_kind_str::INVITE_REVOKE) => raw_operation_invite_ref(payload),
                 _ => None,
             }
         })
         .collect()
-}
-
-/// The `ak.component.invite.lifecycle.v1` state of one Invite, folded out of
-/// the local Realm operation log.
-///
-/// The live set is `{pending, send_failed}` and the two recover differently
-/// from `invite_live_target_occupied`: `pending` only needs its private
-/// delivery re-dispatched, while `send_failed` has no edge back to `pending`
-/// and must be revoked before a replacement invite can exist
-/// (`governance-objects.md` section 5.3).
-pub(super) fn local_invite_lifecycle_state(
-    records: &[RawOperationRecord],
-    realm_id: &str,
-    invite_id: &str,
-) -> Option<String> {
-    let mut state = None;
-    for record in records {
-        if !raw_operation_realm_matches_exact(record, realm_id) {
-            continue;
-        }
-        let payload = &record.payload;
-        match raw_operation_payload_kind(payload).as_deref() {
-            Some(event_kind_str::INVITE_CREATE)
-                if trimmed_string(payload.get("invite_id").or_else(|| payload.get("id")))
-                    .as_deref()
-                    == Some(invite_id) =>
-            {
-                state = Some("pending".to_owned());
-            }
-            Some(event_kind_str::INVITE_ACCEPT)
-                if raw_operation_is_accepted_fact(payload)
-                    && raw_operation_invite_ref(payload).as_deref() == Some(invite_id) =>
-            {
-                state = Some("accepted".to_owned());
-            }
-            Some(event_kind_str::INVITE_CANCEL | event_kind_str::INVITE_REVOKE)
-                if raw_operation_invite_ref(payload).as_deref() == Some(invite_id) =>
-            {
-                state = raw_operation_invite_target_state(payload);
-            }
-            _ => {}
-        }
-    }
-    state
-}
-
-pub(super) const INVITE_STATE_SEND_FAILED: &str = "send_failed";
-
-pub(super) fn raw_operation_invite_target_state(payload: &Value) -> Option<String> {
-    raw_operation_path_string(payload, &["body", "target_state"])
-        .or_else(|| raw_operation_path_string(payload, &["payload", "target_state"]))
-        .or_else(|| trimmed_string(payload.get("target_state")))
-        .or_else(|| trimmed_string(payload.get("state")))
 }
 
 pub(super) fn group_members_with_owned_agents(
@@ -828,8 +764,7 @@ pub(super) fn local_pending_invite_profile_from_raw_operation(
 
 pub(super) use crate::state::realm_membership::{
     local_invitee_by_invite_id_for_realm, raw_invite_create_account_id, raw_operation_invite_ref,
-    raw_operation_is_accepted_fact, raw_operation_path_string, raw_operation_payload_kind,
-    raw_operation_realm_matches_exact,
+    raw_operation_is_accepted_fact, raw_operation_payload_kind, raw_operation_realm_matches_exact,
 };
 pub(super) fn local_membership_profile_from_raw_operation(
     record: &RawOperationRecord,

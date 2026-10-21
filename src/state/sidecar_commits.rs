@@ -422,6 +422,8 @@ mod tests {
             }
             heads.sort_by(|a, b| a.stream_ref.cmp(&b.stream_ref));
             let mut snapshot = arkret_sdk::RealmStateSnapshot {
+                purpose: arkret_wire::RealmSnapshotPurpose::FullRecovery,
+                history_basis: None,
                 snapshot_id: arkret_sdk::RealmSnapshotId::from_digest([0; 32]),
                 realm_id: realm.clone(),
                 governance_generation: generation,

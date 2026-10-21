@@ -247,6 +247,7 @@ impl crate::transport::TransportClient {
     ) -> anyhow::Result<arkret_sdk::InviteDeliveryOutcome> {
         let event_id = arkret_sdk::EventId::new(accepted_event_id.to_owned())
             .map_err(|error| anyhow::anyhow!("accepted invite event id is invalid: {error}"))?;
+        let idempotency_key = arkret_sdk::InviteId::from_event_id(&event_id).to_string();
         // The self dispatch endpoint resolves the already accepted Event from
         // durable local storage.  Carrying the full Event here would be the
         // peer-delivery wire shape and is rejected by the closed self schema.
@@ -255,7 +256,7 @@ impl crate::transport::TransportClient {
             invite_event_id: event_id,
             invite_address: invitee.invite_address.clone(),
             introduction_evidence: invitee.introduction_evidence.clone(),
-            idempotency_key: accepted_event_id.to_owned(),
+            idempotency_key,
         };
         delivery
             .validate_minimal()
