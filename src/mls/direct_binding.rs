@@ -1055,7 +1055,6 @@ mod tests {
             "alice.example",
             "ak:device:0196419b-0000-7000-8000-000000000001",
         );
-        let realm = bundle.realm_id.clone();
         let freshness = arkret_identity::RealmAuthorityFreshness::new(
             crate::test_support::committed_event::fixture_time(100),
             bundle.current_assertion.nonce.clone(),

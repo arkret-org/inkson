@@ -71,7 +71,7 @@ pub async fn send_native_ordinary_mls_message(
         format!("native-message:{}", crate::operation::uuid_v7()),
     )
     .await
-    .map_err(anyhow::Error::from)
+    .map_err(anyhow::Error::msg)
 }
 
 /// Inspect the ordinary protected durable queue without replacing its store.

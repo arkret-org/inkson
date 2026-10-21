@@ -2,6 +2,9 @@
 //! changes a request or invents an authority answer.
 use std::sync::{Arc, Mutex, OnceLock};
 
+use arkret_models_collaboration::authority_commit::{
+    SelfAuthoritySubmitOutcome, SelfAuthoritySubmitRequest,
+};
 use arkret_sdk::http_client::ClientRequestOptions;
 use arkret_sdk::http_client::own_station_results::OwnStationResultClient;
 use arkret_sdk::*;
