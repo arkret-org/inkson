@@ -228,71 +228,30 @@ pub(super) fn spawn_set_agent_realm_behavior(
 /// cell. It acts on the occupant instead, using the stable identity the
 /// rejection echoed.
 ///
-/// `pending` (and, for a third-party invite, `claimed`) means the governance
-/// decision already exists and only its private delivery is missing, so the
-/// delivery is re-dispatched under the occupant's own `create_event_id` — the
-/// stable idempotency key, not the id of the Event that was just refused.
-/// `send_failed` still occupies the slot and has no edge back to `pending`, so
-/// it must be revoked before a replacement invite can be created; that revoke
-/// carries the slot's `head_eq` and is what frees the account.
+/// A pending occupant retains the accepted governance decision through
+/// private delivery failures. Dispatch loads its exact create Event and uses
+/// the original InviteId as the stable retry key.
 pub(super) async fn recover_from_occupied_live_target(
     api: &crate::transport::TransportClient,
-    realm_id: &str,
-    actor: &str,
     invitee: &crate::transport::InviteeResolution,
     invitee_label: &str,
     occupied: &arkret_sdk::InviteLiveTargetOccupiedProblem,
-    occupant_state: Option<&str>,
 ) -> String {
     let invite_id = occupied.invite_id().as_str().to_owned();
     let create_event_id = occupied.create_event_id().as_str().to_owned();
-    match occupant_state {
-        Some(INVITE_STATE_SEND_FAILED) => {
-            match crate::operation::ak_ops::invite_revoke(
-                realm_id,
-                actor,
-                &invite_id,
-                Some(invitee.account_id()),
-                arkret_sdk::InviteRevokePreviousState::SendFailed,
-                "revoked",
-                "delivery_target_unreachable",
-            )
-            .and_then(|builder| builder.build_sdk_event("inkson"))
-            {
-                Ok(revoke) => match api.event_submitter() {
-                    Ok(submitter) => match submitter.submit_sdk_event(&revoke).await {
-                        Ok(_) => format!(
-                            "{invitee_label} had an undeliverable invite ({}); it was revoked. Send the invite again.",
-                            short_protocol_id(&invite_id)
-                        ),
-                        Err(error) => format!(
-                            "invite failed: {invitee_label} has an undeliverable invite ({}) that could not be revoked: {}",
-                            short_protocol_id(&invite_id),
-                            crate::api_error::display_user_facing(&error)
-                        ),
-                    },
-                    Err(error) => format!(
-                        "invite failed: {}",
-                        crate::api_error::display_user_facing(&error)
-                    ),
-                },
-                Err(error) => format!("invite failed: {error:#}"),
-            }
-        }
-        _ => match api
-            .dispatch_accepted_invite(&create_event_id, invitee)
-            .await
-        {
-            Ok(outcome) => format!(
-                "{invitee_label} already has a live invite ({}); {}.",
-                short_protocol_id(&invite_id),
-                invite_delivery_summary(&outcome)
-            ),
-            Err(error) => format!(
-                "invite failed: {invitee_label} already has a live invite ({}) and re-delivery failed: {error}",
-                short_protocol_id(&invite_id)
-            ),
-        },
+    match api
+        .dispatch_accepted_invite(&create_event_id, invitee)
+        .await
+    {
+        Ok(outcome) => format!(
+            "{invitee_label} already has a live invite ({}); {}.",
+            short_protocol_id(&invite_id),
+            invite_delivery_summary(&outcome)
+        ),
+        Err(error) => format!(
+            "invite failed: {invitee_label} already has a live invite ({}) and re-delivery failed: {error}",
+            short_protocol_id(&invite_id)
+        ),
     }
 }
 
@@ -968,22 +927,8 @@ impl RealmMembersController {
                 let occupied = crate::api_error::invite_live_target_occupied_details(&error);
                 let message = match occupied {
                     Some(occupied) => {
-                        let local_state = self.state_store.read().load();
-                        let occupant_state = local_invite_lifecycle_state(
-                            &local_state.raw_operations,
-                            &realm_id,
-                            occupied.invite_id().as_str(),
-                        );
-                        recover_from_occupied_live_target(
-                            &api,
-                            &realm_id,
-                            &actor_id,
-                            &invitee,
-                            &invitee_label,
-                            &occupied,
-                            occupant_state.as_deref(),
-                        )
-                        .await
+                        recover_from_occupied_live_target(&api, &invitee, &invitee_label, &occupied)
+                            .await
                     }
                     None if crate::event_submit::is_durably_queued_error(&error) => {
                         format!("invite queued for retry: {invitee_label}: {error:#}")

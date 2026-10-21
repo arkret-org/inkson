@@ -170,22 +170,8 @@ pub fn invite_revoke(
     target_state: &str,
     reason_code: &str,
 ) -> anyhow::Result<TypedOperationBuilder> {
-    if !matches!(
-        target_state,
-        "revoked"
-            | "expired"
-            | "send_failed"
-            | "revoked_by_capability_loss"
-            | "revoked_by_inviter_left"
-            | "invalidated_by_rate_limit"
-    ) {
-        anyhow::bail!("ak.invite.revoke target_state is not registered: {target_state:?}");
-    }
-    // `send_failed` keeps the invite inside the live set, so it releases no
-    // live-target slot and the payload schema forbids `invitee_account_id`
-    // there (governance-objects.md section 5.3).
-    if target_state == "send_failed" && invitee.is_some() {
-        anyhow::bail!("ak.invite.revoke send_failed must not carry an invitee_account_id");
+    if !matches!(target_state, "revoked" | "expired") {
+        anyhow::bail!("ak.invite.revoke target must be revoked or expired");
     }
     if !arkret_sdk::ReasonCode::is_valid_wire(reason_code) {
         anyhow::bail!("ak.invite.revoke reason_code must match ^[a-z][a-z0-9_]{{0,63}}$");
@@ -204,12 +190,6 @@ pub fn invite_revoke(
     let target_state = match target_state {
         "revoked" => arkret_sdk::InviteRevokeTargetState::Revoked,
         "expired" => arkret_sdk::InviteRevokeTargetState::Expired,
-        "send_failed" => arkret_sdk::InviteRevokeTargetState::SendFailed,
-        "revoked_by_capability_loss" => {
-            arkret_sdk::InviteRevokeTargetState::RevokedByCapabilityLoss
-        }
-        "revoked_by_inviter_left" => arkret_sdk::InviteRevokeTargetState::RevokedByInviterLeft,
-        "invalidated_by_rate_limit" => arkret_sdk::InviteRevokeTargetState::InvalidatedByRateLimit,
         _ => unreachable!("validated invite revoke target state"),
     };
     let payload = arkret_sdk::InviteRevokePayload::new(

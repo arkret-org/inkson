@@ -898,7 +898,17 @@ async fn verified_stream_pages<T: garth::AuthorityTransport>(
                     freshness.expected_nonce.clone(),
                 );
                 // Every declared dependency has an exact verified scan.
+                // This legacy native adapter is fixture-only. Production binds
+                // the expected Account through OwnStationResultClient.
+                let fixture_account = &snapshot
+                    .history_basis
+                    .as_ref()
+                    .ok_or_else(|| {
+                        garth::Error::Protocol("fixture history has no Account binding".into())
+                    })?
+                    .account_id;
                 verified_floor_snapshot = Some(replica.install_verified_floor_predecessor(
+                    fixture_account,
                     stream_ref,
                     basis,
                     floor,
@@ -5228,6 +5238,8 @@ mod tests {
         };
         let head = prefix.last().unwrap();
         arkret_sdk::RealmStateSnapshot {
+            purpose: arkret_wire::RealmSnapshotPurpose::FullRecovery,
+            history_basis: None,
             snapshot_id: arkret_sdk::RealmSnapshotId::from_digest([0; 32]),
             realm_id: bundle.realm_id.clone(),
             governance_generation: 0,
@@ -6327,6 +6339,15 @@ mod tests {
                 &items[..6],
                 chrono::Utc::now() - chrono::Duration::seconds(60),
             );
+            let head = &snapshot.visible_stream_heads[0];
+            snapshot.purpose = arkret_wire::RealmSnapshotPurpose::StreamHistory;
+            snapshot.history_basis = Some(arkret_wire::RealmSnapshotHistoryBasis {
+                account_id: creator.as_account_id().unwrap().clone(),
+                stream_ref: realm_stream.clone(),
+                anchor_position: head.stream_position,
+                anchor_commit_ref: head.commit_id.clone(),
+                accepted_dependency_refs: vec![],
+            });
             fixture_station().sign_snapshot(&mut snapshot);
             (bundle, items, snapshot)
         };
@@ -6494,9 +6515,9 @@ mod tests {
             serde_json::to_value(verified.product_frame(&frame)).unwrap(),
             serde_json::to_value(&frame).unwrap()
         );
-        // A single signed snapshot can bind three independent predecessors.
-        // Empty Circle and Sidecar tails still need their own signed heads;
-        // the Realm head cannot stand in for either stream.
+        // A signed Realm history original cannot also bind unrelated scoped
+        // predecessors. Each target requires its own independent original;
+        // the real multi-Station matrix exercises those source-issued objects.
         let (mut station, bundle, items, mut multi_snapshot) = station_for(&exact_tail);
         let scoped_head = arkret_sdk::RealmCommitId::from_digest([0x6c; 32]);
         for stream_ref in [&circle_stream, &sidecar_stream] {
@@ -6516,8 +6537,10 @@ mod tests {
                 });
         }
         fixture_station().sign_snapshot(&mut multi_snapshot);
-        station.snapshots =
-            BTreeMap::from([(multi_snapshot.snapshot_id.clone(), multi_snapshot.clone())]);
+        station.snapshots = BTreeMap::from([
+            (multi_snapshot.snapshot_id.clone(), multi_snapshot.clone()),
+            (snapshot.snapshot_id.clone(), snapshot.clone()),
+        ]);
         let mut multi_entry =
             anchored_entry(&bundle, &items, &multi_snapshot, exact_rows.clone(), false);
         for stream_ref in [&circle_stream, &sidecar_stream] {
@@ -6552,60 +6575,15 @@ mod tests {
         }
         let multi_frame = account_frame(vec![(realm_id.as_str(), multi_entry)]);
         let multi_authority = AuthorityClient::new(station);
-        let multi_verified =
-            verify_account_frame_described(&multi_authority, &http, Some(&describe), &multi_frame)
-                .await
-                .unwrap();
-        assert!(multi_verified.preview_streams().is_empty());
-        assert_eq!(positions(&multi_verified, &realm_stream), vec![7, 8]);
-        assert_eq!(
-            positions(&multi_verified, &circle_stream),
-            Vec::<u64>::new()
-        );
-        assert_eq!(
-            positions(&multi_verified, &sidecar_stream),
-            Vec::<u64>::new()
-        );
+        verify_account_frame_described(&multi_authority, &http, Some(&describe), &frame)
+            .await
+            .unwrap();
         assert!(
-            multi_verified
-                .product_frame(&multi_frame)
-                .realms
-                .unwrap()
-                .entries[realm_id.as_str()]
-            .current
-            .is_some()
+            verify_account_frame_described(&multi_authority, &http, Some(&describe), &multi_frame,)
+                .await
+                .is_err()
         );
-        let mut accepted_dependency = multi_frame.clone();
-        accepted_dependency
-            .realms
-            .as_mut()
-            .unwrap()
-            .entries
-            .get_mut(realm_id.as_str())
-            .unwrap()
-            .streams
-            .as_mut()
-            .unwrap()[1]
-            .window_start_basis
-            .as_mut()
-            .unwrap()
-            .accepted_dependency_refs = Some(vec![arkret_wire::CommittedEventRef {
-            event_id: items[5].event.event_id.clone(),
-            commit_id: items[5].commit.commit_id.clone(),
-            stream_ref: realm_stream.clone(),
-            stream_position: 6,
-        }]);
-        let accepted_verified = verify_account_frame_described(
-            &multi_authority,
-            &http,
-            Some(&describe),
-            &accepted_dependency,
-        )
-        .await
-        .unwrap();
-        assert!(accepted_verified.preview_streams().is_empty());
-        assert_eq!(positions(&accepted_verified, &realm_stream), vec![7, 8]);
-        let mut invented_dependency = multi_frame.clone();
+        let mut invented_dependency = frame.clone();
         invented_dependency
             .realms
             .as_mut()
@@ -6615,7 +6593,7 @@ mod tests {
             .unwrap()
             .streams
             .as_mut()
-            .unwrap()[1]
+            .unwrap()[0]
             .window_start_basis
             .as_mut()
             .unwrap()

@@ -2095,6 +2095,8 @@ mod tests {
             },
         };
         let snapshot = RealmStateSnapshot {
+            purpose: arkret_wire::RealmSnapshotPurpose::FullRecovery,
+            history_basis: None,
             snapshot_id: RealmSnapshotId::from_digest([3; 32]),
             realm_id: event.realm_id.clone(),
             governance_generation: 0,

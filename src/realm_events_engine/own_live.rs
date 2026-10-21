@@ -726,6 +726,8 @@ pub(super) mod tests {
     fn frozen(rows: &[CommittedEventView]) -> arkret_sdk::RealmStateSnapshot {
         let last = rows.last().unwrap().commit();
         let mut snapshot = arkret_sdk::RealmStateSnapshot {
+            purpose: arkret_wire::RealmSnapshotPurpose::FullRecovery,
+            history_basis: None,
             snapshot_id: arkret_sdk::RealmSnapshotId::from_digest([0; 32]),
             realm_id: last.realm_id.clone(),
             governance_generation: 0,

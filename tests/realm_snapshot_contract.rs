@@ -13,6 +13,8 @@ fn snapshot_payload() -> Value {
     let commit_id = arkret_sdk::RealmCommitId::from_digest([0x31; 32]);
     let created_at = Utc::now();
     serde_json::to_value(arkret_sdk::RealmStateSnapshot {
+        purpose: arkret_wire::RealmSnapshotPurpose::FullRecovery,
+        history_basis: None,
         snapshot_id: arkret_sdk::RealmSnapshotId::from_digest([0xcc; 32]),
         realm_id: realm_id.clone(),
         governance_generation: 4,
