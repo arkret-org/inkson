@@ -60,10 +60,39 @@ pub(crate) async fn consent_current_authority(
         client.session()?.account_id() == holder,
         "Consent authority belongs to another Account"
     );
-    let genesis = genesis_response(client, registered_pcr).await?;
+    // PCR originals use their authenticated own-Station disclosure, not the
+    // ordinary collaboration stream scan required by genesis_response.
+    let event_id = arkret_sdk::EventId::from_digest(
+        registered_pcr.digest_suite_code().digest_suite(),
+        registered_pcr.digest_bytes(),
+    );
+    let genesis = client.committed_event_get(&event_id).await?;
     let CommittedEventView::Full(original) = genesis.value()? else {
         anyhow::bail!("Consent authority requires the original registered PCR Genesis");
     };
+    original.validate_shape()?;
+    original.commit.validate_content_address()?;
+    original
+        .event
+        .verify_event_id_matches_content_with_digest_suite(arkret_sdk::DigestSuite::Sha256)?;
+    anyhow::ensure!(
+        genesis.session() == client.session()?
+            && genesis.request() == &event_id
+            && original.event.event_id == event_id
+            && original.event.realm_id == *registered_pcr
+            && original.event.kind == arkret_sdk::EventKind::RealmCreate
+            && original.event.scope_ref == arkret_sdk::ScopeRef::RealmGenesis
+            && original.commit.realm_id == *registered_pcr
+            && original.commit.event_ref == event_id
+            && original.commit.stream_ref
+                == (arkret_sdk::CommitStreamRef::Realm {
+                    realm_id: registered_pcr.clone(),
+                })
+            && original.commit.stream_position == 0
+            && original.commit.previous_commit_ref.is_none()
+            && original.commit.governance_generation == 0,
+        "Consent authority original differs from the registered PCR Genesis"
+    );
     let governance = arkret_sdk::GenesisGovernance::from_genesis(&original.event)?;
     if governance.is_human() {
         return Ok(ConsentCurrentReadAuthority::from_human_genesis(
@@ -72,6 +101,10 @@ pub(crate) async fn consent_current_authority(
             &genesis,
         )?);
     }
+    anyhow::ensure!(
+        governance.is_principal_control(),
+        "Consent authority is not a PCR"
+    );
     governance.require_transferable()?;
     let request = arkret_sdk::AuthorityBundleRequest {
         realm_id: registered_pcr.clone(),

@@ -197,6 +197,74 @@ pub async fn restore_native_account_session(
     Ok(session)
 }
 
+/// Retain the independently registered PCR for an actual native fixture host.
+/// This does not select an account or derive a pin from a Consent response.
+#[cfg(all(not(target_arch = "wasm32"), feature = "spec-conformance"))]
+pub fn persist_native_registration_pin(
+    host: &crate::sync_engine::NativeAccountHost,
+    expected_account: &arkret_sdk::AccountId,
+    expected_device: &arkret_sdk::DeviceId,
+    registered_pcr: &arkret_sdk::RealmId,
+) -> anyhow::Result<()> {
+    let root = std::path::PathBuf::from(
+        std::env::var_os("COTEST_NATIVE_CLIENT_CONFIG_ROOT").ok_or_else(|| {
+            anyhow::anyhow!("native registration requires the isolated test runner")
+        })?,
+    );
+    anyhow::ensure!(
+        root.is_absolute()
+            && root.is_dir()
+            && std::env::var_os("INKSON_CONFIG_PATH").map(std::path::PathBuf::from)
+                == Some(root.join("inkson").join("config.json")),
+        "native registration configuration scope is inconsistent"
+    );
+    #[cfg(target_os = "windows")]
+    anyhow::ensure!(
+        matches!(root.canonicalize()?.components().next(),
+            Some(std::path::Component::Prefix(prefix))
+                if matches!(prefix.kind(), std::path::Prefix::Disk(drive)
+                    | std::path::Prefix::VerbatimDisk(drive) if drive.to_ascii_uppercase() == b'D')),
+        "native registration test configuration must stay on D"
+    );
+    let mut account = host.active_account_context();
+    anyhow::ensure!(
+        &account.authority == expected_account
+            && &account.device_id == expected_device
+            && &account.principal_control_realm_id == registered_pcr
+            && account.server_url.origin() == host.call_http_client().base_url().origin(),
+        "native host differs from the independently accepted registration"
+    );
+    let mut config = crate::config::LocalConfigStore::default();
+    let mut profiles = config.load_profile_metadata()?;
+    // Native hosts share a factory label, whereas durable profiles require a
+    // distinct local id for each complete Account. Preserve an existing id.
+    account.profile_id = match profiles
+        .profiles
+        .iter()
+        .find(|profile| profile.account.authority == account.authority)
+    {
+        Some(profile) => profile.account.profile_id.clone(),
+        None => format!(
+            "native-accepted:{}",
+            arkret_sdk::canonical::canonical_sha256(&account.authority)?
+        ),
+    };
+    let selected = profiles.active_profile_id.clone();
+    profiles.upsert_and_activate(crate::config::AccountProfile::new(account, String::new()))?;
+    profiles.active_profile_id = selected;
+    config.save_profiles(&profiles)?;
+    anyhow::ensure!(
+        crate::config::LocalConfigStore::default()
+            .known_account_context(expected_account)
+            .is_some_and(
+                |account| account.principal_control_realm_id == *registered_pcr
+                    && account.device_id == *expected_device
+            ),
+        "native registration PCR pin was not durable"
+    );
+    Ok(())
+}
+
 /// Baseline operations for a view or background task. Optional actions (media,
 /// encrypted authoring, recovery, etc.) keep their own operation/feature checks.
 /// These are local product requirements, not new wire profiles or features.
