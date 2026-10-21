@@ -361,7 +361,7 @@ impl LocalOperation {
 /// Standard Event builder whose kind is fixed by the SDK payload marker.
 ///
 /// This boundary never accepts a runtime `EventKind` or an erased JSON payload.
-/// The only constructor requires the payload associated with `K`, and erasure
+/// Each constructor requires the payload associated with `K`, and erasure
 /// happens inside [`arkret_sdk::TypedEventDraft`] after its marker-specific
 /// validation.
 ///
@@ -375,6 +375,29 @@ pub struct TypedOperationBuilder {
 }
 
 impl TypedOperationBuilder {
+    /// Preserve an already captured complete actor and effective scope without
+    /// reconstructing its Station from the currently selected connection.
+    pub fn new_for_actor<K>(
+        scope_ref: ScopeRef,
+        actor_id: arkret_sdk::ActorId,
+        payload: K::Payload,
+    ) -> Self
+    where
+        K: arkret_sdk::EventSpec,
+    {
+        let intent = arkret_sdk::TypedEventDraft::<K>::new(scope_ref, actor_id, payload)
+            .map_err(|err| anyhow::anyhow!("typed Event draft construction failed: {err}"))
+            .and_then(|draft| {
+                draft
+                    .into_intent(crate::clock::now_utc_millis())
+                    .map_err(|err| anyhow::anyhow!("typed Event intent erasure failed: {err}"))
+            });
+        Self {
+            intent,
+            target_ref: None,
+        }
+    }
+
     pub fn new<K>(
         realm_id: impl Into<String>,
         actor: impl Into<String>,
