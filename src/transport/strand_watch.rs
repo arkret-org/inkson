@@ -346,6 +346,8 @@ mod tests {
         signature.context = arkret_sdk::DetachedSignatureContext::RealmSnapshot;
         // Shape fixture for observation checks, not authenticated origin proof.
         arkret_sdk::RealmStateSnapshot {
+            purpose: arkret_wire::RealmSnapshotPurpose::FullRecovery,
+            history_basis: None,
             snapshot_id: arkret_sdk::RealmSnapshotId::from_digest([3; 32]),
             realm_id: bundle.realm_id.clone(),
             governance_generation: bundle.current_generation,

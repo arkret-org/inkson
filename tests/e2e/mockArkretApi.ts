@@ -165,6 +165,7 @@ type InksonWireCommand =
   | "mock-realm-scan"
   | "mock-exact-current"
   | "mock-realm-signer-keys"
+  | "mock-realm-list"
   | "mock-realm-submit";
 type InksonWireCanonicalJson = { canonical: string };
 type InksonWireDigest = { digest: string };
@@ -3222,7 +3223,7 @@ export async function mockArkretApi(
 
     if (url.pathname === "/_arkret/self/invite-locators/revoke" && route.request().method() === "POST") {
       const body = await route.request().postDataJSON();
-      return json(route, { locator_id: body.locator_id, status: "revoked", revoked_at: "2026-10-20T00:00:00.000Z" });
+      return json(route, { locator_id: body.locator_id, revoked_at: "2026-10-20T00:00:00.000Z" });
     }
 
     if (

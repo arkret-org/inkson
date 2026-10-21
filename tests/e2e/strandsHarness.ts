@@ -77,7 +77,7 @@ const signerKeyDiagnostics = new WeakMap<import("@playwright/test").Page, Signer
 const pendingSignerKeyCaptures = new WeakMap<import("@playwright/test").Page, Promise<void>[]>();
 const scenarioRealms = new WeakMap<
   import("@playwright/test").Page,
-  { demoRealm: string; demoBoardSpace: string }
+  Awaited<ReturnType<typeof mockArkretApi>>
 >();
 
 function diagnosticText(value: string): string {

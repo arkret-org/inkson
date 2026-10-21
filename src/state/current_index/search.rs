@@ -1787,6 +1787,8 @@ pub(crate) mod tests {
             stream_position: create.commit.stream_position,
         };
         let mut snapshot = arkret_sdk::RealmStateSnapshot {
+            purpose: arkret_wire::RealmSnapshotPurpose::FullRecovery,
+            history_basis: None,
             snapshot_id: arkret_sdk::RealmSnapshotId::from_digest([0; 32]),
             realm_id: bundle.realm_id.clone(),
             governance_generation: 0,

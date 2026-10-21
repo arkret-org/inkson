@@ -694,6 +694,8 @@ impl Fixture {
             Some(&strand_create),
         );
         let mut snapshot = RealmStateSnapshot {
+            purpose: arkret_wire::RealmSnapshotPurpose::FullRecovery,
+            history_basis: None,
             snapshot_id: RealmSnapshotId::from_digest([0; 32]),
             realm_id: realm,
             governance_generation: 0,

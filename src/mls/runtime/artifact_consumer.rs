@@ -2077,6 +2077,8 @@ mod tests {
         };
         let stream = rows[0].commit.stream_ref.clone();
         let mut snapshot = arkret_wire::RealmStateSnapshot {
+            purpose: arkret_wire::RealmSnapshotPurpose::FullRecovery,
+            history_basis: None,
             snapshot_id: arkret_sdk::RealmSnapshotId::from_digest([0; 32]),
             realm_id: recovery_realm_id(),
             governance_generation: 0,

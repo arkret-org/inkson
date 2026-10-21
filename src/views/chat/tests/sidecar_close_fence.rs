@@ -25,6 +25,8 @@ fn fixture() -> (
         verified_realm_fixture_as(realm.clone(), Vec::new(), "alice.example", device.as_str());
     let realm = bundle.realm_id.clone();
     let mut snapshot = arkret_sdk::RealmStateSnapshot {
+        purpose: arkret_wire::RealmSnapshotPurpose::FullRecovery,
+        history_basis: None,
         snapshot_id: arkret_sdk::RealmSnapshotId::from_digest([0; 32]),
         realm_id: realm.clone(),
         governance_generation: 0,

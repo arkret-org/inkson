@@ -8,6 +8,25 @@ async function fixture() {
   return handler();
 }
 
+test("invite locator revoke preserves the actual locator in the closed current outcome", async () => {
+  const handler = await fixture();
+  for (const locatorId of [
+    "ak:invite_locator:01964137-0000-7000-8000-0000000000b1",
+    "ak:invite_locator:01964137-0000-7000-8000-0000000000c1",
+  ]) {
+    const body = { locator_id: locatorId };
+    validateMockSchema("schemas/principal-locator.schema.json#/$defs/invite_locator_revoke_request_body", body);
+    const result = await driveOnce(handler, {
+      method: "POST", url: "https://local.host/_arkret/self/invite-locators/revoke", postData: body,
+    });
+    expect(result?.status).toBe(200);
+    expect(result?.body).toEqual({ locator_id: locatorId, revoked_at: "2026-10-20T00:00:00.000Z" });
+    expect(() => validateMockSchema("schemas/principal-locator.schema.json#/$defs/invite_locator_revoke_outcome", {
+      ...(result?.body as Record<string, unknown>), status: "revoked",
+    })).toThrow();
+  }
+});
+
 test("effective grants accept the actual subject_actor_id query and expose closed empty current rows", async () => {
   const handler = await fixture();
   const query = new URLSearchParams({ realm_id: DEMO_REALM, subject_actor_id: JSON.stringify(CURRENT_ACCOUNT_ACTOR_ID) });
