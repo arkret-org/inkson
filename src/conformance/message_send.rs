@@ -59,7 +59,7 @@ pub async fn send_native_ordinary_mls_message(
     // The composer adapter reads optional Dioxus session context. Poll the
     // unchanged product entry inside its normal runtime and root scope; the
     // explicit authenticated HTTP client and durable host store remain real.
-    let mut dom = dioxus::prelude::VirtualDom::new(|| dioxus::prelude::rsx! {});
+    let mut dom = dioxus::prelude::VirtualDom::new(dioxus::prelude::VNode::empty);
     dom.rebuild_in_place();
     let send = crate::views::chat::model::send_ordinary_chat_message(
         &api,
