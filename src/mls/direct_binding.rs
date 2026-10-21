@@ -93,7 +93,7 @@ pub(crate) fn mls_authoring_intent(
         DirectConversationResolveOutcome::Provisional { .. } => {
             anyhow::ensure!(
                 outcome.provisional_history_send_allowed(),
-                "Direct founding completion only permits its binding confirmation"
+                "Direct founding completion only permits its first binding confirmation"
             );
             anyhow::ensure!(
                 intent.actor_id() == &genesis.actor_id,

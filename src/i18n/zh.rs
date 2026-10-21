@@ -3073,7 +3073,7 @@ fn add_contacts_keys_zh(dict: &mut TranslationDict) {
         "未能从服务器读取现有策略(将使用默认值):{error}",
     );
     dict.set("invite_policy.kinds_title", "允许的邀请来源");
-    dict.set("invite_policy.kind.consent_grant", "对方签发的邀请许可");
+    dict.set("invite_policy.kind.consent_grant", "持有我的邀请许可的对象");
     dict.set("invite_policy.kind.locator_ref", "邀请链接");
     dict.set("invite_policy.kind.shared_realm", "同群成员");
     dict.set("invite_policy.kind.handle_claim", "知道我 handle 的人");
@@ -3137,7 +3137,7 @@ fn add_contacts_keys_zh(dict: &mut TranslationDict) {
     dict.set("realm_admin.invite_unauthorized", "对方未授权邀请");
     dict.set(
         "realm_admin.invite_none_eligible",
-        "没有可邀请的联系人(缺少同意凭证)。",
+        "没有获得邀请授权的联系人。",
     );
     dict.set("realm_admin.invite_sending", "正在邀请 {total} 位联系人…");
     dict.set("realm_admin.invite_sent", "已邀请 {ok} 位联系人(待接受)。");

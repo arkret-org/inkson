@@ -3398,7 +3398,7 @@ fn add_contacts_keys(dict: &mut TranslationDict) {
     dict.set("invite_policy.kinds_title", "Allowed invite sources");
     dict.set(
         "invite_policy.kind.consent_grant",
-        "Contacts (friends you've approved)",
+        "Peers with my invite permission",
     );
     dict.set("invite_policy.kind.locator_ref", "Invite links");
     dict.set("invite_policy.kind.shared_realm", "Members of my groups");
@@ -3487,7 +3487,7 @@ fn add_contacts_keys(dict: &mut TranslationDict) {
     );
     dict.set(
         "realm_admin.invite_none_eligible",
-        "No contacts can be invited (missing consent grant).",
+        "No contacts have authorized invitations.",
     );
     dict.set("realm_admin.invite_sending", "Inviting {total} contact(s)…");
     dict.set(
