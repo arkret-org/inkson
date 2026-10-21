@@ -1,5 +1,4 @@
-//! Holder-signed Consent Event builders. Stable consent_id names one PCR
-//! current record; revoke carries its exact RealmCommit revision.
+//! Holder-signed complete exact-peer Consent replacement.
 
 use super::TypedOperationBuilder;
 
@@ -26,63 +25,24 @@ pub fn consent_actor_peer(
     })
 }
 
-/// Build a canonical `ak.consent.grant` Event in the holder's principal
-/// control Realm.
-///
-/// A grant creates a new stable consent_id once. Revoke targets that ID and
-/// its exact revision; a revoked ID cannot be granted again. The complete
-/// peer ActorId is frozen by the grant.
-pub fn consent_grant(
+/// Replace the complete exact-peer current under holder root authorization.
+/// The expected state comes exclusively from one authenticated complete read.
+pub fn consent_replace(
     holder_pcr_realm_id: &str,
     holder: &str,
     root_authorization_ref: &arkret_sdk::EventId,
-    consent_id: &arkret_sdk::ConsentId,
     peer: &arkret_sdk::ConsentPeer,
-    consent_scope: &str,
-    expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    expected_current: arkret_sdk::ConsentExpectedCurrent,
+    permissions: Vec<arkret_sdk::ConsentPermission>,
 ) -> anyhow::Result<TypedOperationBuilder> {
-    let payload = arkret_sdk::ConsentGrantPayload {
-        consent_id: consent_id.clone(),
+    let payload = arkret_sdk::ConsentReplacePayload {
         peer: peer.clone(),
-        consent_scope: consent_scope.trim().parse()?,
-        not_before: None,
-        expires_at,
-        constraints: None,
-        evidence_ref: None,
-        reason: None,
+        expected_current,
+        permissions,
     };
+    payload.validate()?;
     Ok(
-        TypedOperationBuilder::new::<arkret_sdk::event_spec::ConsentGrant>(
-            holder_pcr_realm_id,
-            holder,
-            payload,
-        )
-        .authorization_ref(root_authorization_ref.as_str()),
-    )
-}
-
-/// Build a canonical `ak.consent.revoke` Event.
-///
-/// `expected_revision` MUST be the complete typed revision the holder just read
-/// back from the current consent result. The governance Station compares both
-/// the RealmCommit id and stream position; neither coordinate may be rebuilt or
-/// reduced to a local counter. That exact compare closes the concurrent-revoke
-/// race the observed-dot vocabulary used to carry.
-pub fn consent_revoke(
-    holder_pcr_realm_id: &str,
-    holder: &str,
-    root_authorization_ref: &arkret_sdk::EventId,
-    consent_id: &arkret_sdk::ConsentId,
-    expected_revision: &arkret_sdk::CurrentRevision,
-) -> anyhow::Result<TypedOperationBuilder> {
-    let payload = arkret_sdk::ConsentRevokePayload {
-        consent_id: consent_id.clone(),
-        expected_revision: expected_revision.clone(),
-        revoked_at: Some(crate::clock::now_utc_millis()),
-        reason: None,
-    };
-    Ok(
-        TypedOperationBuilder::new::<arkret_sdk::event_spec::ConsentRevoke>(
+        TypedOperationBuilder::new::<arkret_sdk::event_spec::ConsentReplace>(
             holder_pcr_realm_id,
             holder,
             payload,

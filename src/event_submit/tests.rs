@@ -2536,3 +2536,155 @@ async fn blocklist_unknown_freshness_withholds_privacy_signals_before_transport(
         );
     }
 }
+
+#[test]
+fn unresolved_consent_replacement_blocks_reauthoring_only_for_its_exact_peer() {
+    let signer = test_signer();
+    let authority = account_actor().as_account_id().unwrap().clone();
+    let peer = arkret_sdk::ConsentPeer::Actor {
+        actor_id: arkret_sdk::ActorId::account(crate::test_support::authority_at_station(
+            "ak:did_core:web:consent-peer.example",
+            "ak:did_core:web:peer-station.example",
+        )),
+    };
+    let other_station_peer = arkret_sdk::ConsentPeer::Actor {
+        actor_id: arkret_sdk::ActorId::account(crate::test_support::authority_at_station(
+            "ak:did_core:web:consent-peer.example",
+            "ak:did_core:web:other-station.example",
+        )),
+    };
+    let intent: EventIntent = serde_json::from_value(json!({
+        "kind": "ak.consent.replace",
+        "scope_ref": {"kind": "realm", "realm_id": REALM},
+        "actor_id": account_actor(),
+        "authorization_ref": arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [91; 32]),
+        "created_at": "2026-05-19T00:00:00.000Z",
+        "payload": {"peer":peer, "expected_current":{"state":"never_written"}, "permissions":[]}
+    })).unwrap();
+    let event = author_and_sign(intent, &signer);
+    for status in [
+        SendQueueStatus::Queued,
+        SendQueueStatus::Forwarding,
+        SendQueueStatus::Failed,
+        SendQueueStatus::Cancelled,
+        SendQueueStatus::Rejected,
+    ] {
+        let snapshot = snapshot_of(vec![(event.clone(), status)]);
+        assert_eq!(
+            pending_consent_replacement_from_snapshot(&snapshot, &authority, &peer).unwrap(),
+            Some(event.event_id().clone())
+        );
+        assert_eq!(
+            pending_consent_replacement_from_snapshot(&snapshot, &authority, &other_station_peer)
+                .unwrap(),
+            None
+        );
+    }
+    let snapshot = snapshot_of(vec![(event.clone(), SendQueueStatus::Queued)]);
+    let reopened: garth::SendQueueSnapshot =
+        serde_json::from_slice(&serde_json::to_vec(&snapshot).unwrap()).unwrap();
+    assert_eq!(
+        pending_consent_replacement_from_snapshot(&reopened, &authority, &peer).unwrap(),
+        Some(event.event_id().clone())
+    );
+    let committed = snapshot_of(vec![(event.clone(), SendQueueStatus::Committed)]);
+    assert_eq!(
+        pending_consent_replacement_from_snapshot(&committed, &authority, &peer).unwrap(),
+        None
+    );
+    for status in [SendQueueStatus::Failed, SendQueueStatus::Cancelled] {
+        let original = event_submission(&event).unwrap();
+        let snapshot = snapshot_of(vec![(event.clone(), status)]);
+        let reopened: garth::SendQueueSnapshot =
+            serde_json::from_slice(&serde_json::to_vec(&snapshot).unwrap()).unwrap();
+        let mut queue = garth::SendQueue::from_snapshot(reopened);
+        let frozen_bytes = arkret_sdk::canonical::canonical_json_bytes(
+            &queue.get(event.event_id()).unwrap().submission.request,
+        )
+        .unwrap();
+        assert!(
+            requeue_original_consent(
+                &mut queue,
+                &authority,
+                &peer,
+                &original,
+                chrono::Utc::now(),
+                || Ok(())
+            )
+            .unwrap()
+        );
+        let resumed = queue.get(event.event_id()).unwrap();
+        assert_eq!(resumed.status, SendQueueStatus::Queued);
+        assert_eq!(resumed.event_id(), event.event_id());
+        assert_eq!(
+            arkret_sdk::canonical::canonical_json_bytes(&resumed.submission.request).unwrap(),
+            frozen_bytes
+        );
+        assert_eq!(resumed.submission, original);
+    }
+    let original = event_submission(&event).unwrap();
+    let mut queue = garth::SendQueue::from_snapshot(snapshot_of(vec![(
+        event.clone(),
+        SendQueueStatus::Failed,
+    )]));
+    let unchanged = queue.snapshot();
+    assert!(
+        requeue_original_consent(
+            &mut queue,
+            &authority,
+            &other_station_peer,
+            &original,
+            chrono::Utc::now(),
+            || Ok(())
+        )
+        .is_err()
+    );
+    let other_account = crate::test_support::authority_at_station(
+        PRINCIPAL_CORE,
+        "ak:did_core:web:other-account-station.example",
+    );
+    assert!(
+        requeue_original_consent(
+            &mut queue,
+            &other_account,
+            &peer,
+            &original,
+            chrono::Utc::now(),
+            || Ok(())
+        )
+        .is_err()
+    );
+    let checks = std::cell::Cell::new(0);
+    assert!(
+        requeue_original_consent(
+            &mut queue,
+            &authority,
+            &peer,
+            &original,
+            chrono::Utc::now(),
+            || {
+                checks.set(checks.get() + 1);
+                anyhow::ensure!(
+                    checks.get() == 1,
+                    "session generation changed while recovering original"
+                );
+                Ok(())
+            }
+        )
+        .is_err()
+    );
+    assert_eq!(
+        queue.snapshot(),
+        unchanged,
+        "peer/account/session mismatch mutated the frozen queue"
+    );
+    let mut rejected = snapshot_of(vec![(event, SendQueueStatus::Rejected)]);
+    rejected.items[0].submission.state = garth::SubmissionState::Rejected {
+        status: arkret_wire::AuthorityRejectionStatus::Rejected,
+        reason_code: "cas_conflict".to_owned(),
+    };
+    assert_eq!(
+        pending_consent_replacement_from_snapshot(&rejected, &authority, &peer).unwrap(),
+        None
+    );
+}

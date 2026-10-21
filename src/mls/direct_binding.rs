@@ -1,4 +1,4 @@
-//! Endorse the existing Direct Conversation after its exact-pair MLS admission.
+//! Confirm the existing Direct Conversation once after exact-pair MLS admission.
 
 /// Test-feature diagnostics contain fixed stage/outcome values only.
 pub(crate) fn diagnostic_stage(stage: &'static str, outcome: &'static str) {
@@ -93,7 +93,7 @@ pub(crate) fn mls_authoring_intent(
         DirectConversationResolveOutcome::Provisional { .. } => {
             anyhow::ensure!(
                 outcome.provisional_history_send_allowed(),
-                "Direct founding completion only permits its binding endorsement"
+                "Direct founding completion only permits its binding confirmation"
             );
             anyhow::ensure!(
                 intent.actor_id() == &genesis.actor_id,
@@ -324,7 +324,7 @@ pub(crate) async fn install_resolved_message_context(
             })?;
             // A `Found` resolution is the current authority's own answer that
             // the binding Event is committed on the Realm stream, so there is
-            // no separate endorsement state to read: finality is the commit.
+            // no separate confirmation state to read: finality is the commit.
             (
                 arkret_wire::AuthoritySourceId::DirectConversationParticipantV1,
                 reference,
@@ -576,6 +576,7 @@ async fn founding_own_station_prefix(
 pub(crate) async fn ensure_binding(
     api: &crate::transport::TransportClient,
     store: &crate::state::LocalStateStore,
+    state_store: &crate::runtime::input::StateStoreHandle,
     realm_id: &str,
     backfill: &crate::models::BackfillView,
 ) -> anyhow::Result<()> {
@@ -607,7 +608,7 @@ pub(crate) async fn ensure_binding(
     let self_actor = ActorId::account(account.authority.clone());
     anyhow::ensure!(
         participants.contains(&self_actor),
-        "binding endorser is not a founding participant"
+        "binding confirmer is not a founding participant"
     );
     let peer = participants
         .iter()
@@ -659,6 +660,11 @@ pub(crate) async fn ensure_binding(
         peer_selector.contact_actor_id() == *peer,
         "cached Direct peer differs from accepted founding membership"
     );
+    let fence = crate::transport::auth::AuthoringSessionFence::capture()?;
+    let session_epoch = crate::identity::device_directory::session_cache_epoch();
+    let _pair_guard = coordinate_query(&account.authority, &peer_selector).await?;
+    let sequence = begin_query(&account.authority, &peer_selector)?;
+    fence.check()?;
     let resolved = http
         .direct_conversation_resolve(
             &arkret_sdk::direct_conversation::DirectConversationResolveRequestBody {
@@ -671,6 +677,17 @@ pub(crate) async fn ensure_binding(
     let (coordinates, authorization_basis, initial_state_ref) = match resolved {
         DirectConversationResolveOutcome::Found { .. } => {
             diagnostic_stage("resolve_outcome", "found");
+            install_resolved_message_context(
+                &http,
+                state_store,
+                &account.authority,
+                session_epoch,
+                sequence,
+                peer_selector.clone(),
+                &resolved,
+            )
+            .await?;
+            fence.check()?;
             return Ok(());
         }
         DirectConversationResolveOutcome::Provisional {
@@ -755,12 +772,40 @@ pub(crate) async fn ensure_binding(
         "submitter_ready",
         "failed",
     )?;
-    diagnostic_result(
-        "binding_submit",
-        submitter.submit_sdk_event(&operation).await,
-        "completed",
-        "failed",
-    )?;
+    fence.check()?;
+    let result = submitter.submit_sdk_event(&operation).await;
+    fence.check()?;
+    if let Err(error) = result {
+        if !crate::ephemeral::authority_rejected_for_reason(&error, "duplicate_conflict") {
+            return Err(error);
+        }
+        // Another original Event won. Resolve its immutable reference; never
+        // treat this losing Event as accepted or author another confirmation.
+        let winner = http
+            .direct_conversation_resolve(
+                &arkret_sdk::direct_conversation::DirectConversationResolveRequestBody {
+                    peer: peer_selector.clone(),
+                },
+            )
+            .await?;
+        fence.check()?;
+        anyhow::ensure!(
+            winner
+                .coordinates()
+                .is_some_and(|c| c.realm_id == realm && c.binding_event_ref.is_some()),
+            "competing Direct confirmation has no accepted binding reference"
+        );
+        install_resolved_message_context(
+            &http,
+            state_store,
+            &account.authority,
+            session_epoch,
+            sequence,
+            peer_selector,
+            &winner,
+        )
+        .await?;
+    }
     Ok(())
 }
 

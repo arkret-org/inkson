@@ -5,7 +5,7 @@ impl LocalStateStore {
 
     /// Record a freshly-submitted Move and its initial state. The
     /// caller records local progress separately from verified effectiveness.
-    /// `kind` is a free-form classifier (e.g. `ak.consent.grant`,
+    /// `kind` is a free-form classifier (e.g. `ak.consent.replace`,
     /// `ak.message.create`, `mls_commit`) the UI uses to decorate
     /// pills + icons.
     pub fn record_move_submission(

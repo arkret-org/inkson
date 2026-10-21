@@ -47,17 +47,18 @@ test("settings capabilities and consent read surfaces and forms follow the activ
     await page.getByTestId("consent-retry-button").click();
     await expect.poll(() => consentReads).toBeGreaterThan(readsBefore);
     await expect(error).toHaveCount(0);
-    await expect(page.getByTestId("consent-grant-empty")).toContainText(language === "zh" ? "尚未设置联系许可" : "No consent decisions yet");
-    await page.getByTestId("consent-new-grant-button").click();
-    await expect(page.getByTestId("consent-new-grant-submit-button")).toBeDisabled();
-    await page.getByTestId("consent-new-grant-scope-input").getByRole("button").click();
+    await expect(page.getByTestId("consent-peer-empty")).toContainText(language === "zh" ? "尚未设置联系许可" : "No consent decisions yet");
+    await expect(page.getByTestId("consent-read-complete-button")).toBeDisabled();
+    await expect(page.getByTestId("consent-confirm-replace-button")).toHaveCount(0);
+    await expect(page.getByTestId("consent-read-complete-button")).toHaveText(language === "zh" ? "读取完整许可" : "Read complete permissions");
+    await page.getByTestId("consent-request-scope-input").getByRole("button").click();
     for (const name of language === "zh"
-      ? ["群组邀请", "语音通话", "视频通话", "在线状态", "全部联系许可"]
-      : ["Group invites", "Voice calls", "Video calls", "Presence", "All consent permissions"]) {
+      ? ["语音通话", "视频通话", "在线状态"]
+      : ["Voice calls", "Video calls", "Presence"]) {
       await expect(page.getByRole("option", { name, exact: true })).toBeVisible();
     }
+    await expect(page.getByRole("option")).toHaveCount(3);
     await page.keyboard.press("Escape");
-    await page.getByTestId("consent-request-button").click();
     await expect(page.getByTestId("consent-request-submit-button")).toBeDisabled();
     await expect(page.getByTestId("consent-request-submit-button")).toHaveText(language === "zh" ? "发送请求" : "Send request");
   }

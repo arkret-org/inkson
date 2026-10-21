@@ -5,6 +5,11 @@ use arkret_wire::{BindingKind, ServiceKind, ServiceOperationId, operation_bundle
 
 use crate::models::ServiceDescribe;
 
+#[cfg(all(not(target_arch = "wasm32"), feature = "spec-conformance"))]
+mod message_send;
+#[cfg(all(not(target_arch = "wasm32"), feature = "spec-conformance"))]
+pub use message_send::*;
+
 /// Inspect the ordinary Account frame's admitted own-Station pages. Audit
 /// proof pages remain separate; every row access retains the live session fence.
 #[cfg(all(not(target_arch = "wasm32"), feature = "spec-conformance"))]
@@ -657,6 +662,7 @@ mod tests {
 #[cfg(not(target_arch = "wasm32"))]
 pub async fn consume_native_consent_current(
     host: &crate::sync_engine::NativeAccountHost,
+    consent_scope: arkret_sdk::ConsentScope,
     response: &arkret_sdk::http_client::own_station_results::BoundOwnStationResponse<
         arkret_sdk::ConsentCurrentReadRequestBody,
         arkret_sdk::ConsentCurrentReadOutcome,
@@ -675,7 +681,12 @@ pub async fn consume_native_consent_current(
         Ok(())
     };
     crate::signal_receive_engine::install_call_consent_current(
-        &store, &account, response, epoch, &guard,
+        &store,
+        &account,
+        response,
+        consent_scope,
+        epoch,
+        &guard,
     )
     .await
 }
@@ -685,7 +696,6 @@ pub async fn consume_native_consent_current(
 pub async fn read_native_consent_current(
     host: &crate::sync_engine::NativeAccountHost,
     peer: arkret_sdk::ActorId,
-    consent_scope: arkret_sdk::ConsentScope,
 ) -> anyhow::Result<
     arkret_sdk::http_client::own_station_results::BoundOwnStationResponse<
         arkret_sdk::ConsentCurrentReadRequestBody,
@@ -693,16 +703,26 @@ pub async fn read_native_consent_current(
     >,
 > {
     let account = host.active_account_context();
-    let client =
-        crate::transport::own_station_results::client_for_http(&host.call_http_client()).await?;
+    let http = host.call_http_client();
+    let client = crate::transport::own_station_results::client_for_http(&http).await?;
+    let authority = crate::transport::own_station_results::consent_current_authority(
+        &http,
+        &client,
+        &account.authority,
+        &account.principal_control_realm_id,
+    )
+    .await?;
     Ok(client
-        .consent_current(&arkret_sdk::ConsentCurrentReadRequestBody {
-            holder_account_id: account.authority.clone(),
-            peer: arkret_sdk::ConsentPeer::Actor { actor_id: peer },
-            consent_scope,
-            audience_actor_id: arkret_sdk::ActorId::service(account.authority.station_id),
-            nonce: crate::random::base64url_token(32, "Consent read nonce unavailable")?,
-        })
+        .consent_current(
+            &arkret_sdk::ConsentCurrentReadRequestBody {
+                holder_account_id: account.authority.clone(),
+                peer: arkret_sdk::ConsentPeer::Actor { actor_id: peer },
+                audience_actor_id: arkret_sdk::ActorId::service(account.authority.station_id),
+                nonce: crate::random::base64url_token(32, "Consent read nonce unavailable")?,
+            },
+            &account.principal_control_realm_id,
+            &authority,
+        )
         .await?)
 }
 
@@ -778,12 +798,20 @@ pub async fn read_native_call_consent(
     invitation: &arkret_sdk::CallInvitationEnvelope,
 ) -> anyhow::Result<garth::call_invitation::HolderCallConsent> {
     let account = host.active_account_context();
-    let client =
-        crate::transport::own_station_results::client_for_http(&host.call_http_client()).await?;
+    let http = host.call_http_client();
+    let client = crate::transport::own_station_results::client_for_http(&http).await?;
+    let authority = crate::transport::own_station_results::consent_current_authority(
+        &http,
+        &client,
+        &account.authority,
+        &account.principal_control_realm_id,
+    )
+    .await?;
     Ok(garth::call_invitation::read_holder_call_consent(
         &client,
         &account.authority,
         &account.principal_control_realm_id,
+        &authority,
         invitation,
         crate::random::base64url_token(32, "Consent read nonce unavailable")?,
         None,

@@ -65,10 +65,11 @@ fn invite_address(
     )
 }
 
-/// A Contact scope is not a Consent grant. The direct-DID contact path uses
-/// the protocol's explicit-address introduction evidence and relies on the
-/// independent directional `invite` scope gate; it never fabricates a
-/// `consent_grant_ref` from Contact request/response Events.
+/// The direct-DID Contact path uses explicit-address introduction evidence
+/// and the independent directional `invite` gate. Invite `consent_grant_ref`
+/// instead names the invitee's accepted `ak.consent.replace` for the complete
+/// inviter peer with an `invite` permission; reception still checks that peer's
+/// current permission set, window and constraints.
 fn contact_explicit_address_evidence_digest() -> anyhow::Result<String> {
     crate::canonical::canonical_sha256(&serde_json::json!({
         "kind": "explicit_address",

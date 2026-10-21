@@ -2970,6 +2970,37 @@ fn add_contacts_keys_zh(dict: &mut TranslationDict) {
         "settings.capabilities.hint_pending",
         "服务端尚未解析该授权，放弃操作将等待授权记录就绪。如仍未完成，请同步后重试。",
     );
+    dict.set(
+        "consent.edit_intro",
+        "编辑单个对方的完整许可。读取当前值、复核改动后确认。",
+    );
+    dict.set("consent.closed", "所有许可已关闭");
+    dict.set("consent.edit_select", "选择对方");
+    dict.set("consent.grantee_station_label", "对方的 Station 身份");
+    dict.set("consent.read_complete", "读取完整许可");
+    dict.set(
+        "consent.edit_preserve",
+        "过期、未来生效和附条件的许可均保留显示。未修改的条目保持原样。确认过期后需重新读取。",
+    );
+    dict.set("consent.complete_permissions", "完整许可及条件");
+    dict.set("consent.preview", "复核改动");
+    dict.set("consent.before", "当前许可");
+    dict.set("consent.after", "替换后的许可");
+    dict.set("consent.confirm_replace", "确认完整替换");
+    dict.set("consent.replace_success", "许可已替换");
+    dict.set(
+        "consent.never_written",
+        "尚未为此对方作出决定。保存空集合会明确关闭所有许可。",
+    );
+    dict.set(
+        "consent.existing",
+        "将替换已有决定。改动被接受前，当前许可继续生效。",
+    );
+    dict.set("consent.recover_original", "恢复原待定写入");
+    dict.set(
+        "consent.recovery_complete",
+        "已检查恢复结果。编辑前请重新读取当前许可。",
+    );
     dict.set("consent.title", "联系许可");
     dict.set("consent.grant", "授予许可");
     dict.set("consent.request", "请求许可");
@@ -2980,7 +3011,6 @@ fn add_contacts_keys_zh(dict: &mut TranslationDict) {
     dict.set("consent.scope.voice_call", "语音通话");
     dict.set("consent.scope.video_call", "视频通话");
     dict.set("consent.scope.presence", "在线状态");
-    dict.set("consent.scope.any", "全部联系许可");
     dict.set("consent.scope.unknown", "未知范围");
     dict.set("consent.grantee", "接收方 DID");
     dict.set("consent.ttl", "有效时长（例如 30d）");
@@ -3043,7 +3073,7 @@ fn add_contacts_keys_zh(dict: &mut TranslationDict) {
         "未能从服务器读取现有策略(将使用默认值):{error}",
     );
     dict.set("invite_policy.kinds_title", "允许的邀请来源");
-    dict.set("invite_policy.kind.consent_grant", "联系人(已同意的好友)");
+    dict.set("invite_policy.kind.consent_grant", "对方签发的邀请许可");
     dict.set("invite_policy.kind.locator_ref", "邀请链接");
     dict.set("invite_policy.kind.shared_realm", "同群成员");
     dict.set("invite_policy.kind.handle_claim", "知道我 handle 的人");

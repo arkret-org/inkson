@@ -3293,6 +3293,28 @@ fn add_contacts_keys(dict: &mut TranslationDict) {
     );
     dict.set("settings.capabilities.hint_subject", "the server rejected this because the signer is not the grant's subject — only the subject may relinquish a grant; ask the issuer (or Realm owner) to revoke it instead");
     dict.set("settings.capabilities.hint_pending", "the grant is not yet resolved in the server projection — the relinquish stays pending until the grant row lands; retry after sync if it does not settle");
+    dict.set("consent.never_written", "No previous decision for this peer. Saving an empty set explicitly closes all permissions.");
+    dict.set("consent.existing", "An existing decision will be replaced. The current permissions stay in effect until your change is accepted.");
+    dict.set("consent.edit_intro", "Edit one peer's complete permissions. Read the current value, review the change, then confirm.");
+    dict.set("consent.closed", "All permissions closed");
+    dict.set("consent.edit_select", "Select peer");
+    dict.set("consent.grantee_station_label", "Peer Station identity");
+    dict.set("consent.read_complete", "Read complete permissions");
+    dict.set("consent.edit_preserve", "Expired, future and constrained permissions remain visible. Unchanged entries are preserved. Read again if the confirmation expires.");
+    dict.set(
+        "consent.complete_permissions",
+        "Complete permissions and conditions",
+    );
+    dict.set("consent.preview", "Review changes");
+    dict.set("consent.before", "Current permissions");
+    dict.set("consent.after", "Replacement permissions");
+    dict.set("consent.confirm_replace", "Confirm replacement");
+    dict.set("consent.replace_success", "Permissions replaced");
+    dict.set("consent.recover_original", "Recover original pending write");
+    dict.set(
+        "consent.recovery_complete",
+        "Recovery checked. Read the current permissions again before editing.",
+    );
     dict.set("consent.title", "Consent");
     dict.set("consent.grant", "Grant consent");
     dict.set("consent.request", "Request consent");
@@ -3306,7 +3328,6 @@ fn add_contacts_keys(dict: &mut TranslationDict) {
     dict.set("consent.scope.voice_call", "Voice calls");
     dict.set("consent.scope.video_call", "Video calls");
     dict.set("consent.scope.presence", "Presence");
-    dict.set("consent.scope.any", "All consent permissions");
     dict.set("consent.scope.unknown", "Unknown scope");
     dict.set("consent.grantee", "Grantee DID");
     dict.set("consent.ttl", "Valid for (e.g. 30d)");
