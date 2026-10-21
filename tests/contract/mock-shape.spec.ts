@@ -37,6 +37,7 @@ const PROBES: Probe[] = [
     body: {
       actor_id: "ak:did_core:web:bob.example",
       handle: "bob:local.host",
+      locator_id: "ak:invite_locator:01964137-0000-7000-8000-0000000000b1",
       limit: 1,
       realm_id: "ak:realm:AfZipd5actne33fQKtrLCK5Q658LZby1JgRICH16UNjo",
       events: [{ realm_id: "ak:realm:AfZipd5actne33fQKtrLCK5Q658LZby1JgRICH16UNjo" }],
@@ -47,6 +48,7 @@ const PROBES: Probe[] = [
     body: {
       actor_id: "ak:did_core:web:carol.example",
       handle: "carol:local.host",
+      locator_id: "ak:invite_locator:01964137-0000-7000-8000-0000000000c1",
       limit: 2,
       realm_id: "ak:realm:AajANEG2ah2GJghhdat8rziaz1qjK25iQAYUUR6kcIeW",
       events: [
