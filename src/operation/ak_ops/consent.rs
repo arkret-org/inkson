@@ -2,21 +2,20 @@
 
 use super::TypedOperationBuilder;
 
-/// Build the `{kind:"actor"}` consent peer for an ordinary Account
-/// counterparty.
-///
-/// Spec `zh/identity/consent-model.md` section 6.1 query step 1 matches this
-/// branch on the **complete** ActorId, so the counterparty's own Station is
-/// part of the value, not something the granter may leave implicit: a grant
-/// written against the wrong Station simply never matches. The counterparty is
-/// therefore either pasted as its canonical account selector or typed as a
-/// principal together with its Station; there is no fallback to this client's
-/// authoring Station, which is not the counterparty's Station and would name a
-/// different account whenever they differ (account-lifecycle.md §156/§158).
+/// Parse a complete ActorId, or an explicit Account principal and Station.
+/// The Station and Realm dimensions are never inferred from the local holder.
 pub fn consent_actor_peer(
     principal_id: &str,
     station_id: Option<&str>,
 ) -> anyhow::Result<arkret_sdk::ConsentPeer> {
+    if principal_id.trim_start().starts_with('{') {
+        return Ok(
+            serde_json::from_str::<arkret_sdk::ConsentPeer>(principal_id).or_else(|_| {
+                serde_json::from_str::<arkret_sdk::ActorId>(principal_id)
+                    .map(|actor_id| arkret_sdk::ConsentPeer::Actor { actor_id })
+            })?,
+        );
+    }
     Ok(arkret_sdk::ConsentPeer::Actor {
         actor_id: arkret_sdk::ActorId::account(crate::mls_api_helpers::closed_account_id_input(
             principal_id,

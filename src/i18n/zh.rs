@@ -3012,7 +3012,7 @@ fn add_contacts_keys_zh(dict: &mut TranslationDict) {
     dict.set("consent.scope.video_call", "视频通话");
     dict.set("consent.scope.presence", "在线状态");
     dict.set("consent.scope.unknown", "未知范围");
-    dict.set("consent.grantee", "接收方 DID");
+    dict.set("consent.grantee", "完整对方 Actor JSON 或 Account 主体 DID");
     dict.set("consent.ttl", "有效时长（例如 30d）");
     dict.set("consent.grant_submit", "授予");
     dict.set("consent.holder", "许可持有人 DID");

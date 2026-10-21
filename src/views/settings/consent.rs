@@ -26,11 +26,7 @@ fn consent_peer_label(peer: &arkret_sdk::ConsentPeer) -> String {
 }
 
 fn parse_peer(principal: &str, station: &str) -> anyhow::Result<arkret_sdk::ConsentPeer> {
-    if principal.trim().starts_with('{') {
-        Ok(serde_json::from_str(principal)?)
-    } else {
-        crate::operation::ak_ops::consent_actor_peer(principal, Some(station))
-    }
+    crate::operation::ak_ops::consent_actor_peer(principal, Some(station))
 }
 
 fn scope_label(scope: &str) -> String {
@@ -377,6 +373,31 @@ mod tests {
     use super::*;
 
     #[test]
+    fn complete_actor_and_peer_inputs_preserve_identity_and_reject_missing_dimensions() {
+        for actor in [
+            json!({"kind":"account","account_id":{"principal_id":"ak:did_core:web:peer.example","station_id":"ak:did_core:web:peer-station.example"}}),
+            json!({"kind":"service","service_id":"ak:did_core:web:service.example"}),
+            json!({"kind":"realm","realm_actor_id":{"realm_id":"ak:realm:AY789mrKRCQEVlbVgiTgLdjVO5oCMJiUCrF-D-JlRNxI","principal_id":"ak:did_core:webvh:zBot"}}),
+        ] {
+            let wrapped = json!({"kind":"actor","actor_id":actor});
+            for input in [&actor, &wrapped] {
+                assert_eq!(
+                    serde_json::to_value(parse_peer(&input.to_string(), "").unwrap()).unwrap(),
+                    wrapped
+                );
+            }
+        }
+        for invalid in [
+            json!({"kind":"account","account_id":{"principal_id":"ak:did_core:web:peer.example"}}),
+            json!({"kind":"realm","realm_actor_id":{"principal_id":"ak:did_core:webvh:zBot"}}),
+            json!({"kind":"service","service_id":"ak:did_core:web:service.example","extra":true}),
+        ] {
+            assert!(parse_peer(&invalid.to_string(), "ak:did_core:web:local.example").is_err());
+        }
+        assert!(parse_peer("ak:did_core:web:peer.example", "").is_err());
+    }
+
+    #[test]
     fn scope_edit_preserves_expired_future_unknown_and_optional_members() {
         let original = json!([
             {"consent_scope":"invite", "expires_at":"2020-01-01T00:00:00.000Z", "reason":"", "constraints":[]},
@@ -427,5 +448,38 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn consent_scope_and_exact_service_peer_retranslate_without_changing_identity() {
+        let peer = arkret_sdk::ConsentPeer::Actor {
+            actor_id: arkret_sdk::ActorId::service(
+                arkret_sdk::DidCoreId::new("ak:did_core:web:service.example").unwrap(),
+            ),
+        };
+        let original = serde_json::to_string(&peer).unwrap();
+        let mut dom = VirtualDom::new(|| rsx! {});
+        dom.rebuild_in_place();
+        dom.in_scope(ScopeId::ROOT, || {
+            let mut locale = provide_context(crate::i18n::init_i18n_with_locale(
+                crate::i18n::UiLocale::En,
+            ));
+            for (language, scope, prefix) in [
+                (crate::i18n::UiLocale::En, "Group invites", "service "),
+                (crate::i18n::UiLocale::Zh, "群组邀请", "服务 "),
+                (crate::i18n::UiLocale::En, "Group invites", "service "),
+            ] {
+                crate::i18n::set_locale(&mut locale, language);
+                assert_eq!(
+                    scope_label(arkret_wire::ConsentScope::Invite.as_str()),
+                    scope
+                );
+                assert_eq!(
+                    consent_peer_label(&peer),
+                    format!("{prefix}ak:did_core:web:service.example")
+                );
+                assert_eq!(serde_json::to_string(&peer).unwrap(), original);
+            }
+        });
     }
 }

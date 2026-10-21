@@ -3329,7 +3329,10 @@ fn add_contacts_keys(dict: &mut TranslationDict) {
     dict.set("consent.scope.video_call", "Video calls");
     dict.set("consent.scope.presence", "Presence");
     dict.set("consent.scope.unknown", "Unknown scope");
-    dict.set("consent.grantee", "Grantee DID");
+    dict.set(
+        "consent.grantee",
+        "Peer Actor JSON or Account principal DID",
+    );
     dict.set("consent.ttl", "Valid for (e.g. 30d)");
     dict.set("consent.grant_submit", "Grant");
     dict.set("consent.holder", "Holder DID");
