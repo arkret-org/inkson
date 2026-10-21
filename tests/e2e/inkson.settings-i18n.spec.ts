@@ -65,27 +65,46 @@ test("settings capabilities and consent read surfaces and forms follow the activ
 });
 
 test("invite policy saves the actual Account policy and restores it after reload", async ({ page }) => {
-  const writes: Array<Record<string, any>> = [];
+  const policyPath = "/_arkret/self/invite-receive-policy";
+  const writes: Array<Record<string, unknown>> = [];
   page.on("request", request => {
-    if (request.method() === "PUT" && new URL(request.url()).pathname === "/_arkret/self/invite-receive-policy") {
-      const body = request.postDataJSON();
-      validateMockSchema("schemas/invite-receive-policy.schema.json", body);
-      expect(body.account_id).toEqual(CURRENT_ACCOUNT_ID);
-      expect(body.explicit_address_behavior).toBe("notify");
-      expect(body.denied_actor_ids).toEqual([]);
-      writes.push(body);
+    if (request.method() === "PUT" && new URL(request.url()).pathname === policyPath) {
+      // Observe every actual write before validating it in the test flow. A
+      // callback assertion must not hide an emitted request from the count.
+      writes.push(request.postDataJSON());
     }
   });
   await gotoAndDismissRecovery(page, "/settings/invite-policy");
+  await expect(page.getByTestId("invite-policy-blocked-row")).toHaveCount(1);
   await page.getByTestId("invite-policy-explicit-behavior").getByRole("button").click();
   await page.getByRole("option", { name: "Notify me", exact: true }).click();
   await page.getByTestId("invite-policy-blocked-row").getByRole("button").click();
+  await expect(page.getByTestId("invite-policy-blocked-empty")).toBeVisible();
+  const saveResponsePromise = page.waitForResponse(response =>
+    response.request().method() === "PUT" && new URL(response.url()).pathname === policyPath);
   await page.getByTestId("invite-policy-save-button").click();
+  const saveResponse = await saveResponsePromise;
+  expect(saveResponse.status()).toBe(200);
+  const savedPolicy = await saveResponse.json();
   await expect(page.getByTestId("invite-policy-status")).toHaveText("Saved.");
   expect(writes).toHaveLength(1);
+  const written = writes[0];
+  validateMockSchema("schemas/invite-receive-policy.schema.json", written);
+  expect(written.account_id).toEqual(CURRENT_ACCOUNT_ID);
+  expect(written.explicit_address_behavior).toBe("notify");
+  // The formal field is optional. The SDK canonical serializer omits an
+  // empty denied_actor_ids Vec; omission decodes as the empty block list.
+  expect(written).not.toHaveProperty("denied_actor_ids");
+  expect(savedPolicy).toEqual(written);
+  const reloadResponsePromise = page.waitForResponse(response =>
+    response.request().method() === "GET" && new URL(response.url()).pathname === policyPath);
   await page.reload();
+  const reloadResponse = await reloadResponsePromise;
+  expect(reloadResponse.status()).toBe(200);
+  expect(await reloadResponse.json()).toEqual(written);
   await expect(page.getByTestId("invite-policy-explicit-behavior").getByRole("button")).toHaveText("Notify me");
   await expect(page.getByTestId("invite-policy-blocked-empty")).toBeVisible();
+  expect(writes).toHaveLength(1);
 });
 
 test("settings invite policy labels and options follow the active language without saving", async ({ page }) => {
