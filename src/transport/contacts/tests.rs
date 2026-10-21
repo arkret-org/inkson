@@ -55,7 +55,12 @@ pub(super) fn event(kind: &str) -> arkret_sdk::Event {
         payload["request_acceptance_receipt_digest"] =
             json!(receipt.computed_receipt_digest().unwrap());
         if kind == arkret_wire::event_kind_str::CONTACT_ACCEPTED {
-            payload["contact_round_id"] = json!(round_id());
+            payload["contact_round_id"] = json!(
+                ContactRound::normal_from_request_receipt(&receipt)
+                    .unwrap()
+                    .compute_id()
+                    .unwrap()
+            );
         }
     } else {
         if kind == arkret_wire::event_kind_str::CONTACT_SCOPE_UPDATE {
@@ -206,7 +211,11 @@ fn accepted(event: &arkret_sdk::Event) -> ContactOperationOutcome {
     let holder = ContactPeer::Human {
         account_id: event.actor_id.as_account_id().unwrap().clone(),
     };
-    let digest = arkret_sdk::Hash::new(format!("sha256:{}", "11".repeat(32))).unwrap();
+    let digest = event
+        .payload
+        .get("contact_round_id")
+        .map(|round| serde_json::from_value(round.clone()).unwrap())
+        .unwrap_or_else(round_id);
     let incoming = peer_request();
     let is_request = event.kind.as_str() == arkret_wire::event_kind_str::CONTACT_REQUESTED;
     let request = if is_request {
