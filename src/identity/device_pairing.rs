@@ -294,6 +294,8 @@ pub async fn author_pairing_request_body(
             attestation.pairing_challenge_transcript_digest.clone(),
         ),
         applet_id: None,
+        expected_control_revision: None,
+        expected_device_revision: None,
     };
     authorize_payload
         .validate_wire_constraints()

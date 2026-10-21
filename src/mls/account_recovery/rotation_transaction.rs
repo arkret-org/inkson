@@ -865,8 +865,8 @@ mod rotation_resume_tests {
             &arkret_sdk::ActorId::account(account_id.clone())
         );
         assert_eq!(
-            operation.actor_id().route_service_id(),
-            &account_id.station_id
+            operation.actor_id().fixed_route_service_id(),
+            Some(&account_id.station_id)
         );
         assert_eq!(
             operation.payload()["source_commit_ref"]["realm_commit_id"],

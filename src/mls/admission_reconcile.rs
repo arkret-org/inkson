@@ -80,7 +80,10 @@ pub(crate) async fn submit_mls_admission_for_invitee(
     };
     let claim_route = if target_agent.is_some() {
         AcceptedInviteClaimRoute {
-            destination_id: invitee_actor.route_service_id().to_string(),
+            destination_id: invitee_actor
+                .fixed_route_service_id()
+                .ok_or_else(|| anyhow::anyhow!("Account invitee lacks its fixed Station"))?
+                .to_string(),
             target_device_id: None,
         }
     } else if let Some(target_device_id) = target_device_id_override {
@@ -227,7 +230,7 @@ async fn current_owned_agent_endpoint(
                     .context("Agent runtime key state is unavailable")?;
                 anyhow::ensure!(
                     keys.controller_account_id == *controller
-                        && invitee_actor.route_service_id() == &controller.station_id,
+                        && invitee_actor.fixed_route_service_id() == Some(&controller.station_id),
                     "Agent claim does not belong to the current controller Account"
                 );
                 let key = keys

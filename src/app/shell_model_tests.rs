@@ -374,7 +374,6 @@ fn contact_row(principal: &str) -> crate::models::ContactListRow {
         granted_by_peer_scopes: Vec::new(),
         bidirectional_scopes: vec![arkret_sdk::contact_operations::ContactScope::DirectMessage],
         effective_scopes: None,
-        continuity_evidence: None,
         direct_conversation: None,
         contact_agent_projections: Vec::new(),
         peer_endpoint: None,

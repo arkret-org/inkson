@@ -109,7 +109,6 @@ fn contact_remark_set_tombstone_and_display_name() {
         granted_by_peer_scopes: Vec::new(),
         bidirectional_scopes: Vec::new(),
         effective_scopes: None,
-        continuity_evidence: None,
         direct_conversation: None,
         contact_agent_projections: Vec::new(),
         peer_endpoint: None,

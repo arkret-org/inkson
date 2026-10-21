@@ -76,7 +76,7 @@ pub fn contact_peer_id(contact: &ContactListRow) -> arkret_sdk::DidCoreId {
 pub fn contact_peer_account_id(contact: &ContactListRow) -> Option<arkret_sdk::AccountId> {
     match contact.peer.contact_actor_id() {
         arkret_sdk::ActorId::Account { account_id } => Some(account_id),
-        arkret_sdk::ActorId::Service { .. } => None,
+        arkret_sdk::ActorId::Service { .. } | arkret_sdk::ActorId::Realm { .. } => None,
     }
 }
 
@@ -970,7 +970,6 @@ mod tests {
             granted_by_peer_scopes: vec![ContactScope::Invite],
             bidirectional_scopes: Vec::new(),
             effective_scopes: Some(Vec::new()),
-            continuity_evidence: None,
             direct_conversation: None,
             contact_agent_projections: Vec::new(),
             peer_endpoint: None,

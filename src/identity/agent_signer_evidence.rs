@@ -631,9 +631,10 @@ mod historical_result_tests {
                     }
                 }
             };
-            assert_eq!(request.recipient_account_id, recipient);
+            assert_eq!(request.recipient_account_id, Some(recipient));
             assert_eq!(request.queries, vec![expected_selector.clone()]);
             let outcome = arkret_sdk::SignerKeysQueryOutcome {
+                recipient_actor_id: None,
                 request_id: request.request_id.clone(),
                 realm_id: request.realm_id.clone(),
                 recipient_account_id: request.recipient_account_id.clone(),

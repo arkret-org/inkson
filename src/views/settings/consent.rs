@@ -55,6 +55,7 @@ struct ConsentRow {
 fn consent_peer_label(peer: &arkret_sdk::ConsentPeer) -> String {
     match peer {
         arkret_sdk::ConsentPeer::Actor { actor_id } => match actor_id {
+            arkret_sdk::ActorId::Realm { realm_actor_id } => realm_actor_id.to_string(),
             arkret_sdk::ActorId::Account { account_id } => format!(
                 "{} @ {}",
                 account_id.principal_id.as_str(),

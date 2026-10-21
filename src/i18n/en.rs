@@ -3127,19 +3127,6 @@ fn add_contacts_keys(dict: &mut TranslationDict) {
         "contacts.scope_update.label",
         "Permissions you grant this contact",
     );
-    dict.set("contacts.history.compact", "Compact contact history");
-    dict.set("contacts.history.retry", "Retry history confirmation");
-    dict.set("contacts.history.hint", "Use this when repeated contact requests need history recovery. This keeps the existing contact relationship.");
-    dict.set("contacts.history.submitting", "Submitting history request…");
-    dict.set(
-        "contacts.history.pending",
-        "Waiting for the other server to confirm. You can retry later.",
-    );
-    dict.set("contacts.history.committed", "Contact history compacted.");
-    dict.set(
-        "contacts.history.session_changed",
-        "The account session changed. Reopen this page and retry.",
-    );
     dict.set("contacts.scope_update.save", "Save permissions");
     dict.set("contacts.scope_update.saving", "Saving permissions…");
     dict.set(

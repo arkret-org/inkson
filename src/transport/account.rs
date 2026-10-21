@@ -200,7 +200,7 @@ pub async fn update_profile(
         if patch.is_empty() {
             anyhow::bail!("profile update patch is empty");
         }
-        if profile.principal_id != principal_id {
+        if profile.principal_id.as_ref() != Some(&principal_id) {
             anyhow::bail!("accepted account profile belongs to a different principal");
         }
         let profile_id = profile.id.ok_or_else(|| {
@@ -240,13 +240,14 @@ pub async fn update_profile(
             .transpose()?;
         let principal_control_realm_id = authority_evidence.principal_control_realm_id.clone();
         let profile = arkret_models_identity::ActorProfileDefinition {
-            principal_id: principal_id.clone(),
+            principal_id: Some(principal_id.clone()),
+            actor_id: None,
             actor_kind: arkret_sdk::ActorKind::User,
             display_name: display_name.to_owned(),
             handle: None,
             agent_slug: None,
             avatar_blob_ref,
-            accountable_principal_ids: Vec::new(),
+            accountable_principal_ids: None,
             profile_fields,
         };
         crate::operation::ak_ops::account_profile_create(

@@ -332,6 +332,8 @@ fn build_mls_keypackage_claim_request_with_requester(
     ));
     let signed_at = crate::clock::now_utc();
     let unsigned = arkret_sdk::PeerKeyPackagesClaimUnsignedRequest {
+        target_actor_id: None,
+        requester_actor_id: None,
         claim_request_id: arkret_sdk::Base64UrlString::new(claim_request_id.trim().to_owned())
             .map_err(anyhow::Error::msg)?,
         target_account_id,
@@ -393,8 +395,13 @@ fn build_mls_keypackage_claim_request_with_requester(
         | arkret_sdk::PeerKeyPackageRequesterAuthorization::Agent {
             signature: proof, ..
         } => proof.sig = signature,
+        arkret_sdk::PeerKeyPackageRequesterAuthorization::RealmDevice { .. } => {
+            anyhow::bail!("Realm Device claim requires its exact Realm authority signer")
+        }
     }
     let body = arkret_sdk::KeyPackagesClaimRequestBody {
+        target_actor_id: unsigned.target_actor_id,
+        requester_actor_id: unsigned.requester_actor_id,
         claim_request_id: unsigned.claim_request_id,
         target_account_id: unsigned.target_account_id,
         requester_account_id: unsigned.requester_account_id,

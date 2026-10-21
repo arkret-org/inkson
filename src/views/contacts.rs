@@ -121,21 +121,6 @@ fn scope_label(scope: &ContactScope) -> String {
     tr(key)
 }
 
-/// The production control also used by the browser regression test.
-#[component]
-pub fn ContactHistoryAction(busy: bool, pending: bool, oncompact: EventHandler<()>) -> Element {
-    rsx! { div { class: "contact-history-actions",
-        Button {
-            variant: ButtonVariant::Secondary,
-            "data-testid": "contact-history-compact",
-            disabled: busy,
-            onclick: move |_| oncompact.call(()),
-            {tr(if pending { "contacts.history.retry" } else { "contacts.history.compact" })}
-        }
-        div { class: "muted", {tr("contacts.history.hint")} }
-    } }
-}
-
 #[derive(Clone, PartialEq)]
 struct ContactSessionStamp {
     account: Option<(arkret_sdk::AccountId, arkret_sdk::DeviceId, String)>,
@@ -154,78 +139,6 @@ impl ContactSessionStamp {
             generation: (session.session_generation)(),
         }
     }
-}
-
-fn compact_contact_history(
-    base: String,
-    token: Signal<String>,
-    peer: arkret_sdk::contact_operations::ContactPeer,
-    mut busy: Signal<bool>,
-    mut status: Signal<ContactFeedback>,
-    on_changed: EventHandler<()>,
-) {
-    if busy() {
-        return;
-    }
-    let session = crate::app::SessionContext::get();
-    let started = ContactSessionStamp::capture(session, token);
-    let scope = crate::secure_key_store::active_device_seed_scope();
-    if started.base != base
-        || started.token.is_empty()
-        || !started.account.as_ref().zip(scope.as_ref()).is_some_and(
-            |((account, device, server), scope)| {
-                account == &scope.authority
-                    && device == &scope.device_id
-                    && server.trim_end_matches('/') == base.trim_end_matches('/')
-            },
-        )
-    {
-        status.set(ContactFeedback::new("contacts.history.session_changed"));
-        return;
-    }
-    let fence = match crate::transport::auth::AuthoringSessionFence::capture() {
-        Ok(fence) => fence,
-        Err(_) => {
-            status.set(ContactFeedback::new("contacts.history.session_changed"));
-            return;
-        }
-    };
-    busy.set(true);
-    status.set(ContactFeedback::new("contacts.history.submitting"));
-    spawn(async move {
-        let dispatch_fence = fence.clone();
-        let dispatch_stamp = started.clone();
-        let result = with_authed_sdk_client(&base, started.token.clone(), |http| async move {
-            dispatch_fence.check()?;
-            anyhow::ensure!(
-                ContactSessionStamp::capture(session, token) == dispatch_stamp,
-                "Contact history session changed before dispatch"
-            );
-            crate::transport::compact_contact_history(&http, peer).await
-        })
-        .await;
-        if fence.check().is_err() || ContactSessionStamp::capture(session, token) != started {
-            return;
-        }
-        match result {
-            Ok(outcome) => {
-                use arkret_sdk::contact_operations::ContactContinuityCheckpointStatus;
-                let committed = outcome.status == ContactContinuityCheckpointStatus::Committed;
-                status.set(ContactFeedback::new(if committed {
-                    "contacts.history.committed"
-                } else {
-                    "contacts.history.pending"
-                }));
-                if committed {
-                    on_changed.call(());
-                }
-            }
-            Err(error) => {
-                status.set(ContactFeedback::new("contacts.action_failed").with_api_error(error))
-            }
-        }
-        busy.set(false);
-    });
 }
 
 /// Embeddable contact-request form. Used both as the modal body inside
@@ -354,9 +267,9 @@ fn ContactRow(
     let mut busy = use_signal(|| false);
     let mut confirm_block = use_signal(|| false);
     let session = crate::app::SessionContext::get();
-    let history_session = use_memo(move || ContactSessionStamp::capture(session, token));
+    let action_session = use_memo(move || ContactSessionStamp::capture(session, token));
     use_effect(move || {
-        let _ = history_session.read();
+        let _ = action_session.read();
         busy.set(false);
         row_status.set(ContactFeedback::default());
     });
@@ -1124,18 +1037,6 @@ fn ContactRow(
                         onclick: move |_| confirm_block.set(true),
                         {tr("contacts.action.block")}
                     }
-                }
-            }
-
-            if advanced && contact.peer.contact_actor_id().as_account_id().is_some()
-                && (is_accepted || state == arkret_sdk::ContactState::Tombstoned) {
-                ContactHistoryAction {
-                    busy: busy(), pending: row_status.read().key == "contacts.history.pending",
-                    oncompact: {
-                        let base = base_url.clone();
-                        let peer = contact.peer.clone();
-                        move |_| compact_contact_history(base.clone(), token, peer.clone(), busy, row_status, on_changed)
-                    },
                 }
             }
 

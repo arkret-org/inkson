@@ -185,6 +185,7 @@ pub(crate) async fn freeze_and_request<F: FnOnce(PreparedReview)>(
     // enqueue, forwarding, membership transition, or Welcome is performed here.
     let signed = submitter.author_for_direct_submission(&local).await?;
     let request = ManagementReviewRequestBody {
+        configuration_ref: None,
         request_id: arkret_sdk::RequestId::new_v7_at(crate::clock::now_unix_ms()).to_string(),
         effective_scope: ScopeRef::Realm { realm_id: realm },
         management_operation: operation,

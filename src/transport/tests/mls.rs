@@ -110,7 +110,8 @@ fn keypackage_claim_request_carries_required_capabilities() {
                 &requester_device_authorize_event_id
             );
         }
-        arkret_sdk::PeerKeyPackageRequesterAuthorization::Agent { .. } => {
+        arkret_sdk::PeerKeyPackageRequesterAuthorization::Agent { .. }
+        | arkret_sdk::PeerKeyPackageRequesterAuthorization::RealmDevice { .. } => {
             panic!("human caller must author device authorization")
         }
     }
