@@ -906,6 +906,18 @@ fn check_creator_own_source(
 }
 
 impl InksonOutboundStore {
+    /// The exact AccountId protecting this existing vault namespace.
+    pub(crate) fn account_id(&self) -> Option<&arkret_sdk::AccountId> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.protection.as_ref().map(|(account, _)| account)
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            Some(&self.authority)
+        }
+    }
+
     /// Freeze the signed retry unit and its encrypted provider state in the
     /// same existing vault write. No checkpoint is published before this cut.
     pub(crate) async fn freeze_mls_commit(

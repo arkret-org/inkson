@@ -2971,32 +2971,35 @@ fn add_contacts_keys_zh(dict: &mut TranslationDict) {
         "服务端尚未解析该授权，放弃操作将等待授权记录就绪。如仍未完成，请同步后重试。",
     );
     dict.set(
-        "consent.full_set_help",
-        "编辑前先读取对方的完整许可。保存会替换该对方的整个许可集合。",
+        "consent.edit_intro",
+        "编辑单个对方的完整许可。读取当前值、复核改动后确认。",
+    );
+    dict.set("consent.closed", "所有许可已关闭");
+    dict.set("consent.edit_select", "选择对方");
+    dict.set("consent.grantee_station_label", "对方的 Station 身份");
+    dict.set("consent.read_complete", "读取完整许可");
+    dict.set(
+        "consent.edit_preserve",
+        "过期、未来生效和附条件的许可均保留显示。未修改的条目保持原样。确认过期后需重新读取。",
+    );
+    dict.set("consent.complete_permissions", "完整许可及条件");
+    dict.set("consent.preview", "复核改动");
+    dict.set("consent.before", "当前许可");
+    dict.set("consent.after", "替换后的许可");
+    dict.set("consent.confirm_replace", "确认完整替换");
+    dict.set("consent.replace_success", "许可已替换");
+    dict.set(
+        "consent.never_written",
+        "尚未为此对方作出决定。保存空集合会明确关闭所有许可。",
     );
     dict.set(
-        "consent.peer_station",
-        "Account 对方 Station（输入主体 DID 时填写）",
+        "consent.existing",
+        "将替换已有决定。改动被接受前，当前许可继续生效。",
     );
-    dict.set("consent.read_full", "读取并编辑许可");
+    dict.set("consent.recover_original", "恢复原待定写入");
     dict.set(
-        "consent.empty_help",
-        "取消全部许可会保存为空集合。过期和未来生效的条目仍会完整显示。",
-    );
-    dict.set("consent.not_before", "生效时间（RFC 3339，可留空）");
-    dict.set("consent.expires_at", "到期时间（RFC 3339，可留空）");
-    dict.set("consent.constraints", "附加条件（JSON 数组，可留空）");
-    dict.set("consent.evidence_ref", "依据引用（可留空）");
-    dict.set("consent.reason", "原因（可留空）");
-    dict.set("consent.replace_submit", "保存完整许可集合");
-    dict.set("consent.replace_success", "许可集合已保存。");
-    dict.set(
-        "consent.replace_queued",
-        "已进入耐久发送队列，等待最终结果。",
-    );
-    dict.set(
-        "consent.replace_failed",
-        "未保存。请重新读取并确认修改后再提交",
+        "consent.recovery_complete",
+        "已检查恢复结果。编辑前请重新读取当前许可。",
     );
     dict.set("consent.title", "联系许可");
     dict.set("consent.grant", "授予许可");

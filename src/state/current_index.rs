@@ -2135,12 +2135,10 @@ impl CurrentIndex {
     ) -> anyhow::Result<CurrentStage> {
         let check = || -> anyhow::Result<()> {
             guard()?;
-            let value = response.value()?;
-            value.validate_for_request(
-                response.request(),
-                value.governance_generation,
-                crate::clock::now_utc(),
-            )?;
+            // This unforgeable SDK response was bound only after verifying
+            // the independent PCR/authority tenure, assertion method and JWS.
+            // Recheck its short authority/assertion lease at each install cut.
+            response.value()?;
             Ok(())
         };
         check()?;
@@ -2200,6 +2198,27 @@ impl CurrentIndex {
     ) -> anyhow::Result<CurrentStage> {
         let lease = self.acquire_lease().await?;
         guard()?;
+        if let Some(response) = &targeted_consent
+            && matches!(
+                response.value()?.current,
+                arkret_sdk::ConsentCurrentState::NeverWritten
+            )
+        {
+            let arkret_sdk::ConsentPeer::Actor { actor_id } = &response.request().peer;
+            let selector = CurrentSelector::Consent {
+                peer_id: actor_id.clone(),
+            };
+            anyhow::ensure!(
+                self.visible_selector(
+                    response.value()?.realm_id.as_str(),
+                    &selector,
+                    self.generation.load(Ordering::Acquire)
+                )
+                .await?
+                .is_none(),
+                "never-written Consent contradicts an installed accepted peer current"
+            );
+        }
         let expected_generation = committed_generation()?;
         anyhow::ensure!(
             !self.is_poisoned(),

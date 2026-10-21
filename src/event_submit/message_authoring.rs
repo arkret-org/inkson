@@ -26,7 +26,6 @@ use super::*;
 /// can change it, and no retry it makes can consume another MLS sender
 /// counter.
 pub(crate) struct MessageAuthoringPlan {
-    realm_id: arkret_sdk::RealmId,
     scope: arkret_sdk::ScopeRef,
     actor_id: arkret_sdk::ActorId,
     intent: MessageAuthoringIntent,
@@ -99,7 +98,6 @@ impl EventSubmitter {
             return Err(failure("the message scope belongs to another Realm"));
         }
         Ok(MessageAuthoringPlan {
-            realm_id,
             scope,
             actor_id: arkret_sdk::ActorId::account(account),
             intent,
@@ -113,11 +111,11 @@ impl EventSubmitter {
         attempt: &MessageSendAttempt,
     ) -> std::result::Result<QueuedSubmission, MessageAuthoringFailure> {
         let plan = &attempt.session;
-        let operation = crate::operation::TypedOperationBuilder::new::<
+        let operation = crate::operation::TypedOperationBuilder::new_for_actor::<
             arkret_sdk::event_spec::MessageCreate,
         >(
-            plan.realm_id.as_str(),
-            plan.actor_id.signing_principal_id().as_str(),
+            plan.scope.clone(),
+            plan.actor_id.clone(),
             plan.intent.payload(),
         )
         .target_ref(plan.intent.strand_id.as_str())
@@ -126,9 +124,6 @@ impl EventSubmitter {
         .with_local_operation_id(crate::operation::LocalOperationId::from_holder_key(
             attempt.local_operation_id.clone(),
         ));
-        let operation = operation
-            .with_effective_scope(plan.scope.clone())
-            .map_err(failure)?;
         let event_intent = operation.intent().clone().with_created_at(plan.created_at);
         self.ensure_recovery_material_ready(&event_intent)
             .await

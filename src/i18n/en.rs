@@ -3293,30 +3293,27 @@ fn add_contacts_keys(dict: &mut TranslationDict) {
     );
     dict.set("settings.capabilities.hint_subject", "the server rejected this because the signer is not the grant's subject — only the subject may relinquish a grant; ask the issuer (or Realm owner) to revoke it instead");
     dict.set("settings.capabilities.hint_pending", "the grant is not yet resolved in the server projection — the relinquish stays pending until the grant row lands; retry after sync if it does not settle");
+    dict.set("consent.never_written", "No previous decision for this peer. Saving an empty set explicitly closes all permissions.");
+    dict.set("consent.existing", "An existing decision will be replaced. The current permissions stay in effect until your change is accepted.");
+    dict.set("consent.edit_intro", "Edit one peer's complete permissions. Read the current value, review the change, then confirm.");
+    dict.set("consent.closed", "All permissions closed");
+    dict.set("consent.edit_select", "Select peer");
+    dict.set("consent.grantee_station_label", "Peer Station identity");
+    dict.set("consent.read_complete", "Read complete permissions");
+    dict.set("consent.edit_preserve", "Expired, future and constrained permissions remain visible. Unchanged entries are preserved. Read again if the confirmation expires.");
     dict.set(
-        "consent.full_set_help",
-        "Read a peer’s complete permissions before editing. Changes replace that whole set.",
+        "consent.complete_permissions",
+        "Complete permissions and conditions",
     );
+    dict.set("consent.preview", "Review changes");
+    dict.set("consent.before", "Current permissions");
+    dict.set("consent.after", "Replacement permissions");
+    dict.set("consent.confirm_replace", "Confirm replacement");
+    dict.set("consent.replace_success", "Permissions replaced");
+    dict.set("consent.recover_original", "Recover original pending write");
     dict.set(
-        "consent.peer_station",
-        "Account peer Station (when entering a principal DID)",
-    );
-    dict.set("consent.read_full", "Read and edit permissions");
-    dict.set("consent.empty_help", "Clearing every scope keeps an explicit empty permission set. Expired and future entries remain visible.");
-    dict.set("consent.not_before", "Valid from (RFC 3339, optional)");
-    dict.set("consent.expires_at", "Valid until (RFC 3339, optional)");
-    dict.set("consent.constraints", "Conditions (JSON array, optional)");
-    dict.set("consent.evidence_ref", "Evidence reference (optional)");
-    dict.set("consent.reason", "Reason (optional)");
-    dict.set("consent.replace_submit", "Save the complete permission set");
-    dict.set("consent.replace_success", "Permission set saved.");
-    dict.set(
-        "consent.replace_queued",
-        "Saved to the durable send queue; waiting for the final result.",
-    );
-    dict.set(
-        "consent.replace_failed",
-        "Not saved. Read again and review your changes before resubmitting",
+        "consent.recovery_complete",
+        "Recovery checked. Read the current permissions again before editing.",
     );
     dict.set("consent.title", "Consent");
     dict.set("consent.grant", "Grant consent");

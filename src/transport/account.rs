@@ -905,7 +905,7 @@ fn owned_agent_reply_update_needed(
 }
 
 /// List the holder-private consent cells visible to the authenticated
-/// actor (cells where the actor is either holder or peer). Spec
+/// holder. This is a display summary, never complete authoring input. Spec
 /// `identity/consent-model.md` §3 / OpenAPI `ak.self.consent.read.list.v1`.
 pub async fn consent_cells(
     http: &arkret_sdk::http_client::Client,
@@ -1201,107 +1201,158 @@ pub async fn tombstone_contact(
     }
 }
 
-/// A full edit prestate bound to the active account session. Summary rows cannot supply it.
-pub(crate) struct ConsentEditingSession {
-    source: arkret_sdk::http_client::own_station_results::BoundOwnStationResponse<
+/// One authenticated complete editing cut. Display summaries cannot construct it.
+#[derive(Clone)]
+pub(crate) struct ConsentEdit {
+    response: arkret_sdk::http_client::own_station_results::BoundOwnStationResponse<
         arkret_sdk::ConsentCurrentReadRequestBody,
         arkret_sdk::ConsentCurrentReadOutcome,
     >,
-    realm_id: arkret_sdk::RealmId,
-    root_authorization_ref: arkret_sdk::EventId,
+    fence: crate::transport::auth::AuthoringSessionFence,
 }
-impl ConsentEditingSession {
-    pub fn peer(&self) -> anyhow::Result<&arkret_sdk::ConsentPeer> {
-        self.source.value()?;
-        Ok(&self.source.request().peer)
+
+impl ConsentEdit {
+    pub(crate) fn check(&self) -> anyhow::Result<()> {
+        self.fence.check()?;
+        // SDK construction verifies the independent authority and JWS; every
+        // access retains that short authority/assertion and session lease.
+        self.response.value()?;
+        Ok(())
     }
-    pub fn permissions(&self) -> anyhow::Result<Vec<arkret_sdk::ConsentPermission>> {
-        Ok(match &self.source.value()?.current {
-            arkret_sdk::ConsentCurrentState::Present { result } => result.value.permissions.clone(),
-            arkret_sdk::ConsentCurrentState::NeverWritten => Vec::new(),
-        })
+    pub(crate) fn peer(&self) -> &arkret_sdk::ConsentPeer {
+        &self.response.request().peer
     }
-    pub fn expected_current(&self) -> anyhow::Result<arkret_sdk::ConsentExpectedCurrent> {
-        Ok(match &self.source.value()?.current {
-            arkret_sdk::ConsentCurrentState::Present { result } => {
-                arkret_sdk::ConsentExpectedCurrent::Present {
-                    revision: result.revision.clone(),
-                }
-            }
-            arkret_sdk::ConsentCurrentState::NeverWritten => {
+    pub(crate) fn permissions(&self) -> anyhow::Result<Vec<arkret_sdk::ConsentPermission>> {
+        self.check()?;
+        Ok(self
+            .response
+            .value()?
+            .current_permissions()
+            .unwrap_or_default()
+            .to_vec())
+    }
+    pub(crate) fn expected_current(&self) -> anyhow::Result<arkret_sdk::ConsentExpectedCurrent> {
+        self.check()?;
+        Ok(self.response.value()?.expected_current())
+    }
+    pub(crate) fn replacement(
+        &self,
+        raw: &str,
+    ) -> anyhow::Result<arkret_sdk::ConsentReplacePayload> {
+        let payload = arkret_sdk::ConsentReplacePayload {
+            peer: self.peer().clone(),
+            expected_current: self.expected_current()?,
+            permissions: serde_json::from_str(raw)?,
+        };
+        payload.validate()?;
+        anyhow::ensure!(
+            matches!(
+                payload.expected_current,
                 arkret_sdk::ConsentExpectedCurrent::NeverWritten
-            }
-        })
-    }
-}
-pub(crate) async fn read_consent_editing_session(
-    http: &arkret_sdk::http_client::Client,
-    peer: arkret_sdk::ConsentPeer,
-) -> anyhow::Result<ConsentEditingSession> {
-    let client = crate::transport::own_station_results::client_for_http(http).await?;
-    let holder = client.session()?.account_id().clone();
-    let realm_id =
-        crate::identity::principal_control::resolve_accepted(http, &holder.principal_id).await?;
-    let root_authorization_ref =
-        crate::identity::principal_control::current_root_authorization_ref(
-            http, &realm_id, &holder,
-        )
-        .await?;
-    let request = arkret_sdk::ConsentCurrentReadRequestBody {
-        holder_account_id: holder.clone(),
-        peer,
-        audience_actor_id: arkret_sdk::ActorId::service(holder.station_id.clone()),
-        nonce: crate::random::base64url_token(32, "Consent edit nonce unavailable")?,
-    };
-    let authority =
-        crate::transport::own_station_results::consent_authority(http, &client, &holder, &realm_id)
-            .await?;
-    let source = client
-        .consent_current(&request, &realm_id, &authority)
-        .await?;
-    let value = source.value()?;
-    anyhow::ensure!(
-        value.realm_id == realm_id,
-        "Consent edit prestate belongs to another inception PCR"
-    );
-    Ok(ConsentEditingSession {
-        source,
-        realm_id,
-        root_authorization_ref,
-    })
-}
-/// Submit the reviewed complete target. A conflict never triggers reread/merge/retry.
-pub(crate) async fn replace_consent(
-    submitter: &crate::event_submit::EventSubmitter,
-    session: &ConsentEditingSession,
-    permissions: Vec<arkret_sdk::ConsentPermission>,
-) -> anyhow::Result<crate::models::SubmitEventResult> {
-    anyhow::ensure!(
-        submitter.authority()? == session.source.session().account_id(),
-        "Consent edit account changed"
-    );
-    let holder = session.source.session().account_id();
-    let event = crate::operation::ak_ops::consent_replace(
-        session.realm_id.as_str(),
-        holder.principal_id.as_str(),
-        &session.root_authorization_ref,
-        session.peer()?,
-        session.expected_current()?,
-        permissions,
-    )?
-    .build_sdk_event("inkson")?;
-    session.source.value()?;
-    match submitter.submit_consent_replacement(&event).await {
-        Err(error) => match error.downcast_ref::<crate::event_submit::DurablyQueuedError>() {
-            Some(pending) => Ok(crate::models::SubmitEventResult::queued(
-                pending.operation_id.clone(),
-            )),
-            None => Err(error),
-        },
-        result => result,
+            ) || payload.permissions != self.permissions()?,
+            "Consent replacement has no change"
+        );
+        Ok(payload)
     }
 }
 
+pub(crate) async fn read_consent_edit(
+    http: &arkret_sdk::http_client::Client,
+    state_store: &crate::runtime::input::StateStoreHandle,
+    holder: &arkret_sdk::AccountId,
+    registered_pcr: &arkret_sdk::RealmId,
+    peer: &arkret_sdk::ConsentPeer,
+) -> anyhow::Result<ConsentEdit> {
+    let fence = crate::transport::auth::AuthoringSessionFence::capture()?;
+    crate::event_submit::ensure_consent_replacement_settled(holder, peer).await?;
+    fence.check()?;
+    let epoch = crate::identity::device_directory::session_cache_epoch();
+    let principal = current_principal_for_authority(http, holder).await?;
+    anyhow::ensure!(
+        principal.principal_control_realm_id == *registered_pcr,
+        "Consent editor current principal differs from the registered PCR"
+    );
+    fence.check()?;
+    let client = crate::transport::own_station_results::client_for_http(http).await?;
+    anyhow::ensure!(
+        client.session()?.account_id() == holder,
+        "Consent editor belongs to another Account"
+    );
+    let authority = crate::transport::own_station_results::consent_current_authority(
+        http,
+        &client,
+        holder,
+        registered_pcr,
+    )
+    .await?;
+    let response = client
+        .consent_current(
+            &arkret_sdk::ConsentCurrentReadRequestBody {
+                holder_account_id: holder.clone(),
+                peer: peer.clone(),
+                audience_actor_id: arkret_sdk::ActorId::service(holder.station_id.clone()),
+                nonce: crate::random::base64url_token(32, "Consent read nonce unavailable")?,
+            },
+            registered_pcr,
+            &authority,
+        )
+        .await?;
+    crate::signal_receive_engine::install_consent_current_for_holder(
+        state_store,
+        holder,
+        registered_pcr,
+        &response,
+        arkret_sdk::ConsentScope::Invite,
+        epoch,
+        &|| fence.check(),
+    )
+    .await?;
+    let edit = ConsentEdit { response, fence };
+    edit.check()?;
+    Ok(edit)
+}
+
+/// Queue the confirmed complete replacement once. Unknown delivery replays the
+/// original signed Event through the ordinary durable authority queue.
+pub(crate) async fn replace_consent(
+    submitter: &crate::event_submit::EventSubmitter,
+    edit: &ConsentEdit,
+    replacement: arkret_sdk::ConsentReplacePayload,
+) -> anyhow::Result<crate::models::SubmitEventResult> {
+    edit.check()?;
+    let holder = &edit.response.request().holder_account_id;
+    anyhow::ensure!(
+        submitter.authority()? == holder,
+        "Consent writer belongs to another Account"
+    );
+    anyhow::ensure!(
+        replacement.peer == *edit.peer()
+            && replacement.expected_current == edit.expected_current()?,
+        "Consent confirmation belongs to another peer or read cut"
+    );
+    replacement.validate()?;
+    let realm = &edit.response.value()?.realm_id;
+    let root = crate::identity::principal_control::current_root_authorization_ref(
+        submitter.http(),
+        realm,
+        holder,
+    )
+    .await?;
+    edit.check()?;
+    let operation = crate::operation::ak_ops::consent_replace(
+        realm.as_str(),
+        holder.principal_id.as_str(),
+        &root,
+        edit.peer(),
+        replacement.expected_current,
+        replacement.permissions,
+    )?
+    .build_sdk_event("inkson")?;
+    edit.check()?;
+    let result = submitter.submit_sdk_event(&operation).await;
+    edit.fence.check()?;
+    result
+}
 /// Open an outbound consent request: ask `holder` to grant the
 /// authenticated actor the given scope. `scope` is the consent-model section 4
 /// enum **minus `invite`** — an invite belongs to invite delivery and the

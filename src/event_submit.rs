@@ -37,6 +37,8 @@ use crate::outbound_store::{InksonOutboundStore, OutboundLane};
 
 mod authoring_unit;
 mod authority;
+#[cfg(all(not(target_arch = "wasm32"), feature = "spec-conformance"))]
+pub(crate) mod conformance_transport;
 mod message_authoring;
 mod metadata;
 mod outbound_recovery;
@@ -74,8 +76,11 @@ impl garth::HostClock for InksonHostClock {
 }
 
 type InksonOutboundEngine = OutboundEngine<InksonOutboundStore, InksonHostClock>;
+#[cfg(not(all(not(target_arch = "wasm32"), feature = "spec-conformance")))]
 type InksonAuthorityClient =
     garth::AuthorityClient<arkret_sdk::http_client::own_station_results::OwnStationResultClient>;
+#[cfg(all(not(target_arch = "wasm32"), feature = "spec-conformance"))]
+type InksonAuthorityClient = garth::AuthorityClient<conformance_transport::ObservedTransport>;
 
 /// The write is safely persisted and will be retried.
 ///
@@ -439,6 +444,116 @@ pub(crate) async fn retained_sidecar_control_request(
         }
     }
     Ok(false)
+}
+
+/// A Direct confirmation has one durable authoring attempt until its terminal
+/// outcome is known; a lost response cannot produce a second bound Event.
+async fn ensure_direct_confirmation_settled(
+    authority: &arkret_sdk::AccountId,
+    realm: &arkret_sdk::RealmId,
+) -> anyhow::Result<()> {
+    let outbound = OutboundEngine::new(
+        InksonOutboundStore::open(authority, OutboundLane::Standard)?,
+        InksonHostClock,
+    );
+    for item in &outbound.snapshot().await?.items {
+        let event = queued_event(item);
+        if event.kind == arkret_sdk::EventKind::DirectConversationBound
+            && &event.realm_id == realm
+            && item.status != SendQueueStatus::Committed
+            && !mls_submission_definitively_rejected(item)
+        {
+            return Err(DurablyQueuedError {
+                operation_id: event.event_id.to_string(),
+                reason: Some(
+                    "original Direct confirmation awaits its exact terminal outcome".to_owned(),
+                ),
+            }
+            .into());
+        }
+    }
+    Ok(())
+}
+
+fn pending_consent_replacement_from_snapshot(
+    snapshot: &garth::SendQueueSnapshot,
+    authority: &arkret_sdk::AccountId,
+    peer: &arkret_sdk::ConsentPeer,
+) -> anyhow::Result<Option<arkret_sdk::EventId>> {
+    for item in &snapshot.items {
+        let event = queued_event(item);
+        if event.kind != arkret_sdk::EventKind::ConsentReplace
+            || event.actor_id.as_account_id() != Some(authority)
+            || item.status == SendQueueStatus::Committed
+            || mls_submission_definitively_rejected(item)
+        {
+            continue;
+        }
+        let payload: arkret_sdk::ConsentReplacePayload =
+            serde_json::from_value(serde_json::to_value(&event.payload)?)?;
+        if &payload.peer == peer {
+            return Ok(Some(event.event_id.clone()));
+        }
+    }
+    Ok(None)
+}
+
+fn requeue_original_consent(
+    queue: &mut garth::SendQueue,
+    authority: &arkret_sdk::AccountId,
+    peer: &arkret_sdk::ConsentPeer,
+    original: &QueuedSubmission,
+    now: chrono::DateTime<chrono::Utc>,
+    check: impl Fn() -> anyhow::Result<()>,
+) -> garth::Result<bool> {
+    let invalid = |error: anyhow::Error| garth::Error::Protocol(error.to_string());
+    check().map_err(invalid)?;
+    original.validate_queued_request()?;
+    let event = original.primary_event();
+    if event.kind != arkret_sdk::EventKind::ConsentReplace
+        || event.actor_id.as_account_id() != Some(authority)
+    {
+        return Err(garth::Error::Protocol(
+            "Consent recovery original belongs to another Account or Event kind".into(),
+        ));
+    }
+    let payload: arkret_sdk::ConsentReplacePayload =
+        serde_json::from_value(serde_json::to_value(&event.payload)?)?;
+    if &payload.peer != peer {
+        return Err(garth::Error::Protocol(
+            "Consent recovery original belongs to another peer".into(),
+        ));
+    }
+    let current = queue
+        .get(&original.event_id)
+        .ok_or_else(|| garth::Error::Storage("pending Consent original disappeared".into()))?;
+    ensure_exact_queued_request(&current.submission, original).map_err(invalid)?;
+    check().map_err(invalid)?;
+    queue.retry_unknown(&original.event_id, now)
+}
+
+/// An unknown replacement retains its original Event across editor remounts
+/// and process restart. The ordinary queue must settle before a new edit.
+pub(crate) async fn ensure_consent_replacement_settled(
+    authority: &arkret_sdk::AccountId,
+    peer: &arkret_sdk::ConsentPeer,
+) -> anyhow::Result<()> {
+    let outbound = OutboundEngine::new(
+        InksonOutboundStore::open(authority, OutboundLane::Standard)?,
+        InksonHostClock,
+    );
+    if let Some(event) =
+        pending_consent_replacement_from_snapshot(&outbound.snapshot().await?, authority, peer)?
+    {
+        return Err(DurablyQueuedError {
+            operation_id: event.to_string(),
+            reason: Some(
+                "previous Consent replacement awaits its exact terminal outcome".to_owned(),
+            ),
+        }
+        .into());
+    }
+    Ok(())
 }
 
 fn pending_chat_event_ids_from_snapshot(
@@ -1091,9 +1206,10 @@ impl EventSubmitter {
     }
 
     async fn authority_client(&self) -> anyhow::Result<InksonAuthorityClient> {
-        Ok(garth::AuthorityClient::new(
-            crate::transport::own_station_results::client_for_http(&self.http).await?,
-        ))
+        let transport = crate::transport::own_station_results::client_for_http(&self.http).await?;
+        #[cfg(all(not(target_arch = "wasm32"), feature = "spec-conformance"))]
+        let transport = conformance_transport::ObservedTransport(transport);
+        Ok(garth::AuthorityClient::new(transport))
     }
 
     pub(crate) fn verify_publication<T: arkret_sdk::PublicationRequest>(
@@ -1641,6 +1757,20 @@ impl EventSubmitter {
         self.refresh_direct_message_authority(&intent, None).await?;
         let local_operation_id = operation.local_operation_id().to_string();
         let _single_writer = outbound_submit_lock().lock().await;
+        if intent.kind() == &arkret_sdk::EventKind::DirectConversationBound {
+            ensure_direct_confirmation_settled(
+                self.authority()?,
+                intent
+                    .realm_id_opt()
+                    .ok_or_else(|| anyhow::anyhow!("Direct confirmation omits Realm"))?,
+            )
+            .await?;
+        }
+        if intent.kind() == &arkret_sdk::EventKind::ConsentReplace {
+            let replacement = intent.typed_payload::<arkret_sdk::event_spec::ConsentReplace>()?;
+            ensure_consent_replacement_settled(self.authority()?, &replacement.peer).await?;
+        }
+
         #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
         let trace = OutboundWriterTrace::acquired("submit_event");
         let event = self.author_intent(&intent).await?;
@@ -2468,6 +2598,17 @@ impl EventSubmitter {
         write: &QueuedWrite,
         outbound: &InksonOutboundEngine,
     ) -> anyhow::Result<Option<garth::SendQueueItem>> {
+        self.persist_queued_write_checked(write, outbound, &|| Ok(()))
+            .await
+    }
+
+    async fn persist_queued_write_checked(
+        &self,
+        write: &QueuedWrite,
+        outbound: &InksonOutboundEngine,
+        check: &(impl Fn() -> anyhow::Result<()> + garth::MaybeSendSync),
+    ) -> anyhow::Result<Option<garth::SendQueueItem>> {
+        check()?;
         let event_id = &write.submission.event_id;
         let event = write.submission.primary_event();
         let existing = outbound
@@ -2476,6 +2617,7 @@ impl EventSubmitter {
             .items
             .into_iter()
             .find(|item| item.event_id() == event_id);
+        check()?;
         if let Some(item) = &existing {
             ensure_exact_queued_request(&item.submission, &write.submission)?;
         }
@@ -2499,6 +2641,7 @@ impl EventSubmitter {
                     .map_err(anyhow::Error::from)?;
             }
         }
+        check()?;
         if let Some(state_store) = self.state_store.as_ref() {
             state_store.write(|store| {
                 record_queued_operation_identity(store, &write.local_operation_id, event);
@@ -2513,6 +2656,7 @@ impl EventSubmitter {
             .items
             .into_iter()
             .find(|item| item.event_id() == event_id && item.status.is_terminal());
+        check()?;
         if let (Some(state_store), Some(item)) = (self.state_store.as_ref(), settled.as_ref()) {
             state_store.write(|store| {
                 reconcile_settled_outbound_item(store, item);
@@ -2522,8 +2666,21 @@ impl EventSubmitter {
     }
 
     async fn enqueue_and_drive(&self, write: QueuedWrite) -> anyhow::Result<garth::SendQueueItem> {
+        self.enqueue_and_drive_checked(write, || Ok(())).await
+    }
+
+    async fn enqueue_and_drive_checked(
+        &self,
+        write: QueuedWrite,
+        check: impl Fn() -> anyhow::Result<()> + garth::MaybeSendSync,
+    ) -> anyhow::Result<garth::SendQueueItem> {
+        check()?;
         let outbound = self.outbound(write.lane)?;
-        if let Some(item) = self.persist_queued_write(&write, &outbound).await? {
+        if let Some(item) = self
+            .persist_queued_write_checked(&write, &outbound, &check)
+            .await?
+        {
+            check()?;
             return Ok(item);
         }
         let QueuedWrite {
@@ -2536,18 +2693,27 @@ impl EventSubmitter {
         let event_id = submission.event_id;
 
         self.cancel_quarantined_creator_items(&outbound).await?;
+        check()?;
         let authority_client = self.authority_client().await?;
+        check()?;
         let options = arkret_sdk::http_client::ClientRequestOptions::new()
             .request_id(event_id.to_string())
             .idempotency_key(event_id.to_string());
         let mut interactive_retries = 0_u8;
         loop {
-            self.recover_accepted_application_items(&outbound).await?;
+            check()?;
+            self.recover_accepted_application_items_checked(&outbound, &check)
+                .await?;
+            check()?;
             let fence = self.resolve_queue_generation_fence(&outbound).await?;
+            check()?;
             self.quarantine_superseded_items(&outbound, &fence).await?;
+            check()?;
             let replay_store = outbound.store().clone();
+            let check_send = &check;
             match outbound
                 .submit_next_checked(&authority_client, &options, |request| async move {
+                    check_send().map_err(|error| error.to_string())?;
                     self.ensure_creator_quarantine_replay_fence(&request)
                         .await
                         .map_err(|error| error.to_string())?;
@@ -2566,6 +2732,7 @@ impl EventSubmitter {
                     self.ensure_queued_application_send_gate(&request)
                         .await
                         .map_err(|error| error.to_string())?;
+                    check_send().map_err(|error| error.to_string())?;
                     self.verify_publication(request)
                         .map_err(|error| error.to_string())
                 })
@@ -2575,7 +2742,9 @@ impl EventSubmitter {
                 OutboundEngineOutcome::Committed { item, commit }
                     if item.event_id() == &event_id =>
                 {
+                    check()?;
                     self.run_post_accept(&post_accept, &item, &commit).await?;
+                    check()?;
                     if let Some(state_store) = self.state_store.as_ref() {
                         state_store.write(|store| {
                             reconcile_settled_outbound_item(store, &item);
@@ -2584,6 +2753,7 @@ impl EventSubmitter {
                     return Ok(*item);
                 }
                 OutboundEngineOutcome::Rejected { item, .. } if item.event_id() == &event_id => {
+                    check()?;
                     if let Some(state_store) = self.state_store.as_ref() {
                         state_store.write(|store| {
                             reconcile_settled_outbound_item(store, &item);
@@ -2665,6 +2835,7 @@ impl EventSubmitter {
                 OutboundEngineOutcome::Committed { item, .. }
                 | OutboundEngineOutcome::Rejected { item, .. }
                 | OutboundEngineOutcome::Failed { item, .. } => {
+                    check()?;
                     self.settle_other_item(&item);
                 }
                 OutboundEngineOutcome::Retry { item, delay } => {
@@ -2759,6 +2930,106 @@ impl EventSubmitter {
     /// client, so process and browser restarts eventually drain pending work.
     pub(crate) async fn drain_outbound(&self) -> anyhow::Result<usize> {
         self.drain_lane(OutboundLane::Standard).await
+    }
+
+    /// Explicitly resume one peer's original Consent write after a local
+    /// failure. No current read, Event authoring or signing occurs here.
+    pub(crate) async fn recover_pending_consent(
+        &self,
+        peer: &arkret_sdk::ConsentPeer,
+    ) -> anyhow::Result<Option<SubmitEventResult>> {
+        let authority = self.authority()?.clone();
+        let epoch = crate::identity::device_directory::session_cache_epoch();
+        let fence = crate::transport::auth::AuthoringSessionFence::capture()?;
+        let device = arkret_sdk::DeviceId::new(
+            fence
+                .signer
+                .device_id()
+                .ok_or_else(|| anyhow::anyhow!("Consent recovery requires an active device"))?
+                .to_owned(),
+        )?;
+        let _single_writer = outbound_submit_lock().lock().await;
+        let outbound = self.outbound(OutboundLane::Standard)?;
+        let check = || -> anyhow::Result<()> {
+            fence.check()?;
+            self.ensure_device_authoring_fence(&authority, &device, &fence.signer, epoch)?;
+            anyhow::ensure!(
+                self.state_store.is_some(),
+                "Consent recovery requires the active account store"
+            );
+            anyhow::ensure!(
+                outbound.store().account_id() == Some(&authority),
+                "Consent recovery queue belongs to another Account"
+            );
+            if let Some(client) = self.http.own_station_result_client()? {
+                anyhow::ensure!(
+                    client.session()?.account_id() == &authority,
+                    "Consent recovery HTTP session names another Account"
+                );
+            }
+            Ok(())
+        };
+        check()?;
+        let snapshot = outbound.snapshot().await?;
+        let Some(event_id) =
+            pending_consent_replacement_from_snapshot(&snapshot, self.authority()?, peer)?
+        else {
+            return Ok(None);
+        };
+        let original = snapshot
+            .items
+            .into_iter()
+            .find(|item| item.event_id() == &event_id)
+            .ok_or_else(|| anyhow::anyhow!("pending Consent original disappeared"))?;
+        check()?;
+        let now = crate::clock::now_utc();
+        let retained = original.submission.clone();
+        outbound
+            .store()
+            .mutate_outbound(|queue| {
+                requeue_original_consent(queue, &authority, peer, &retained, now, &check)
+            })
+            .await?;
+        check()?;
+        let pending = outbound
+            .snapshot()
+            .await?
+            .items
+            .into_iter()
+            .find(|item| item.event_id() == &event_id)
+            .ok_or_else(|| anyhow::anyhow!("pending Consent original disappeared"))?;
+        let source = crate::transport::own_station_results::client_for_http(&self.http).await?;
+        check()?;
+        // An accepted historical original settles even after a device change;
+        // recovery never tries to re-sign it with the replacement device.
+        if let Some(settled) = outbound_recovery::recover_disclosed_event_item(
+            &outbound, &authority, &source, &pending, &check,
+        )
+        .await?
+        {
+            check()?;
+            if let Some(state) = &self.state_store {
+                state.write(|store| {
+                    reconcile_settled_outbound_item(store, &settled);
+                });
+            }
+            return Ok(Some(settled_outbound_result(&settled)?));
+        }
+        check()?;
+        let item = self
+            .enqueue_and_drive_checked(
+                QueuedWrite {
+                    lane: OutboundLane::Standard,
+                    submission: original.submission,
+                    local_operation_id: event_id.to_string(),
+                    post_accept: PostAccept::None,
+                    retry_scope: InteractiveRetryScope::Ordinary,
+                },
+                &check,
+            )
+            .await?;
+        check()?;
+        Ok(Some(settled_outbound_result(&item)?))
     }
 
     /// Resume queued `ak.mls.commit` submissions.
@@ -3798,13 +4069,20 @@ impl EventSubmitter {
         );
         let principal =
             crate::transport::account::current_principal_for_authority(&self.http, holder).await?;
+        let registered = crate::config::LocalConfigStore::default()
+            .known_account_context(holder)
+            .ok_or_else(|| {
+                anyhow::anyhow!("Presence Consent requires the registered Account PCR pin")
+            })?;
+        anyhow::ensure!(
+            principal.principal_control_realm_id == registered.principal_control_realm_id,
+            "Presence Consent current principal differs from the registered PCR"
+        );
+        let pcr = &registered.principal_control_realm_id;
         guard()?;
         let client = crate::transport::own_station_results::client_for_http(&self.http).await?;
-        let authority = crate::transport::own_station_results::consent_authority(
-            &self.http,
-            &client,
-            holder,
-            &principal.principal_control_realm_id,
+        let authority = crate::transport::own_station_results::consent_current_authority(
+            &self.http, &client, holder, pcr,
         )
         .await?;
         let mut responses = Vec::new();
@@ -3823,7 +4101,7 @@ impl EventSubmitter {
                             "Presence Consent nonce unavailable",
                         )?,
                     },
-                    &principal.principal_control_realm_id,
+                    pcr,
                     &authority,
                 )
                 .await?;
@@ -3831,7 +4109,7 @@ impl EventSubmitter {
                 crate::signal_receive_engine::install_consent_current_for_holder(
                     store,
                     holder,
-                    &principal.principal_control_realm_id,
+                    pcr,
                     &response,
                     arkret_sdk::ConsentScope::Presence,
                     epoch,
@@ -3850,9 +4128,7 @@ impl EventSubmitter {
             || Ok(store.read(|s| s.current_generation())),
         )
         .await?;
-        let progress = index
-            .read_progress(principal.principal_control_realm_id.as_str())
-            .await?;
+        let progress = index.read_progress(pcr.as_str()).await?;
         for response in &responses {
             let value = response.value()?;
             anyhow::ensure!(

@@ -1046,13 +1046,14 @@ impl InksonSignalSink {
             audience_actor_id: arkret_sdk::ActorId::service(account.authority.station_id.clone()),
             nonce: crate::random::base64url_token(32, "Consent read nonce unavailable")?,
         };
-        let authority = crate::transport::own_station_results::consent_authority(
+        let authority = crate::transport::own_station_results::consent_current_authority(
             &http,
             &client,
             &account.authority,
             &account.principal_control_realm_id,
         )
         .await?;
+        guard()?;
         let response = client
             .consent_current(&request, &account.principal_control_realm_id, &authority)
             .await?;
@@ -2453,7 +2454,7 @@ pub(crate) async fn install_call_consent_current(
         arkret_sdk::ConsentCurrentReadRequestBody,
         arkret_sdk::ConsentCurrentReadOutcome,
     >,
-    scope: arkret_sdk::ConsentScope,
+    consent_scope: arkret_sdk::ConsentScope,
     session_epoch: u64,
     guard: &dyn Fn() -> anyhow::Result<()>,
 ) -> anyhow::Result<bool> {
@@ -2462,7 +2463,7 @@ pub(crate) async fn install_call_consent_current(
         &account.authority,
         &account.principal_control_realm_id,
         response,
-        scope,
+        consent_scope,
         session_epoch,
         guard,
     )
@@ -2477,7 +2478,7 @@ pub(crate) async fn install_consent_current_for_holder(
         arkret_sdk::ConsentCurrentReadRequestBody,
         arkret_sdk::ConsentCurrentReadOutcome,
     >,
-    scope: arkret_sdk::ConsentScope,
+    consent_scope: arkret_sdk::ConsentScope,
     session_epoch: u64,
     guard: &dyn Fn() -> anyhow::Result<()>,
 ) -> anyhow::Result<bool> {
@@ -2534,5 +2535,5 @@ pub(crate) async fn install_consent_current_for_holder(
     }
     Ok(response
         .value()?
-        .permits(response.request(), scope, crate::clock::now_utc()))
+        .permits(response.request(), consent_scope, crate::clock::now_utc()))
 }

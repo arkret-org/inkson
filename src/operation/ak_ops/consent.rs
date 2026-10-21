@@ -1,4 +1,4 @@
-//! Holder-signed complete exact-peer permission replacement.
+//! Holder-signed complete exact-peer Consent replacement.
 
 use super::TypedOperationBuilder;
 
@@ -9,9 +9,12 @@ pub fn consent_actor_peer(
     station_id: Option<&str>,
 ) -> anyhow::Result<arkret_sdk::ConsentPeer> {
     if principal_id.trim_start().starts_with('{') {
-        if let Ok(actor_id) = serde_json::from_str::<arkret_sdk::ActorId>(principal_id) {
-            return Ok(arkret_sdk::ConsentPeer::Actor { actor_id });
-        }
+        return Ok(
+            serde_json::from_str::<arkret_sdk::ConsentPeer>(principal_id).or_else(|_| {
+                serde_json::from_str::<arkret_sdk::ActorId>(principal_id)
+                    .map(|actor_id| arkret_sdk::ConsentPeer::Actor { actor_id })
+            })?,
+        );
     }
     Ok(arkret_sdk::ConsentPeer::Actor {
         actor_id: arkret_sdk::ActorId::account(crate::mls_api_helpers::closed_account_id_input(
@@ -21,7 +24,8 @@ pub fn consent_actor_peer(
     })
 }
 
-/// Build one complete exact-peer replacement with the reviewed CAS precondition.
+/// Replace the complete exact-peer current under holder root authorization.
+/// The expected state comes exclusively from one authenticated complete read.
 pub fn consent_replace(
     holder_pcr_realm_id: &str,
     holder: &str,

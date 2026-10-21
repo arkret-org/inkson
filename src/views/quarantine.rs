@@ -10,14 +10,14 @@
 //! The cell carries two closed `surface_kind` branches and this panel reviews
 //! them separately, because `consent-model.md` section 6.1.1 gives them
 //! different terminal semantics: accepting an `invite_delivery` builds a section
-//! 3.2 consent grant and MAY additionally accept the original invite, while
-//! accepting a `consent_request` builds the grant and stops. Neither is a
+//! complete consent replacement and MAY additionally accept the original invite, while
+//! accepting a `consent_request` replaces the related scope and stops. Neither is a
 //! consent cell -- an entry grants nothing and never appears in
 //! `ak.self.consent.query.cells.v1` -- and neither is the Contact surface: a
 //! Contact request keeps its own `pending_incoming` state and deliberately
 //! produces no entry here.
 //!
-//! Until the consent-grant authoring flow is connected the panel stays
+//! Until the complete replacement authoring flow is connected the panel stays
 //! read-only and does not invent an approval action.
 
 use arkret_models_collaboration::governance::holder_quarantine::{
@@ -26,7 +26,6 @@ use arkret_models_collaboration::governance::holder_quarantine::{
 use dioxus::prelude::*;
 
 use crate::i18n::tr;
-use crate::views::helpers::short_protocol_id;
 
 /// Decode the restored Station-CAS row into the closed cell shape.
 ///
@@ -117,7 +116,7 @@ fn QuarantineSurfaceSection(
             for entry in entries.iter() {
                 div { class: "event-row", "data-testid": "{testid}-row",
                     span { class: "mono",
-                        {short_protocol_id(entry.source_peer_principal_id.as_str())}
+                        {serde_json::to_string(&entry.source_peer_actor_id).unwrap_or_default()}
                     }
                     span { class: "muted",
                         {format!("{} {}", tr("quarantine.scope_label"), entry.consent_scope())}
