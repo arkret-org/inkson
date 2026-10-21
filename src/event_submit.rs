@@ -18,6 +18,7 @@ use std::sync::{Mutex, OnceLock as SyncOnceLock, PoisonError};
 use std::time::Duration;
 
 use anyhow::Context;
+use arkret_sdk::EventPayloadExt as _;
 use arkret_wire::event_kind_str;
 use garth::{
     OutboundEngine, OutboundEngineOutcome, OutboundQueueStore as _, QueuedSubmission,
@@ -918,6 +919,46 @@ impl EventSubmitter {
                 "durable Event submission requires an active AccountId captured when the submitter was created"
             )
         })
+    }
+
+    pub(crate) async fn submit_consent_replacement(
+        &self,
+        operation: &LocalOperation,
+    ) -> anyhow::Result<SubmitEventResult> {
+        let _single_writer = outbound_submit_lock().lock().await;
+        let event = self.author_for_direct_submission(operation).await?;
+        anyhow::ensure!(
+            event.kind == arkret_wire::EventKind::ConsentReplace,
+            "Consent writer requires the native replacement Event"
+        );
+        let payload = event
+            .event()
+            .typed_payload::<arkret_sdk::event_spec::ConsentReplace>()?;
+        let outbound = self.outbound(OutboundLane::Standard)?;
+        for item in outbound.snapshot().await?.items {
+            let previous = item.submission.primary_event();
+            if !matches!(
+                item.submission.state,
+                garth::SubmissionState::Committed { .. } | garth::SubmissionState::Rejected { .. }
+            ) && previous.kind == arkret_wire::EventKind::ConsentReplace
+            {
+                let pending = previous.typed_payload::<arkret_sdk::event_spec::ConsentReplace>()?;
+                anyhow::ensure!(
+                    pending.peer != payload.peer,
+                    "The previous Consent replacement is awaiting its original outcome; resume the durable queue before editing this peer"
+                );
+            }
+        }
+        let item = self
+            .enqueue_and_drive(QueuedWrite {
+                lane: OutboundLane::Standard,
+                submission: event_submission(&event)?,
+                local_operation_id: operation.local_operation_id().to_string(),
+                post_accept: PostAccept::None,
+                retry_scope: InteractiveRetryScope::Ordinary,
+            })
+            .await?;
+        settled_outbound_result(&item)
     }
 
     /// The shared SDK http-client backing this submitter.

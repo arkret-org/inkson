@@ -2208,6 +2208,20 @@ impl CurrentIndex {
         if self.generation.load(Ordering::Acquire) != expected_generation {
             return Err(CurrentGenerationChanged.into());
         }
+        if let Some(bound) = &targeted_consent {
+            let value = bound.value()?;
+            if matches!(value.current, arkret_sdk::ConsentCurrentState::NeverWritten) {
+                let selector = CurrentSelector::Consent {
+                    peer_id: bound.request().peer.actor_id().clone(),
+                };
+                anyhow::ensure!(
+                    self.raw_selector(value.realm_id.as_str(), &selector, expected_generation)
+                        .await?
+                        .is_none(),
+                    "A previously installed Consent current cannot become never-written"
+                );
+            }
+        }
         let generation = expected_generation
             .checked_add(1)
             .ok_or_else(|| anyhow::anyhow!("current generation exhausted"))?;

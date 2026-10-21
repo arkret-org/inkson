@@ -50,9 +50,7 @@ pub(crate) fn candidate(
     request: &ManagementReviewRequestBody,
 ) -> anyhow::Result<(&Event, AccountId)> {
     request.validate()?;
-    let ManagementReviewTarget::Event { event } = &request.target else {
-        anyhow::bail!("This interface supports the original Agent join and public intents")
-    };
+    let ManagementReviewTarget::Event { event } = &request.target;
     anyhow::ensure!(
         event.scope_ref == request.effective_scope
             && matches!(&event.scope_ref, ScopeRef::Realm { realm_id } if realm_id == &event.realm_id)

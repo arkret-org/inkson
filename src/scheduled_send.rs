@@ -11,6 +11,7 @@
 //! queue reports the frozen Event as sent; until then the plan stays so a
 //! crash or an offline interval cannot lose it.
 
+#[cfg(test)]
 use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};

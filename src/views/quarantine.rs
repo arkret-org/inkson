@@ -155,6 +155,13 @@ mod tests {
                         "station_id": "ak:did_core:web:station.example"
                     },
                     "source_peer_principal_id": "ak:did_core:web:inviter.example",
+                    "source_peer_actor_id": {
+                        "kind": "account",
+                        "account_id": {
+                            "principal_id": "ak:did_core:web:inviter.example",
+                            "station_id": "ak:did_core:web:peer-station.example"
+                        }
+                    },
                     "source_id": "ak:did_core:web:peer-station.example",
                     "surface_kind": "invite_delivery",
                     "consent_scope": "invite",
@@ -174,6 +181,13 @@ mod tests {
                         "station_id": "ak:did_core:web:station.example"
                     },
                     "source_peer_principal_id": "ak:did_core:web:asker.example",
+                    "source_peer_actor_id": {
+                        "kind": "account",
+                        "account_id": {
+                            "principal_id": "ak:did_core:web:asker.example",
+                            "station_id": "ak:did_core:web:station.example"
+                        }
+                    },
                     "source_id": "ak:did_core:web:station.example",
                     "surface_kind": "consent_request",
                     "consent_scope": "voice_call",
@@ -210,6 +224,12 @@ mod tests {
 
     #[test]
     fn a_cell_this_client_cannot_decode_is_not_half_rendered() {
+        let mut missing_actor = cell_value();
+        missing_actor["quarantine_entries"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("source_peer_actor_id");
+        assert!(decode_holder_quarantine(Some(&missing_actor)).is_none());
         let mut malformed = cell_value();
         // Cross-filling the consent_request branch with invite evidence is a
         // schema violation, so the whole cell is refused rather than rendering

@@ -1291,7 +1291,7 @@ pub(crate) async fn replace_consent(
     )?
     .build_sdk_event("inkson")?;
     session.source.value()?;
-    match submitter.submit_sdk_event(&event).await {
+    match submitter.submit_consent_replacement(&event).await {
         Err(error) => match error.downcast_ref::<crate::event_submit::DurablyQueuedError>() {
             Some(pending) => Ok(crate::models::SubmitEventResult::queued(
                 pending.operation_id.clone(),
