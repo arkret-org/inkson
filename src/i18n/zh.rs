@@ -2970,6 +2970,34 @@ fn add_contacts_keys_zh(dict: &mut TranslationDict) {
         "settings.capabilities.hint_pending",
         "服务端尚未解析该授权，放弃操作将等待授权记录就绪。如仍未完成，请同步后重试。",
     );
+    dict.set(
+        "consent.full_set_help",
+        "编辑前先读取对方的完整许可。保存会替换该对方的整个许可集合。",
+    );
+    dict.set(
+        "consent.peer_station",
+        "Account 对方 Station（输入主体 DID 时填写）",
+    );
+    dict.set("consent.read_full", "读取并编辑许可");
+    dict.set(
+        "consent.empty_help",
+        "取消全部许可会保存为空集合。过期和未来生效的条目仍会完整显示。",
+    );
+    dict.set("consent.not_before", "生效时间（RFC 3339，可留空）");
+    dict.set("consent.expires_at", "到期时间（RFC 3339，可留空）");
+    dict.set("consent.constraints", "附加条件（JSON 数组，可留空）");
+    dict.set("consent.evidence_ref", "依据引用（可留空）");
+    dict.set("consent.reason", "原因（可留空）");
+    dict.set("consent.replace_submit", "保存完整许可集合");
+    dict.set("consent.replace_success", "许可集合已保存。");
+    dict.set(
+        "consent.replace_queued",
+        "已进入耐久发送队列，等待最终结果。",
+    );
+    dict.set(
+        "consent.replace_failed",
+        "未保存。请重新读取并确认修改后再提交",
+    );
     dict.set("consent.title", "联系许可");
     dict.set("consent.grant", "授予许可");
     dict.set("consent.request", "请求许可");
@@ -2980,9 +3008,8 @@ fn add_contacts_keys_zh(dict: &mut TranslationDict) {
     dict.set("consent.scope.voice_call", "语音通话");
     dict.set("consent.scope.video_call", "视频通话");
     dict.set("consent.scope.presence", "在线状态");
-    dict.set("consent.scope.any", "全部联系许可");
     dict.set("consent.scope.unknown", "未知范围");
-    dict.set("consent.grantee", "接收方 DID");
+    dict.set("consent.grantee", "完整对方 Actor JSON 或 Account 主体 DID");
     dict.set("consent.ttl", "有效时长（例如 30d）");
     dict.set("consent.grant_submit", "授予");
     dict.set("consent.holder", "许可持有人 DID");

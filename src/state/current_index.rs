@@ -2145,11 +2145,14 @@ impl CurrentIndex {
         };
         check()?;
         let value = response.value()?;
-        let rows = value
-            .consents
-            .iter()
-            .map(|row| serde_json::from_value::<TypedCurrentRow>(serde_json::to_value(row)?))
-            .collect::<Result<Vec<_>, _>>()?;
+        let rows = match &value.current {
+            arkret_sdk::ConsentCurrentReadState::Present { result } => {
+                vec![serde_json::from_value::<TypedCurrentRow>(
+                    serde_json::to_value(result)?,
+                )?]
+            }
+            arkret_sdk::ConsentCurrentReadState::NeverWritten {} => Vec::new(),
+        };
         let entry = arkret_sdk::sync::RealmSyncEntry {
             current: Some(
                 arkret_models_collaboration::sync_frames::current_results::AccountCurrentView {

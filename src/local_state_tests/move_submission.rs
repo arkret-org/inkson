@@ -38,7 +38,7 @@ fn move_submission_record_round_trips_through_store() {
     store.record_move_submission(
         mid,
         realm,
-        "ak.consent.grant",
+        "ak.consent.replace",
         MoveSubmissionState::PendingCommit,
         None,
         None,

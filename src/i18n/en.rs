@@ -3293,6 +3293,31 @@ fn add_contacts_keys(dict: &mut TranslationDict) {
     );
     dict.set("settings.capabilities.hint_subject", "the server rejected this because the signer is not the grant's subject — only the subject may relinquish a grant; ask the issuer (or Realm owner) to revoke it instead");
     dict.set("settings.capabilities.hint_pending", "the grant is not yet resolved in the server projection — the relinquish stays pending until the grant row lands; retry after sync if it does not settle");
+    dict.set(
+        "consent.full_set_help",
+        "Read a peer’s complete permissions before editing. Changes replace that whole set.",
+    );
+    dict.set(
+        "consent.peer_station",
+        "Account peer Station (when entering a principal DID)",
+    );
+    dict.set("consent.read_full", "Read and edit permissions");
+    dict.set("consent.empty_help", "Clearing every scope keeps an explicit empty permission set. Expired and future entries remain visible.");
+    dict.set("consent.not_before", "Valid from (RFC 3339, optional)");
+    dict.set("consent.expires_at", "Valid until (RFC 3339, optional)");
+    dict.set("consent.constraints", "Conditions (JSON array, optional)");
+    dict.set("consent.evidence_ref", "Evidence reference (optional)");
+    dict.set("consent.reason", "Reason (optional)");
+    dict.set("consent.replace_submit", "Save the complete permission set");
+    dict.set("consent.replace_success", "Permission set saved.");
+    dict.set(
+        "consent.replace_queued",
+        "Saved to the durable send queue; waiting for the final result.",
+    );
+    dict.set(
+        "consent.replace_failed",
+        "Not saved. Read again and review your changes before resubmitting",
+    );
     dict.set("consent.title", "Consent");
     dict.set("consent.grant", "Grant consent");
     dict.set("consent.request", "Request consent");
@@ -3306,9 +3331,11 @@ fn add_contacts_keys(dict: &mut TranslationDict) {
     dict.set("consent.scope.voice_call", "Voice calls");
     dict.set("consent.scope.video_call", "Video calls");
     dict.set("consent.scope.presence", "Presence");
-    dict.set("consent.scope.any", "All consent permissions");
     dict.set("consent.scope.unknown", "Unknown scope");
-    dict.set("consent.grantee", "Grantee DID");
+    dict.set(
+        "consent.grantee",
+        "Peer Actor JSON or Account principal DID",
+    );
     dict.set("consent.ttl", "Valid for (e.g. 30d)");
     dict.set("consent.grant_submit", "Grant");
     dict.set("consent.holder", "Holder DID");

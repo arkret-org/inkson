@@ -657,6 +657,7 @@ mod tests {
 #[cfg(not(target_arch = "wasm32"))]
 pub async fn consume_native_consent_current(
     host: &crate::sync_engine::NativeAccountHost,
+    scope: arkret_sdk::ConsentScope,
     response: &arkret_sdk::http_client::own_station_results::BoundOwnStationResponse<
         arkret_sdk::ConsentCurrentReadRequestBody,
         arkret_sdk::ConsentCurrentReadOutcome,
@@ -675,7 +676,7 @@ pub async fn consume_native_consent_current(
         Ok(())
     };
     crate::signal_receive_engine::install_call_consent_current(
-        &store, &account, response, epoch, &guard,
+        &store, &account, response, scope, epoch, &guard,
     )
     .await
 }
@@ -685,7 +686,6 @@ pub async fn consume_native_consent_current(
 pub async fn read_native_consent_current(
     host: &crate::sync_engine::NativeAccountHost,
     peer: arkret_sdk::ActorId,
-    consent_scope: arkret_sdk::ConsentScope,
 ) -> anyhow::Result<
     arkret_sdk::http_client::own_station_results::BoundOwnStationResponse<
         arkret_sdk::ConsentCurrentReadRequestBody,
@@ -699,7 +699,6 @@ pub async fn read_native_consent_current(
         .consent_current(&arkret_sdk::ConsentCurrentReadRequestBody {
             holder_account_id: account.authority.clone(),
             peer: arkret_sdk::ConsentPeer::Actor { actor_id: peer },
-            consent_scope,
             audience_actor_id: arkret_sdk::ActorId::service(account.authority.station_id),
             nonce: crate::random::base64url_token(32, "Consent read nonce unavailable")?,
         })

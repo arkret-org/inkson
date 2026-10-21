@@ -1043,7 +1043,6 @@ impl InksonSignalSink {
             peer: arkret_sdk::ConsentPeer::Actor {
                 actor_id: signal.actor_id().clone(),
             },
-            consent_scope: delivery.invitation.media.consent_scope(),
             audience_actor_id: arkret_sdk::ActorId::service(account.authority.station_id.clone()),
             nonce: crate::random::base64url_token(32, "Consent read nonce unavailable")?,
         };
@@ -1053,6 +1052,7 @@ impl InksonSignalSink {
             &self.state_store,
             account,
             &response,
+            delivery.invitation.media.consent_scope(),
             session_epoch,
             &guard,
         )
@@ -2444,6 +2444,7 @@ pub(crate) async fn install_call_consent_current(
         arkret_sdk::ConsentCurrentReadRequestBody,
         arkret_sdk::ConsentCurrentReadOutcome,
     >,
+    scope: arkret_sdk::ConsentScope,
     session_epoch: u64,
     guard: &dyn Fn() -> anyhow::Result<()>,
 ) -> anyhow::Result<bool> {
@@ -2452,6 +2453,7 @@ pub(crate) async fn install_call_consent_current(
         &account.authority,
         &account.principal_control_realm_id,
         response,
+        scope,
         session_epoch,
         guard,
     )
@@ -2466,6 +2468,7 @@ pub(crate) async fn install_consent_current_for_holder(
         arkret_sdk::ConsentCurrentReadRequestBody,
         arkret_sdk::ConsentCurrentReadOutcome,
     >,
+    scope: arkret_sdk::ConsentScope,
     session_epoch: u64,
     guard: &dyn Fn() -> anyhow::Result<()>,
 ) -> anyhow::Result<bool> {
@@ -2522,5 +2525,5 @@ pub(crate) async fn install_consent_current_for_holder(
     }
     Ok(response
         .value()?
-        .permits(response.request(), crate::clock::now_utc()))
+        .permits(response.request(), scope, crate::clock::now_utc()))
 }

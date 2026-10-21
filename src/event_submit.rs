@@ -3768,7 +3768,6 @@ impl EventSubmitter {
                     peer: arkret_sdk::ConsentPeer::Actor {
                         actor_id: peer.clone(),
                     },
-                    consent_scope: arkret_sdk::ConsentScope::Presence,
                     audience_actor_id: arkret_sdk::ActorId::service(holder.station_id.clone()),
                     nonce: crate::random::base64url_token(
                         32,
@@ -3782,6 +3781,7 @@ impl EventSubmitter {
                     holder,
                     &principal.principal_control_realm_id,
                     &response,
+                    arkret_sdk::ConsentScope::Presence,
                     epoch,
                     &guard
                 )
@@ -3808,7 +3808,11 @@ impl EventSubmitter {
                     && progress
                         .observed_heads
                         .contains(&value.effective_stream_head)
-                    && value.permits(response.request(), crate::clock::now_utc()),
+                    && value.permits(
+                        response.request(),
+                        arkret_sdk::ConsentScope::Presence,
+                        crate::clock::now_utc()
+                    ),
                 "Presence Consent cut became stale before sealing"
             );
         }
