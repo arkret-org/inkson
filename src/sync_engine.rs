@@ -1541,6 +1541,8 @@ impl InksonAccountProjector {
         &self,
         http: &arkret_sdk::http_client::Client,
     ) -> anyhow::Result<bool> {
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+        self.rotate_captured_transport_for_test(http).await?;
         let viewer = http.account_viewer().await?;
         if !self.fence() {
             return Ok(false);
@@ -1574,9 +1576,76 @@ impl InksonAccountProjector {
         Ok(true)
     }
 
-    /// Post-commit work is retried on the next bounded poll. A terminal
-    /// authorization failure ends the run instead.
+    /// Only the explicitly opted-in joint bundle contains this one-shot fault.
+    /// Pause after capturing `http`, before its request/DPoP is constructed; the
+    /// old transport then receives a genuine issuer-backed 401 after rotation.
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+    async fn rotate_captured_transport_for_test(
+        &self,
+        http: &arkret_sdk::http_client::Client,
+    ) -> anyhow::Result<()> {
+        const HOOK: &str = "__inkson_captured_transport_rotation_v1";
+        let Some(window) = web_sys::window() else {
+            return Ok(());
+        };
+        if js_sys::Reflect::get(&window, &HOOK.into()).ok().as_ref()
+            != Some(&wasm_bindgen::JsValue::TRUE)
+        {
+            return Ok(());
+        }
+        // Consume synchronously so concurrent readers cannot rotate twice.
+        js_sys::Reflect::set(&window, &HOOK.into(), &wasm_bindgen::JsValue::FALSE)
+            .map_err(|_| anyhow::anyhow!("could not consume the transport scheduling fault"))?;
+        let generation = self.ctx.session.generation();
+        let device = arkret_sdk::DeviceId::new(self.ctx.device_id.clone())?;
+        let result = crate::identity::session_refresh::rotate_captured_transport_for_test(
+            http.base_url().as_str(),
+            &self.ctx.account.authority,
+            &device,
+        )
+        .await;
+        let evidence = match &result {
+            Ok((previous, successor)) => serde_json::json!({
+                "phase": "rotated_before_request",
+                "predecessor_grant_id": previous,
+                "successor_grant_id": successor,
+                "account_id": self.ctx.account.authority,
+                "device_id": device,
+                "session_generation_before": generation,
+                "session_generation_after": self.ctx.session.generation(),
+            }),
+            Err(_) => serde_json::json!({"phase": "rotation_failed"}),
+        };
+        js_sys::Reflect::set(
+            &window,
+            &HOOK.into(),
+            &wasm_bindgen::JsValue::from_str(&evidence.to_string()),
+        )
+        .map_err(|_| anyhow::anyhow!("could not record the transport scheduling fault"))?;
+        result?;
+        anyhow::ensure!(
+            self.active() && self.ctx.session.generation() == generation,
+            "captured transport test outlived its account session"
+        );
+        Ok(())
+    }
+
+    /// Post-commit work is retried on the next bounded poll. A 401 retires
+    /// this transport attempt so the outer runner can reacquire the shared
+    /// session grant. Other typed terminal failures retain their existing gate.
     fn defer(&self, error: anyhow::Error) -> garth::Result<()> {
+        if let Some((status, envelope)) = crate::api_error::api_error_status_and_envelope(&error)
+            && status == reqwest::StatusCode::UNAUTHORIZED
+        {
+            // Another task may have refreshed the grant after this transport
+            // was created. Preserve the original typed denial for the outer
+            // Unauthorized recovery path instead of clearing its successor.
+            self.control.cancel();
+            return Err(garth::Error::Api {
+                status: status.as_u16(),
+                error: Box::new(envelope.clone()),
+            });
+        }
         if is_auth_expired_error(&error) || is_terminal_session_grant_error(&error) {
             self.ctx
                 .session
@@ -3746,6 +3815,63 @@ mod tests {
         provider.ctx.effect.cancel();
         assert!(!provider.invalidate_terminal_refresh(replacement, &terminal_refresh_refusal()));
         assert_eq!(session.credential().as_deref(), Some("replacement"));
+    }
+
+    #[test]
+    fn post_commit_unauthorized_retires_only_the_captured_transport() {
+        let (mut projector, _) = retired_account_attempt();
+        let session = projector.ctx.session.clone();
+        let generation = session.replace("current-session");
+        projector.session_generation = generation;
+        let original =
+            arkret_sdk::Problem::from_code("unauthenticated", "session grant is not active");
+        let error = anyhow::Error::new(arkret_sdk::http_client::Error::Api {
+            status: 401,
+            error: Box::new(original.clone()),
+        })
+        .context("refresh local device view after durable Account checkpoint");
+
+        let error = projector.defer(error).unwrap_err();
+        assert_eq!(
+            garth::classify_error(&error),
+            garth::RunErrorClass::Unauthorized
+        );
+        let garth::Error::Api { status, error } = error else {
+            panic!("the original structured denial was discarded");
+        };
+        assert_eq!(status, 401);
+        assert_eq!(
+            serde_json::to_value(error).unwrap(),
+            serde_json::to_value(original).unwrap()
+        );
+        assert!(projector.control.is_cancelled());
+        assert_eq!(session.generation(), generation);
+        assert_eq!(session.credential().as_deref(), Some("current-session"));
+    }
+
+    #[test]
+    fn wrapped_account_rail_unauthorized_keeps_the_same_session_generation() {
+        let (mut projector, _) = retired_account_attempt();
+        let session = projector.ctx.session.clone();
+        let generation = session.replace("current-session");
+        projector.session_generation = generation;
+        let error = anyhow::Error::new(garth::Error::Api {
+            status: 401,
+            error: Box::new(arkret_sdk::Problem::from_code(
+                "auth_expired",
+                "captured old grant",
+            )),
+        })
+        .context("post-commit Account work");
+
+        let error = projector.defer(error).unwrap_err();
+        assert_eq!(
+            garth::classify_error(&error),
+            garth::RunErrorClass::Unauthorized
+        );
+        assert!(projector.control.is_cancelled());
+        assert_eq!(session.generation(), generation);
+        assert_eq!(session.credential().as_deref(), Some("current-session"));
     }
 
     #[test]

@@ -645,6 +645,46 @@ pub(crate) async fn refresh_authenticated_session_after_unauthorized(
     .await
 }
 
+/// One-shot joint-test scheduling fault: rotate the real issuer grant while a
+/// caller retains an already-created SDK transport. No token or key leaves Rust.
+#[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+pub(crate) async fn rotate_captured_transport_for_test(
+    station_url: &str,
+    account: &arkret_sdk::AccountId,
+    device: &arkret_sdk::DeviceId,
+) -> anyhow::Result<(String, String)> {
+    let secure = crate::secure_key_store::default_secure_key_store("inkson");
+    let grant = load_active_session_grant(station_url, secure.as_ref())?;
+    anyhow::ensure!(
+        &grant.account_id == account && &grant.device_id == device,
+        "captured transport test belongs to another account/device"
+    );
+    let holder = load_session_holder(&grant, secure.as_ref())?;
+    let runtime = session_grant_runtime();
+    let provider = session_transport_provider(runtime.as_ref(), &grant, &holder, secure).await?;
+    let previous = provider
+        .session()
+        .current_state()
+        .context("captured transport test has no current issuer grant")?;
+    // This is the production refresh exchange and durable grant store, not a
+    // fabricated denial or a mutation of local expiry/authorization material.
+    provider.refresh_for_sensitive_action().await?;
+    let successor = provider
+        .session()
+        .current_state()
+        .context("captured transport test lost the successor grant")?;
+    anyhow::ensure!(
+        successor.account_id == previous.account_id
+            && successor.device_id == previous.device_id
+            && successor.grant_id != previous.grant_id,
+        "issuer refresh did not preserve the holder and rotate its grant"
+    );
+    Ok((
+        previous.grant_id.to_string(),
+        successor.grant_id.to_string(),
+    ))
+}
+
 async fn refresh_authenticated_session_after_unauthorized_with_secure_store(
     station_url: &str,
     secure_store: Arc<dyn crate::secure_key_store::SecureKeyStore + Send + Sync>,
