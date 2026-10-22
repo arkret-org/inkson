@@ -33,10 +33,10 @@ anyhow = "1.0.104"
 # Needed only to name arkret_crypto::Result in the MlsExporterSource impl:
 # the SFrame exporter trait moved to arkret-crypto (SDK phase 2-d), so its
 # method signature returns arkret_crypto::Error at the crypto boundary.
-arkret-crypto = { version = "0.3.0", path = "../arkret-rust-sdk-realm-actors/crates/crypto", default-features = false }
-arkret-retry = { version = "0.3.0", path = "../arkret-rust-sdk-realm-actors/crates/retry" }
-arkret-sdk = { package = "arkret", version = "0.3.0", path = "../arkret-rust-sdk-realm-actors/crates/sdk" }
-arkret-signatures = { version = "0.3.0", path = "../arkret-rust-sdk-realm-actors/crates/signatures", default-features = false, features = ["collaboration", "webvh"] }
+arkret-crypto = { version = "0.3.0", path = "../arkret-rust-sdk/crates/crypto", default-features = false }
+arkret-retry = { version = "0.3.0", path = "../arkret-rust-sdk/crates/retry" }
+arkret-sdk = { package = "arkret", version = "0.3.0", path = "../arkret-rust-sdk/crates/sdk" }
+arkret-signatures = { version = "0.3.0", path = "../arkret-rust-sdk/crates/signatures", default-features = false, features = ["collaboration", "webvh"] }
 base64 = "0.23"
 chacha20poly1305 = { version = "0.11", default-features = false }
 chime = { version = "0.3.0", path = "../chime" }
@@ -125,7 +125,7 @@ path = "src/bin/inkson-wire.rs"
 required-features = ["spec-conformance"]
 
 [dependencies]
-arkret-test-kit = { path = "../arkret-rust-sdk-realm-actors/crates/test-kit", optional = true }
+arkret-test-kit = { path = "../arkret-rust-sdk/crates/test-kit", optional = true }
 rand_chacha = "0.10"
 # Feature-unification alias: `getrandom@0.2` is pulled in transitively by the
 # crypto stack (rand_core 0.6 → p256/k256/hpke-rs/openmls and Arkret owner
@@ -164,24 +164,24 @@ rand_chacha = "0.10"
 # left disabled (default) so untrusted message bodies cannot inject
 # arbitrary tags via `dangerous_inner_html`.
 anyhow = { workspace = true }
-arkret-bootstrap = { version = "0.3.0", path = "../arkret-rust-sdk-realm-actors/crates/bootstrap", default-features = false }
+arkret-bootstrap = { version = "0.3.0", path = "../arkret-rust-sdk/crates/bootstrap", default-features = false }
 arkret-crypto = { workspace = true, features = ["backup", "blob-aead", "identity-root", "secret-share", "sframe"] }
-arkret-event-draft = { version = "0.3.0", path = "../arkret-rust-sdk-realm-actors/crates/event-draft", default-features = false }
-arkret-identifiers = { version = "0.3.0", path = "../arkret-rust-sdk-realm-actors/crates/identifiers", default-features = false }
-arkret-identity = { version = "0.3.0", path = "../arkret-rust-sdk-realm-actors/crates/identity", default-features = false }
-arkret-locale = { version = "0.3.0", path = "../arkret-rust-sdk-realm-actors/crates/locale", default-features = false, features = ["serde"] }
-arkret-models-collaboration = { version = "0.3.0", path = "../arkret-rust-sdk-realm-actors/crates/models-collaboration", default-features = false }
-arkret-models-crypto = { version = "0.3.0", path = "../arkret-rust-sdk-realm-actors/crates/models-crypto", default-features = false }
-arkret-models-discovery = { version = "0.3.0", path = "../arkret-rust-sdk-realm-actors/crates/models-discovery", default-features = false }
-arkret-models-identity = { version = "0.3.0", path = "../arkret-rust-sdk-realm-actors/crates/models-identity", default-features = false }
-arkret-models-integration = { version = "0.3.0", path = "../arkret-rust-sdk-realm-actors/crates/models-integration", default-features = false }
-arkret-policy = { version = "0.3.0", path = "../arkret-rust-sdk-realm-actors/crates/policy", default-features = false }
+arkret-event-draft = { version = "0.3.0", path = "../arkret-rust-sdk/crates/event-draft", default-features = false }
+arkret-identifiers = { version = "0.3.0", path = "../arkret-rust-sdk/crates/identifiers", default-features = false }
+arkret-identity = { version = "0.3.0", path = "../arkret-rust-sdk/crates/identity", default-features = false }
+arkret-locale = { version = "0.3.0", path = "../arkret-rust-sdk/crates/locale", default-features = false, features = ["serde"] }
+arkret-models-collaboration = { version = "0.3.0", path = "../arkret-rust-sdk/crates/models-collaboration", default-features = false }
+arkret-models-crypto = { version = "0.3.0", path = "../arkret-rust-sdk/crates/models-crypto", default-features = false }
+arkret-models-discovery = { version = "0.3.0", path = "../arkret-rust-sdk/crates/models-discovery", default-features = false }
+arkret-models-identity = { version = "0.3.0", path = "../arkret-rust-sdk/crates/models-identity", default-features = false }
+arkret-models-integration = { version = "0.3.0", path = "../arkret-rust-sdk/crates/models-integration", default-features = false }
+arkret-policy = { version = "0.3.0", path = "../arkret-rust-sdk/crates/policy", default-features = false }
 arkret-retry = { workspace = true }
-arkret-schema = { version = "0.3.0", path = "../arkret-rust-sdk-realm-actors/crates/schema", default-features = false }
-arkret-schema-conformance = { version = "0.3.0", path = "../arkret-rust-sdk-realm-actors/crates/schema-conformance", default-features = false, optional = true }
+arkret-schema = { version = "0.3.0", path = "../arkret-rust-sdk/crates/schema", default-features = false }
+arkret-schema-conformance = { version = "0.3.0", path = "../arkret-rust-sdk/crates/schema-conformance", default-features = false, optional = true }
 arkret-signatures = { workspace = true }
-arkret-state = { version = "0.3.0", path = "../arkret-rust-sdk-realm-actors/crates/state", default-features = false }
-arkret-wire = { version = "0.3.0", path = "../arkret-rust-sdk-realm-actors/crates/wire", default-features = false }
+arkret-state = { version = "0.3.0", path = "../arkret-rust-sdk/crates/state", default-features = false }
+arkret-wire = { version = "0.3.0", path = "../arkret-rust-sdk/crates/wire", default-features = false }
 base64 = { workspace = true }
 chacha20poly1305 = { workspace = true, default-features = false, features = ["alloc"] }
 chime = { workspace = true, features = ["http"] }
@@ -221,7 +221,7 @@ zeroize = { workspace = true, features = ["derive"] }
 # validated addresses into the client. wasm has no socket to pin — the
 # browser owns DNS there — so the wasm build keeps the static shared
 # classification (`host_is_safe_for_outbound`) as its whole guard.
-arkret-egress-reqwest = { version = "0.3.0", path = "../arkret-rust-sdk-realm-actors/crates/egress-reqwest" }
+arkret-egress-reqwest = { version = "0.3.0", path = "../arkret-rust-sdk/crates/egress-reqwest" }
 # T5.2 (2026-05-20): `signer` feature enabled so `event_signer` can pull
 # in `arkret_sdk::signatures::Ed25519DetachedJwsSigner` for the
 # `RealEd25519` proof-mode path. Without it the SDK signatures module is
@@ -243,7 +243,7 @@ arkret-egress-reqwest = { version = "0.3.0", path = "../arkret-rust-sdk-realm-ac
 arkret-sdk = { workspace = true, features = ["client", "mls", "signer", "tls-rustls", "keystore-macos", "keystore-linux", "keystore-windows"] }
 dioxus = { workspace = true }
 fs2 = "0.4.3"
-garth = { path = "../garth-realm-actors", default-features = false, features = ["native"] }
+garth = { path = "../garth", default-features = false, features = ["native"] }
 reqwest = { workspace = true, default-features = false, features = ["json", "multipart", "rustls", "stream", "form"] }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 sentry = { workspace = true, default-features = false, features = ["backtrace", "contexts", "panic", "reqwest", "rustls"] }
@@ -277,7 +277,7 @@ tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 # See the non-wasm note above.
 arkret-sdk = { workspace = true, features = ["client", "mls", "signer"] }
 dioxus = { workspace = true }
-garth = { path = "../garth-realm-actors", default-features = false, features = ["wasm"] }
+garth = { path = "../garth", default-features = false, features = ["wasm"] }
 gloo-timers = { workspace = true, features = ["futures"] }
 js-sys = { workspace = true }
 reqwest = { workspace = true, default-features = false, features = ["json", "multipart", "stream", "form"] }
@@ -360,15 +360,15 @@ chrono = { workspace = true }
 [dev-dependencies]
 # Upload fixtures use serialized FileData without selecting a native renderer.
 dioxus-html = { version = "=0.7.10", default-features = false, features = ["serialize"] }
-arkret-test-kit = { path = "../arkret-rust-sdk-realm-actors/crates/test-kit" }
-arkret-schema-conformance = { version = "0.3.0", path = "../arkret-rust-sdk-realm-actors/crates/schema-conformance", default-features = false }
+arkret-test-kit = { path = "../arkret-rust-sdk/crates/test-kit" }
+arkret-schema-conformance = { version = "0.3.0", path = "../arkret-rust-sdk/crates/schema-conformance", default-features = false }
 arkret-sdk = { workspace = true, features = ["mls-test-utils"] }
-arkret-wire = { version = "0.3.0", path = "../arkret-rust-sdk-realm-actors/crates/wire", default-features = false, features = ["test-support"] }
+arkret-wire = { version = "0.3.0", path = "../arkret-rust-sdk/crates/wire", default-features = false, features = ["test-support"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 # Deterministic signed service-route fixtures for the media route-evaluator
 # tests (`src/media/service_route.rs`, `src/media/rtc.rs`). Test builds only.
-garth = { path = "../garth-realm-actors", default-features = false, features = ["native", "route-material-test-support"] }
+garth = { path = "../garth", default-features = false, features = ["native", "route-material-test-support"] }
 # Stream J conformance gate (`tests/conformance_gates.rs`): JSON Schema
 # 2020-12 validation of envelopes produced by typed builders against
 # `arkret-spec/spec/v1/artifacts/schemas/event-envelope.schema.json`.
