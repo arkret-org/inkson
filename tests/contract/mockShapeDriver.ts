@@ -115,13 +115,13 @@ export function captureRouteHandler(): {
 /// `null` when it deferred to the network (`route.continue()`).
 export async function driveOnce(
   handler: RouteHandler,
-  request: { url: string; method: string; postData?: unknown },
+  request: { url: string; method: string; postData?: unknown; headers?: Record<string, string> },
 ): Promise<FulfilledResponse | null> {
   let fulfilled: FulfilledResponse | null = null;
   const fakeRequest = {
     url: () => request.url,
     method: () => request.method,
-    headers: () => ({ authorization: "Bearer sx:e2e-token" }),
+    headers: () => request.headers ?? ({ authorization: "Bearer sx:e2e-token" }),
     postData: () =>
       request.postData === undefined ? null : JSON.stringify(request.postData),
     postDataJSON: () => request.postData ?? {},

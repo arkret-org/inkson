@@ -11,7 +11,7 @@
 
 import { expect, test } from "@playwright/test";
 
-import { CURRENT_ASSISTANT_CORE_ID, mockArkretApi } from "../e2e/mockArkretApi";
+import { CURRENT_ASSISTANT_CORE_ID, DEMO_REALM, mockArkretApi } from "../e2e/mockArkretApi";
 import {
   captureRouteHandler,
   concretePath,
@@ -23,6 +23,7 @@ import {
 } from "./mockShapeDriver";
 
 const BASE_URL = "https://local.host";
+const DIRECTORY_BASE_URL = "https://directory.example";
 
 // Two different synthetic request bodies per operation. A response the mock
 // hard-codes rejects identically under both, and that is a real drift from the
@@ -84,6 +85,7 @@ test("every mock response the inventory names still matches its schema", async (
   const violations: string[] = [];
   const requestDependent: string[] = [];
   const covered = new Set<string>();
+  const directoryCovered = new Set<string>();
   const excused = new Set<string>();
 
   for (const install of INSTALLS) {
@@ -92,7 +94,7 @@ test("every mock response the inventory names still matches its schema", async (
     // drift in those fails here before a single request is driven.
     await mockArkretApi(page as never, install as never);
     const route = handler();
-    await driveInstall(route, violations, requestDependent, covered, excused);
+    await driveInstall(route, violations, requestDependent, covered, excused, directoryCovered);
   }
 
   // Recorded, not asserted: these are the operations whose response the driver
@@ -116,6 +118,17 @@ test("every mock response the inventory names still matches its schema", async (
   // refactor that makes every branch fall through, so nothing is reached; and
   // one that makes every response echo the request, so nothing is judgeable.
   expect(covered.size).toBeGreaterThan(20);
+  const directoryOperations = mockOperations().filter((operation) =>
+    operation.path_template.startsWith("/_arkret/find/directory/"),
+  );
+  expect(directoryOperations.map((operation) => operation.path_template).sort()).toEqual([
+    "/_arkret/find/directory/describe",
+    "/_arkret/find/directory/resolve-realm",
+    "/_arkret/find/directory/search-realms",
+  ]);
+  expect([...directoryCovered].sort(), "all three public Directory operations must reach validated successful responses").toEqual(
+    directoryOperations.map((operation) => operation.operation_id).sort(),
+  );
   expect(
     new Set(requestDependent).size,
     `too many operations are request-dependent for this gate to mean anything:\n${[...new Set(requestDependent)].sort().join("\n")}`,
@@ -134,6 +147,7 @@ async function driveInstall(
   requestDependent: string[],
   covered: Set<string>,
   excused: Set<string>,
+  directoryCovered: Set<string>,
 ) {
   for (const operation of mockOperations()) {
     // Agent routes probe the actual default native Agent rather than an
@@ -141,17 +155,30 @@ async function driveInstall(
     const pathTemplate = operation.path_template.replaceAll(
       "{agent_id}", CURRENT_ASSISTANT_CORE_ID,
     );
-    const url = `${BASE_URL}${concretePath(pathTemplate)}`;
+    const publicDirectory = operation.path_template.startsWith("/_arkret/find/directory/");
+    const url = `${publicDirectory ? DIRECTORY_BASE_URL : BASE_URL}${concretePath(pathTemplate)}`;
+    const probes = publicDirectory ? PROBES.map((_, index): Probe => ({
+      query: "",
+      body: pathTemplate.endsWith("/search-realms")
+        ? { query: index === 0 ? "demo" : "public", limit: index + 1 }
+        : pathTemplate.endsWith("/resolve-realm") ? { realm_id: DEMO_REALM } : {},
+    })) : PROBES;
     const seen: ({ summary: string; fingerprint: string } | null)[] = [];
-    for (const probe of PROBES) {
+    for (const probe of probes) {
       try {
         const response = await driveOnce(route, {
           url: `${url}${probe.query}`,
           method: operation.method,
           postData: operation.method === "GET" ? undefined : probe.body,
+          // Public requests select the exact registry operation without the
+          // Account bearer used by the generic self-path probe fixture.
+          headers: publicDirectory ? { "arkret-operation": operation.operation_id } : undefined,
         });
         if (response) {
           covered.add(operation.operation_id);
+          if (publicDirectory && response.status === 200) {
+            directoryCovered.add(operation.operation_id);
+          }
         }
         seen.push(null);
       } catch (error) {

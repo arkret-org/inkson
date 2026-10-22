@@ -2578,6 +2578,8 @@ export async function mockArkretApi(
       route.request().method() === "POST"
     ) {
       expect(route.request().headers()["arkret-operation"]).toBe("ak.find.directory.read.search_realms.v1");
+      expect(url.search).toBe("");
+      validateMockSchema("schemas/directory-operations.schema.json#/$defs/directory_search_realms_request_body", await contractRequestBody(route));
       return json(route, {
         // Realm creation does not opt the resource into a Directory. No public
         // metadata was imported by a private deployment maintainer, so empty
@@ -2607,6 +2609,9 @@ export async function mockArkretApi(
       url.pathname === "/_arkret/find/directory/resolve-realm" &&
       route.request().method() === "POST"
     ) {
+      expect(route.request().headers()["arkret-operation"]).toBe("ak.find.directory.read.resolve_realm.v1");
+      expect(url.search).toBe("");
+      validateMockSchema("schemas/directory-operations.schema.json#/$defs/directory_resolve_realm_request_body", await contractRequestBody(route));
       return json(route, directoryRealmResolution());
     }
 
@@ -2616,6 +2621,8 @@ export async function mockArkretApi(
       route.request().method() === "GET"
     ) {
       expect(route.request().headers()["arkret-operation"]).toBe("ak.find.directory.read.describe.v1");
+      expect(url.search).toBe("");
+      expect(route.request().postData()).toBeNull();
       return json(route, directoryServiceDescribe());
     }
 
