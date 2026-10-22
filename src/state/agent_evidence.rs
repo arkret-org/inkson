@@ -99,7 +99,7 @@ impl LocalStateStore {
         if let Some(previous) = self.cached.historical_agent_event_candidates.get(&key) {
             let mut replay = entry.clone();
             replay.indexed_at_unix_ms = previous.indexed_at_unix_ms;
-            if &**previous != &replay {
+            if **previous != replay {
                 return Err(
                     "historical Agent candidate conflicts at one committed coordinate".to_owned(),
                 );
@@ -227,7 +227,7 @@ impl LocalStateStore {
         if let Some(previous) = self.cached.historical_agent_signer_keys.get(&key) {
             let mut replay = entry.clone();
             replay.cached_at_unix_ms = previous.cached_at_unix_ms;
-            if &**previous != &replay {
+            if **previous != replay {
                 return Err(
                     "historical Agent signing result conflicts for the same exact target"
                         .to_owned(),

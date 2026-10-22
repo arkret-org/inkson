@@ -1782,12 +1782,12 @@ impl ChatController {
                     // A newer benign read does not erase a known failure for
                     // this same session/cell. A pre-write or retired-target
                     // read, however, cannot invalidate its successor's state.
-                    if queue.read_owns_target(publication, &target) {
-                        if let Err(error) = &result {
-                            self.invalidate_strand_watch_observation(
-                                crate::event_submit::is_durably_queued_error(error.inner()),
-                            );
-                        }
+                    if queue.read_owns_target(publication, &target)
+                        && let Err(error) = &result
+                    {
+                        self.invalidate_strand_watch_observation(
+                            crate::event_submit::is_durably_queued_error(error.inner()),
+                        );
                     }
                     continue;
                 }

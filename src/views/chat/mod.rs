@@ -1782,6 +1782,7 @@ fn composer_mention_nodes(
     mentions
 }
 
+#[cfg(test)]
 fn chat_visible_read_receipt_should_send(
     store: &LocalStateStore,
     strand_id: &str,

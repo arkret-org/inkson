@@ -274,7 +274,6 @@ impl MediaJoinRequest {
         Ok(TypedJoinIds {
             realm_id,
             call_id,
-            actor_id,
             device_id,
         })
     }
@@ -520,7 +519,6 @@ fn policy_media_service_decrypts(payload: Option<&Value>) -> bool {
 struct TypedJoinIds {
     realm_id: RealmId,
     call_id: CallId,
-    actor_id: DidCoreId,
     device_id: DeviceId,
 }
 
@@ -916,6 +914,100 @@ fn classify_protocol_error(err: &arkret_signatures::Error) -> RtcClientError {
         return RtcClientError::FocusUnavailableForClient;
     }
     RtcClientError::ParticipantBindingInvalid
+}
+
+/// Create a signed token intent only at an explicit user join action.
+pub fn voluntary_join_context(
+    realm: &str,
+    call: &str,
+    authority: &arkret_sdk::AccountId,
+    device: &DeviceId,
+    focus: &str,
+    media: DesiredMedia,
+) -> Result<arkret_sdk::CallMediaJoinContext, RtcClientError> {
+    use arkret_sdk::*;
+    let signer =
+        crate::event_signer::active_signer().ok_or(RtcClientError::ParticipantBindingInvalid)?;
+    let created_at = crate::clock::now_utc();
+    let nonce = crate::random::base64url_token(32, "voluntary join nonce unavailable")
+        .map_err(|_| RtcClientError::ParticipantBindingInvalid)?;
+    let context = CallMediaJoinContext::Voluntary(CallVoluntaryJoinContext {
+        kind: CallVoluntaryJoinKind::Voluntary,
+        created_at,
+        expires_at: created_at + chrono::Duration::seconds(60),
+        nonce,
+        proof: CallVoluntaryJoinProof {
+            verification_method: signer.verification_method().to_owned(),
+            jws: String::new(),
+        },
+    });
+    let mut body = call_media_token_exchange(
+        RealmId::new(realm).map_err(|_| RtcClientError::FocusMismatch)?,
+        CallId::new(call).map_err(|_| RtcClientError::FocusMismatch)?,
+        ActorId::account(authority.clone()),
+        device.clone(),
+        focus,
+        context,
+    );
+    body.desired_media = Some(media.into_wire());
+    let raw = serde_json::to_value(&body).map_err(|_| RtcClientError::ParticipantBindingInvalid)?;
+    let input =
+        arkret_models_collaboration::call_invitation::voluntary_join_signing_input_from_value(&raw)
+            .map_err(|_| RtcClientError::ParticipantBindingInvalid)?;
+    let CallMediaJoinContext::Voluntary(mut context) = body.join_context else {
+        unreachable!()
+    };
+    context.proof.jws = signer
+        .detached_jws_over_payload_with_kid(signer.verification_method(), &input)
+        .map_err(|_| RtcClientError::ParticipantBindingInvalid)?;
+    Ok(CallMediaJoinContext::Voluntary(context))
+}
+
+pub(crate) fn current_media_governance_evidence(
+    store: &crate::state::LocalStateStore,
+    realm_id: &str,
+    device_id: &str,
+    media_plaintext_ui_confirmed: bool,
+) -> Option<MediaGovernanceEvidence> {
+    let view = store
+        .current_product_view()
+        .filter(|view| view.realm_id == realm_id && view.complete_cut)?;
+    let scope = arkret_sdk::ScopeRef::Realm {
+        realm_id: arkret_sdk::RealmId::new(realm_id.to_owned()).ok()?,
+    };
+    let current = crate::current_projection::current_mls_group(&view.entries, &scope)?;
+    let checkpoint = store.mls_checkpoint_for(realm_id)?;
+    let account = store.active_authority()?;
+    let device = arkret_sdk::DeviceId::new(device_id.to_owned()).ok()?;
+    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+    let exporter = crate::media::rtc::RealmMlsExporter::for_realm(
+        Some(checkpoint.clone()),
+        secure_store.as_ref(),
+        &account,
+        &device,
+    )
+    .ok()?;
+    let governance_binding = exporter
+        .current_governance_binding(&checkpoint, &current)
+        .ok()?;
+    let descriptor = view.media_service().ok().flatten()?;
+    let policy_bundle_payload =
+        crate::current_projection::current_realm_policy_bundle_value(&view.entries);
+    let plaintext_visible_services_payload = view.entries.iter().find_map(|row| {
+        let arkret_wire::TypedCurrentRow::Value {
+            selector, value, ..
+        } = row;
+        (*selector == arkret_wire::CurrentSelector::RealmPlaintextVisibleServices)
+            .then(|| serde_json::from_value(value.clone()).ok())
+            .flatten()
+    });
+    Some(MediaGovernanceEvidence {
+        governance_binding,
+        media_service_payload: serde_json::to_value(descriptor).ok()?,
+        policy_bundle_payload,
+        plaintext_visible_services_payload,
+        media_plaintext_ui_confirmed,
+    })
 }
 
 #[cfg(test)]
@@ -1587,98 +1679,4 @@ mod tests {
             "a malformed remote device_id MUST fail closed, not fabricate a key"
         );
     }
-}
-
-/// Create a signed token intent only at an explicit user join action.
-pub fn voluntary_join_context(
-    realm: &str,
-    call: &str,
-    authority: &arkret_sdk::AccountId,
-    device: &DeviceId,
-    focus: &str,
-    media: DesiredMedia,
-) -> Result<arkret_sdk::CallMediaJoinContext, RtcClientError> {
-    use arkret_sdk::*;
-    let signer =
-        crate::event_signer::active_signer().ok_or(RtcClientError::ParticipantBindingInvalid)?;
-    let created_at = crate::clock::now_utc();
-    let nonce = crate::random::base64url_token(32, "voluntary join nonce unavailable")
-        .map_err(|_| RtcClientError::ParticipantBindingInvalid)?;
-    let context = CallMediaJoinContext::Voluntary(CallVoluntaryJoinContext {
-        kind: CallVoluntaryJoinKind::Voluntary,
-        created_at,
-        expires_at: created_at + chrono::Duration::seconds(60),
-        nonce,
-        proof: CallVoluntaryJoinProof {
-            verification_method: signer.verification_method().to_owned(),
-            jws: String::new(),
-        },
-    });
-    let mut body = call_media_token_exchange(
-        RealmId::new(realm).map_err(|_| RtcClientError::FocusMismatch)?,
-        CallId::new(call).map_err(|_| RtcClientError::FocusMismatch)?,
-        ActorId::account(authority.clone()),
-        device.clone(),
-        focus,
-        context,
-    );
-    body.desired_media = Some(media.into_wire());
-    let raw = serde_json::to_value(&body).map_err(|_| RtcClientError::ParticipantBindingInvalid)?;
-    let input =
-        arkret_models_collaboration::call_invitation::voluntary_join_signing_input_from_value(&raw)
-            .map_err(|_| RtcClientError::ParticipantBindingInvalid)?;
-    let CallMediaJoinContext::Voluntary(mut context) = body.join_context else {
-        unreachable!()
-    };
-    context.proof.jws = signer
-        .detached_jws_over_payload_with_kid(signer.verification_method(), &input)
-        .map_err(|_| RtcClientError::ParticipantBindingInvalid)?;
-    Ok(CallMediaJoinContext::Voluntary(context))
-}
-
-pub(crate) fn current_media_governance_evidence(
-    store: &crate::state::LocalStateStore,
-    realm_id: &str,
-    device_id: &str,
-    media_plaintext_ui_confirmed: bool,
-) -> Option<MediaGovernanceEvidence> {
-    let view = store
-        .current_product_view()
-        .filter(|view| view.realm_id == realm_id && view.complete_cut)?;
-    let scope = arkret_sdk::ScopeRef::Realm {
-        realm_id: arkret_sdk::RealmId::new(realm_id.to_owned()).ok()?,
-    };
-    let current = crate::current_projection::current_mls_group(&view.entries, &scope)?;
-    let checkpoint = store.mls_checkpoint_for(realm_id)?;
-    let account = store.active_authority()?;
-    let device = arkret_sdk::DeviceId::new(device_id.to_owned()).ok()?;
-    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-    let exporter = crate::media::rtc::RealmMlsExporter::for_realm(
-        Some(checkpoint.clone()),
-        secure_store.as_ref(),
-        &account,
-        &device,
-    )
-    .ok()?;
-    let governance_binding = exporter
-        .current_governance_binding(&checkpoint, &current)
-        .ok()?;
-    let descriptor = view.media_service().ok().flatten()?;
-    let policy_bundle_payload =
-        crate::current_projection::current_realm_policy_bundle_value(&view.entries);
-    let plaintext_visible_services_payload = view.entries.iter().find_map(|row| {
-        let arkret_wire::TypedCurrentRow::Value {
-            selector, value, ..
-        } = row;
-        (*selector == arkret_wire::CurrentSelector::RealmPlaintextVisibleServices)
-            .then(|| serde_json::from_value(value.clone()).ok())
-            .flatten()
-    });
-    Some(MediaGovernanceEvidence {
-        governance_binding,
-        media_service_payload: serde_json::to_value(descriptor).ok()?,
-        policy_bundle_payload,
-        plaintext_visible_services_payload,
-        media_plaintext_ui_confirmed,
-    })
 }

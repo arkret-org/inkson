@@ -27,15 +27,6 @@ use crate::event_submit::EventSubmitter;
 use crate::models::{ContactList, CurrentAccount};
 use crate::state::LocalStateStore;
 
-pub(crate) fn did_for_request_field(
-    field: &str,
-    value: &str,
-) -> anyhow::Result<arkret_sdk::DidCoreId> {
-    let value = value.trim();
-    crate::mls_api_helpers::principal_core_id(value)
-        .map_err(|err| anyhow::anyhow!("invalid {field} DID `{value}`: {err}"))
-}
-
 pub async fn account_viewer(
     http: &arkret_sdk::http_client::Client,
 ) -> anyhow::Result<arkret_models_collaboration::account_operations::AccountView> {

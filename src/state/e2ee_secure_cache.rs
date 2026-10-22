@@ -1432,6 +1432,7 @@ impl CacheClearRecovery {
             )
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn reconcile(&self, json: &Option<String>) -> Result<Option<String>, String> {
         // A later draft or an explicit empty-string tombstone wins. Restore
         // only fields removed by the failed clear, never MLS checkpoints.
@@ -1554,6 +1555,7 @@ impl CachePersistQueue {
     /// authored fields and provenance; failed-clear recovery may fill missing
     /// old fields before activation. A newer capture never satisfies an older
     /// waiter, and stale provenance is rejected instead of reporting success.
+    #[cfg(test)]
     fn enqueue(
         &mut self,
         key: String,

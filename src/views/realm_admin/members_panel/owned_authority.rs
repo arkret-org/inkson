@@ -98,7 +98,7 @@ fn OwnedAgentScopePreview(
                     let target = crate::transport::realm_read::authz_check_request(&http, &request(agent.clone())).await;
                     let target = match target {
                         Ok(outcome) => decision_label(&outcome).to_owned(),
-                        Err(error) => format!("当前有效性未确认：{}", error.to_string()),
+                        Err(error) => format!("当前有效性未确认：{error}"),
                     };
                     messages.push(format!("{}：主人{}；Agent{}", action, decision_label(&owner), target));
                 }
@@ -678,11 +678,7 @@ async fn load(
                 let outcome = match result {
                     Ok(outcome) => outcome,
                     Err(error) => {
-                        decisions.push(format!(
-                            "{}：当前有效性未确认：{}",
-                            action,
-                            error.to_string()
-                        ));
+                        decisions.push(format!("{}：当前有效性未确认：{}", action, error));
                         continue;
                     }
                 };

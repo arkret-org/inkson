@@ -960,6 +960,23 @@ fn app_data_dir() -> PathBuf {
         .join("inkson")
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+fn write_selection_file(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
+    use std::io::Write;
+    let temporary = path.with_extension("json.tmp");
+    let result = (|| {
+        let mut file = fs::File::create(&temporary)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        fs::rename(&temporary, path)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use chrono::{TimeZone as _, Utc};
@@ -1241,21 +1258,4 @@ mod tests {
         assert!(validate_server_url("https://arkret.example/#frag").is_err());
         assert!(validate_server_url("ftp://localhost").is_err());
     }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn write_selection_file(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
-    use std::io::Write;
-    let temporary = path.with_extension("json.tmp");
-    let result = (|| {
-        let mut file = fs::File::create(&temporary)?;
-        file.write_all(bytes)?;
-        file.sync_all()?;
-        fs::rename(&temporary, path)?;
-        Ok(())
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&temporary);
-    }
-    result
 }

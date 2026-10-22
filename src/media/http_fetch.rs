@@ -81,15 +81,6 @@ pub(crate) async fn fetch_did_bytes(
     fetch_guarded_bytes(http, url, max_bytes, None).await
 }
 
-pub(crate) async fn fetch_arkret_bytes(
-    http: &reqwest::Client,
-    url: &str,
-    max_bytes: usize,
-    operation: &str,
-) -> Option<(String, Vec<u8>)> {
-    fetch_guarded_bytes(http, url, max_bytes, Some(operation)).await
-}
-
 async fn fetch_guarded_bytes(
     http: &reqwest::Client,
     url: &str,

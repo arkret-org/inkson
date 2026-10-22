@@ -259,6 +259,13 @@ struct RealmSecurityView {
 }
 
 impl Clone for LocalStateStore {
+    #[cfg_attr(
+        not(test),
+        expect(
+            clippy::unwrap_used,
+            reason = "Clone cannot report a poisoned account-cache invariant; never reuse partial authority state."
+        )
+    )]
     fn clone(&self) -> Self {
         Self {
             cached: self.cached.clone(),
@@ -951,10 +958,7 @@ impl LocalStateStore {
             );
             Ok(checkpoint)
         })()
-        .map(|checkpoint| account_store::CachedCheckpoint {
-            checkpoint,
-            ..Default::default()
-        });
+        .map(|checkpoint| account_store::CachedCheckpoint { checkpoint });
         #[cfg(target_arch = "wasm32")]
         let result: anyhow::Result<_> = match account_store::browser::cached_result(scope) {
             Ok(Some(cached)) => Ok(cached),
@@ -966,14 +970,22 @@ impl LocalStateStore {
                 let state = cached.checkpoint.state.clone();
                 self.account_checkpoints
                     .lock()
-                    .unwrap()
+                    .map_err(|_| {
+                        *self.lock_persist_health() =
+                            Some("account checkpoint or quarantine lock poisoned".into());
+                    })
+                    .ok()?
                     .insert(scope.to_owned(), Arc::new(cached));
                 Some(state)
             }
             Err(error) => {
                 self.corrupt_account_scopes
                     .lock()
-                    .unwrap()
+                    .map_err(|_| {
+                        *self.lock_persist_health() =
+                            Some("account checkpoint or quarantine lock poisoned".into());
+                    })
+                    .ok()?
                     .insert(scope.to_owned());
                 *self.lock_persist_health() = Some(format!(
                     "account records could not be authenticated; durable data retained: {error}"
@@ -1028,12 +1040,9 @@ impl LocalStateStore {
             )?;
             self.corrupt_account_scopes
                 .lock()
-                .unwrap()
+                .map_err(|_| anyhow::anyhow!("account checkpoint or quarantine lock poisoned"))?
                 .remove(ANONYMOUS_ACCOUNT_NAMESPACE);
-            account_store::CachedCheckpoint {
-                checkpoint,
-                ..Default::default()
-            }
+            account_store::CachedCheckpoint { checkpoint }
         };
         #[cfg(target_arch = "wasm32")]
         let cached = account_store::browser::enqueue_reset(
@@ -1043,7 +1052,7 @@ impl LocalStateStore {
         )?;
         self.account_checkpoints
             .lock()
-            .unwrap()
+            .map_err(|_| anyhow::anyhow!("account checkpoint or quarantine lock poisoned"))?
             .insert(ANONYMOUS_ACCOUNT_NAMESPACE.to_owned(), Arc::new(cached));
         Ok(())
     }
@@ -1054,24 +1063,35 @@ impl LocalStateStore {
     ) -> anyhow::Result<account_store::Checkpoint> {
         #[cfg(not(target_arch = "wasm32"))]
         {
-            if let Some(cached) = self.account_checkpoints.lock().unwrap().get(scope) {
+            if let Some(cached) = self
+                .account_checkpoints
+                .lock()
+                .map_err(|_| anyhow::anyhow!("account checkpoint or quarantine lock poisoned"))?
+                .get(scope)
+            {
                 return Ok(cached.checkpoint.clone());
             }
             let checkpoint = account_store::load(&self.account_record_backend()?, scope)?;
-            self.account_checkpoints.lock().unwrap().insert(
-                scope.to_owned(),
-                Arc::new(account_store::CachedCheckpoint {
-                    checkpoint: checkpoint.clone(),
-                    ..Default::default()
-                }),
-            );
+            self.account_checkpoints
+                .lock()
+                .map_err(|_| anyhow::anyhow!("account checkpoint or quarantine lock poisoned"))?
+                .insert(
+                    scope.to_owned(),
+                    Arc::new(account_store::CachedCheckpoint {
+                        checkpoint: checkpoint.clone(),
+                    }),
+                );
             Ok(checkpoint)
         }
         #[cfg(target_arch = "wasm32")]
         {
             let cached = account_store::browser::cached_result(scope)?
                 .ok_or_else(|| anyhow::anyhow!("committed account records are not hydrated"))?;
-            let checkpoint = cached.last_committed.lock().unwrap().clone();
+            let checkpoint = cached
+                .last_committed
+                .lock()
+                .map_err(|_| anyhow::anyhow!("account checkpoint or quarantine lock poisoned"))?
+                .clone();
             Ok(checkpoint)
         }
     }
@@ -1091,7 +1111,6 @@ impl LocalStateStore {
             #[cfg(not(target_arch = "wasm32"))]
             let checkpoint = account_store::CachedCheckpoint {
                 checkpoint: account_store::load(&backend, scope)?,
-                ..Default::default()
             };
             #[cfg(target_arch = "wasm32")]
             let checkpoint = account_store::browser::cached(scope).unwrap_or_default();
@@ -1100,7 +1119,7 @@ impl LocalStateStore {
         let cached = Arc::make_mut(
             checkpoints
                 .get_mut(scope)
-                .expect("hydrated account checkpoint"),
+                .ok_or_else(|| anyhow::anyhow!("hydrated account checkpoint is missing"))?,
         );
         let publication = match self.active_authority() {
             Some(authority) => CurrentIndex::account_publication(
@@ -1198,7 +1217,7 @@ impl LocalStateStore {
             let repairing = self
                 .account_checkpoints
                 .lock()
-                .unwrap()
+                .map_err(|_| anyhow::anyhow!("account checkpoint lock poisoned"))?
                 .get(&active)
                 .is_some_and(|cached| cached.recovering.load(Ordering::Acquire));
             #[cfg(not(target_arch = "wasm32"))]

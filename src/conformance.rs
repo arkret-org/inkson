@@ -472,14 +472,6 @@ pub async fn observe_native_call_projection(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) async fn observe_call_projection(
-    state_store: crate::runtime::input::StateStoreHandle,
-    outcome: garth::signal::SignalReceiveOutcome,
-) -> anyhow::Result<usize> {
-    observe_call_projection_with_account(state_store, outcome, None, None).await
-}
-
-#[cfg(not(target_arch = "wasm32"))]
 async fn observe_call_projection_with_account(
     state_store: crate::runtime::input::StateStoreHandle,
     outcome: garth::signal::SignalReceiveOutcome,
@@ -643,89 +635,6 @@ pub fn private_sidecar_response_plaintext(
     .ok_or_else(|| anyhow::anyhow!("user-facing response cannot be authenticated and decrypted"))
 }
 
-#[cfg(test)]
-mod tests {
-    use arkret_models_discovery::TransportBinding;
-    use arkret_wire::{Did, ProfileId, TrustDomainId};
-
-    use super::*;
-
-    fn station(bundles: &[&str]) -> ServiceDescribe {
-        ServiceDescribe::development(
-            Did::new("did:web:coland.example".to_owned()).unwrap(),
-            TrustDomainId::new("ak:trust_domain:example.net").unwrap(),
-            ServiceKind::Station,
-            bundles.iter().map(|id| (*id).to_owned()).collect(),
-            vec![TransportBinding::HttpJson {
-                base_url: "https://coland.example/".to_owned(),
-                extension_profile_required: (),
-            }],
-        )
-    }
-
-    #[test]
-    fn realm_creation_does_not_require_identity_resolver_or_upload_transport() {
-        let description = station(&[
-            "ak.operation_bundle.station.describe.v1",
-            "ak.operation_bundle.station.http_core_current.v1",
-        ]);
-        assert!(!description.supports_operation(ServiceOperationId::RootIdentityReadResolveV1));
-        assert!(StationFeature::CreateRealm.ready(Some(&description)));
-        assert!(StationFeature::CreateSpace.ready(Some(&description)));
-        assert!(StationFeature::Board.ready(Some(&description)));
-    }
-
-    #[test]
-    fn missing_describe_bundle_blocks_creation_but_not_reading_or_key_publication() {
-        let description = station(&["ak.operation_bundle.station.http_core_current.v1"]);
-        assert_eq!(
-            StationFeature::CreateRealm.missing_requirements(Some(&description)),
-            vec!["ak.server.read.describe.v1 (http_json)"]
-        );
-        assert!(StationFeature::Discussion.ready(Some(&description)));
-        assert!(StationFeature::PublishKeyPackage.ready(Some(&description)));
-    }
-
-    #[test]
-    fn every_baseline_operation_is_a_live_registry_operation() {
-        for feature in [
-            StationFeature::Discussion,
-            StationFeature::Board,
-            StationFeature::CreateRealm,
-            StationFeature::CreateSpace,
-            StationFeature::Circles,
-            StationFeature::PublishKeyPackage,
-            StationFeature::MlsAdmission,
-            StationFeature::WelcomeBootstrap,
-        ] {
-            for operation in feature.operations() {
-                assert_eq!(
-                    ServiceOperationId::from_wire(operation.as_str()),
-                    Some(*operation)
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn discovery_and_transport_are_required_and_profile_claims_cannot_supply_operations() {
-        assert!(!StationFeature::CreateRealm.ready(None));
-        let mut description = station(&[]);
-        description
-            .supported_profiles
-            .push(ProfileId::FULL_CLIENT_V1.to_owned());
-        assert!(!StationFeature::CreateRealm.ready(Some(&description)));
-        description = station(&["ak.operation_bundle.station.http_core_current.v1"]);
-        description.transport_bindings.clear();
-        assert!(!StationFeature::Discussion.ready(Some(&description)));
-        description = station(&["ak.operation_bundle.station.http_core_current.v1"]);
-        description.service_kind = ServiceKind::IdentityRegistry;
-        assert!(!StationFeature::Discussion.ready(Some(&description)));
-        description = station(&["ak.operation_bundle.station.unknown.v1"]);
-        assert!(!StationFeature::Discussion.ready(Some(&description)));
-    }
-}
-
 /// Consume a genuine holder read through the same persistent installation as ringing.
 #[cfg(not(target_arch = "wasm32"))]
 pub async fn consume_native_consent_current(
@@ -882,8 +791,93 @@ pub async fn read_native_call_consent(
         &authority,
         invitation,
         crate::random::base64url_token(32, "Consent read nonce unavailable")?,
-        None,
-        &[],
+        garth::call_invitation::HolderConsentKnownCut {
+            governance_generation: None,
+            stream_heads: &[],
+        },
     )
     .await?)
+}
+
+#[cfg(test)]
+mod tests {
+    use arkret_models_discovery::TransportBinding;
+    use arkret_wire::{Did, ProfileId, TrustDomainId};
+
+    use super::*;
+
+    fn station(bundles: &[&str]) -> ServiceDescribe {
+        ServiceDescribe::development(
+            Did::new("did:web:coland.example".to_owned()).unwrap(),
+            TrustDomainId::new("ak:trust_domain:example.net").unwrap(),
+            ServiceKind::Station,
+            bundles.iter().map(|id| (*id).to_owned()).collect(),
+            vec![TransportBinding::HttpJson {
+                base_url: "https://coland.example/".to_owned(),
+                extension_profile_required: (),
+            }],
+        )
+    }
+
+    #[test]
+    fn realm_creation_does_not_require_identity_resolver_or_upload_transport() {
+        let description = station(&[
+            "ak.operation_bundle.station.describe.v1",
+            "ak.operation_bundle.station.http_core_current.v1",
+        ]);
+        assert!(!description.supports_operation(ServiceOperationId::RootIdentityReadResolveV1));
+        assert!(StationFeature::CreateRealm.ready(Some(&description)));
+        assert!(StationFeature::CreateSpace.ready(Some(&description)));
+        assert!(StationFeature::Board.ready(Some(&description)));
+    }
+
+    #[test]
+    fn missing_describe_bundle_blocks_creation_but_not_reading_or_key_publication() {
+        let description = station(&["ak.operation_bundle.station.http_core_current.v1"]);
+        assert_eq!(
+            StationFeature::CreateRealm.missing_requirements(Some(&description)),
+            vec!["ak.server.read.describe.v1 (http_json)"]
+        );
+        assert!(StationFeature::Discussion.ready(Some(&description)));
+        assert!(StationFeature::PublishKeyPackage.ready(Some(&description)));
+    }
+
+    #[test]
+    fn every_baseline_operation_is_a_live_registry_operation() {
+        for feature in [
+            StationFeature::Discussion,
+            StationFeature::Board,
+            StationFeature::CreateRealm,
+            StationFeature::CreateSpace,
+            StationFeature::Circles,
+            StationFeature::PublishKeyPackage,
+            StationFeature::MlsAdmission,
+            StationFeature::WelcomeBootstrap,
+        ] {
+            for operation in feature.operations() {
+                assert_eq!(
+                    ServiceOperationId::from_wire(operation.as_str()),
+                    Some(*operation)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn discovery_and_transport_are_required_and_profile_claims_cannot_supply_operations() {
+        assert!(!StationFeature::CreateRealm.ready(None));
+        let mut description = station(&[]);
+        description
+            .supported_profiles
+            .push(ProfileId::FULL_CLIENT_V1.to_owned());
+        assert!(!StationFeature::CreateRealm.ready(Some(&description)));
+        description = station(&["ak.operation_bundle.station.http_core_current.v1"]);
+        description.transport_bindings.clear();
+        assert!(!StationFeature::Discussion.ready(Some(&description)));
+        description = station(&["ak.operation_bundle.station.http_core_current.v1"]);
+        description.service_kind = ServiceKind::IdentityRegistry;
+        assert!(!StationFeature::Discussion.ready(Some(&description)));
+        description = station(&["ak.operation_bundle.station.unknown.v1"]);
+        assert!(!StationFeature::Discussion.ready(Some(&description)));
+    }
 }

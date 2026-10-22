@@ -145,8 +145,10 @@ async fn routed_policy(value: Option<Value>, complete: bool) -> Vec<arkret_sdk::
         complete
     );
     sink.handle(received(&signal)).await.unwrap();
-    let answer = products.0.borrow().clone();
-    answer
+    {
+        let observed = products.0.borrow();
+        observed.clone()
+    }
 }
 
 #[tokio::test]

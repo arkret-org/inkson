@@ -248,7 +248,10 @@ pub(super) fn plan(scope: &str, old: &Checkpoint, state: ClientLocalState) -> an
     checkpoint.state = state;
     writes.push((
         root_key(scope),
-        checkpoint.root.clone().expect("new account root"),
+        checkpoint
+            .root
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("new account root is missing"))?,
     ));
     Ok(Plan {
         check: (root_key(scope), old.root.clone()),
@@ -441,11 +444,9 @@ pub(super) fn gc(backend: &Backend, scope: &str) -> anyhow::Result<bool> {
     Ok(true)
 }
 
-fn gc_step(
-    scope: &str,
-    key: &str,
-    mut task: Garbage,
-) -> anyhow::Result<(Vec<String>, Vec<(String, Vec<u8>)>)> {
+type RecordBatch = (Vec<String>, Vec<(String, Vec<u8>)>);
+
+fn gc_step(scope: &str, key: &str, mut task: Garbage) -> anyhow::Result<RecordBatch> {
     anyhow::ensure!(
         task.next <= task.chunks && key == format!("{}gc/{}", prefix(scope), task.blob),
         "invalid account GC task"
@@ -681,7 +682,10 @@ pub(super) mod browser {
             OnceLock::new();
         let workers = WORKERS.get_or_init(Default::default);
         let dirty = {
-            let mut registry = workers.lock().unwrap();
+            let Ok(mut registry) = workers.lock() else {
+                tracing::warn!("account GC registry lock poisoned; durable task retained");
+                return;
+            };
             if let Some(dirty) = registry.get(&scope) {
                 dirty.store(true, Ordering::Release);
                 return;
@@ -703,7 +707,10 @@ pub(super) mod browser {
                         tracing::warn!(%error,"account GC retained durable task for retry");
                     }
                 }
-                let mut registry = workers.lock().unwrap();
+                let Ok(mut registry) = workers.lock() else {
+                    tracing::warn!("account GC registry lock poisoned; durable task retained");
+                    return;
+                };
                 if dirty.swap(false, Ordering::AcqRel) {
                     continue;
                 }
@@ -953,7 +960,10 @@ pub(super) fn schedule_gc(backend: Backend, scope: String, storage: String) {
     let workers = WORKERS.get_or_init(Default::default);
     let identity = format!("{storage}/{scope}");
     let dirty = {
-        let mut registry = workers.lock().unwrap();
+        let Ok(mut registry) = workers.lock() else {
+            tracing::warn!("account GC registry lock poisoned; durable task retained");
+            return;
+        };
         if let Some(dirty) = registry.get(&identity) {
             dirty.store(true, Ordering::Release);
             return;
@@ -974,7 +984,10 @@ pub(super) fn schedule_gc(backend: Backend, scope: String, storage: String) {
                     tracing::warn!(%error,"account GC retained durable task for retry");
                 }
             }
-            let mut registry = workers.lock().unwrap();
+            let Ok(mut registry) = workers.lock() else {
+                tracing::warn!("account GC registry lock poisoned; durable task retained");
+                return;
+            };
             if dirty.swap(false, Ordering::AcqRel) {
                 continue;
             }

@@ -192,7 +192,7 @@ impl EventSubmitter {
         outbound
             .store()
             .mutate_outbound(|queue| {
-                requeue_original_watch(queue, &authority, request, &retained, now, &check)
+                requeue_original_watch(queue, &authority, request, &retained, now, check)
             })
             .await?;
         check()?;

@@ -780,10 +780,10 @@ impl InksonSignalSink {
                 return Ok(false);
             }
         }
-        if let arkret_sdk::SignalPlaintext::Typing(typing) = &signal.payload {
-            if !self.typing_product_allowed(signal, &typing.strand_id, crate::clock::now_utc()) {
-                return Ok(false);
-            }
+        if let arkret_sdk::SignalPlaintext::Typing(typing) = &signal.payload
+            && !self.typing_product_allowed(signal, &typing.strand_id, crate::clock::now_utc())
+        {
+            return Ok(false);
         }
         let current = if matches!(
             signal.kind(),
@@ -1194,10 +1194,10 @@ impl InksonSignalSink {
     }
 
     fn apply_live_body(&self, signal: &AdmittedSignal) -> garth::Result<bool> {
-        if let arkret_sdk::SignalPlaintext::Typing(typing) = &signal.payload {
-            if !self.typing_product_allowed(signal, &typing.strand_id, crate::clock::now_utc()) {
-                return Ok(false);
-            }
+        if let arkret_sdk::SignalPlaintext::Typing(typing) = &signal.payload
+            && !self.typing_product_allowed(signal, &typing.strand_id, crate::clock::now_utc())
+        {
+            return Ok(false);
         }
         let body = live_body_value(signal)?;
         let now = crate::clock::now_utc();
@@ -1546,6 +1546,98 @@ async fn run_signal_receive_attempt(
         }
     }
     Ok(SignalStreamStopReason::Ended)
+}
+
+/// Install the sealed complete holder read and enforce its persisted high-water.
+pub(crate) async fn install_call_consent_current(
+    state_store: &crate::runtime::input::StateStoreHandle,
+    account: &crate::config::ActiveAccountContext,
+    response: &arkret_sdk::http_client::own_station_results::BoundOwnStationResponse<
+        arkret_sdk::ConsentCurrentReadRequestBody,
+        arkret_sdk::ConsentCurrentReadOutcome,
+    >,
+    consent_scope: arkret_sdk::ConsentScope,
+    session_epoch: u64,
+    guard: &dyn Fn() -> anyhow::Result<()>,
+) -> anyhow::Result<bool> {
+    install_consent_current_for_holder(
+        state_store,
+        &account.authority,
+        &account.principal_control_realm_id,
+        response,
+        consent_scope,
+        session_epoch,
+        guard,
+    )
+    .await
+}
+
+pub(crate) async fn install_consent_current_for_holder(
+    state_store: &crate::runtime::input::StateStoreHandle,
+    holder: &arkret_sdk::AccountId,
+    pcr_realm: &arkret_sdk::RealmId,
+    response: &arkret_sdk::http_client::own_station_results::BoundOwnStationResponse<
+        arkret_sdk::ConsentCurrentReadRequestBody,
+        arkret_sdk::ConsentCurrentReadOutcome,
+    >,
+    consent_scope: arkret_sdk::ConsentScope,
+    session_epoch: u64,
+    guard: &dyn Fn() -> anyhow::Result<()>,
+) -> anyhow::Result<bool> {
+    guard()?;
+    anyhow::ensure!(
+        response.value()?.realm_id == *pcr_realm,
+        "Consent current differs from accepted holder PCR"
+    );
+    let index = crate::state::CurrentIndex::open_committed(
+        holder,
+        state_store.read(|s| s.current_index_location()),
+        || Ok(state_store.read(|s| s.current_generation())),
+    )
+    .await?;
+    let mut stage = index
+        .stage_consent_current(
+            || Ok(state_store.read(|s| s.current_generation())),
+            response,
+            &guard,
+        )
+        .await?;
+    state_store
+        .write(|store| {
+            store.verified_projection_transaction(|store| {
+                if store.active_authority() != Some(holder.clone())
+                    || store.current_reset_required()
+                    || crate::identity::device_directory::session_cache_epoch() != session_epoch
+                {
+                    return Err("ring attempt changed before installation".to_owned());
+                }
+                response.value().map_err(|e| e.to_string())?;
+                stage.arm_account_commit();
+                store.set_current_generation(stage.generation());
+                Ok(())
+            })
+        })
+        .map_err(anyhow::Error::msg)?;
+    let durable = state_store.read(|s| s.begin_durable_flush())?.wait().await;
+    if let Err(error) = durable {
+        index.poison();
+        return Err(anyhow::anyhow!(error));
+    }
+    stage.finish();
+    guard()?;
+    let progress = index
+        .read_progress(response.value()?.realm_id.as_str())
+        .await?;
+    if progress.observed_governance_generation != Some(response.value()?.governance_generation)
+        || !progress
+            .observed_heads
+            .contains(&response.value()?.effective_stream_head)
+    {
+        return Ok(false);
+    }
+    Ok(response
+        .value()?
+        .permits(response.request(), consent_scope, crate::clock::now_utc()))
 }
 
 #[cfg(test)]
@@ -1973,7 +2065,7 @@ mod tests {
             .unwrap();
             let handle = arkret_sdk::Handle::parse("alice:verified.example").unwrap();
             assert!(crate::account_data::hides_typing(
-                &[entry.clone()],
+                std::slice::from_ref(&entry),
                 &signal,
                 std::slice::from_ref(&handle),
                 now
@@ -1982,7 +2074,7 @@ mod tests {
                 || target.get("value") == Some(&json!("verified.example"))
             {
                 assert!(!crate::account_data::hides_typing(
-                    &[entry.clone()],
+                    std::slice::from_ref(&entry),
                     &signal,
                     &[],
                     now
@@ -1990,7 +2082,7 @@ mod tests {
             }
             entry.mode = AccountBlocklistMode::Mute;
             assert!(!crate::account_data::hides_typing(
-                &[entry.clone()],
+                std::slice::from_ref(&entry),
                 &signal,
                 std::slice::from_ref(&handle),
                 now
@@ -1998,7 +2090,7 @@ mod tests {
             entry.mode = AccountBlocklistMode::Block;
             entry.applies_to = vec![AccountBlocklistSurface::Calls];
             assert!(!crate::account_data::hides_typing(
-                &[entry.clone()],
+                std::slice::from_ref(&entry),
                 &signal,
                 std::slice::from_ref(&handle),
                 now
@@ -2039,7 +2131,7 @@ mod tests {
         ));
         let entry: AccountBlocklistEntry = serde_json::from_value(json!({"target":{"kind":"domain","value":"alice.example"},"mode":"hide","applies_to":["dm"],"created_at":"2026-01-01T00:00:00.000Z"})).unwrap();
         assert!(!crate::account_data::hides_typing(
-            &[entry.clone()],
+            std::slice::from_ref(&entry),
             &signal,
             &[],
             now
@@ -2444,96 +2536,4 @@ mod tests {
             json!(arkret_sdk::canonical::format_timestamp_canonical(at(30)))
         );
     }
-}
-
-/// Install the sealed complete holder read and enforce its persisted high-water.
-pub(crate) async fn install_call_consent_current(
-    state_store: &crate::runtime::input::StateStoreHandle,
-    account: &crate::config::ActiveAccountContext,
-    response: &arkret_sdk::http_client::own_station_results::BoundOwnStationResponse<
-        arkret_sdk::ConsentCurrentReadRequestBody,
-        arkret_sdk::ConsentCurrentReadOutcome,
-    >,
-    consent_scope: arkret_sdk::ConsentScope,
-    session_epoch: u64,
-    guard: &dyn Fn() -> anyhow::Result<()>,
-) -> anyhow::Result<bool> {
-    install_consent_current_for_holder(
-        state_store,
-        &account.authority,
-        &account.principal_control_realm_id,
-        response,
-        consent_scope,
-        session_epoch,
-        guard,
-    )
-    .await
-}
-
-pub(crate) async fn install_consent_current_for_holder(
-    state_store: &crate::runtime::input::StateStoreHandle,
-    holder: &arkret_sdk::AccountId,
-    pcr_realm: &arkret_sdk::RealmId,
-    response: &arkret_sdk::http_client::own_station_results::BoundOwnStationResponse<
-        arkret_sdk::ConsentCurrentReadRequestBody,
-        arkret_sdk::ConsentCurrentReadOutcome,
-    >,
-    consent_scope: arkret_sdk::ConsentScope,
-    session_epoch: u64,
-    guard: &dyn Fn() -> anyhow::Result<()>,
-) -> anyhow::Result<bool> {
-    guard()?;
-    anyhow::ensure!(
-        response.value()?.realm_id == *pcr_realm,
-        "Consent current differs from accepted holder PCR"
-    );
-    let index = crate::state::CurrentIndex::open_committed(
-        holder,
-        state_store.read(|s| s.current_index_location()),
-        || Ok(state_store.read(|s| s.current_generation())),
-    )
-    .await?;
-    let mut stage = index
-        .stage_consent_current(
-            || Ok(state_store.read(|s| s.current_generation())),
-            &response,
-            &guard,
-        )
-        .await?;
-    state_store
-        .write(|store| {
-            store.verified_projection_transaction(|store| {
-                if store.active_authority() != Some(holder.clone())
-                    || store.current_reset_required()
-                    || crate::identity::device_directory::session_cache_epoch() != session_epoch
-                {
-                    return Err("ring attempt changed before installation".to_owned());
-                }
-                response.value().map_err(|e| e.to_string())?;
-                stage.arm_account_commit();
-                store.set_current_generation(stage.generation());
-                Ok(())
-            })
-        })
-        .map_err(anyhow::Error::msg)?;
-    let durable = state_store.read(|s| s.begin_durable_flush())?.wait().await;
-    if let Err(error) = durable {
-        index.poison();
-        return Err(anyhow::anyhow!(error));
-    }
-    stage.finish();
-    guard()?;
-    let progress = index
-        .read_progress(response.value()?.realm_id.as_str())
-        .await?;
-    if progress.observed_governance_generation != Some(response.value()?.governance_generation)
-        || !progress
-            .observed_heads
-            .contains(&response.value()?.effective_stream_head)
-    {
-        return Ok(false);
-    }
-    Ok(response
-        .value()?
-        .permits(response.request(), consent_scope, crate::clock::now_utc()))
 }

@@ -355,7 +355,7 @@ fn AppBootstrap() -> Element {
         .as_ref()
         .map(|account| account.principal_id().clone());
     let initial_can_restore_session =
-        has_bootstrap_refresh_material(&initial_state_store, initial_active_account.as_ref());
+        has_bootstrap_refresh_material(initial_state_store, initial_active_account.as_ref());
     let initial_secure_store_bootstrap_ready = !cfg!(target_arch = "wasm32");
     let initial_session_boot_state = session_boot_state_from_bootstrap_material(
         &initial_session_credential,
@@ -363,7 +363,7 @@ fn AppBootstrap() -> Element {
         crate::app::principal_id_text(&initial_principal_id),
         initial_secure_store_bootstrap_ready,
     );
-    let initial_control_realm_ids = principal_control_realm_ids(&initial_local_state);
+    let initial_control_realm_ids = principal_control_realm_ids(initial_local_state);
     let initial_realm_tree_nodes = realm_tree_nodes_from_sync_realms_with_roles(
         &initial_local_state.realm_tree_projections,
         &initial_local_state.realm_collaboration_roles,
@@ -374,7 +374,7 @@ fn AppBootstrap() -> Element {
     let initial_realm_tree_owner_id = initial_state_store
         .active_principal_id()
         .unwrap_or_default();
-    let initial_sidebar_width = load_sidebar_width_preference(&initial_state_store);
+    let initial_sidebar_width = load_sidebar_width_preference(initial_state_store);
     // Boot locale: the device cache plus the platform default, through the
     // shared resolver. The account tier is deliberately absent here — the
     // signed-in account's `preferred_locale` arrives with the session, which

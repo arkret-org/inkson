@@ -651,7 +651,7 @@ pub fn realm_tree_nodes_from_sync_realms_with_roles(
                 && !unavailable.contains(*id)
                 && !projection_looks_like_strand(body)
                 && !realm_projection_is_principal_control(body)
-                && collaboration_roles.get(*id)
+                && collaboration_roles.get(id)
                     != Some(&arkret_sdk::CollaborationRealmRole::DirectConversation)
         })
         .map(|(id, body)| {

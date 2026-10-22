@@ -109,7 +109,7 @@ async fn native_search_policy_replacement_cancels_the_old_boundary_and_cold_read
         Some(old_start),
         None,
     );
-    install_search_policies(&mut store, &[first.clone()]).await;
+    install_search_policies(&mut store, std::slice::from_ref(&first)).await;
     let (mut dom, harness) = mount(store, account.clone());
     settle(&mut dom, &harness, 1).await;
     let (mut context, search) = harness.handles.borrow().unwrap();

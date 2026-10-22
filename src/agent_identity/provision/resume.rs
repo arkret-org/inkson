@@ -97,8 +97,14 @@ async fn commit(
     .await
     .map_err(|error| anyhow::anyhow!(error.display()))?;
     check_holder(record, fence)?;
-    let prepared = record.preparation.as_ref().unwrap();
-    let authored = record.authored.as_ref().unwrap();
+    let prepared = record
+        .preparation
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("Agent ceremony has no frozen preparation"))?;
+    let authored = record
+        .authored
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("Agent ceremony has no frozen commit"))?;
     let matches = match &outcome {
         AgentProvisionOutcome::AwaitingPcrGenesis(value) => {
             value.agent_id == prepared.agent_id
@@ -210,7 +216,11 @@ pub(crate) async fn resume_ceremony(
         record = vault.advance_agent_provision(&record, next).await?;
     }
     if record.authored.is_none() {
-        let prepared = record.preparation.as_ref().unwrap().clone();
+        let prepared = record
+            .preparation
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Agent ceremony has no frozen preparation"))?
+            .clone();
         anyhow::ensure!(
             prepared.controller_realm_id == evidence.principal_control_realm_id,
             "Agent allocation changed the original controller PCR"
@@ -317,7 +327,12 @@ pub(crate) async fn resume_ceremony(
     }
     let mut outcome = commit(&record, &credential, &fence).await?;
     if matches!(outcome, AgentProvisionOutcome::AwaitingPcrGenesis(_)) {
-        let genesis = record.authored.as_ref().unwrap().genesis.clone();
+        let genesis = record
+            .authored
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Agent ceremony has no frozen commit"))?
+            .genesis
+            .clone();
         let owned = record.clone();
         let check = fence.clone();
         with_event_submitter(&base, credential.clone(), move |submitter| async move {
@@ -334,7 +349,10 @@ pub(crate) async fn resume_ceremony(
     if matches!(outcome, AgentProvisionOutcome::AwaitingDidBinding(_)) {
         if record.binding_operation.is_none() {
             check_holder(&record, &fence)?;
-            let authored = record.authored.as_ref().unwrap();
+            let authored = record
+                .authored
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("Agent ceremony has no frozen commit"))?;
             let digest = arkret_signatures::agent::agent_requested_scope_digest(
                 &authored.commit.agent_id,
                 &record.authority.principal_id,
