@@ -389,6 +389,14 @@ pub(crate) fn strand_views_from_projection_and_ops(
     ops: &[RawOperationRecord],
 ) -> Vec<crate::state::projection_views::StrandProjectionView> {
     let aliases = event_derived_target_aliases(ops);
+    strand_views_with_aliases(projected, ops, &aliases)
+}
+
+fn strand_views_with_aliases(
+    projected: &[crate::state::projection_views::StrandProjectionView],
+    ops: &[RawOperationRecord],
+    aliases: &BTreeMap<String, String>,
+) -> Vec<crate::state::projection_views::StrandProjectionView> {
     // Preserve first-seen (create) order for stable output; placement/sort is
     // applied by `columns_from_lifecycle_projection`.
     let mut order = projected
@@ -709,6 +717,30 @@ pub(crate) fn project_board_with_projection_for_actor(
     self_actor_id: &str,
     current_entries: &[arkret_wire::TypedCurrentRow],
 ) -> (Vec<KanbanColumn>, Vec<BoardSpaceOption>, Option<String>) {
+    project_board_with_current_inventory_for_actor(
+        ops,
+        projected_containers,
+        projected_strands,
+        preferred_board_id,
+        realm_id,
+        decrypt_ctx,
+        self_actor_id,
+        current_entries,
+        false,
+    )
+}
+
+pub(crate) fn project_board_with_current_inventory_for_actor(
+    ops: &[RawOperationRecord],
+    projected_containers: &[crate::state::projection_views::SpaceContainerProjectionView],
+    projected_strands: &[crate::state::projection_views::StrandProjectionView],
+    preferred_board_id: &str,
+    realm_id: &str,
+    decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
+    self_actor_id: &str,
+    current_entries: &[arkret_wire::TypedCurrentRow],
+    complete_current: bool,
+) -> (Vec<KanbanColumn>, Vec<BoardSpaceOption>, Option<String>) {
     let aliases = event_derived_target_aliases(ops);
     let preferred_board_id = resolve_event_derived_target_alias(&aliases, preferred_board_id);
     let mut containers = space_container_views_from_projection_and_ops(
@@ -717,6 +749,19 @@ pub(crate) fn project_board_with_projection_for_actor(
         realm_id,
         current_entries,
     );
+    if complete_current {
+        let mut visible = projected_containers
+            .iter()
+            .map(|view| view.space_id.clone())
+            .collect::<BTreeSet<_>>();
+        visible.extend(
+            ops.iter()
+                .filter(|record| kanban_operation_is_pending(record))
+                .filter_map(local_space_create_from_raw_operation)
+                .map(|local| resolve_event_derived_target_alias(&aliases, &local.id)),
+        );
+        containers.retain(|view| visible.contains(&view.space_id));
+    }
     if let Some(ctx) = decrypt_ctx
         && let Some((account, device)) = ctx.identity
         && let Ok(device) = arkret_sdk::DeviceId::new(device.to_owned())
@@ -733,7 +778,27 @@ pub(crate) fn project_board_with_projection_for_actor(
             }
         }
     }
-    let mut strands = strand_views_from_projection_and_ops(projected_strands, ops);
+    let pending: Cow<'_, [RawOperationRecord]> = if complete_current {
+        Cow::Owned(kanban_pending_operations(ops))
+    } else {
+        Cow::Borrowed(ops)
+    };
+    // RSVP history retains its authenticated source Event identity. Current
+    // object inventory never comes from replaying historical creates/moves.
+    let structural: Cow<'_, [RawOperationRecord]> = if complete_current {
+        Cow::Owned(
+            ops.iter()
+                .filter(|record| {
+                    kanban_operation_is_pending(record)
+                        || raw_operation_kind_matches(&record.payload, event_kind_str::RSVP_SET)
+                })
+                .cloned()
+                .collect(),
+        )
+    } else {
+        Cow::Borrowed(ops)
+    };
+    let mut strands = strand_views_with_aliases(projected_strands, &structural, &aliases);
     // A current-only lifecycle change must render without a projection-list
     // fetch or a historical Event. Local pending writes are overlaid below.
     for view in &mut strands {
@@ -785,10 +850,13 @@ pub(crate) fn project_board_with_projection_for_actor(
     // overlay reads the write's holder-local `effect` — see
     // [`local_card_create_from_raw_operation`] — never a placement smuggled
     // into the create payload.
-    let columns =
-        overlay_local_card_create_records(columns, ops, board_id.as_deref().unwrap_or_default());
-    let columns = overlay_local_card_update_records(columns, ops, decrypt_ctx);
-    let columns = overlay_local_card_assignment_records(columns, ops);
+    let columns = overlay_local_card_create_records(
+        columns,
+        &pending,
+        board_id.as_deref().unwrap_or_default(),
+    );
+    let columns = overlay_local_card_update_records(columns, &pending, decrypt_ctx);
+    let columns = overlay_local_card_assignment_records(columns, &pending);
     (columns, board_options, board_id)
 }
 

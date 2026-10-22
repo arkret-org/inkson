@@ -1,3 +1,4 @@
+use super::projection_reads::ProjectionReadSet;
 use super::*;
 
 fn kanban_read_account_scope(
@@ -26,19 +27,33 @@ struct KanbanProjectionSnapshot {
 async fn fetch_kanban_projection_snapshot(
     api: crate::transport::TransportClient,
     realm_id: &str,
+    needed: ProjectionReadSet,
 ) -> anyhow::Result<KanbanProjectionSnapshot> {
     let http = api.sdk_http_client()?;
     // Read independent, complete derived Space/Strand pages concurrently.
     // These rows are not an authoring basis or a governance head;
     // accepted Events remain the canonical truth source.
     let (spaces, strands) = futures_util::future::join(
-        crate::transport::realm_read::list_realm_spaces(&http, realm_id),
-        crate::transport::realm_read::list_realm_strands(&http, realm_id),
+        async {
+            if needed.spaces {
+                Some(crate::transport::realm_read::list_realm_spaces(&http, realm_id).await)
+            } else {
+                None
+            }
+        },
+        async {
+            if needed.strands {
+                Some(crate::transport::realm_read::list_realm_strands(&http, realm_id).await)
+            } else {
+                None
+            }
+        },
     )
     .await;
     let spaces = match spaces {
-        Ok(spaces) => Some(spaces.into_iter().map(Into::into).collect::<Vec<_>>()),
-        Err(error) => {
+        Some(Ok(spaces)) => Some(spaces.into_iter().map(Into::into).collect::<Vec<_>>()),
+        None => None,
+        Some(Err(error)) => {
             if crate::api_error::is_auth_expired_error(&error) {
                 return Err(error);
             }
@@ -47,8 +62,9 @@ async fn fetch_kanban_projection_snapshot(
         }
     };
     let strands = match strands {
-        Ok(strands) => Some(strands.into_iter().map(Into::into).collect::<Vec<_>>()),
-        Err(error) => {
+        Some(Ok(strands)) => Some(strands.into_iter().map(Into::into).collect::<Vec<_>>()),
+        None => None,
+        Some(Err(error)) => {
             if crate::api_error::is_auth_expired_error(&error) {
                 return Err(error);
             }
@@ -69,6 +85,7 @@ async fn fetch_kanban_projection_snapshot(
 pub(super) fn KanbanEffects(
     controller: KanbanController,
     columns: Memo<Vec<KanbanColumn>>,
+    current_inventory: Memo<Result<Option<KanbanCurrentInventory>, String>>,
     route: Route,
     local_realm_id: String,
     base_url: String,
@@ -176,10 +193,21 @@ pub(super) fn KanbanEffects(
     {
         let realm = local_realm_id.clone();
         use_effect(move || {
-            let raw_operations = state_store.read().load().raw_operations;
+            let operations = state_store.read().load().raw_operations;
+            let (projected, raw_operations) = match current_inventory() {
+                Ok(Some(inventory)) => (
+                    inventory.containers,
+                    std::borrow::Cow::Owned(kanban_pending_operations(&operations)),
+                ),
+                Ok(None) => (
+                    lifecycle_container_projection(),
+                    std::borrow::Cow::Borrowed(operations.as_slice()),
+                ),
+                Err(_) => (Vec::new(), std::borrow::Cow::Borrowed(&[][..])),
+            };
             let entries = state_store.read().realm_current_state_entries(&realm);
             let mut containers = space_container_views_from_projection_and_ops(
-                &lifecycle_container_projection(),
+                &projected,
                 &raw_operations,
                 &realm,
                 &entries,
@@ -406,13 +434,22 @@ pub(super) fn KanbanEffects(
             let raw_operations = state_store.read().load().raw_operations;
             let aliases = event_derived_target_aliases(&raw_operations);
             let strand_id = resolve_event_derived_target_alias(&aliases, &strand_id);
-            let Some(strand_board) = strand_views_from_projection_and_ops(
-                &lifecycle_strand_projection(),
-                &raw_operations,
-            )
-            .into_iter()
-            .find(|view| view.strand_id == strand_id)
-            .and_then(|view| view.board_space_id) else {
+            let (projected, overlay) = match current_inventory() {
+                Ok(Some(inventory)) => (
+                    inventory.strands,
+                    std::borrow::Cow::Owned(kanban_pending_operations(&raw_operations)),
+                ),
+                Ok(None) => (
+                    lifecycle_strand_projection(),
+                    std::borrow::Cow::Borrowed(raw_operations.as_slice()),
+                ),
+                Err(_) => return,
+            };
+            let Some(strand_board) = strand_views_from_projection_and_ops(&projected, &overlay)
+                .into_iter()
+                .find(|view| view.strand_id == strand_id)
+                .and_then(|view| view.board_space_id)
+            else {
                 return;
             };
             // The projection may still reference a holder-local handle; only a
@@ -426,10 +463,9 @@ pub(super) fn KanbanEffects(
         });
     }
 
-    // MLS unlocks already invalidate the columns memo. Bootstrap/readiness,
-    // Realm changes and current installs share one inventory reader. Keep the
-    // current axis until placement/relations have complete local coverage;
-    // opaque account cursor re-mints are not inventory revisions.
+    // The admitted current view contains the whole Realm inventory. Prefer
+    // local projection; HTTP only bootstraps a still-missing display baseline.
+    // The ordinary follower owns subsequent current/history recovery.
     let session = crate::app::SessionContext::get();
     let read_scope = use_memo(use_reactive(
         (&base_url, &local_realm_id),
@@ -442,15 +478,58 @@ pub(super) fn KanbanEffects(
             )
         },
     ));
-    let read_queue = use_hook(|| {
+    let read_owner = use_hook(|| {
         std::rc::Rc::new(std::cell::RefCell::new(
-            super::projection_reads::ProjectionReadQueue::default(),
+            super::projection_reads::ProjectionReadOwner::default(),
         ))
     });
     use_effect(move || {
         let scope = read_scope();
         let credential = token();
-        if credential.trim().is_empty() || scope.0.trim().is_empty() || scope.1.trim().is_empty() {
+        let account = scope.3.as_ref().map(|(_, account, ..)| account);
+        let enabled = !credential.trim().is_empty()
+            && !scope.0.trim().is_empty()
+            && !scope.1.trim().is_empty()
+            && account.is_some_and(|account| {
+                state_store.read().active_authority().as_ref() == Some(account)
+            })
+            && !state_store.read().account_scope_read_denied(&scope.1);
+        if read_owner
+            .borrow_mut()
+            .set_scope(enabled.then_some(scope.clone()))
+        {
+            lifecycle_container_projection.set(Vec::new());
+            lifecycle_strand_projection.set(Vec::new());
+        }
+        if !enabled {
+            return;
+        }
+        match current_inventory() {
+            Ok(Some(inventory)) => {
+                read_owner.borrow_mut().cancel_pending();
+                read_owner.borrow_mut().cover(ProjectionReadSet::all());
+                if *lifecycle_container_projection.peek() != inventory.containers {
+                    lifecycle_container_projection.set(inventory.containers);
+                }
+                if *lifecycle_strand_projection.peek() != inventory.strands {
+                    lifecycle_strand_projection.set(inventory.strands);
+                }
+                return;
+            }
+            Err(error) => {
+                read_owner.borrow_mut().cancel_pending();
+                tracing::warn!(%error, "admitted Kanban inventory is unavailable");
+                if !lifecycle_container_projection.peek().is_empty() {
+                    lifecycle_container_projection.set(Vec::new());
+                }
+                if !lifecycle_strand_projection.peek().is_empty() {
+                    lifecycle_strand_projection.set(Vec::new());
+                }
+                return;
+            }
+            Ok(None) => {}
+        }
+        if !read_owner.borrow().missing().any() {
             return;
         }
         let request = (
@@ -459,13 +538,15 @@ pub(super) fn KanbanEffects(
             realm_live_epoch(),
             state_store.read().current_generation(),
         );
-        if !read_queue.borrow_mut().request(request) {
+        if !read_owner.borrow_mut().queue.request(request) {
             return;
         }
-        let queue = read_queue.clone();
-        spawn(async move {
+        let owner = read_owner.clone();
+        let task = spawn(async move {
             loop {
-                let Some((scope, ..)) = queue.borrow_mut().next() else {
+                let next = owner.borrow_mut().queue.next();
+                let Some((scope, ..)) = next else {
+                    owner.borrow_mut().finish();
                     return;
                 };
                 if *read_scope.peek() != scope
@@ -475,10 +556,35 @@ pub(super) fn KanbanEffects(
                 {
                     continue;
                 }
+                let needed = owner.borrow().missing();
+                if !needed.any() {
+                    continue;
+                }
                 let realm = scope.1.clone();
+                let list_fence = state_store.peek().realm_list_read_fence(&realm);
+                if state_store.peek().account_scope_read_denied(&realm) {
+                    continue;
+                }
+                let Some((_, expected_account, expected_device, _)) = scope.3.clone() else {
+                    continue;
+                };
                 let credential = token.peek().clone();
                 let result = with_authed_api(&scope.0, credential, move |api| async move {
-                    fetch_kanban_projection_snapshot(api, &realm).await
+                    let http = api.sdk_http_client()?;
+                    let bound =
+                        crate::transport::own_station_results::client_for_http(&http).await?;
+                    let active_device_scope = crate::secure_key_store::active_device_seed_scope();
+                    anyhow::ensure!(
+                        bound.session()?.account_id() == &expected_account
+                            && active_device_scope.as_ref().is_some_and(|active| {
+                                active.authority == expected_account
+                                    && active.device_id == expected_device
+                            }),
+                        "Kanban inventory belongs to another Account or Device session"
+                    );
+                    let snapshot = fetch_kanban_projection_snapshot(api, &realm, needed).await?;
+                    bound.check_session()?;
+                    Ok(snapshot)
                 })
                 .await;
                 // An old account, Station, session or route may finish after
@@ -490,8 +596,22 @@ pub(super) fn KanbanEffects(
                 {
                     continue;
                 }
+                let store = state_store.peek();
+                if store.account_scope_read_denied(&scope.1)
+                    || store
+                        .require_realm_list_read_fence(&scope.1, Some(&list_fence))
+                        .is_err()
+                    || store.current_product_view_stamp(&scope.1).is_some()
+                {
+                    continue;
+                }
+                drop(store);
                 match result {
                     Ok(snapshot) => {
+                        owner.borrow_mut().cover(ProjectionReadSet {
+                            spaces: snapshot.containers.is_some(),
+                            strands: snapshot.strands.is_some(),
+                        });
                         if let Some(containers) = snapshot.containers {
                             lifecycle_container_projection.set(containers);
                         }
@@ -505,6 +625,7 @@ pub(super) fn KanbanEffects(
                 }
             }
         });
+        read_owner.borrow_mut().attach(task);
     });
 
     // Locked author-private fields can become readable after another device
@@ -746,7 +867,9 @@ mod projection_read_tests {
             http,
             crate::transport::RequestContext::new(""),
         );
-        let snapshot = fetch_kanban_projection_snapshot(api, realm).await.unwrap();
+        let snapshot = fetch_kanban_projection_snapshot(api, realm, ProjectionReadSet::all())
+            .await
+            .unwrap();
         assert_eq!(snapshot.containers, Some(Vec::new()));
         assert_eq!(snapshot.strands, Some(Vec::new()));
         assert_eq!(server.join().unwrap().len(), 2);

@@ -51,9 +51,16 @@ test("kanban coalesces delayed inventory reads into one worker", async ({ page }
   });
   await openKanban(page);
   await expect.poll(() => active.spaces + active.strands).toBe(0);
-  expect(totals.spaces).toBeGreaterThan(0);
-  expect(totals.strands).toBeGreaterThan(0);
-  expect(maximum).toEqual({ spaces: 1, strands: 1 });
+  expect(maximum.spaces).toBeLessThanOrEqual(1);
+  expect(maximum.strands).toBeLessThanOrEqual(1);
+  const settled = { ...totals };
+  for (let index = 0; index < 20; index++) {
+    await page.getByTestId("kanban-card").first().click();
+    await expect(page.getByTestId("card-detail-edit-button")).toBeEnabled();
+    await page.getByTestId("card-detail-close-button").click();
+  }
+  await expect.poll(() => active.spaces + active.strands).toBe(0);
+  expect(totals).toEqual(settled);
   await testInfo.attach("kanban-inventory-concurrency.json", {
     body: Buffer.from(JSON.stringify({ totals, maximum }, null, 2)),
     contentType: "application/json",

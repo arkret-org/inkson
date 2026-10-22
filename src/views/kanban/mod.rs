@@ -1017,6 +1017,28 @@ pub fn KanbanPanel(
             pending_board_creates_from_ops(&store.load().raw_operations, &pending_realm_id)
         }
     });
+    let inventory_session = crate::app::SessionContext::get();
+    let current_inventory_stamp = use_memo(use_reactive((&local_realm_id,), move |(realm,)| {
+        let active = (inventory_session.active_account)()?;
+        let store = state_store.read();
+        if store.active_authority().as_ref() != Some(&active.authority) {
+            return None;
+        }
+        store.current_product_view_stamp(&realm)
+    }));
+    let current_inventory = use_memo(use_reactive((&local_realm_id,), move |(realm,)| {
+        if current_inventory_stamp().is_none() {
+            return Ok(None);
+        }
+        let Some(view) = state_store.peek().current_product_view() else {
+            return Ok(None);
+        };
+        if view.realm_id != realm {
+            return Ok(None);
+        }
+        kanban_inventory_from_current(&view, selected_board().as_ref())
+            .map_err(|error| error.to_string())
+    }));
     // `columns` merges the server's current Space/Strand baseline with the
     // visible Event log. The baseline recovers current objects whose create
     // Event predates a `since_join` floor; Events provide signed updates,
@@ -1034,16 +1056,33 @@ pub fn KanbanPanel(
                 .map(|board_id| board_id.to_string())
                 .unwrap_or_default();
             let decrypt_store = state_store.read();
+            let active = (inventory_session.active_account)();
+            if active.as_ref().is_none_or(|active| {
+                decrypt_store.active_authority().as_ref() != Some(&active.authority)
+            }) {
+                return Vec::new();
+            }
             let raw_operations = decrypt_store.load().raw_operations;
-            let projected_containers = lifecycle_container_projection();
-            let projected_strands = lifecycle_strand_projection();
+            if decrypt_store.account_scope_read_denied(&seed_realm_id) {
+                return Vec::new();
+            }
+            let (projected_containers, projected_strands, complete_current) =
+                match current_inventory() {
+                    Ok(Some(inventory)) => (inventory.containers, inventory.strands, true),
+                    Ok(None) => (
+                        lifecycle_container_projection(),
+                        lifecycle_strand_projection(),
+                        false,
+                    ),
+                    Err(_) => return Vec::new(),
+                };
             let decrypt_ctx = mls_decrypt_ctx_if_ready(
                 &decrypt_store,
                 &decrypt_realm_id,
                 &decrypt_authority,
                 &decrypt_device,
             );
-            if raw_operations.is_empty() && !seed_columns.is_empty() {
+            if !complete_current && raw_operations.is_empty() && !seed_columns.is_empty() {
                 // Demo / seed-fallback columns: layer local optimistic ops on top.
                 let cols = overlay_local_card_create_records(
                     seed_columns.clone(),
@@ -1055,7 +1094,7 @@ pub fn KanbanPanel(
                 return overlay_local_card_assignment_records(cols, &raw_operations);
             }
             let entries = decrypt_store.realm_current_state_entries(&seed_realm_id);
-            let (mut cols, ..) = project_board_with_projection_for_actor(
+            let (mut cols, ..) = project_board_with_current_inventory_for_actor(
                 &raw_operations,
                 &projected_containers,
                 &projected_strands,
@@ -1064,6 +1103,7 @@ pub fn KanbanPanel(
                 decrypt_ctx.as_ref(),
                 &self_actor_id,
                 &entries,
+                complete_current,
             );
             install_current_card_sources(
                 &mut cols,
@@ -1075,7 +1115,11 @@ pub fn KanbanPanel(
             );
             let cols =
                 overlay_pending_card_updates(cols, &raw_operations, &entries, decrypt_ctx.as_ref());
-            overlay_local_card_assignment_records(cols, &raw_operations)
+            overlay_local_card_assignment_records_at_current(
+                cols,
+                &raw_operations,
+                complete_current,
+            )
         }
     });
     let mut current_card_page = use_signal(|| 0usize);
@@ -1239,6 +1283,7 @@ pub fn KanbanPanel(
             KanbanEffects {
                 controller,
                 columns,
+                current_inventory,
                 route: route.clone(),
                 local_realm_id: local_realm_id.clone(),
                 base_url: base_url.clone(),

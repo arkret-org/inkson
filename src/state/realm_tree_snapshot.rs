@@ -156,6 +156,26 @@ impl LocalStateStore {
             .unwrap_or_default()
     }
 
+    /// Cheap account-scoped dependency for readers of the complete product view.
+    pub(crate) fn current_product_view_stamp(&self, realm_id: &str) -> Option<(String, u64)> {
+        if self.cached_account_key.as_deref() != Some(self.effective_account_key().as_str())
+            || self.account_scope_read_denied(realm_id)
+        {
+            return None;
+        }
+        self.current_view
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .as_ref()
+            .filter(|view| {
+                view.account_key == self.cached_account_key
+                    && view.view.realm_id == realm_id.trim()
+                    && view.required_ready
+                    && view.view.ready()
+            })
+            .and_then(|view| Some((view.account_key.clone()?, view.generation)))
+    }
+
     /// The installed product view of the active account, if any.
     pub(crate) fn current_product_view(
         &self,
