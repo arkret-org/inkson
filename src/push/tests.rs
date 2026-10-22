@@ -1,9 +1,16 @@
 use super::binding::push_token_entry_key;
-use super::token_source::{current_platform, default_gateway_binding, push_preferences};
+use super::token_source::current_platform;
 use super::*;
 
 fn build_register_request(
     device_id: &str,
+) -> anyhow::Result<chime::ChimePushRegisterDeviceRequest> {
+    build_register_request_with_gateway(device_id, "https://push.example/_arkret/edge/push/notify")
+}
+
+fn build_register_request_with_gateway(
+    device_id: &str,
+    gateway: &str,
 ) -> anyhow::Result<chime::ChimePushRegisterDeviceRequest> {
     let push_key = "apns:0123456789abcdef0123456789abcdef";
     let idempotency_key = format!("inkson-push-register-{device_id}");
@@ -21,10 +28,18 @@ fn build_register_request(
         request_id: None,
         proof: None,
     };
+    // Request/state tests must not depend on the build profile or ambient
+    // INKSON_FLORIA_URL. This is explicit request data, never a network call.
+    let binding = chime::GatewayBinding::new(chime::PushGatewayType::Standard, gateway);
+    let preferences = chime::PushPreferences {
+        enabled: true,
+        gateways: vec![binding.clone()],
+        ..Default::default()
+    };
     Ok(chime::build_register_device_request(
         &config,
-        &default_gateway_binding(),
-        &push_preferences(),
+        &binding,
+        &preferences,
     )?)
 }
 
@@ -47,6 +62,19 @@ fn builds_chime_register_request() {
     assert_eq!(request.app_id.as_deref(), Some("inkson"));
     assert_eq!(request.platform.as_deref(), Some(current_platform()));
     assert!(!request.push_key.is_empty());
+    assert_eq!(
+        request.push_gateway,
+        "https://push.example/_arkret/edge/push/notify"
+    );
+}
+
+#[test]
+fn register_request_rejects_an_empty_gateway_without_a_development_fallback() {
+    let error = build_register_request_with_gateway("dev_inkson", "").unwrap_err();
+    assert!(matches!(
+        error.downcast_ref::<chime::PushRegistrationError>(),
+        Some(chime::PushRegistrationError::MissingField("push_gateway"))
+    ));
 }
 
 #[test]
