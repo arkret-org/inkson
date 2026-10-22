@@ -147,6 +147,9 @@ async fn read_once(
         request.watcher_actor_id.as_account_id() == Some(client.session()?.account_id()),
         "watch cell is not the current complete account"
     );
+    crate::event_submit::ensure_strand_watch_settled(client.session()?.account_id(), request)
+        .await?;
+    client.check_session()?;
     let before = client.snapshot_head(&request.realm_id).await?;
     garth::own_station_results::consume_bound_snapshot(&before, &request.realm_id)?;
     client.check_session()?;

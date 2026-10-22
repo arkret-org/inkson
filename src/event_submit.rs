@@ -42,7 +42,7 @@ pub(crate) mod conformance_transport;
 mod message_authoring;
 mod metadata;
 mod outbound_recovery;
-
+mod strand_watch;
 #[cfg(test)]
 pub(crate) use authoring_unit::author_event_unit_for_test;
 use authoring_unit::{UnitAuthoringChain, validate_authored_unit_shape};
@@ -55,6 +55,7 @@ pub(crate) use authority::{original_creator_checkpoint_secret, restored_creator_
 #[cfg(test)]
 pub(crate) use message_authoring::retry_frozen_message;
 pub(crate) use message_authoring::{MessageSendAttempt, drive_message_send};
+pub(crate) use strand_watch::ensure_strand_watch_settled;
 #[cfg(test)]
 pub(crate) use tests::queue_message_operation_for_test;
 
@@ -1769,6 +1770,18 @@ impl EventSubmitter {
         if intent.kind() == &arkret_sdk::EventKind::ConsentReplace {
             let replacement = intent.typed_payload::<arkret_sdk::event_spec::ConsentReplace>()?;
             ensure_consent_replacement_settled(self.authority()?, &replacement.peer).await?;
+        }
+        if intent.kind() == &arkret_sdk::EventKind::StrandWatchSet {
+            let payload = intent.typed_payload::<arkret_sdk::event_spec::StrandWatchSet>()?;
+            let request = arkret_sdk::StrandWatchCurrentRequestBody {
+                realm_id: intent
+                    .realm_id_opt()
+                    .ok_or_else(|| anyhow::anyhow!("watch write omits Realm"))?
+                    .clone(),
+                strand_id: payload.strand_id,
+                watcher_actor_id: payload.watcher_actor_id,
+            };
+            ensure_strand_watch_settled(self.authority()?, &request).await?;
         }
 
         #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]

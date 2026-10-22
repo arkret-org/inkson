@@ -15,6 +15,18 @@ pub(crate) struct AuthoringSessionFence {
 }
 
 impl AuthoringSessionFence {
+    pub(crate) fn same_session_identity(&self, other: &Self) -> bool {
+        self.session_epoch == other.session_epoch
+            && self.scope == other.scope
+            && std::sync::Arc::ptr_eq(&self.signer, &other.signer)
+    }
+
+    pub(crate) fn belongs_to_account(&self, account: &arkret_sdk::AccountId) -> bool {
+        self.scope.as_ref().is_some_and(|scope| {
+            &scope.authority == account && self.signer.device_id() == Some(scope.device_id.as_str())
+        })
+    }
+
     pub(crate) fn capture() -> anyhow::Result<Self> {
         Ok(Self {
             session_epoch: crate::identity::device_directory::session_cache_epoch(),

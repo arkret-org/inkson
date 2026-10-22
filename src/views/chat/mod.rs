@@ -1936,6 +1936,7 @@ pub fn ChatPanel(
         strand_watch_level: _,
         strand_watch_current: _,
         strand_watch_pending: _,
+        strand_watch_queued: _,
         strand_watch_request: _,
         strand_watch_refresh: _,
         watch_level_menu_open: _,
@@ -2960,7 +2961,9 @@ pub fn ChatPanel(
                                 })
                             } else { None };
                             let observed = (controller.strand_watch_current)();
+                            let target_matches = request.as_ref().is_some_and(|request| controller.strand_watch_target_is_current(&base_url, &token(), request));
                             let enabled = request.as_ref().zip(observed.as_ref()).is_some_and(|(request, current)| current.validate_for_request(request).is_ok())
+                                && target_matches
                                 && !(controller.strand_watch_pending)();
                             let explicit_level = observed.as_ref().and_then(|current| match current {
                                 arkret_sdk::StrandWatchCurrentOutcome::Current { result, .. } => match result.value {
@@ -2975,8 +2978,28 @@ pub fn ChatPanel(
                                 else { crate::i18n::tr("chat.watch_level.unavailable_short") };
                             let tooltip = crate::i18n::tr(if enabled { "chat.watch_level.tooltip" } else if (controller.strand_watch_pending)() { "chat.watch_level.pending" } else { "chat.watch_level.unavailable" });
                             rsx! {
+                                if target_matches && (controller.strand_watch_queued)() {
+                                    Button {
+                                        variant: ButtonVariant::Secondary,
+                                        r#type: "button",
+                                        "data-testid": "watch-level-retry",
+                                        title: crate::i18n::tr("chat.watch_level.queued"),
+                                        disabled: controller.strand_watch_write_pending(),
+                                        onclick: {
+                                            let request = request.clone();
+                                            let base = base_url.clone();
+                                            move |_| {
+                                                if let Some(request) = request.clone() {
+                                                    controller.recover_strand_watch(base.clone(), token(), request);
+                                                }
+                                            }
+                                        },
+                                        {crate::i18n::tr("common.retry")}
+                                    }
+                                }
                                 DropdownMenu {
                                     class: "watch-level-picker", "data-testid": "watch-level-picker",
+                                    "data-watch-read-pending": controller.strand_watch_read_running(),
                                     disabled: !enabled,
                                     open: request.is_some() && (controller.watch_level_menu_open)(),
                                     on_open_change: move |open| {
