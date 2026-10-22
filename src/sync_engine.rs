@@ -220,6 +220,7 @@ struct AccountTransportProvider {
     ctx: SyncEngineContext,
     generation: crate::runtime::input::ValueReader<u64>,
     start_generation: u64,
+    session_generation: u64,
 }
 
 impl AccountTransportProvider {
@@ -319,20 +320,45 @@ impl AccountTransportProvider {
     }
 
     async fn recover_unauthorized(&self) -> garth::Result<bool> {
-        let session_generation = self.ctx.session.generation();
-        let result =
+        self.recover_unauthorized_with_refresh(|| async {
             crate::identity::session_refresh::refresh_authenticated_session_after_unauthorized(
                 self.ctx.account.server_url.as_str(),
             )
-            .await;
-        if self.ctx.session.generation() != session_generation || !self.is_active() {
+            .await
+            .map(|_| ())
+        })
+        .await
+    }
+
+    async fn recover_unauthorized_with_refresh<F, Fut>(&self, refresh: F) -> garth::Result<bool>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = anyhow::Result<()>>,
+    {
+        // The global provider reads the active secure account. Fence before
+        // invoking it: a late 401 must not rotate a replacement holder's grant.
+        if !self.is_active() || !self.owns_active_device_scope() {
+            return Ok(false);
+        }
+        let result = refresh().await;
+        if !self.is_active() || !self.owns_active_device_scope() {
             return Ok(false);
         }
         match result {
             Ok(_) => Ok(true),
-            Err(error) if self.invalidate_terminal_refresh(session_generation, &error) => Ok(false),
+            Err(error) if self.invalidate_terminal_refresh(self.session_generation, &error) => {
+                Ok(false)
+            }
             Err(error) => Err(garth::Error::Http(error.to_string())),
         }
+    }
+
+    fn owns_active_device_scope(&self) -> bool {
+        crate::secure_key_store::active_device_seed_scope().is_some_and(|scope| {
+            scope.authority == self.ctx.account.authority
+                && scope.device_id == self.ctx.account.device_id
+                && scope.device_id.as_str() == self.ctx.device_id
+        })
     }
 
     fn invalidate_terminal_refresh(&self, session_generation: u64, error: &anyhow::Error) -> bool {
@@ -349,6 +375,7 @@ impl AccountTransportProvider {
 
     fn is_active(&self) -> bool {
         !self.ctx.effect.is_cancelled()
+            && self.ctx.session.generation() == self.session_generation
             && self.generation.get() == self.start_generation
             && !self.ctx.token.get().trim().is_empty()
     }
@@ -1846,6 +1873,7 @@ pub async fn run_sync_engine(
     ctx: SyncEngineContext,
 ) {
     let provider = AccountTransportProvider {
+        session_generation: ctx.session.generation(),
         ctx: ctx.clone(),
         generation: generation.clone(),
         start_generation,
@@ -3732,6 +3760,7 @@ mod tests {
             projection_sink: Default::default(),
         };
         let provider = AccountTransportProvider {
+            session_generation: ctx.session.generation(),
             ctx: ctx.clone(),
             generation: ValueReader::new(|| panic!("disposed generation reader")),
             start_generation: 1,
@@ -3788,6 +3817,95 @@ mod tests {
         .context("session grant refresh")
     }
 
+    fn active_refresh_test_provider() -> AccountTransportProvider {
+        let (_, mut provider) = retired_account_attempt();
+        provider.ctx.token = crate::runtime::input::ValueReader::new(|| "live".to_owned());
+        provider.generation = crate::runtime::input::ValueReader::new(|| 1);
+        provider.session_generation = provider.ctx.session.replace("live");
+        provider
+    }
+
+    #[tokio::test]
+    async fn retired_account_provider_never_invokes_the_refresh_exchange() {
+        for cancel_effect in [true, false] {
+            let provider = active_refresh_test_provider();
+            let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(Some((
+                &provider.ctx.account.authority,
+                &provider.ctx.account.device_id,
+            )));
+            if cancel_effect {
+                provider.ctx.effect.cancel();
+            } else {
+                // The outer UI generation has not propagated yet. The
+                // coordinator itself already belongs to another login.
+                provider.ctx.session.replace("replacement");
+            }
+            let calls = std::cell::Cell::new(0);
+            assert!(
+                !provider
+                    .recover_unauthorized_with_refresh(|| async {
+                        calls.set(calls.get() + 1);
+                        Ok(())
+                    })
+                    .await
+                    .unwrap()
+            );
+            assert_eq!(calls.get(), 0, "a retired attempt reached the issuer");
+        }
+    }
+
+    #[tokio::test]
+    async fn old_account_provider_cannot_refresh_the_new_same_station_holder() {
+        let provider = active_refresh_test_provider();
+        let replacement =
+            crate::test_support::AccountFixture::new("ak:did_core:web:replacement.example").build();
+        assert_eq!(
+            replacement.authority.station_id,
+            provider.ctx.account.authority.station_id
+        );
+        let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(Some((
+            &replacement.authority,
+            &replacement.device_id,
+        )));
+        let calls = std::cell::Cell::new(0);
+        assert!(
+            !provider
+                .recover_unauthorized_with_refresh(|| async {
+                    calls.set(calls.get() + 1);
+                    Ok(())
+                })
+                .await
+                .unwrap()
+        );
+        assert_eq!(calls.get(), 0);
+        assert_eq!(provider.ctx.session.credential().as_deref(), Some("live"));
+    }
+
+    #[tokio::test]
+    async fn account_refresh_still_fences_replacement_after_the_exchange() {
+        let provider = active_refresh_test_provider();
+        let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(Some((
+            &provider.ctx.account.authority,
+            &provider.ctx.account.device_id,
+        )));
+        let calls = std::cell::Cell::new(0);
+        assert!(
+            !provider
+                .recover_unauthorized_with_refresh(|| async {
+                    calls.set(calls.get() + 1);
+                    provider.ctx.session.replace("replacement");
+                    Err(terminal_refresh_refusal())
+                })
+                .await
+                .unwrap()
+        );
+        assert_eq!(calls.get(), 1);
+        assert_eq!(
+            provider.ctx.session.credential().as_deref(),
+            Some("replacement")
+        );
+    }
+
     #[test]
     fn active_account_refresh_retires_its_credential_only_for_a_typed_termination() {
         let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
@@ -3796,6 +3914,7 @@ mod tests {
         provider.generation = crate::runtime::input::ValueReader::new(|| 1);
         let session = provider.ctx.session.clone();
         let generation = session.replace("live");
+        provider.session_generation = generation;
         let unavailable = anyhow::Error::new(garth::Error::Http("session grant revoked".into()));
         assert!(!provider.invalidate_terminal_refresh(generation, &unavailable));
         assert_eq!(session.credential().as_deref(), Some("live"));
