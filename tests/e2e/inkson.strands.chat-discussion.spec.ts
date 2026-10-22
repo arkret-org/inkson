@@ -41,15 +41,25 @@ test("chat fails closed until this device receives Realm encryption keys", async
 const watchPath = "/_arkret/self/strands/watch/current";
 
 async function openWatchCell(page: Page) {
-  const { realmId } = strandWatchTargets(page);
+  const { realmId, strands } = strandWatchTargets(page);
   const [response] = await Promise.all([
     page.waitForResponse(response => response.request().method() === "POST"
       && new URL(response.url()).pathname === watchPath
       && response.request().postDataJSON()?.realm_id === realmId
+      && response.request().postDataJSON()?.strand_id === strands.review
       && response.status() === 200),
-    gotoAndDismissRecovery(page, `/chat/${realmId}`),
+    (async () => {
+      await gotoAndDismissRecovery(page, `/chat/${realmId}`);
+      // This Realm has real card Strands but no default discussion Strand.
+      // Select the existing readable track through its normal product button.
+      await page.getByTestId("channel-item").filter({ hasText: "Legal review for public beta" }).click();
+      await expect(page.getByRole("heading", { name: "Legal review for public beta", exact: true })).toBeVisible();
+    })(),
   ]);
   const request = response.request().postDataJSON();
+  expect(request.realm_id).toBe(realmId);
+  expect(request.strand_id).toBe(strands.review);
+  expect(request.watcher_actor_id).toEqual(CURRENT_ACCOUNT_ACTOR_ID);
   const target = { realmId: request.realm_id as string, strandId: request.strand_id as string };
   await expect(page.getByTestId("watch-level-toggle")).toBeEnabled();
   return target;
