@@ -13,6 +13,7 @@
 //! localStorage per-origin quota that a single queue can exhaust on its own.
 
 mod agent_provision;
+pub(crate) mod applet_configuration;
 mod attachments;
 mod creator_discussion;
 pub(crate) mod creator_protection;
@@ -97,6 +98,8 @@ struct DurableOutboundState {
     attachments: Vec<crate::attachments::AttachmentObject>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     agent_provision_records: Vec<crate::agent_identity::provision::ProvisionCeremony>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    applet_configurations: Vec<applet_configuration::ConfigurationRecord>,
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     mls_commit_checkpoints: std::collections::BTreeMap<
         arkret_sdk::EventId,
@@ -188,6 +191,17 @@ impl DurableOutboundState {
     }
 
     fn validate(&self) -> garth::Result<()> {
+        for (index, record) in self.applet_configurations.iter().enumerate() {
+            record.validate()?;
+            if self.applet_configurations[..index]
+                .iter()
+                .any(|other| other.intent.request_id == record.intent.request_id)
+            {
+                return Err(garth::Error::Storage(
+                    "duplicate Applet request identity".into(),
+                ));
+            }
+        }
         for (index, object) in self.attachments.iter().enumerate() {
             object
                 .validate()

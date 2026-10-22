@@ -2459,7 +2459,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("applets.registry_empty", "No applets registered yet. Use the signed Applet Package install flow below; registration is derived during commit.");
     dict.set("applets.bridge_errors", "Bridge errors");
     dict.set("applets.bridge_errors_empty", "No bridge errors observed.");
-    dict.set("applets.installed", "Installed applets");
+    dict.set("applets.installed", "Observed Applet Services");
     dict.set("applets.close_install", "Close install");
     dict.set("applets.open_install", "+ Install applet");
     dict.set("applets.manifest_placeholder", "manifest URL or JSON body");
@@ -2474,9 +2474,34 @@ pub fn english_translations() -> TranslationDict {
     dict.set("applets.allow_ghost", "allow Applet-managed Ghost Actors");
     dict.set("applets.preview_plan", "Preview plan");
     dict.set("applets.install", "Install applet");
-    dict.set("applets.installed_empty", "No applets installed.");
-    dict.set("applets.bot_creation_help", "Service installation supports zero or more independent Bots. Create Bots through the Applet's own management controls; this client has no authenticated Applet control connection. Any required approval must complete before acceptance.");
+    dict.set(
+        "applets.installed_empty",
+        "No Applet Services observed in this Realm.",
+    );
     dict.set("applets.trace_events", "Trace events");
+    dict.set("applets.revoke_scope", "Uninstall target");
+    dict.set("applets.revoke_scope_help", "Choose the Circle to uninstall from, or leave blank for the Realm installation. Only the selected Service is affected. Registration history does not show whether an installation is active.");
+    dict.set("applets.bot_name", "Bot display name (optional)");
+    dict.set("applets.create_bot", "Create Bot");
+    dict.set(
+        "applets.configure_accepted",
+        "Bot creation accepted. The Applet manages its keys and devices.",
+    );
+    dict.set(
+        "applets.configure_denied",
+        "The configuration request was denied.",
+    );
+    dict.set(
+        "applets.configure_cancelled",
+        "The configuration request was cancelled.",
+    );
+    dict.set(
+        "applets.configure_pending",
+        "This request is pending. Check its original result before starting another.",
+    );
+    dict.set("applets.configure_recover", "Check original result");
+    dict.set("applets.configure_cancel", "Cancel this request");
+    dict.set("applets.configure_retry", "Retry original request");
     dict.set("applets.uninstall", "Uninstall");
     dict.set(
         "applets.trace_empty",

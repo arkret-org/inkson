@@ -2226,7 +2226,7 @@ pub fn chinese_translations() -> TranslationDict {
     );
     dict.set("applets.bridge_errors", "桥接错误");
     dict.set("applets.bridge_errors_empty", "尚未观察到桥接错误。");
-    dict.set("applets.installed", "已安装的小程序");
+    dict.set("applets.installed", "已观察到的小程序 Service");
     dict.set("applets.close_install", "关闭安装表单");
     dict.set("applets.open_install", "+ 安装小程序");
     dict.set("applets.manifest_placeholder", "清单网址或 JSON 内容");
@@ -2238,9 +2238,28 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("applets.allow_ghost", "允许由小程序管理的 Ghost Actor");
     dict.set("applets.preview_plan", "预览计划");
     dict.set("applets.install", "安装小程序");
-    dict.set("applets.installed_empty", "尚未安装小程序。");
-    dict.set("applets.bot_creation_help", "服务安装可以包含零个或多个独立 Bot。请通过小程序自己的管理入口创建 Bot；此客户端尚无已认证的小程序控制连接。所有必要审批都必须在接纳前完成。");
+    dict.set(
+        "applets.installed_empty",
+        "此 Realm 尚未观察到小程序 Service。",
+    );
     dict.set("applets.trace_events", "查看事件追踪");
+    dict.set("applets.revoke_scope", "卸载目标");
+    dict.set("applets.revoke_scope_help", "填写要卸载的 Circle，留空表示 Realm 安装。只影响所选 Service。登记历史不代表当前安装仍有效。");
+    dict.set("applets.bot_name", "Bot 显示名称（可选）");
+    dict.set("applets.create_bot", "创建 Bot");
+    dict.set(
+        "applets.configure_accepted",
+        "Bot 创建已获接纳，密钥与设备由 Applet 管理。",
+    );
+    dict.set("applets.configure_denied", "配置请求已被拒绝。");
+    dict.set("applets.configure_cancelled", "配置请求已取消。");
+    dict.set(
+        "applets.configure_pending",
+        "此请求尚未结束。请查询原请求结果后再创建下一个。",
+    );
+    dict.set("applets.configure_recover", "查询原请求结果");
+    dict.set("applets.configure_cancel", "取消此请求");
+    dict.set("applets.configure_retry", "重试原请求");
     dict.set("applets.uninstall", "卸载");
     dict.set("applets.trace_empty", "尚未观察到此小程序的事件。");
     dict.set("applets.registered_count", "已注册 {count} 个");
