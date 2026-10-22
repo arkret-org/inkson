@@ -1444,6 +1444,19 @@ export async function mockArkretApi(
       ];
   await page.route("**/*", async (route) => {
     const url = new URL(route.request().url());
+    if (url.hostname === "directory.example") {
+      const headers = route.request().headers();
+      for (const name of ["authorization", "dpop", "cookie", "signature", "signature-input", "source-service-id", "destination-service-id"]) {
+        expect(headers[name], `public Directory request leaked ${name}`).toBeUndefined();
+      }
+      if (url.pathname.startsWith("/_arkret/") && ![
+        "/_arkret/find/directory/describe",
+        "/_arkret/find/directory/search-realms",
+        "/_arkret/find/directory/resolve-realm",
+      ].includes(url.pathname)) {
+        return route.fulfill({ status: 404 });
+      }
+    }
     if (url.pathname === "/health") {
       return json(route, { ok: true, service: "server", storage: "memory" });
     }
@@ -1513,9 +1526,6 @@ export async function mockArkretApi(
       url.pathname === "/_arkret/describe" &&
       route.request().method() === "GET"
     ) {
-      if (url.searchParams.get("service_kind") === "directory_service") {
-        return json(route, directoryServiceDescribe());
-      }
       if (url.hostname === "auth.local.host") {
         return route.fulfill({
           status: 404,
@@ -2563,13 +2573,15 @@ export async function mockArkretApi(
     }
 
     if (
+      url.hostname === "directory.example" &&
       url.pathname === "/_arkret/find/directory/search-realms" &&
       route.request().method() === "POST"
     ) {
+      expect(route.request().headers()["arkret-operation"]).toBe("ak.find.directory.read.search_realms.v1");
       return json(route, {
-        // Realm creation does not opt the resource into a Directory. This mock
-        // has no signed discovery Event plus announce/pull ingest setup, so the
-        // spec-correct directory result is empty.
+        // Realm creation does not opt the resource into a Directory. No public
+        // metadata was imported by a private deployment maintainer, so empty
+        // results are required without reviving the retired ingest protocol.
         realms: [],
         has_more: false,
       });
@@ -2591,6 +2603,7 @@ export async function mockArkretApi(
     }
 
     if (
+      url.hostname === "directory.example" &&
       url.pathname === "/_arkret/find/directory/resolve-realm" &&
       route.request().method() === "POST"
     ) {
@@ -2598,9 +2611,11 @@ export async function mockArkretApi(
     }
 
     if (
+      url.hostname === "directory.example" &&
       url.pathname === "/_arkret/find/directory/describe" &&
       route.request().method() === "GET"
     ) {
+      expect(route.request().headers()["arkret-operation"]).toBe("ak.find.directory.read.describe.v1");
       return json(route, directoryServiceDescribe());
     }
 
@@ -4077,7 +4092,7 @@ export async function mockArkretApi(
       route.request().method() === "GET"
     ) {
       if (decodeURIComponent(url.pathname.split("/")[4]) === currentDirectoryServiceResolution.service_id) {
-        return json(route, currentDirectoryServiceResolution);
+        return route.fulfill({ status: 404 });
       }
       return json(route, inksonWire("service-resolution", {}));
     }

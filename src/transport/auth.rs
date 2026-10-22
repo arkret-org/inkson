@@ -290,11 +290,12 @@ where
     }
 }
 
-/// Session-gated Directory exit backed by an independently verified Directory
-/// role route. The Principal grant is refreshed as a local session-liveness
-/// prerequisite but is never attached to the Directory client.
+/// Session-gated Directory exit backed by an explicit, independently verified
+/// Directory route. The separate Principal grant is refreshed as a local
+/// liveness prerequisite and is never attached to the public Directory client.
 pub async fn with_directory_sdk_client<F, Fut, T>(
     principal_base_url: &str,
+    directory_candidate_base_url: &str,
     session_credential: String,
     f: F,
 ) -> Result<T, ApiCallError>
@@ -311,9 +312,10 @@ where
     crate::identity::session_refresh::provide_authenticated_sdk_client(principal_base_url)
         .await
         .map_err(ApiCallError::Unavailable)?;
-    let directory = crate::transport::directory::verified_directory_client(principal_base_url)
-        .await
-        .map_err(ApiCallError::Unavailable)?;
+    let directory =
+        crate::transport::directory::verified_directory_client(directory_candidate_base_url)
+            .await
+            .map_err(ApiCallError::Unavailable)?;
     f(directory).await.map_err(ApiCallError::Failed)
 }
 

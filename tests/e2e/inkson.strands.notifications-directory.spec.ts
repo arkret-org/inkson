@@ -232,8 +232,13 @@ test("directory search refuses unindexed Realms and exposes only public Realm me
   page,
 }) => {
   const writes: string[] = [];
+  const directoryRequests: import("@playwright/test").Request[] = [];
   page.on("request", (request) => {
-    const path = new URL(request.url()).pathname;
+    const url = new URL(request.url());
+    const path = url.pathname;
+    if (url.hostname === "directory.example" || path.startsWith("/_arkret/find/directory/")) {
+      directoryRequests.push(request);
+    }
     if (request.method() === "POST" && (
       path === "/_arkret/self/realm-joins/prepare" ||
       path === "/_arkret/self/events" ||
@@ -245,9 +250,14 @@ test("directory search refuses unindexed Realms and exposes only public Realm me
   await page.getByTestId("global-search-input").press("Enter");
   await expect(page.getByTestId("directory-panel")).toBeVisible();
 
+  await expect(page.getByTestId("directory-address-input")).toHaveValue("");
+  await expect(page.getByTestId("directory-search-button")).toBeDisabled();
+  expect(directoryRequests).toEqual([]);
+  await page.getByTestId("directory-address-input").fill("https://directory.example");
   await page.getByTestId("directory-search-input").fill("demo");
   const response = page.waitForResponse((value) =>
     value.request().method() === "POST" &&
+    new URL(value.url()).hostname === "directory.example" &&
     new URL(value.url()).pathname === "/_arkret/find/directory/search-realms",
   );
   await page.getByTestId("directory-search-button").click();
@@ -262,6 +272,16 @@ test("directory search refuses unindexed Realms and exposes only public Realm me
   await expect(page.getByTestId("org-result")).toHaveCount(0);
   await expect(page.getByTestId("org-search-members")).toHaveCount(0);
   expect(writes).toEqual([]);
+  expect(directoryRequests.some((request) => new URL(request.url()).pathname === "/_arkret/find/directory/describe")).toBe(true);
+  expect(directoryRequests.some((request) => new URL(request.url()).pathname === "/.well-known/did.json")).toBe(true);
+  for (const request of directoryRequests) {
+    const url = new URL(request.url());
+    expect(url.hostname).toBe("directory.example");
+    expect(url.pathname).not.toMatch(/^\/_arkret\/open\/services\//);
+    for (const name of ["authorization", "dpop", "cookie", "signature", "signature-input", "source-service-id", "destination-service-id"]) {
+      expect(request.headers()[name], `Directory request leaked ${name}`).toBeUndefined();
+    }
+  }
 });
 
 test("command palette closes with Escape and outside click", async ({
