@@ -125,6 +125,49 @@ type MockArkretApiOptions = {
   deviceAuthorizationValidityMs?: number;
 };
 
+export type MockWatchTarget = { realmId: string; strandId: string };
+
+// Scheduling belongs to the test harness. All successful response bodies are
+// still built from the original SDK-verified Realm fixture before waiting.
+class MockWatchReads {
+  private readonly gates = new Map<string, Array<{ enter(): void; wait: Promise<void> }>>();
+  private readonly failures = new Map<string, Array<{ status: number; code: string }>>();
+  private readonly counts = new Map<string, number>();
+
+  private key(target: MockWatchTarget) { return JSON.stringify([target.realmId, target.strandId]); }
+
+  holdNext(target: MockWatchTarget) {
+    let enter!: () => void;
+    let release!: () => void;
+    const entered = new Promise<void>(resolve => { enter = resolve; });
+    const wait = new Promise<void>(resolve => { release = resolve; });
+    const key = this.key(target);
+    const gates = this.gates.get(key) ?? [];
+    gates.push({ enter, wait });
+    this.gates.set(key, gates);
+    return { entered, release };
+  }
+
+  failNext(target: MockWatchTarget, status: number, code: string) {
+    const descriptor = watchReadErrorDescriptor(code);
+    if (descriptor.http_status !== status) throw new Error("watch failure status differs from its registered code");
+    const key = this.key(target);
+    const failures = this.failures.get(key) ?? [];
+    failures.push({ status, code });
+    this.failures.set(key, failures);
+  }
+
+  count(target: MockWatchTarget) { return this.counts.get(this.key(target)) ?? 0; }
+
+  begin(target: MockWatchTarget) {
+    const key = this.key(target);
+    this.counts.set(key, this.count(target) + 1);
+    const gate = this.gates.get(key)?.shift();
+    const failure = this.failures.get(key)?.shift();
+    return { gate, failure };
+  }
+}
+
 type MockAccountDevice = {
   device_id: string;
   status?:
@@ -165,6 +208,7 @@ type InksonWireCommand =
   | "mock-realm-scan"
   | "mock-realm-streams"
   | "mock-exact-current"
+  | "mock-strand-watch-current"
   | "mock-realm-signer-keys"
   | "mock-realm-list"
   | "mock-realm-submit";
@@ -256,6 +300,28 @@ const snapshotUnavailableDescriptor = (() => {
   return descriptor;
 })();
 const streamScanOperationId = "ak.self.committed_event.read.scan.v1";
+const watchReadOperationId = "ak.self.strand.watch.read.current.v1";
+const watchPreconditionDescriptor = (() => {
+  const descriptor = activeMockErrorDescriptor("failed_precondition");
+  const operations = mockOperationErrorMapping.operations.filter(operation => operation.operation_id === "ak.self.events.command.submit.v1");
+  if (operations.length !== 1 || !operations[0].operation_specific.includes(descriptor.code)) {
+    throw new Error("Watch CAS refusal must be registered for self Event submission");
+  }
+  return descriptor;
+})();
+function watchReadErrorDescriptor(code: string): MockErrorDescriptor {
+  const descriptor = activeMockErrorDescriptor(code);
+  const operations = mockOperationErrorMapping.operations.filter(operation => operation.operation_id === watchReadOperationId);
+  const universalCodes: readonly string[] = mockOperationErrorMapping.rules.universal_codes.match(/[a-z][a-z0-9_]+/g) ?? [];
+  // strand-and-message §8.3 mandates these exact current-read failures in
+  // addition to the protected-operation failure surface.
+  if (operations.length !== 1 || !(universalCodes.includes(code)
+    || operations[0].operation_specific.includes(code)
+    || code === "not_found" || code === "revision_unavailable")) {
+    throw new Error(`${code} is outside the exact self watch read failure surface`);
+  }
+  return descriptor;
+}
 const committedEventNotFoundDescriptor = (() => {
   const descriptor = activeMockErrorDescriptor("not_found");
   const operationId = "ak.self.committed_event.resource.get.v1";
@@ -452,6 +518,19 @@ export function validateMockResponseForOperation(
   }
   if (operation.operation_id === streamScanOperationId && status === streamScanCapabilityDeniedDescriptor.http_status) {
     validateClosedMockProblem(streamScanCapabilityDeniedDescriptor, status, value, contentType);
+    return;
+  }
+  if (operation.operation_id === watchReadOperationId && status !== 200) {
+    const type = (value as Record<string, unknown> | undefined)?.type;
+    const descriptor = mockErrorRegistry.codes.find(entry => entry.status === "active" && entry.type_uri === type);
+    if (!descriptor) throw new Error("watch read failure must use a registered Problem type");
+    validateClosedMockProblem(watchReadErrorDescriptor(descriptor.code), status, value, contentType);
+    return;
+  }
+  if (operation.operation_id === "ak.self.events.command.submit.v1"
+    && status === watchPreconditionDescriptor.http_status
+    && (value as Record<string, unknown> | undefined)?.type === watchPreconditionDescriptor.type_uri) {
+    validateClosedMockProblem(watchPreconditionDescriptor, status, value, contentType);
     return;
   }
   const response =
@@ -947,6 +1026,7 @@ export async function mockArkretApi(
   const DEMO_STRAND_SECONDARY_CARD = demoNative.ids.secondary;
   let invitedRealmId = DEMO_REALM;
   const nativeFixtures = new Map<string, NativeRealmFixture>();
+  const watchReads = new MockWatchReads();
   const accountContinuation = new MockAccountContinuation();
   const historicalSignerResponses = new Map<string, Record<string, any>>();
   const registerNative = (fixture: NativeRealmFixture) => {
@@ -1445,6 +1525,19 @@ export async function mockArkretApi(
       ];
   await page.route("**/*", async (route) => {
     const url = new URL(route.request().url());
+    if (url.hostname === "directory.example") {
+      const headers = route.request().headers();
+      for (const name of ["authorization", "dpop", "cookie", "signature", "signature-input", "source-service-id", "destination-service-id"]) {
+        expect(headers[name], `public Directory request leaked ${name}`).toBeUndefined();
+      }
+      if (url.pathname.startsWith("/_arkret/") && ![
+        "/_arkret/find/directory/describe",
+        "/_arkret/find/directory/search-realms",
+        "/_arkret/find/directory/resolve-realm",
+      ].includes(url.pathname)) {
+        return route.fulfill({ status: 404 });
+      }
+    }
     if (url.pathname === "/health") {
       return json(route, { ok: true, service: "server", storage: "memory" });
     }
@@ -1514,9 +1607,6 @@ export async function mockArkretApi(
       url.pathname === "/_arkret/describe" &&
       route.request().method() === "GET"
     ) {
-      if (url.searchParams.get("service_kind") === "directory_service") {
-        return json(route, directoryServiceDescribe());
-      }
       if (url.hostname === "auth.local.host") {
         return route.fulfill({
           status: 404,
@@ -1666,12 +1756,17 @@ export async function mockArkretApi(
       const existingCommit = Array.from(nativeFixtures.values()).flatMap(fixture => fixture.committed_events)
         .find(full => full.event.event_id === submittedEvents[0]?.event_id);
       const requestedRealm = explicitRealm ?? existingCommit?.commit.realm_id;
-      const accepted = inksonWire<{ fixture: NativeRealmFixture; outcome: Record<string, any> }>("mock-realm-submit", {
+      const accepted = inksonWire<{
+        fixture: NativeRealmFixture; outcome: Record<string, any>; problem?: Record<string, any>;
+      }>("mock-realm-submit", {
         fixture: requestedRealm ? nativeFixtures.get(String(requestedRealm)) ?? null : null,
         request: body,
         seed_b64url: options.currentDeviceSigningSeedB64url ?? "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
         device_id: currentDeviceId,
       });
+      if (accepted.problem) {
+        return json(route, accepted.problem, Number(accepted.problem.status), "application/problem+json");
+      }
       const realmId = String(accepted.fixture.snapshot.realm_id);
       if ((requestedRealm !== undefined && String(requestedRealm) !== realmId)
         || accepted.fixture.committed_events.some(full => full.commit.realm_id !== realmId
@@ -2564,13 +2659,17 @@ export async function mockArkretApi(
     }
 
     if (
+      url.hostname === "directory.example" &&
       url.pathname === "/_arkret/find/directory/search-realms" &&
       route.request().method() === "POST"
     ) {
+      expect(route.request().headers()["arkret-operation"]).toBe("ak.find.directory.read.search_realms.v1");
+      expect(url.search).toBe("");
+      validateMockSchema("schemas/directory-operations.schema.json#/$defs/directory_search_realms_request_body", await contractRequestBody(route));
       return json(route, {
-        // Realm creation does not opt the resource into a Directory. This mock
-        // has no signed discovery Event plus announce/pull ingest setup, so the
-        // spec-correct directory result is empty.
+        // Realm creation does not opt the resource into a Directory. No public
+        // metadata was imported by a private deployment maintainer, so empty
+        // results are required without reviving the retired ingest protocol.
         realms: [],
         has_more: false,
       });
@@ -2592,16 +2691,24 @@ export async function mockArkretApi(
     }
 
     if (
+      url.hostname === "directory.example" &&
       url.pathname === "/_arkret/find/directory/resolve-realm" &&
       route.request().method() === "POST"
     ) {
+      expect(route.request().headers()["arkret-operation"]).toBe("ak.find.directory.read.resolve_realm.v1");
+      expect(url.search).toBe("");
+      validateMockSchema("schemas/directory-operations.schema.json#/$defs/directory_resolve_realm_request_body", await contractRequestBody(route));
       return json(route, directoryRealmResolution());
     }
 
     if (
+      url.hostname === "directory.example" &&
       url.pathname === "/_arkret/find/directory/describe" &&
       route.request().method() === "GET"
     ) {
+      expect(route.request().headers()["arkret-operation"]).toBe("ak.find.directory.read.describe.v1");
+      expect(url.search).toBe("");
+      expect(route.request().postData()).toBeNull();
       return json(route, directoryServiceDescribe());
     }
 
@@ -2777,6 +2884,37 @@ export async function mockArkretApi(
       return json(route, inksonWire("mock-realm-streams", {
         fixture, limit: Number(url.searchParams.get("limit") ?? "500"),
       }));
+    }
+
+    if (url.pathname === "/_arkret/self/strands/watch/current" && route.request().method() === "POST") {
+      const request = route.request().postDataJSON();
+      const fixture = nativeFixtures.get(String(request.realm_id));
+      const target = { realmId: String(request.realm_id), strandId: String(request.strand_id) };
+      const account = fixture?.invite_recipient?.identity.account_id ?? fixture?.identity.account_id;
+      const readable = fixture && nativeReadable(fixture) && account
+        && canonicalJson(request.watcher_actor_id) === canonicalJson({ kind: "account", account_id: account })
+        && fixture.snapshot.current_state_entries.some((row: Record<string, any>) => row.selector.kind === "strand"
+          && row.selector.strand_id === request.strand_id && row.value.state === "active"
+          && (row.value.scope_circle_id === null || row.value.scope_circle_id === undefined));
+      if (!readable) {
+        const descriptor = watchReadErrorDescriptor("not_found");
+        return json(route, {
+          type: descriptor.type_uri, title: descriptor.title, status: descriptor.http_status,
+          detail: "The exact self watch observation is unavailable in this fixture.",
+        }, descriptor.http_status, "application/problem+json");
+      }
+      const current = inksonWire("mock-strand-watch-current", { fixture, request });
+      const { gate, failure } = watchReads.begin(target);
+      gate?.enter();
+      if (gate) await gate.wait;
+      if (failure) {
+        const descriptor = watchReadErrorDescriptor(failure.code);
+        return json(route, {
+          type: descriptor.type_uri, title: descriptor.title, status: descriptor.http_status,
+          detail: "The exact self watch observation is unavailable in this fixture.",
+        }, descriptor.http_status, "application/problem+json");
+      }
+      return json(route, current);
     }
 
     if (url.pathname === "/_arkret/self/realm-state-snapshot/head" && route.request().method() === "GET") {
@@ -4092,7 +4230,7 @@ export async function mockArkretApi(
       route.request().method() === "GET"
     ) {
       if (decodeURIComponent(url.pathname.split("/")[4]) === currentDirectoryServiceResolution.service_id) {
-        return json(route, currentDirectoryServiceResolution);
+        return route.fulfill({ status: 404 });
       }
       return json(route, inksonWire("service-resolution", {}));
     }
@@ -4103,6 +4241,11 @@ export async function mockArkretApi(
     demoRealm: DEMO_REALM,
     demoBoardSpace: DEMO_BOARD_SPACE,
     hasSeededCards: includeDemoRealms && !options.emptyBoard,
+    demoStrands: {
+      review: DEMO_STRAND_LEGAL_REVIEW, scope: DEMO_STRAND_ONBOARDING_COPY,
+      security: DEMO_STRAND_SECURITY_SIGNOFF, secondary: DEMO_STRAND_SECONDARY_CARD,
+    },
+    watchReads,
   };
 }
 

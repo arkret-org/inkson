@@ -416,6 +416,8 @@ pub(super) fn ChatEffects(
         )| {
             let strand = selected_channel();
             let credential = token();
+            let _session_generation = (session_context.session_generation)();
+            let _account = (session_context.active_account)();
             let _epoch = realm_live_epoch();
             let readable_realm_strand = channels().iter().any(|channel| {
                 channel.strand_id == strand

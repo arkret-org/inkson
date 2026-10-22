@@ -519,11 +519,13 @@ mod tests {
     }
     #[test]
     fn form_roundtrip_preserves_selector_operations_priority_resources_and_validity() {
-        let mut draft = Draft::default();
-        draft.not_before = "2026-10-12T01:00:00Z".into();
-        draft.expires_at = "2026-10-13T01:00:00Z".into();
+        let mut draft = Draft {
+            not_before: "2026-10-12T01:00:00Z".into(),
+            expires_at: "2026-10-13T01:00:00Z".into(),
+            priority: "3".into(),
+            ..Default::default()
+        };
         draft.rules[0].priority = "17".into();
-        draft.priority = "3".into();
         draft.rules[0].resources.push(ResourceDraft {
             kind: "realm".into(),
             realm: realm().to_string(),

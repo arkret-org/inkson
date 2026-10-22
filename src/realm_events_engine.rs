@@ -69,6 +69,7 @@ const SUBSCRIBE_CANCEL_POLL: Duration = Duration::from_millis(250);
 
 /// Rows requested per scan. The Station may return fewer and flag `truncated`,
 /// which this engine drains before moving to the next stream.
+#[cfg(test)]
 const SCAN_LIMIT: u16 = 200;
 
 /// Runtime inputs consumed by the realm events engine. UI frameworks are
@@ -913,8 +914,7 @@ async fn verified_stream_pages<T: garth::AuthorityTransport>(
                     basis,
                     floor,
                     snapshot,
-                    (&snapshot_freshness, &snapshot_keys),
-                    &dependency_pages,
+                    (&snapshot_freshness, &snapshot_keys, &dependency_pages),
                 )?);
             }
         } else if matches!(start, ReplayStart::Genesis)
@@ -1326,6 +1326,7 @@ impl VerifiedAccountFrame {
     }
 }
 
+#[cfg(test)]
 fn row_source(row: &arkret_wire::TypedCurrentRow) -> &CommitStreamRef {
     match row {
         arkret_wire::TypedCurrentRow::Value {

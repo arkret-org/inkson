@@ -98,6 +98,7 @@ fn main() -> Result<()> {
         "mock-realm-scan" => realm_fixture::scan(input)?,
         "mock-realm-streams" => realm_fixture::streams(input)?,
         "mock-exact-current" => realm_fixture::exact_current(input)?,
+        "mock-strand-watch-current" => realm_fixture::strand_watch_current(input)?,
         "mock-realm-submit" => realm_fixture::submit(input)?,
         "mock-realm-signer-keys" => realm_fixture::signer_keys(input)?,
         #[cfg(not(target_arch = "wasm32"))]

@@ -92,7 +92,9 @@ impl<K: Ord + Clone, V: Clone> MapExt<K, V> for imbl::OrdMap<K, V> {
     fn retain(&mut self, mut keep: impl FnMut(&K, &mut V) -> bool) {
         let keys: Vec<_> = self.keys().cloned().collect();
         for key in keys {
-            if !keep(&key, self.get_mut(&key).expect("existing key")) {
+            if let Some(value) = self.get_mut(&key)
+                && !keep(&key, value)
+            {
                 self.remove(&key);
             }
         }
@@ -100,7 +102,9 @@ impl<K: Ord + Clone, V: Clone> MapExt<K, V> for imbl::OrdMap<K, V> {
     fn for_each_mut(&mut self, mut visit: impl FnMut(&K, &mut V)) {
         let keys: Vec<_> = self.keys().cloned().collect();
         for key in keys {
-            visit(&key, self.get_mut(&key).expect("existing key"));
+            if let Some(value) = self.get_mut(&key) {
+                visit(&key, value);
+            }
         }
     }
     fn into_values(self) -> impl Iterator<Item = V> {
@@ -147,7 +151,10 @@ impl Changes {
             // A present empty nested map must survive restart. The marker is
             // installed before child records during hydration.
             if new.is_some() {
-                self.0.last_mut().expect("map marker").value = Some(b"{}".to_vec());
+                self.0
+                    .last_mut()
+                    .ok_or_else(|| anyhow::anyhow!("account map marker is missing"))?
+                    .value = Some(b"{}".to_vec());
             }
         }
         // Constructing an empty persistent tree reserves nodes inline for V.
@@ -242,10 +249,10 @@ impl Changes {
         old: Option<&Shared<C>>,
         new: Option<&Shared<C>>,
     ) -> anyhow::Result<()> {
-        if let (Some(a), Some(b)) = (old, new) {
-            if a.ptr_eq(b) {
-                return Ok(());
-            }
+        if let (Some(a), Some(b)) = (old, new)
+            && a.ptr_eq(b)
+        {
+            return Ok(());
         }
         if old.is_none() != new.is_none() {
             self.0.push(Change {

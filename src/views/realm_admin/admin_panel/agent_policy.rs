@@ -242,7 +242,12 @@ pub(super) fn AgentPolicyEditor(realm_id: String, token: Signal<String>) -> Elem
                                             Ok(draft) => form.set(draft),
                                             Err(error) => { message.set(error.to_string()); pending.set(false); return; }
                                         }
-                                        message.set(format!("Accepted current {} at {}. Editing does not change the accepted value.", current.id, current.revision.as_ref().unwrap().commit_id));
+                                        let Some(revision) = current.revision.as_ref() else {
+                                            message.set("Accepted policy has no current revision; editing remains blocked.".into());
+                                            pending.set(false);
+                                            return;
+                                        };
+                                        message.set(format!("Accepted current {} at {}. Editing does not change the accepted value.", current.id, revision.commit_id));
                                     } else { message.set("Authoritative never_written: this exact id can be created with null expected_revision.".into()); }
                                     loaded.set(Some(current));
                                 }
@@ -347,7 +352,9 @@ fn submit_pending(
                 }
                 let accepted = submitter
                     .submit_signed_sdk_events_in_order(std::slice::from_ref(
-                        write.signed.as_ref().unwrap(),
+                        write.signed.as_ref().ok_or_else(|| {
+                            anyhow::anyhow!("Policy authoring did not produce a signed event")
+                        })?,
                     ))
                     .await;
                 check_session(&write.current.account, write.current.session_generation)?;

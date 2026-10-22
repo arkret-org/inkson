@@ -177,6 +177,7 @@ pub(super) fn ConfigurationPanel(
                     (AppletConfigurationCommand::Cancel, "applets.configure_cancel"),
                 ] {
                     Button {
+                        "data-testid": label,
                         disabled: busy(),
                         onclick: {
                             let base = base.clone(); let original = original.clone();

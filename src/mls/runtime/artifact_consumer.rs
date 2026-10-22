@@ -386,7 +386,7 @@ pub(crate) async fn deliver_owed_keypackage_consumes(
     let clients = crate::transport::EndpointClients::new(api.clone());
     let attempts = crate::mls::welcome_consume::drain_owed_consumes(owed, |(_, request)| {
         let clients = clients.clone();
-        let active = state.read(&current);
+        let active = state.read(current);
         async move {
             if !active {
                 return crate::mls::welcome_consume::ConsumeAttempt::Retry(

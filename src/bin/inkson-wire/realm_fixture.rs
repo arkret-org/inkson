@@ -177,6 +177,10 @@ struct Builder {
     directed_invite: bool,
 }
 
+#[derive(Debug, thiserror::Error)]
+#[error("watch expected_value differs from the complete current value")]
+struct FixtureWatchConflict;
+
 fn at(position: usize) -> chrono::DateTime<chrono::Utc> {
     chrono::DateTime::parse_from_rfc3339("2026-09-19T00:00:00.000Z")
         .expect("fixed fixture timestamp")
@@ -848,8 +852,11 @@ impl Builder {
                 .as_deref()
                 .ok_or_else(|| anyhow::anyhow!("fixture Event belongs to another Account actor"))?;
             ensure!(
-                event.kind == EventKind::InviteAccept && event.actor_id == recipient.actor,
-                "fixture secondary producer may only accept its own directed Invite"
+                matches!(
+                    event.kind,
+                    EventKind::InviteAccept | EventKind::StrandWatchSet
+                ) && event.actor_id == recipient.actor,
+                "fixture secondary producer must use its own directed Invite or watch cell"
             );
             recipient
         };
@@ -1069,6 +1076,62 @@ impl Builder {
                 let id = StrandId::from_event_id(&full.event.event_id);
                 strand.id = Some(id.clone());
                 self.row(full, CurrentSelector::Strand { strand_id: id }, strand)?;
+            }
+            EventKind::StrandWatchSet => {
+                let watch = full.event.typed_payload::<event_spec::StrandWatchSet>()?;
+                ensure!(
+                    watch.watcher_actor_id == full.event.actor_id,
+                    "fixture watch must belong to its complete authenticated Actor"
+                );
+                let strand = self
+                    .rows
+                    .iter()
+                    .find_map(|row| match row {
+                        TypedCurrentRow::Value {
+                            selector: CurrentSelector::Strand { strand_id },
+                            value,
+                            ..
+                        } if strand_id == &watch.strand_id => Some(value),
+                        _ => None,
+                    })
+                    .ok_or_else(|| anyhow::anyhow!("fixture watch requires its original Strand"))?;
+                ensure!(
+                    strand.get("state").and_then(Value::as_str) == Some("active")
+                        && strand.get("scope_circle_id").is_none_or(Value::is_null)
+                        && full.event.scope_ref
+                            == (ScopeRef::Realm {
+                                realm_id: full.event.realm_id.clone()
+                            }),
+                    "fixture watch requires the active Realm-default Strand namespace"
+                );
+                let selector = CurrentSelector::StrandWatch {
+                    strand_id: watch.strand_id,
+                    watcher_actor_id: watch.watcher_actor_id,
+                };
+                let current = self
+                    .rows
+                    .iter()
+                    .find_map(|row| match row {
+                        TypedCurrentRow::Value {
+                            selector: existing,
+                            value,
+                            ..
+                        } if existing == &selector => Some(value.clone()),
+                        _ => None,
+                    })
+                    .map(serde_json::from_value::<StrandWatchCurrentValue>)
+                    .transpose()?;
+                if current != watch.expected_value {
+                    return Err(FixtureWatchConflict.into());
+                }
+                let value = match watch.level {
+                    Some(level) => StrandWatchCurrentValue::Set(StrandWatchExpectedValue {
+                        level,
+                        level_public: watch.level_public,
+                    }),
+                    None => StrandWatchCurrentValue::Cleared(()),
+                };
+                self.row(full, selector, value)?;
             }
             EventKind::MessageCreate => {
                 let message = full.event.typed_payload::<event_spec::MessageCreate>()?;
@@ -2250,6 +2313,115 @@ struct ExactCurrentInput {
     request: arkret_models_collaboration::exact_current_results::ExactCurrentResultsReadRequestBody,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StrandWatchCurrentInput {
+    fixture: Fixture,
+    request: StrandWatchCurrentRequestBody,
+}
+
+pub(super) fn strand_watch_current(input: Value) -> Result<Value> {
+    let input: StrandWatchCurrentInput = serde_json::from_value(input)?;
+    input.request.validate()?;
+    let fixture = validate_fixture(&input.fixture)?;
+    require_fixture_readable(&fixture)?;
+    let account = fixture
+        .invite_recipient
+        .as_ref()
+        .map_or(&fixture.identity.account_id, |recipient| {
+            &recipient.identity.account_id
+        });
+    ensure!(
+        input.request.realm_id == fixture.snapshot.realm_id
+            && input.request.watcher_actor_id == ActorId::account(account.clone()),
+        "watch-current request does not name its complete authenticated Account and Realm"
+    );
+    ensure!(
+        fixture
+            .snapshot
+            .current_state_entries
+            .iter()
+            .any(|row| matches!(row,
+        TypedCurrentRow::Value { selector: CurrentSelector::Strand { strand_id }, value, .. }
+            if strand_id == &input.request.strand_id
+                && value.get("state").and_then(Value::as_str) == Some("active")
+                && value.get("scope_circle_id").is_none_or(Value::is_null))),
+        "watch-current requires an active Realm-default Strand"
+    );
+    let selector = StrandWatchCurrentSelector {
+        kind: StrandWatchSelectorKind::StrandWatch,
+        strand_id: input.request.strand_id.clone(),
+        watcher_actor_id: input.request.watcher_actor_id.clone(),
+    };
+    let stream = CommitStreamRef::Realm {
+        realm_id: input.request.realm_id.clone(),
+    };
+    let head = fixture
+        .snapshot
+        .visible_stream_heads
+        .iter()
+        .find(|head| head.stream_ref == stream)
+        .ok_or_else(|| anyhow::anyhow!("watch-current requires its complete Realm stream head"))?
+        .clone();
+    let current = fixture
+        .snapshot
+        .current_state_entries
+        .iter()
+        .find_map(|row| match row {
+            TypedCurrentRow::Value {
+                selector:
+                    CurrentSelector::StrandWatch {
+                        strand_id,
+                        watcher_actor_id,
+                    },
+                source_stream_ref,
+                revision,
+                value,
+            } if strand_id == &input.request.strand_id
+                && watcher_actor_id == &input.request.watcher_actor_id =>
+            {
+                Some((source_stream_ref, revision, value))
+            }
+            _ => None,
+        });
+    let outcome = match current {
+        Some((source_stream_ref, revision, value)) => StrandWatchCurrentOutcome::Current {
+            realm_id: input.request.realm_id.clone(),
+            governance_generation: fixture.snapshot.governance_generation,
+            stream_head: head,
+            result: StrandWatchCurrentRow {
+                selector,
+                source_stream_ref: source_stream_ref.clone(),
+                revision: revision.clone(),
+                value: serde_json::from_value(value.clone())?,
+            },
+        },
+        None => {
+            // The entire signed accepted history has been replayed above;
+            // absence in an arbitrary snapshot alone cannot prove this branch.
+            ensure!(
+                !fixture.committed_events.iter().any(|full| full.event.kind
+                    == EventKind::StrandWatchSet
+                    && full.event.payload.get("strand_id")
+                        == Some(&json!(input.request.strand_id))
+                    && full.event.payload.get("watcher_actor_id")
+                        == Some(&json!(input.request.watcher_actor_id))),
+                "accepted watch history cannot become never_written"
+            );
+            StrandWatchCurrentOutcome::NeverWritten {
+                realm_id: input.request.realm_id.clone(),
+                governance_generation: fixture.snapshot.governance_generation,
+                stream_head: head,
+                selector,
+            }
+        }
+    };
+    outcome
+        .validate_for_generation(&input.request, fixture.snapshot.governance_generation)
+        .map_err(anyhow::Error::msg)?;
+    serde_json::to_value(outcome).map_err(Into::into)
+}
+
 pub(super) fn exact_current(input: Value) -> Result<Value> {
     use arkret_models_collaboration::exact_current_results::{
         ExactCurrentResultSelector, ExactCurrentResultsReadOutcome,
@@ -2391,7 +2563,13 @@ pub(super) fn submit(input: Value) -> Result<Value> {
             continue;
         }
         duplicate = false;
-        builder.append_signed(submission.event)?;
+        if let Err(error) = builder.append_signed(submission.event) {
+            if error.is::<FixtureWatchConflict>() {
+                let problem = Problem::from_code("failed_precondition", error.to_string());
+                return Ok(json!({ "fixture": builder.finish()?, "problem": problem }));
+            }
+            return Err(error);
+        }
         commits.push(builder.events.last().unwrap().commit.clone());
     }
     let outcome = match &input.request {
@@ -2456,6 +2634,151 @@ mod tests {
     };
 
     use super::*;
+
+    fn watch_builder(fixture: &Fixture) -> Result<Builder> {
+        let configuration: BuildInput = serde_json::from_value(json!({
+            "salt": 9, "title": "", "device_id": default_device(),
+        }))?;
+        let mut builder = Builder::new(&configuration)?;
+        for full in &fixture.committed_events {
+            builder.append_signed(full.event.clone())?;
+            assert_eq!(builder.events.last(), Some(full));
+        }
+        builder.ids = fixture.ids.clone();
+        Ok(builder)
+    }
+
+    #[test]
+    fn watch_current_keeps_original_cas_null_and_exact_retry_without_new_commits() -> Result<()> {
+        let initial: Fixture = serde_json::from_value(build(json!({
+            "salt": 9, "title": "Watch Realm", "board": true,
+        }))?)?;
+        let request = StrandWatchCurrentRequestBody {
+            realm_id: initial.snapshot.realm_id.clone(),
+            strand_id: initial.ids["review"].parse()?,
+            watcher_actor_id: ActorId::account(initial.identity.account_id.clone()),
+        };
+        let read = |fixture: &Fixture| -> Result<StrandWatchCurrentOutcome> {
+            Ok(serde_json::from_value(strand_watch_current(
+                json!({"fixture":fixture,"request":request}),
+            )?)?)
+        };
+        assert!(matches!(
+            read(&initial)?,
+            StrandWatchCurrentOutcome::NeverWritten { .. }
+        ));
+        let mut builder = watch_builder(&initial)?;
+        let first = builder.author::<event_spec::StrandWatchSet>(
+            &request.realm_id,
+            StrandWatchSetPayload::set(
+                request.strand_id.clone(),
+                request.watcher_actor_id.clone(),
+                StrandWatchLevel::All,
+                Some(true),
+            ),
+        )?;
+        let first_fixture = builder.finish()?;
+        validate_fixture(&first_fixture)?;
+        let StrandWatchCurrentOutcome::Current { result, .. } = read(&first_fixture)? else {
+            bail!("accepted watch is not current");
+        };
+        assert_eq!(
+            result.revision.commit_id,
+            first_fixture
+                .committed_events
+                .last()
+                .unwrap()
+                .commit
+                .commit_id
+        );
+        assert_eq!(
+            result.value,
+            StrandWatchCurrentValue::Set(StrandWatchExpectedValue {
+                level: StrandWatchLevel::All,
+                level_public: Some(true)
+            })
+        );
+        let mut builder = watch_builder(&first_fixture)?;
+        let before = serde_json::to_value((&builder.events, &builder.rows, &builder.facts))?;
+        let conflict = builder.author::<event_spec::StrandWatchSet>(
+            &request.realm_id,
+            StrandWatchSetPayload::clear(
+                request.strand_id.clone(),
+                request.watcher_actor_id.clone(),
+            ),
+        );
+        assert!(conflict.unwrap_err().is::<FixtureWatchConflict>());
+        assert_eq!(
+            serde_json::to_value((&builder.events, &builder.rows, &builder.facts))?,
+            before
+        );
+        builder.author::<event_spec::StrandWatchSet>(
+            &request.realm_id,
+            StrandWatchSetPayload::clear(
+                request.strand_id.clone(),
+                request.watcher_actor_id.clone(),
+            )
+            .with_expected_value(result.value),
+        )?;
+        let cleared = builder.finish()?;
+        validate_fixture(&cleared)?;
+        let StrandWatchCurrentOutcome::Current { result, .. } = read(&cleared)? else {
+            bail!("cleared watch became never_written");
+        };
+        assert_eq!(result.value, StrandWatchCurrentValue::Cleared(()));
+        let mut builder = watch_builder(&cleared)?;
+        let second = builder.author::<event_spec::StrandWatchSet>(
+            &request.realm_id,
+            StrandWatchSetPayload::set(
+                request.strand_id.clone(),
+                request.watcher_actor_id.clone(),
+                StrandWatchLevel::Muted,
+                None,
+            )
+            .with_expected_value(result.value),
+        )?;
+        let finished = builder.finish()?;
+        validate_fixture(&finished)?;
+        let replay = submit(json!({"fixture":finished,"request":{"event":first}}))?;
+        assert_eq!(replay["outcome"]["status"], "duplicate");
+        assert_eq!(replay["fixture"], serde_json::to_value(&finished)?);
+        let current = read(&finished)?;
+        let StrandWatchCurrentOutcome::Current { result, .. } = &current else {
+            bail!("watch disappeared");
+        };
+        assert_eq!(
+            result.value,
+            StrandWatchCurrentValue::Set(StrandWatchExpectedValue {
+                level: StrandWatchLevel::Muted,
+                level_public: None
+            })
+        );
+        assert_eq!(finished.committed_events.last().unwrap().event, second);
+        let mut forged = finished.clone();
+        let row = forged
+            .snapshot
+            .current_state_entries
+            .iter_mut()
+            .find(|row| {
+                matches!(
+                    row,
+                    TypedCurrentRow::Value {
+                        selector: CurrentSelector::StrandWatch { .. },
+                        ..
+                    }
+                )
+            })
+            .unwrap();
+        let TypedCurrentRow::Value { value, .. } = row;
+        *value = json!({"level":"all"});
+        assert!(validate_fixture(&forged).is_err());
+        let mut foreign = request.clone();
+        let mut other = initial.identity.account_id.clone();
+        other.station_id = "ak:did_core:web:other.example".parse()?;
+        foreign.watcher_actor_id = ActorId::account(other);
+        assert!(strand_watch_current(json!({"fixture":finished,"request":foreign})).is_err());
+        Ok(())
+    }
 
     #[test]
     fn discovery_uses_the_accepted_head_and_the_same_floor_as_scan() -> Result<()> {

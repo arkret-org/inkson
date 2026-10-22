@@ -205,7 +205,7 @@ impl LocalStateStore {
             !self
                 .corrupt_account_scopes
                 .lock()
-                .unwrap()
+                .map_err(|_| anyhow::anyhow!("account quarantine lock poisoned"))?
                 .contains(&namespace),
             "selected account storage is quarantined"
         );
@@ -224,7 +224,7 @@ impl LocalStateStore {
             !self
                 .corrupt_account_scopes
                 .lock()
-                .unwrap()
+                .map_err(|_| anyhow::anyhow!("account quarantine lock poisoned"))?
                 .contains(&namespace),
             "selected account storage is quarantined"
         );
@@ -384,7 +384,7 @@ impl LocalStateStore {
             && self
                 .corrupt_account_scopes
                 .lock()
-                .unwrap()
+                .map_err(|_| anyhow::anyhow!("account quarantine lock poisoned"))?
                 .contains(ANONYMOUS_ACCOUNT_NAMESPACE);
         // A quarantined anonymous incarnation is deliberately preserved by
         // the reset below. It cannot be flushed; every ordinary outgoing

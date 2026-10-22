@@ -492,7 +492,7 @@ mod tests {
                     "verification_method":"did:web:authority.example#key-1",
                     "signed_digest":format!("sha256:{}","0".repeat(64)),
                     "created_at":"2026-10-15T00:00:00.000Z",
-                    "sig":arkret_sdk::canonical::base64url_encode(&[0;64])}
+                    "sig":arkret_sdk::canonical::base64url_encode([0;64])}
             }});
             let mut unsigned = result["source_commit"].clone();
             unsigned.as_object_mut().unwrap().remove("commit_id");

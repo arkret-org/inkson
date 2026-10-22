@@ -18,7 +18,6 @@ use std::sync::{Mutex, OnceLock as SyncOnceLock, PoisonError};
 use std::time::Duration;
 
 use anyhow::Context;
-use arkret_sdk::EventPayloadExt as _;
 use arkret_wire::event_kind_str;
 use garth::{
     OutboundEngine, OutboundEngineOutcome, OutboundQueueStore as _, QueuedSubmission,
@@ -42,7 +41,7 @@ pub(crate) mod conformance_transport;
 mod message_authoring;
 mod metadata;
 mod outbound_recovery;
-
+mod strand_watch;
 #[cfg(test)]
 pub(crate) use authoring_unit::author_event_unit_for_test;
 use authoring_unit::{UnitAuthoringChain, validate_authored_unit_shape};
@@ -55,6 +54,7 @@ pub(crate) use authority::{original_creator_checkpoint_secret, restored_creator_
 #[cfg(test)]
 pub(crate) use message_authoring::retry_frozen_message;
 pub(crate) use message_authoring::{MessageSendAttempt, drive_message_send};
+pub(crate) use strand_watch::ensure_strand_watch_settled;
 #[cfg(test)]
 pub(crate) use tests::queue_message_operation_for_test;
 
@@ -1036,46 +1036,6 @@ impl EventSubmitter {
         })
     }
 
-    pub(crate) async fn submit_consent_replacement(
-        &self,
-        operation: &LocalOperation,
-    ) -> anyhow::Result<SubmitEventResult> {
-        let _single_writer = outbound_submit_lock().lock().await;
-        let event = self.author_for_direct_submission(operation).await?;
-        anyhow::ensure!(
-            event.kind == arkret_wire::EventKind::ConsentReplace,
-            "Consent writer requires the native replacement Event"
-        );
-        let payload = event
-            .event()
-            .typed_payload::<arkret_sdk::event_spec::ConsentReplace>()?;
-        let outbound = self.outbound(OutboundLane::Standard)?;
-        for item in outbound.snapshot().await?.items {
-            let previous = item.submission.primary_event();
-            if !matches!(
-                item.submission.state,
-                garth::SubmissionState::Committed { .. } | garth::SubmissionState::Rejected { .. }
-            ) && previous.kind == arkret_wire::EventKind::ConsentReplace
-            {
-                let pending = previous.typed_payload::<arkret_sdk::event_spec::ConsentReplace>()?;
-                anyhow::ensure!(
-                    pending.peer != payload.peer,
-                    "The previous Consent replacement is awaiting its original outcome; resume the durable queue before editing this peer"
-                );
-            }
-        }
-        let item = self
-            .enqueue_and_drive(QueuedWrite {
-                lane: OutboundLane::Standard,
-                submission: event_submission(&event)?,
-                local_operation_id: operation.local_operation_id().to_string(),
-                post_accept: PostAccept::None,
-                retry_scope: InteractiveRetryScope::Ordinary,
-            })
-            .await?;
-        settled_outbound_result(&item)
-    }
-
     /// The shared SDK http-client backing this submitter.
     pub(crate) fn http(&self) -> &arkret_sdk::http_client::Client {
         &self.http
@@ -1769,6 +1729,18 @@ impl EventSubmitter {
         if intent.kind() == &arkret_sdk::EventKind::ConsentReplace {
             let replacement = intent.typed_payload::<arkret_sdk::event_spec::ConsentReplace>()?;
             ensure_consent_replacement_settled(self.authority()?, &replacement.peer).await?;
+        }
+        if intent.kind() == &arkret_sdk::EventKind::StrandWatchSet {
+            let payload = intent.typed_payload::<arkret_sdk::event_spec::StrandWatchSet>()?;
+            let request = arkret_sdk::StrandWatchCurrentRequestBody {
+                realm_id: intent
+                    .realm_id_opt()
+                    .ok_or_else(|| anyhow::anyhow!("watch write omits Realm"))?
+                    .clone(),
+                strand_id: payload.strand_id,
+                watcher_actor_id: payload.watcher_actor_id,
+            };
+            ensure_strand_watch_settled(self.authority()?, &request).await?;
         }
 
         #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
@@ -2987,7 +2959,7 @@ impl EventSubmitter {
         outbound
             .store()
             .mutate_outbound(|queue| {
-                requeue_original_consent(queue, &authority, peer, &retained, now, &check)
+                requeue_original_consent(queue, &authority, peer, &retained, now, check)
             })
             .await?;
         check()?;

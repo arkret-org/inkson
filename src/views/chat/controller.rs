@@ -20,38 +20,137 @@ struct SharedPinOperationRecord<'a> {
     payload: SharedPinOperationBody,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone)]
 pub(super) struct WatchRefreshTarget {
     base_url: String,
     credential: String,
-    session_epoch: u64,
+    session: crate::transport::auth::AuthoringSessionFence,
     request: arkret_sdk::StrandWatchCurrentRequestBody,
 }
 
-#[derive(Clone, Default, PartialEq)]
-pub(super) struct WatchRefreshQueue {
-    latest: Option<(u64, WatchRefreshTarget)>,
-    running: bool,
+impl PartialEq for WatchRefreshTarget {
+    fn eq(&self, other: &Self) -> bool {
+        self.base_url == other.base_url
+            && self.credential == other.credential
+            && self.request == other.request
+            && self.session.same_session_identity(&other.session)
+    }
 }
 
-impl WatchRefreshQueue {
-    fn target_changed(&self, target: Option<&WatchRefreshTarget>) -> bool {
+impl WatchRefreshTarget {
+    fn capture(
+        base_url: String,
+        credential: String,
+        request: arkret_sdk::StrandWatchCurrentRequestBody,
+    ) -> Option<Self> {
+        let session = crate::transport::auth::AuthoringSessionFence::capture().ok()?;
+        let account = request.watcher_actor_id.as_account_id()?;
+        if !session.belongs_to_account(account) || session.check_session_identity().is_err() {
+            return None;
+        }
+        Some(Self {
+            base_url,
+            credential,
+            session,
+            request,
+        })
+    }
+}
+
+/// Read coalescing and write ownership are independent. A live notification
+/// may supersede a read, but cannot retire a same-session write or release it.
+#[derive(Clone, PartialEq)]
+pub(super) struct WatchRefreshQueue<T = WatchRefreshTarget> {
+    latest: Option<(u64, T)>,
+    running: bool,
+    publication: u64,
+    next_write: u64,
+    write: Option<(u64, T)>,
+}
+
+impl<T> Default for WatchRefreshQueue<T> {
+    fn default() -> Self {
+        Self {
+            latest: None,
+            running: false,
+            publication: 0,
+            next_write: 0,
+            write: None,
+        }
+    }
+}
+
+impl<T: Clone + PartialEq> WatchRefreshQueue<T> {
+    fn target_changed(&self, target: Option<&T>) -> bool {
         self.latest.as_ref().map(|(_, target)| target) != target
     }
 
-    fn enqueue(&mut self, target: Option<(u64, WatchRefreshTarget)>) -> bool {
+    fn enqueue(&mut self, target: Option<(u64, T)>) -> bool {
+        if self.target_changed(target.as_ref().map(|(_, target)| target)) {
+            self.publication = self.publication.wrapping_add(1);
+            self.write = None;
+        }
         self.latest = target;
-        if self.running || self.latest.is_none() {
+        if self.running || self.latest.is_none() || self.write.is_some() {
             return false;
         }
         self.running = true;
         true
     }
 
-    fn has_newer(&self, sequence: u64) -> bool {
-        self.latest
+    fn read_owns_target(&self, publication: u64, target: &T) -> bool {
+        self.write.is_none()
+            && self.publication == publication
+            && !self.target_changed(Some(target))
+    }
+
+    fn may_publish(&self, sequence: u64, publication: u64, target: &T) -> bool {
+        self.read_owns_target(publication, target)
+            && self
+                .latest
+                .as_ref()
+                .is_some_and(|(latest, _)| *latest == sequence)
+    }
+
+    fn may_retain_presentation(
+        &self,
+        target: Option<&T>,
+        valid_display: bool,
+        queued: bool,
+    ) -> bool {
+        target.is_some() && !self.target_changed(target) && (valid_display || queued)
+    }
+
+    fn pending(&self, has_observation: bool, queued: bool) -> bool {
+        self.write.is_some() || (self.latest.is_some() && !has_observation && !queued)
+    }
+
+    fn finish_read(&mut self) -> bool {
+        self.running = false;
+        self.write.is_some()
+    }
+
+    fn begin_write(&mut self, target: &T) -> Option<u64> {
+        if self.write.is_some() || self.target_changed(Some(target)) {
+            return None;
+        }
+        self.next_write = self.next_write.wrapping_add(1);
+        self.publication = self.publication.wrapping_add(1);
+        self.write = Some((self.next_write, target.clone()));
+        Some(self.next_write)
+    }
+
+    fn finish_write(&mut self, ticket: u64, target: &T) -> bool {
+        if self
+            .write
             .as_ref()
-            .is_some_and(|(latest, _)| *latest != sequence)
+            .is_none_or(|(active, value)| *active != ticket || value != target)
+        {
+            return false;
+        }
+        self.write = None;
+        self.publication = self.publication.wrapping_add(1);
+        !self.target_changed(Some(target))
     }
 }
 
@@ -260,6 +359,7 @@ pub(super) struct ChatController {
     pub strand_watch_level: Signal<WatchLevel>,
     pub strand_watch_current: Signal<Option<arkret_sdk::StrandWatchCurrentOutcome>>,
     pub strand_watch_pending: Signal<bool>,
+    pub strand_watch_queued: Signal<bool>,
     pub strand_watch_request: Signal<u64>,
     pub strand_watch_refresh: Signal<WatchRefreshQueue>,
     pub watch_level_menu_open: Signal<bool>,
@@ -1571,7 +1671,44 @@ impl ChatController {
         });
     }
 
-    /// Observe only the exact self cell. A missing observation disables writes.
+    fn invalidate_strand_watch_observation(&mut self, queued: bool) {
+        self.strand_watch_current.set(None);
+        self.strand_watch_queued.set(queued);
+        self.watch_level_menu_open.set(false);
+    }
+
+    fn clear_strand_watch_observation(&mut self) {
+        self.invalidate_strand_watch_observation(false);
+    }
+
+    pub fn strand_watch_write_pending(&self) -> bool {
+        self.strand_watch_refresh.read().write.is_some()
+    }
+
+    pub fn strand_watch_read_running(&self) -> bool {
+        self.strand_watch_refresh.read().running
+    }
+
+    pub fn strand_watch_target_is_current(
+        &self,
+        base_url: &str,
+        credential: &str,
+        request: &arkret_sdk::StrandWatchCurrentRequestBody,
+    ) -> bool {
+        self.strand_watch_refresh
+            .read()
+            .latest
+            .as_ref()
+            .is_some_and(|(_, target)| {
+                target.base_url == base_url
+                    && target.credential == credential
+                    && &target.request == request
+                    && target.session.check_session_identity().is_ok()
+            })
+    }
+
+    /// Same-target background reads retain only a validated presentation. Each
+    /// write still obtains a fresh authenticated preimage in transport::write.
     pub fn refresh_strand_watch(
         mut self,
         base_url: String,
@@ -1579,31 +1716,31 @@ impl ChatController {
         request: Option<arkret_sdk::StrandWatchCurrentRequestBody>,
     ) {
         let sequence = self.strand_watch_request.peek().wrapping_add(1);
-        let target = request.map(|request| {
-            (
-                sequence,
-                WatchRefreshTarget {
-                    base_url,
-                    credential: api_token,
-                    session_epoch: crate::identity::device_directory::session_cache_epoch(),
-                    request,
-                },
-            )
-        });
+        let target =
+            request.and_then(|request| WatchRefreshTarget::capture(base_url, api_token, request));
         let mut queue = self.strand_watch_refresh.peek().clone();
-        if queue.target_changed(target.as_ref().map(|(_, target)| target)) {
-            self.watch_level_menu_open.set(false);
+        let valid_display = target.as_ref().is_some_and(|target| {
+            self.strand_watch_current
+                .peek()
+                .as_ref()
+                .is_some_and(|current| current.validate_for_request(&target.request).is_ok())
+        });
+        let queued = *self.strand_watch_queued.peek() && self.strand_watch_current.peek().is_none();
+        if !queue.may_retain_presentation(target.as_ref(), valid_display, queued) {
+            self.clear_strand_watch_observation();
         }
         self.strand_watch_request.set(sequence);
-        self.strand_watch_current.set(None);
-        let start = queue.enqueue(target);
-        self.strand_watch_pending.set(queue.latest.is_some());
+        let start = queue.enqueue(target.map(|target| (sequence, target)));
+        self.strand_watch_pending.set(queue.pending(
+            self.strand_watch_current.peek().is_some(),
+            *self.strand_watch_queued.peek(),
+        ));
         self.strand_watch_refresh.set(queue);
         if !start {
             return;
         }
-        // One owner-scoped worker drains only the latest requested cut. Live
-        // message bursts cannot launch concurrent authentication/snapshot reads.
+        // One owner-scoped worker drains the latest read. Its publication fence
+        // is invalidated before a write; it never settles the write's ticket.
         crate::runtime_helpers::spawn_owned(self.messages.origin_scope(), async move {
             let mut attempted_target = None;
             let mut attempts = 0u32;
@@ -1612,12 +1749,16 @@ impl ChatController {
                 std::time::Duration::from_secs(4),
             );
             loop {
-                let Some((sequence, target)) = self.strand_watch_refresh.peek().latest.clone()
-                else {
+                let queue = self.strand_watch_refresh.peek().clone();
+                if queue.write.is_some() {
+                    break;
+                }
+                let Some((sequence, target)) = queue.latest else {
                     break;
                 };
-                if target.session_epoch != crate::identity::device_directory::session_cache_epoch()
-                {
+                let publication = queue.publication;
+                if target.session.check_session_identity().is_err() {
+                    self.clear_strand_watch_observation();
                     break;
                 }
                 if attempted_target.as_ref() != Some(&target) {
@@ -1636,34 +1777,45 @@ impl ChatController {
                         },
                     )
                     .await;
-                if target.session_epoch != crate::identity::device_directory::session_cache_epoch()
-                {
-                    let latest = self.strand_watch_refresh.peek().latest.clone();
-                    if latest.as_ref().is_some_and(|(_, latest)| {
-                        latest.session_epoch
-                            == crate::identity::device_directory::session_cache_epoch()
-                    }) {
-                        continue;
+                let queue = self.strand_watch_refresh.peek().clone();
+                if !queue.may_publish(sequence, publication, &target) {
+                    // A newer benign read does not erase a known failure for
+                    // this same session/cell. A pre-write or retired-target
+                    // read, however, cannot invalidate its successor's state.
+                    if queue.read_owns_target(publication, &target)
+                        && let Err(error) = &result
+                    {
+                        self.invalidate_strand_watch_observation(
+                            crate::event_submit::is_durably_queued_error(error.inner()),
+                        );
                     }
-                    break;
-                }
-                let latest = self.strand_watch_refresh.peek().latest.clone();
-                if latest.as_ref().is_none_or(|(_, latest)| latest != &target) {
                     continue;
                 }
+                if target.session.check_session_identity().is_err() {
+                    self.clear_strand_watch_observation();
+                    break;
+                }
                 match result {
-                    Ok(current) => {
-                        attempts = 0;
-                        if self.strand_watch_refresh.peek().has_newer(sequence) {
-                            continue;
-                        }
+                    Ok(current) if current.validate_for_request(&target.request).is_ok() => {
+                        self.strand_watch_queued.set(false);
                         self.strand_watch_level.set(super::watch_level_from_wire(
                             crate::transport::strand_watch::current_level(&current),
                         ));
                         self.strand_watch_current.set(Some(current));
                         break;
                     }
+                    Ok(_) => {
+                        self.clear_strand_watch_observation();
+                        break;
+                    }
                     Err(error) => {
+                        // Even a retryable read failure invalidates the old display.
+                        let queued = crate::event_submit::is_durably_queued_error(error.inner());
+                        self.invalidate_strand_watch_observation(queued);
+                        if queued {
+                            self.status_msg
+                                .set(crate::i18n::tr("chat.watch_level.queued"));
+                        }
                         tracing::warn!(error = %error.display_diagnostic(), attempt = attempts,
                             "self watch current observation failed");
                         let Some(delay) =
@@ -1676,9 +1828,8 @@ impl ChatController {
                 }
             }
             let mut queue = self.strand_watch_refresh.peek().clone();
-            queue.running = false;
+            self.strand_watch_pending.set(queue.finish_read());
             self.strand_watch_refresh.set(queue);
-            self.strand_watch_pending.set(false);
         });
     }
 
@@ -1690,11 +1841,26 @@ impl ChatController {
         request: arkret_sdk::StrandWatchCurrentRequestBody,
         level: Option<arkret_sdk::StrandWatchLevel>,
     ) {
-        if *self.strand_watch_pending.peek() || self.strand_watch_current.peek().is_none() {
+        if *self.strand_watch_pending.peek()
+            || self
+                .strand_watch_current
+                .peek()
+                .as_ref()
+                .is_none_or(|current| current.validate_for_request(&request).is_err())
+        {
             return;
         }
-        let sequence = self.strand_watch_request.peek().wrapping_add(1);
-        self.strand_watch_request.set(sequence);
+        let Some(target) =
+            WatchRefreshTarget::capture(base_url.clone(), api_token.clone(), request.clone())
+        else {
+            self.clear_strand_watch_observation();
+            return;
+        };
+        let mut queue = self.strand_watch_refresh.peek().clone();
+        let Some(ticket) = queue.begin_write(&target) else {
+            return;
+        };
+        self.strand_watch_refresh.set(queue);
         self.strand_watch_pending.set(true);
         self.watch_level_menu_open.set(false);
         spawn(async move {
@@ -1710,33 +1876,94 @@ impl ChatController {
                     },
                 )
                 .await;
-            if *self.strand_watch_request.peek() != sequence {
-                return;
+            self.finish_strand_watch_write(ticket, target, result);
+        });
+    }
+
+    fn finish_strand_watch_write(
+        mut self,
+        ticket: u64,
+        target: WatchRefreshTarget,
+        result: Result<arkret_sdk::StrandWatchCurrentOutcome, crate::transport::auth::ApiCallError>,
+    ) {
+        let mut queue = self.strand_watch_refresh.peek().clone();
+        if !queue.finish_write(ticket, &target) {
+            return;
+        }
+        self.strand_watch_refresh.set(queue);
+        self.strand_watch_pending.set(false);
+        if target.session.check_session_identity().is_err() {
+            self.clear_strand_watch_observation();
+            return;
+        }
+        match result {
+            Ok(current) if current.validate_for_request(&target.request).is_ok() => {
+                self.strand_watch_queued.set(false);
+                self.strand_watch_level.set(super::watch_level_from_wire(
+                    crate::transport::strand_watch::current_level(&current),
+                ));
+                self.strand_watch_current.set(Some(current));
+                self.status_msg
+                    .set(crate::i18n::tr("chat.watch_level.saved"));
             }
-            self.strand_watch_pending.set(false);
-            match result {
-                Ok(current) => {
-                    self.strand_watch_level.set(super::watch_level_from_wire(
-                        crate::transport::strand_watch::current_level(&current),
-                    ));
-                    self.strand_watch_current.set(Some(current));
-                    self.status_msg
-                        .set(crate::i18n::tr("chat.watch_level.saved"));
-                }
-                Err(error) => {
-                    let queued = crate::event_submit::is_durably_queued_error(error.inner());
-                    self.status_msg.set(if queued {
-                        crate::i18n::tr("chat.watch_level.queued")
-                    } else {
-                        crate::i18n::tr("chat.watch_level.failed")
-                    });
-                    if queued {
-                        self.strand_watch_current.set(None);
-                    } else {
-                        self.refresh_strand_watch(base_url, api_token, Some(request));
-                    }
+            result => {
+                let queued = result.as_ref().err().is_some_and(|error| {
+                    crate::event_submit::is_durably_queued_error(error.inner())
+                });
+                self.invalidate_strand_watch_observation(queued);
+                self.status_msg.set(crate::i18n::tr(if queued {
+                    "chat.watch_level.queued"
+                } else {
+                    "chat.watch_level.failed"
+                }));
+                if !queued {
+                    self.refresh_strand_watch(
+                        target.base_url,
+                        target.credential,
+                        Some(target.request),
+                    );
                 }
             }
+        }
+    }
+
+    /// Retry only the exact durable original; a current read never settles an
+    /// unknown submission and this path never authors the selected level again.
+    pub fn recover_strand_watch(
+        mut self,
+        base_url: String,
+        credential: String,
+        request: arkret_sdk::StrandWatchCurrentRequestBody,
+    ) {
+        if *self.strand_watch_pending.peek() || !*self.strand_watch_queued.peek() {
+            return;
+        }
+        let Some(target) =
+            WatchRefreshTarget::capture(base_url.clone(), credential.clone(), request.clone())
+        else {
+            self.clear_strand_watch_observation();
+            return;
+        };
+        let mut queue = self.strand_watch_refresh.peek().clone();
+        let Some(ticket) = queue.begin_write(&target) else {
+            return;
+        };
+        self.strand_watch_refresh.set(queue);
+        self.strand_watch_pending.set(true);
+        self.watch_level_menu_open.set(false);
+        spawn(async move {
+            let result = crate::transport::auth::with_authed_sdk_client(
+                &base_url,
+                credential,
+                |http| async move {
+                    crate::app::runtime_adapter::event_submitter(http.clone())
+                        .recover_pending_strand_watch(&request)
+                        .await?;
+                    crate::transport::strand_watch::read(&http, &request).await
+                },
+            )
+            .await;
+            self.finish_strand_watch_write(ticket, target, result);
         });
     }
 
@@ -2180,6 +2407,7 @@ pub(super) fn use_chat_controller(
         strand_watch_level: use_signal(|| WatchLevel::All),
         strand_watch_current: use_signal(|| None),
         strand_watch_pending: use_signal(|| false),
+        strand_watch_queued: use_signal(|| false),
         strand_watch_request: use_signal(|| 0),
         strand_watch_refresh: use_signal(WatchRefreshQueue::default),
         watch_level_menu_open: use_signal(|| false),
@@ -2235,50 +2463,185 @@ mod composer_target_tests {
     use super::*;
 
     #[test]
-    fn watch_refresh_coalesces_live_changes_and_keeps_latest_scope() {
-        let target = WatchRefreshTarget {
-            base_url: "https://station.example".into(),
-            credential: "fixture".into(),
-            session_epoch: 1,
-            request: arkret_sdk::StrandWatchCurrentRequestBody {
-                realm_id: arkret_sdk::RealmId::new(
-                    "ak:realm:ATwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q",
-                )
-                .unwrap(),
-                strand_id: arkret_sdk::StrandId::new(
-                    "ak:strand:AWXzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c",
-                )
-                .unwrap(),
-                watcher_actor_id: arkret_sdk::ActorId::account(crate::test_support::authority(
-                    "ak:did_core:web:alice.example",
-                )),
-            },
-        };
-        let mut queue = WatchRefreshQueue::default();
-        assert!(queue.target_changed(Some(&target)));
-        assert!(queue.enqueue(Some((1, target.clone()))));
+    fn watch_refresh_coalesces_live_changes_without_retiring_the_write() {
+        let mut queue = WatchRefreshQueue::<u8>::default();
+        assert!(queue.enqueue(Some((1, 7))));
+        let before_write = queue.publication;
+        let ticket = queue.begin_write(&7).unwrap();
         for sequence in 2..20 {
-            assert!(!queue.target_changed(Some(&target)));
-            assert!(!queue.enqueue(Some((sequence, target.clone()))));
+            assert!(!queue.enqueue(Some((sequence, 7))));
         }
-        assert!(queue.has_newer(1));
-        assert_eq!(queue.latest.as_ref().unwrap().0, 19);
-        let mut replacement = target.clone();
-        replacement.session_epoch += 1;
-        assert!(queue.target_changed(Some(&replacement)));
-        assert!(!queue.enqueue(Some((20, replacement.clone()))));
+        assert!(!queue.may_publish(1, before_write, &7));
+        assert!(!queue.may_publish(19, queue.publication, &7));
+        // A background read's cleanup owns only `running`, never this ticket.
         assert!(
-            queue
-                .latest
-                .as_ref()
-                .is_some_and(|(_, latest)| latest == &replacement)
+            queue.finish_read(),
+            "read completion keeps the active write pending"
         );
-        assert!(queue.target_changed(None));
+        assert!(queue.write.is_some());
+        assert!(queue.finish_write(ticket, &7));
+        assert!(queue.write.is_none());
+        assert!(!queue.may_publish(19, before_write, &7));
+        assert!(queue.enqueue(Some((20, 7))));
+        assert!(queue.may_publish(20, queue.publication, &7));
+    }
+
+    #[test]
+    fn watch_replaced_target_does_not_publish_or_settle_another_write() {
+        let mut queue = WatchRefreshQueue::<u8>::default();
+        assert!(queue.enqueue(Some((1, 7))));
+        let old_read = queue.publication;
+        let old_write = queue.begin_write(&7).unwrap();
+        assert!(!queue.enqueue(Some((2, 8))));
+        let new_write = queue.begin_write(&8).unwrap();
+        assert!(!queue.finish_write(old_write, &7));
+        assert_eq!(queue.write, Some((new_write, 8)));
+        assert!(!queue.may_publish(1, old_read, &7));
+        assert!(queue.finish_write(new_write, &8));
         assert!(!queue.enqueue(None));
         assert!(queue.latest.is_none());
-        assert!(!queue.target_changed(None));
-        queue.running = false;
-        assert!(queue.enqueue(Some((21, target))));
+        assert!(queue.write.is_none());
+        assert!(!queue.may_publish(2, queue.publication, &8));
+    }
+
+    #[test]
+    fn watch_queued_retry_survives_background_reads_without_unlocking_a_write() {
+        let mut queue = WatchRefreshQueue::<u8>::default();
+        assert!(queue.enqueue(Some((1, 7))));
+        assert!(queue.may_retain_presentation(Some(&7), false, true));
+        assert!(
+            !queue.pending(false, true),
+            "a queued read is not a new write"
+        );
+        assert!(!queue.enqueue(Some((2, 7))));
+        assert!(queue.may_retain_presentation(Some(&7), false, true));
+        assert!(!queue.pending(false, true));
+        let ticket = queue.begin_write(&7).unwrap();
+        assert!(
+            queue.pending(false, true),
+            "only explicit recovery owns the write pending flag"
+        );
+        assert!(queue.finish_read());
+        assert!(queue.pending(false, true));
+        assert!(queue.finish_write(ticket, &7));
+        assert!(!queue.pending(false, true));
+        assert!(!queue.may_retain_presentation(Some(&8), false, true));
+        assert!(!queue.may_retain_presentation(None, false, true));
+        assert!(
+            !queue.may_retain_presentation(Some(&7), false, false),
+            "invalid/failed observations are not retained"
+        );
+    }
+
+    #[test]
+    fn watch_read_failure_remains_relevant_across_benign_refresh_but_not_write_or_target_change() {
+        let mut queue = WatchRefreshQueue::<u8>::default();
+        assert!(queue.enqueue(Some((1, 7))));
+        let publication = queue.publication;
+        assert!(!queue.enqueue(Some((2, 7))));
+        assert!(!queue.may_publish(1, publication, &7));
+        assert!(
+            queue.read_owns_target(publication, &7),
+            "a real failure still invalidates the same cell"
+        );
+        let ticket = queue.begin_write(&7).unwrap();
+        assert!(!queue.read_owns_target(publication, &7));
+        assert!(queue.finish_write(ticket, &7));
+        assert!(!queue.read_owns_target(publication, &7));
+        let publication = queue.publication;
+        assert!(!queue.enqueue(Some((3, 8))));
+        assert!(!queue.read_owns_target(publication, &7));
+    }
+
+    #[test]
+    fn watch_target_is_fenced_by_complete_account_device_signer_and_credential() {
+        let account = crate::test_support::authority("did:web:alice.example");
+        let device =
+            arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-0000000000a1").unwrap();
+        let replacement_device =
+            arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-0000000000a2").unwrap();
+        let _scope =
+            crate::secure_key_store::DeviceSeedScopeTestGuard::replace(Some((&account, &device)));
+        let signer = std::sync::Arc::new(crate::event_signer::build_ed25519_device_signer(
+            [21; 32],
+            "did:web:alice.example",
+            device.as_str(),
+        ));
+        let _signer = crate::event_signer::ActiveSignerTestGuard::replace(Some(signer.clone()));
+        let request = arkret_sdk::StrandWatchCurrentRequestBody {
+            realm_id: arkret_sdk::RealmId::new(
+                "ak:realm:ATwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q",
+            )
+            .unwrap(),
+            strand_id: arkret_sdk::StrandId::new(
+                "ak:strand:AWXzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c",
+            )
+            .unwrap(),
+            watcher_actor_id: arkret_sdk::ActorId::account(account.clone()),
+        };
+        let capture = || {
+            WatchRefreshTarget::capture(
+                "https://station.example".into(),
+                "credential-one".into(),
+                request.clone(),
+            )
+            .unwrap()
+        };
+        let target = capture();
+        assert!(target == capture());
+        let mut changed_credential = target.clone();
+        changed_credential.credential = "credential-two".into();
+        assert!(target != changed_credential);
+        let mut changed_base = target.clone();
+        changed_base.base_url = "https://other.example".into();
+        assert!(target != changed_base);
+        // Same DID at a different Station is a different complete Account.
+        let other_account = crate::test_support::authority_at_station(
+            "did:web:alice.example",
+            "did:web:other.example",
+        );
+        crate::secure_key_store::set_active_device_seed_scope(Some((&other_account, &device)));
+        assert!(target.session.check_session_identity().is_err());
+        assert!(
+            WatchRefreshTarget::capture(
+                target.base_url.clone(),
+                target.credential.clone(),
+                request.clone()
+            )
+            .is_none()
+        );
+        crate::secure_key_store::set_active_device_seed_scope(Some((
+            &account,
+            &replacement_device,
+        )));
+        assert!(
+            WatchRefreshTarget::capture(
+                target.base_url.clone(),
+                target.credential.clone(),
+                request.clone()
+            )
+            .is_none(),
+            "a selected Device and its active signer must be mutually bound"
+        );
+        crate::event_signer::replace_active_signer(Some(std::sync::Arc::new(
+            crate::event_signer::build_ed25519_device_signer(
+                [23; 32],
+                "did:web:alice.example",
+                replacement_device.as_str(),
+            ),
+        )));
+        assert!(target != capture());
+        assert!(target.session.check_session_identity().is_err());
+        crate::secure_key_store::set_active_device_seed_scope(Some((&account, &device)));
+        crate::event_signer::replace_active_signer(Some(std::sync::Arc::new(
+            crate::event_signer::build_ed25519_device_signer(
+                [22; 32],
+                "did:web:alice.example",
+                device.as_str(),
+            ),
+        )));
+        assert!(target != capture());
+        assert!(target.session.check_session_identity().is_err());
     }
 
     #[test]

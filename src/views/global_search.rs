@@ -478,7 +478,7 @@ fn use_local_search(initial_query: String) -> LocalSearchState {
                     crate::runtime_helpers::sleep_for(
                         remaining
                             .to_std()
-                            .unwrap()
+                            .unwrap_or(std::time::Duration::ZERO)
                             .min(std::time::Duration::from_secs(60)),
                     )
                     .await;

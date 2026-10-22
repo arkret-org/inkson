@@ -54,7 +54,7 @@ impl CardAssignmentMutation {
 #[serde(untagged)]
 enum QueuedAssignmentBody {
     Create(Box<arkret_sdk::RelationCreatePayload>),
-    Tombstone(arkret_sdk::RelationTombstonePayload),
+    Tombstone(Box<arkret_sdk::RelationTombstonePayload>),
 }
 
 /// Queued op-log record for one card-assignee mutation; field order matches
@@ -80,7 +80,7 @@ fn queued_assignment_body(
             operation.typed_payload::<arkret_wire::event_spec::RelationCreate>()?,
         )),
         CardAssignmentMutation::Tombstone { operation, .. } => QueuedAssignmentBody::Tombstone(
-            operation.typed_payload::<arkret_wire::event_spec::RelationTombstone>()?,
+            Box::new(operation.typed_payload::<arkret_wire::event_spec::RelationTombstone>()?),
         ),
     })
 }

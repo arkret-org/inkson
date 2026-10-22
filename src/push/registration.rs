@@ -477,11 +477,23 @@ mod tests {
     }
 
     #[test]
-    fn build_request_falls_back_to_runtime_floria_gateway_when_empty() {
+    fn empty_gateway_context_uses_runtime_config_or_fails_closed() {
         let mut c = ctx("dev_inkson");
         c.floria_gateway_url = "   ".to_owned();
-        let request = build_request(&c, "apns:01234567890abcdef").expect("build");
-        assert_eq!(request.push_gateway, floria_gateway_url());
+        let configured = floria_gateway_url();
+        let result = build_request(&c, "apns:01234567890abcdef");
+        if configured.is_empty() {
+            let PushRegistrationError::BuildRequest(error) = result.unwrap_err() else {
+                panic!("missing runtime gateway must fail during request construction");
+            };
+            assert_eq!(
+                error.to_string(),
+                "build register-device request: missing required Arkret push field: push_gateway"
+            );
+        } else {
+            let request = result.expect("configured runtime gateway must build");
+            assert_eq!(request.push_gateway, configured);
+        }
     }
 
     #[test]

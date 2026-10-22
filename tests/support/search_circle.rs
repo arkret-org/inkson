@@ -365,7 +365,6 @@ pub fn disclosure_cases() -> Vec<(&'static str, Vec<DisclosureStep>)> {
         push(vec![withheld.clone(), full.clone()], false);
         push(vec![full.clone()], true);
         push(vec![withheld], false);
-        drop(push);
 
         // A legitimate Full backfill cannot reopen a tightened history floor.
         fixture

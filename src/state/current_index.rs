@@ -676,6 +676,13 @@ impl CurrentStage {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Account stage has no original frame"))
     }
+    #[cfg_attr(
+        not(test),
+        expect(
+            clippy::unwrap_used,
+            reason = "An infallible current publication transition must fail closed if its shared authority lock is poisoned."
+        )
+    )]
     pub(crate) fn arm_account_commit(&mut self) {
         if self.changed {
             *self.index._shared.publication.lock().unwrap() = self.publication.clone();
@@ -686,6 +693,13 @@ impl CurrentStage {
         }
     }
     /// The caller must first durably commit this generation and account cursor together.
+    #[cfg_attr(
+        not(test),
+        expect(
+            clippy::unwrap_used,
+            reason = "An infallible current publication transition must fail closed if its shared authority lock is poisoned."
+        )
+    )]
     pub(crate) fn finish(self) {
         #[cfg(all(test, not(target_arch = "wasm32")))]
         if self.index.account_scope.is_none()
@@ -710,6 +724,13 @@ impl CurrentStage {
 }
 
 impl Drop for CurrentStage {
+    #[cfg_attr(
+        not(test),
+        expect(
+            clippy::unwrap_used,
+            reason = "An infallible current publication transition must fail closed if its shared authority lock is poisoned."
+        )
+    )]
     fn drop(&mut self) {
         if self.changed && self.index._shared.pending.load(Ordering::Acquire) == self.generation {
             self.index.poison();
@@ -1072,7 +1093,11 @@ impl CurrentIndex {
         );
         self.generation.store(generation, Ordering::Release);
         self._shared.pending.store(0, Ordering::Release);
-        self._shared.publication.lock().unwrap().take();
+        self._shared
+            .publication
+            .lock()
+            .map_err(|_| anyhow::anyhow!("current publication lock poisoned"))?
+            .take();
         self._shared.poisoned.store(false, Ordering::Release);
         Ok(())
     }
@@ -1904,32 +1929,7 @@ impl CurrentIndex {
         self.progress_at(realm, self.generation.load(Ordering::Acquire))
             .await
     }
-    pub(crate) async fn call_consent_high_water(
-        &self,
-        realm: &str,
-    ) -> anyhow::Result<(Option<u64>, Vec<arkret_wire::CommitStreamHead>)> {
-        let progress = self.read_progress(realm).await?;
-        let mut heads = progress
-            .signed_snapshot
-            .as_ref()
-            .map(|s| s.stream_heads.clone())
-            .or_else(|| {
-                progress
-                    .baseline
-                    .as_ref()
-                    .map(|b| b.coverage.stream_heads.clone())
-            })
-            .unwrap_or_default();
-        heads.extend(progress.observed_heads);
-        Ok((
-            progress
-                .governance_generation
-                .into_iter()
-                .chain(progress.observed_governance_generation)
-                .max(),
-            heads,
-        ))
-    }
+
     #[cfg(test)]
     pub(crate) async fn read_target_page(
         &self,
@@ -2291,22 +2291,22 @@ impl CurrentIndex {
         if self.generation.load(Ordering::Acquire) != expected_generation {
             return Err(CurrentGenerationChanged.into());
         }
-        if let Some(response) = &targeted_consent {
-            if matches!(
+        if let Some(response) = &targeted_consent
+            && matches!(
                 response.value()?.current,
                 arkret_sdk::ConsentCurrentState::NeverWritten
-            ) {
-                let selector = CurrentSelector::Consent {
-                    peer_id: response.request().peer.actor_id().clone(),
-                };
-                self.require_consent_never_written(
-                    response.value()?.realm_id.as_str(),
-                    &selector,
-                    expected_generation,
-                )
-                .await?;
-                guard()?;
-            }
+            )
+        {
+            let selector = CurrentSelector::Consent {
+                peer_id: response.request().peer.actor_id().clone(),
+            };
+            self.require_consent_never_written(
+                response.value()?.realm_id.as_str(),
+                &selector,
+                expected_generation,
+            )
+            .await?;
+            guard()?;
         }
         let generation = expected_generation
             .checked_add(1)

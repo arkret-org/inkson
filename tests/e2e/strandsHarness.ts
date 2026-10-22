@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import {
   CURRENT_STATION_ID,
   CURRENT_PRINCIPAL_DID,
@@ -79,6 +79,18 @@ const scenarioRealms = new WeakMap<
   import("@playwright/test").Page,
   Awaited<ReturnType<typeof mockArkretApi>>
 >();
+
+export function strandWatchControls(page: Page) {
+  const scenario = scenarioRealms.get(page);
+  if (!scenario) throw new Error("Strands mock scenario has not been installed");
+  return scenario.watchReads;
+}
+
+export function strandWatchTargets(page: Page) {
+  const scenario = scenarioRealms.get(page);
+  if (!scenario) throw new Error("Strands mock scenario has not been installed");
+  return { realmId: scenario.demoRealm, strands: scenario.demoStrands };
+}
 
 function diagnosticText(value: string): string {
   return value

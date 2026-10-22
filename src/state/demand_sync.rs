@@ -486,8 +486,13 @@ impl LocalStateStore {
         else {
             return Ok(false);
         };
-        let revision = crate::account_data::notification_inbox_event_revision(event)?.unwrap();
-        let key = event.payload.get("key").and_then(Value::as_str).unwrap();
+        let revision = crate::account_data::notification_inbox_event_revision(event)?
+            .ok_or_else(|| anyhow::anyhow!("notification inbox Event has no revision"))?;
+        let key = event
+            .payload
+            .get("key")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("notification inbox Event has no key"))?;
         if let Some(current) = self.cached.demand_sync.account_events.get(key) {
             let previous = crate::account_data::notification_inbox_event_revision(current)?
                 .ok_or_else(|| anyhow::anyhow!("inbox current has no revision"))?;
@@ -631,7 +636,11 @@ impl LocalStateStore {
             else {
                 continue;
             };
-            let key = event.payload.get("key").and_then(Value::as_str).unwrap();
+            let key = event
+                .payload
+                .get("key")
+                .and_then(Value::as_str)
+                .ok_or_else(|| anyhow::anyhow!("notification inbox Event has no key"))?;
             let current = inbox_heads.get(key).or_else(|| {
                 self.cached
                     .demand_sync
@@ -1202,6 +1211,144 @@ impl LocalStateStore {
         detail.invalidated = true;
         detail.complete = false;
         detail.invalidated_snapshot = detail.snapshot.clone();
+    }
+}
+
+impl DemandSyncState {
+    pub(super) fn durable_changes(
+        &self,
+        old: &Self,
+        changes: &mut super::account_items::Changes,
+    ) -> anyhow::Result<()> {
+        changes.scalar(
+            vec!["demand_sync".into(), "filter".into()],
+            Some(&old.filter),
+            Some(&self.filter),
+        )?;
+        changes.scalar(
+            vec!["demand_sync".into(), "list_after".into()],
+            Some(&old.list_after),
+            Some(&self.list_after),
+        )?;
+        changes.scalar(
+            vec!["demand_sync".into(), "requested_list_after".into()],
+            Some(&old.requested_list_after),
+            Some(&self.requested_list_after),
+        )?;
+        changes.scalar(
+            vec!["demand_sync".into(), "list_snapshot".into()],
+            Some(&old.list_snapshot),
+            Some(&self.list_snapshot),
+        )?;
+        changes.scalar(
+            vec!["demand_sync".into(), "list_revision".into()],
+            Some(&old.list_revision),
+            Some(&self.list_revision),
+        )?;
+        changes.scalar(
+            vec!["demand_sync".into(), "list_complete".into()],
+            Some(&old.list_complete),
+            Some(&self.list_complete),
+        )?;
+        changes.set(
+            vec!["demand_sync".into(), "list_seen".into()],
+            &old.list_seen,
+            &self.list_seen,
+        )?;
+        changes.map(
+            vec!["demand_sync".into(), "summaries".into()],
+            Some(&old.summaries),
+            Some(&self.summaries),
+            |changes, p, a, b| {
+                changes.scalar(p, a, b)?;
+                Ok(())
+            },
+        )?;
+        changes.map(
+            vec!["demand_sync".into(), "summary_removals".into()],
+            Some(&old.summary_removals),
+            Some(&self.summary_removals),
+            |changes, p, a, b| {
+                changes.scalar(p, a, b)?;
+                Ok(())
+            },
+        )?;
+        changes.scalar(
+            vec!["demand_sync".into(), "global_snapshot".into()],
+            Some(&old.global_snapshot),
+            Some(&self.global_snapshot),
+        )?;
+        changes.map(
+            vec!["demand_sync".into(), "channels".into()],
+            Some(&old.channels),
+            Some(&self.channels),
+            |changes, p, a, b| {
+                let mut seen = p.clone();
+                seen.push("seen".into());
+                changes.set_optional(seen, a.map(|s| &s.seen), b.map(|s| &s.seen))?;
+                let mut mutated = p.clone();
+                mutated.push("mutated".into());
+                changes.set_optional(mutated, a.map(|s| &s.mutated), b.map(|s| &s.mutated))?;
+                let mut complete = p;
+                complete.push("complete".into());
+                changes.scalar(complete, a.map(|s| &s.complete), b.map(|s| &s.complete))?;
+                Ok(())
+            },
+        )?;
+        changes.map(
+            vec!["demand_sync".into(), "account_events".into()],
+            Some(&old.account_events),
+            Some(&self.account_events),
+            |changes, p, a, b| {
+                changes.scalar(p, a, b)?;
+                Ok(())
+            },
+        )?;
+        changes.set(
+            vec!["demand_sync".into(), "device_ids".into()],
+            &old.device_ids,
+            &self.device_ids,
+        )?;
+        changes.map(
+            vec!["demand_sync".into(), "agent_draft_pending_intents".into()],
+            Some(&old.agent_draft_pending_intents),
+            Some(&self.agent_draft_pending_intents),
+            |changes, p, a, b| {
+                changes.scalar(p, a, b)?;
+                Ok(())
+            },
+        )?;
+        changes.scalar(
+            vec![
+                "demand_sync".into(),
+                "agent_draft_pending_projection_position".into(),
+            ],
+            Some(&old.agent_draft_pending_projection_position),
+            Some(&self.agent_draft_pending_projection_position),
+        )?;
+        changes.scalar(
+            vec![
+                "demand_sync".into(),
+                "agent_draft_pending_delta_fingerprint".into(),
+            ],
+            Some(&old.agent_draft_pending_delta_fingerprint),
+            Some(&self.agent_draft_pending_delta_fingerprint),
+        )?;
+        changes.scalar(
+            vec!["demand_sync".into(), "agent_draft_pending_baseline".into()],
+            Some(&old.agent_draft_pending_baseline),
+            Some(&self.agent_draft_pending_baseline),
+        )?;
+        changes.map(
+            vec!["demand_sync".into(), "details".into()],
+            Some(&old.details),
+            Some(&self.details),
+            |changes, p, a, b| {
+                changes.scalar(p, a, b)?;
+                Ok(())
+            },
+        )?;
+        Ok(())
     }
 }
 
@@ -1941,143 +2088,5 @@ mod tests {
         assert!(store.realm_detail_invalidated(REALM));
         assert!(store.current_product_view().is_none());
         assert!(!store.cached.demand_sync.details[REALM].complete);
-    }
-}
-
-impl DemandSyncState {
-    pub(super) fn durable_changes(
-        &self,
-        old: &Self,
-        changes: &mut super::account_items::Changes,
-    ) -> anyhow::Result<()> {
-        changes.scalar(
-            vec!["demand_sync".into(), "filter".into()],
-            Some(&old.filter),
-            Some(&self.filter),
-        )?;
-        changes.scalar(
-            vec!["demand_sync".into(), "list_after".into()],
-            Some(&old.list_after),
-            Some(&self.list_after),
-        )?;
-        changes.scalar(
-            vec!["demand_sync".into(), "requested_list_after".into()],
-            Some(&old.requested_list_after),
-            Some(&self.requested_list_after),
-        )?;
-        changes.scalar(
-            vec!["demand_sync".into(), "list_snapshot".into()],
-            Some(&old.list_snapshot),
-            Some(&self.list_snapshot),
-        )?;
-        changes.scalar(
-            vec!["demand_sync".into(), "list_revision".into()],
-            Some(&old.list_revision),
-            Some(&self.list_revision),
-        )?;
-        changes.scalar(
-            vec!["demand_sync".into(), "list_complete".into()],
-            Some(&old.list_complete),
-            Some(&self.list_complete),
-        )?;
-        changes.set(
-            vec!["demand_sync".into(), "list_seen".into()],
-            &old.list_seen,
-            &self.list_seen,
-        )?;
-        changes.map(
-            vec!["demand_sync".into(), "summaries".into()],
-            Some(&old.summaries),
-            Some(&self.summaries),
-            |changes, p, a, b| {
-                changes.scalar(p, a, b)?;
-                Ok(())
-            },
-        )?;
-        changes.map(
-            vec!["demand_sync".into(), "summary_removals".into()],
-            Some(&old.summary_removals),
-            Some(&self.summary_removals),
-            |changes, p, a, b| {
-                changes.scalar(p, a, b)?;
-                Ok(())
-            },
-        )?;
-        changes.scalar(
-            vec!["demand_sync".into(), "global_snapshot".into()],
-            Some(&old.global_snapshot),
-            Some(&self.global_snapshot),
-        )?;
-        changes.map(
-            vec!["demand_sync".into(), "channels".into()],
-            Some(&old.channels),
-            Some(&self.channels),
-            |changes, p, a, b| {
-                let mut seen = p.clone();
-                seen.push("seen".into());
-                changes.set_optional(seen, a.map(|s| &s.seen), b.map(|s| &s.seen))?;
-                let mut mutated = p.clone();
-                mutated.push("mutated".into());
-                changes.set_optional(mutated, a.map(|s| &s.mutated), b.map(|s| &s.mutated))?;
-                let mut complete = p;
-                complete.push("complete".into());
-                changes.scalar(complete, a.map(|s| &s.complete), b.map(|s| &s.complete))?;
-                Ok(())
-            },
-        )?;
-        changes.map(
-            vec!["demand_sync".into(), "account_events".into()],
-            Some(&old.account_events),
-            Some(&self.account_events),
-            |changes, p, a, b| {
-                changes.scalar(p, a, b)?;
-                Ok(())
-            },
-        )?;
-        changes.set(
-            vec!["demand_sync".into(), "device_ids".into()],
-            &old.device_ids,
-            &self.device_ids,
-        )?;
-        changes.map(
-            vec!["demand_sync".into(), "agent_draft_pending_intents".into()],
-            Some(&old.agent_draft_pending_intents),
-            Some(&self.agent_draft_pending_intents),
-            |changes, p, a, b| {
-                changes.scalar(p, a, b)?;
-                Ok(())
-            },
-        )?;
-        changes.scalar(
-            vec![
-                "demand_sync".into(),
-                "agent_draft_pending_projection_position".into(),
-            ],
-            Some(&old.agent_draft_pending_projection_position),
-            Some(&self.agent_draft_pending_projection_position),
-        )?;
-        changes.scalar(
-            vec![
-                "demand_sync".into(),
-                "agent_draft_pending_delta_fingerprint".into(),
-            ],
-            Some(&old.agent_draft_pending_delta_fingerprint),
-            Some(&self.agent_draft_pending_delta_fingerprint),
-        )?;
-        changes.scalar(
-            vec!["demand_sync".into(), "agent_draft_pending_baseline".into()],
-            Some(&old.agent_draft_pending_baseline),
-            Some(&self.agent_draft_pending_baseline),
-        )?;
-        changes.map(
-            vec!["demand_sync".into(), "details".into()],
-            Some(&old.details),
-            Some(&self.details),
-            |changes, p, a, b| {
-                changes.scalar(p, a, b)?;
-                Ok(())
-            },
-        )?;
-        Ok(())
     }
 }

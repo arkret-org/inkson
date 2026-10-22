@@ -320,7 +320,9 @@ impl CurrentIndex {
                 continue;
             }
             // Event spellings must never become terminal Message state.
-            let message = message.unwrap();
+            let Some(message) = message else {
+                continue;
+            };
             let prefix = format!("{}search/{message}/", self.prefix);
             let key = format!("{prefix}{suffix}");
             let mut record: SearchRecord = match writes.get(&key) {
@@ -375,7 +377,11 @@ impl CurrentIndex {
             "search cursor belongs to another account"
         );
         let entries = self.backend.scan(&prefix, None, after, 32).await?;
-        let mut next = (entries.len() == 32).then(|| entries.last().unwrap().0.clone());
+        let mut next = if entries.len() == 32 {
+            entries.last().map(|(key, _)| key.clone())
+        } else {
+            None
+        };
         let mut rows = Vec::new();
         let mut recheck_at = None;
         let mut used = 0;
@@ -503,7 +509,8 @@ impl CurrentIndex {
         // bit, including candidates cached before current-redaction folding.
         let message = match full.event.kind {
             EventKind::MessageCreate => MessageId::from_event_id(&full.event.event_id),
-            _ => target(full)?.unwrap(),
+            _ => target(full)?
+                .ok_or_else(|| anyhow::anyhow!("search Message operation has no target"))?,
         };
         // The Event spelling is an independent field-cropping assertion, not
         // the terminal Message state. An intact cached signed Event cannot be
@@ -635,7 +642,9 @@ impl CurrentIndex {
         }
         let create_id = match full.event.kind {
             EventKind::MessageCreate => full.event.event_id.clone(),
-            _ => target(full)?.unwrap().event_id(),
+            _ => target(full)?
+                .ok_or_else(|| anyhow::anyhow!("search Message operation has no target"))?
+                .event_id(),
         };
         let record = self
             .latest::<SearchRecord>(

@@ -87,6 +87,7 @@ impl LocalStateStore {
     }
 
     /// Every durably owed `keypackages/consume` command, exactly as signed.
+    #[cfg(test)]
     pub(crate) fn pending_keypackage_consumes(
         &self,
     ) -> anyhow::Result<Vec<(String, arkret_sdk::KeyPackagesConsumeRequestBody)>> {
@@ -1622,8 +1623,7 @@ mod tests {
             overlay.snapshots.insert(key.clone(), advanced);
             overlay.plaintexts.insert(
                 REALM.to_owned(),
-                std::collections::BTreeMap::from([("digest".to_owned(), encode(b"overlay text"))])
-                    .into(),
+                std::collections::BTreeMap::from([("digest".to_owned(), encode(b"overlay text"))]),
             );
         }
         assert_eq!(store.mls_checkpoint_for_scope(&scope).unwrap().epoch, 2);

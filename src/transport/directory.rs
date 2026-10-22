@@ -27,10 +27,34 @@ fn directory_route_cache() -> &'static Mutex<Vec<DirectoryRouteCacheEntry>> {
     CACHE.get_or_init(|| Mutex::new(Vec::new()))
 }
 
+fn directory_candidate_url(base_url: &str) -> anyhow::Result<url::Url> {
+    let url = crate::config::validate_server_url(base_url.trim())?;
+    anyhow::ensure!(url.scheme() == "https", "Directory address requires HTTPS");
+    Ok(url)
+}
+
 fn public_directory_client(base_url: &str) -> anyhow::Result<arkret_sdk::http_client::Client> {
-    let base_url = crate::config::validate_server_url(base_url)?;
-    arkret_sdk::http_client::ClientBuilder::new(base_url)
-        .allow_insecure_localhost()
+    let base_url = directory_candidate_url(base_url)?;
+    let builder = arkret_sdk::http_client::ClientBuilder::new(base_url.clone());
+    // Only the existing explicit joint-fixture feature permits method-native
+    // reads in this development namespace. A remote DID cannot widen it.
+    #[cfg(feature = "wasm-localstorage-secrets-test")]
+    let builder = if let Some(namespace) =
+        ["localhost", "local.host"].into_iter().find(|namespace| {
+            let host = base_url.host_str().unwrap_or_default();
+            host == *namespace
+                || host
+                    .strip_suffix(*namespace)
+                    .is_some_and(|prefix| prefix.ends_with('.'))
+        }) {
+        builder.loopback_service_discovery(
+            namespace,
+            base_url.port_or_known_default().unwrap_or(443),
+        )?
+    } else {
+        builder
+    };
+    builder
         .build()
         .map_err(|error| anyhow::anyhow!("build verified Directory client: {error}"))
 }
@@ -57,12 +81,13 @@ fn realm_search_http_json_base(description: &arkret_sdk::ServiceDescribe) -> any
     Ok(base_url)
 }
 
-/// Resolve the Directory role independently from the Principal service and
-/// return an unauthenticated client pinned to its verified public route.
+/// Resolve an explicitly supplied Directory candidate and return a public
+/// client pinned to its verified route. This never discovers a Directory by
+/// treating the Account's Principal Station as another service role.
 pub async fn verified_directory_client(
     candidate_base_url: &str,
 ) -> anyhow::Result<arkret_sdk::http_client::Client> {
-    let candidate = crate::config::validate_server_url(candidate_base_url)?.to_string();
+    let candidate = directory_candidate_url(candidate_base_url)?.to_string();
     let now = Utc::now();
     if let Some(route_base) = {
         let mut cache = directory_route_cache()
@@ -87,7 +112,10 @@ pub async fn verified_directory_client(
     let advertised_base = realm_search_http_json_base(&description)?;
     let service_id = description.service_id.clone();
     let authenticated_resolution = candidate_client
-        .open_service_resolution(&service_id)
+        .resolve_service_from_did(
+            &description.service_resolution.did,
+            arkret_sdk::ServiceKind::DirectoryService,
+        )
         .await
         .map_err(|error| anyhow::anyhow!("Directory service resolution failed: {error}"))?;
     let describe_binding =
@@ -193,7 +221,27 @@ pub async fn search_realms(
 mod route_tests {
     use arkret_sdk::{Did, ServiceKind, TransportBinding, TrustDomainId};
 
-    use super::realm_search_http_json_base;
+    use super::{directory_candidate_url, realm_search_http_json_base};
+
+    #[test]
+    fn directory_candidate_is_explicit_https_without_embedded_credentials() {
+        assert_eq!(
+            directory_candidate_url("https://directory.example")
+                .unwrap()
+                .as_str(),
+            "https://directory.example/"
+        );
+        for invalid in [
+            "",
+            "http://127.0.0.1:7781",
+            "http://directory.example",
+            "https://user:secret@directory.example",
+            "https://directory.example?account=alice",
+            "https://directory.example/#credential",
+        ] {
+            assert!(directory_candidate_url(invalid).is_err(), "{invalid}");
+        }
+    }
 
     fn description(service_kind: ServiceKind, bundles: Vec<String>) -> arkret_sdk::ServiceDescribe {
         arkret_sdk::ServiceDescribe::development(

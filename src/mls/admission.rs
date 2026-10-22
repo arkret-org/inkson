@@ -15,6 +15,7 @@ use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use garth::mls::checkpoint::MlsLocalCheckpointEnvelope;
 
+#[cfg(test)]
 use crate::operation::trim_realm_id;
 use crate::secure_key_store::SecureKeyStore;
 use crate::state::LocalStateStore;
@@ -116,6 +117,7 @@ fn requester_device_authorize_event_id(
 
 /// Build the complete admission unit for one claimed KeyPackage.
 #[allow(clippy::too_many_arguments)]
+#[cfg(test)]
 pub(crate) fn build_realm_mls_admission_events_from_claim(
     state_store: &LocalStateStore,
     secure_store: &dyn SecureKeyStore,
@@ -140,6 +142,7 @@ pub(crate) fn build_realm_mls_admission_events_from_claim(
     )
 }
 
+#[cfg(test)]
 fn realm_effective_scope(realm_id: &str) -> Result<arkret_sdk::ScopeRef, String> {
     Ok(arkret_sdk::ScopeRef::Realm {
         realm_id: arkret_sdk::RealmId::new(trim_realm_id(realm_id))
@@ -148,6 +151,7 @@ fn realm_effective_scope(realm_id: &str) -> Result<arkret_sdk::ScopeRef, String>
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg(test)]
 pub(crate) fn build_admission_events_for_scope(
     state_store: &LocalStateStore,
     secure_store: &dyn SecureKeyStore,

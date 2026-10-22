@@ -59,7 +59,7 @@ pub fn LoginPanel(
     // A4 — base_url / state_store from session context instead of props.
     let session_context = crate::app::SessionContext::get();
     let mut base_url = session_context.base_url;
-    let mut station_draft = use_signal(|| base_url());
+    let mut station_draft = use_signal(&*base_url);
     use_effect(move || station_draft.set(base_url()));
     let mut active_account = session_context.active_account;
     let state_store = session_context.state_store;

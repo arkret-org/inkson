@@ -1,7 +1,10 @@
 import { expect, test } from "@playwright/test";
 import { createHash } from "node:crypto";
-import { inksonWire, mockArkretApi, validateMockSchema } from "../e2e/mockArkretApi";
-import { captureRouteHandler, driveOnce } from "./mockShapeDriver";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { inksonWire, mockArkretApi, validateMockResponseForOperation, validateMockSchema } from "../e2e/mockArkretApi";
+import { captureRouteHandler, driveOnce, mockOperations } from "./mockShapeDriver";
 
 type Fixture = {
   snapshot: Record<string, any>;
@@ -341,6 +344,139 @@ async function mockReadFixture() {
   });
   return { fixture, route: captured.handler() };
 }
+
+test("Self Watch current reads the SDK-verified complete cell without advancing its cut", async () => {
+  const fixture = build();
+  const original = structuredClone(fixture);
+  const request = {
+    realm_id: fixture.snapshot.realm_id, strand_id: fixture.ids.review,
+    watcher_actor_id: { kind: "account", account_id: fixture.identity.account_id },
+  };
+  const current = inksonWire<Record<string, any>>("mock-strand-watch-current", { fixture, request });
+  expect(current).toEqual({
+    status: "never_written", realm_id: request.realm_id,
+    governance_generation: fixture.snapshot.governance_generation,
+    stream_head: fixture.snapshot.visible_stream_heads[0],
+    selector: { kind: "strand_watch", strand_id: request.strand_id, watcher_actor_id: request.watcher_actor_id },
+  });
+  validateMockSchema("schemas/service-operation-dtos.schema.json#/$defs/StrandWatchCurrentOutcome", current);
+  expect(fixture).toEqual(original);
+  for (const field of ["Realm", "Strand", "Account", "Station"] as const) {
+    const changed = structuredClone(request);
+    if (field === "Realm") changed.realm_id = inksonWire<Fixture>("mock-realm-fixture", { salt: 10, title: "Other" }).snapshot.realm_id;
+    if (field === "Strand") changed.strand_id = "ak:strand:AWXzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c";
+    if (field === "Account") changed.watcher_actor_id.account_id.principal_id = "ak:did_core:web:other.example";
+    if (field === "Station") changed.watcher_actor_id.account_id.station_id = "ak:did_core:web:other.example";
+    expect(() => inksonWire("mock-strand-watch-current", { fixture, request: changed }), field).toThrow();
+  }
+  const changed = structuredClone(fixture);
+  changed.snapshot.current_state_entries.push({
+    selector: current.selector, source_stream_ref: current.stream_head.stream_ref,
+    revision: { commit_id: current.stream_head.commit_id, stream_position: current.stream_head.stream_position },
+    value: { level: "muted" },
+  });
+  expect(() => inksonWire("mock-strand-watch-current", { fixture: changed, request })).toThrow();
+});
+
+test("Watch read controls delay only the exact response and keep failures and other targets independent", async () => {
+  const captured = captureRouteHandler();
+  const scenario = await mockArkretApi(captured.page as never);
+  const fixture = inksonWire<Fixture>("mock-realm-fixture", { salt: 9, title: "Arkret Demo Realm", board: true });
+  const target = { realmId: scenario.demoRealm, strandId: scenario.demoStrands.review };
+  const request = {
+    realm_id: target.realmId, strand_id: target.strandId,
+    watcher_actor_id: { kind: "account", account_id: fixture.identity.account_id },
+  };
+  const current = inksonWire("mock-strand-watch-current", { fixture, request });
+  const route = captured.handler();
+  const url = "https://local.host/_arkret/self/strands/watch/current";
+  const gate = scenario.watchReads.holdNext(target);
+  let entered = false;
+  void gate.entered.then(() => { entered = true; });
+  let delivered = false;
+  let pending: ReturnType<typeof driveOnce> | undefined;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    for (const field of ["principal_id", "station_id"] as const) {
+      const foreign = structuredClone(request);
+      foreign.watcher_actor_id.account_id[field] = "ak:did_core:web:other.example";
+      const refused = await Promise.race([
+        driveOnce(route, { url, method: "POST", postData: foreign }),
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(() => reject(new Error("foreign Actor consumed the own watch gate")), 5_000);
+        }),
+      ]);
+      clearTimeout(timeout);
+      timeout = undefined;
+      expect(refused?.status).toBe(404);
+      expect(refused?.body).not.toHaveProperty("result");
+      expect(scenario.watchReads.count(target)).toBe(0);
+      expect(entered).toBe(false);
+    }
+    pending = driveOnce(route, { url, method: "POST", postData: request }).then(result => { delivered = true; return result; });
+    await gate.entered;
+    expect(scenario.watchReads.count(target)).toBe(1);
+    expect(delivered).toBe(false);
+    const otherTarget = { realmId: target.realmId, strandId: scenario.demoStrands.scope };
+    const other = await driveOnce(route, { url, method: "POST", postData: { ...request, strand_id: otherTarget.strandId } });
+    expect(other?.status).toBe(200);
+    expect(scenario.watchReads.count(otherTarget)).toBe(1);
+    expect(delivered).toBe(false);
+  } finally {
+    clearTimeout(timeout);
+    gate.release();
+  }
+  expect(pending).toBeDefined();
+  expect(await pending).toEqual({ status: 200, body: current });
+  scenario.watchReads.failNext(target, 503, "service_unavailable");
+  const failure = await driveOnce(route, { url, method: "POST", postData: request });
+  expect(failure?.status).toBe(503);
+  expect(failure?.body).toMatchObject({ status: 503 });
+  expect(failure?.body).not.toHaveProperty("value");
+  expect(failure?.body).not.toHaveProperty("result");
+  expect(await driveOnce(route, { url, method: "POST", postData: request })).toEqual({ status: 200, body: current });
+  expect(scenario.watchReads.count(target)).toBe(3);
+  const foreign = structuredClone(request);
+  foreign.watcher_actor_id.account_id.station_id = "ak:did_core:web:other.example";
+  const refused = await driveOnce(route, { url, method: "POST", postData: foreign });
+  expect(refused?.status).toBe(404);
+  expect(refused?.body).not.toHaveProperty("result");
+  expect(scenario.watchReads.count(target)).toBe(3);
+  expect(await driveOnce(route, {
+    url: `https://local.host/_arkret/self/realm-state-snapshot/head?realm_id=${encodeURIComponent(target.realmId)}`, method: "GET",
+  })).toEqual({ status: 200, body: fixture.snapshot });
+});
+
+test("Watch CAS validation preserves other declared conflict responses without treating them as Watch failures", () => {
+  const registryPath = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "arkret-spec", "spec", "v1", "artifacts", "registry", "error-code-registry.json");
+  const registry = JSON.parse(readFileSync(registryPath, "utf8")) as {
+    codes: Array<{ code: string; status: string; http_status: number; type_uri: string; title: string }>;
+  };
+  const problem = (code: string) => {
+    const descriptor = registry.codes.find(entry => entry.code === code && entry.status === "active")!;
+    expect(descriptor).toBeDefined();
+    return { type: descriptor.type_uri, title: descriptor.title, status: descriptor.http_status, detail: "Current registered conflict fixture." };
+  };
+  const operations = mockOperations();
+  const submit = operations.find(operation => operation.operation_id === "ak.self.events.command.submit.v1")!;
+  const generic = operations.find(operation => operation.responses["409"]?.schema_ref === "schemas/http-problem-details.schema.json")!;
+  expect(submit).toBeDefined();
+  expect(generic).toBeDefined();
+  const watch = problem("failed_precondition");
+  expect(() => validateMockResponseForOperation(submit, 409, watch, "application/problem+json")).not.toThrow();
+  expect(() => validateMockResponseForOperation(submit, 409, { ...watch, title: "Wrong Watch title" }, "application/problem+json")).toThrow();
+  const duplicate = problem("duplicate_conflict");
+  const original = structuredClone(duplicate);
+  expect(() => validateMockResponseForOperation(generic, 409, duplicate, "application/problem+json")).not.toThrow();
+  // Exercise the generic declared-response path under the same operation id.
+  // This validator input does not add a response to the embedded inventory.
+  const declared = { ...submit, responses: { ...submit.responses, "409": generic.responses["409"] } };
+  expect(() => validateMockResponseForOperation(declared, 409, duplicate, "application/problem+json")).not.toThrow();
+  expect(duplicate).toEqual(original);
+  if (!submit.responses["409"] && !submit.responses.default) {
+    expect(() => validateMockResponseForOperation(submit, 409, duplicate, "application/problem+json")).toThrow("has no OpenAPI response");
+  }
+});
 
 test("New Root bootstrap registers its native Realm before exact historical reads", async () => {
   const captured = captureRouteHandler();
