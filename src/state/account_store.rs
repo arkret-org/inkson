@@ -1025,7 +1025,7 @@ pub(super) fn committed_map<T: serde::de::DeserializeOwned + Clone>(
     backend.snapshot(|snapshot| {
         anyhow::ensure!(
             snapshot.get_sync(&root_key(scope))? == expected.root,
-            "account checkpoint changed before committed read"
+            committed_read::CommittedReadChanged::Before
         );
         if expected.incarnation.is_empty() {
             return Ok(imbl::OrdMap::new());

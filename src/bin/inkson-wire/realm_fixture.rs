@@ -2084,6 +2084,63 @@ pub(super) fn authority_bundle(input: Value) -> Result<Value> {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct StreamsInput {
+    fixture: Fixture,
+    limit: u16,
+}
+
+pub(super) fn streams(input: Value) -> Result<Value> {
+    use arkret_state::AuthorityCommitStore as _;
+    let input: StreamsInput = serde_json::from_value(input)?;
+    ensure!(
+        (1..=500).contains(&input.limit),
+        "invalid stream enumeration limit"
+    );
+    let fixture = validate_fixture(&input.fixture)?;
+    require_fixture_readable(&fixture)?;
+    let store = arkret_state::MemoryAuthorityCommitStore::default();
+    for full in &fixture.committed_events {
+        store.append(&full.event, full.commit.clone())?;
+    }
+    let mut rows = Vec::new();
+    for head in &fixture.snapshot.visible_stream_heads {
+        let scan = store.scan(&StreamScanRequest {
+            realm_id: fixture.snapshot.realm_id.clone(),
+            stream_ref: head.stream_ref.clone(),
+            direction: arkret_wire::StreamScanDirection::After(None),
+            limit: 1,
+        })?;
+        let row = arkret_wire::RealmStreamRow {
+            stream_ref: head.stream_ref.clone(),
+            head_commit_ref: head.commit_id.clone(),
+            next_position: head
+                .stream_position
+                .checked_add(1)
+                .ok_or_else(|| anyhow::anyhow!("fixture stream position exhausted"))?,
+            readable_floor: scan.readable_floor,
+        };
+        rows.push((
+            arkret_sdk::canonical::canonical_json_bytes(&row.stream_ref)?,
+            row,
+        ));
+    }
+    rows.sort_by(|left, right| left.0.cmp(&right.0));
+    ensure!(
+        rows.len() <= usize::from(input.limit),
+        "fixture requires paginated stream enumeration"
+    );
+    let page = arkret_wire::RealmStreamList {
+        realm_id: fixture.snapshot.realm_id,
+        streams: rows.into_iter().map(|(_, row)| row).collect(),
+        next_cursor: None,
+        has_more: false,
+    };
+    page.validate()?;
+    serde_json::to_value(page).map_err(Into::into)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ScanInput {
     fixture: Fixture,
     request: StreamScanRequest,
@@ -2399,6 +2456,49 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn discovery_uses_the_accepted_head_and_the_same_floor_as_scan() -> Result<()> {
+        let fixture: Fixture = serde_json::from_value(build(json!({
+            "salt": 9, "title": "Discovery Realm", "board": true,
+        }))?)?;
+        let page: arkret_wire::RealmStreamList = serde_json::from_value(streams(json!({
+            "fixture": fixture, "limit": 1,
+        }))?)?;
+        page.validate()?;
+        assert_eq!(page.realm_id, fixture.snapshot.realm_id);
+        assert_eq!(page.streams.len(), 1);
+        let row = &page.streams[0];
+        let head = &fixture.snapshot.visible_stream_heads[0];
+        assert_eq!(row.stream_ref, head.stream_ref);
+        assert_eq!(row.head_commit_ref, head.commit_id);
+        assert_eq!(row.next_position, head.stream_position + 1);
+        let floor = row
+            .readable_floor
+            .as_ref()
+            .expect("the fixture admits its readable prefix");
+        assert_eq!(floor.oldest_position, 0);
+        assert_eq!(
+            floor.floor_commit_id,
+            fixture.committed_events[0].commit.commit_id
+        );
+        assert_eq!(
+            floor.floor_reason,
+            arkret_wire::ReadableFloorReason::StreamStart
+        );
+        assert!(!page.has_more);
+        assert_eq!(page.next_cursor, None);
+        Ok(())
+    }
+
+    #[test]
+    fn discovery_does_not_disclose_a_directed_realm_before_join() -> Result<()> {
+        let fixture = build(json!({
+            "salt": 10, "title": "Invited Realm", "directed_invite": true,
+        }))?;
+        assert!(streams(json!({ "fixture": fixture, "limit": 500 })).is_err());
+        Ok(())
+    }
 
     #[test]
     fn message_fixture_delivers_exact_current_revision_carrier() -> Result<()> {

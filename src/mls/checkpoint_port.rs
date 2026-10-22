@@ -96,32 +96,65 @@ pub(crate) async fn read_durable_checkpoint(
     state: &StateStoreHandle,
     scope: &arkret_sdk::ScopeRef,
 ) -> anyhow::Result<Option<garth::mls::checkpoint::MlsLocalCheckpointEnvelope>> {
-    let read = state.read(LocalStateStore::capture_committed_account_read)?;
-    let checkpoint = read.checkpoint_for_scope(scope).await?;
-    state.read(|store| -> anyhow::Result<()> {
-        anyhow::ensure!(
-            read.matches(store),
-            "MLS committed read belongs to a replaced session"
-        );
-        Ok(())
-    })?;
-    Ok(checkpoint)
+    let mut read = state.read(LocalStateStore::capture_committed_account_read)?;
+    for _ in 0..COMMITTED_READ_ATTEMPTS {
+        let checkpoint = read.checkpoint_for_scope(scope).await;
+        let changed = checkpoint
+            .as_ref()
+            .err()
+            .is_some_and(crate::state::CommittedAccountRead::root_changed);
+        if let Some(next) = next_committed_read(state, &read, changed)? {
+            read = next;
+            continue;
+        }
+        return checkpoint;
+    }
+    anyhow::bail!("MLS checkpoint repeatedly changed during committed read")
 }
 
 pub(crate) async fn read_durable_consumes(
     state: &StateStoreHandle,
 ) -> anyhow::Result<Vec<(String, arkret_sdk::KeyPackagesConsumeRequestBody)>> {
-    let read = state.read(LocalStateStore::capture_committed_account_read)?;
-    let consumes = read.pending_consumes().await?;
-    state.read(|store| -> anyhow::Result<()> {
-        anyhow::ensure!(
-            read.matches(store),
-            "MLS consume read belongs to a replaced session"
-        );
-        Ok(())
-    })?;
-    Ok(consumes)
+    let mut read = state.read(LocalStateStore::capture_committed_account_read)?;
+    for _ in 0..COMMITTED_READ_ATTEMPTS {
+        let consumes = read.pending_consumes().await;
+        let changed = consumes
+            .as_ref()
+            .err()
+            .is_some_and(crate::state::CommittedAccountRead::root_changed);
+        if let Some(next) = next_committed_read(state, &read, changed)? {
+            read = next;
+            continue;
+        }
+        return consumes;
+    }
+    anyhow::bail!("MLS consumes repeatedly changed during committed read")
 }
+
+const COMMITTED_READ_ATTEMPTS: usize = 4;
+
+fn next_committed_read(
+    state: &StateStoreHandle,
+    read: &crate::state::CommittedAccountRead,
+    root_changed: bool,
+) -> anyhow::Result<Option<crate::state::CommittedAccountRead>> {
+    state.read(|store| {
+        anyhow::ensure!(
+            read.same_session(store),
+            "MLS committed read belongs to a replaced session"
+        );
+        if !root_changed && read.matches(store) {
+            // A stable-root error remains an error, including corrupt or
+            // replayed records. Only a wholly superseded read is discarded.
+            Ok(None)
+        } else {
+            Ok(Some(store.capture_committed_account_read()?))
+        }
+    })
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests;
 
 // Dropping an installer does not revoke an accepted MLS transition. Its exact
 // checkpoint/consume tuple stays recoverable; consumers read durable state and

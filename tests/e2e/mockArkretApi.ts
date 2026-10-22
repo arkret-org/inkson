@@ -163,6 +163,7 @@ type InksonWireCommand =
   | "mock-realm-authority-bundle"
   | "mock-current-principal"
   | "mock-realm-scan"
+  | "mock-realm-streams"
   | "mock-exact-current"
   | "mock-realm-signer-keys"
   | "mock-realm-list"
@@ -2762,6 +2763,20 @@ export async function mockArkretApi(
       const fixture = nativeFixtures.get(String(request.realm_id));
       if (!fixture || !nativeReadable(fixture)) throw new Error("exact current request has no readable native Realm");
       return json(route, inksonWire("mock-exact-current", { fixture, request }));
+    }
+
+    const realmStreams = url.pathname.match(/^\/_arkret\/self\/realms\/([^/]+)\/streams$/);
+    if (realmStreams && route.request().method() === "GET") {
+      const fixture = nativeFixtures.get(decodeURIComponent(realmStreams[1]));
+      if (!fixture || !nativeReadable(fixture)) {
+        throw new Error("stream enumeration has no readable native Realm fixture");
+      }
+      // Current fixtures fit one page. Never silently truncate an expanded
+      // fixture or pretend that its unreadable streams have an empty floor.
+      expect(url.searchParams.has("cursor")).toBe(false);
+      return json(route, inksonWire("mock-realm-streams", {
+        fixture, limit: Number(url.searchParams.get("limit") ?? "500"),
+      }));
     }
 
     if (url.pathname === "/_arkret/self/realm-state-snapshot/head" && route.request().method() === "GET") {

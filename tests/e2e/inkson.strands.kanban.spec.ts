@@ -26,6 +26,12 @@ test("kanban coalesces delayed inventory reads into one worker", async ({ page }
   const active = { spaces: 0, strands: 0 };
   const maximum = { spaces: 0, strands: 0 };
   const totals = { spaces: 0, strands: 0 };
+  const discoveryStatuses: number[] = [];
+  page.on("response", response => {
+    if (/\/_arkret\/self\/realms\/[^/]+\/streams$/.test(new URL(response.url()).pathname)) {
+      discoveryStatuses.push(response.status());
+    }
+  });
   page.on("request", request => {
     const path = new URL(request.url()).pathname;
     const collection = path.match(/\/_arkret\/self\/realms\/[^/]+\/(spaces|strands)$/)?.[1] as "spaces" | "strands" | undefined;
@@ -50,6 +56,8 @@ test("kanban coalesces delayed inventory reads into one worker", async ({ page }
     await route.fallback();
   });
   await openKanban(page);
+  await expect.poll(() => discoveryStatuses.filter(status => status === 200).length).toBeGreaterThan(0);
+  expect(discoveryStatuses).not.toContain(404);
   await expect.poll(() => active.spaces + active.strands).toBe(0);
   expect(maximum.spaces).toBeLessThanOrEqual(1);
   expect(maximum.strands).toBeLessThanOrEqual(1);
@@ -62,7 +70,7 @@ test("kanban coalesces delayed inventory reads into one worker", async ({ page }
   await expect.poll(() => active.spaces + active.strands).toBe(0);
   expect(totals).toEqual(settled);
   await testInfo.attach("kanban-inventory-concurrency.json", {
-    body: Buffer.from(JSON.stringify({ totals, maximum }, null, 2)),
+    body: Buffer.from(JSON.stringify({ totals, maximum, discoveryStatuses }, null, 2)),
     contentType: "application/json",
   });
 });

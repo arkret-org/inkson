@@ -1,6 +1,15 @@
 //! Exact committed reads never consult the optimistic account queue.
 use super::*;
 
+#[derive(Debug, thiserror::Error)]
+pub(super) enum CommittedReadChanged {
+    #[error("account checkpoint changed before committed read")]
+    Before,
+    #[cfg(target_arch = "wasm32")]
+    #[error("account checkpoint changed during committed read")]
+    During,
+}
+
 pub(crate) struct CommittedAccountRead {
     pub(in crate::state) scope: String,
     pub(in crate::state) expected: Checkpoint,
@@ -13,10 +22,14 @@ pub(crate) struct CommittedAccountRead {
     pub(in crate::state) pending: Option<(arkret_sdk::DeviceId, Option<String>)>,
 }
 impl CommittedAccountRead {
-    pub(crate) fn matches(&self, store: &super::super::LocalStateStore) -> bool {
+    pub(crate) fn root_changed(error: &anyhow::Error) -> bool {
+        error.downcast_ref::<CommittedReadChanged>().is_some()
+    }
+
+    /// Identity fences stay fixed while an entire data read may be resampled.
+    pub(crate) fn same_session(&self, store: &super::super::LocalStateStore) -> bool {
         self.scope == store.effective_account_key()
             && self.account == store.active_authority()
-            && self.generation == store.current_generation()
             && self.epoch == crate::identity::device_directory::cache_epoch()
             && self.device
                 == crate::secure_key_store::active_device_seed_scope()
@@ -26,6 +39,11 @@ impl CommittedAccountRead {
                 == store
                     .pending_login()
                     .map(|pending| (pending.device_id, pending.anonymous_storage_incarnation))
+    }
+
+    pub(crate) fn matches(&self, store: &super::super::LocalStateStore) -> bool {
+        self.same_session(store)
+            && self.generation == store.current_generation()
             && store
                 .committed_account_checkpoint(&self.scope)
                 .ok()
@@ -88,7 +106,7 @@ pub(super) async fn committed_map_async<T: serde::de::DeserializeOwned + Clone>(
 ) -> anyhow::Result<imbl::OrdMap<String, T>> {
     anyhow::ensure!(
         backend.get(&root_key(scope)).await? == expected.root,
-        "account checkpoint changed before committed read"
+        CommittedReadChanged::Before
     );
     if expected.incarnation.is_empty() {
         return Ok(imbl::OrdMap::new());
@@ -141,7 +159,7 @@ pub(super) async fn committed_map_async<T: serde::de::DeserializeOwned + Clone>(
     }
     anyhow::ensure!(
         backend.get(&root_key(scope)).await? == expected.root,
-        "account checkpoint changed during committed read"
+        CommittedReadChanged::During
     );
     Ok(result)
 }
