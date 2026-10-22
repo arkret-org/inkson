@@ -526,7 +526,9 @@ export function validateMockResponseForOperation(
     validateClosedMockProblem(watchReadErrorDescriptor(descriptor.code), status, value, contentType);
     return;
   }
-  if (operation.operation_id === "ak.self.events.command.submit.v1" && status === watchPreconditionDescriptor.http_status) {
+  if (operation.operation_id === "ak.self.events.command.submit.v1"
+    && status === watchPreconditionDescriptor.http_status
+    && (value as Record<string, unknown> | undefined)?.type === watchPreconditionDescriptor.type_uri) {
     validateClosedMockProblem(watchPreconditionDescriptor, status, value, contentType);
     return;
   }

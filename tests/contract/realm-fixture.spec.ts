@@ -1,7 +1,10 @@
 import { expect, test } from "@playwright/test";
 import { createHash } from "node:crypto";
-import { inksonWire, mockArkretApi, validateMockSchema } from "../e2e/mockArkretApi";
-import { captureRouteHandler, driveOnce } from "./mockShapeDriver";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { inksonWire, mockArkretApi, validateMockResponseForOperation, validateMockSchema } from "../e2e/mockArkretApi";
+import { captureRouteHandler, driveOnce, mockOperations } from "./mockShapeDriver";
 
 type Fixture = {
   snapshot: Record<string, any>;
@@ -442,6 +445,37 @@ test("Watch read controls delay only the exact response and keep failures and ot
   expect(await driveOnce(route, {
     url: `https://local.host/_arkret/self/realm-state-snapshot/head?realm_id=${encodeURIComponent(target.realmId)}`, method: "GET",
   })).toEqual({ status: 200, body: fixture.snapshot });
+});
+
+test("Watch CAS validation preserves other declared conflict responses without treating them as Watch failures", () => {
+  const registryPath = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "arkret-spec", "spec", "v1", "artifacts", "registry", "error-code-registry.json");
+  const registry = JSON.parse(readFileSync(registryPath, "utf8")) as {
+    codes: Array<{ code: string; status: string; http_status: number; type_uri: string; title: string }>;
+  };
+  const problem = (code: string) => {
+    const descriptor = registry.codes.find(entry => entry.code === code && entry.status === "active")!;
+    expect(descriptor).toBeDefined();
+    return { type: descriptor.type_uri, title: descriptor.title, status: descriptor.http_status, detail: "Current registered conflict fixture." };
+  };
+  const operations = mockOperations();
+  const submit = operations.find(operation => operation.operation_id === "ak.self.events.command.submit.v1")!;
+  const generic = operations.find(operation => operation.responses["409"]?.schema_ref === "schemas/http-problem-details.schema.json")!;
+  expect(submit).toBeDefined();
+  expect(generic).toBeDefined();
+  const watch = problem("failed_precondition");
+  expect(() => validateMockResponseForOperation(submit, 409, watch, "application/problem+json")).not.toThrow();
+  expect(() => validateMockResponseForOperation(submit, 409, { ...watch, title: "Wrong Watch title" }, "application/problem+json")).toThrow();
+  const duplicate = problem("duplicate_conflict");
+  const original = structuredClone(duplicate);
+  expect(() => validateMockResponseForOperation(generic, 409, duplicate, "application/problem+json")).not.toThrow();
+  // Exercise the generic declared-response path under the same operation id.
+  // This validator input does not add a response to the embedded inventory.
+  const declared = { ...submit, responses: { ...submit.responses, "409": generic.responses["409"] } };
+  expect(() => validateMockResponseForOperation(declared, 409, duplicate, "application/problem+json")).not.toThrow();
+  expect(duplicate).toEqual(original);
+  if (!submit.responses["409"] && !submit.responses.default) {
+    expect(() => validateMockResponseForOperation(submit, 409, duplicate, "application/problem+json")).toThrow("has no OpenAPI response");
+  }
 });
 
 test("New Root bootstrap registers its native Realm before exact historical reads", async () => {
