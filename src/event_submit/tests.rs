@@ -21,7 +21,7 @@ fn test_authority() -> arkret_sdk::AccountId {
     )
 }
 
-fn account_actor() -> arkret_sdk::ActorId {
+pub(super) fn account_actor() -> arkret_sdk::ActorId {
     arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
         crate::mls_api_helpers::principal_core_id(PRINCIPAL).unwrap(),
         arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
@@ -2255,7 +2255,36 @@ async fn retryable_authority_answer_is_durable_and_really_resubmits_after_restar
     ));
     assert_eq!(accepted_calls.load(std::sync::atomic::Ordering::SeqCst), 1);
     assert_eq!(resumed.snapshot().await.unwrap().items[0].attempts, 2);
-    std::fs::remove_dir_all(directory).unwrap();
+    drop(resumed);
+    let fixture_root = directory.canonicalize().unwrap();
+    let temporary_root = std::env::temp_dir().canonicalize().unwrap();
+    assert_eq!(fixture_root.parent(), Some(temporary_root.as_path()));
+    assert!(
+        fixture_root
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with("inkson-message-retry-")
+    );
+    let cleanup_deadline = std::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        match std::fs::remove_dir_all(&fixture_root) {
+            Ok(()) => break,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+            Err(error)
+                if cfg!(windows)
+                    && error.raw_os_error() == Some(32)
+                    && std::time::Instant::now() < cleanup_deadline =>
+            {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            Err(error) => panic!(
+                "remove owned retry fixture {}: {error}",
+                fixture_root.display()
+            ),
+        }
+    }
+    assert!(!fixture_root.exists());
 }
 
 pub(crate) fn queue_message_operation_for_test(operation: &LocalOperation) -> QueuedSubmission {

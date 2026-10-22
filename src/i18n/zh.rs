@@ -174,6 +174,29 @@ fn add_generic_error_keys_zh(dict: &mut TranslationDict) {
 /// Build Chinese translation dictionary.
 pub fn chinese_translations() -> TranslationDict {
     let mut dict = TranslationDict::new(UiLocale::Zh);
+    dict.set("consent.resume_original", "恢复已签名的待定提交");
+    dict.set("consent.replace_success", "完整权限替换已提交");
+    dict.set("consent.replace_failed", "权限替换未完成：{error}");
+
+    dict.set(
+        "consent.edit_intro",
+        "先读取对方的完整权限，查看全部变更后再确认。未修改的权限及附加信息会完整保留。",
+    );
+    dict.set("consent.edit_peer", "编辑权限");
+    dict.set("consent.empty_set", "权限为空，已保存的版本仍保留。");
+    dict.set("consent.read_complete", "读取完整当前权限");
+    dict.set("consent.before", "完整当前状态");
+    dict.set("consent.after", "待确认的完整替换");
+    dict.set("consent.not_before", "生效时间（RFC 3339，可留空）");
+    dict.set("consent.expires_at", "过期时间（RFC 3339，可留空）");
+    dict.set("consent.reason", "原因（可留空）");
+    dict.set(
+        "consent.retained_fields",
+        "原有约束和证据会完整保留，无法解释的约束不会授权。",
+    );
+    dict.set("consent.preview", "查看完整变更");
+    dict.set("consent.confirm", "确认并提交替换");
+
     for (state, label, description) in [
         ("synced", "已同步", "已接受的修改已显示在本地视图中。"),
         ("optimistic", "草稿", "已保存在本地，尚未加入发送队列。"),

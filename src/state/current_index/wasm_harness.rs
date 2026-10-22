@@ -52,6 +52,38 @@ impl CurrentIndexHarness {
         Ok(generation)
     }
 
+    /// Apply accepted account-list scope changes through the production planner.
+    pub async fn commit_account_scope_change(
+        &self,
+        expected: u64,
+        frame: &str,
+    ) -> Result<u64, String> {
+        let frame: AccountSubscribeFrame = serde_json::from_str(frame).map_err(message)?;
+        frame.validate().map_err(message)?;
+        let resets =
+            super::super::demand_sync::initial_account_scope_resets(&frame).map_err(message)?;
+        let mut stage = self
+            .index
+            .stage_current_install(
+                || Ok(expected),
+                Some(&frame),
+                None,
+                &Default::default(),
+                &Default::default(),
+                &|| Ok(()),
+                None,
+                None,
+                Some(&|| Ok(resets.clone())),
+            )
+            .await
+            .map_err(message)?;
+        let generation = stage.generation();
+        stage.arm_account_commit();
+        stage.persist_for_harness().await.map_err(message)?;
+        stage.finish();
+        Ok(generation)
+    }
+
     /// Fixture host for a snapshot already verified by the sync pipeline.
     pub async fn commit_snapshot(
         &self,
@@ -71,6 +103,7 @@ impl CurrentIndexHarness {
                 &Default::default(),
                 &std::collections::BTreeMap::from([(snapshot.realm_id.to_string(), &snapshot)]),
                 &|| Ok(()),
+                None,
                 None,
                 None,
             )

@@ -1224,7 +1224,6 @@ pub fn SettingsPanel(
 
                     if active_section == SettingsSection::Devices {
                         crate::views::settings::devices::SettingsDevicesPanel {
-                            principal_id,
                             device_id,
                             token,
                         }

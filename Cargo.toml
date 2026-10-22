@@ -240,7 +240,7 @@ arkret-egress-reqwest = { version = "0.3.0", path = "../arkret-rust-sdk/crates/e
 # NOTE: arkret-sdk `default = []`; this client opts into only its transport,
 # MLS, signer and platform-keystore integrations. Crypto capabilities are
 # selected directly on `arkret-crypto`.
-arkret-sdk = { workspace = true, features = ["client", "mls", "signer", "keystore-macos", "keystore-linux", "keystore-windows"] }
+arkret-sdk = { workspace = true, features = ["client", "mls", "signer", "tls-rustls", "keystore-macos", "keystore-linux", "keystore-windows"] }
 dioxus = { workspace = true }
 fs2 = "0.4.3"
 garth = { path = "../garth", default-features = false, features = ["native"] }

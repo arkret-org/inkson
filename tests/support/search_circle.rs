@@ -92,6 +92,22 @@ pub struct Fixture {
     pub message: CommittedEventFullView,
 }
 
+pub fn account_scope_removal_frame(realm: &RealmId) -> String {
+    // The account list counter deliberately exceeds every Realm/Circle position.
+    json!({"kind":"delta", "cursor":"ak:cursor:YQ", "realm_list_changes":{
+        "upserts":[], "removals":[{"realm_id":realm, "revision":100_000}]
+    }})
+    .to_string()
+}
+
+pub fn account_scope_rejoin_frame(realm: &RealmId) -> String {
+    json!({"kind":"delta", "cursor":"ak:cursor:Yg", "realm_list_changes":{
+        "upserts":[{"realm_id":realm,"revision":100_001,"activity_position":1,"membership":"join"}],
+        "removals":[]
+    }})
+    .to_string()
+}
+
 pub struct DisclosureStep {
     pub frame: String,
     pub snapshot: String,
@@ -826,3 +842,128 @@ pub const SCENARIOS: [&str; 7] = [
     "wrong_schema",
     "wrong_source",
 ];
+
+pub struct SearchAuthorizationCase {
+    pub name: &'static str,
+    pub fixture: Fixture,
+    pub requester: ActorId,
+    pub visible: bool,
+    pub malformed_current: bool,
+}
+
+impl SearchAuthorizationCase {
+    pub fn assert_search_result<T: PartialEq + std::fmt::Debug>(
+        &self,
+        result: std::result::Result<T, String>,
+        expected: T,
+        phase: &str,
+    ) {
+        let expected_error = match self.name {
+            "wrong_strand_id" | "wrong_strand_realm" => {
+                Some("Strand current differs from its selected subject")
+            }
+            "wrong_strand_scope" => {
+                Some("Strand current source stream differs from its security scope")
+            }
+            _ => None,
+        };
+        match expected_error {
+            Some(error) => assert_eq!(result, Err(error.to_owned()), "{phase} {}", self.name),
+            None => assert_eq!(result, Ok(expected), "{phase} {}", self.name),
+        }
+    }
+
+    pub fn cached_originals_frame(&self) -> String {
+        let mut frame: Value = serde_json::from_str(&self.fixture.frame(true)).unwrap();
+        frame["realms"][self.fixture.snapshot.realm_id.as_str()]
+            .as_object_mut()
+            .unwrap()
+            .remove("current");
+        frame.to_string()
+    }
+}
+
+pub fn authorization_cases() -> Vec<SearchAuthorizationCase> {
+    [
+        "matched",
+        "wrong_principal",
+        "wrong_station",
+        "missing_strand",
+        "wrong_strand_id",
+        "wrong_strand_scope",
+        "wrong_strand_realm",
+    ]
+    .into_iter()
+    .map(|name| {
+        let mut fixture = Fixture::new();
+        let mut requester = fixture.actor.clone();
+        let malformed_current = name == "missing_strand" || name.starts_with("wrong_strand_");
+        match name {
+            "wrong_principal" => {
+                requester = ActorId::account(AccountId::new(
+                    "ak:did_core:web:bob.example".parse().unwrap(),
+                    fixture.actor.as_account_id().unwrap().station_id.clone(),
+                ));
+            }
+            "wrong_station" => {
+                requester = ActorId::account(AccountId::new(
+                    fixture.actor.signing_principal_id().clone(),
+                    "ak:did_core:web:other-station.example".parse().unwrap(),
+                ));
+            }
+            _ if malformed_current => {
+                let position = fixture
+                    .snapshot
+                    .current_state_entries
+                    .iter()
+                    .position(|entry| {
+                        matches!(
+                            entry,
+                            TypedCurrentRow::Value {
+                                selector: CurrentSelector::Strand { .. },
+                                ..
+                            }
+                        )
+                    })
+                    .unwrap();
+                if name == "missing_strand" {
+                    fixture.snapshot.current_state_entries.remove(position);
+                } else {
+                    let TypedCurrentRow::Value { value, .. } =
+                        &mut fixture.snapshot.current_state_entries[position];
+                    match name {
+                        "wrong_strand_id" => {
+                            value["id"] = json!(StrandId::from_event_id(&EventId::from_digest(
+                                DigestSuite::Sha256,
+                                [93; 32]
+                            )))
+                        }
+                        "wrong_strand_scope" => {
+                            value["scope_circle_id"] = json!(CircleId::from_event_id(
+                                &EventId::from_digest(DigestSuite::Sha256, [94; 32])
+                            ))
+                        }
+                        "wrong_strand_realm" => {
+                            value["realm_id"] =
+                                json!("ak:realm:AQJmSg1s9QyzppFeJL40dN92YVHZeLdBBt3UWHa9XNOD")
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+                // Preserve valid original signatures while signing the exact
+                // misbound current cut that the reader must refuse.
+                seal(&mut fixture.snapshot);
+            }
+            "matched" => {}
+            _ => unreachable!(),
+        }
+        SearchAuthorizationCase {
+            name,
+            fixture,
+            requester,
+            visible: name == "matched",
+            malformed_current,
+        }
+    })
+    .collect()
+}

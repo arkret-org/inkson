@@ -124,6 +124,7 @@ pub(crate) use storage_util::*;
 // sees this module's items (private parent items are visible to child
 // modules, so no visibility widening is needed).
 mod demand_sync;
+pub(crate) use demand_sync::RealmListReadFence;
 mod identity_session;
 pub(crate) mod invite_credentials;
 mod member_identity;

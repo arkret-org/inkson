@@ -7,6 +7,16 @@ use arkret_wire::Cursor;
 
 use super::*;
 
+mod realm_list;
+pub(crate) use realm_list::RealmListReadFence;
+
+#[cfg(any(test, target_arch = "wasm32"))]
+pub(in crate::state) fn initial_account_scope_resets(
+    frame: &AccountSubscribeFrame,
+) -> anyhow::Result<BTreeSet<String>> {
+    realm_list::initial_resets(frame)
+}
+
 /// Baseline delivery channels of the account stream.
 ///
 /// The wire baseline segment is an opaque JSON value; this is the host's typed
@@ -178,6 +188,8 @@ pub(crate) struct DemandSyncState {
     list_complete: bool,
     list_seen: imbl::OrdSet<String>,
     summaries: imbl::OrdMap<String, RealmRow>,
+    // Last negative Account-list revision, retained across a newer joined row.
+    // It fences old requests across leave/rejoin; it is never a stream position.
     summary_removals: imbl::OrdMap<String, u64>,
     global_snapshot: Option<String>,
     channels: imbl::OrdMap<Channel, BaselineChannelState>,
@@ -689,52 +701,7 @@ impl LocalStateStore {
                 .as_ref()
                 .is_some_and(|segment| segment.channels.contains(&channel))
         };
-        if let Some(page) = &views.realm_list {
-            let state = &mut self.cached.demand_sync;
-            if state.list_snapshot.as_ref() != Some(&page.snapshot_cursor) {
-                state.list_snapshot = Some(page.snapshot_cursor.clone());
-                state.list_revision = page.snapshot_revision;
-                state.list_seen.clear();
-                state.list_complete = false;
-            }
-            anyhow::ensure!(
-                state.list_revision == page.snapshot_revision,
-                "Realm list snapshot changed revision"
-            );
-            for row in &page.items {
-                state.list_seen.insert(row.realm_id.to_string());
-            }
-            for row in &page.items {
-                self.apply_demand_summary(row)?;
-            }
-            self.cached.demand_sync.list_after = page.next_cursor.clone();
-            self.cached.demand_sync.requested_list_after = None;
-            self.cached.demand_sync.list_complete = page.complete;
-            if page.complete {
-                let stale = self
-                    .cached
-                    .demand_sync
-                    .summaries
-                    .iter()
-                    .filter(|(id, row)| {
-                        row.revision <= page.snapshot_revision
-                            && !self.cached.demand_sync.list_seen.contains(*id)
-                    })
-                    .map(|(id, _)| id.clone())
-                    .collect::<Vec<_>>();
-                for id in stale {
-                    self.remove_demand_summary(&id, page.snapshot_revision);
-                }
-            }
-        }
-        if let Some(changes) = &views.realm_list_changes {
-            for row in &changes.upserts {
-                self.apply_demand_summary(row)?;
-            }
-            for row in &changes.removals {
-                self.remove_demand_summary(row.realm_id.as_str(), row.revision);
-            }
-        }
+        self.apply_realm_list_views(&views)?;
         if let Some(invalidations) = &frame.realm_invalidations {
             for invalidation in invalidations {
                 let state = self
@@ -1187,30 +1154,10 @@ impl LocalStateStore {
         Ok(())
     }
 
-    fn apply_demand_summary(&mut self, row: &RealmRow) -> anyhow::Result<()> {
+    fn project_demand_summary(&mut self, row: &RealmRow) -> anyhow::Result<()> {
         let id = row.realm_id.to_string();
-        let state = &mut self.cached.demand_sync;
-        if state
-            .summary_removals
-            .get(&id)
-            .is_some_and(|revision| *revision >= row.revision)
-        {
-            return Ok(());
-        }
-        if let Some(previous) = state.summaries.get(&id) {
-            if previous.revision > row.revision {
-                return Ok(());
-            }
-            anyhow::ensure!(
-                previous.revision != row.revision || previous == row,
-                "Realm summary changed at same revision"
-            );
-        }
-        state.summary_removals.remove(&id);
-        state.summaries.insert(id.clone(), row.clone());
         if row.membership != arkret_wire::MembershipState::Join {
-            self.cached.realm_tree_projections.remove(&id);
-            self.cached.realm_collaboration_roles.remove(&id);
+            self.project_demand_removal(&id);
         }
         let projection = self
             .cached
@@ -1234,27 +1181,16 @@ impl LocalStateStore {
         }
         Ok(())
     }
-    fn remove_demand_summary(&mut self, id: &str, revision: u64) {
-        if self
-            .cached
-            .demand_sync
-            .summaries
-            .get(id)
-            .is_some_and(|row| row.revision > revision)
-            || self
-                .cached
-                .demand_sync
-                .summary_removals
-                .get(id)
-                .is_some_and(|previous| *previous > revision)
+    fn project_demand_removal(&mut self, id: &str) {
+        super::realm_tree_snapshot::invalidate_current_view(&self.current_view, id);
+        if let Some(view) = self
+            .realm_security_view
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .as_mut()
         {
-            return;
+            view.states.remove(id);
         }
-        self.cached.demand_sync.summaries.remove(id);
-        self.cached
-            .demand_sync
-            .summary_removals
-            .insert(id.to_owned(), revision);
         self.cached.realm_tree_projections.remove(id);
         self.cached.realm_collaboration_roles.remove(id);
         let detail = self

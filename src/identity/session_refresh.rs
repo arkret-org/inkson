@@ -622,10 +622,9 @@ async fn provide_authenticated_session_with_secure_store(
     let runtime = session_grant_runtime();
     let provider =
         session_transport_provider(runtime.as_ref(), &grant, &device_handle, secure_store).await?;
-    let client = provider
-        .provide()
-        .await
-        .map_err(|error| anyhow::anyhow!("provide authenticated session transport: {error}"))?;
+    let client = provider.provide().await.map_err(|error| {
+        anyhow::Error::from(error).context("provide authenticated session transport")
+    })?;
     let state = provider
         .session()
         .current_state()
@@ -660,10 +659,9 @@ async fn refresh_authenticated_session_after_unauthorized_with_secure_store(
         // The generation-fenced app coordinator owns terminal cleanup.
         return Err(error);
     }
-    let client = provider
-        .provide()
-        .await
-        .map_err(|error| anyhow::anyhow!("rebuild authenticated session transport: {error}"))?;
+    let client = provider.provide().await.map_err(|error| {
+        anyhow::Error::from(error).context("rebuild authenticated session transport")
+    })?;
     let state = provider
         .session()
         .current_state()

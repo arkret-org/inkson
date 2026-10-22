@@ -163,6 +163,9 @@ async fn follow_once<F: Fn() -> bool>(
 ) -> garth::Result<()> {
     client.check_session()?;
     let mut streams = garth::discover_realm_streams(client, realm).await?;
+    let list_fence = projector
+        .state_store
+        .read(|store| store.realm_list_read_fence(realm.as_str()));
     let snapshot = client.snapshot_head(realm).await?;
     let heads = snapshot
         .value()?
@@ -229,6 +232,7 @@ async fn follow_once<F: Fn() -> bool>(
             projector,
             is_active,
             current,
+            Some(&list_fence),
         )
         .await?;
         installed_generation = Some(
@@ -271,9 +275,20 @@ pub(super) async fn drain<F: Fn() -> bool>(
     is_active: &F,
     current: &mut OwnStationReplica,
 ) -> garth::Result<()> {
+    let list_fence = projector
+        .state_store
+        .read(|store| store.realm_list_read_fence(realm.as_str()));
     let snapshot = client.snapshot_head(realm).await?;
     drain_from_snapshot(
-        client, http, realm, stream, &snapshot, projector, is_active, current,
+        client,
+        http,
+        realm,
+        stream,
+        &snapshot,
+        projector,
+        is_active,
+        current,
+        Some(&list_fence),
     )
     .await
 }
@@ -287,6 +302,7 @@ async fn drain_from_snapshot<F: Fn() -> bool>(
     projector: &RealmIngestProjector,
     is_active: &F,
     current: &mut OwnStationReplica,
+    list_fence: Option<&crate::state::RealmListReadFence>,
 ) -> garth::Result<()> {
     current.install_bound_snapshot(snapshot)?;
     own_station::validate_current_product(snapshot.value()?, realm)?;
@@ -313,7 +329,7 @@ async fn drain_from_snapshot<F: Fn() -> bool>(
     }
     client.check_session()?;
     let (changed, _) = install_live_current_snapshot(
-        client, snapshot, realm, stream, projector, &replica, &pages, &batch, is_active,
+        client, snapshot, realm, stream, projector, &replica, &pages, &batch, is_active, list_fence,
     )
     .await?;
     let evidence = resolve_stream_agent_keys(http, &projector.state_store, changed > 0).await?;
@@ -360,6 +376,7 @@ async fn install_live_current_snapshot<F: Fn() -> bool>(
     pages: &[OwnStationScanPage],
     batch: &[ClientEvent],
     is_active: &F,
+    list_fence: Option<&crate::state::RealmListReadFence>,
 ) -> garth::Result<(usize, bool)> {
     let account = snapshot.session().account_id().clone();
     let source_guard = || -> anyhow::Result<()> {
@@ -369,13 +386,16 @@ async fn install_live_current_snapshot<F: Fn() -> bool>(
     };
     let guard = || -> anyhow::Result<()> {
         source_guard()?;
+        projector
+            .state_store
+            .read(|store| store.require_realm_list_read_fence(realm.as_str(), list_fence))?;
         anyhow::ensure!(
             projector.state_store.read(|store| store.active_authority()) == Some(account.clone()),
             "live current account changed"
         );
         Ok(())
     };
-    guard().map_err(protocol)?;
+    guard().map_err(crate::state::current_index::current_stage_error)?;
     let location = projector
         .state_store
         .read(|store| store.current_index_location());
@@ -386,16 +406,16 @@ async fn install_live_current_snapshot<F: Fn() -> bool>(
             .read(|store| store.current_generation()))
     })
     .await
-    .map_err(protocol)?;
-    guard().map_err(protocol)?;
+    .map_err(crate::state::current_index::current_stage_error)?;
+    guard().map_err(crate::state::current_index::current_stage_error)?;
     let generation = projector
         .state_store
         .read(|store| store.current_generation());
     if index.is_poisoned() {
         confirm_live_current_pointer(&index, &projector.state_store, &account, generation)
             .await
-            .map_err(protocol)?;
-        guard().map_err(protocol)?;
+            .map_err(crate::state::current_index::current_stage_error)?;
+        guard().map_err(crate::state::current_index::current_stage_error)?;
     }
     let mut stage = index
         .stage_committed_own_station_snapshot_with_history(
@@ -412,7 +432,7 @@ async fn install_live_current_snapshot<F: Fn() -> bool>(
         .await
         .map_err(crate::state::current_index::current_stage_error)?;
     let generation = stage.previous_generation();
-    guard().map_err(protocol)?;
+    guard().map_err(crate::state::current_index::current_stage_error)?;
     let current_changed = stage.changed();
     projector
         .state_store
@@ -421,6 +441,9 @@ async fn install_live_current_snapshot<F: Fn() -> bool>(
     let transaction = projector.state_store.write(|store| {
         store.verified_projection_transaction(|store| {
             source_guard().map_err(|error| error.to_string())?;
+            store
+                .require_realm_list_read_fence(realm.as_str(), list_fence)
+                .map_err(|error| error.to_string())?;
             if store.active_authority() != Some(account.clone()) {
                 return Err("live current account changed before transaction".into());
             }
@@ -446,7 +469,7 @@ async fn install_live_current_snapshot<F: Fn() -> bool>(
         Err(error) => {
             rollback_live_current_pointer(&index, &projector.state_store, &account, generation)
                 .await
-                .map_err(protocol)?;
+                .map_err(crate::state::current_index::current_stage_error)?;
             return Err(protocol(error));
         }
     };
@@ -460,7 +483,7 @@ async fn install_live_current_snapshot<F: Fn() -> bool>(
     if let Err(error) = durable {
         rollback_live_current_pointer(&index, &projector.state_store, &account, generation)
             .await
-            .map_err(protocol)?;
+            .map_err(crate::state::current_index::current_stage_error)?;
         return Err(protocol(error));
     }
     // A late response from an ended provider may not publish a shared pointer.
@@ -469,7 +492,7 @@ async fn install_live_current_snapshot<F: Fn() -> bool>(
     if let Err(error) = snapshot.value() {
         rollback_live_current_pointer(&index, &projector.state_store, &account, generation)
             .await
-            .map_err(protocol)?;
+            .map_err(crate::state::current_index::current_stage_error)?;
         return Err(protocol(error));
     }
     if projector.state_store.read(|store| store.active_authority()) != Some(account.clone()) {
@@ -477,7 +500,7 @@ async fn install_live_current_snapshot<F: Fn() -> bool>(
         return Err(protocol("live current account ended before publication"));
     }
     stage.finish();
-    guard().map_err(protocol)?;
+    guard().map_err(crate::state::current_index::current_stage_error)?;
     crate::sync_engine::publish_current_product_view(
         &index,
         &projector.state_store,
@@ -486,8 +509,8 @@ async fn install_live_current_snapshot<F: Fn() -> bool>(
         &source_guard,
     )
     .await
-    .map_err(protocol)?;
-    guard().map_err(protocol)?;
+    .map_err(crate::state::current_index::current_stage_error)?;
+    guard().map_err(crate::state::current_index::current_stage_error)?;
     if current_changed {
         projector
             .realm_live_epoch
@@ -555,6 +578,9 @@ pub(super) async fn refresh_sidecars<F: Fn() -> bool>(
     is_active: &F,
     current: &mut OwnStationReplica,
 ) -> garth::Result<()> {
+    let list_fence = projector
+        .state_store
+        .read(|store| store.realm_list_read_fence(realm.as_str()));
     let snapshot = client.snapshot_head(realm).await?;
     let mut candidate = current.clone();
     candidate.install_bound_snapshot(&snapshot)?;
@@ -602,6 +628,10 @@ pub(super) async fn refresh_sidecars<F: Fn() -> bool>(
     client.check_session()?;
     projector
         .state_store
+        .read(|store| store.require_realm_list_read_fence(realm.as_str(), Some(&list_fence)))
+        .map_err(crate::state::current_index::current_stage_error)?;
+    projector
+        .state_store
         .write(|store| store.require_sidecar_current_not_superseded(snapshot.value()?))
         .map_err(crate::state::current_index::current_stage_error)?;
     let changed = projector
@@ -612,6 +642,9 @@ pub(super) async fn refresh_sidecars<F: Fn() -> bool>(
                     return Err("private route ended before projection".into());
                 }
                 client.check_session().map_err(|e| e.to_string())?;
+                store
+                    .require_realm_list_read_fence(realm.as_str(), Some(&list_fence))
+                    .map_err(|error| error.to_string())?;
                 let mut changed = 0;
                 for page in &pages {
                     changed += store.ingest_verified_message_history(page)?;
@@ -1050,6 +1083,7 @@ pub(super) mod tests {
             &[],
             &[],
             &|| true,
+            None,
         )
         .await
         .unwrap();
@@ -1115,6 +1149,7 @@ pub(super) mod tests {
             &pages,
             &[],
             &|| true,
+            None,
         )
         .await
         .unwrap();
@@ -1203,6 +1238,7 @@ pub(super) mod tests {
             &[],
             &[],
             &|| true,
+            None,
         )
         .await;
         assert!(matches!(refused, Err(garth::Error::AuthorityCutBehind)));
@@ -1215,6 +1251,142 @@ pub(super) mod tests {
                 .await
                 .unwrap();
         assert!(!index.is_poisoned());
+    }
+
+    #[tokio::test]
+    async fn account_list_change_refuses_inflight_live_snapshot_without_poisoning_or_cursor_advance()
+     {
+        let first = withheld(0, None);
+        let realm = first.commit().realm_id.clone();
+        let stream = first.commit().stream_ref.clone();
+        let older = current_snapshot(&[first], 1);
+        let directory = tempfile::tempdir().unwrap();
+        let account = crate::test_support::AccountFixture::new("did:web:alice.example")
+            .station("ak:did_core:web:station.example")
+            .build();
+        let mut local =
+            crate::state::LocalStateStore::with_path(directory.path().join("late.json"));
+        local.switch_active_account(&account).unwrap();
+        local.save_sync_cursor("ak:cursor:unchanged-account");
+        let (client, _, server) = http(vec![serde_json::to_value(&older).unwrap()]);
+        let inflight = client.snapshot_head(&realm).await.unwrap();
+        server.join().unwrap();
+        let list_fence = local.realm_list_read_fence(realm.as_str());
+        let removal = serde_json::from_value(serde_json::json!({
+            "kind":"delta", "cursor":"ak:cursor:YQ",
+            "realm_list_changes":{"upserts":[],"removals":[{"realm_id":realm,"revision":100_000}]}
+        }))
+        .unwrap();
+        let prepared = local.prepare_account_demand_frame(&removal).unwrap();
+        local.finish_account_demand_frame(&prepared).unwrap();
+        let location = local.current_index_location();
+        let before = serde_json::to_value(local.load()).unwrap();
+        let store = Arc::new(Mutex::new(local));
+        let projector = test_projector(store.clone(), &realm);
+        let mut replica = OwnStationReplica::new(realm.clone());
+        replica.install_bound_snapshot(&inflight).unwrap();
+        let refused = install_live_current_snapshot(
+            &client,
+            &inflight,
+            &realm,
+            &stream,
+            &projector,
+            &replica,
+            &[],
+            &[],
+            &|| true,
+            Some(&list_fence),
+        )
+        .await;
+        assert!(matches!(refused, Err(garth::Error::AuthorityCutBehind)));
+        assert_eq!(
+            serde_json::to_value(store.lock().unwrap().load()).unwrap(),
+            before
+        );
+        let index =
+            crate::state::CurrentIndex::open_committed(&account.authority, location, || Ok(0))
+                .await
+                .unwrap();
+        assert!(!index.is_poisoned());
+    }
+
+    #[tokio::test]
+    async fn initial_join_and_activity_do_not_refuse_an_inflight_live_snapshot() {
+        let first = withheld(0, None);
+        let realm = first.commit().realm_id.clone();
+        let stream = first.commit().stream_ref.clone();
+        let snapshot = current_snapshot(std::slice::from_ref(&first), 1);
+        let directory = tempfile::tempdir().unwrap();
+        let account = crate::test_support::AccountFixture::new("did:web:alice.example")
+            .station("ak:did_core:web:station.example")
+            .build();
+        let mut local =
+            crate::state::LocalStateStore::with_path(directory.path().join("join.json"));
+        local.switch_active_account(&account).unwrap();
+        local.save_sync_cursor("ak:cursor:unchanged-account");
+        let fence = local.realm_list_read_fence(realm.as_str());
+        let (client, _, server) = http(vec![
+            serde_json::to_value(&snapshot).unwrap(),
+            serde_json::json!({"committed_events":[first.clone()],"readable_floor":{
+                "oldest_position":0,"floor_commit_id":first.commit().commit_id,
+                "floor_reason":"stream_start"},"truncated":false}),
+        ]);
+        let bound = client.snapshot_head(&realm).await.unwrap();
+        let (replica, pages) = replay(&client, &realm, &stream, &bound, None)
+            .await
+            .unwrap();
+        server.join().unwrap();
+        for revision in [10, 11] {
+            let frame = serde_json::from_value(serde_json::json!({
+                "kind":"delta", "cursor":"ak:cursor:YQ", "realm_list_changes":{
+                    "upserts":[{"realm_id":realm,"revision":revision,"activity_position":1,"membership":"join"}],
+                    "removals":[]}
+            })).unwrap();
+            crate::state::current_index::search::tests::install_account_scope_frame(
+                &mut local, &frame,
+            )
+            .await;
+            assert_eq!(local.realm_list_read_fence(realm.as_str()), fence);
+            assert!(!local.account_scope_read_denied(realm.as_str()));
+        }
+        let store = Arc::new(Mutex::new(local));
+        let projector = test_projector(store.clone(), &realm);
+        let (_, changed) = install_live_current_snapshot(
+            &client,
+            &bound,
+            &realm,
+            &stream,
+            &projector,
+            &replica,
+            &pages,
+            &[],
+            &|| true,
+            Some(&fence),
+        )
+        .await
+        .unwrap();
+        assert!(changed);
+        let local = store.lock().unwrap();
+        assert_eq!(local.current_generation(), 3);
+        assert_eq!(
+            local.sync_cursor().as_deref(),
+            Some("ak:cursor:unchanged-account")
+        );
+        assert_eq!(
+            local
+                .verified_commit_stream_cursor(&stream)
+                .unwrap()
+                .as_ref(),
+            replica.head(&stream)
+        );
+        let view = local.current_product_view().unwrap();
+        assert!(view.complete_cut);
+        let visible = garth::direct_structure::DirectStructureView::from_current(
+            &realm,
+            view.entries_for(realm.as_str()).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(visible.chats.len(), 1);
     }
 
     #[tokio::test]
@@ -1259,7 +1431,8 @@ pub(super) mod tests {
                     &replica,
                     &pages,
                     &[],
-                    &|| false
+                    &|| false,
+                    None,
                 )
                 .await
                 .is_err()
@@ -1275,6 +1448,7 @@ pub(super) mod tests {
                 &pages,
                 &[],
                 &|| true,
+                None,
             )
             .await
             .unwrap();
@@ -1607,7 +1781,8 @@ pub(super) mod tests {
                 &replica,
                 &pages,
                 &[],
-                &|| true
+                &|| true,
+                None,
             )
             .await
             .is_err()
@@ -1688,6 +1863,7 @@ pub(super) mod tests {
             &pages,
             &[],
             &|| true,
+            None,
         )
         .await
         .unwrap();

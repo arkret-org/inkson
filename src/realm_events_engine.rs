@@ -312,7 +312,7 @@ pub async fn run_realm_events_engine_with_transport<P, F>(
                     {
                         Ok(_) => continue,
                         Err(refresh_error)
-                            if crate::api_error::is_terminal_session_grant_error(&refresh_error) =>
+                            if crate::api_error::is_terminal_session_grant_refresh_error(&refresh_error) =>
                         {
                             break;
                         }
