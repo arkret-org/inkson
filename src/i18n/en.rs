@@ -8,6 +8,32 @@ use super::{TranslationDict, UiLocale};
 /// Build the default English translation dictionary.
 pub fn english_translations() -> TranslationDict {
     let mut dict = TranslationDict::new(UiLocale::En);
+    dict.set("consent.resume_original", "Resume original pending sends");
+    dict.set(
+        "consent.replace_success",
+        "Complete permissions replacement committed",
+    );
+    dict.set(
+        "consent.replace_failed",
+        "Permissions replacement is incomplete: {error}",
+    );
+
+    dict.set("consent.edit_intro", "Read the complete permissions for a peer, review the entire change, then confirm. Other permissions and retained details are preserved.");
+    dict.set("consent.edit_peer", "Edit permissions");
+    dict.set(
+        "consent.empty_set",
+        "No permissions; a saved revision remains.",
+    );
+    dict.set("consent.read_complete", "Read complete current permissions");
+    dict.set("consent.before", "Complete current state");
+    dict.set("consent.after", "Complete replacement to confirm");
+    dict.set("consent.not_before", "Valid from (RFC 3339, optional)");
+    dict.set("consent.expires_at", "Expires at (RFC 3339, optional)");
+    dict.set("consent.reason", "Reason (optional)");
+    dict.set("consent.retained_fields", "Existing constraints and evidence are retained. Unknown constraints do not grant permission.");
+    dict.set("consent.preview", "Review complete change");
+    dict.set("consent.confirm", "Confirm and submit replacement");
+
     for (state, label, description) in [
         (
             "synced",

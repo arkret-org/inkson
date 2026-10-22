@@ -128,11 +128,7 @@ fn extract_device_pairing_target_proof(
 }
 
 #[component]
-pub fn SettingsDevicesPanel(
-    principal_id: Signal<String>,
-    device_id: Signal<String>,
-    token: Signal<String>,
-) -> Element {
+pub fn SettingsDevicesPanel(device_id: Signal<String>, token: Signal<String>) -> Element {
     // A4 — base_url / state_store from session context instead of props.
     let session = crate::app::SessionContext::get();
     let base_url = session.base_url;
@@ -296,7 +292,6 @@ pub fn SettingsDevicesPanel(
                     revoke_target,
                     revoke_status,
                     base_url,
-                    principal_id,
                     device_id,
                     token,
                     state_store,
@@ -316,7 +311,6 @@ fn render_device_list(
     revoke_target: Signal<Option<String>>,
     revoke_status: Signal<String>,
     base_url: Signal<String>,
-    principal_id: Signal<String>,
     device_id: Signal<String>,
     token: Signal<String>,
     state_store: SyncSignal<LocalStateStore>,
@@ -373,7 +367,6 @@ fn render_device_list(
                 devices,
                 load_status,
                 state_store,
-                principal_id,
                 device_id,
                 authority,
                 revoke_passphrase,
@@ -597,7 +590,6 @@ fn render_revoke_modal(
     mut devices: Signal<Vec<DeviceRow>>,
     mut load_status: Signal<String>,
     state_store: SyncSignal<LocalStateStore>,
-    principal_id: Signal<String>,
     device_id: Signal<String>,
     authority: arkret_sdk::AccountId,
     mut revoke_passphrase: Signal<crate::fresh_device_recovery::RecoveryWordsInput>,
@@ -657,7 +649,6 @@ fn render_revoke_modal(
                         onclick: move |_| {
                             let base = base_url();
                             let api_token = token();
-                            let actor = principal_id();
                             let current_device = device_id();
                             let target_id = confirm_target.clone();
                             let target_for_status = target_id.clone();
@@ -685,7 +676,6 @@ fn render_revoke_modal(
                                                 state_store,
                                             ),
                                             &authority,
-                                            &actor,
                                             &current_device,
                                             &target_id,
                                             recovery_words.as_str(),
@@ -698,7 +688,7 @@ fn render_revoke_modal(
                                 match rotation_result {
                                     Ok(rotation) => {
                                         revoke_status.set(format!(
-                                            "Revoked {target_label} through transaction {}. Rotated MLS history secret to v{} with {} replacement backup object(s); both old series were durably erased.",
+                                            "Revoked {target_label} through transaction {}. Rotated MLS history secret to v{} with {} replacement backup object(s); old backup material was durably erased.",
                                             rotation.transaction_id,
                                             rotation.new_secret_version,
                                             rotation.replacement_backup_count,

@@ -374,6 +374,8 @@ function sessionInjectionRecord(
 ) {
   return {
     grant_jwt: DEFAULT_SESSION_CREDENTIAL,
+    expires_at: new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString(),
+    granted_scope: [],
     grant_id: "ak:session_grant:AY6DJbBwavsGTQuBZZiqqw9MVcqPZ8QX8invQ3i2kpi7",
     audience: DEFAULT_SERVER_AUDIENCE,
     account_id: {

@@ -44,6 +44,10 @@ struct MockServiceAuthority {
 #[path = "inkson-wire/contact_fixture.rs"]
 mod contact_fixture;
 
+#[cfg(not(target_arch = "wasm32"))]
+#[path = "inkson-wire/native_search.rs"]
+mod native_search;
+
 fn main() -> Result<()> {
     let command = std::env::args().nth(1).context("missing command")?;
     let input = read_stdin_json()?;
@@ -95,6 +99,8 @@ fn main() -> Result<()> {
         "mock-exact-current" => realm_fixture::exact_current(input)?,
         "mock-realm-submit" => realm_fixture::submit(input)?,
         "mock-realm-signer-keys" => realm_fixture::signer_keys(input)?,
+        #[cfg(not(target_arch = "wasm32"))]
+        "native-account-search" => native_search::read(input)?,
         _ => bail!("unknown inkson-wire command {command:?}"),
     };
 

@@ -5,6 +5,51 @@ use super::*;
 use crate::state::current_index::search::tests::authorized_store;
 
 #[tokio::test(flavor = "current_thread")]
+async fn native_host_search_uses_secure_grant_without_publishing_it_to_account_state() {
+    let (_directory, mut store, account, original) = authorized_store().await;
+    let grant = store.session_grant().unwrap();
+    store.set_session_grant(None);
+    let shared = std::sync::Arc::new(std::sync::Mutex::new(store));
+    let reader = shared.clone();
+    let writer = shared.clone();
+    let handle = crate::runtime::input::StateStoreHandle::new(
+        move |read| read(&reader.lock().unwrap()),
+        move |write| write(&mut writer.lock().unwrap()),
+    );
+    for variant in 0..4 {
+        let mut candidate = grant.clone();
+        match variant {
+            1 => candidate.account_id.station_id = "ak:did_core:web:other.example".parse().unwrap(),
+            2 => {
+                candidate.device_id = "ak:device:0196419b-0000-7000-8000-000000000002"
+                    .parse()
+                    .unwrap()
+            }
+            3 => candidate.grant_expires_at = Some(chrono::Utc::now()),
+            _ => {}
+        }
+        let (view, deadline) = search_native_index(
+            handle.clone(),
+            &account.authority,
+            &account.device_id,
+            &candidate,
+            "needle",
+            &[],
+            100,
+        )
+        .await
+        .unwrap();
+        assert_eq!(view.results.len(), usize::from(variant == 0));
+        assert_eq!(deadline.is_some(), variant == 0);
+        if variant == 0 {
+            assert_eq!(view.results[0]["event_id"], json!(original.event.event_id));
+            assert_eq!(view.results[0]["covering_commit"], json!(original.commit));
+        }
+        assert!(shared.lock().unwrap().session_grant().is_none());
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn native_search_policy_window_withdraws_and_restores_without_a_new_cut() {
     use crate::state::current_index::search::tests::{install_search_policies, search_policy};
     for kind in [
@@ -374,6 +419,40 @@ async fn native_search_current_only_redaction_removes_visible_body_and_retry_sta
 }
 
 type Input = (LocalStateStore, crate::config::ActiveAccountContext);
+
+#[tokio::test(flavor = "current_thread")]
+async fn native_search_account_list_removal_withdraws_retained_body_and_cold_retry_stays_empty() {
+    let (directory, store, account, original) = authorized_store().await;
+    let (mut dom, harness) = mount(store, account.clone());
+    settle(&mut dom, &harness, 1).await;
+    let (mut context, search) = harness.handles.borrow().unwrap();
+    let mut updated = dom.in_runtime(|| context.state_store.peek().clone());
+    let frame = serde_json::from_value(json!({"kind":"delta","cursor":"ak:cursor:YQ",
+        "realm_list_changes":{"upserts":[],"removals":[{"realm_id":original.event.realm_id,"revision":100_000}]}})).unwrap();
+    crate::state::current_index::search::tests::install_account_scope_frame(&mut updated, &frame)
+        .await;
+    assert!(updated.search_session_matches(&account.authority, &account.device_id));
+    dom.in_runtime(|| context.state_store.set(updated));
+    settle(&mut dom, &harness, 0).await;
+    dom.in_runtime(|| harness.retry.borrow().unwrap().call(()));
+    settle(&mut dom, &harness, 0).await;
+    dom.in_runtime(|| assert!(search.error_key.peek().is_none()));
+    let mut cold = LocalStateStore::with_path(directory.path().join("holder.json"));
+    cold.switch_active_account(&account).unwrap();
+    assert!(cold.search_session_matches(&account.authority, &account.device_id));
+    let (view, _) = search_local(
+        SearchSource::Borrowed(&cold),
+        &account.authority,
+        &account.device_id,
+        "needle",
+        &[],
+        Some(&["message"]),
+        100,
+    )
+    .await
+    .unwrap();
+    assert!(view.results.is_empty());
+}
 type Handles = (crate::app::SessionContext, LocalSearchState);
 
 #[derive(Clone)]

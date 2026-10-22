@@ -131,7 +131,6 @@ pub(crate) async fn execute_device_revoke_security_rotation(
     secure_store: std::sync::Arc<dyn SecureKeyStore + Send + Sync>,
     state_store: &crate::runtime::input::StateStoreHandle,
     authority: &arkret_sdk::AccountId,
-    actor_id: &str,
     current_device_id: &str,
     target_device_id: &str,
     recovery_words: &str,
@@ -140,6 +139,7 @@ pub(crate) async fn execute_device_revoke_security_rotation(
         garth::mls::checkpoint::MlsLocalCheckpointEnvelope,
     >,
 ) -> Result<CompletedSecurityRotation> {
+    let actor_id = authority.principal_id.as_str();
     if current_device_id == target_device_id {
         return Err(anyhow!("a device cannot revoke itself"));
     }
@@ -166,9 +166,9 @@ pub(crate) async fn execute_device_revoke_security_rotation(
     let list_payload = super::restore::fetch_mls_restore_payload(api, actor_id).await?;
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow!("active device signer is required"))?;
-    let principal = Did::new(actor_id.to_owned())?;
     let control_realm =
-        crate::identity::principal_control::resolve_accepted(&http, &principal).await?;
+        crate::identity::principal_control::resolve_accepted_for_authority(&http, authority)
+            .await?;
     let expected_pointer = super::current_basis::state_from_payload(&list_payload)?;
     let basis = super::current_basis::ConfirmedBackupBasis::read(
         api,
@@ -194,7 +194,7 @@ pub(crate) async fn execute_device_revoke_security_rotation(
     let source_realm_commit_id = basis.state()?.authority_commit_id.clone();
     let revoke = crate::operation::ak_ops::device_revoke(
         control_realm.as_str(),
-        actor_id,
+        authority,
         target_device_id,
         current_device_id,
         "user_request",
@@ -251,12 +251,6 @@ pub(crate) async fn execute_device_revoke_security_rotation(
         .collect();
     let transaction_id =
         TransactionId::new(format!("ak:transaction:{}", crate::operation::uuid_v7()))?;
-    let principal = crate::mls_api_helpers::principal_core_id(principal.as_str())?;
-    if principal != authority.principal_id {
-        return Err(anyhow!(
-            "security rotation actor does not match the supplied account"
-        ));
-    }
     let create = crate::fresh_device_recovery::SecurityRotationDraft {
         transaction_id: transaction_id.clone(),
         account_id: authority.clone(),

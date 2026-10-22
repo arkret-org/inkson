@@ -22,6 +22,18 @@ impl super::super::LocalStateStore {
         device: &arkret_sdk::DeviceId,
         now: chrono::DateTime<chrono::Utc>,
     ) -> Option<chrono::DateTime<chrono::Utc>> {
+        self.search_valid_until_with_grant(account, device, now, None)
+    }
+
+    /// Native readers borrow the exact secure-store grant checked by their
+    /// live SDK session. Reading never republishes credentials into account state.
+    pub(crate) fn search_valid_until_with_grant(
+        &self,
+        account: &AccountId,
+        device: &arkret_sdk::DeviceId,
+        now: chrono::DateTime<chrono::Utc>,
+        grant: Option<&crate::state::PersistedSessionGrant>,
+    ) -> Option<chrono::DateTime<chrono::Utc>> {
         if self.active_authority().as_ref() != Some(account)
             || self.current_reset_required()
             || self.persist_error().is_some()
@@ -29,7 +41,7 @@ impl super::super::LocalStateStore {
             return None;
         }
         self.with_unoverlaid_account_fields(|state| {
-            let grant = state.session_grant.as_ref()?;
+            let grant = grant.or(state.session_grant.as_ref())?;
             let authority = state.device_authoring_authority.as_ref()?;
             let projection = &authority.device_projection;
             let expiry = grant.grant_expires_at?.min(projection.expires_at).min(
@@ -775,9 +787,88 @@ pub(crate) mod tests {
                 &|| Ok(()),
                 None,
                 None,
+                None,
             )
             .await
             .unwrap()
+    }
+
+    #[tokio::test]
+    async fn account_scope_removal_requires_fresh_current_without_mixing_list_and_stream_positions()
+    {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("scope-list.sqlite");
+        let index = super::super::tests::index(&path, 0).await;
+        let fixture = circle_fixture::Fixture::new();
+        stage_circle_fixture(&index, &fixture, true, 0)
+            .await
+            .finish();
+        let read = || index.read_search_page(&fixture.actor, None, circle_fixture::at(20));
+        assert_eq!(read().await.unwrap().rows, vec![fixture.message.clone()]);
+        let frame: AccountSubscribeFrame = serde_json::from_str(
+            &circle_fixture::account_scope_removal_frame(&fixture.snapshot.realm_id),
+        )
+        .unwrap();
+        let resets =
+            super::super::super::demand_sync::initial_account_scope_resets(&frame).unwrap();
+        for abandon in [true, false] {
+            let stage = index
+                .stage_current_install(
+                    || Ok(1),
+                    Some(&frame),
+                    None,
+                    &Default::default(),
+                    &Default::default(),
+                    &|| Ok(()),
+                    None,
+                    None,
+                    Some(&|| Ok(resets.clone())),
+                )
+                .await
+                .unwrap();
+            if abandon {
+                drop(stage);
+                assert_eq!(read().await.unwrap().rows.len(), 1);
+            } else {
+                stage.finish();
+            }
+        }
+        assert!(read().await.unwrap().rows.is_empty());
+        assert!(!index.is_poisoned());
+        drop(index);
+        let reopened = super::super::tests::index(&path, 2).await;
+        assert!(
+            reopened
+                .read_search_page(&fixture.actor, None, circle_fixture::at(20))
+                .await
+                .unwrap()
+                .rows
+                .is_empty()
+        );
+        let rejoin: AccountSubscribeFrame = serde_json::from_str(
+            &circle_fixture::account_scope_rejoin_frame(&fixture.snapshot.realm_id),
+        )
+        .unwrap();
+        reopened.stage_frame(2, &rejoin).await.unwrap().finish();
+        assert!(
+            reopened
+                .read_search_page(&fixture.actor, None, circle_fixture::at(20))
+                .await
+                .unwrap()
+                .rows
+                .is_empty()
+        );
+        stage_circle_fixture(&reopened, &fixture, true, 3)
+            .await
+            .finish();
+        assert_eq!(
+            reopened
+                .read_search_page(&fixture.actor, None, circle_fixture::at(20))
+                .await
+                .unwrap()
+                .rows,
+            vec![fixture.message]
+        );
     }
 
     #[tokio::test]
@@ -835,6 +926,7 @@ pub(crate) mod tests {
                         &Default::default(),
                         &BTreeMap::from([(snapshot.realm_id.to_string(), &snapshot)]),
                         &|| Ok(()),
+                        None,
                         None,
                         None,
                     )
@@ -916,6 +1008,7 @@ pub(crate) mod tests {
                         &Default::default(),
                         &BTreeMap::from([(snapshot.realm_id.to_string(), &snapshot)]),
                         &|| Ok(()),
+                        None,
                         None,
                         None,
                     )
@@ -1055,6 +1148,7 @@ pub(crate) mod tests {
                             &fixture.snapshot,
                         )]),
                         &|| Ok(()),
+                        None,
                         None,
                         None,
                     )
@@ -1264,7 +1358,8 @@ pub(crate) mod tests {
                         )]),
                         &|| Ok(()),
                         None,
-                        None
+                        None,
+                        None,
                     )
                     .await
                     .is_err(),
@@ -1306,6 +1401,7 @@ pub(crate) mod tests {
                     &Default::default(),
                     &BTreeMap::from([(realm.clone(), &fixture.snapshot)]),
                     &|| Ok(()),
+                    None,
                     None,
                     None,
                 )
@@ -1351,6 +1447,7 @@ pub(crate) mod tests {
                     &|| Ok(()),
                     None,
                     None,
+                    None,
                 )
                 .await
                 .unwrap()
@@ -1379,6 +1476,95 @@ pub(crate) mod tests {
                     .rows,
                 expected,
                 "reopened {scenario}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn search_authorization_context_uses_one_complete_cut_on_cold_reopen() {
+        for case in circle_fixture::authorization_cases() {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("authorization-search.sqlite");
+            let index = super::super::tests::index(&path, 0).await;
+            let fixture = &case.fixture;
+            let message = arkret_sdk::MessageId::from_event_id(&fixture.message.event.event_id);
+            let cached = serde_json::from_str(&case.cached_originals_frame()).unwrap();
+            index.stage_frame(0, &cached).await.unwrap().finish();
+            let record: SearchRecord = index
+                .latest(&format!("{}search/{message}/", index.prefix), 1)
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(record.create.is_some() || record.revision.is_some());
+            assert!(
+                index
+                    .read_search_page(&fixture.actor, None, circle_fixture::at(20))
+                    .await
+                    .unwrap()
+                    .rows
+                    .is_empty(),
+                "missing cut {}",
+                case.name
+            );
+
+            let frame = serde_json::from_str(&fixture.frame(true)).unwrap();
+            index
+                .stage_current_install(
+                    || Ok(1),
+                    Some(&frame),
+                    None,
+                    &Default::default(),
+                    &BTreeMap::from([(fixture.snapshot.realm_id.to_string(), &fixture.snapshot)]),
+                    &|| Ok(()),
+                    None,
+                    None,
+                    None,
+                )
+                .await
+                .unwrap()
+                .finish();
+            let generation = 2;
+            let expected = if case.visible {
+                vec![fixture.message.clone()]
+            } else {
+                vec![]
+            };
+            case.assert_search_result(
+                index
+                    .read_search_page(&case.requester, None, circle_fixture::at(20))
+                    .await
+                    .map(|page| page.rows)
+                    .map_err(|error| error.to_string()),
+                expected.clone(),
+                "live",
+            );
+            if !case.malformed_current {
+                assert_eq!(
+                    index
+                        .read_search_page(&fixture.actor, None, circle_fixture::at(20))
+                        .await
+                        .unwrap()
+                        .rows,
+                    vec![fixture.message.clone()],
+                    "holder control {}",
+                    case.name
+                );
+            }
+            drop(index);
+            let cold = super::super::tests::index(&path, generation).await;
+            let record: SearchRecord = cold
+                .latest(&format!("{}search/{message}/", cold.prefix), generation)
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(record.create.is_some() || record.revision.is_some());
+            case.assert_search_result(
+                cold.read_search_page(&case.requester, None, circle_fixture::at(20))
+                    .await
+                    .map(|page| page.rows)
+                    .map_err(|error| error.to_string()),
+                expected,
+                "cold",
             );
         }
     }
@@ -1454,6 +1640,47 @@ pub(crate) mod tests {
         .await;
         store.commit_current_stage_for_test(staged).unwrap();
         (directory, store, account, originals[0].clone())
+    }
+
+    pub(crate) async fn install_account_scope_frame(
+        store: &mut crate::state::LocalStateStore,
+        frame: &AccountSubscribeFrame,
+    ) {
+        let index = CurrentIndex::open(
+            &store.active_authority().unwrap(),
+            store.current_generation(),
+            store.current_index_location(),
+        )
+        .await
+        .unwrap();
+        let mut stage = index
+            .stage_current_install(
+                || Ok(store.current_generation()),
+                Some(frame),
+                None,
+                &Default::default(),
+                &Default::default(),
+                &|| Ok(()),
+                None,
+                None,
+                Some(&|| store.account_scope_resets(frame)),
+            )
+            .await
+            .unwrap();
+        stage.arm_account_commit();
+        store
+            .verified_projection_transaction(|store| {
+                let frame = store
+                    .prepare_account_demand_frame(frame)
+                    .map_err(|e| e.to_string())?;
+                store
+                    .finish_account_demand_frame(&frame)
+                    .map_err(|e| e.to_string())?;
+                store.set_current_generation(stage.generation());
+                Ok(())
+            })
+            .unwrap();
+        stage.finish();
     }
 
     pub(crate) async fn install_search_disclosure(
@@ -1859,6 +2086,7 @@ pub(crate) mod tests {
                 &Default::default(),
                 &BTreeMap::from([(realm, snapshot)]),
                 &|| Ok(()),
+                None,
                 None,
                 None,
             )

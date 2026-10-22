@@ -1,5 +1,5 @@
 //! Demand-loaded current selectors published with the account record transaction.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 
@@ -311,6 +311,45 @@ fn progress_is_complete_cut(
 }
 
 impl CurrentRealmProgress {
+    /// Keep independent authority watermarks when withdrawing a complete cut.
+    fn remember_current_watermarks(&mut self) -> anyhow::Result<()> {
+        let held_heads = self
+            .signed_snapshot
+            .as_ref()
+            .map(|cut| cut.stream_heads.clone())
+            .or_else(|| {
+                self.baseline
+                    .as_ref()
+                    .map(|baseline| baseline.coverage.stream_heads.clone())
+            })
+            .unwrap_or_default();
+        for held in held_heads {
+            match self
+                .observed_heads
+                .iter_mut()
+                .find(|old| old.stream_ref == held.stream_ref)
+            {
+                Some(old) if held.stream_position > old.stream_position => *old = held,
+                Some(old) if held.stream_position == old.stream_position => {
+                    anyhow::ensure!(
+                        old.commit_id == held.commit_id,
+                        "held current watermark forks its stream"
+                    );
+                }
+                Some(_) => {}
+                None => self.observed_heads.push(held),
+            }
+        }
+        if let Some(held) = self.governance_generation {
+            self.observed_governance_generation = Some(
+                self.observed_governance_generation
+                    .unwrap_or(held)
+                    .max(held),
+            );
+        }
+        Ok(())
+    }
+
     fn invalidate(&mut self, revision: u64) {
         if self.has_invalidation && revision <= self.invalidation_revision {
             return;
@@ -1187,6 +1226,21 @@ impl CurrentIndex {
         self.latest(&self.retired_prefix(realm, selector)?, generation)
             .await
     }
+    async fn require_consent_never_written(
+        &self,
+        realm: &str,
+        selector: &CurrentSelector,
+        generation: u64,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.raw_selector(realm, selector, generation)
+                .await?
+                .is_none()
+                && self.retired(realm, selector, generation).await?.is_none(),
+            "Consent present state cannot return to never_written"
+        );
+        Ok(())
+    }
     async fn visible_selector(
         &self,
         realm: &str,
@@ -2002,6 +2056,7 @@ impl CurrentIndex {
             frame,
             resolved_preview_streams,
             snapshots,
+            None,
         )
         .await
     }
@@ -2014,6 +2069,7 @@ impl CurrentIndex {
         frame: &AccountSubscribeFrame,
         resolved_preview_streams: &std::collections::BTreeSet<arkret_sdk::CommitStreamRef>,
         snapshots: &BTreeMap<String, crate::realm_events_engine::VerifiedCurrentSnapshot>,
+        account_scope_changes: Option<&dyn Fn() -> anyhow::Result<BTreeSet<String>>>,
     ) -> anyhow::Result<CurrentStage> {
         let snapshots = snapshots
             .iter()
@@ -2028,6 +2084,7 @@ impl CurrentIndex {
             &|| Ok(()),
             None,
             None,
+            account_scope_changes,
         )
         .await
     }
@@ -2120,6 +2177,7 @@ impl CurrentIndex {
             &check,
             Some(response.clone()),
             None,
+            None,
         )
         .await
     }
@@ -2171,6 +2229,7 @@ impl CurrentIndex {
             &check,
             None,
             Some(response.clone()),
+            None,
         )
         .await
     }
@@ -2195,6 +2254,7 @@ impl CurrentIndex {
                 arkret_sdk::ConsentCurrentReadOutcome,
             >,
         >,
+        account_scope_changes: Option<&dyn Fn() -> anyhow::Result<BTreeSet<String>>>,
     ) -> anyhow::Result<CurrentStage> {
         let lease = self.acquire_lease().await?;
         guard()?;
@@ -2220,6 +2280,10 @@ impl CurrentIndex {
             );
         }
         let expected_generation = committed_generation()?;
+        let account_scope_changes = account_scope_changes
+            .map(|read| read())
+            .transpose()?
+            .unwrap_or_default();
         anyhow::ensure!(
             !self.is_poisoned(),
             "current pointer durability is unresolved"
@@ -2227,18 +2291,21 @@ impl CurrentIndex {
         if self.generation.load(Ordering::Acquire) != expected_generation {
             return Err(CurrentGenerationChanged.into());
         }
-        if let Some(bound) = &targeted_consent {
-            let value = bound.value()?;
-            if matches!(value.current, arkret_sdk::ConsentCurrentState::NeverWritten) {
+        if let Some(response) = &targeted_consent {
+            if matches!(
+                response.value()?.current,
+                arkret_sdk::ConsentCurrentState::NeverWritten
+            ) {
                 let selector = CurrentSelector::Consent {
-                    peer_id: bound.request().peer.actor_id().clone(),
+                    peer_id: response.request().peer.actor_id().clone(),
                 };
-                anyhow::ensure!(
-                    self.raw_selector(value.realm_id.as_str(), &selector, expected_generation)
-                        .await?
-                        .is_none(),
-                    "A previously installed Consent current cannot become never-written"
-                );
+                self.require_consent_never_written(
+                    response.value()?.realm_id.as_str(),
+                    &selector,
+                    expected_generation,
+                )
+                .await?;
+                guard()?;
             }
         }
         let generation = expected_generation
@@ -2294,6 +2361,16 @@ impl CurrentIndex {
         }
         let mut filtered = frame.cloned();
         let mut progress_updates = BTreeMap::<String, CurrentRealmProgress>::new();
+        for realm in account_scope_changes {
+            let mut progress = self.progress_at(&realm, expected_generation).await?;
+            progress.remember_current_watermarks()?;
+            progress.reset();
+            progress_updates.insert(realm.clone(), progress);
+            writes.insert(
+                format!("{}refresh/{}/{suffix}", self.prefix, hash(&realm)?),
+                serde_json::to_vec(&generation)?,
+            );
+        }
         if frame.is_some_and(|frame| {
             frame.kind == arkret_sdk::sync::AccountSubscribeFrameKind::ResyncRequired
         }) {
@@ -2305,12 +2382,16 @@ impl CurrentIndex {
         if let Some(invalidations) = frame.and_then(|frame| frame.realm_invalidations.as_ref()) {
             for invalidation in invalidations {
                 let realm = invalidation.realm_id.as_str();
-                let mut progress = self.progress_at(realm, expected_generation).await?;
+                let mut progress = match progress_updates.get(realm) {
+                    Some(progress) => progress.clone(),
+                    None => self.progress_at(realm, expected_generation).await?,
+                };
                 if progress.has_invalidation
                     && invalidation.revision <= progress.invalidation_revision
                 {
                     continue;
                 }
+                progress.remember_current_watermarks()?;
                 progress.invalidate(invalidation.revision);
                 progress_updates.insert(realm.to_owned(), progress);
                 writes.insert(
@@ -2366,45 +2447,7 @@ impl CurrentIndex {
                         "complete current baseline has incomplete stream coverage"
                     );
                 }
-                // Older v1 progress already held authoritative baseline/cut
-                // heads. Seed the cumulative watermark before replacing that
-                // visible cut, including streams the next original omits.
-                let held_heads = previous
-                    .signed_snapshot
-                    .as_ref()
-                    .map(|cut| cut.stream_heads.clone())
-                    .or_else(|| {
-                        previous
-                            .baseline
-                            .as_ref()
-                            .map(|baseline| baseline.coverage.stream_heads.clone())
-                    })
-                    .unwrap_or_default();
-                for held in held_heads {
-                    match previous
-                        .observed_heads
-                        .iter_mut()
-                        .find(|old| old.stream_ref == held.stream_ref)
-                    {
-                        Some(old) if held.stream_position > old.stream_position => *old = held,
-                        Some(old) if held.stream_position == old.stream_position => {
-                            anyhow::ensure!(
-                                old.commit_id == held.commit_id,
-                                "held current watermark forks its stream"
-                            );
-                        }
-                        Some(_) => {}
-                        None => previous.observed_heads.push(held),
-                    }
-                }
-                if let Some(held) = previous.governance_generation {
-                    previous.observed_governance_generation = Some(
-                        previous
-                            .observed_governance_generation
-                            .unwrap_or(held)
-                            .max(held),
-                    );
-                }
+                previous.remember_current_watermarks()?;
                 if let Some(current) = &incoming.current {
                     anyhow::ensure!(
                         previous
@@ -5201,6 +5244,63 @@ mod tests {
         );
     }
     #[tokio::test]
+    async fn consent_present_and_empty_cannot_become_never_written_after_gc_and_cold_open() {
+        for permissions in [json!([]), json!([{"consent_scope":"invite"}])] {
+            let path = path();
+            let store = index(&path, 0).await;
+            let entry: TypedCurrentRow = serde_json::from_value(json!({
+                "selector":{"kind":"consent","peer_id":{
+                    "kind":"account","account_id":{
+                        "principal_id":"ak:did_core:web:peer.example",
+                        "station_id":"ak:did_core:web:peer-station.example"
+                    }
+                }},
+                "source_stream_ref":{"kind":"realm","realm_id":REALM},
+                "revision":{"commit_id":COMMIT,"stream_position":7},
+                "value":{"permissions":permissions}
+            }))
+            .unwrap();
+            let selector = selector_of(&entry).clone();
+            store
+                .require_consent_never_written(REALM, &selector, 0)
+                .await
+                .unwrap();
+            store
+                .stage_frame(0, &frame(vec![entry], None))
+                .await
+                .unwrap()
+                .finish();
+            assert!(
+                store
+                    .require_consent_never_written(REALM, &selector, 1)
+                    .await
+                    .is_err()
+            );
+            store
+                .stage_frame(1, &frame(vec![], Some(baseline("ak:cursor:Yg", 8, true))))
+                .await
+                .unwrap()
+                .finish();
+            drive(&store, 80).await;
+            assert!(
+                store
+                    .raw_selector(REALM, &selector, 2)
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
+            assert!(store.retired(REALM, &selector, 2).await.unwrap().is_some());
+            drop(store);
+            let reopened = index(&path, 2).await;
+            assert!(
+                reopened
+                    .require_consent_never_written(REALM, &selector, 2)
+                    .await
+                    .is_err()
+            );
+        }
+    }
+    #[tokio::test]
     async fn unresolved_pointer_poison_prevents_failed_generation_reuse() {
         let path = path();
         let index = index(&path, 0).await;
@@ -5340,6 +5440,7 @@ mod tests {
                             &next_frame,
                             &Default::default(),
                             &Default::default(),
+                            None,
                         )
                         .await
                         .unwrap();

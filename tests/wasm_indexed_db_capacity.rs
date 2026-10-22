@@ -5,6 +5,14 @@ use wasm_bindgen_test::*;
 
 wasm_bindgen_test_configure!(run_in_browser);
 
+#[cfg(feature = "wasm-localstorage-secrets-test")]
+#[inline(never)]
+fn on_heap<'a, F: std::future::Future + 'a>(
+    make: impl FnOnce() -> F,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = F::Output> + 'a>> {
+    Box::pin(make())
+}
+
 #[wasm_bindgen_test(async)]
 async fn cancelled_open_preserves_schema_and_detaches_request_callbacks() {
     use std::cell::RefCell;
@@ -267,7 +275,7 @@ async fn failed_durable_write_does_not_publish_a_phantom_cache_value() {
 #[wasm_bindgen_test(async)]
 #[cfg(feature = "wasm-localstorage-secrets-test")]
 async fn account_state_fault_injection_contract_holds_in_browser() {
-    inkson::run_browser_account_persist_fault_contract()
+    on_heap(inkson::run_browser_account_persist_fault_contract)
         .await
         .expect("browser account-state persistence contract");
 }
@@ -275,7 +283,7 @@ async fn account_state_fault_injection_contract_holds_in_browser() {
 #[wasm_bindgen_test(async)]
 #[cfg(feature = "wasm-localstorage-secrets-test")]
 async fn account_record_corruption_is_retained_and_rejected_on_cold_reopen() {
-    inkson::run_browser_account_record_corruption_contract()
+    on_heap(inkson::run_browser_account_record_corruption_contract)
         .await
         .unwrap();
 }

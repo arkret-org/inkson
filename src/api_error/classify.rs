@@ -214,9 +214,32 @@ pub fn is_terminal_session_grant_refresh_error(error: &anyhow::Error) -> bool {
         return true;
     }
     api_error_status_and_envelope(error).is_some_and(|(status, envelope)| {
-        terminal_session_grant_refresh_code(envelope.code())
+        terminal_session_grant_replay_error(status, envelope)
+            || terminal_session_grant_refresh_code(envelope.code())
             || is_terminal_session_grant_api_error(status, envelope)
     })
+}
+
+fn terminal_session_grant_replay_error(status: StatusCode, envelope: &Problem) -> bool {
+    use arkret_sdk::error_codes::ErrorCode;
+    if envelope.status != status.as_u16() {
+        return false;
+    }
+    match envelope.code() {
+        ErrorCode::SESSION_GRANT_REPLAY_EXPIRED => {
+            status == StatusCode::GONE
+                && matches!(envelope.session_grant_replay_expired_details(), Ok(Some(_)))
+        }
+        ErrorCode::SESSION_GRANT_REPLAY_TERMINAL => {
+            status == StatusCode::CONFLICT
+                && matches!(
+                    envelope.session_grant_replay_terminal_details(),
+                    Ok(Some(_))
+                )
+        }
+        ErrorCode::SESSION_GRANT_REPLAY_INDETERMINATE => status == StatusCode::CONFLICT,
+        _ => false,
+    }
 }
 
 fn is_terminal_session_grant_api_error(status: StatusCode, envelope: &Problem) -> bool {

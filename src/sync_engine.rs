@@ -290,7 +290,10 @@ impl AccountTransportProvider {
             self.ctx.account.server_url.as_str(),
         )
         .await
-        .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+        .map_err(|error| {
+            self.invalidate_terminal_refresh(session_generation, &error);
+            garth::Error::Protocol(error.to_string())
+        })?;
         let selected_realm_id = self.ctx.selected_realm_id.get();
         if let Ok(realm_id) = arkret_sdk::RealmId::new(selected_realm_id.clone())
             && !self
@@ -327,14 +330,21 @@ impl AccountTransportProvider {
         }
         match result {
             Ok(_) => Ok(true),
-            Err(error) if is_terminal_session_grant_error(&error) => {
-                self.ctx
-                    .session
-                    .invalidate_if_generation(session_generation, error.to_string());
-                Ok(false)
-            }
+            Err(error) if self.invalidate_terminal_refresh(session_generation, &error) => Ok(false),
             Err(error) => Err(garth::Error::Http(error.to_string())),
         }
+    }
+
+    fn invalidate_terminal_refresh(&self, session_generation: u64, error: &anyhow::Error) -> bool {
+        if self.ctx.session.generation() != session_generation
+            || !self.is_active()
+            || !crate::api_error::is_terminal_session_grant_refresh_error(error)
+        {
+            return false;
+        }
+        self.ctx
+            .session
+            .invalidate_if_generation(session_generation, error.to_string())
     }
 
     fn is_active(&self) -> bool {
@@ -598,6 +608,49 @@ impl NativeAccountHost {
 
     pub fn state_store_handle(&self) -> crate::runtime::input::StateStoreHandle {
         self.projector.ctx.state_store.clone()
+    }
+
+    /// Read the same verified local candidates as the application search hook.
+    /// The returned deadline bounds this read; a retained display also follows
+    /// this host's current publication and session invalidations.
+    pub async fn search_local_messages(
+        &self,
+        query: &str,
+        realm_ids: &[String],
+        limit: usize,
+    ) -> anyhow::Result<(
+        crate::models::IndexSearchView,
+        Option<chrono::DateTime<chrono::Utc>>,
+    )> {
+        let account = &self.projector.ctx.account;
+        let own = crate::identity::session_refresh::own_station_result_client_for_http(&self.http)
+            .await?;
+        let session = own.session()?;
+        anyhow::ensure!(
+            session.account_id() == &account.authority,
+            "native search belongs to another Account"
+        );
+        let secure = crate::secure_key_store::default_secure_key_store("inkson");
+        let grant = crate::identity::session_refresh::load_account_session_grant_with_secure_store(
+            account,
+            secure.as_ref(),
+        )?;
+        anyhow::ensure!(
+            grant.account_id == account.authority && grant.grant_id == session.grant_id().as_str(),
+            "native search grant differs from its live SDK session"
+        );
+        let result = crate::views::global_search::search_native_index(
+            self.state_store_handle(),
+            &self.projector.ctx.account.authority,
+            &self.projector.ctx.account.device_id,
+            &grant,
+            query,
+            realm_ids,
+            limit,
+        )
+        .await?;
+        own.check_session()?;
+        Ok(result)
     }
 
     /// Use the ordinary production Signal sender with this host's account
@@ -1107,6 +1160,7 @@ impl InksonAccountProjector {
                 &reset_frame,
                 &Default::default(),
                 &Default::default(),
+                None,
             )
             .await
             .map_err(|error| garth::Error::Protocol(error.to_string()))?;
@@ -1204,6 +1258,11 @@ impl InksonAccountProjector {
                 frame,
                 verified.resolved_preview_streams(),
                 verified.current_snapshots(),
+                Some(&|| {
+                    self.ctx
+                        .state_store
+                        .read(|store| store.account_scope_resets(frame))
+                }),
             )
             .await
             .map_err(crate::state::current_index::current_stage_error)?;
@@ -3641,6 +3700,52 @@ mod tests {
         projector.ctx.effect.cancel();
         assert!(!projector.active());
         assert!(!provider.is_active());
+    }
+
+    fn terminal_refresh_refusal() -> anyhow::Error {
+        let mut problem = arkret_sdk::Problem::from_code(
+            arkret_sdk::error_codes::ErrorCode::SESSION_GRANT_REPLAY_TERMINAL,
+            "refresh refused",
+        );
+        problem.extensions.insert(
+            "session_grant_id".into(),
+            json!("ak:session_grant:AY6DJbBwavsGTQuBZZiqqw9MVcqPZ8QX8invQ3i2kpi7"),
+        );
+        problem.extensions.insert("state".into(), json!("revoked"));
+        anyhow::Error::new(garth::Error::Api {
+            status: 409,
+            error: Box::new(problem),
+        })
+        .context("session grant refresh")
+    }
+
+    #[test]
+    fn active_account_refresh_retires_its_credential_only_for_a_typed_termination() {
+        let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
+        let (_, mut provider) = retired_account_attempt();
+        provider.ctx.token = crate::runtime::input::ValueReader::new(|| "live".to_owned());
+        provider.generation = crate::runtime::input::ValueReader::new(|| 1);
+        let session = provider.ctx.session.clone();
+        let generation = session.replace("live");
+        let unavailable = anyhow::Error::new(garth::Error::Http("session grant revoked".into()));
+        assert!(!provider.invalidate_terminal_refresh(generation, &unavailable));
+        assert_eq!(session.credential().as_deref(), Some("live"));
+        assert!(provider.invalidate_terminal_refresh(generation, &terminal_refresh_refusal()));
+        assert_eq!(session.credential(), None);
+        assert_ne!(session.generation(), generation);
+    }
+
+    #[test]
+    fn late_or_cancelled_account_refresh_cannot_retire_the_replacement() {
+        let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
+        let (_, provider) = retired_account_attempt();
+        let session = provider.ctx.session.clone();
+        let previous = session.generation();
+        let replacement = session.replace("replacement");
+        assert!(!provider.invalidate_terminal_refresh(previous, &terminal_refresh_refusal()));
+        provider.ctx.effect.cancel();
+        assert!(!provider.invalidate_terminal_refresh(replacement, &terminal_refresh_refusal()));
+        assert_eq!(session.credential().as_deref(), Some("replacement"));
     }
 
     #[test]

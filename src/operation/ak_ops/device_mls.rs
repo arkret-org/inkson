@@ -12,7 +12,7 @@ use super::TypedOperationBuilder;
 /// (e.g. `user_request`, `device_lost`).
 pub fn device_revoke(
     realm_id: &str,
-    actor: &str,
+    account: &arkret_sdk::AccountId,
     target_device_id: &str,
     revoked_by_device_id: &str,
     reason: &str,
@@ -30,8 +30,11 @@ pub fn device_revoke(
         proof: None,
     };
     Ok(
-        TypedOperationBuilder::new::<arkret_sdk::event_spec::DeviceRevoke>(
-            realm_id, actor, payload,
+        TypedOperationBuilder::new_for_station::<arkret_sdk::event_spec::DeviceRevoke>(
+            realm_id,
+            account.principal_id.as_str(),
+            account.station_id.clone(),
+            payload,
         )
         .target_ref(target_device_id),
     )
@@ -80,4 +83,32 @@ pub fn mls_genesis_with_governance(
         )
         .target_ref(group_id.to_owned()),
     )
+}
+
+#[cfg(test)]
+mod revoke_tests {
+    use super::*;
+
+    #[test]
+    fn revoke_builder_binds_the_supplied_complete_account_and_core_id() {
+        let account = arkret_sdk::AccountId::new(
+            arkret_sdk::DidCoreId::new(
+                "ak:did_core:webvh:QmPjVhccBPngemwoNXgqsXeCevJMbT18QGxYikYaeRzPig",
+            )
+            .unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:explicit-revoke-station.example").unwrap(),
+        );
+        let realm = "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h";
+        let target = "ak:device:01964137-0000-7000-8000-000000000022";
+        let current = "ak:device:01964137-0000-7000-8000-000000000011";
+        let operation = device_revoke(realm, &account, target, current, "user_request")
+            .unwrap()
+            .build_sdk_event(current)
+            .unwrap();
+        assert_eq!(operation.actor_id(), &arkret_sdk::ActorId::account(account));
+        assert_eq!(operation.realm_id_opt().unwrap().as_str(), realm);
+        let payload: arkret_sdk::DeviceRevokePayload =
+            serde_json::from_value(operation.payload_value()).unwrap();
+        assert_eq!(payload.device_id.as_str(), target);
+    }
 }

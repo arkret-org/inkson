@@ -100,6 +100,11 @@ enum SearchSource<'a> {
     #[allow(dead_code)]
     Borrowed(&'a LocalStateStore),
     Live(SyncSignal<LocalStateStore>),
+    #[cfg(not(target_arch = "wasm32"))]
+    Host(
+        crate::runtime::input::StateStoreHandle,
+        &'a crate::state::PersistedSessionGrant,
+    ),
 }
 
 impl SearchSource<'_> {
@@ -107,8 +112,59 @@ impl SearchSource<'_> {
         match self {
             Self::Borrowed(store) => read(store),
             Self::Live(store) => read(&store.peek()),
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::Host(store, _) => store.read(read),
         }
     }
+
+    fn holder_deadline(
+        &self,
+        account: &arkret_sdk::AccountId,
+        device: &arkret_sdk::DeviceId,
+    ) -> SearchDeadline {
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Self::Host(_, grant) = self {
+            return self.with_store(|store| {
+                store.search_valid_until_with_grant(
+                    account,
+                    device,
+                    chrono::Utc::now(),
+                    Some(grant),
+                )
+            });
+        }
+        self.with_store(|store| {
+            store.search_session_valid_until(account, device, chrono::Utc::now())
+        })
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) async fn search_native_index(
+    store: crate::runtime::input::StateStoreHandle,
+    authority: &arkret_sdk::AccountId,
+    device_id: &arkret_sdk::DeviceId,
+    grant: &crate::state::PersistedSessionGrant,
+    query: &str,
+    realm_ids: &[String],
+    limit: usize,
+) -> anyhow::Result<(IndexSearchView, SearchDeadline)> {
+    let (mut view, policy_deadline) = search_local(
+        SearchSource::Host(store.clone(), grant),
+        authority,
+        device_id,
+        query,
+        realm_ids,
+        Some(&["message"]),
+        limit,
+    )
+    .await?;
+    let holder_deadline = SearchSource::Host(store, grant).holder_deadline(authority, device_id);
+    let deadline = earliest_deadline(holder_deadline, policy_deadline);
+    if holder_deadline.is_none() || deadline.is_some_and(|value| value <= chrono::Utc::now()) {
+        view.results.clear();
+    }
+    Ok((view, deadline))
 }
 
 fn search_blocked_actors(store: &LocalStateStore) -> std::collections::BTreeSet<String> {
@@ -156,7 +212,7 @@ async fn search_local(
     if query.is_empty()
         || limit == 0
         || object_kinds.is_some_and(|kinds| !kinds.contains(&"message"))
-        || !source.with_store(|store| store.search_session_matches(authority, device_id))
+        || source.holder_deadline(authority, device_id).is_none()
     {
         return Ok((response, None));
     }
@@ -178,7 +234,7 @@ async fn search_local(
             .read_search_page(&actor, after.as_deref(), chrono::Utc::now())
             .await?;
         if page.generation != generation
-            || !source.with_store(|store| store.search_session_matches(authority, device_id))
+            || source.holder_deadline(authority, device_id).is_none()
             || source.with_store(search_blocked_actors) != blocked
         {
             response.results.clear();
@@ -210,6 +266,7 @@ async fn search_local(
                 continue;
             }
             if message.crypto_state != crate::views::chat::model::MessageCryptoState::Plaintext
+                || source.with_store(|store| store.account_scope_read_denied(&message.realm_id))
                 || message.pending
                 || message.failed
                 || message.redacted
@@ -259,7 +316,7 @@ async fn search_local(
         after = page.next;
     }
     if source.with_store(|store| store.current_generation()) != generation
-        || !source.with_store(|store| store.search_session_matches(authority, device_id))
+        || source.holder_deadline(authority, device_id).is_none()
         || source.with_store(search_blocked_actors) != blocked
         || recheck_at.is_some_and(|deadline| deadline <= chrono::Utc::now())
     {
@@ -532,6 +589,13 @@ pub fn GlobalSearchPanel(
         .read()
         .iter()
         .filter(|result| {
+            if result
+                .get("realm_id")
+                .and_then(Value::as_str)
+                .is_none_or(|realm| state_store.read().account_scope_read_denied(realm))
+            {
+                return false;
+            }
             result
                 .get("actor_id")
                 .and_then(|value| serde_json::from_value::<arkret_sdk::ActorId>(value.clone()).ok())

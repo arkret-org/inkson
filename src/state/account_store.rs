@@ -65,8 +65,10 @@ pub(super) struct Checkpoint {
     pub incarnation: String,
     root: Option<Vec<u8>>,
     pub state: ClientLocalState,
-    records: imbl::OrdMap<Vec<String>, Record>,
-    physical: imbl::OrdMap<String, Vec<String>>,
+    // Persistent tree mutations move complete leaf nodes. Share immutable
+    // metadata across checkpoints without placing each Record in those frames.
+    records: imbl::OrdMap<Vec<String>, Arc<Record>>,
+    physical: imbl::OrdMap<String, Arc<Record>>,
     tree: record_tree::Tree,
 }
 
@@ -225,7 +227,8 @@ pub(super) fn plan(scope: &str, old: &Checkpoint, state: ClientLocalState) -> an
                     metadata.len() <= CHUNK_BYTES,
                     "account record metadata exceeds its physical bound"
                 );
-                checkpoint.physical.insert(key.clone(), change.path.clone());
+                let record = Arc::new(record);
+                checkpoint.physical.insert(key.clone(), record.clone());
                 checkpoint
                     .tree
                     .set(record_path_hash(&change.path)?, Some(record_hash(&record)?));
@@ -325,7 +328,8 @@ fn decode_records(
             "account record is incomplete or corrupt"
         );
         tree.set(record_path_hash(&record.path)?, Some(record_hash(&record)?));
-        physical.insert(key.clone(), record.path.clone());
+        let record = Arc::new(record);
+        physical.insert(key.clone(), record.clone());
         install_json(&mut value, &record.path, serde_json::from_slice(&bytes)?)?;
         anyhow::ensure!(
             entries.insert(record.path.clone(), record).is_none(),
@@ -1032,10 +1036,11 @@ pub(super) fn committed_map<T: serde::de::DeserializeOwned + Clone>(
             prefix.push_str(&scope_bucket(key)?);
         }
         let mut result = imbl::OrdMap::new();
-        for (key, path) in expected
+        for (key, physical_record) in expected
             .physical
             .range(prefix.clone()..format!("{prefix}~"))
         {
+            let path = &physical_record.path;
             let bytes = snapshot
                 .get_sync(key)?
                 .ok_or_else(|| anyhow::anyhow!("committed account record missing"))?;
@@ -1045,7 +1050,7 @@ pub(super) fn committed_map<T: serde::de::DeserializeOwned + Clone>(
             );
             let record: Record = serde_json::from_slice(&bytes)?;
             anyhow::ensure!(
-                Some(&record) == expected.records.get(path),
+                Some(&record) == expected.records.get(path).map(Arc::as_ref),
                 "committed account record was replayed"
             );
             anyhow::ensure!(
@@ -1130,7 +1135,8 @@ pub(super) fn decoded_records_for_test(backend: &Backend, scope: &str) -> anyhow
     let data_scope = item_scope(scope, &checkpoint.incarnation)?;
     backend.snapshot(|snapshot| {
         let mut text = String::new();
-        for (key, path) in &checkpoint.physical {
+        for (key, physical_record) in &checkpoint.physical {
+            let path = &physical_record.path;
             let record = &checkpoint.records[path];
             text.push_str(&serde_json::to_string(path)?);
             text.push_str(&serde_json::to_string(&record_value(

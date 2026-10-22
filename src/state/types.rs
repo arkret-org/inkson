@@ -1056,7 +1056,7 @@ pub struct ClientLocalState {
     /// sync surfaces an Seal that includes the id (or a rejection).
     /// Drives message / realm_admin state pill UI.
     #[serde(default)]
-    pub move_submissions: imbl::OrdMap<String, MoveSubmissionRecord>,
+    pub move_submissions: imbl::OrdMap<String, Box<MoveSubmissionRecord>>,
     /// Plaintext, non-secret device-local records for the active account
     /// namespace: UI preferences, prompt-dismissal markers, public Recovery
     /// Key metadata, in-flight Sidecar ceremony requests. There is no at-rest

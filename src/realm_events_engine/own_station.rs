@@ -40,20 +40,30 @@ pub(crate) async fn refresh_joined_realm(
     };
     let active = || client.check_session().is_ok();
     let mut current = OwnStationReplica::new(realm.clone());
-    super::own_live::drain(
-        &client,
-        http,
-        realm,
-        &CommitStreamRef::Realm {
-            realm_id: realm.clone(),
-        },
-        &projector,
-        &active,
-        &mut current,
-    )
-    .await?;
-    client.check_session()?;
-    Ok(())
+    // Acceptance is already committed. Retry only the read of a superseded
+    // authority cut, never the invite write or an authorization refusal.
+    for attempt in 0..3 {
+        client.check_session()?;
+        let result = super::own_live::drain(
+            &client,
+            http,
+            realm,
+            &CommitStreamRef::Realm {
+                realm_id: realm.clone(),
+            },
+            &projector,
+            &active,
+            &mut current,
+        )
+        .await;
+        if !super::creator_cut_changed(&result) || attempt == 2 {
+            result?;
+            client.check_session()?;
+            return Ok(());
+        }
+        crate::runtime_helpers::sleep_for(Duration::from_millis(250)).await;
+    }
+    unreachable!("the bounded joined-cut loop always returns")
 }
 
 /// Read back an accepted private write without depending on a live hint rail.

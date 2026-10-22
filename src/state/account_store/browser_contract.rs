@@ -43,19 +43,26 @@ async fn commit(
     Ok(plan.checkpoint)
 }
 
+#[inline(never)]
+fn on_heap<'a, F: std::future::Future + 'a>(
+    make: impl FnOnce() -> F,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = F::Output> + 'a>> {
+    Box::pin(make())
+}
+
 pub(super) async fn run() -> anyhow::Result<()> {
     crate::secure_key_store::ensure_wasm_secure_key_store_ready("inkson").await?;
-    transaction_abort_and_independent_cas()
+    on_heap(transaction_abort_and_independent_cas)
         .await
         .context("account transaction abort/CAS")?;
-    product_publication_and_cancelled_waiter()
+    on_heap(product_publication_and_cancelled_waiter)
         .await
         .context("product account publication")?;
-    gc_restart().await.context("account GC restart")?;
-    capacity()
+    on_heap(gc_restart).await.context("account GC restart")?;
+    on_heap(capacity)
         .await
         .context("account bounded physical writes")?;
-    anonymous_repair_resume()
+    on_heap(anonymous_repair_resume)
         .await
         .context("anonymous repair restart")?;
     Ok(())

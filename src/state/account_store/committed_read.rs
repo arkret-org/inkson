@@ -99,10 +99,11 @@ pub(super) async fn committed_map_async<T: serde::de::DeserializeOwned + Clone>(
         prefix.push_str(&scope_bucket(key)?);
     }
     let mut result = imbl::OrdMap::new();
-    for (key, path) in expected
+    for (key, physical_record) in expected
         .physical
         .range(prefix.clone()..format!("{prefix}~"))
     {
+        let path = &physical_record.path;
         let bytes = backend
             .get(key)
             .await?
@@ -113,7 +114,7 @@ pub(super) async fn committed_map_async<T: serde::de::DeserializeOwned + Clone>(
         );
         let record: Record = serde_json::from_slice(&bytes)?;
         anyhow::ensure!(
-            Some(&record) == expected.records.get(path),
+            Some(&record) == expected.records.get(path).map(Arc::as_ref),
             "committed account record was replayed"
         );
         anyhow::ensure!(

@@ -19,6 +19,54 @@ const COMMIT: &str = "ak:realm_commit:AT33EWBTXdTx5CjY-ogbIIF2T4vh-v7jCMCQ80Fss2
 mod search_circle;
 
 #[wasm_bindgen_test(async)]
+async fn account_scope_removal_requires_fresh_current_without_mixing_list_and_stream_positions() {
+    let fixture = search_circle::Fixture::new();
+    let id = authority("account-scope-removal");
+    let actor = serde_json::to_string(&fixture.actor).unwrap();
+    let now = search_circle::at(20).to_rfc3339();
+    let snapshot = serde_json::to_string(&fixture.snapshot).unwrap();
+    let expected = serde_json::to_string(&vec![fixture.message.clone()]).unwrap();
+    let index = CurrentIndexHarness::open(&id, 0).await.unwrap();
+    index
+        .commit_snapshot(0, &fixture.frame(true), &snapshot)
+        .await
+        .unwrap();
+    assert_eq!(index.search(&actor, &now).await.unwrap(), expected);
+    index
+        .commit_account_scope_change(
+            1,
+            &search_circle::account_scope_removal_frame(&fixture.snapshot.realm_id),
+        )
+        .await
+        .unwrap();
+    assert_eq!(index.search(&actor, &now).await.unwrap(), "[]");
+    assert!(
+        index
+            .search_originals_present(
+                &arkret_sdk::MessageId::from_event_id(&fixture.message.event.event_id).to_string()
+            )
+            .await
+            .unwrap()
+    );
+    drop(index);
+    let reopened = CurrentIndexHarness::open(&id, 2).await.unwrap();
+    assert_eq!(reopened.search(&actor, &now).await.unwrap(), "[]");
+    reopened
+        .commit_account_scope_change(
+            2,
+            &search_circle::account_scope_rejoin_frame(&fixture.snapshot.realm_id),
+        )
+        .await
+        .unwrap();
+    assert_eq!(reopened.search(&actor, &now).await.unwrap(), "[]");
+    reopened
+        .commit_snapshot(3, &fixture.frame(true), &snapshot)
+        .await
+        .unwrap();
+    assert_eq!(reopened.search(&actor, &now).await.unwrap(), expected);
+}
+
+#[wasm_bindgen_test(async)]
 async fn search_retention_policy_and_validity_boundaries_survive_restart() {
     for (scenario, fixture, checks) in search_circle::policy_cases() {
         let id = authority(&format!("retention-policy-{scenario}"));
@@ -452,6 +500,74 @@ async fn search_circle_current_scope_survives_archive_but_not_terminal_or_missin
             expected,
             "reopened {scenario}"
         );
+    }
+}
+
+#[wasm_bindgen_test(async)]
+async fn search_authorization_context_uses_one_complete_cut_on_cold_reopen() {
+    for case in search_circle::authorization_cases() {
+        let id = authority(&format!("search-authorization-{}", case.name));
+        let index = CurrentIndexHarness::open(&id, 0).await.unwrap();
+        let fixture = &case.fixture;
+        let message = arkret_sdk::MessageId::from_event_id(&fixture.message.event.event_id);
+        let holder = serde_json::to_string(&fixture.actor).unwrap();
+        let requester = serde_json::to_string(&case.requester).unwrap();
+        let now = search_circle::at(20).to_rfc3339();
+        assert_eq!(
+            index
+                .commit(0, &case.cached_originals_frame())
+                .await
+                .unwrap(),
+            1
+        );
+        assert!(
+            index
+                .search_originals_present(message.as_str())
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            index.search(&holder, &now).await.unwrap(),
+            "[]",
+            "missing cut {}",
+            case.name
+        );
+        let generation = index
+            .commit_snapshot(
+                1,
+                &fixture.frame(true),
+                &serde_json::to_string(&fixture.snapshot).unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(generation, 2);
+        let expected = serde_json::to_string(&if case.visible {
+            vec![fixture.message.clone()]
+        } else {
+            vec![]
+        })
+        .unwrap();
+        case.assert_search_result(
+            index.search(&requester, &now).await,
+            expected.clone(),
+            "live",
+        );
+        if !case.malformed_current {
+            assert_eq!(
+                index.search(&holder, &now).await.unwrap(),
+                serde_json::to_string(&vec![fixture.message.clone()]).unwrap(),
+                "holder control {}",
+                case.name
+            );
+        }
+        drop(index);
+        let cold = CurrentIndexHarness::open(&id, generation).await.unwrap();
+        assert!(
+            cold.search_originals_present(message.as_str())
+                .await
+                .unwrap()
+        );
+        case.assert_search_result(cold.search(&requester, &now).await, expected, "cold");
     }
 }
 

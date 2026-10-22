@@ -52,7 +52,9 @@ impl LocalStateStore {
             reason,
             observed_stream_head,
         };
-        self.cached.move_submissions.insert(move_id, record.clone());
+        self.cached
+            .move_submissions
+            .insert(move_id, Box::new(record.clone()));
         let _ = self.flush();
         record
     }
@@ -115,6 +117,7 @@ impl LocalStateStore {
             .move_submissions
             .into_values()
             .filter(|record| record.realm_id == realm_id)
+            .map(|record| *record)
             .collect();
         out.sort_by_key(|r| std::cmp::Reverse(r.submitted_at));
         out
@@ -123,8 +126,12 @@ impl LocalStateStore {
     /// Read all tracked Moves regardless of Space — used by the
     /// dashboard "everything failing" banner and the recovery flow.
     pub fn all_move_submissions(&self) -> Vec<MoveSubmissionRecord> {
-        let mut out: Vec<MoveSubmissionRecord> =
-            self.load().move_submissions.into_values().collect();
+        let mut out: Vec<MoveSubmissionRecord> = self
+            .load()
+            .move_submissions
+            .into_values()
+            .map(|record| *record)
+            .collect();
         out.sort_by_key(|r| std::cmp::Reverse(r.submitted_at));
         out
     }
