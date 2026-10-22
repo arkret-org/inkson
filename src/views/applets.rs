@@ -602,620 +602,546 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
     };
 
     rsx! {
-               div { class: "timeline", "data-testid": "applets-panel", role: "region", "aria-label": tr("applets.region"),
-                   div { class: "event",
-                       div { class: "event-head",
-                           span { {tr("applets.registry")} }
-                           span { class: "badge", {applet_registered_count(registrations.len())} }
+           div { class: "timeline", "data-testid": "applets-panel", role: "region", "aria-label": tr("applets.region"),
+               div { class: "event",
+                   div { class: "event-head",
+                       span { {tr("applets.registry")} }
+                       span { class: "badge", {applet_registered_count(registrations.len())} }
+                   }
+                   div { class: "muted",
+                       {tr("applets.registry_help")}
+                   }
+                   if registrations.is_empty() {
+                       div { class: "muted", "data-testid": "applet-registry-empty",
+                           {tr("applets.registry_empty")}
                        }
-                       div { class: "muted",
-                           {tr("applets.registry_help")}
-                       }
-                       if registrations.is_empty() {
-                           div { class: "muted", "data-testid": "applet-registry-empty",
-                               {tr("applets.registry_empty")}
+                   } else {
+                       for (r, service_id) in registrations {
+                           {
+                               let namespace = registration_namespace_label(observed_applet_body(&r.payload));
+                               let op_id = r.operation_id.clone();
+                               let service_id_label = short_protocol_id(&service_id);
+                               let op_id_label = short_protocol_id(&op_id);
+                               rsx! {
+                                   div { class: "event", "data-testid": "applet-registration-row",
+                                       div { class: "event-head",
+                                           span { class: "mono", title: "{service_id}", "{service_id_label}" }
+                                           span { class: "badge", "{namespace}" }
+                                       }
+                                       div { class: "muted", title: "{op_id}", {applet_value_label("applets.operation_id", &op_id_label)} }
+                                   }
+                               }
                            }
-                       } else {
-                           for (r, service_id) in registrations {
-                               {
-                                   let namespace = registration_namespace_label(observed_applet_body(&r.payload));
-                                   let op_id = r.operation_id.clone();
-                                   let service_id_label = short_protocol_id(&service_id);
-                                   let op_id_label = short_protocol_id(&op_id);
-                                   rsx! {
-                                       div { class: "event", "data-testid": "applet-registration-row",
-                                           div { class: "event-head",
-                                               span { class: "mono", title: "{service_id}", "{service_id_label}" }
-                                               span { class: "badge", "{namespace}" }
-                                           }
-                                           div { class: "muted", title: "{op_id}", {applet_value_label("applets.operation_id", &op_id_label)} }
+                       }
+                   }
+               }
+               div { class: "event", "data-testid": "applet-bridge-errors",
+                   div { class: "event-head",
+                       span { {tr("applets.bridge_errors")} }
+                       span { class: "badge red", "{bridge_errors.len()}" }
+                   }
+                   if bridge_errors.is_empty() {
+                       div { class: "muted", {tr("applets.bridge_errors_empty")} }
+                   } else {
+                       for e in bridge_errors {
+                           {
+                               let error_code = observed_applet_body(&e.payload)
+                                   .and_then(|b| b.get("error_code"))
+                                   .and_then(Value::as_str)
+                                   .unwrap_or("?")
+                                   .to_owned();
+                               let failed_transaction_ref = observed_applet_body(&e.payload)
+                                   .and_then(|b| b.get("failed_transaction_ref"))
+                                   .and_then(Value::as_str)
+                                   .unwrap_or("?")
+                                   .to_owned();
+                               let msg_opt = observed_applet_body(&e.payload)
+                                   .and_then(|b| b.get("message"))
+                                   .and_then(Value::as_str)
+                                   .map(ToOwned::to_owned);
+                               let failed_transaction_ref_label = short_protocol_id(&failed_transaction_ref);
+                               rsx! {
+                                   div { class: "event", "data-testid": "applet-bridge-error-row",
+                                       div { class: "event-head",
+                                           span { class: "mono", "{error_code}" }
+                                           span { class: "mono", title: "{failed_transaction_ref}", "{failed_transaction_ref_label}" }
+                                       }
+                                       if let Some(msg) = msg_opt {
+                                           div { class: "muted", "{msg}" }
                                        }
                                    }
                                }
                            }
                        }
                    }
-                   div { class: "event", "data-testid": "applet-bridge-errors",
-                       div { class: "event-head",
-                           span { {tr("applets.bridge_errors")} }
-                           span { class: "badge red", "{bridge_errors.len()}" }
-                       }
-                       if bridge_errors.is_empty() {
-                           div { class: "muted", {tr("applets.bridge_errors_empty")} }
-                       } else {
-                           for e in bridge_errors {
-                               {
-                                   let error_code = observed_applet_body(&e.payload)
-                                       .and_then(|b| b.get("error_code"))
-                                       .and_then(Value::as_str)
-                                       .unwrap_or("?")
-                                       .to_owned();
-                                   let failed_transaction_ref = observed_applet_body(&e.payload)
-                                       .and_then(|b| b.get("failed_transaction_ref"))
-                                       .and_then(Value::as_str)
-                                       .unwrap_or("?")
-                                       .to_owned();
-                                   let msg_opt = observed_applet_body(&e.payload)
-                                       .and_then(|b| b.get("message"))
-                                       .and_then(Value::as_str)
-                                       .map(ToOwned::to_owned);
-                                   let failed_transaction_ref_label = short_protocol_id(&failed_transaction_ref);
-                                   rsx! {
-                                       div { class: "event", "data-testid": "applet-bridge-error-row",
-                                           div { class: "event-head",
-                                               span { class: "mono", "{error_code}" }
-                                               span { class: "mono", title: "{failed_transaction_ref}", "{failed_transaction_ref_label}" }
-                                           }
-                                           if let Some(msg) = msg_opt {
-                                               div { class: "muted", "{msg}" }
-                                           }
-                                       }
-                                   }
-                               }
-                           }
-                       }
-                   }
+               }
 
-                   // ─────────────────────────────────────────────────────
-                   // G3.Y4 — install / list panel + accountability trace
-                   // ─────────────────────────────────────────────────────
-                   div { class: "event", "data-testid": "applet-list-panel",
-                       div { class: "event-head",
-                           span { {tr("applets.installed")} }
-                           span { class: "badge", "{applet_rows.len()}" }
-                           Button {
-                               variant: ButtonVariant::Primary,
-                               "data-testid": "applet-install-button",
-                               onclick: move |_| install_open.set(!install_open()),
-                               if install_open() { {tr("applets.close_install")} } else { {tr("applets.open_install")} }
-                           }
+               // ─────────────────────────────────────────────────────
+               // G3.Y4 — install / list panel + accountability trace
+               // ─────────────────────────────────────────────────────
+               div { class: "event", "data-testid": "applet-list-panel",
+                   div { class: "event-head",
+                       span { {tr("applets.installed")} }
+                       span { class: "badge", "{applet_rows.len()}" }
+                       Button {
+                           variant: ButtonVariant::Primary,
+                           "data-testid": "applet-install-button",
+                           onclick: move |_| install_open.set(!install_open()),
+                           if install_open() { {tr("applets.close_install")} } else { {tr("applets.open_install")} }
                        }
-                       if install_open() {
-                           div { class: "workflow-form",
-                               Textarea {
-                                   "data-testid": "applet-install-manifest-input",
-                                   placeholder: tr("applets.manifest_placeholder"),
-                                   value: "{install_manifest}",
-                                   oninput: move |event: FormEvent| {
-                                       install_manifest.set(event.value());
+                   }
+                   if install_open() {
+                       div { class: "workflow-form",
+                           Textarea {
+                               "data-testid": "applet-install-manifest-input",
+                               placeholder: tr("applets.manifest_placeholder"),
+                               value: "{install_manifest}",
+                               oninput: move |event: FormEvent| {
+                                   install_manifest.set(event.value());
+                                   install_preview.set(None);
+                               },
+                               style: "width: 100%; min-height: 60px;",
+                           }
+                           // Optional Circle scope. Blank installs Realm-wide; a
+                           // `ak:circle:…` id scopes the applet to that Circle only.
+                           // Changing it invalidates the previewed plan (the digest
+                           // is computed over effective_scope), so re-preview.
+                           Textarea {
+                               "data-testid": "applet-install-circle-input",
+                               placeholder: tr("applets.circle_placeholder"),
+                               value: "{install_circle_id}",
+                               oninput: move |event: FormEvent| {
+                                   install_circle_id.set(event.value());
+                                   install_preview.set(None);
+                               },
+                               style: "width: 100%; min-height: 32px;",
+                           }
+                           Textarea {
+                               "data-testid": "applet-install-approve-actions-input",
+                               placeholder: tr("applets.actions_placeholder"),
+                               value: "{install_approve_actions}",
+                               oninput: move |event: FormEvent| {
+                                   install_approve_actions.set(event.value());
+                                   install_preview.set(None);
+                               },
+                               style: "width: 100%; min-height: 48px;",
+                           }
+                           label { class: "metric", "data-testid": "applet-install-ghost-row",
+                               Checkbox {
+                                   "data-testid": "applet-install-allow-ghost",
+                                   checked: if install_ghost_actors_allowed() { CheckboxState::Checked } else { CheckboxState::Unchecked },
+                                   on_checked_change: move |state: CheckboxState| {
+                                       install_ghost_actors_allowed.set(bool::from(state));
                                        install_preview.set(None);
                                    },
-                                   style: "width: 100%; min-height: 60px;",
                                }
-                               // Optional Circle scope. Blank installs Realm-wide; a
-                               // `ak:circle:…` id scopes the applet to that Circle only.
-                               // Changing it invalidates the previewed plan (the digest
-                               // is computed over effective_scope), so re-preview.
-                               Textarea {
-                                   "data-testid": "applet-install-circle-input",
-                                   placeholder: tr("applets.circle_placeholder"),
-                                   value: "{install_circle_id}",
-                                   oninput: move |event: FormEvent| {
-                                       install_circle_id.set(event.value());
-                                       install_preview.set(None);
-                                   },
-                                   style: "width: 100%; min-height: 32px;",
-                               }
-                               Textarea {
-                                   "data-testid": "applet-install-approve-actions-input",
-                                   placeholder: tr("applets.actions_placeholder"),
-                                   value: "{install_approve_actions}",
-                                   oninput: move |event: FormEvent| {
-                                       install_approve_actions.set(event.value());
-                                       install_preview.set(None);
-                                   },
-                                   style: "width: 100%; min-height: 48px;",
-                               }
-                               label { class: "metric", "data-testid": "applet-install-ghost-row",
-                                   Checkbox {
-                                       "data-testid": "applet-install-allow-ghost",
-                                       checked: if install_ghost_actors_allowed() { CheckboxState::Checked } else { CheckboxState::Unchecked },
-                                       on_checked_change: move |state: CheckboxState| {
-                                           install_ghost_actors_allowed.set(bool::from(state));
-                                           install_preview.set(None);
-                                       },
-                                   }
-                                   span { {tr("applets.allow_ghost")} }
-                               }
-                               // Step 1 — author the administrator Events once, then ask
-                               // the Station to sign the closed authoring request.
-                               div { class: "actions",
-                                   Button {
-                                       variant: ButtonVariant::Secondary,
-                                       "data-testid": "applet-install-verify-button",
-                                       onclick: {
-                                           let base = base_url.clone();
-                                           let realm = selected_realm_id.clone();
-                                           move |_| {
-                                               let raw = install_manifest();
-                                               let kind = classify_manifest_input(&raw);
-                                               let Some((package, registration_epoch_evidence)) =
-                                                   applet_install_material_from_manifest(&kind)
-                                               else {
-                                                   install_preview.set(None);
-                                                   install_status.set(Some(AppletInstallFeedback::InvalidManifest));
+                               span { {tr("applets.allow_ghost")} }
+                           }
+                           // Step 1 — author the administrator Events once, then ask
+                           // the Station to sign the closed authoring request.
+                           div { class: "actions",
+                               Button {
+                                   variant: ButtonVariant::Secondary,
+                                   "data-testid": "applet-install-verify-button",
+                                   onclick: {
+                                       let base = base_url.clone();
+                                       let realm = selected_realm_id.clone();
+                                       move |_| {
+                                           let raw = install_manifest();
+                                           let kind = classify_manifest_input(&raw);
+                                           let Some((package, registration_epoch_evidence)) =
+                                               applet_install_material_from_manifest(&kind)
+                                           else {
+                                               install_preview.set(None);
+                                               install_status.set(Some(AppletInstallFeedback::InvalidManifest));
+                                               return;
+                                           };
+                                           let base = base.clone();
+                                           let realm = realm.clone();
+                                           let api_token = token();
+                                           let Some(account) = active_account.peek().clone() else {
+                                               install_status.set(Some(AppletInstallFeedback::PreviewAccountUnavailable));
+                                               return;
+                                           };
+                                           let actor_id = account.principal_id().clone();
+                                           let install_actor_id = arkret_sdk::ActorId::account(account.authority.clone());
+                                           let target_station_id = account.authority.station_id.clone();
+                                           let realm_typed = match arkret_sdk::RealmId::new(realm.clone()) {
+                                               Ok(realm_id) => realm_id,
+                                               Err(error) => {
+                                                   install_status.set(Some(AppletInstallFeedback::InvalidRealm(error.to_string())));
                                                    return;
-                                               };
-                                               let base = base.clone();
-                                               let realm = realm.clone();
-                                               let api_token = token();
-                                               let Some(account) = active_account.peek().clone() else {
-                                                   install_status.set(Some(AppletInstallFeedback::PreviewAccountUnavailable));
-                                                   return;
-                                               };
-                                               let actor_id = account.principal_id().clone();
-                                               let install_actor_id = arkret_sdk::ActorId::account(account.authority.clone());
-                                               let target_station_id = account.authority.station_id.clone();
-                                               let realm_typed = match arkret_sdk::RealmId::new(realm.clone()) {
-                                                   Ok(realm_id) => realm_id,
-                                                   Err(error) => {
-                                                       install_status.set(Some(AppletInstallFeedback::InvalidRealm(error.to_string())));
+                                               }
+                                           };
+                                           let issuer_authority_basis = applet_capability_issuer_basis(
+                                               state_store.read().realm_authority_basis(realm_typed.as_str()),
+                                               &realm_typed,
+                                           );
+                                           let Some(issuer_authority_basis) = issuer_authority_basis else {
+                                               install_status.set(Some(AppletInstallFeedback::AuthorityUnavailable));
+                                               return;
+                                           };
+                                           let circle = install_circle_id();
+                                           let approve_actions = parse_applet_approval_actions(
+                                               &install_approve_actions(),
+                                           );
+                                           let ghost_actor_mode = if install_ghost_actors_allowed() {
+                                               AppletGhostActorMode::PolicyDeclared
+                                           } else {
+                                               AppletGhostActorMode::Disallowed
+                                           };
+                                           install_status.set(Some(AppletInstallFeedback::Previewing));
+                                           spawn(async move {
+                                               let effective_scope = match applet_effective_scope(
+                                                   &realm,
+                                                   Some(circle.as_str()),
+                                               ) {
+                                                   Ok(scope) => scope,
+                                                   Err(err) => {
+                                                       install_status.set(Some(AppletInstallFeedback::InvalidScope(err)));
                                                        return;
                                                    }
                                                };
-                                               let issuer_authority_basis = applet_capability_issuer_basis(
-                                                   state_store.read().realm_authority_basis(realm_typed.as_str()),
-                                                   &realm_typed,
+                                               let approval_request = approval_request(
+                                                   approve_actions.clone(),
+                                                   ghost_actor_mode,
                                                );
-                                               let Some(issuer_authority_basis) = issuer_authority_basis else {
-                                                   install_status.set(Some(AppletInstallFeedback::AuthorityUnavailable));
-                                                   return;
+                                               let actor_policy = AppletActorPolicy {
+                                                   ghost_actor_mode: Some(ghost_actor_mode),
                                                };
-                                               let circle = install_circle_id();
-                                               let approve_actions = parse_applet_approval_actions(
-                                                   &install_approve_actions(),
-                                               );
-                                               let ghost_actor_mode = if install_ghost_actors_allowed() {
-                                                   AppletGhostActorMode::PolicyDeclared
-                                               } else {
-                                                   AppletGhostActorMode::Disallowed
+                                               let requested_at = crate::clock::now_utc_millis();
+                                               let package_digest = match package.package_digest.clone() {
+                                                   Some(value) => value,
+                                                   None => {
+                                                       install_status.set(Some(AppletInstallFeedback::MissingPackageDigest));
+                                                       return;
+                                                   }
                                                };
-                                               install_status.set(Some(AppletInstallFeedback::Previewing));
-                                               spawn(async move {
-                                                   let effective_scope = match applet_effective_scope(
-                                                       &realm,
-                                                       Some(circle.as_str()),
-                                                   ) {
-                                                       Ok(scope) => scope,
-                                                       Err(err) => {
-                                                           install_status.set(Some(AppletInstallFeedback::InvalidScope(err)));
-                                                           return;
+                                               let authored_package = package.clone();
+                                               let authored_scope = effective_scope.clone();
+                                               let result = with_event_submitter(&base, api_token, |submitter| async move {
+                                                   use arkret_sdk::exact_current_results::{
+                                                       AppletRegistrationExactCurrentSelector, AppletRegistrationExactCurrentSelectorKind,
+                                                       ExactCurrentResultSelector, ExactCurrentResultEntry, ExactCurrentResultsReadRequestBody,
+                                                       ExactCurrentResultsReadOutcome, NeverWrittenExactCurrentSelector,
+                                                   };
+                                                   let registration_current = submitter.http().exact_current_result(
+                                                       &ExactCurrentResultsReadRequestBody {
+                                                           realm_id: authored_scope.realm_id().clone(),
+                                                           selector: ExactCurrentResultSelector::AppletRegistration(AppletRegistrationExactCurrentSelector {
+                                                               kind: AppletRegistrationExactCurrentSelectorKind::AppletRegistration,
+                                                               applet_id: authored_package.applet_id.clone(), service_id: authored_package.service_id.clone(),
+                                                           }),
+                                                       }, issuer_authority_basis.authority_generation,
+                                                   ).await?;
+                                                   let expected_revision = match registration_current {
+                                                       ExactCurrentResultsReadOutcome::Present { entry: ExactCurrentResultEntry::AppletRegistration(row), .. } => Some(row.revision),
+                                                       ExactCurrentResultsReadOutcome::NeverWritten { selector: NeverWrittenExactCurrentSelector::AppletRegistration(_), .. } => None,
+                                                       _ => anyhow::bail!("registration current returned a different selector"),
+                                                   };
+                                                   let (registration, grants) =
+                                                       build_formal_applet_install_events(
+                                                           &authored_package,
+                                                           &registration_epoch_evidence,
+                                                           expected_revision,
+                                                           &authored_scope,
+                                                           &approve_actions,
+                                                           actor_id.as_str(),
+                                                           &target_station_id,
+                                                           &issuer_authority_basis,
+                                                           requested_at,
+                                                       )?;
+                                                   let mut events = Vec::with_capacity(1 + grants.len());
+                                                   events.push(registration.into_intent());
+                                                   events.extend(grants.into_iter().map(
+                                                       crate::operation::LocalOperation::into_intent,
+                                                   ));
+                                                   let mut events = submitter
+                                                       .author_independent_events(events)
+                                                       .await?
+                                                       .into_iter()
+                                                       .map(arkret_sdk::AuthoredEvent::into_event)
+                                                       .collect::<Vec<_>>();
+                                                   let registration_event = events.remove(0);
+                                                   let body = AppletInstallPreviewRequestBody {
+                                                       applet_package: authored_package.clone(),
+                                                       authoring_request_basis:
+                                                           AppletInstallAuthoringRequestBasis {
+                                                               schema: AppletInstallAuthoringRequestBasis::SCHEMA.to_owned(),
+                                                               purpose: AppletManagedActorPurpose::InstallService,
+                                                               target_station_id,
+                                                               install_actor_id,
+                                                               applet_id: authored_package.applet_id.clone(),
+                                                               service_id: authored_package.service_id.clone(),
+                                                               package_digest,
+                                                               effective_scope: authored_scope.clone(),
+                                                               approval_request,
+                                                               actor_policy: Some(actor_policy),
+                                                               e2ee_policy: None,
+                                                               widget_policy: None,
+                                                               registration_event,
+                                                               capability_grant_events: events,
+                                                           },
+                                                   };
+                                                   let requested_basis = body.authoring_request_basis.clone();
+                                                   let preview = submitter
+                                                       .http()
+                                                       .applet_install_preview(&body)
+                                                       .await
+                                                       .map_err(anyhow::Error::from)?;
+                                                   Ok((preview, requested_basis))
+                                               })
+                                               .await;
+                                               match result {
+                                                   Ok((preview, requested_basis)) => match approved_actions_from_plan(&preview.plan, &package) {
+                                                       Ok(actions)
+                                                           if preview.plan.effective_scope == effective_scope
+    =>
+                                                       {
+                                                           let scope_count = preview.plan.approved_scopes.len();
+                                                           let digest = preview.plan.plan_digest.to_string();
+                                                           install_preview.set(Some(AppletInstallPreviewSnapshot {
+                                                               package,
+                                                               basis: requested_basis,
+                                                               preview,
+                                                           }));
+                                                           install_status.set(Some(AppletInstallFeedback::PlanReady {
+                                                               scopes: scope_count,
+                                                               actions: actions.len(),
+                                                               digest: short_protocol_id(&digest),
+                                                           }));
                                                        }
-                                                   };
-                                                   let approval_request = approval_request(
-                                                       approve_actions.clone(),
-                                                       ghost_actor_mode,
-                                                   );
-                                                   let actor_policy = AppletActorPolicy {
-                                                       ghost_actor_mode: Some(ghost_actor_mode),
-                                                   };
-                                                   let requested_at = crate::clock::now_utc_millis();
-                                                   let package_digest = match package.package_digest.clone() {
-                                                       Some(value) => value,
-                                                       None => {
-                                                           install_status.set(Some(AppletInstallFeedback::MissingPackageDigest));
-                                                           return;
+                                                       Ok(_) => {
+                                                           install_preview.set(None);
+                                                           install_status.set(Some(AppletInstallFeedback::ScopeMismatch));
                                                        }
-                                                   };
-                                                   let authored_package = package.clone();
-                                                   let authored_scope = effective_scope.clone();
-                                                   let result = with_event_submitter(&base, api_token, |submitter| async move {
-                                                       use arkret_sdk::exact_current_results::{
-                                                           AppletRegistrationExactCurrentSelector, AppletRegistrationExactCurrentSelectorKind,
-                                                           ExactCurrentResultSelector, ExactCurrentResultEntry, ExactCurrentResultsReadRequestBody,
-                                                           ExactCurrentResultsReadOutcome, NeverWrittenExactCurrentSelector,
-                                                       };
-                                                       let registration_current = submitter.http().exact_current_result(
-                                                           &ExactCurrentResultsReadRequestBody {
-                                                               realm_id: authored_scope.realm_id().clone(),
-                                                               selector: ExactCurrentResultSelector::AppletRegistration(AppletRegistrationExactCurrentSelector {
-                                                                   kind: AppletRegistrationExactCurrentSelectorKind::AppletRegistration,
-                                                                   applet_id: authored_package.applet_id.clone(), service_id: authored_package.service_id.clone(),
-                                                               }),
-                                                           }, issuer_authority_basis.authority_generation,
-                                                       ).await?;
-                                                       let expected_revision = match registration_current {
-                                                           ExactCurrentResultsReadOutcome::Present { entry: ExactCurrentResultEntry::AppletRegistration(row), .. } => Some(row.revision),
-                                                           ExactCurrentResultsReadOutcome::NeverWritten { selector: NeverWrittenExactCurrentSelector::AppletRegistration(_), .. } => None,
-                                                           _ => anyhow::bail!("registration current returned a different selector"),
-                                                       };
-                                                       let (registration, grants) =
-                                                           build_formal_applet_install_events(
-                                                               &authored_package,
-                                                               &registration_epoch_evidence,
-                                                               expected_revision,
-                                                               &authored_scope,
-                                                               &approve_actions,
-                                                               actor_id.as_str(),
-                                                               &target_station_id,
-                                                               &issuer_authority_basis,
-                                                               requested_at,
-                                                           )?;
-                                                       let mut events = Vec::with_capacity(1 + grants.len());
-                                                       events.push(registration.into_intent());
-                                                       events.extend(grants.into_iter().map(
-                                                           crate::operation::LocalOperation::into_intent,
-                                                       ));
-                                                       let mut events = submitter
-                                                           .author_independent_events(events)
-                                                           .await?
-                                                           .into_iter()
-                                                           .map(arkret_sdk::AuthoredEvent::into_event)
-                                                           .collect::<Vec<_>>();
-                                                       let registration_event = events.remove(0);
-                                                       let body = AppletInstallPreviewRequestBody {
-                                                           applet_package: authored_package.clone(),
-                                                           authoring_request_basis:
-                                                               AppletInstallAuthoringRequestBasis {
-                                                                   schema: AppletInstallAuthoringRequestBasis::SCHEMA.to_owned(),
-                                                                   purpose: AppletManagedActorPurpose::InstallService,
-                                                                   target_station_id,
-                                                                   install_actor_id,
-                                                                   applet_id: authored_package.applet_id.clone(),
-                                                                   service_id: authored_package.service_id.clone(),
-                                                                   package_digest,
-                                                                   effective_scope: authored_scope.clone(),
-                                                                   approval_request,
-                                                                   actor_policy: Some(actor_policy),
-                                                                   e2ee_policy: None,
-                                                                   widget_policy: None,
-                                                                   registration_event,
-                                                                   capability_grant_events: events,
-                                                               },
-                                                       };
-                                                       let requested_basis = body.authoring_request_basis.clone();
-                                                       let preview = submitter
-                                                           .http()
-                                                           .applet_install_preview(&body)
-                                                           .await
-                                                           .map_err(anyhow::Error::from)?;
-                                                       Ok((preview, requested_basis))
-                                                   })
-                                                   .await;
-                                                   match result {
-                                                       Ok((preview, requested_basis)) => match approved_actions_from_plan(&preview.plan, &package) {
-                                                           Ok(actions)
-                                                               if preview.plan.effective_scope == effective_scope
-        =>
-                                                           {
-                                                               let scope_count = preview.plan.approved_scopes.len();
-                                                               let digest = preview.plan.plan_digest.to_string();
-                                                               install_preview.set(Some(AppletInstallPreviewSnapshot {
-                                                                   package,
-                                                                   basis: requested_basis,
-                                                                   preview,
-                                                               }));
-                                                               install_status.set(Some(AppletInstallFeedback::PlanReady {
-                                                                   scopes: scope_count,
-                                                                   actions: actions.len(),
-                                                                   digest: short_protocol_id(&digest),
-                                                               }));
-                                                           }
-                                                           Ok(_) => {
-                                                               install_preview.set(None);
-                                                               install_status.set(Some(AppletInstallFeedback::ScopeMismatch));
-                                                           }
-                                                           Err(err) => {
-                                                               install_preview.set(None);
-                                                               install_status.set(Some(AppletInstallFeedback::InvalidPreview(err.to_string())));
-                                                           }
-                                                       },
                                                        Err(err) => {
                                                            install_preview.set(None);
-                                                           install_status.set(Some(AppletInstallFeedback::PreviewFailed(std::sync::Arc::new(err))));
-                                                       }
-                                                   }
-                                               });
-                                           }
-                                       },
-                                       {tr("applets.preview_plan")}
-                                   }
-                                   // Commit only the administrator-signed Service installation.
-                                   Button {
-                                       variant: if install_preview().is_some() { ButtonVariant::Primary } else { ButtonVariant::Secondary },
-                                       disabled: install_preview().is_none(),
-                                       "data-testid": "applet-install-confirm-button",
-                                       onclick: {
-                                           let base = base_url.clone();
-                                           move |_| {
-                                               let Some(snapshot) = install_preview() else {
-                                                   install_status.set(Some(AppletInstallFeedback::PreviewRequired));
-                                                   return;
-                                               };
-                                               let base = base.clone();
-                                               let api_token = token();
-                                               install_status.set(Some(AppletInstallFeedback::Installing));
-                                               spawn(async move {
-                                                   let idem = snapshot.preview.plan.plan_digest.to_string();
-                                                   let result = with_authed_sdk_client(&base, api_token, |http| async move {
-                                                       let body = AppletInstallRequestBody {
-                                                           applet_package: snapshot.package,
-                                                           authoring_request_basis: snapshot.basis,
-                                                           plan_digest: snapshot.preview.plan.plan_digest,
-                                                       };
-                                                       http.applet_install(&idem, &crate::transport::own_station_results::verify_local_publication(&http, body).await?)
-                                                           .await
-                                                           .map_err(anyhow::Error::from)
-                                                   })
-                                                   .await;
-                                                   match result {
-                                                       Ok(outcome) => {
-                                                           use arkret_models_integration::AppletInstallEffectiveStatus as Status;
-                                                           let aid = short_protocol_id(&outcome.applet_id);
-                                                           let feedback = match outcome.effective_status {
-                                                               Status::Installed => {
-                                                                   AppletInstallFeedback::Installed(aid)
-                                                               }
-                                                               Status::PartiallyInstalled => AppletInstallFeedback::PartiallyInstalled {
-                                                                   applet_id: aid,
-                                                                   rejected: outcome.rejections.len(),
-                                                               },
-                                                           };
-                                                           let installed = matches!(outcome.effective_status, Status::Installed);
-                                                           install_status.set(Some(feedback));
-                                                           // Keep the form open on a partial outcome so the
-                                                           // admin can adjust and retry denied scopes.
-                                                           if installed {
-                                                               install_open.set(false);
-                                                               install_manifest.set(String::new());
-                                                               install_circle_id.set(String::new());
-                                                               install_approve_actions.set(String::new());
-                                                               install_ghost_actors_allowed.set(false);
-                                                               install_preview.set(None);
-                                                           }
-                                                       }
-                                                       Err(err) => install_status.set(Some(AppletInstallFeedback::InstallFailed(std::sync::Arc::new(err)))),
-                                                   }
-                                               });
-                                           }
-                                       },
-                                       {tr("applets.install")}
-                                   }
-                               }
-                               {applet_install_feedback(install_status.read().as_ref())}
-                           }
-                       }
-
-                       div { class: "workflow-form",
-                           label { r#for: "applet-revoke-circle", {tr("applets.revoke_scope")} }
-                           Textarea {
-                               id: "applet-revoke-circle",
-                               "data-testid": "applet-revoke-circle-input",
-                               placeholder: tr("applets.circle_placeholder"),
-                               value: "{revoke_circle_id}",
-                               oninput: move |event: FormEvent| revoke_circle_id.set(event.value()),
-                           }
-                           p { class: "muted", {tr("applets.revoke_scope_help")} }
-                       }
-                       if applet_rows.is_empty() {
-                           div { class: "muted", "data-testid": "applet-empty",
-                               {tr("applets.installed_empty")}
-                           }
-                       } else {
-                           for (applet_id, service_id) in applet_rows.iter().cloned() {
-                               {
-                                   let service_id_label = short_protocol_id(&service_id);
-                                   rsx! {
-                                       div {
-                                           class: "event",
-                                           "data-testid": "applet-row",
-                                           "data-applet-id": "{applet_id}",
-                                           "data-service-id": "{service_id}",
-                                           div { class: "event-head",
-                                               span { class: "mono", title: "{service_id}", "{service_id_label}" }
-                                               span { class: "mono muted", title: "{applet_id}", {short_protocol_id(&applet_id)} }
-                                           }
-                                           configuration::ConfigurationPanel {
-                                               key: "{applet_id}/{service_id}/{selected_realm_id}",
-                                               token, realm_id: selected_realm_id.clone(),
-                                               applet_id: applet_id.clone(), service_id: service_id.clone(),
-                                           }
-                                           div { class: "actions",
-                                               Button {
-                                                   variant: ButtonVariant::Secondary,
-                                                   "data-testid": "applet-accountability-trace-button",
-                                                   onclick: {
-                                                       let aid = applet_id.clone();
-                                                       let sid = service_id.clone();
-                                                       move |_| trace_open_for.set(Some((aid.clone(), sid.clone())))
-                                                   },
-                                                   {tr("applets.trace_events")}
-                                               }
-                                               Button {
-                                                   variant: ButtonVariant::Destructive,
-                                                   "data-testid": "applet-uninstall-button",
-                                                   onclick: {
-                                                       let base = base_url.clone();
-                                                       let realm = selected_realm_id.clone();
-                                                       let service_id = service_id.clone();
-                                                       let aid = applet_id.clone();
-                                                       move |_| {
-                                                           let base = base.clone();
-                                                           let realm = crate::operation::trim_realm_id(&realm);
-                                                           let effective_scope = match applet_effective_scope(&realm, Some(&revoke_circle_id())) {
-                                                               Ok(scope) => scope,
-                                                               Err(error) => {
-                                                                   install_status.set(Some(AppletInstallFeedback::InvalidScope(error)));
-                                                                   return;
-                                                               }
-                                                           };
-                                                           let service_id = service_id.clone();
-                                                           let aid = aid.clone();
-                                                           let api_token = token();
-                                                           let Some(account) = active_account.peek().clone() else {
-                                                               install_status.set(Some(AppletInstallFeedback::RevokeAccountUnavailable));
-                                                               return;
-                                                           };
-                                                           let principal_id = account.authority.principal_id;
-                                                           install_status.set(Some(AppletInstallFeedback::Revoking));
-                                                           spawn(async move {
-                                                               let service_id: DidCoreId = service_id.parse()?;
-    let reason_code = arkret_sdk::ReasonCode::PolicyRevoked;
-                                                               let revoke_mode = AppletRevokeMode::RevokeRuntimeOnly;
-                                                               let result = with_event_submitter(&base, api_token, |submitter| async move {
-                                                                   let preview = submitter.http().applet_revoke_preview(
-                                                                       &aid,
-                                                                       &arkret_sdk::AppletRevokePreviewRequestBody {
-                                                                           service_id: service_id.clone(),
-                                                                           effective_scope: effective_scope.clone(),
-                                                                           reason_code: reason_code.clone(),
-                                                                           revoke_mode,
-                                                                       },
-                                                                   ).await.map_err(anyhow::Error::from)?;
-                                                                   if preview.revoke_plan.effective_scope != effective_scope || preview.revoke_plan.service_id != service_id {
-                                                                       anyhow::bail!("revoke preview changed the requested scope");
-                                                                   }
-                                                                   if !preview.revoke_plan.membership_removals.is_empty() {
-                                                                       anyhow::bail!("runtime revoke preview unexpectedly requires membership Events");
-                                                                   }
-                                                                   let mut revoke_events = Vec::with_capacity(
-                                                                       preview.revoke_plan.capability_revocations.len(),
-                                                                   );
-                                                                   for intent in &preview.revoke_plan.capability_revocations {
-                                                                       let builder = crate::operation::ak_ops::capability_revoke_from_applet_preview(
-                                                                           &realm,
-                                                                           principal_id.as_str(),
-                                                                           intent,
-                                                                       )?;
-                                                                       let builder = match &effective_scope {
-                                                                           ScopeRef::Circle { circle_id, .. } => builder.circle_id(circle_id.to_string()),
-                                                                           _ => builder,
-                                                                       };
-                                                                       revoke_events.push(builder.build_sdk_event("inkson")?);
-                                                                   }
-                                                                   let authored_revokes = submitter
-                                                                       .author_independent_events(
-                                                                           revoke_events
-                                                                               .into_iter()
-                                                                               .map(crate::operation::LocalOperation::into_intent)
-                                                                               .collect(),
-                                                                       )
-                                                                       .await?;
-                                                                   let capability_revoke_events = submitter
-                                                                       .prepare_initial_submissions(&authored_revokes)
-                                                                       .await?;
-                                                                   let revoke_plan_digest = arkret_sdk::Hash::new(
-                                                                       arkret_sdk::canonical::canonical_sha256(&preview.revoke_plan)?,
-                                                                   )?;
-                                                                   let body = AppletRevokeRequestBody {
-                                                                       revoke_plan_digest,
-                                                                       service_id: preview.revoke_plan.service_id.clone(),
-                                                                       effective_scope,
-                                                                       reason_code,
-                                                                       revoke_mode,
-                                                                       capability_revoke_events,
-                                                                       membership_state_events: Vec::new(),
-                                                                   };
-                                                                   let idempotency_key = crate::operation::uuid_v7();
-                                                                   submitter.http().applet_revoke(
-                                                                       &aid,
-                                                                       &idempotency_key,
-                                                                       &submitter.verify_publication(body)?,
-                                                                   ).await.map_err(anyhow::Error::from)
-                                                               })
-                                                               .await;
-                                                               match result {
-                                                                   Ok(outcome) => install_status.set(Some(AppletInstallFeedback::Revoked(outcome.revoked_refs.len()))),
-                                                                   Err(err) => install_status.set(Some(AppletInstallFeedback::RevokeFailed(std::sync::Arc::new(err)))),
-                                                               }
-                                                           });
+                                                           install_status.set(Some(AppletInstallFeedback::InvalidPreview(err.to_string())));
                                                        }
                                                    },
-                                                   {tr("applets.uninstall")}
+                                                   Err(err) => {
+                                                       install_preview.set(None);
+                                                       install_status.set(Some(AppletInstallFeedback::PreviewFailed(std::sync::Arc::new(err))));
+                                                   }
                                                }
-                                           }
+                                           });
                                        }
-                                   }
+                                   },
+                                   {tr("applets.preview_plan")}
+                               }
+                               // Commit only the administrator-signed Service installation.
+                               Button {
+                                   variant: if install_preview().is_some() { ButtonVariant::Primary } else { ButtonVariant::Secondary },
+                                   disabled: install_preview().is_none(),
+                                   "data-testid": "applet-install-confirm-button",
+                                   onclick: {
+                                       let base = base_url.clone();
+                                       move |_| {
+                                           let Some(snapshot) = install_preview() else {
+                                               install_status.set(Some(AppletInstallFeedback::PreviewRequired));
+                                               return;
+                                           };
+                                           let base = base.clone();
+                                           let api_token = token();
+                                           install_status.set(Some(AppletInstallFeedback::Installing));
+                                           spawn(async move {
+                                               let idem = snapshot.preview.plan.plan_digest.to_string();
+                                               let result = with_authed_sdk_client(&base, api_token, |http| async move {
+                                                   let body = AppletInstallRequestBody {
+                                                       applet_package: snapshot.package,
+                                                       authoring_request_basis: snapshot.basis,
+                                                       plan_digest: snapshot.preview.plan.plan_digest,
+                                                   };
+                                                   http.applet_install(&idem, &crate::transport::own_station_results::verify_local_publication(&http, body).await?)
+                                                       .await
+                                                       .map_err(anyhow::Error::from)
+                                               })
+                                               .await;
+                                               match result {
+                                                   Ok(outcome) => {
+                                                       use arkret_models_integration::AppletInstallEffectiveStatus as Status;
+                                                       let aid = short_protocol_id(&outcome.applet_id);
+                                                       let feedback = match outcome.effective_status {
+                                                           Status::Installed => {
+                                                               AppletInstallFeedback::Installed(aid)
+                                                           }
+                                                           Status::PartiallyInstalled => AppletInstallFeedback::PartiallyInstalled {
+                                                               applet_id: aid,
+                                                               rejected: outcome.rejections.len(),
+                                                           },
+                                                       };
+                                                       let installed = matches!(outcome.effective_status, Status::Installed);
+                                                       install_status.set(Some(feedback));
+                                                       // Keep the form open on a partial outcome so the
+                                                       // admin can adjust and retry denied scopes.
+                                                       if installed {
+                                                           install_open.set(false);
+                                                           install_manifest.set(String::new());
+                                                           install_circle_id.set(String::new());
+                                                           install_approve_actions.set(String::new());
+                                                           install_ghost_actors_allowed.set(false);
+                                                           install_preview.set(None);
+                                                       }
+                                                   }
+                                                   Err(err) => install_status.set(Some(AppletInstallFeedback::InstallFailed(std::sync::Arc::new(err)))),
+                                               }
+                                           });
+                                       }
+                                   },
+                                   {tr("applets.install")}
                                }
                            }
+                           {applet_install_feedback(install_status.read().as_ref())}
                        }
                    }
 
-                   // Accountability trace modal — renders only when the
-                   // operator clicked the trace button on a row.
-                   if let Some(target) = trace_open_for() {
-                       {
-                           let target = format!("{} / {}", target.0, target.1);
-                           let target_label = target.clone();
-                           rsx! {
-                               Dialog {
-                                   open: true,
-                                   on_open_change: move |open: bool| {
-                                       if !open {
-                                           trace_open_for.set(None);
-                                       }
-                                   },
-                                   "data-testid": "applet-accountability-modal",
+                   div { class: "workflow-form",
+                       label { r#for: "applet-revoke-circle", {tr("applets.revoke_scope")} }
+                       Textarea {
+                           id: "applet-revoke-circle",
+                           "data-testid": "applet-revoke-circle-input",
+                           placeholder: tr("applets.circle_placeholder"),
+                           value: "{revoke_circle_id}",
+                           oninput: move |event: FormEvent| revoke_circle_id.set(event.value()),
+                       }
+                       p { class: "muted", {tr("applets.revoke_scope_help")} }
+                   }
+                   if applet_rows.is_empty() {
+                       div { class: "muted", "data-testid": "applet-empty",
+                           {tr("applets.installed_empty")}
+                       }
+                   } else {
+                       for (applet_id, service_id) in applet_rows.iter().cloned() {
+                           {
+                               let service_id_label = short_protocol_id(&service_id);
+                               rsx! {
                                    div {
-                                       class: "publish-to-source-modal",
-                                       header {
-                                           class: "publish-to-source-modal-header",
-                                           h2 { title: "{target}", {applet_value_label("applets.trace_title", &target_label)} }
+                                       class: "event",
+                                       "data-testid": "applet-row",
+                                       "data-applet-id": "{applet_id}",
+                                       "data-service-id": "{service_id}",
+                                       div { class: "event-head",
+                                           span { class: "mono", title: "{service_id}", "{service_id_label}" }
+                                           span { class: "mono muted", title: "{applet_id}", {short_protocol_id(&applet_id)} }
                                        }
-                                       section {
-                                           class: "publish-to-source-modal-body",
-                                           if trace_events.is_empty() {
-                                               p { class: "muted", {tr("applets.trace_empty")} }
-                                           } else {
-                                               for ev in trace_events.iter() {
-                                                   {
-                                                       let event_id = ev.operation_id.clone();
-                                                       let kind = ev
-                                                           .payload
-                                                           .get("kind")
-                                                           .and_then(Value::as_str)
-                                                           .unwrap_or("?")
-                                                           .to_owned();
-                                                       let emitted_at = ev
-                                                           .payload
-                                                           .get("timestamp")
-                                                           .and_then(Value::as_str)
-                                                           .unwrap_or("-")
-                                                           .to_owned();
-                                                       let event_id_label = short_protocol_id(&event_id);
-                                                       rsx! {
-                                                           div {
-                                                               class: "event",
-                                                               "data-testid": "applet-accountability-event",
-                                                               "data-event-id": "{event_id}",
-                                                               "data-emitted-at": "{emitted_at}",
-                                                               div { class: "event-head",
-                                                                   span { class: "mono", "{kind}" }
-                                                                   span { class: "muted", "{emitted_at}" }
-                                                               }
-                                                               div { class: "muted", title: "{event_id}", {applet_value_label("applets.event_id", &event_id_label)} }
-                                                           }
-                                                       }
-                                                   }
-                                               }
-                                           }
+                                       configuration::ConfigurationPanel {
+                                           key: "{applet_id}/{service_id}/{selected_realm_id}",
+                                           token, realm_id: selected_realm_id.clone(),
+                                           applet_id: applet_id.clone(), service_id: service_id.clone(),
                                        }
-                                       footer {
-                                           class: "publish-to-source-modal-footer",
+                                       div { class: "actions",
                                            Button {
                                                variant: ButtonVariant::Secondary,
-                                               onclick: move |_| trace_open_for.set(None),
-                                               {tr("common.close")}
+                                               "data-testid": "applet-accountability-trace-button",
+                                               onclick: {
+                                                   let aid = applet_id.clone();
+                                                   let sid = service_id.clone();
+                                                   move |_| trace_open_for.set(Some((aid.clone(), sid.clone())))
+                                               },
+                                               {tr("applets.trace_events")}
+                                           }
+                                           Button {
+                                               variant: ButtonVariant::Destructive,
+                                               "data-testid": "applet-uninstall-button",
+                                               onclick: {
+                                                   let base = base_url.clone();
+                                                   let realm = selected_realm_id.clone();
+                                                   let service_id = service_id.clone();
+                                                   let aid = applet_id.clone();
+                                                   move |_| {
+                                                       let base = base.clone();
+                                                       let realm = crate::operation::trim_realm_id(&realm);
+                                                       let effective_scope = match applet_effective_scope(&realm, Some(&revoke_circle_id())) {
+                                                           Ok(scope) => scope,
+                                                           Err(error) => {
+                                                               install_status.set(Some(AppletInstallFeedback::InvalidScope(error)));
+                                                               return;
+                                                           }
+                                                       };
+                                                       let service_id = service_id.clone();
+                                                       let aid = aid.clone();
+                                                       let api_token = token();
+                                                       let Some(account) = active_account.peek().clone() else {
+                                                           install_status.set(Some(AppletInstallFeedback::RevokeAccountUnavailable));
+                                                           return;
+                                                       };
+                                                       let principal_id = account.authority.principal_id;
+                                                       install_status.set(Some(AppletInstallFeedback::Revoking));
+                                                       spawn(async move {
+                                                           let reason_code = arkret_sdk::ReasonCode::PolicyRevoked;
+                                                           let revoke_mode = AppletRevokeMode::RevokeRuntimeOnly;
+                                                           let result = with_event_submitter(&base, api_token, |submitter| async move {
+                                                               let service_id: DidCoreId = service_id.parse()?;
+                                                               let preview = submitter.http().applet_revoke_preview(
+                                                                   &aid,
+                                                                   &arkret_sdk::AppletRevokePreviewRequestBody {
+                                                                       service_id: service_id.clone(),
+                                                                       effective_scope: effective_scope.clone(),
+                                                                       reason_code: reason_code.clone(),
+                                                                       revoke_mode,
+                                                                   },
+                                                               ).await.map_err(anyhow::Error::from)?;
+                                                               if preview.revoke_plan.effective_scope != effective_scope || preview.revoke_plan.service_id != service_id {
+                                                                   anyhow::bail!("revoke preview changed the requested scope");
+                                                               }
+                                                               if !preview.revoke_plan.membership_removals.is_empty() {
+                                                                   anyhow::bail!("runtime revoke preview unexpectedly requires membership Events");
+                                                               }
+                                                               let mut revoke_events = Vec::with_capacity(
+                                                                   preview.revoke_plan.capability_revocations.len(),
+                                                               );
+                                                               for intent in &preview.revoke_plan.capability_revocations {
+                                                                   let builder = crate::operation::ak_ops::capability_revoke_from_applet_preview(
+                                                                       &realm,
+                                                                       principal_id.as_str(),
+                                                                       intent,
+                                                                   )?;
+                                                                   let builder = match &effective_scope {
+                                                                       ScopeRef::Circle { circle_id, .. } => builder.circle_id(circle_id.to_string()),
+                                                                       _ => builder,
+                                                                   };
+                                                                   revoke_events.push(builder.build_sdk_event("inkson")?);
+                                                               }
+                                                               let authored_revokes = submitter
+                                                                   .author_independent_events(
+                                                                       revoke_events
+                                                                           .into_iter()
+                                                                           .map(crate::operation::LocalOperation::into_intent)
+                                                                           .collect(),
+                                                                   )
+                                                                   .await?;
+                                                               let capability_revoke_events = submitter
+                                                                   .prepare_initial_submissions(&authored_revokes)
+                                                                   .await?;
+                                                               let revoke_plan_digest = arkret_sdk::Hash::new(
+                                                                   arkret_sdk::canonical::canonical_sha256(&preview.revoke_plan)?,
+                                                               )?;
+                                                               let body = AppletRevokeRequestBody {
+                                                                   revoke_plan_digest,
+                                                                   service_id: preview.revoke_plan.service_id.clone(),
+                                                                   effective_scope,
+                                                                   reason_code,
+                                                                   revoke_mode,
+                                                                   capability_revoke_events,
+                                                                   membership_state_events: Vec::new(),
+                                                               };
+                                                               let idempotency_key = crate::operation::uuid_v7();
+                                                               submitter.http().applet_revoke(
+                                                                   &aid,
+                                                                   &idempotency_key,
+                                                                   &submitter.verify_publication(body)?,
+                                                               ).await.map_err(anyhow::Error::from)
+                                                           })
+                                                           .await;
+                                                           match result {
+                                                               Ok(outcome) => install_status.set(Some(AppletInstallFeedback::Revoked(outcome.revoked_refs.len()))),
+                                                               Err(err) => install_status.set(Some(AppletInstallFeedback::RevokeFailed(std::sync::Arc::new(err)))),
+                                                           }
+                                                       });
+                                                   }
+                                               },
+                                               {tr("applets.uninstall")}
                                            }
                                        }
                                    }
@@ -1224,7 +1150,81 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                        }
                    }
                }
+
+               // Accountability trace modal — renders only when the
+               // operator clicked the trace button on a row.
+               if let Some(target) = trace_open_for() {
+                   {
+                       let target = format!("{} / {}", target.0, target.1);
+                       let target_label = target.clone();
+                       rsx! {
+                           Dialog {
+                               open: true,
+                               on_open_change: move |open: bool| {
+                                   if !open {
+                                       trace_open_for.set(None);
+                                   }
+                               },
+                               "data-testid": "applet-accountability-modal",
+                               div {
+                                   class: "publish-to-source-modal",
+                                   header {
+                                       class: "publish-to-source-modal-header",
+                                       h2 { title: "{target}", {applet_value_label("applets.trace_title", &target_label)} }
+                                   }
+                                   section {
+                                       class: "publish-to-source-modal-body",
+                                       if trace_events.is_empty() {
+                                           p { class: "muted", {tr("applets.trace_empty")} }
+                                       } else {
+                                           for ev in trace_events.iter() {
+                                               {
+                                                   let event_id = ev.operation_id.clone();
+                                                   let kind = ev
+                                                       .payload
+                                                       .get("kind")
+                                                       .and_then(Value::as_str)
+                                                       .unwrap_or("?")
+                                                       .to_owned();
+                                                   let emitted_at = ev
+                                                       .payload
+                                                       .get("timestamp")
+                                                       .and_then(Value::as_str)
+                                                       .unwrap_or("-")
+                                                       .to_owned();
+                                                   let event_id_label = short_protocol_id(&event_id);
+                                                   rsx! {
+                                                       div {
+                                                           class: "event",
+                                                           "data-testid": "applet-accountability-event",
+                                                           "data-event-id": "{event_id}",
+                                                           "data-emitted-at": "{emitted_at}",
+                                                           div { class: "event-head",
+                                                               span { class: "mono", "{kind}" }
+                                                               span { class: "muted", "{emitted_at}" }
+                                                           }
+                                                           div { class: "muted", title: "{event_id}", {applet_value_label("applets.event_id", &event_id_label)} }
+                                                       }
+                                                   }
+                                               }
+                                           }
+                                       }
+                                   }
+                                   footer {
+                                       class: "publish-to-source-modal-footer",
+                                       Button {
+                                           variant: ButtonVariant::Secondary,
+                                           onclick: move |_| trace_open_for.set(None),
+                                           {tr("common.close")}
+                                       }
+                                   }
+                               }
+                           }
+                       }
+                   }
+               }
            }
+       }
 }
 
 #[cfg(test)]
