@@ -344,7 +344,7 @@ fn inkson_accepts_server_contract_payloads() {
             "received_at": "2026-04-28T12:00:00.000Z",
             "issuer_id": "ak:did_core:web:server.local",
             "signature": {
-                "kid": "ak:did_core:web:server.local",
+                "kid": "did:web:server.local#key-1",
                 "signature_algorithm": "Ed25519",
                 "sig": "c2ln"
             }
