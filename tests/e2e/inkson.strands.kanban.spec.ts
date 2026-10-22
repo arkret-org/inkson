@@ -21,6 +21,45 @@ import {
 
 registerStrandsBeforeEach();
 
+test("kanban coalesces delayed inventory reads into one worker", async ({ page }, testInfo) => {
+  const requests = new Map<import("@playwright/test").Request, "spaces" | "strands">();
+  const active = { spaces: 0, strands: 0 };
+  const maximum = { spaces: 0, strands: 0 };
+  const totals = { spaces: 0, strands: 0 };
+  page.on("request", request => {
+    const path = new URL(request.url()).pathname;
+    const collection = path.match(/\/_arkret\/self\/realms\/[^/]+\/(spaces|strands)$/)?.[1] as "spaces" | "strands" | undefined;
+    if (!collection || request.method() !== "GET") return;
+    requests.set(request, collection);
+    totals[collection]++;
+    maximum[collection] = Math.max(maximum[collection], ++active[collection]);
+  });
+  const finish = (request: import("@playwright/test").Request) => {
+    const collection = requests.get(request);
+    if (!collection) return;
+    active[collection]--;
+    requests.delete(request);
+  };
+  page.on("requestfinished", finish);
+  page.on("requestfailed", finish);
+  await page.route("**/_arkret/self/realms/*/*", async route => {
+    if (/\/(spaces|strands)$/.test(new URL(route.request().url()).pathname)) {
+      // Keep initial requests in flight while account/current updates arrive.
+      await new Promise(resolve => setTimeout(resolve, 300));
+    }
+    await route.fallback();
+  });
+  await openKanban(page);
+  await expect.poll(() => active.spaces + active.strands).toBe(0);
+  expect(totals.spaces).toBeGreaterThan(0);
+  expect(totals.strands).toBeGreaterThan(0);
+  expect(maximum).toEqual({ spaces: 1, strands: 1 });
+  await testInfo.attach("kanban-inventory-concurrency.json", {
+    body: Buffer.from(JSON.stringify({ totals, maximum }, null, 2)),
+    contentType: "application/json",
+  });
+});
+
 test("kanban card detail embeds discussion without boundary copy", async ({
   page,
 }) => {

@@ -25,6 +25,7 @@ mod card_detail_surface;
 mod controller;
 mod drag_drop_controller;
 mod effects;
+mod projection_reads;
 // card due-calendar pure calculation helpers moved to `due_calendar`
 // (move-only).
 mod due_calendar;

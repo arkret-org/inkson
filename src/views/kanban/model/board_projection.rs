@@ -733,7 +733,44 @@ pub(crate) fn project_board_with_projection_for_actor(
             }
         }
     }
-    let strands = strand_views_from_projection_and_ops(projected_strands, ops);
+    let mut strands = strand_views_from_projection_and_ops(projected_strands, ops);
+    // A current-only lifecycle change must render without a projection-list
+    // fetch or a historical Event. Local pending writes are overlaid below.
+    for view in &mut strands {
+        if let Ok(id) = arkret_sdk::StrandId::new(view.strand_id.clone())
+            && let Some(current) = current_strand_value(current_entries, &id)
+            && current.realm_id.as_str() == realm_id
+        {
+            view.state = current.state.unwrap_or(arkret_sdk::ObjectState::Active);
+        }
+    }
+    let indexes = strands
+        .iter()
+        .enumerate()
+        .map(|(index, view)| (view.strand_id.clone(), index))
+        .collect::<BTreeMap<_, _>>();
+    for record in ordered_operations(ops) {
+        if !matches!(
+            record.payload.get("write_state").and_then(Value::as_str),
+            Some(
+                "queued" | "submitting" | "forwarding" | "submitted" | "pending" | "pending_commit"
+            )
+        ) {
+            continue;
+        }
+        let Some(index) = op_strand_target_id(record)
+            .map(|id| resolve_event_derived_target_alias(&aliases, &id))
+            .and_then(|id| indexes.get(&id))
+        else {
+            continue;
+        };
+        let view = &mut strands[*index];
+        match op_kind(record).as_deref() {
+            Some(event_kind_str::STRAND_ARCHIVE) => view.state = arkret_sdk::ObjectState::Archived,
+            Some(event_kind_str::STRAND_RESTORE) => view.state = arkret_sdk::ObjectState::Active,
+            _ => {}
+        }
+    }
     let (columns, board_options, board_id) = columns_from_lifecycle_projection_for_actor(
         &containers,
         &strands,
@@ -1375,6 +1412,72 @@ mod tests {
                 .all(|card| card.lifecycle != StrandLifecycleState::Active),
             "archived card remains available to the drawer but leaves active board rendering"
         );
+    }
+
+    #[test]
+    fn current_only_lifecycle_wins_over_history_and_preserves_pending_restore() {
+        let strand_id = "ak:strand:AdVU7b0NwVjyucaE-ZRGksbrifDFqHbytR9znwTjsAwy";
+        let mut events = vec![
+            space_create_event(BOARD, "board", "Board", None),
+            space_create_event(LIST_A, "list", "List", Some(BOARD)),
+        ];
+        events.extend(strand_create_and_place_events(
+            strand_id,
+            "ak:did_core:web:alice.example",
+            "Card",
+            BOARD,
+            LIST_A,
+            "U",
+            "2026-06-28T00:01:00.000Z",
+        ));
+        let mut ops = kanban_operations_from_events(&events);
+        let id = arkret_sdk::StrandId::new(strand_id).unwrap();
+        let mut strand = arkret_sdk::Strand::new(
+            id.clone(),
+            arkret_sdk::RealmId::new(REALM).unwrap(),
+            "Card",
+            crate::test_support::account_actor("ak:did_core:web:alice.example"),
+        );
+        strand.state = Some(arkret_sdk::ObjectState::Archived);
+        let entries = vec![arkret_wire::TypedCurrentRow::Value {
+            selector: arkret_wire::CurrentSelector::Strand { strand_id: id },
+            source_stream_ref: arkret_wire::CommitStreamRef::Realm {
+                realm_id: arkret_sdk::RealmId::new(REALM).unwrap(),
+            },
+            revision: arkret_wire::CurrentRevision {
+                commit_id: arkret_wire::RealmCommitId::from_digest([9; 32]),
+                stream_position: 9,
+            },
+            value: serde_json::to_value(strand).unwrap(),
+        }];
+        let (columns, ..) = project_board_with_projection_for_actor(
+            &ops,
+            &[],
+            &[],
+            BOARD,
+            REALM,
+            None,
+            "",
+            &entries,
+        );
+        assert_eq!(
+            columns[0].cards[0].lifecycle,
+            StrandLifecycleState::Archived
+        );
+        ops.push(local_op("pending-restore", "2026-06-28T03:00:00.000Z", json!({
+            "kind": "ak.strand.restore", "write_state": "queued", "body": { "target_ref": strand_id }
+        })));
+        let (columns, ..) = project_board_with_projection_for_actor(
+            &ops,
+            &[],
+            &[],
+            BOARD,
+            REALM,
+            None,
+            "",
+            &entries,
+        );
+        assert_eq!(columns[0].cards[0].lifecycle, StrandLifecycleState::Active);
     }
 
     /// Build a locally-appended optimistic op record directly (the shape
