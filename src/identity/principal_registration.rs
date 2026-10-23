@@ -38,7 +38,7 @@ pub fn prepare_registration_checkpoint(
     let lease_fence = handoff
         .lease_fence
         .ok_or_else(|| anyhow!("account handoff has no lease fence"))?;
-    let draft = arkret_sdk::webvh::prepare_principal_inception(
+    let draft = arkret_sdk::webvh::prepare_portable_principal_inception(
         &arkret_sdk::webvh::PrincipalInceptionInput {
             provider_endpoint: &endpoint,
             principal_endpoint: &endpoint,
@@ -797,6 +797,9 @@ mod tests {
         handoff.trust_domain = "ak:trust_domain:arkret.org".to_owned();
         let checkpoint =
             prepare_registration_checkpoint(&handoff, device_id, &recovery_key).unwrap();
+        let arkret_sdk::PrincipalRegistrationAnchor::WebvhRegistration { log_entries, .. } =
+            &checkpoint.principal_registration_anchor;
+        assert_eq!(log_entries[0]["parameters"]["portable"], true);
         let material = validate_checkpoint_recovery_key(&checkpoint, &recovery_key).unwrap();
         let signer = crate::event_signer::build_ed25519_device_signer(
             [145; 32],
