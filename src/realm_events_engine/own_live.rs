@@ -6,12 +6,28 @@ use garth::own_station_results::{OwnStationReplica, OwnStationScanPage};
 
 use super::*;
 
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[path = "own_live/sidecar_tests.rs"]
+mod sidecar_tests;
+
 const MAX_REPLAY_BYTES: usize = 64 * 1024 * 1024;
 const DISCOVERY_INTERVAL: Duration = Duration::from_secs(30);
 const MAX_HINT_BATCH: usize = 64;
 const MAX_COVERED_HINTS: usize = 2048;
 
 type HintOriginals = BTreeMap<(CommitStreamRef, u64), [u8; 32]>;
+
+#[derive(Default)]
+struct HintAdmission {
+    originals: HintOriginals,
+    generation: Option<u64>,
+}
+
+struct InstalledLiveCut {
+    changed: usize,
+    current_changed: bool,
+    generation: u64,
+}
 
 fn content_hint_digest(view: &CommittedEventView) -> garth::Result<Option<[u8; 32]>> {
     if !matches!(view, CommittedEventView::Full(full) if matches!(full.event.kind,
@@ -22,6 +38,27 @@ fn content_hint_digest(view: &CommittedEventView) -> garth::Result<Option<[u8; 3
     Ok(Some(arkret_sdk::canonical::sha256_bytes(
         arkret_sdk::canonical::canonical_json_bytes(view).map_err(protocol)?,
     )))
+}
+
+fn admitted_hint_originals(pages: &[OwnStationScanPage]) -> garth::Result<HintOriginals> {
+    let mut originals = HintOriginals::new();
+    for page in pages {
+        for row in page.rows()? {
+            if let Some(digest) = content_hint_digest(row)? {
+                originals.insert(
+                    (
+                        row.commit().stream_ref.clone(),
+                        row.commit().stream_position,
+                    ),
+                    digest,
+                );
+                if originals.len() > MAX_COVERED_HINTS {
+                    originals.pop_first();
+                }
+            }
+        }
+    }
+    Ok(originals)
 }
 
 /// An optimization proof for exact content wakeups, not a reusable allow ticket.
@@ -369,6 +406,9 @@ async fn follow_once<F: Fn() -> bool>(
         if !is_active() {
             return Ok(());
         }
+        if matches!(row.stream_ref, CommitStreamRef::Sidecar { .. }) {
+            continue;
+        }
         if let Some(generation) = installed_generation
             && let Some(expected) = heads.get(&row.stream_ref).copied()
             && current.head(&row.stream_ref) == Some(expected)
@@ -398,7 +438,7 @@ async fn follow_once<F: Fn() -> bool>(
                 continue;
             }
         }
-        drain_from_snapshot(
+        let admitted = drain_from_snapshot(
             client,
             http,
             realm,
@@ -410,11 +450,7 @@ async fn follow_once<F: Fn() -> bool>(
             Some(&list_fence),
         )
         .await?;
-        installed_generation = Some(
-            projector
-                .state_store
-                .read(|store| store.current_generation()),
-        );
+        installed_generation = admitted.generation;
     }
     if private && is_active() {
         refresh_sidecars_from_snapshot(
@@ -472,9 +508,13 @@ async fn drain_hints<F: Fn() -> bool>(
         }
     }
     let mut originals = HintOriginals::new();
+    let mut installed_generation = None;
     for stream in &hints.streams {
         if !is_active() {
             return Ok(());
+        }
+        if matches!(stream, CommitStreamRef::Sidecar { .. }) {
+            continue;
         }
         let admitted = drain_from_snapshot(
             client,
@@ -488,7 +528,8 @@ async fn drain_hints<F: Fn() -> bool>(
             Some(&list_fence),
         )
         .await?;
-        for (key, digest) in admitted {
+        installed_generation = admitted.generation;
+        for (key, digest) in admitted.originals {
             originals.insert(key, digest);
             if originals.len() > MAX_COVERED_HINTS {
                 originals.pop_first();
@@ -501,7 +542,7 @@ async fn drain_hints<F: Fn() -> bool>(
         .any(|stream| matches!(stream, CommitStreamRef::Sidecar { .. }))
         && is_active()
     {
-        refresh_sidecars_from_snapshot(
+        let private_originals = refresh_sidecars_from_snapshot(
             client,
             http,
             realm,
@@ -512,8 +553,16 @@ async fn drain_hints<F: Fn() -> bool>(
             &list_fence,
         )
         .await?;
+        installed_generation = private_originals.generation;
+        originals.extend(private_originals.originals);
     }
-    if is_active() {
+    if let Some(generation) = installed_generation
+        && is_active()
+        && projector
+            .state_store
+            .read(|store| store.current_generation())
+            == generation
+    {
         client.check_session()?;
         snapshot.value()?;
         while originals.len() > MAX_COVERED_HINTS {
@@ -521,9 +570,7 @@ async fn drain_hints<F: Fn() -> bool>(
         }
         *coverage = Some(HintCoverage {
             snapshot,
-            generation: projector
-                .state_store
-                .read(|store| store.current_generation()),
+            generation,
             list_fence,
             originals,
         });
@@ -588,7 +635,7 @@ async fn drain_from_snapshot<F: Fn() -> bool>(
     is_active: &F,
     current: &mut OwnStationReplica,
     list_fence: Option<&crate::state::RealmListReadFence>,
-) -> garth::Result<HintOriginals> {
+) -> garth::Result<HintAdmission> {
     current.install_bound_snapshot(snapshot)?;
     own_station::validate_current_product(snapshot.value()?, realm)?;
     let saved = projector
@@ -605,37 +652,34 @@ async fn drain_from_snapshot<F: Fn() -> bool>(
     )
     .await?;
     let mut rows = Vec::new();
-    let mut originals = HintOriginals::new();
+    let originals = admitted_hint_originals(&pages)?;
     for page in &pages {
-        for row in page.rows()? {
-            if let Some(digest) = content_hint_digest(row)? {
-                originals.insert(
-                    (
-                        row.commit().stream_ref.clone(),
-                        row.commit().stream_position,
-                    ),
-                    digest,
-                );
-                if originals.len() > MAX_COVERED_HINTS {
-                    originals.pop_first();
-                }
-            }
-        }
         rows.extend(page.rows()?.iter().cloned());
     }
     let batch = committed_views_to_client_events(realm, rows)?;
     if !is_active() {
-        return Ok(HintOriginals::new());
+        return Ok(HintAdmission::default());
     }
     client.check_session()?;
-    let (changed, _) = install_live_current_snapshot(
-        client, snapshot, realm, stream, projector, &replica, &pages, &batch, is_active, list_fence,
+    let installed = install_live_cut(
+        client,
+        snapshot,
+        realm,
+        std::slice::from_ref(stream),
+        projector,
+        &replica,
+        &pages,
+        &batch,
+        is_active,
+        list_fence,
+        false,
     )
     .await?;
+    let changed = installed.changed;
     let evidence = resolve_stream_agent_keys(http, &projector.state_store, changed > 0).await?;
     client.check_session()?;
     if !is_active() {
-        return Ok(HintOriginals::new());
+        return Ok(HintAdmission::default());
     }
     let finals = projector.state_store.read(|store| {
         batch
@@ -649,7 +693,7 @@ async fn drain_from_snapshot<F: Fn() -> bool>(
                 .map_err(|e| protocol(e.to_string()))?;
         }
     }
-    if changed > 0 || evidence || batch.iter().any(|e| matches!(e, ClientEvent::Event(e) if e.kind == arkret_sdk::EventKind::AgentInteractionSet)) {
+    if changed > 0 || installed.current_changed || evidence || batch.iter().any(|e| matches!(e, ClientEvent::Event(e) if e.kind == arkret_sdk::EventKind::AgentInteractionSet)) {
         projector.realm_live_epoch.update(|v| *v = v.wrapping_add(1));
     }
     // Adopt only the candidate whose history and current pointer committed.
@@ -658,11 +702,15 @@ async fn drain_from_snapshot<F: Fn() -> bool>(
     if is_active() {
         *current = replica;
     }
-    Ok(originals)
+    Ok(HintAdmission {
+        originals,
+        generation: Some(installed.generation),
+    })
 }
 
 /// Install real live history and its current original at one durable pointer;
 /// the Account cursor is deliberately outside this independent transaction.
+#[cfg(test)]
 async fn install_live_current_snapshot<F: Fn() -> bool>(
     client: &OwnStationResultClient,
     snapshot: &arkret_sdk::http_client::own_station_results::BoundOwnStationResponse<
@@ -678,6 +726,41 @@ async fn install_live_current_snapshot<F: Fn() -> bool>(
     is_active: &F,
     list_fence: Option<&crate::state::RealmListReadFence>,
 ) -> garth::Result<(usize, bool)> {
+    let installed = install_live_cut(
+        client,
+        snapshot,
+        realm,
+        std::slice::from_ref(stream),
+        projector,
+        replica,
+        pages,
+        batch,
+        is_active,
+        list_fence,
+        false,
+    )
+    .await?;
+    if installed.current_changed {
+        projector
+            .realm_live_epoch
+            .update(|epoch| *epoch = epoch.wrapping_add(1));
+    }
+    Ok((installed.changed, installed.current_changed))
+}
+
+async fn install_live_cut<F: Fn() -> bool>(
+    client: &OwnStationResultClient,
+    snapshot: &CreatorOwnSnapshot,
+    realm: &arkret_sdk::RealmId,
+    streams: &[CommitStreamRef],
+    projector: &RealmIngestProjector,
+    replica: &OwnStationReplica,
+    pages: &[OwnStationScanPage],
+    batch: &[ClientEvent],
+    is_active: &F,
+    list_fence: Option<&crate::state::RealmListReadFence>,
+    complete_sidecars: bool,
+) -> garth::Result<InstalledLiveCut> {
     let account = snapshot.session().account_id().clone();
     let source_guard = || -> anyhow::Result<()> {
         anyhow::ensure!(is_active(), "live current route ended");
@@ -732,6 +815,7 @@ async fn install_live_current_snapshot<F: Fn() -> bool>(
         .await
         .map_err(crate::state::current_index::current_stage_error)?;
     let generation = stage.previous_generation();
+    let published_generation = stage.generation();
     guard().map_err(crate::state::current_index::current_stage_error)?;
     let current_changed = stage.changed();
     projector
@@ -753,7 +837,16 @@ async fn install_live_current_snapshot<F: Fn() -> bool>(
                 crate::identity::agent_signer_evidence::index_verified_committed_page(store, page)?;
             }
             changed += ingest_realm_batch(store, &projector.realm_id, batch);
-            store.stage_own_station_commit_stream_checkpoint(client, replica, stream, pages)?;
+            if complete_sidecars {
+                store
+                    .sidecar_history_at_snapshot(
+                        snapshot.value().map_err(|error| error.to_string())?,
+                    )
+                    .map_err(|error| error.to_string())?;
+            }
+            for stream in streams {
+                store.stage_own_station_commit_stream_checkpoint(client, replica, stream, pages)?;
+            }
             store.install_own_station_sidecar_current(snapshot)?;
             snapshot.value().map_err(|error| error.to_string())?;
             if !is_active() || store.active_authority() != Some(account.clone()) {
@@ -811,12 +904,11 @@ async fn install_live_current_snapshot<F: Fn() -> bool>(
     .await
     .map_err(crate::state::current_index::current_stage_error)?;
     guard().map_err(crate::state::current_index::current_stage_error)?;
-    if current_changed {
-        projector
-            .realm_live_epoch
-            .update(|epoch| *epoch = epoch.wrapping_add(1));
-    }
-    Ok((changed, current_changed))
+    Ok(InstalledLiveCut {
+        changed,
+        current_changed,
+        generation: published_generation,
+    })
 }
 
 /// Confirm only the pointer belonging to this store. A poisoned independent
@@ -893,6 +985,7 @@ pub(super) async fn refresh_sidecars<F: Fn() -> bool>(
         &list_fence,
     )
     .await
+    .map(|_| ())
 }
 
 async fn refresh_sidecars_from_snapshot<F: Fn() -> bool>(
@@ -904,108 +997,125 @@ async fn refresh_sidecars_from_snapshot<F: Fn() -> bool>(
     current: &mut OwnStationReplica,
     snapshot: &CreatorOwnSnapshot,
     list_fence: &crate::state::RealmListReadFence,
-) -> garth::Result<()> {
+) -> garth::Result<HintAdmission> {
     let mut candidate = current.clone();
     candidate.install_bound_snapshot(snapshot)?;
     own_station::validate_current_product(snapshot.value()?, realm)?;
     let mut pages = Vec::new();
     let mut retained_bytes = 0usize;
     let frozen = snapshot.value()?;
-    if projector
-        .state_store
-        .read(|s| s.sidecar_history_at_snapshot(frozen).is_err())
+    if frozen
+        .retention_and_history_floor
+        .stream_floors
+        .iter()
+        .any(|floor| {
+            matches!(floor.stream_ref, CommitStreamRef::Sidecar { .. }) && floor.oldest_position > 0
+        })
     {
-        for head in &snapshot.value()?.visible_stream_heads {
-            if !matches!(head.stream_ref, CommitStreamRef::Sidecar { .. }) {
-                continue;
+        projector
+            .state_store
+            .write(|store| -> anyhow::Result<()> {
+                anyhow::ensure!(is_active(), "private route ended before floor invalidation");
+                client.check_session()?;
+                snapshot.value()?;
+                store.require_realm_list_read_fence(realm.as_str(), Some(list_fence))?;
+                anyhow::ensure!(
+                    store.active_authority().as_ref() == Some(snapshot.session().account_id()),
+                    "private account changed before floor invalidation"
+                );
+                store.require_sidecar_current_not_superseded(snapshot.value()?)?;
+                // Withdrawal is fail-closed even when the subsequent flush fails.
+                // It never publishes a partial new cut or advances a checkpoint.
+                store.invalidate_sidecar_current(Some(realm.as_str()));
+                Ok(())
+            })
+            .map_err(protocol)?;
+        projector
+            .realm_live_epoch
+            .update(|epoch| *epoch = epoch.wrapping_add(1));
+        let barrier = projector
+            .state_store
+            .read(|store| store.begin_durable_flush())
+            .map_err(protocol)?;
+        barrier.wait().await.map_err(protocol)?;
+        return Err(protocol(
+            "complete Sidecar history is below its readable floor",
+        ));
+    }
+    let mut streams = Vec::new();
+    for head in &frozen.visible_stream_heads {
+        if !matches!(head.stream_ref, CommitStreamRef::Sidecar { .. }) {
+            continue;
+        }
+        if !is_active() {
+            return Ok(HintAdmission::default());
+        }
+        streams.push(head.stream_ref.clone());
+        let admitted = candidate
+            .complete_sidecar_head(client, &head.stream_ref)?
+            .cloned();
+        let retained = admitted.as_ref().is_some_and(|prefix| {
+            projector
+                .state_store
+                .read(|store| store.has_complete_sidecar_prefix(frozen, prefix))
+        });
+        if retained && admitted.as_ref() == Some(head) {
+            continue;
+        }
+        let (next, recovered) = candidate
+            .replay_sidecar_history(client, snapshot, &head.stream_ref, retained)
+            .await?;
+        candidate = next;
+        for page in recovered {
+            retained_bytes = retained_bytes
+                .checked_add(serde_json::to_vec(page.rows()?).map_err(protocol)?.len())
+                .ok_or_else(|| protocol("Sidecar current capacity overflow"))?;
+            if retained_bytes > MAX_REPLAY_BYTES {
+                return Err(protocol(
+                    "Sidecar current exceeds bounded candidate capacity",
+                ));
             }
-            let mut replica = OwnStationReplica::new(realm.clone());
-            replica.install_bound_snapshot(snapshot)?;
-            let end = head
-                .stream_position
-                .checked_add(1)
-                .ok_or_else(|| protocol("Sidecar head overflow"))?;
-            let recovered =
-                own_station::genesis_pages(client, realm, &head.stream_ref, end, &mut replica)
-                    .await?
-                    .ok_or_else(|| protocol("Sidecar native history is below readable floor"))?;
-            if replica.head(&head.stream_ref) != Some(head) {
-                return Err(protocol("Sidecar history has not reached exact current"));
-            }
-            for page in recovered {
-                retained_bytes = retained_bytes
-                    .checked_add(serde_json::to_vec(page.rows()?).map_err(protocol)?.len())
-                    .ok_or_else(|| protocol("Sidecar current capacity overflow"))?;
-                if retained_bytes > MAX_REPLAY_BYTES {
-                    return Err(protocol(
-                        "Sidecar current exceeds bounded candidate capacity",
-                    ));
-                }
-                pages.push(page);
-            }
+            pages.push(page);
         }
     }
     if !is_active() {
-        return Ok(());
+        return Ok(HintAdmission::default());
     }
     client.check_session()?;
-    projector
-        .state_store
-        .read(|store| store.require_realm_list_read_fence(realm.as_str(), Some(list_fence)))
-        .map_err(crate::state::current_index::current_stage_error)?;
-    projector
-        .state_store
-        .write(|store| store.require_sidecar_current_not_superseded(snapshot.value()?))
-        .map_err(crate::state::current_index::current_stage_error)?;
-    let changed = projector
-        .state_store
-        .write(|store| {
-            store.verified_projection_transaction(|store| {
-                if !is_active() {
-                    return Err("private route ended before projection".into());
-                }
-                client.check_session().map_err(|e| e.to_string())?;
-                store
-                    .require_realm_list_read_fence(realm.as_str(), Some(list_fence))
-                    .map_err(|error| error.to_string())?;
-                let mut changed = 0;
-                for page in &pages {
-                    changed += store.ingest_verified_message_history(page)?;
-                    crate::identity::agent_signer_evidence::index_verified_committed_page(
-                        store, page,
-                    )?;
-                }
-                store
-                    .sidecar_history_at_snapshot(snapshot.value().map_err(|e| e.to_string())?)
-                    .map_err(|e| e.to_string())?;
-                changed += store.install_own_station_sidecar_current(snapshot)?;
-                Ok(changed)
-            })
-        })
-        .map_err(protocol)?;
-    projector
-        .state_store
-        .read(|s| s.begin_durable_flush())
-        .map_err(protocol)?
-        .wait()
-        .await
-        .map_err(protocol)?;
+    let installed = install_live_cut(
+        client,
+        snapshot,
+        realm,
+        &streams,
+        projector,
+        &candidate,
+        &pages,
+        &[],
+        is_active,
+        Some(list_fence),
+        true,
+    )
+    .await?;
+    let changed = installed.changed;
     client.check_session()?;
     if !is_active() {
-        return Ok(());
+        return Ok(HintAdmission::default());
     }
     *current = candidate;
     let evidence = resolve_stream_agent_keys(http, &projector.state_store, changed > 0).await?;
     client.check_session()?;
     if !is_active() {
-        return Ok(());
+        return Ok(HintAdmission::default());
     }
-    if changed > 0 || evidence {
+    if changed > 0 || installed.current_changed || evidence {
         projector
             .realm_live_epoch
             .update(|v| *v = v.wrapping_add(1));
     }
-    Ok(())
+    Ok(HintAdmission {
+        originals: admitted_hint_originals(&pages)?,
+        generation: Some(installed.generation),
+    })
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -1202,7 +1312,7 @@ pub(super) mod tests {
         (rows, snapshot)
     }
 
-    fn content_burst_fixture() -> (
+    pub(super) fn content_burst_fixture() -> (
         Vec<CommittedEventView>,
         arkret_sdk::RealmStateSnapshot,
         serde_json::Value,
@@ -1393,6 +1503,64 @@ pub(super) mod tests {
     }
 
     #[tokio::test]
+    async fn hint_coverage_never_adopts_a_concurrent_generation_after_publication() {
+        let (rows, snapshot, key) = content_burst_fixture();
+        let realm = snapshot.realm_id.clone();
+        let mut bodies = vec![
+            serde_json::to_value(&snapshot).unwrap(),
+            serde_json::json!({
+                "committed_events":rows,"readable_floor":{"oldest_position":0,
+                "floor_commit_id":rows[0].commit().commit_id,"floor_reason":"stream_start"},"truncated":false
+            }),
+        ];
+        bodies.extend((0..20).map(|_| serde_json::json!({"__signer_key":key})));
+        let (client, _, server) = http(bodies);
+        let directory = tempfile::tempdir().unwrap();
+        let account = crate::test_support::AccountFixture::new("did:web:alice.example")
+            .station("ak:did_core:web:station.example")
+            .build();
+        let mut local =
+            crate::state::LocalStateStore::with_path(directory.path().join("concurrent-cut.json"));
+        local.switch_active_account(&account).unwrap();
+        let store = Arc::new(Mutex::new(local));
+        let mut projector = test_projector(store.clone(), &realm);
+        let writer = store.clone();
+        projector.realm_live_epoch = crate::runtime::input::ValueCell::new(
+            || 0,
+            |_| {},
+            move |update| {
+                let mut epoch = 0;
+                update(&mut epoch);
+                let mut store = writer.lock().unwrap();
+                let next = store.current_generation() + 1;
+                store.set_current_generation(next);
+            },
+        );
+        let mut hints = HintBatch::default();
+        hints.push(&realm, &hint(rows[2].clone(), 0)).unwrap();
+        let mut replica = OwnStationReplica::new(realm.clone());
+        let mut coverage = None;
+        drain_hints(
+            &client,
+            &client.http_client().unwrap(),
+            &realm,
+            &hints,
+            &projector,
+            &|| true,
+            &mut replica,
+            &mut coverage,
+        )
+        .await
+        .unwrap();
+        server.join().unwrap();
+        assert!(store.lock().unwrap().current_generation() > 1);
+        assert!(
+            coverage.is_none(),
+            "a later store generation is not this install's publication proof"
+        );
+    }
+
+    #[tokio::test]
     async fn hint_batch_does_not_scan_or_advance_when_snapshot_does_not_cover_hint() {
         let first = withheld(0, None);
         let second = withheld(1, Some(first.commit().commit_id.clone()));
@@ -1482,7 +1650,7 @@ pub(super) mod tests {
         assert!(hints.push(&realm, &hint(conflict, 1)).is_err());
     }
 
-    struct Source(Mutex<OwnStationSessionSnapshot>);
+    pub(super) struct Source(pub(super) Mutex<OwnStationSessionSnapshot>);
     impl OwnStationSessionSource for Source {
         fn snapshot(&self) -> arkret_sdk::http_client::Result<OwnStationSessionSnapshot> {
             Ok(self.0.lock().unwrap().clone())
@@ -1541,7 +1709,7 @@ pub(super) mod tests {
         .unwrap()
     }
 
-    fn frozen(rows: &[CommittedEventView]) -> arkret_sdk::RealmStateSnapshot {
+    pub(super) fn frozen(rows: &[CommittedEventView]) -> arkret_sdk::RealmStateSnapshot {
         let last = rows.last().unwrap().commit();
         let mut snapshot = arkret_sdk::RealmStateSnapshot {
             purpose: arkret_wire::RealmSnapshotPurpose::FullRecovery,
@@ -1603,6 +1771,19 @@ pub(super) mod tests {
         Arc<Source>,
         std::thread::JoinHandle<()>,
     ) {
+        http_for_account_observed(bodies, account, exact_checkpoint, None)
+    }
+
+    pub(super) fn http_for_account_observed(
+        bodies: Vec<serde_json::Value>,
+        account: arkret_sdk::AccountId,
+        exact_checkpoint: Option<arkret_sdk::CommitStreamHead>,
+        observed: Option<Arc<Mutex<Vec<String>>>>,
+    ) -> (
+        OwnStationResultClient,
+        Arc<Source>,
+        std::thread::JoinHandle<()>,
+    ) {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let base = format!("http://{}/", listener.local_addr().unwrap());
         let station = account.station_id.clone();
@@ -1651,6 +1832,12 @@ pub(super) mod tests {
                 };
                 let headers = String::from_utf8_lossy(&bytes[..end]).to_ascii_lowercase();
                 assert!(headers.contains("authorization: bearer test-grant"));
+                if let Some(observed) = &observed {
+                    observed
+                        .lock()
+                        .unwrap()
+                        .push(headers.lines().next().unwrap().to_owned());
+                }
                 let len = headers
                     .lines()
                     .find_map(|line| {
@@ -1663,7 +1850,13 @@ pub(super) mod tests {
                     assert!(count > 0);
                     bytes.extend_from_slice(&buffer[..count]);
                 }
-                if let Some(key) = body.get("__signer_key") {
+                if let Some(expected) = body.get("__scan_request") {
+                    assert!(headers.starts_with("post /_arkret/self/streams/scan "));
+                    let request: StreamScanRequest =
+                        serde_json::from_slice(&bytes[end..end + len]).unwrap();
+                    assert_eq!(serde_json::to_value(request).unwrap(), *expected);
+                    body = body["response"].clone();
+                } else if let Some(key) = body.get("__signer_key") {
                     use arkret_models_identity::signer_key_operations::{
                         SignerKeyQueryOutcome, SignerKeysQueryOutcome, SignerKeysQueryRequestBody,
                     };
@@ -1682,6 +1875,8 @@ pub(super) mod tests {
                         }],
                     })
                     .unwrap();
+                } else if body.get("visible_stream_heads").is_some() {
+                    assert!(headers.starts_with("get "));
                 } else if index > 0 {
                     assert!(headers.starts_with("post /_arkret/self/streams/scan "));
                     let request: StreamScanRequest =
@@ -1771,7 +1966,7 @@ pub(super) mod tests {
         snapshot
     }
 
-    fn seal_current_snapshot(snapshot: &mut arkret_sdk::RealmStateSnapshot) {
+    pub(super) fn seal_current_snapshot(snapshot: &mut arkret_sdk::RealmStateSnapshot) {
         let mut body = serde_json::to_value(&*snapshot).unwrap();
         body.as_object_mut().unwrap().remove("snapshot_id");
         body.as_object_mut().unwrap().remove("signature");
@@ -1782,7 +1977,7 @@ pub(super) mod tests {
         crate::test_support::committed_event::FixtureStation::did_web().sign_snapshot(snapshot);
     }
 
-    fn test_projector(
+    pub(super) fn test_projector(
         store: Arc<Mutex<crate::state::LocalStateStore>>,
         realm: &arkret_sdk::RealmId,
     ) -> RealmIngestProjector {
