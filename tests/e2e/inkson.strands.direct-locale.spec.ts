@@ -9,7 +9,7 @@ import {
 
 registerStrandsBeforeEach();
 
-test("Direct structure local controls preserve action values and existing MLS and main-Chat guards across public language navigation", async ({ page }) => {
+test("Direct structure local controls preserve action values and refuse writes without complete Current across public language navigation", async ({ page }) => {
   const writes: string[] = [];
   page.on("request", (request) => {
     const path = new URL(request.url()).pathname;
@@ -29,21 +29,6 @@ test("Direct structure local controls preserve action values and existing MLS an
     "unplace", "reorder", "rename_topic_target", "reorder_topic", "archive_topic_target",
     "restore_topic_target", "delete_topic_target",
   ];
-  const saveDisabled: Record<string, boolean> = {
-    new_chat: true,
-    new_topic: true,
-    rename_chat: true,
-    archive_chat: true,
-    restore_chat: true,
-    place: false,
-    unplace: false,
-    reorder: false,
-    rename_topic_target: true,
-    reorder_topic: false,
-    archive_topic_target: false,
-    restore_topic_target: false,
-    delete_topic_target: false,
-  };
   const english = [
     "New Chat", "New Topic", "Rename Chat", "Archive Chat", "Restore Chat", "Move Chat to Topic",
     "Remove Chat from Topic", "Move Chat to end of Topic", "Rename Topic", "Move Topic to end",
@@ -68,9 +53,8 @@ test("Direct structure local controls preserve action values and existing MLS an
     await page.getByTestId("settings-nav-item-theme").click();
     await page.getByTestId(`language-${language}`).click();
     await expect(page.getByTestId("client-shell")).toHaveAttribute("data-locale", language);
-    // Navigate through the public contact sidebar. The fixture's protected Found
-    // result installs a stable binding context, but supplies no typed Current
-    // rows or restorable MLS state for metadata encryption.
+    // Navigate through the public contact sidebar. Found supplies coordinates;
+    // this fixture has no complete typed Current or restorable MLS state.
     await gotoAndDismissRecovery(page, "/contacts/manage");
     const shell = page.getByTestId("client-shell");
     await shell.getByTestId("realm-sidebar-tab-direct").click();
@@ -116,14 +100,9 @@ test("Direct structure local controls preserve action values and existing MLS an
       } else {
         await expect(topic).toHaveCount(0);
       }
-      // Metadata actions require MLS; archiving/restoring the main Chat is blocked.
-      // Other local controls remain enabled. No Save is submitted, and enabled
-      // controls do not prove that a command could pass its authoring/admission gates.
-      if (saveDisabled[value]) {
-        await expect(save).toBeDisabled();
-      } else {
-        await expect(save).toBeEnabled();
-      }
+      // Every write requires complete Current and proven joined membership.
+      // Localized controls remain usable without inventing authoring authority.
+      await expect(save).toBeDisabled();
     }
     await action.selectOption("rename_chat");
     await manage.click();
