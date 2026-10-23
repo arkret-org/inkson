@@ -75,8 +75,9 @@ impl<T> ReadFlights<T> {
             return flight;
         }
         let flight = make().shared();
-        self.entries
-            .push((key, flight.downgrade().expect("unpolled projection read")));
+        if let Some(weak) = flight.downgrade() {
+            self.entries.push((key, weak));
+        }
         flight
     }
 }

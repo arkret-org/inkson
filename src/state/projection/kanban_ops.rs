@@ -158,6 +158,7 @@ struct LocalRecordMetadata {
 /// Normalize a batch of canonical realm events (from `backfill` /
 /// `events/subscribe`) into [`RawOperationRecord`]s for EVERY kanban-relevant
 /// kind — the single ingest funnel that replaces the old per-kind extractors.
+#[cfg(test)]
 pub(crate) fn kanban_operations_from_events(
     events: &[arkret_sdk::Event],
 ) -> Vec<RawOperationRecord> {

@@ -665,9 +665,19 @@ pub(super) fn submit_kanban_card_create(
     ));
     let api_token = token();
     let realm_for_record = realm_id.clone();
+    let (board_space_id, list_space_id) = match (
+        arkret_sdk::SpaceId::new(command.board_space_id),
+        arkret_sdk::SpaceId::new(command.list_space_id),
+    ) {
+        (Ok(board), Ok(list)) => (board, list),
+        (Err(error), _) | (_, Err(error)) => {
+            board_status.set(error.to_string());
+            return;
+        }
+    };
     let placement = match crate::outbound_store::card_placement::CardPlacement::new(
-        arkret_sdk::SpaceId::new(command.board_space_id).expect("validated Board"),
-        arkret_sdk::SpaceId::new(command.list_space_id).expect("validated List"),
+        board_space_id,
+        list_space_id,
         command.rank,
         op_id.clone(),
     ) {

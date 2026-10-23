@@ -419,7 +419,7 @@ fn strand_views_with_aliases(
         match kind.as_str() {
             event_kind_str::STRAND_CREATE => {
                 if let Some(mut view) = strand_view_from_create_op(record) {
-                    view.strand_id = resolve_event_derived_target_alias(&aliases, &view.strand_id);
+                    view.strand_id = resolve_event_derived_target_alias(aliases, &view.strand_id);
                     if let Some(current) = by_id.get_mut(&view.strand_id) {
                         // The endpoint row is the authoritative current
                         // structural/metadata view. It intentionally omits
@@ -451,39 +451,39 @@ fn strand_views_with_aliases(
             }
             event_kind_str::STRAND_MOVE => {
                 if let Some(id) = op_strand_target_id(record)
-                    .map(|id| resolve_event_derived_target_alias(&aliases, &id))
+                    .map(|id| resolve_event_derived_target_alias(aliases, &id))
                     && let Some(view) = by_id.get_mut(&id)
                 {
                     apply_move_to_view(view, record);
                     view.board_space_id = view
                         .board_space_id
                         .as_deref()
-                        .map(|id| resolve_event_derived_target_alias(&aliases, id));
+                        .map(|id| resolve_event_derived_target_alias(aliases, id));
                     view.list_space_id = view
                         .list_space_id
                         .as_deref()
-                        .map(|id| resolve_event_derived_target_alias(&aliases, id));
+                        .map(|id| resolve_event_derived_target_alias(aliases, id));
                 }
             }
             event_kind_str::STRAND_REORDER => {
                 if let Some(id) = op_strand_target_id(record)
-                    .map(|id| resolve_event_derived_target_alias(&aliases, &id))
+                    .map(|id| resolve_event_derived_target_alias(aliases, &id))
                     && let Some(view) = by_id.get_mut(&id)
                 {
                     apply_reorder_to_view(view, record);
                     view.board_space_id = view
                         .board_space_id
                         .as_deref()
-                        .map(|id| resolve_event_derived_target_alias(&aliases, id));
+                        .map(|id| resolve_event_derived_target_alias(aliases, id));
                     view.list_space_id = view
                         .list_space_id
                         .as_deref()
-                        .map(|id| resolve_event_derived_target_alias(&aliases, id));
+                        .map(|id| resolve_event_derived_target_alias(aliases, id));
                 }
             }
             event_kind_str::STRAND_ARCHIVE => {
                 if let Some(id) = op_strand_target_id(record)
-                    .map(|id| resolve_event_derived_target_alias(&aliases, &id))
+                    .map(|id| resolve_event_derived_target_alias(aliases, &id))
                     && let Some(view) = by_id.get_mut(&id)
                 {
                     view.state = arkret_sdk::ObjectState::Archived;
@@ -491,7 +491,7 @@ fn strand_views_with_aliases(
             }
             event_kind_str::STRAND_RESTORE => {
                 if let Some(id) = op_strand_target_id(record)
-                    .map(|id| resolve_event_derived_target_alias(&aliases, &id))
+                    .map(|id| resolve_event_derived_target_alias(aliases, &id))
                     && let Some(view) = by_id.get_mut(&id)
                 {
                     view.state = arkret_sdk::ObjectState::Active;
@@ -499,7 +499,7 @@ fn strand_views_with_aliases(
             }
             event_kind_str::STRAND_UPDATE => {
                 if let Some(id) = op_strand_target_id(record)
-                    .map(|id| resolve_event_derived_target_alias(&aliases, &id))
+                    .map(|id| resolve_event_derived_target_alias(aliases, &id))
                     && let Some(view) = by_id.get_mut(&id)
                     && op_body(record)
                         .and_then(|body| body.get("patch"))
@@ -512,7 +512,7 @@ fn strand_views_with_aliases(
             event_kind_str::RSVP_SET => {
                 if let Some(id) = op_body(record)
                     .and_then(|body| json_path_string(Some(body), &["event_ref"]))
-                    .map(|id| resolve_event_derived_target_alias(&aliases, &id))
+                    .map(|id| resolve_event_derived_target_alias(aliases, &id))
                     && let Some(view) = by_id.get_mut(&id)
                 {
                     apply_rsvp_set_to_view(view, record);
@@ -707,6 +707,7 @@ pub(crate) fn project_board_with_projection(
     )
 }
 
+#[cfg(test)]
 pub(crate) fn project_board_with_projection_for_actor(
     ops: &[RawOperationRecord],
     projected_containers: &[crate::state::projection_views::SpaceContainerProjectionView],

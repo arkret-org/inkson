@@ -3113,7 +3113,7 @@ async fn process_to_device_delivery(
 
 /// Fold the realm's discussion timeline into the shared `raw_operations` log so
 /// the Discussion tab projects local-first — no per-open realm backfill /
-/// redecrypt — mirroring [`ingest_kanban_projection_events`].
+/// redecrypt — mirroring [`ingest_kanban_events`].
 /// Returns the number of newly inserted / changed records. Stores only
 /// ciphertext envelopes / tombstones (never decrypted plaintext); dedup is by
 /// the message event id via `upsert_raw_operation`.
@@ -3188,6 +3188,7 @@ pub(crate) fn ingest_message_events(
 /// dedupe through the same `operation_id` upsert. Events are the projection
 /// event JSON shape (`event_kind` / `payload` / `operation_id`), matching both
 /// `account.subscribe` `state.events[]` and `events/subscribe` Event frames.
+#[cfg(test)]
 pub(crate) fn ingest_kanban_projection_events(
     store: &mut LocalStateStore,
     realm_id: &str,

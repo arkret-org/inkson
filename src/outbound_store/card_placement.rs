@@ -147,7 +147,7 @@ impl DurableOutboundState {
         self.items = queue.snapshot().items;
         self.card_placements
             .get_mut(create)
-            .expect("validated initializer")
+            .ok_or_else(|| garth::Error::Storage("missing card initializer".into()))?
             .move_event = Some(candidate.event_id.clone());
         Ok(candidate)
     }
