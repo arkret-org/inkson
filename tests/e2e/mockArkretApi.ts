@@ -301,6 +301,15 @@ const snapshotUnavailableDescriptor = (() => {
 })();
 const streamScanOperationId = "ak.self.committed_event.read.scan.v1";
 const watchReadOperationId = "ak.self.strand.watch.read.current.v1";
+const realmStreamsOperationId = "ak.self.realm.read.streams.v1";
+const realmStreamsNotFoundDescriptor = (() => {
+  const descriptor = activeMockErrorDescriptor("not_found");
+  const operations = mockOperationErrorMapping.operations.filter(operation => operation.operation_id === realmStreamsOperationId);
+  // client-sync section 4.1 and the operation's error mapping require the
+  // same non-enumerating not_found for absent and invisible Realms.
+  if (operations.length !== 1) throw new Error("Realm stream enumeration must have one current error mapping");
+  return descriptor;
+})();
 const watchPreconditionDescriptor = (() => {
   const descriptor = activeMockErrorDescriptor("failed_precondition");
   const operations = mockOperationErrorMapping.operations.filter(operation => operation.operation_id === "ak.self.events.command.submit.v1");
@@ -518,6 +527,10 @@ export function validateMockResponseForOperation(
   }
   if (operation.operation_id === streamScanOperationId && status === streamScanCapabilityDeniedDescriptor.http_status) {
     validateClosedMockProblem(streamScanCapabilityDeniedDescriptor, status, value, contentType);
+    return;
+  }
+  if (operation.operation_id === realmStreamsOperationId && status === realmStreamsNotFoundDescriptor.http_status) {
+    validateClosedMockProblem(realmStreamsNotFoundDescriptor, status, value, contentType);
     return;
   }
   if (operation.operation_id === watchReadOperationId && status !== 200) {
@@ -2876,7 +2889,11 @@ export async function mockArkretApi(
     if (realmStreams && route.request().method() === "GET") {
       const fixture = nativeFixtures.get(decodeURIComponent(realmStreams[1]));
       if (!fixture || !nativeReadable(fixture)) {
-        throw new Error("stream enumeration has no readable native Realm fixture");
+        const descriptor = realmStreamsNotFoundDescriptor;
+        return json(route, {
+          type: descriptor.type_uri, title: descriptor.title, status: descriptor.http_status,
+          detail: "The requested Realm is unavailable to this fixture caller.",
+        }, descriptor.http_status, "application/problem+json");
       }
       // Current fixtures fit one page. Never silently truncate an expanded
       // fixture or pretend that its unreadable streams have an empty floor.

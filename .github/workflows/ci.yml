@@ -235,6 +235,10 @@ jobs:
               output.write(f"INKSON_WIRE_BIN={executables[0]}\n")
           PY
 
+      - name: Stream error response contracts
+        working-directory: inkson
+        run: npm run contract -- tests/contract/realm-streams-not-found.spec.ts tests/contract/stream-capability-denied.spec.ts
+
       - name: Browser regression preflight
         id: browser-preflight
         working-directory: inkson
