@@ -176,6 +176,27 @@ impl LocalStateStore {
             .and_then(|view| Some((view.account_key.clone()?, view.generation)))
     }
 
+    /// Publication fence for a complete cut, independent of MLS/send readiness.
+    pub(crate) fn current_product_cut_generation(&self, realm_id: &str) -> Option<u64> {
+        if self.current_reset_required()
+            || self.account_scope_read_denied(realm_id)
+            || self.cached_account_key.as_deref() != Some(self.effective_account_key().as_str())
+        {
+            return None;
+        }
+        self.current_view
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .as_ref()
+            .filter(|view| {
+                view.account_key == self.cached_account_key
+                    && view.generation == self.current_generation()
+                    && view.view.realm_id == realm_id.trim()
+                    && view.view.complete_cut
+            })
+            .map(|view| view.generation)
+    }
+
     /// The installed product view of the active account, if any.
     pub(crate) fn current_product_view(
         &self,

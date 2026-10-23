@@ -9,6 +9,81 @@ use super::*;
 const MAX_REPLAY_BYTES: usize = 64 * 1024 * 1024;
 const DISCOVERY_INTERVAL: Duration = Duration::from_secs(30);
 const MAX_HINT_BATCH: usize = 64;
+const MAX_COVERED_HINTS: usize = 2048;
+
+type HintOriginals = BTreeMap<(CommitStreamRef, u64), [u8; 32]>;
+
+fn content_hint_digest(view: &CommittedEventView) -> garth::Result<Option<[u8; 32]>> {
+    if !matches!(view, CommittedEventView::Full(full) if matches!(full.event.kind,
+        arkret_sdk::EventKind::MessageCreate | arkret_sdk::EventKind::MessageRevise))
+    {
+        return Ok(None);
+    }
+    Ok(Some(arkret_sdk::canonical::sha256_bytes(
+        arkret_sdk::canonical::canonical_json_bytes(view).map_err(protocol)?,
+    )))
+}
+
+/// An optimization proof for exact content wakeups, not a reusable allow ticket.
+/// Its bound response keeps the original provider and authority lease alive.
+struct HintCoverage {
+    snapshot: CreatorOwnSnapshot,
+    generation: u64,
+    list_fence: crate::state::RealmListReadFence,
+    originals: HintOriginals,
+}
+
+impl HintCoverage {
+    fn covers(
+        &self,
+        client: &OwnStationResultClient,
+        hints: &HintBatch,
+        projector: &RealmIngestProjector,
+        current: &OwnStationReplica,
+    ) -> garth::Result<bool> {
+        client.check_session()?;
+        let snapshot = self.snapshot.value()?;
+        if client.session()? != self.snapshot.session()
+            || hints.revalidate
+            || hints.originals.is_empty()
+            || hints
+                .originals
+                .iter()
+                .any(|(key, digest)| self.originals.get(key) != Some(digest))
+            || current.snapshot() != Some(snapshot)
+        {
+            return Ok(false);
+        }
+        projector
+            .state_store
+            .read(|store| -> Result<bool, String> {
+                if store.active_authority().as_ref() != Some(self.snapshot.session().account_id())
+                    || store.current_generation() != self.generation
+                    || store.realm_list_read_fence(snapshot.realm_id.as_str()) != self.list_fence
+                    || store.current_product_cut_generation(snapshot.realm_id.as_str())
+                        != Some(self.generation)
+                {
+                    return Ok(false);
+                }
+                for stream in &hints.streams {
+                    let Some(head) = snapshot
+                        .visible_stream_heads
+                        .iter()
+                        .find(|head| &head.stream_ref == stream)
+                    else {
+                        return Ok(false);
+                    };
+                    if current.head(stream) != Some(head)
+                        || store.verified_commit_stream_cursor(stream)?.as_ref() != Some(head)
+                    {
+                        return Ok(false);
+                    }
+                }
+                Ok(true)
+            })
+            .map_err(protocol)
+    }
+}
 
 type HintFrame = arkret_models_collaboration::sync_frames::committed_event_subscribe::CommittedEventSubscribeFrame;
 
@@ -20,6 +95,8 @@ struct HintBatch {
     streams: BTreeSet<CommitStreamRef>,
     discover: bool,
     cursor: Option<String>,
+    originals: HintOriginals,
+    revalidate: bool,
 }
 
 impl HintBatch {
@@ -42,6 +119,17 @@ impl HintBatch {
             ));
         }
         self.streams.insert(commit.stream_ref.clone());
+        if let Some(digest) = content_hint_digest(view)? {
+            if self
+                .originals
+                .insert((commit.stream_ref.clone(), commit.stream_position), digest)
+                .is_some_and(|prior| prior != digest)
+            {
+                self.revalidate = true;
+            }
+        } else {
+            self.revalidate = true;
+        }
         self.discover |= matches!(view, CommittedEventView::Full(full) if matches!(full.event.kind,
             arkret_sdk::EventKind::CircleCreate | arkret_sdk::EventKind::CircleMemberState | arkret_sdk::EventKind::MemberState | arkret_sdk::EventKind::InviteAccept | arkret_sdk::EventKind::SidecarCreate | arkret_sdk::EventKind::SidecarContextAttach));
         if let Some(cursor) = &frame.cursor {
@@ -128,6 +216,7 @@ pub(super) async fn subscription<F: Fn() -> bool>(
     // Re-enumerate at rollover and while idle or busy so the first 64 cannot
     // permanently starve another stream. Only verified scans move checkpoints.
     follow_once(client, http, realm, projector, ctx, is_active, current).await?;
+    let mut coverage = None;
     let mut rediscovery = Box::pin(crate::runtime_helpers::sleep_for(DISCOVERY_INTERVAL));
     while is_active() {
         client.check_session()?;
@@ -143,6 +232,7 @@ pub(super) async fn subscription<F: Fn() -> bool>(
             .await
             {
                 Either::Left(_) => {
+                    coverage = None;
                     follow_once(client, http, realm, projector, ctx, is_active, current).await?;
                     rediscovery = Box::pin(crate::runtime_helpers::sleep_for(DISCOVERY_INTERVAL));
                 }
@@ -154,6 +244,7 @@ pub(super) async fn subscription<F: Fn() -> bool>(
                         .state_store
                         .read(|s| s.has_pending_sidecar_history(realm.as_str()))
                     {
+                        coverage = None;
                         refresh_sidecars(client, http, realm, projector, is_active, current)
                             .await?;
                     }
@@ -167,11 +258,22 @@ pub(super) async fn subscription<F: Fn() -> bool>(
         if frame.committed_event().is_some() {
             let (hints, control, ended) =
                 collect_ready_hints(realm, frame, &mut stream, resume, is_active)?;
-            drain_hints(client, http, realm, &hints, projector, is_active, current).await?;
+            drain_hints(
+                client,
+                http,
+                realm,
+                &hints,
+                projector,
+                is_active,
+                current,
+                &mut coverage,
+            )
+            .await?;
             if !is_active() {
                 return Ok(());
             }
             if hints.discover {
+                coverage = None;
                 follow_once(client, http, realm, projector, ctx, is_active, current).await?;
             }
             client.check_session()?;
@@ -186,6 +288,9 @@ pub(super) async fn subscription<F: Fn() -> bool>(
             };
             frame = next;
         }
+        // A control frame is always an invalidation barrier, even when it
+        // carries no cursor. It is never absorbed by content deduplication.
+        coverage = None;
         match frame.kind {
             Kind::ResyncRequired => {
                 resume.reset();
@@ -335,11 +440,18 @@ async fn drain_hints<F: Fn() -> bool>(
     projector: &RealmIngestProjector,
     is_active: &F,
     current: &mut OwnStationReplica,
+    coverage: &mut Option<HintCoverage>,
 ) -> garth::Result<()> {
     client.check_session()?;
     if !is_active() || hints.streams.is_empty() {
         return Ok(());
     }
+    if let Some(proof) = coverage.as_ref()
+        && proof.covers(client, hints, projector, current)?
+    {
+        return Ok(());
+    }
+    *coverage = None;
     let list_fence = projector
         .state_store
         .read(|store| store.realm_list_read_fence(realm.as_str()));
@@ -359,11 +471,12 @@ async fn drain_hints<F: Fn() -> bool>(
             ));
         }
     }
+    let mut originals = HintOriginals::new();
     for stream in &hints.streams {
         if !is_active() {
             return Ok(());
         }
-        drain_from_snapshot(
+        let admitted = drain_from_snapshot(
             client,
             http,
             realm,
@@ -375,6 +488,12 @@ async fn drain_hints<F: Fn() -> bool>(
             Some(&list_fence),
         )
         .await?;
+        for (key, digest) in admitted {
+            originals.insert(key, digest);
+            if originals.len() > MAX_COVERED_HINTS {
+                originals.pop_first();
+            }
+        }
     }
     if hints
         .streams
@@ -393,6 +512,21 @@ async fn drain_hints<F: Fn() -> bool>(
             &list_fence,
         )
         .await?;
+    }
+    if is_active() {
+        client.check_session()?;
+        snapshot.value()?;
+        while originals.len() > MAX_COVERED_HINTS {
+            originals.pop_first();
+        }
+        *coverage = Some(HintCoverage {
+            snapshot,
+            generation: projector
+                .state_store
+                .read(|store| store.current_generation()),
+            list_fence,
+            originals,
+        });
     }
     Ok(())
 }
@@ -441,6 +575,7 @@ pub(super) async fn drain<F: Fn() -> bool>(
         Some(&list_fence),
     )
     .await
+    .map(|_| ())
 }
 
 async fn drain_from_snapshot<F: Fn() -> bool>(
@@ -453,7 +588,7 @@ async fn drain_from_snapshot<F: Fn() -> bool>(
     is_active: &F,
     current: &mut OwnStationReplica,
     list_fence: Option<&crate::state::RealmListReadFence>,
-) -> garth::Result<()> {
+) -> garth::Result<HintOriginals> {
     current.install_bound_snapshot(snapshot)?;
     own_station::validate_current_product(snapshot.value()?, realm)?;
     let saved = projector
@@ -470,12 +605,27 @@ async fn drain_from_snapshot<F: Fn() -> bool>(
     )
     .await?;
     let mut rows = Vec::new();
+    let mut originals = HintOriginals::new();
     for page in &pages {
+        for row in page.rows()? {
+            if let Some(digest) = content_hint_digest(row)? {
+                originals.insert(
+                    (
+                        row.commit().stream_ref.clone(),
+                        row.commit().stream_position,
+                    ),
+                    digest,
+                );
+                if originals.len() > MAX_COVERED_HINTS {
+                    originals.pop_first();
+                }
+            }
+        }
         rows.extend(page.rows()?.iter().cloned());
     }
     let batch = committed_views_to_client_events(realm, rows)?;
     if !is_active() {
-        return Ok(());
+        return Ok(HintOriginals::new());
     }
     client.check_session()?;
     let (changed, _) = install_live_current_snapshot(
@@ -485,7 +635,7 @@ async fn drain_from_snapshot<F: Fn() -> bool>(
     let evidence = resolve_stream_agent_keys(http, &projector.state_store, changed > 0).await?;
     client.check_session()?;
     if !is_active() {
-        return Ok(());
+        return Ok(HintOriginals::new());
     }
     let finals = projector.state_store.read(|store| {
         batch
@@ -508,7 +658,7 @@ async fn drain_from_snapshot<F: Fn() -> bool>(
     if is_active() {
         *current = replica;
     }
-    Ok(())
+    Ok(originals)
 }
 
 /// Install real live history and its current original at one durable pointer;
@@ -977,6 +1127,7 @@ pub(super) mod tests {
             &projector,
             &|| true,
             &mut current,
+            &mut None,
         )
         .await
         .unwrap();
@@ -1051,6 +1202,196 @@ pub(super) mod tests {
         (rows, snapshot)
     }
 
+    fn content_burst_fixture() -> (
+        Vec<CommittedEventView>,
+        arkret_sdk::RealmStateSnapshot,
+        serde_json::Value,
+    ) {
+        use crate::test_support::committed_event::{
+            FixtureStation, fixture_time, verified_realm_fixture_as,
+            verified_realm_fixture_from_genesis,
+        };
+        let station = FixtureStation::did_web();
+        let device = "ak:device:0196419b-0000-7000-8000-000000000001";
+        let (origin, ..) = verified_realm_fixture_as(
+            withheld(0, None).commit().realm_id.clone(),
+            vec![],
+            "alice.example",
+            device,
+        );
+        let mut strand = arkret_models_collaboration::objects::strand::Strand::new_create(
+            origin.realm_id.clone(),
+            "Content fixture",
+            origin.genesis_event.actor_id.clone(),
+        );
+        strand.created_at = fixture_time(2);
+        strand.tracks.clear();
+        strand.tracks.insert(
+            "discussion".into(),
+            arkret_models_collaboration::objects::profiles::StrandTrack::discussion_primary(),
+        );
+        let entry = (
+            "ak.strand.create".to_owned(),
+            serde_json::json!({"object":strand}),
+        );
+        let (_, _, first) = verified_realm_fixture_from_genesis(
+            &station,
+            origin.genesis_event.clone(),
+            vec![entry.clone()],
+            "alice.example",
+            device,
+        );
+        let strand_id = arkret_sdk::StrandId::from_event_id(&first[0].event.event_id);
+        let mut entries = vec![entry];
+        for number in 0..20 {
+            entries.push((
+                "ak.message.create".to_owned(),
+                serde_json::json!({
+                    "strand_id":strand_id,"track_name":"discussion",
+                    "content":{"kind":"ak.content.text","body":format!("Content {number}")}
+                }),
+            ));
+        }
+        let (bundle, _, mut items) = verified_realm_fixture_from_genesis(
+            &station,
+            origin.genesis_event,
+            entries,
+            "alice.example",
+            device,
+        );
+        let signer = arkret_test_kit::keys::seeded_signer(
+            arkret_sdk::Did::new("did:web:alice.example").unwrap(),
+            arkret_sdk::DidUrl::new(format!("did:web:alice.example#{device}")).unwrap(),
+        );
+        let key = arkret_models_identity::ResolvedSignerKey {
+            public_key_b64u: arkret_sdk::Base64UrlString::new(
+                arkret_sdk::canonical::base64url_encode(signer.verifying_key().as_bytes()),
+            )
+            .unwrap(),
+            authorization_ref: arkret_sdk::CommittedEventRef {
+                event_id: bundle.genesis_event.event_id.clone(),
+                commit_id: bundle.genesis_commit.commit_id.clone(),
+                stream_ref: bundle.genesis_commit.stream_ref.clone(),
+                stream_position: 0,
+            },
+            revision: arkret_sdk::CurrentRevision {
+                commit_id: bundle.genesis_commit.commit_id.clone(),
+                stream_position: 0,
+            },
+            governance_generation: 0,
+        };
+        let mut previous = bundle.genesis_commit.commit_id.clone();
+        let mut rows = vec![serde_json::from_value(serde_json::json!({"commit":bundle.genesis_commit,"event_disclosure":{"status":"withheld"}})).unwrap()];
+        for item in &mut items {
+            item.commit.previous_commit_ref = Some(previous);
+            if item.event.kind == arkret_sdk::EventKind::MessageCreate {
+                let fact = arkret_models_collaboration::authority_commit::AccountDeviceHistoricalSignerFact {
+                    event_id: item.event.event_id.clone(), actor: item.event.actual_signer().clone(),
+                    device_id: item.event.account_device_producer().unwrap().unwrap().device_id,
+                    verification_method: item.event.producer_proof.as_ref().unwrap().verification_method.clone(),
+                    key: key.clone(), accepted_at: fixture_time(1),
+                };
+                item.commit.producer_signer_fact_digest = Some(fact.digest().unwrap());
+            }
+            item.commit = station.seal_commit(item.commit.clone());
+            previous = item.commit.commit_id.clone();
+            rows.push(if item.event.kind == arkret_sdk::EventKind::MessageCreate {
+                CommittedEventView::Full(item.clone())
+            } else {
+                serde_json::from_value(serde_json::json!({"commit":item.commit,"event_disclosure":{"status":"withheld"}})).unwrap()
+            });
+        }
+        let mut snapshot = frozen(&rows);
+        snapshot.current_state_entries =
+            super::super::tests::coland_bootstrap_rows(&bundle, &items);
+        seal_current_snapshot(&mut snapshot);
+        (rows, snapshot, serde_json::to_value(key).unwrap())
+    }
+
+    #[tokio::test]
+    async fn twenty_separate_batches_reuse_only_durably_admitted_content_at_the_same_cut() {
+        let (rows, snapshot, key) = content_burst_fixture();
+        let realm = snapshot.realm_id.clone();
+        let mut bodies = vec![
+            serde_json::to_value(&snapshot).unwrap(),
+            serde_json::json!({
+                "committed_events":rows,"readable_floor":{"oldest_position":0,
+                "floor_commit_id":rows[0].commit().commit_id,"floor_reason":"stream_start"},"truncated":false
+            }),
+        ];
+        bodies.extend((0..20).map(|_| serde_json::json!({"__signer_key":key})));
+        let (client, source, server) = http(bodies);
+        let directory = tempfile::tempdir().unwrap();
+        let account = crate::test_support::AccountFixture::new("did:web:alice.example")
+            .station("ak:did_core:web:station.example")
+            .build();
+        let mut local = crate::state::LocalStateStore::with_path(
+            directory.path().join("separate-batches.json"),
+        );
+        local.switch_active_account(&account).unwrap();
+        let store = Arc::new(Mutex::new(local));
+        let projector = test_projector(store.clone(), &realm);
+        let mut current = OwnStationReplica::new(realm.clone());
+        let mut coverage = None;
+        for (number, row) in rows.iter().skip(2).enumerate() {
+            let mut hints = HintBatch::default();
+            hints.push(&realm, &hint(row.clone(), number)).unwrap();
+            drain_hints(
+                &client,
+                &client.http_client().unwrap(),
+                &realm,
+                &hints,
+                &projector,
+                &|| true,
+                &mut current,
+                &mut coverage,
+            )
+            .await
+            .unwrap();
+        }
+        server.join().unwrap();
+        let proof = coverage.as_ref().unwrap();
+        assert_eq!(proof.originals.len(), 20);
+        let mut repeated = HintBatch::default();
+        repeated.push(&realm, &hint(rows[2].clone(), 20)).unwrap();
+        assert!(
+            proof
+                .covers(&client, &repeated, &projector, &current)
+                .unwrap()
+        );
+        let mut undisclosed = HintBatch::default();
+        undisclosed.push(&realm, &hint(serde_json::from_value(serde_json::json!({"commit":rows[2].commit(),"event_disclosure":{"status":"withheld"}})).unwrap(), 20)).unwrap();
+        assert!(
+            !proof
+                .covers(&client, &undisclosed, &projector, &current)
+                .unwrap()
+        );
+        let generation = store.lock().unwrap().current_generation();
+        store.lock().unwrap().set_current_generation(generation + 1);
+        assert!(
+            !proof
+                .covers(&client, &repeated, &projector, &current)
+                .unwrap()
+        );
+        store.lock().unwrap().set_current_generation(generation);
+        let old = source.0.lock().unwrap().clone();
+        *source.0.lock().unwrap() = OwnStationSessionSnapshot::new(
+            old.binding().clone(),
+            old.account_id().clone(),
+            old.account_id().station_id.clone(),
+            old.grant_id().clone(),
+            old.epoch() + 1,
+            "test-grant".into(),
+        )
+        .unwrap()
+        .with_provider_identity(Default::default());
+        assert!(
+            proof
+                .covers(&client, &repeated, &projector, &current)
+                .is_err()
+        );
+    }
+
     #[tokio::test]
     async fn hint_batch_does_not_scan_or_advance_when_snapshot_does_not_cover_hint() {
         let first = withheld(0, None);
@@ -1082,7 +1423,8 @@ pub(super) mod tests {
                     &hints,
                     &projector,
                     &|| true,
-                    &mut current
+                    &mut current,
+                    &mut None
                 )
                 .await
                 .is_err()
@@ -1292,7 +1634,7 @@ pub(super) mod tests {
             .unwrap()
             + 1;
         let server = std::thread::spawn(move || {
-            for (index, body) in bodies.into_iter().enumerate() {
+            for (index, mut body) in bodies.into_iter().enumerate() {
                 let (mut stream, _) = listener.accept().unwrap();
                 stream
                     .set_read_timeout(Some(Duration::from_secs(10)))
@@ -1321,7 +1663,26 @@ pub(super) mod tests {
                     assert!(count > 0);
                     bytes.extend_from_slice(&buffer[..count]);
                 }
-                if index > 0 {
+                if let Some(key) = body.get("__signer_key") {
+                    use arkret_models_identity::signer_key_operations::{
+                        SignerKeyQueryOutcome, SignerKeysQueryOutcome, SignerKeysQueryRequestBody,
+                    };
+                    assert!(headers.starts_with("post /_arkret/self/signer-keys/query "));
+                    let request: SignerKeysQueryRequestBody =
+                        serde_json::from_slice(&bytes[end..end + len]).unwrap();
+                    body = serde_json::to_value(SignerKeysQueryOutcome {
+                        request_id: request.request_id,
+                        realm_id: request.realm_id,
+                        recipient_account_id: request.recipient_account_id,
+                        recipient_actor_id: request.recipient_actor_id,
+                        results: vec![SignerKeyQueryOutcome::HistoricalResolved {
+                            selector: request.queries[0].clone(),
+                            key: serde_json::from_value(key.clone()).unwrap(),
+                            accepted_at: crate::test_support::committed_event::fixture_time(1),
+                        }],
+                    })
+                    .unwrap();
+                } else if index > 0 {
                     assert!(headers.starts_with("post /_arkret/self/streams/scan "));
                     let request: StreamScanRequest =
                         serde_json::from_slice(&bytes[end..end + len]).unwrap();

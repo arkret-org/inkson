@@ -3902,7 +3902,7 @@ mod tests {
         )
     }
 
-    fn coland_bootstrap_rows(
+    pub(in crate::realm_events_engine) fn coland_bootstrap_rows(
         bundle: &arkret_sdk::RealmAuthorityBundle,
         items: &[arkret_sdk::CommittedEventFullView],
     ) -> Vec<TypedCurrentRow> {
