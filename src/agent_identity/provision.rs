@@ -31,6 +31,7 @@ pub(crate) struct ProvisionCeremony {
     pub(crate) operation_id: ProtocolOperationId,
     pub(crate) idempotency_key: IdempotencyKey,
     pub(crate) slug: String,
+    pub(crate) avatar_blob_ref: Option<arkret_sdk::BlobRef>,
     pub(crate) requested_scope: AgentKeyScope,
     pub(crate) inception: PreparedPrincipalInception,
     pub(crate) keys: AgentDidKeys,
@@ -38,9 +39,53 @@ pub(crate) struct ProvisionCeremony {
     pub(crate) authored: Option<AuthoredProvision>,
     pub(crate) binding_operation: Option<DidOperationSubmitRequestBody>,
     pub(crate) outcome: Option<AgentProvisionComplete>,
+    pub(crate) profile_event: Option<arkret_sdk::AuthoredEvent>,
+    pub(crate) profile_commit: Option<arkret_sdk::RealmCommit>,
 }
 
 impl ProvisionCeremony {
+    pub(crate) fn is_complete(&self) -> bool {
+        self.outcome.is_some() && (self.avatar_blob_ref.is_none() || self.profile_commit.is_some())
+    }
+
+    pub(crate) fn profile_intent(&self) -> anyhow::Result<arkret_sdk::EventIntent> {
+        let outcome = self
+            .outcome
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Agent provision is not accepted"))?;
+        let avatar = self
+            .avatar_blob_ref
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("Agent intent has no avatar"))?;
+        let agent = AccountId::new(outcome.agent_id.clone(), self.authority.station_id.clone());
+        Ok(
+            arkret_event_draft::TypedEventDraft::<arkret_sdk::event_spec::ProfileCreate>::new(
+                arkret_sdk::ScopeRef::Realm {
+                    realm_id: outcome.principal_control_realm_id.clone(),
+                },
+                arkret_sdk::ActorId::account(agent),
+                arkret_models_collaboration::events_payloads::ActorProfileCreatePayload {
+                    object: arkret_sdk::ActorProfileDefinition {
+                        principal_id: Some(outcome.agent_id.clone()),
+                        actor_id: None,
+                        actor_kind: arkret_sdk::ActorKind::Agent,
+                        display_name: self.slug.clone(),
+                        handle: None,
+                        agent_slug: Some(self.slug.clone()),
+                        avatar_blob_ref: Some(avatar),
+                        accountable_principal_ids: Some(vec![self.authority.principal_id.clone()]),
+                        profile_fields: Default::default(),
+                    },
+                },
+            )?
+            .with_executed_by(arkret_sdk::ActorId::account(self.authority.clone()))
+            .with_authorization_ref(arkret_sdk::AuthorizationRef::from(
+                outcome.controller_authorization_ref.clone(),
+            ))
+            .into_intent(crate::clock::now_utc())?,
+        )
+    }
+
     pub(crate) fn validate(&self) -> anyhow::Result<()> {
         self.authority.validate()?;
         let did = Did::new(self.inception.did.clone())?;
@@ -139,6 +184,31 @@ impl ProvisionCeremony {
                 "complete ceremony changed its immutable coordinates"
             );
         }
+        if let Some(profile) = &self.profile_event {
+            let intent = self.profile_intent()?;
+            let event = profile.event();
+            anyhow::ensure!(
+                event.kind == *intent.kind()
+                    && &event.scope_ref == intent.scope_ref()
+                    && &event.actor_id == intent.actor_id()
+                    && event.executed_by.as_ref() == intent.executed_by()
+                    && event.authorization_ref.as_ref() == intent.authorization_ref()
+                    && crate::canonical::canonical_json_bytes(&event.payload)?
+                        == crate::canonical::canonical_json_bytes(intent.payload())?
+                    && event.producer_proof.is_some(),
+                "Agent profile substituted its frozen avatar, Account, PCR or controller delegation"
+            );
+        }
+        if let Some(commit) = &self.profile_commit {
+            let event = self
+                .profile_event
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("Agent profile commit lost its signed original"))?;
+            anyhow::ensure!(
+                commit.event_ref == event.event_id && commit.realm_id == event.realm_id,
+                "Agent profile result does not cover its exact signed original"
+            );
+        }
         Ok(())
     }
 
@@ -163,6 +233,7 @@ impl ProvisionCeremony {
                     &record.operation_id,
                     &record.idempotency_key,
                     &record.slug,
+                    &record.avatar_blob_ref,
                     &record.requested_scope,
                     &record.inception,
                     &record.keys,
@@ -196,6 +267,8 @@ impl ProvisionCeremony {
         preserve!(authored);
         preserve!(binding_operation);
         preserve!(outcome);
+        preserve!(profile_event);
+        preserve!(profile_commit);
         Ok(())
     }
 }

@@ -62,7 +62,7 @@ impl InksonOutboundStore {
             Ok(state
                 .agent_provision_records
                 .iter()
-                .filter(|record| record.outcome.is_none())
+                .filter(|record| !record.is_complete())
                 .cloned()
                 .collect())
         })
@@ -81,10 +81,11 @@ impl InksonOutboundStore {
             if let Some(winner) = state
                 .agent_provision_records
                 .iter()
-                .find(|record| record.authority == candidate.authority && record.outcome.is_none())
+                .find(|record| record.authority == candidate.authority && !record.is_complete())
             {
                 if winner.device_id != candidate.device_id
                     || winner.slug != candidate.slug
+                    || winner.avatar_blob_ref != candidate.avatar_blob_ref
                     || winner.controller_did != candidate.controller_did
                     || winner.principal_endpoint != candidate.principal_endpoint
                     || crate::canonical::canonical_json_bytes(&winner.requested_scope)
@@ -290,7 +291,8 @@ mod tests {
             operation_id: arkret_sdk::ProtocolOperationId::new(format!("ak:operation:agent.provision.{nonce}")).unwrap(),
             idempotency_key: arkret_sdk::IdempotencyKey::new(nonce).unwrap(), slug: "journal-agent".to_owned(),
             requested_scope: serde_json::from_value(serde_json::json!({"actions":["ak.self.agent.resource.get.v1"],"resources":[{"kind":"operation","operation":"ak.self.agent.resource.get.v1"}]})).unwrap(),
-            inception, keys, preparation: None, authored: None, binding_operation: None, outcome: None,
+            avatar_blob_ref: None, inception, keys, preparation: None, authored: None, binding_operation: None, outcome: None,
+            profile_event: None, profile_commit: None,
         }
     }
 
@@ -320,6 +322,10 @@ mod tests {
         replacement.operation_id = fixture().operation_id;
         assert!(winner.check_successor(&replacement).is_err());
         replacement = winner.clone();
+        replacement.avatar_blob_ref =
+            Some(arkret_sdk::BlobRef::new(format!("ak:blob:sha256:{}", "ab".repeat(32))).unwrap());
+        assert!(winner.check_successor(&replacement).is_err());
+        replacement = winner.clone();
         replacement
             .requested_scope
             .actions
@@ -341,7 +347,9 @@ mod tests {
     async fn native_vault_encrypts_ceremony_and_cold_reads_without_replacing_bytes() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("standard.json");
-        let record = fixture();
+        let mut record = fixture();
+        record.avatar_blob_ref =
+            Some(arkret_sdk::BlobRef::new(format!("ak:blob:sha256:{}", "cd".repeat(32))).unwrap());
         let secrets = std::sync::Arc::new(garth::MemorySecureKeyStore::new());
         crate::secure_key_store::UserLocalStore::new(
             record.authority.clone(),
@@ -366,6 +374,10 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(cold.len(), 1);
+        assert_eq!(cold[0].avatar_blob_ref, record.avatar_blob_ref);
+        let mut substituted = record.clone();
+        substituted.avatar_blob_ref = None;
+        assert!(make().freeze_agent_provision(substituted).await.is_err());
         assert!(
             cold[0].exact_bytes().unwrap().as_slice() == frozen.exact_bytes().unwrap().as_slice()
         );
