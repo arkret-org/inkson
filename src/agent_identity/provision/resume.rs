@@ -162,6 +162,10 @@ pub(crate) async fn resume_ceremony(
         "Agent recovery lacks the original complete controller evidence"
     );
     let base = record.principal_endpoint.clone();
+    if let Some(outcome) = record.outcome.clone() {
+        finish_profile(record, &vault, &credential, &fence).await?;
+        return Ok(outcome);
+    }
     if record.preparation.is_none() {
         let store = crate::secure_key_store::default_secure_key_store("inkson");
         super::super::store_keys_durable(store.as_ref(), &record.inception.did, &record.keys)
@@ -378,6 +382,79 @@ pub(crate) async fn resume_ceremony(
     check_holder(&record, &fence)?;
     let mut next = record.clone();
     next.outcome = Some(outcome.clone());
-    vault.advance_agent_provision(&record, next).await?;
+    record = vault.advance_agent_provision(&record, next).await?;
+    finish_profile(record, &vault, &credential, &fence).await?;
     Ok(outcome)
+}
+
+async fn finish_profile(
+    mut record: ProvisionCeremony,
+    vault: &crate::outbound_store::InksonOutboundStore,
+    credential: &str,
+    fence: &AuthoringSessionFence,
+) -> anyhow::Result<()> {
+    check_holder(&record, fence)?;
+    if record.avatar_blob_ref.is_none() || record.profile_commit.is_some() {
+        return Ok(());
+    }
+    if record.profile_event.is_none() {
+        let owned = record.clone();
+        let check = fence.clone();
+        let event = with_event_submitter(
+            &record.principal_endpoint,
+            credential.to_owned(),
+            move |submitter| async move {
+                check_holder(&owned, &check)?;
+                let events = submitter
+                    .author_independent_events(vec![owned.profile_intent()?])
+                    .await?;
+                check_holder(&owned, &check)?;
+                events
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("Agent profile authoring returned no Event"))
+            },
+        )
+        .await
+        .map_err(|error| anyhow::anyhow!(error.display()))?;
+        check_holder(&record, fence)?;
+        let mut next = record.clone();
+        next.profile_event = Some(event);
+        record = vault.advance_agent_provision(&record, next).await?;
+    }
+    let owned = record.clone();
+    let check = fence.clone();
+    let commit = with_event_submitter(
+        &record.principal_endpoint,
+        credential.to_owned(),
+        move |submitter| async move {
+            check_holder(&owned, &check)?;
+            let event = owned
+                .profile_event
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("Agent avatar lost its signed original"))?;
+            let result = submitter
+                .submit_signed_sdk_events_in_order(std::slice::from_ref(event))
+                .await?;
+            check_holder(&owned, &check)?;
+            let result = result
+                .into_iter()
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("Agent profile returned no result"))?;
+            anyhow::ensure!(
+                result.is_committed() && result.event_id == event.event_id.as_str(),
+                "Agent profile is not exactly accepted"
+            );
+            result
+                .commit
+                .ok_or_else(|| anyhow::anyhow!("Agent profile has no accepted Commit"))
+        },
+    )
+    .await
+    .map_err(|error| anyhow::anyhow!(error.display()))?;
+    check_holder(&record, fence)?;
+    let mut next = record.clone();
+    next.profile_commit = Some(commit);
+    vault.advance_agent_provision(&record, next).await?;
+    Ok(())
 }

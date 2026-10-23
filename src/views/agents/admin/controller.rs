@@ -29,6 +29,7 @@ pub(super) struct AgentAdminController {
     /// coordinates. A second click must not start a competing ceremony against
     /// the same Controller PCR authoring slot.
     pub(super) provision_in_flight: Signal<bool>,
+    pub(super) provision_operation_id: Signal<Option<arkret_sdk::ProtocolOperationId>>,
     pub(super) deactivate_dialog_open: Signal<bool>,
     pub(super) deactivate_confirm: Signal<String>,
     /// The one Agent a pairing action is in flight for. Non-empty means every
@@ -54,6 +55,7 @@ impl Drop for ProvisionInFlightReset {
 pub(super) struct ProvisionAgentRequest {
     pub(super) controller_principal_id: arkret_sdk::DidCoreId,
     pub(super) slug: String,
+    pub(super) avatar_blob_ref: String,
     pub(super) content_presets: Vec<AgentGrantPreset>,
     pub(super) service_scopes: Vec<AgentServiceScopePreset>,
 }
@@ -536,15 +538,9 @@ impl AgentAdminController {
         request: ProvisionAgentRequest,
     ) {
         let Self {
-            mut agents,
-            mut refresh_epoch,
-            mut detail_refresh_epoch,
-            mut selected_agent_id,
-            mut create_mode,
-            mut new_agent_avatar_blob_ref,
             mut last_op_status,
             mut provision_in_flight,
-            owned_agents_rev,
+            mut provision_operation_id,
             state_store,
             ..
         } = self;
@@ -552,28 +548,47 @@ impl AgentAdminController {
             last_op_status.set("Agent creation is already in progress.".to_owned());
             return;
         }
+        let Some(account) = crate::app::SessionContext::get().active_account() else {
+            last_op_status
+                .set("Create failed: active controller account is unavailable".to_owned());
+            return;
+        };
+        let fence = match crate::transport::auth::AuthoringSessionFence::capture() {
+            Ok(fence) if fence.belongs_to_account(&account.authority) => fence,
+            _ => {
+                last_op_status
+                    .set("Create failed: active controller authority is unavailable".to_owned());
+                return;
+            }
+        };
         provision_in_flight.set(true);
         let ProvisionAgentRequest {
             controller_principal_id,
             slug,
+            avatar_blob_ref,
             content_presets,
             service_scopes,
         } = request;
         spawn(async move {
             let _provision_in_flight_reset = ProvisionInFlightReset(provision_in_flight);
-            let account = match crate::app::SessionContext::get().active_account() {
-                Some(account) => account,
-                None => {
-                    last_op_status
-                        .set("Create failed: active controller account is unavailable".to_owned());
-                    return;
-                }
-            };
+            if fence.check().is_err() {
+                return;
+            }
             if account.principal_id() != &controller_principal_id {
                 last_op_status.set("Create failed: active controller authority changed".to_owned());
                 return;
             }
             let slug = normalize_agent_slug(&slug);
+            let avatar_blob_ref = match avatar_blob_ref.trim() {
+                "" => None,
+                value => match arkret_sdk::BlobRef::new(value.to_owned()) {
+                    Ok(value) => Some(value),
+                    Err(error) => {
+                        last_op_status.set(format!("Create failed: invalid avatar: {error}"));
+                        return;
+                    }
+                },
+            };
             if slug.is_empty() {
                 last_op_status.set("Slug is required.".to_owned());
                 return;
@@ -664,6 +679,9 @@ impl AgentAdminController {
                     .set("The active account changed. Start Agent creation again.".to_owned());
                 return;
             }
+            if fence.check().is_err() {
+                return;
+            }
             let vault = match crate::outbound_store::InksonOutboundStore::open(
                 &account.authority,
                 crate::outbound_store::OutboundLane::Standard,
@@ -683,9 +701,21 @@ impl AgentAdminController {
                     return;
                 }
             };
+            let original_id = provision_operation_id.peek().clone();
+            if let Some(original_id) = original_id
+                && let Ok(saved) = vault
+                    .agent_provision_record(&account.authority, &original_id)
+                    .await
+                && saved.is_complete()
+            {
+                self.install_completed_provision(saved, api_token, fence)
+                    .await;
+                return;
+            }
             let record = if let Some(original) = pending.into_iter().next() {
                 if original.device_id != account.device_id
                     || original.slug != slug
+                    || original.avatar_blob_ref != avatar_blob_ref
                     || original.controller_did != controller_did
                     || original.principal_endpoint != base
                     || !matches!(
@@ -734,6 +764,7 @@ impl AgentAdminController {
                     operation_id,
                     idempotency_key,
                     slug: slug.clone(),
+                    avatar_blob_ref,
                     requested_scope,
                     inception,
                     keys,
@@ -741,6 +772,8 @@ impl AgentAdminController {
                     authored: None,
                     binding_operation: None,
                     outcome: None,
+                    profile_event: None,
+                    profile_commit: None,
                 };
                 match vault.freeze_agent_provision(candidate).await {
                     Ok(record) => record,
@@ -752,66 +785,169 @@ impl AgentAdminController {
                     }
                 }
             };
-            let outcome = match crate::agent_identity::provision::resume_ceremony(
+            provision_operation_id.set(Some(record.operation_id.clone()));
+            if fence.check().is_err() {
+                return;
+            }
+            let operation_id = record.operation_id.clone();
+            let resumed = crate::agent_identity::provision::resume_ceremony(
                 record,
                 controller_recovery_evidence,
                 api_token.clone(),
             )
-            .await
-            {
-                Ok(outcome) => outcome,
+            .await;
+            if fence.check().is_err() {
+                return;
+            }
+            match resumed {
+                Ok(_) => {}
                 Err(error) => {
-                    last_op_status.set(format!("Agent creation remains recoverable: {error}"));
+                    let provisioned = vault
+                        .agent_provision_record(&account.authority, &operation_id)
+                        .await
+                        .ok()
+                        .is_some_and(|saved| saved.outcome.is_some());
+                    if fence.check().is_err() {
+                        return;
+                    }
+                    last_op_status.set(if provisioned {
+                        format!("Agent was created; its avatar is still pending. The original request is saved: {error}")
+                    } else {
+                        format!("Agent creation remains recoverable: {error}")
+                    });
                     return;
                 }
-            };
-            let agent_id = outcome.agent_id.clone();
-            let created_view = match fetch_agent_details(&base, &api_token, agent_id.as_str()).await
+            }
+            match vault
+                .agent_provision_record(&account.authority, &operation_id)
+                .await
             {
-                Ok(view) => view,
-                Err(error) => {
-                    last_op_status.set(format!(
-                        "Agent was created, but loading its authoritative details failed: {}",
-                        error.display()
-                    ));
-                    bump_owned_agents_rev(owned_agents_rev);
-                    self.refresh_agents(base, api_token);
-                    return;
+                Ok(record) => {
+                    self.install_completed_provision(record, api_token, fence)
+                        .await
                 }
-            };
-            // Older directory/detail responses must not remove or overwrite the
-            // newly committed row between installing it and selecting it.
-            let next_refresh_epoch = (*refresh_epoch.peek()).saturating_add(1);
-            let next_detail_epoch = (*detail_refresh_epoch.peek()).saturating_add(1);
-            refresh_epoch.set(next_refresh_epoch);
-            detail_refresh_epoch.set(next_detail_epoch);
-            let selected_id = match agents.with_mut(|rows| {
-                apply_provisioned_agent_view(
-                    rows,
-                    created_view,
-                    &outcome,
-                    &controller_principal_id,
-                    &account.authority.station_id,
-                )
-            }) {
-                Ok(id) => id,
-                Err(reason) => {
-                    last_op_status.set(format!(
-                        "Agent was created, but its authoritative details were rejected: {reason}"
-                    ));
-                    return;
-                }
-            };
-            last_op_status.set(format!(
-                "Created {} with a Station-committed Agent PCR.",
-                short_protocol_id(agent_id.as_str())
-            ));
-            selected_agent_id.set(selected_id);
-            create_mode.set(false);
-            new_agent_avatar_blob_ref.set(String::new());
-            bump_owned_agents_rev(owned_agents_rev);
-            self.refresh_agents(base, api_token);
+                Err(error) => last_op_status.set(format!(
+                    "Agent creation is saved; reading its accepted result failed: {error}"
+                )),
+            }
         });
+    }
+
+    /// Observe the original journal after the route-independent worker finishes.
+    /// This never provisions an Agent or authors a second profile Event.
+    pub(super) fn reconcile_completed_provision(self, base: String, api_token: String) {
+        let Some(operation_id) = self.provision_operation_id.peek().clone() else {
+            return;
+        };
+        spawn(async move {
+            let Ok(fence) = crate::transport::auth::AuthoringSessionFence::capture() else {
+                return;
+            };
+            let Some(account) = crate::app::SessionContext::get().active_account() else {
+                return;
+            };
+            if !fence.belongs_to_account(&account.authority) {
+                return;
+            }
+            let Ok(vault) = crate::outbound_store::InksonOutboundStore::open(
+                &account.authority,
+                crate::outbound_store::OutboundLane::Standard,
+            ) else {
+                return;
+            };
+            let Ok(record) = vault
+                .agent_provision_record(&account.authority, &operation_id)
+                .await
+            else {
+                return;
+            };
+            if record.principal_endpoint == base && record.is_complete() {
+                self.install_completed_provision(record, api_token, fence)
+                    .await;
+            }
+        });
+    }
+
+    async fn install_completed_provision(
+        self,
+        record: crate::agent_identity::provision::ProvisionCeremony,
+        api_token: String,
+        fence: crate::transport::auth::AuthoringSessionFence,
+    ) {
+        if !record.is_complete()
+            || !fence.belongs_to_account(&record.authority)
+            || fence.check().is_err()
+            || self.provision_operation_id.peek().as_ref() != Some(&record.operation_id)
+        {
+            return;
+        }
+        let Some(outcome) = record.outcome else {
+            return;
+        };
+        let base = record.principal_endpoint;
+        let Self {
+            mut agents,
+            mut refresh_epoch,
+            mut detail_refresh_epoch,
+            mut selected_agent_id,
+            mut create_mode,
+            mut new_agent_avatar_blob_ref,
+            mut last_op_status,
+            mut provision_operation_id,
+            owned_agents_rev,
+            ..
+        } = self;
+        let agent_id = outcome.agent_id.clone();
+        let details = fetch_agent_details(&base, &api_token, agent_id.as_str()).await;
+        if fence.check().is_err()
+            || provision_operation_id.peek().as_ref() != Some(&record.operation_id)
+        {
+            return;
+        }
+        let created_view = match details {
+            Ok(view) => view,
+            Err(error) => {
+                last_op_status.set(format!(
+                    "Agent was created, but loading its authoritative details failed: {}",
+                    error.display()
+                ));
+                self.refresh_agents(base, api_token);
+                return;
+            }
+        };
+        // Older directory/detail responses must not remove or overwrite the
+        // newly committed row between installing it and selecting it.
+        let next_refresh_epoch = (*refresh_epoch.peek()).saturating_add(1);
+        let next_detail_epoch = (*detail_refresh_epoch.peek()).saturating_add(1);
+        refresh_epoch.set(next_refresh_epoch);
+        detail_refresh_epoch.set(next_detail_epoch);
+        let selected_id = match agents.with_mut(|rows| {
+            apply_provisioned_agent_view(
+                rows,
+                created_view,
+                &outcome,
+                &record.authority.principal_id,
+                &record.authority.station_id,
+            )
+        }) {
+            Ok(id) => id,
+            Err(reason) => {
+                last_op_status.set(format!(
+                    "Agent was created, but its authoritative details were rejected: {reason}"
+                ));
+                return;
+            }
+        };
+        last_op_status.set(format!(
+            "Created {} with a Station-committed Agent PCR.",
+            short_protocol_id(agent_id.as_str())
+        ));
+        selected_agent_id.set(selected_id);
+        create_mode.set(false);
+        new_agent_avatar_blob_ref.set(String::new());
+        provision_operation_id.set(None);
+        bump_owned_agents_rev(owned_agents_rev);
+        self.refresh_agents(base, api_token);
     }
 
     /// Re-open pairing on this Agent in place: fresh one-time code and QR,

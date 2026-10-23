@@ -55,6 +55,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
     let SessionContext {
         state_store,
         active_account,
+        mut owned_agents_rev,
         ..
     } = SessionContext::get();
     // Agent creation is an explicit durable intent. Discovery runs on every
@@ -95,14 +96,26 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                 {
                     continue;
                 }
-                if let Err(error) = crate::agent_identity::provision::resume_ceremony(
+                match crate::agent_identity::provision::resume_ceremony(
                     original,
                     evidence.clone(),
                     credential.clone(),
                 )
                 .await
                 {
-                    tracing::debug!(%error, "Original Agent ceremony remains pending");
+                    Ok(_) => {
+                        if active_account
+                            .peek()
+                            .as_ref()
+                            .is_some_and(|current| current.authority == account.authority)
+                        {
+                            let next = (*owned_agents_rev.peek()).saturating_add(1);
+                            owned_agents_rev.set(next);
+                        }
+                    }
+                    Err(error) => {
+                        tracing::debug!(%error, "Original Agent ceremony remains pending")
+                    }
                 }
             }
         }

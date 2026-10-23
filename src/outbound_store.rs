@@ -225,8 +225,8 @@ impl DurableOutboundState {
             if self.agent_provision_records[..index].iter().any(|other| {
                 other.operation_id == record.operation_id
                     || (other.authority == record.authority
-                        && other.outcome.is_none()
-                        && record.outcome.is_none())
+                        && !other.is_complete()
+                        && !record.is_complete())
             }) {
                 return Err(garth::Error::Storage(
                     "duplicate Agent ceremony identity or active controller intent".into(),
