@@ -1193,6 +1193,28 @@ async fn submit_source_routed_sidecar_message(
         "private send belongs to a replaced account session"
     );
     crate::sidecar::validate_agent_sidecar_view(view)?;
+    let api = crate::transport::auth::authed_api_with_sync(base_url, api_token.clone(), None)?;
+    let history_pending = state_store
+        .read()
+        .has_pending_sidecar_history(source_realm_id);
+    if history_pending {
+        // An authenticated current may advance before its private originals.
+        // Complete that cut before creating an intent or consuming the send
+        // ratchet; an old fold cannot authorize the next private request.
+        crate::realm_events_engine::refresh_sidecar_history(
+            api.http(),
+            authority,
+            request_epoch,
+            &view.sidecar.realm_id,
+            crate::app::runtime_adapter::state_store_handle(state_store),
+            &active,
+        )
+        .await?;
+    }
+    anyhow::ensure!(
+        active(),
+        "private send belongs to a replaced account session"
+    );
     crate::sidecar::cached_sidecar_exchange_projections(
         &state_store.read(),
         authority,
@@ -1337,7 +1359,6 @@ async fn submit_source_routed_sidecar_message(
     crate::sidecar::set_sidecar_exchange_binding(&mut message_metadata, &binding)?;
     let metadata_bytes = serde_json::to_vec(&message_metadata)?;
     let message_id = new_chat_local_id();
-    let api = crate::transport::auth::authed_api_with_sync(base_url, api_token.clone(), None)?;
     let build = crate::views::secure_send::build_secure_send(
         &api,
         state_store,

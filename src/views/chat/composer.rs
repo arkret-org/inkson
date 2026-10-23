@@ -251,6 +251,17 @@ fn latest_source_event_anchor(
         .find(|message| {
             message.realm_id == realm_id
                 && message.strand_id == strand_id
+                && !message.pending
+                && !message.failed
+                && message.protocol_content.as_ref().is_some_and(|content| {
+                    content.source.as_str() == message.id
+                        && matches!(
+                            &content.scope,
+                            arkret_sdk::ScopeRef::Realm { realm_id: source }
+                                | arkret_sdk::ScopeRef::Circle { realm_id: source, .. }
+                                if source.as_str() == realm_id
+                        )
+                })
                 && arkret_sdk::EventId::new(message.id.clone()).is_ok()
         })
         .map(|message| message.id.clone())

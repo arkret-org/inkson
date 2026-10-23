@@ -278,6 +278,65 @@ fn primary_send_keeps_its_dom_identity_across_scope_probe_and_encryption_changes
 
 type FailureState = Rc<RefCell<Option<(Signal<Vec<ChatMessage>>, Signal<String>, Signal<String>)>>>;
 
+#[test]
+fn private_echoes_and_unconfirmed_rows_cannot_anchor_the_next_private_request() {
+    let control = Rc::new(RefCell::new(None));
+    let mut dom = VirtualDom::new_with_props(send_failure_harness, control.clone());
+    dom.rebuild_to_vec();
+    dom.in_scope(dioxus::dioxus_core::ScopeId::ROOT, || {
+        let (messages, ..) = control.borrow().unwrap();
+        let id =
+            |byte| arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [byte; 32]);
+        let realm = arkret_sdk::RealmId::from_event_id(&id(1));
+        let strand = arkret_sdk::StrandId::from_event_id(&id(2));
+        let mut source = messages.read()[0].clone();
+        source.realm_id = realm.to_string();
+        source.strand_id = strand.to_string();
+        source.id = id(3).to_string();
+        source.pending = false;
+        source.protocol_content = Some(AuthenticatedMessageContent {
+            scope: arkret_sdk::ScopeRef::Realm {
+                realm_id: realm.clone(),
+            },
+            source: id(3),
+            content: serde_json::from_value(json!({
+                "kind": "ak.content.text", "format": "plain", "body": "ordinary source"
+            }))
+            .unwrap(),
+        });
+        let mut private = source.clone();
+        private.id = id(4).to_string();
+        let content = private.protocol_content.as_mut().unwrap();
+        content.source = id(4);
+        content.scope = arkret_sdk::ScopeRef::Sidecar {
+            realm_id: realm.clone(),
+            sidecar_id: arkret_sdk::SidecarId::from_event_id(&id(5)),
+        };
+        let mut unknown = source.clone();
+        unknown.id = id(6).to_string();
+        unknown.protocol_content = None;
+        let mut pending = source.clone();
+        pending.pending = true;
+        let mut failed = source.clone();
+        failed.failed = true;
+        let rows = vec![
+            source.clone(),
+            private.clone(),
+            unknown.clone(),
+            pending,
+            failed,
+        ];
+        assert_eq!(
+            latest_source_event_anchor(&rows, realm.as_str(), strand.as_str()),
+            Some(source.id)
+        );
+        assert_eq!(
+            latest_source_event_anchor(&[private, unknown], realm.as_str(), strand.as_str()),
+            None
+        );
+    });
+}
+
 fn send_failure_harness(control: FailureState) -> Element {
     let messages = use_signal(|| {
         vec![ChatMessage {

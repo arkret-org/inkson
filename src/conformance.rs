@@ -580,6 +580,37 @@ pub fn hydrate_native_private_cache(store: &mut crate::LocalStateStore) -> anyho
     Ok(())
 }
 
+/// Exercise the post-accept production reader without starting any live rail.
+/// The native host must already hold its real session and MLS private state.
+#[cfg(all(not(target_arch = "wasm32"), feature = "spec-conformance"))]
+pub async fn read_back_native_accepted_sidecar(
+    http: &arkret_sdk::http_client::Client,
+    account: &arkret_sdk::AccountId,
+    scope: &arkret_sdk::ScopeRef,
+    event: &arkret_sdk::EventId,
+    store: crate::runtime::input::StateStoreHandle,
+) -> anyhow::Result<()> {
+    let arkret_sdk::ScopeRef::Sidecar {
+        realm_id,
+        sidecar_id,
+    } = scope
+    else {
+        anyhow::bail!("accepted private readback requires a Sidecar scope");
+    };
+    crate::realm_events_engine::refresh_accepted_sidecar(
+        http,
+        account,
+        crate::identity::device_directory::session_cache_epoch(),
+        realm_id,
+        sidecar_id,
+        event,
+        store,
+        || true,
+    )
+    .await?;
+    Ok(())
+}
+
 /// Read an admitted response through the product fold, signer gate and receive
 /// ratchet. No fixture plaintext or projection is installed by this inspector.
 #[cfg(all(not(target_arch = "wasm32"), feature = "spec-conformance"))]
