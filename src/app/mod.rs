@@ -998,7 +998,6 @@ fn AppBootstrap() -> Element {
                 "data-theme": theme_attr,
                 "data-testid": "auth-shell",
                 div { class: "auth-card",
-                    account_switch::AccountSwitcher {}
                     match auth_surface {
                         AuthSurface::Callback => rsx! {
                             crate::views::login::LoginPanel {

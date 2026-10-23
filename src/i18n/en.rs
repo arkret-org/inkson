@@ -871,6 +871,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("topbar.account_menu", "Account menu");
 
     dict.set("login.continue", "Continue");
+    dict.set("login.server_sign_in", "Sign in to this server");
     dict.set("login.working", "Working...");
     dict.set("login.title", "Sign in");
     dict.set("login.completing", "Completing sign in");
@@ -4672,8 +4673,10 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
     dict.set("app.account.log_out", "Log out");
     dict.set("app.account.switching", "Switching account…");
     dict.set("app.account.switch", "Switch account");
+    dict.set("app.account.unnamed", "Unnamed account");
+    dict.set("app.account.return_previous", "Back to previous account");
     dict.set("app.account.choose", "Choose a saved account");
-    dict.set("app.account.add", "Add account");
+    dict.set("app.account.add", "Sign in to another account");
     dict.set(
         "app.account.saved_unavailable",
         "Saved accounts could not be loaded. Your data has been retained.",

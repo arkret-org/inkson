@@ -180,8 +180,8 @@ pub fn station_options_for(current_server_url: &str, configured_stations: &[Url]
 pub struct AccountProfile {
     #[serde(flatten)]
     pub account: ActiveAccountContext,
-    /// Optional human label (e.g. "Work", "Personal"). Falls back to
-    /// the stable principal identifier's last segment when empty.
+    /// Human label or the accepted account's verified handle. Older entries
+    /// can be unnamed until the account is restored successfully.
     #[serde(default)]
     pub label: String,
     #[serde(default, skip_serializing)]
@@ -195,20 +195,6 @@ impl AccountProfile {
             label: String::new(),
             session_credential,
         }
-    }
-
-    /// Human label used by the avatar dropdown switcher. Falls back to the
-    /// stable principal identifier's last `:` segment when no label is set.
-    pub fn display_label(&self) -> &str {
-        if !self.label.is_empty() {
-            return self.label.as_str();
-        }
-        self.account
-            .principal_id()
-            .as_str()
-            .rsplit(':')
-            .next()
-            .unwrap_or(self.account.principal_id().as_str())
     }
 }
 

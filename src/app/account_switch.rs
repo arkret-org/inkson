@@ -333,8 +333,7 @@ impl AccountSessionRoot {
     }
 }
 
-/// The real picker is also used on the login surface, so an unfinished new
-/// sign-in never traps the user away from a previously saved account.
+/// Account switching lives in the authenticated account menu.
 #[component]
 pub fn SavedAccountPicker(
     options: Vec<(String, String)>,
@@ -343,24 +342,33 @@ pub fn SavedAccountPicker(
     on_select: EventHandler<String>,
     on_add: EventHandler<()>,
 ) -> Element {
+    if options.is_empty() {
+        return rsx! {};
+    }
     rsx! {
-        div { class: "account-menu__actions", "data-testid": "account-switcher",
-            label {
+        div { class: "account-picker", "data-testid": "account-switcher",
+            label { class: "account-picker__field",
                 {crate::i18n::tr("app.account.switch")}
-                select {
-                    "data-testid": "account-switch-select",
-                    disabled: busy,
-                    value: selected,
-                    onchange: move |event| on_select.call(event.value()),
-                    option { value: "", disabled: true, {crate::i18n::tr("app.account.choose")} }
-                    for (id, label) in options {
-                        option { key: "{id}", value: id,
-                            "{label}"
+                span { class: "account-picker__control",
+                    select { class: "select account-picker__select",
+                        "data-testid": "account-switch-select",
+                        disabled: busy,
+                        value: selected,
+                        onchange: move |event| on_select.call(event.value()),
+                        option { value: "", disabled: true, {crate::i18n::tr("app.account.choose")} }
+                        for (id, label) in options {
+                            option { key: "{id}", value: id,
+                                "{label}"
+                            }
                         }
+                    }
+                    span { class: "account-picker__caret", "aria-hidden": "true",
+                        UiIcon { name: "chevron-down" }
                     }
                 }
             }
             Button { variant: ButtonVariant::Ghost, size: ButtonSize::Sm,
+                class: "account-picker__add",
                 disabled: busy, "data-testid": "account-add", onclick: move |_| on_add.call(()),
                 {crate::i18n::tr("app.account.add")}
             }
@@ -372,21 +380,28 @@ pub fn account_picker_options(profiles: &MultiProfileConfig) -> Vec<(String, Str
     profiles
         .profiles
         .iter()
-        .map(|profile| {
+        .enumerate()
+        .map(|(index, profile)| {
+            let label = if profile.label.trim().is_empty() {
+                format!("{} {}", crate::i18n::tr("app.account.unnamed"), index + 1)
+            } else {
+                profile.label.clone()
+            };
+            let server = profile.account.server_url.as_str().trim_end_matches('/');
+            let server = server
+                .strip_prefix("https://")
+                .or_else(|| server.strip_prefix("http://"))
+                .unwrap_or(server);
             (
                 profile.account.profile_id.clone(),
-                format!(
-                    "{} · {}",
-                    profile.display_label(),
-                    profile.account.server_url
-                ),
+                format!("{label} · {server}"),
             )
         })
         .collect()
 }
 
 #[component]
-pub(super) fn AccountSwitcher() -> Element {
+pub(crate) fn AccountSwitcher(#[props(default)] disabled: bool) -> Element {
     let root = AccountSessionRoot::get();
     let mut error = root.error;
     let account = (root.account)();
@@ -402,7 +417,7 @@ pub(super) fn AccountSwitcher() -> Element {
                 SavedAccountPicker {
                     options: account_picker_options(&profiles),
                     selected: if root.blocked() { String::new() } else { account.map(|account| account.profile_id).unwrap_or_default() },
-                    busy: (root.busy)(),
+                    busy: disabled || (root.busy)(),
                     on_select: move |id| {
                         let selecting = selecting.clone();
                         selecting.start_select_profile(id, move |outcome| {
@@ -425,6 +440,45 @@ pub(super) fn AccountSwitcher() -> Element {
                 if let Some(message) = (root.error)() { p { role: "alert", "{message}" } }
             }
         }
+    }
+}
+
+#[component]
+pub(crate) fn ReturnToPreviousAccount(#[props(default)] disabled: bool) -> Element {
+    let root = AccountSessionRoot::get();
+    let navigator = use_navigator();
+    if root.active_account().is_some() {
+        return rsx! {};
+    }
+    let Ok(profiles) = root.config.read().load_profile_metadata() else {
+        return rsx! {};
+    };
+    let Some(previous) = profiles
+        .active()
+        .map(|profile| profile.account.profile_id.clone())
+    else {
+        return rsx! {};
+    };
+    let mut error = root.error;
+    let busy = disabled || root.is_switching();
+    rsx! {
+        Button { variant: ButtonVariant::Ghost,
+            disabled: busy, "data-testid": "return-previous-account",
+            onclick: move |_| {
+                root.clone().start_select_profile(previous.clone(), move |outcome| {
+                    match outcome {
+                        Ok(()) => { error.set(None); navigator.replace(Route::Dashboard); }
+                        Err(failure) => {
+                            tracing::warn!(%failure, "return to previous account failed");
+                            error.set(Some(crate::i18n::tr("app.account.switch_failed")));
+                        }
+                    }
+                });
+            },
+            UiIcon { name: "chevron-left" }
+            {crate::i18n::tr("app.account.return_previous")}
+        }
+        if let Some(message) = error() { p { role: "alert", "{message}" } }
     }
 }
 

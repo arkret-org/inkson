@@ -156,20 +156,21 @@ pub fn LoginPanel(
                 }
                 let mut account = completed.account.clone();
                 let mut profiles = config_store.read().load_profiles();
-                let profile_id =
-                    match profiles.upsert_and_activate(crate::config::AccountProfile::new(
-                        account.clone(),
-                        completed.session_credential.clone(),
-                    )) {
-                        Ok(profile_id) => profile_id,
-                        Err(error) => {
-                            auth_status.set(format!(
-                                "Could not prepare the accepted account profile: {error}"
-                            ));
-                            is_busy.set(false);
-                            return;
-                        }
-                    };
+                let mut profile = crate::config::AccountProfile::new(
+                    account.clone(),
+                    completed.session_credential.clone(),
+                );
+                profile.label = completed.personal_handle.clone().unwrap_or_default();
+                let profile_id = match profiles.upsert_and_activate(profile) {
+                    Ok(profile_id) => profile_id,
+                    Err(error) => {
+                        auth_status.set(format!(
+                            "Could not prepare the accepted account profile: {error}"
+                        ));
+                        is_busy.set(false);
+                        return;
+                    }
+                };
                 account.profile_id = profile_id;
                 let station_url = normalize_server_url(account.server_url.as_str());
                 let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
@@ -536,11 +537,12 @@ pub fn LoginPanel(
                     if is_busy() {
                         {crate::i18n::tr("login.working")}
                     } else {
-                        {crate::i18n::tr("login.continue")}
+                        {crate::i18n::tr("login.server_sign_in")}
                     }
                 }
 
                 if !auto_capture_callback {
+                    crate::app::account_switch::ReturnToPreviousAccount { disabled: is_busy() }
                     div { class: "auth-footer",
                         Link {
                             to: crate::routes::Route::Register,

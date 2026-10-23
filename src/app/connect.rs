@@ -1035,22 +1035,23 @@ pub(super) fn connect(
                 }
                 let canonical_runtime_principal = Some(canonical_principal_id.clone());
                 let mut profiles = config_store.read().load_profiles();
-                let profile_id =
-                    match profiles.upsert_and_activate(crate::config::AccountProfile::new(
-                        accepted_account.clone(),
-                        session_credential.clone(),
-                    )) {
-                        Ok(profile_id) => profile_id,
-                        Err(error) => {
-                            invalidate_bootstrap_session(
-                                &session,
-                                format!("accepted account profile update rejected: {error}"),
-                                session_boot_state,
-                                sync_bootstrap_complete,
-                            );
-                            return;
-                        }
-                    };
+                let mut accepted_profile = crate::config::AccountProfile::new(
+                    accepted_account.clone(),
+                    session_credential.clone(),
+                );
+                accepted_profile.label = account_personal_handle.clone().unwrap_or_default();
+                let profile_id = match profiles.upsert_and_activate(accepted_profile) {
+                    Ok(profile_id) => profile_id,
+                    Err(error) => {
+                        invalidate_bootstrap_session(
+                            &session,
+                            format!("accepted account profile update rejected: {error}"),
+                            session_boot_state,
+                            sync_bootstrap_complete,
+                        );
+                        return;
+                    }
+                };
                 accepted_account.profile_id = profile_id;
                 {
                     let mut store = config_store.write();

@@ -508,6 +508,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("topbar.account_menu", "账号菜单");
 
     dict.set("login.continue", "继续");
+    dict.set("login.server_sign_in", "前往服务器登录");
     dict.set("login.working", "处理中...");
     dict.set("login.title", "登录");
     dict.set("login.completing", "正在完成登录");
@@ -3992,8 +3993,10 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
     dict.set("app.account.log_out", "退出登录");
     dict.set("app.account.switching", "正在切换账号…");
     dict.set("app.account.switch", "切换账号");
+    dict.set("app.account.unnamed", "未命名账号");
+    dict.set("app.account.return_previous", "返回上个账号");
     dict.set("app.account.choose", "选择已保存的账号");
-    dict.set("app.account.add", "添加账号");
+    dict.set("app.account.add", "登录另一个账号");
     dict.set(
         "app.account.saved_unavailable",
         "无法读取已保存的账号，数据已保留。",

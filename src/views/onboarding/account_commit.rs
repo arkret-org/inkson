@@ -235,12 +235,14 @@ pub(super) fn persist_completed_account_config(
     mut config_store: Signal<crate::config::LocalConfigStore>,
     account: &crate::config::ActiveAccountContext,
     session_credential: &str,
+    display_handle: &str,
 ) -> anyhow::Result<()> {
     let mut profiles = config_store.read().load_profiles();
-    let profile_id = profiles.upsert_and_activate(crate::config::AccountProfile::new(
-        account.clone(),
-        session_credential.to_owned(),
-    ))?;
+    let mut profile =
+        crate::config::AccountProfile::new(account.clone(), session_credential.to_owned());
+    profile.label =
+        crate::identity::handle::normalize_user_handle_display(display_handle).unwrap_or_default();
+    let profile_id = profiles.upsert_and_activate(profile)?;
     if profile_id != account.profile_id {
         anyhow::bail!("completed account profile id does not match the active state namespace");
     }
@@ -364,10 +366,20 @@ pub(super) async fn commit_completed_account(
         // durable first, then switch the authority namespace, then publish the
         // runtime signals. A retry repeats the same upsert and same-account
         // namespace switch.
+        // The authenticated handoff's handle is a display hint, never account
+        // authority. Keep it with the accepted profile before publishing UI;
+        // normal bootstrap replaces it with the authenticated viewer handle.
+        let display_handle = state_store
+            .read()
+            .pending_account_handoff()
+            .filter(|handoff| handoff.audience_id == completed.account.authority.station_id)
+            .map(|handoff| handoff.account_handle)
+            .unwrap_or_default();
         persist_completed_account_config(
             config_store,
             &completed.account,
             completed.session_credential(),
+            &display_handle,
         )?;
         let barrier = {
             let mut store = state_store.write();
