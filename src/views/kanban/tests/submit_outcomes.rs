@@ -12,14 +12,22 @@ const EVENT: &str = "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
 const LOCAL: &str = "01a01bdd-804b-7ad0-bee8-194898437ad7";
 
 fn holder_record(state: &str) -> Value {
-    json!({
+    holder_record_with_event(state, Some(json!(EVENT)))
+}
+
+fn holder_record_with_event(state: &str, event: Option<Value>) -> Value {
+    let mut record = json!({
         "kind":"ak.strand.create", "operation_id":LOCAL,
-        "local_target_ref":LOCAL, "event_id":EVENT, "write_state":state,
+        "local_target_ref":LOCAL, "write_state":state,
         "effect": {
             "strand_id":LOCAL, "board_space_id":"ak:space:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
             "list_space_id":"ak:space:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL", "title":"Offline card", "rank":"U"
         }
-    })
+    });
+    if let Some(event) = event {
+        record["event_id"] = event;
+    }
+    record
 }
 
 fn queued_answer() -> Result<crate::models::SubmitEventResult, ApiCallError> {
@@ -103,15 +111,15 @@ fn partial_archive_failure_preserves_submitted_outcomes_and_cancels_only_unsent_
     let mut store = LocalStateStore::with_path(dir.path().join("state.json"));
     let ids = ["accepted", "queued", "rejected", "unsubmitted"].map(str::to_owned);
     for (index, id) in ids.iter().enumerate() {
-        let mut payload = holder_record(if id == "unsubmitted" { "queued" } else { id });
+        let event = (id != "unsubmitted").then(|| {
+            json!(arkret_sdk::EventId::from_digest(
+                arkret_sdk::DigestSuite::Sha256,
+                [index as u8 + 1; 32]
+            ))
+        });
+        let mut payload =
+            holder_record_with_event(if id == "unsubmitted" { "queued" } else { id }, event);
         payload["operation_id"] = json!(id);
-        payload["event_id"] = json!(arkret_sdk::EventId::from_digest(
-            arkret_sdk::DigestSuite::Sha256,
-            [index as u8 + 1; 32]
-        ));
-        if id == "unsubmitted" {
-            payload.as_object_mut().unwrap().remove("event_id");
-        }
         store.upsert_raw_operation(id, Some(REALM.to_owned()), payload);
     }
     let before = store.load();
