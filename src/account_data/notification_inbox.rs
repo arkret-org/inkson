@@ -103,7 +103,7 @@ pub(crate) fn notification_inbox_event_revision(
         return Ok(None);
     }
     anyhow::ensure!(
-        event.kind.as_str() == "ak.account_data.set",
+        event.kind.as_str() == arkret_wire::event_kind_str::ACCOUNT_DATA_SET,
         "inbox update is not account data"
     );
     let payload: arkret_sdk::AccountDataSetPayload =
