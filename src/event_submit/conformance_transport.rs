@@ -28,7 +28,9 @@ pub struct MessageResponseLoss(Arc<LostResponse>);
 
 impl MessageResponseLoss {
     pub fn arm(account: AccountId, scope: ScopeRef) -> anyhow::Result<Self> {
-        let mut slot = slot().lock().unwrap();
+        let mut slot = slot()
+            .lock()
+            .map_err(|_| anyhow::anyhow!("response-loss observer lock poisoned"))?;
         anyhow::ensure!(slot.is_none(), "another response-loss observer is active");
         let state = Arc::new(LostResponse {
             account,
@@ -40,15 +42,24 @@ impl MessageResponseLoss {
         Ok(Self(state))
     }
 
-    pub async fn accepted(&self) -> (SelfAuthoritySubmitRequest, RealmCommit) {
+    pub async fn accepted(&self) -> anyhow::Result<(SelfAuthoritySubmitRequest, RealmCommit)> {
         self.0.ready.notified().await;
-        self.0.accepted.lock().unwrap().clone().unwrap()
+        self.0
+            .accepted
+            .lock()
+            .map_err(|_| anyhow::anyhow!("accepted response lock poisoned"))?
+            .clone()
+            .ok_or_else(|| {
+                anyhow::anyhow!("response-loss observer signaled without accepted evidence")
+            })
     }
 }
 
 impl Drop for MessageResponseLoss {
     fn drop(&mut self) {
-        let mut slot = slot().lock().unwrap();
+        let Ok(mut slot) = slot().lock() else {
+            return;
+        };
         if slot
             .as_ref()
             .is_some_and(|current| Arc::ptr_eq(current, &self.0))
@@ -75,7 +86,10 @@ impl AuthorityTransport for ObservedTransport {
         options: &ClientRequestOptions,
     ) -> garth::Result<SelfAuthoritySubmitOutcome> {
         let outcome = AuthorityTransport::submit_self(&self.0, request, options).await?;
-        let observer = slot().lock().unwrap().clone();
+        let observer = slot()
+            .lock()
+            .map_err(|_| garth::Error::Storage("response-loss observer lock poisoned".into()))?
+            .clone();
         if let Some(observer) = observer
             && let SelfAuthoritySubmitRequest::Event(submission) = request.wire()
             && submission.event.kind == EventKind::MessageCreate
@@ -86,7 +100,11 @@ impl AuthorityTransport for ObservedTransport {
                 commit,
             }) = &outcome
         {
-            *observer.accepted.lock().unwrap() = Some((request.wire().clone(), commit.clone()));
+            *observer
+                .accepted
+                .lock()
+                .map_err(|_| garth::Error::Storage("accepted response lock poisoned".into()))? =
+                Some((request.wire().clone(), commit.clone()));
             observer.ready.notify_one();
             // The durable queue has recorded Forwarding, but cannot consume
             // this genuine reply. Cancellation models a crashed client.

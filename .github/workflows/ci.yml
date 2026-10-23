@@ -235,9 +235,13 @@ jobs:
               output.write(f"INKSON_WIRE_BIN={executables[0]}\n")
           PY
 
+      - name: Native E2E fixture Clippy
+        working-directory: inkson
+        run: cargo clippy --locked --profile joint-e2e --features spec-conformance --bin inkson-wire -- -D warnings
+
       - name: Stream error response contracts
         working-directory: inkson
-        run: npm run contract -- tests/contract/realm-streams-not-found.spec.ts tests/contract/stream-capability-denied.spec.ts
+        run: npm run contract -- tests/contract/realm-streams-not-found.spec.ts tests/contract/stream-capability-denied.spec.ts tests/contract/mimi-client-boundary.spec.ts
 
       - name: Browser regression preflight
         id: browser-preflight
@@ -246,7 +250,7 @@ jobs:
           PLAYWRIGHT_HTML_OPEN: never
           PLAYWRIGHT_HTML_OUTPUT_DIR: playwright-report-preflight
         # These are the same five regressions in the complete suite below.
-        # Fail promptly with diagnostics, then require all 111 when they pass.
+        # Fail promptly with diagnostics, then require the complete suite when they pass.
         run: >-
           npm run e2e -- --reporter=line,html --output=test-results-preflight
           --grep ' (?:invite preview disclosed stays loading then visible and only Accept joins|directory search refuses unindexed Realms and exposes only public Realm metadata|realm sidebar separates contact-based direct chats|dashboard summarizes unread notifications from sync projection|configured recovery session can create a Realm)$'

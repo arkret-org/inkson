@@ -322,71 +322,68 @@ test("topbar theme toggle takes effect on the first click from system dark", asy
   await expect(toggle).toHaveAttribute("title", "Switch to night theme");
 });
 
-test("settings MIMI facade discovers drafts and runs interop actions", async ({ page }) => {
+test("settings reads its signed own Station directory and refuses provider-only actions", async ({ page }) => {
+  const providerPosts: string[] = [];
+  page.on("request", request => {
+    if (request.method() === "POST" && new URL(request.url()).pathname.startsWith("/_arkret/open/mimi/")) {
+      providerPosts.push(request.url());
+    }
+  });
   await gotoAndDismissRecovery(page, "/settings/mimi");
   await expect(page.getByTestId("mimi-interop-panel")).toBeVisible();
-  await expect(page.getByTestId("mimi-draft-pinning")).toHaveCount(0);
-
   await page.getByTestId("mimi-refresh-directory").click();
   await expect(page.getByTestId("mimi-directory-result")).toContainText("mimi://mimi.example.com");
-  await expect(page.getByTestId("mimi-directory-result")).toContainText("submit_message");
-  await expect(page.getByTestId("mimi-directory-result")).toContainText("identifier_query");
-  await expect(page.getByTestId("mimi-directory-result")).toContainText("proxy_download");
-
-  await page.getByTestId("mimi-identifier-query").click();
-  await expect(page.getByTestId("mimi-action-receipt")).toContainText("identifier results 1");
-  await expect(page.getByTestId("mimi-action-receipt")).toContainText(
-    '"mimi_uri":"mimi://remote.example/alice"',
-  );
-
-  await page.getByTestId("mimi-proxy-download").click();
-  await expect(page.getByTestId("mimi-action-receipt")).toContainText(
-    "proxy-download https://mimi.example.com/proxy/ak:blob:sha256:431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460 headers 1",
-  );
-
-  const submit = page.waitForRequest("**/_arkret/open/mimi/strands/01JSMIMI/messages");
-  await page.getByTestId("mimi-submit-message").click();
-  const submitBody = (await submit).postDataJSON();
-  expect(submitBody.source_format).toBeUndefined();
-  // `sender_actor_id` is an `ActorId`: the account variant carries the complete
-  // AccountId, and no comparison may fall back to a bare principal id.
-  expect(submitBody.sender_actor_id).toEqual(CURRENT_ACCOUNT_ACTOR_ID);
-  expect(submitBody.ciphertext.content_type).toBe("application/json");
-  expect(submitBody.ciphertext.ciphertext_digest).toMatch(/^sha256:[0-9a-f]{64}$/);
-  expect(submitBody.ciphertext.payload).toMatch(/^[A-Za-z0-9_-]+$/);
-  await expect(page.getByTestId("mimi-action-receipt")).toContainText(
-    "submit-message event ak:event:AX-AFSYZHl0U2MQP-Ng7mU-aOm_Flhf0pVBoHYUK6Shg rejected 0",
-  );
+  for (const feature of ["submit_message", "identifier_query", "proxy_download"]) {
+    await expect(page.getByTestId("mimi-directory-result")).toContainText(feature);
+  }
+  // mimi-interop section 5 requires a provider Service signer. A user session
+  // cannot substitute for it, even when the directory advertises the feature.
+  for (const [button, receipt] of [
+    ["mimi-identifier-query", "mimi-query-receipt"],
+    ["mimi-submit-message", "mimi-submit-receipt"],
+    ["mimi-proxy-download", "mimi-proxy-receipt"],
+  ]) {
+    await page.getByTestId(button).click();
+    await expect(page.getByTestId(receipt)).toContainText("failed:");
+    await expect(page.getByTestId(button)).toBeEnabled();
+  }
+  expect(providerPosts).toEqual([]);
 });
 
-test("MIMI concurrent actions keep separate pending states and late results", async ({ page }) => {
+test("a pending directory read preserves independent provider refusals and ignores duplicate clicks", async ({ page }) => {
   await gotoAndDismissRecovery(page, "/settings/mimi");
-  let releaseQuery!: () => void;
-  const heldQuery = new Promise<void>((resolve) => { releaseQuery = resolve; });
-  let queryRequests = 0;
-  await page.route("**/_arkret/open/mimi/identifiers/query", async (route) => {
-    queryRequests += 1;
-    await heldQuery;
+  let releaseDirectory!: () => void;
+  const heldDirectory = new Promise<void>((resolve) => { releaseDirectory = resolve; });
+  let directoryRequests = 0;
+  await page.route("**/_arkret/open/mimi/provider-directory", async route => {
+    directoryRequests += 1;
+    await heldDirectory;
     await route.fallback();
   });
-  await page.getByTestId("mimi-identifier-query").click();
-  await expect(page.getByTestId("mimi-identifier-query")).toBeDisabled();
-  await expect(page.getByTestId("mimi-submit-message")).toBeEnabled();
-  await expect(page.getByTestId("mimi-proxy-download")).toBeEnabled();
-  // A duplicate DOM click must not launch another query while pending.
-  await page.getByTestId("mimi-identifier-query").evaluate((element) => (element as HTMLElement).click());
-  await page.getByTestId("mimi-submit-message").click();
-  await page.getByTestId("mimi-proxy-download").click();
-  await expect(page.getByTestId("mimi-submit-receipt")).toContainText("submit-message event");
-  await expect(page.getByTestId("mimi-proxy-receipt")).toContainText("proxy-download https://");
-  const submitted = await page.getByTestId("mimi-submit-receipt").textContent();
-  const downloaded = await page.getByTestId("mimi-proxy-receipt").textContent();
-  releaseQuery();
-  await expect(page.getByTestId("mimi-query-receipt")).toContainText("identifier results 1");
-  await expect(page.getByTestId("mimi-identifier-query")).toBeEnabled();
-  await expect(page.getByTestId("mimi-submit-receipt")).toHaveText(submitted!);
-  await expect(page.getByTestId("mimi-proxy-receipt")).toHaveText(downloaded!);
-  expect(queryRequests).toBe(1);
+  try {
+    await page.getByTestId("mimi-refresh-directory").click();
+    await expect.poll(() => directoryRequests).toBe(1);
+    await expect(page.getByTestId("mimi-refresh-directory")).toBeDisabled();
+    await page.getByTestId("mimi-refresh-directory").evaluate(element => (element as HTMLElement).click());
+    const receipts = new Map<string, string>();
+    for (const [button, receipt] of [
+      ["mimi-identifier-query", "mimi-query-receipt"],
+      ["mimi-submit-message", "mimi-submit-receipt"],
+      ["mimi-proxy-download", "mimi-proxy-receipt"],
+    ]) {
+      await expect(page.getByTestId(button)).toBeEnabled();
+      await page.getByTestId(button).click();
+      await expect(page.getByTestId(receipt)).toContainText("failed:");
+      receipts.set(receipt, (await page.getByTestId(receipt).textContent())!);
+    }
+    releaseDirectory();
+    await expect(page.getByTestId("mimi-directory-result")).toContainText("mimi://mimi.example.com");
+    await expect(page.getByTestId("mimi-refresh-directory")).toBeEnabled();
+    for (const [receipt, text] of receipts) await expect(page.getByTestId(receipt)).toHaveText(text);
+    expect(directoryRequests).toBe(1);
+  } finally {
+    releaseDirectory();
+  }
 });
 
 test("account settings split account/server info and surface Agents", async ({ page }) => {

@@ -207,6 +207,7 @@ type InksonWireCommand =
   | "mock-current-principal"
   | "mock-realm-scan"
   | "mock-realm-streams"
+  | "mock-mimi-directory"
   | "mock-exact-current"
   | "mock-strand-watch-current"
   | "mock-realm-signer-keys"
@@ -2045,125 +2046,10 @@ export async function mockArkretApi(
       return json(route, mimiProviderDirectory());
     }
 
-    if (
-      url.pathname === "/_arkret/open/mimi/key-material" &&
-      route.request().method() === "POST"
-    ) {
-      return json(route, {
-        keypackages: [
-          {
-            device_id: "ak:device:01964137-0000-7000-8000-0000000000b2",
-            mls_keypackage: "bWltaS1rZXktcGFja2FnZS1lMmU",
-          },
-        ],
-        failures: [],
-      });
-    }
-
-    if (
-      url.pathname.match(/^\/_arkret\/open\/mimi\/strands\/[^/]+\/update$/) &&
-      route.request().method() === "POST"
-    ) {
-      const roomId = decodeURIComponent(url.pathname.split("/")[5]);
-      // `roomId` is the addressed Strand; the outcome answers whether the
-      // update was accepted, not which room it was.
-      void roomId;
-      return json(route, {
-        accepted: true,
-        rejections: [],
-      });
-    }
-
-    if (
-      url.pathname.match(/^\/_arkret\/open\/mimi\/strands\/[^/]+\/notify$/) &&
-      route.request().method() === "POST"
-    ) {
-      return json(route, { accepted: true });
-    }
-
-    if (
-      url.pathname.match(/^\/_arkret\/open\/mimi\/strands\/[^/]+\/messages$/) &&
-      route.request().method() === "POST"
-    ) {
-      return json(route, {
-        event_ref: "ak:event:AX-AFSYZHl0U2MQP-Ng7mU-aOm_Flhf0pVBoHYUK6Shg",
-        delivery: {
-          status: "accepted",
-          delivered_to_ids: ["ak:did_core:web:remote.example"],
-        },
-        rejections: [],
-      });
-    }
-
-    if (
-      url.pathname === "/_arkret/open/mimi/consent/request" &&
-      route.request().method() === "POST"
-    ) {
-      return json(route, {
-        consent_id: "ak:consent:01964137-0000-7000-8000-0000000000f1",
-        challenge: "e2e-consent-challenge",
-      });
-    }
-
-    if (
-      url.pathname === "/_arkret/open/mimi/consent/update" &&
-      route.request().method() === "POST"
-    ) {
-      return json(route, {
-        consent_id: "ak:consent:01964137-0000-7000-8000-0000000000f1",
-        decision: "accept",
-        updated_at: "2026-04-28T12:00:00.000Z",
-        event_ref: "ak:event:AX-AFSYZHl0U2MQP-Ng7mU-aOm_Flhf0pVBoHYUK6Shg",
-      });
-    }
-
-    if (
-      url.pathname === "/_arkret/open/mimi/identifiers/query" &&
-      route.request().method() === "POST"
-    ) {
-      const body = await route.request().postDataJSON();
-      return json(route, {
-        matches: [
-          {
-            identifier_commitment: `sha256:${"2".repeat(64)}`,
-            matched: true,
-            mimi_uri:
-              body.identifiers?.[0]?.mimi_uri ?? "mimi://remote.example/alice",
-            subject_id: accountPrincipalCoreId,
-          },
-        ],
-        proofs: [
-          {
-            kind: "detached_jws",
-            verification_method: `${CURRENT_STATION_DID}#mimi-identifier-query`,
-            payload_digest: `sha256:${"0".repeat(64)}`,
-            created_at: "2026-04-28T12:00:00.000Z",
-            jws: "e30..c2ln",
-          },
-        ],
-        has_more: false,
-      });
-    }
-
-    if (
-      url.pathname === "/_arkret/open/mimi/report-abuse" &&
-      route.request().method() === "POST"
-    ) {
-      return json(route, {
-        report_id: "ak:report:AX-AFSYZHl0U2MQP-Ng7mU-aOm_Flhf0pVBoHYUK6Shg",
-        routed_to_ids: [],
-      });
-    }
-
-    if (
-      url.pathname === "/_arkret/open/mimi/proxy-download" &&
-      route.request().method() === "POST"
-    ) {
-      return json(route, {
-        download_ref: `https://mimi.example.com/proxy/${DEMO_BLOB_REF}`,
-        headers: { "content-type": "application/octet-stream" },
-        expires_at: "2026-04-30T12:00:00.000Z",
-      });
+    if (url.pathname.startsWith("/_arkret/open/mimi/") && route.request().method() === "POST") {
+      // This browser fixture has account credentials, never a provider Service
+      // signer. Provider authority and MLS/claim results need the native SUT.
+      throw new Error("provider-only MIMI POST requires a native authenticated provider fixture");
     }
 
     if (
@@ -4496,8 +4382,8 @@ function mimiProviderDirectory() {
     "identifier_query",
     "report_abuse",
     "proxy_download",
-  ];
-  return {
+  ].sort();
+  return inksonWire("mock-mimi-directory", {
     schema: "ak.schema.mimi_interop.v1",
     service_id: CURRENT_STATION_ID,
     service_kind: "mimi_provider_facade",
@@ -4507,25 +4393,18 @@ function mimiProviderDirectory() {
       content_draft: "draft-ietf-mimi-content-08",
       room_policy_draft: "draft-ietf-mimi-room-policy-03",
       identifier_draft: "draft-kohbrok-mimi-identifiers-01",
-      base_url: "https://mimi.example.com/_arkret/open/mimi",
+      base_url: "https://local.host/_arkret/open/mimi",
       provider_id: "mimi://mimi.example.com",
       endpoints: features.map((endpointId) => ({
         endpoint_id: endpointId,
-        relative_path: `/${endpointId.replaceAll("_", "-")}`,
+        relative_path: `/_arkret/open/mimi/${endpointId.replaceAll("_", "-")}`,
       })),
       features,
       mls_cipher_suites: ["MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519"],
       content_profiles: ["application/mimi-content"],
       room_policy_components: ["membership"],
     },
-    proof: {
-      kind: "detached_jws",
-      verification_method: `${CURRENT_STATION_DID}#mimi-provider`,
-      payload_digest: `sha256:${"0".repeat(64)}`,
-      created_at: "2026-04-28T12:00:00.000Z",
-      jws: "e30..c2ln",
-    },
-  };
+  });
 }
 
 function snapshotUnavailable(route: Route) {

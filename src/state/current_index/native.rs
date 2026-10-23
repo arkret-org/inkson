@@ -356,7 +356,10 @@ impl Backend {
     }
     #[cfg(any(test, feature = "spec-conformance"))]
     pub(crate) fn execute_for_test(&self, sql: &str) -> anyhow::Result<()> {
-        self.connection.lock().unwrap().execute_batch(sql)?;
+        self.connection
+            .lock()
+            .map_err(|_| anyhow::anyhow!("account snapshot lock poisoned"))?
+            .execute_batch(sql)?;
         Ok(())
     }
 }

@@ -56,6 +56,7 @@ fn main() -> Result<()> {
         "canonical-json" => canonical_json(input)?,
         "sha256-canonical-json" => sha256_canonical_json(input)?,
         "service-resolution" => serde_json::to_value(service_resolution(input)?)?,
+        "mock-mimi-directory" => mimi_provider_directory(input)?,
         "service-document" => {
             serde_json::to_value(service_resolution(input)?.normalized_did_document)?
         }
@@ -522,6 +523,35 @@ fn service_resolution(input: Value) -> Result<arkret_sdk::AuthenticatedServiceRe
         _ => bail!("service fixture supports only Station and Directory roles"),
     };
     Ok(resolution)
+}
+
+fn mimi_provider_directory(mut input: Value) -> Result<Value> {
+    let authority = mock_service_authority()?;
+    input["service_id"] = serde_json::to_value(&authority.service_id)?;
+    input["proof"] = serde_json::to_value(arkret_wire::PayloadProof {
+        kind: arkret_sdk::proof_kind::DETACHED_JWS.to_owned(),
+        verification_method: authority.verification_method,
+        payload_digest: arkret_wire::Hash::new(arkret_sdk::canonical::sha256_digest(b""))?,
+        created_at: chrono::Utc::now(),
+        domain: None,
+        audience: None,
+        proof_purpose: None,
+        jws: String::new(),
+    })?;
+    let mut directory: arkret_models_collaboration::objects::interop::ProviderDirectory =
+        serde_json::from_value(input)?;
+    directory.proof.0.payload_digest = directory.payload_digest()?;
+    let bytes = directory.proof_binding_bytes()?;
+    directory.proof.0.jws =
+        arkret_sdk::signatures::sign_ed25519_detached_jws(&authority.signing_key, &bytes)?;
+    directory.validate()?;
+    arkret_sdk::signatures::service_resolution::verify_service_payload_proof(
+        &authority.service_id,
+        &authority.resolution.normalized_did_document,
+        &directory.proof.0,
+        &bytes,
+    )?;
+    serde_json::to_value(directory).context("serialize the signed own Station MIMI directory")
 }
 
 fn principal_locator(input: Value) -> Result<Value> {
