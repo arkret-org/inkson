@@ -18,6 +18,8 @@ use crate::models::{AuthzCheckOutcome, GrantList};
 use crate::operation::trim_realm_id;
 use crate::wire_helpers::path_component;
 
+mod shared;
+
 fn effective_grants_path(
     realm_id: &arkret_sdk::RealmId,
     subject: &arkret_sdk::ActorId,
@@ -62,20 +64,41 @@ pub async fn list_realm_spaces(
     realm_id: &str,
 ) -> anyhow::Result<Vec<arkret_sdk::ProjectionSpaceRow>> {
     let realm_id = arkret_sdk::RealmId::new(trim_realm_id(realm_id))?;
+    shared::spaces(http, realm_id, None).await
+}
+
+pub(crate) async fn list_realm_spaces_scoped(
+    http: &arkret_sdk::http_client::Client,
+    realm_id: &str,
+    read_fence: &crate::state::RealmListReadFence,
+) -> anyhow::Result<Vec<arkret_sdk::ProjectionSpaceRow>> {
+    let realm_id = arkret_sdk::RealmId::new(trim_realm_id(realm_id))?;
+    shared::spaces(http, realm_id, Some(read_fence.clone())).await
+}
+
+async fn list_realm_spaces_pages(
+    http: &arkret_sdk::http_client::Client,
+    realm_id: &arkret_sdk::RealmId,
+) -> anyhow::Result<Vec<arkret_sdk::ProjectionSpaceRow>> {
+    let bound = http
+        .own_station_result_client()?
+        .ok_or_else(|| anyhow::anyhow!("Space read requires its captured session"))?;
     let mut rows = Vec::new();
     let mut cursor = None;
     let mut seen = std::collections::BTreeSet::new();
     loop {
+        bound.check_session()?;
         let page: arkret_sdk::ProjectionSpaceList = http
             .get(&realm_projection_path(
-                &realm_id,
+                realm_id,
                 "spaces",
                 cursor.as_deref(),
             ))
             .await?;
+        bound.check_session()?;
         page.validate()?;
         anyhow::ensure!(
-            page.realm_id == realm_id,
+            &page.realm_id == realm_id,
             "Space page belongs to another Realm"
         );
         rows.extend(page.spaces);
@@ -100,20 +123,41 @@ pub async fn list_realm_strands(
     realm_id: &str,
 ) -> anyhow::Result<Vec<arkret_sdk::ProjectionStrandRow>> {
     let realm_id = arkret_sdk::RealmId::new(trim_realm_id(realm_id))?;
+    shared::strands(http, realm_id, None).await
+}
+
+pub(crate) async fn list_realm_strands_scoped(
+    http: &arkret_sdk::http_client::Client,
+    realm_id: &str,
+    read_fence: &crate::state::RealmListReadFence,
+) -> anyhow::Result<Vec<arkret_sdk::ProjectionStrandRow>> {
+    let realm_id = arkret_sdk::RealmId::new(trim_realm_id(realm_id))?;
+    shared::strands(http, realm_id, Some(read_fence.clone())).await
+}
+
+async fn list_realm_strands_pages(
+    http: &arkret_sdk::http_client::Client,
+    realm_id: &arkret_sdk::RealmId,
+) -> anyhow::Result<Vec<arkret_sdk::ProjectionStrandRow>> {
+    let bound = http
+        .own_station_result_client()?
+        .ok_or_else(|| anyhow::anyhow!("Strand read requires its captured session"))?;
     let mut rows = Vec::new();
     let mut cursor = None;
     let mut seen = std::collections::BTreeSet::new();
     loop {
+        bound.check_session()?;
         let page: arkret_sdk::ProjectionStrandList = http
             .get(&realm_projection_path(
-                &realm_id,
+                realm_id,
                 "strands",
                 cursor.as_deref(),
             ))
             .await?;
+        bound.check_session()?;
         page.validate()?;
         anyhow::ensure!(
-            page.realm_id == realm_id,
+            &page.realm_id == realm_id,
             "Strand page belongs to another Realm"
         );
         rows.extend(page.strands);

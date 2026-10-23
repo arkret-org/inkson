@@ -15,6 +15,7 @@
 mod agent_provision;
 pub(crate) mod applet_configuration;
 mod attachments;
+pub(crate) mod card_placement;
 mod creator_discussion;
 pub(crate) mod creator_protection;
 mod creator_quarantine;
@@ -94,6 +95,8 @@ type ScheduledDispatches =
 #[serde(deny_unknown_fields)]
 struct DurableOutboundState {
     items: Vec<garth::SendQueueItem>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    card_placements: std::collections::BTreeMap<arkret_sdk::EventId, card_placement::CardPlacement>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     attachments: Vec<crate::attachments::AttachmentObject>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

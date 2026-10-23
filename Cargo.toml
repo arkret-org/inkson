@@ -45,7 +45,7 @@ dioxus = { version = "=0.7.10", default-features = false, features = ["minimal",
 dioxus-primitives = { version = "0.0.1", git = "https://github.com/DioxusLabs/components", default-features = false }
 dioxus-router = "=0.7.10"
 ed25519-dalek = "3.0.0"
-futures-util = { version = "0.3.34", default-features = false, features = ["sink"] }
+futures-util = { version = "0.3.34", default-features = false, features = ["sink", "std"] }
 getrandom = "0.4.3"
 getrandom_02 = { package = "getrandom", version = "0.2.17" }
 gloo-timers = "0.4"

@@ -36,6 +36,7 @@ use crate::outbound_store::{InksonOutboundStore, OutboundLane};
 
 mod authoring_unit;
 mod authority;
+mod card_placement;
 #[cfg(all(not(target_arch = "wasm32"), feature = "spec-conformance"))]
 pub(crate) mod conformance_transport;
 mod message_authoring;
@@ -1696,7 +1697,7 @@ impl EventSubmitter {
         &self,
         operation: &LocalOperation,
     ) -> anyhow::Result<SubmitEventResult> {
-        let result = self.submit_sdk_event_inner(operation).await;
+        let result = self.submit_sdk_event_inner(operation, None).await;
         #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
         if let Err(error) = &result {
             tracing::warn!(kind = %operation.intent().kind().as_str(), error = %error,
@@ -1708,6 +1709,7 @@ impl EventSubmitter {
     async fn submit_sdk_event_inner(
         &self,
         operation: &LocalOperation,
+        card_placement: Option<crate::outbound_store::card_placement::CardPlacement>,
     ) -> anyhow::Result<SubmitEventResult> {
         let intent = operation.intent().clone();
         self.ensure_recovery_material_ready(&intent).await?;
@@ -1756,6 +1758,14 @@ impl EventSubmitter {
             "producer Event authored; enqueueing durable submission"
         );
         let submission = event_submission(&event)?;
+        let outbound = self.outbound(OutboundLane::Standard)?;
+        let continue_card_placement = card_placement.is_some();
+        if let Some(placement) = card_placement {
+            outbound
+                .store()
+                .freeze_card_create(submission.clone(), placement)
+                .await?;
+        }
         let item = self
             .enqueue_and_drive(QueuedWrite {
                 lane: OutboundLane::Standard,
@@ -1765,7 +1775,35 @@ impl EventSubmitter {
                 retry_scope: InteractiveRetryScope::Ordinary,
             })
             .await?;
-        settled_outbound_result(&item)
+        let result = settled_outbound_result(&item)?;
+        // Product continuation is owned by the durable writer, even if the
+        // component is gone or the create was recovered by another drain.
+        let pending = if continue_card_placement {
+            match self.resume_card_placements(&outbound).await {
+                Ok(pending) => pending,
+                Err(error) => {
+                    tracing::warn!(%error, "accepted card retains its durable placement intent");
+                    Vec::new()
+                }
+            }
+        } else {
+            Vec::new()
+        };
+        for submission in pending {
+            if let Err(error) = self
+                .enqueue_and_drive(QueuedWrite {
+                    lane: OutboundLane::Standard,
+                    local_operation_id: submission.event_id.to_string(),
+                    submission,
+                    post_accept: PostAccept::None,
+                    retry_scope: InteractiveRetryScope::Ordinary,
+                })
+                .await
+            {
+                tracing::debug!(%error, "card placement retained for background recovery");
+            }
+        }
+        Ok(result)
     }
 
     /// Create an explicitly encrypted Circle. Freeze the signed creation
@@ -3258,6 +3296,10 @@ impl EventSubmitter {
                     })
                     .await?,
                 );
+                if lane == OutboundLane::Standard {
+                    crate::runtime::boxed_future_from(|| self.resume_card_placements(&outbound))
+                        .await?;
+                }
                 let fence = crate::runtime::boxed_future_from(|| {
                     self.resolve_queue_generation_fence(&outbound)
                 })

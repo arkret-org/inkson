@@ -2,9 +2,18 @@
 //! revisions remain account-local and are never compared with stream positions.
 use super::*;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct RealmListReadFence {
     removal: Option<u64>,
+}
+
+#[cfg(test)]
+impl RealmListReadFence {
+    pub(crate) fn after_removal_for_test(revision: u64) -> Self {
+        Self {
+            removal: Some(revision),
+        }
+    }
 }
 
 fn read_fence(state: &DemandSyncState, realm: &str) -> RealmListReadFence {

@@ -25,25 +25,41 @@ struct KanbanProjectionSnapshot {
 }
 
 async fn fetch_kanban_projection_snapshot(
-    api: crate::transport::TransportClient,
+    http: arkret_sdk::http_client::Client,
     realm_id: &str,
     needed: ProjectionReadSet,
+    read_fence: Option<crate::state::RealmListReadFence>,
 ) -> anyhow::Result<KanbanProjectionSnapshot> {
-    let http = api.sdk_http_client()?;
     // Read independent, complete derived Space/Strand pages concurrently.
     // These rows are not an authoring basis or a governance head;
     // accepted Events remain the canonical truth source.
     let (spaces, strands) = futures_util::future::join(
         async {
             if needed.spaces {
-                Some(crate::transport::realm_read::list_realm_spaces(&http, realm_id).await)
+                Some(match read_fence.as_ref() {
+                    Some(fence) => {
+                        crate::transport::realm_read::list_realm_spaces_scoped(
+                            &http, realm_id, fence,
+                        )
+                        .await
+                    }
+                    None => crate::transport::realm_read::list_realm_spaces(&http, realm_id).await,
+                })
             } else {
                 None
             }
         },
         async {
             if needed.strands {
-                Some(crate::transport::realm_read::list_realm_strands(&http, realm_id).await)
+                Some(match read_fence.as_ref() {
+                    Some(fence) => {
+                        crate::transport::realm_read::list_realm_strands_scoped(
+                            &http, realm_id, fence,
+                        )
+                        .await
+                    }
+                    None => crate::transport::realm_read::list_realm_strands(&http, realm_id).await,
+                })
             } else {
                 None
             }
@@ -545,10 +561,11 @@ pub(super) fn KanbanEffects(
         let task = spawn(async move {
             loop {
                 let next = owner.borrow_mut().queue.next();
-                let Some((scope, ..)) = next else {
+                let Some(request) = next else {
                     owner.borrow_mut().finish();
                     return;
                 };
+                let (scope, ..) = request.clone();
                 if *read_scope.peek() != scope
                     || *session.session_generation.peek() != scope.2
                     || kanban_read_account_scope(session.active_account.peek().clone()) != scope.3
@@ -569,6 +586,7 @@ pub(super) fn KanbanEffects(
                     continue;
                 };
                 let credential = token.peek().clone();
+                let request_fence = list_fence.clone();
                 let result = with_authed_api(&scope.0, credential, move |api| async move {
                     let http = api.sdk_http_client()?;
                     let bound =
@@ -582,7 +600,13 @@ pub(super) fn KanbanEffects(
                             }),
                         "Kanban inventory belongs to another Account or Device session"
                     );
-                    let snapshot = fetch_kanban_projection_snapshot(api, &realm, needed).await?;
+                    let snapshot = fetch_kanban_projection_snapshot(
+                        bound.http_client()?,
+                        &realm,
+                        needed,
+                        Some(request_fence),
+                    )
+                    .await?;
                     bound.check_session()?;
                     Ok(snapshot)
                 })
@@ -608,10 +632,13 @@ pub(super) fn KanbanEffects(
                 drop(store);
                 match result {
                     Ok(snapshot) => {
-                        owner.borrow_mut().cover(ProjectionReadSet {
-                            spaces: snapshot.containers.is_some(),
-                            strands: snapshot.strands.is_some(),
-                        });
+                        owner.borrow_mut().cover_if_latest(
+                            &request,
+                            ProjectionReadSet {
+                                spaces: snapshot.containers.is_some(),
+                                strands: snapshot.strands.is_some(),
+                            },
+                        );
                         if let Some(containers) = snapshot.containers {
                             lifecycle_container_projection.set(containers);
                         }
@@ -820,6 +847,7 @@ mod projection_read_tests {
             while requests.len() < 2 {
                 match listener.accept() {
                     Ok((mut connection, _)) => {
+                        connection.set_nonblocking(false).unwrap();
                         connection
                             .set_read_timeout(Some(Duration::from_secs(5)))
                             .unwrap();
@@ -863,13 +891,44 @@ mod projection_read_tests {
             ))
             .build()
             .unwrap();
-        let api = crate::transport::TransportClient::from_http(
-            http,
-            crate::transport::RequestContext::new(""),
-        );
-        let snapshot = fetch_kanban_projection_snapshot(api, realm, ProjectionReadSet::all())
-            .await
+        use arkret_sdk::http_client::own_station_results::{
+            OwnStationResultClient, OwnStationSessionSnapshot, OwnStationSessionSource,
+        };
+        struct Source(OwnStationSessionSnapshot);
+        impl OwnStationSessionSource for Source {
+            fn snapshot(&self) -> arkret_sdk::http_client::Result<OwnStationSessionSnapshot> {
+                Ok(self.0.clone())
+            }
+        }
+        let account = arkret_sdk::AccountId {
+            principal_id: arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap(),
+            station_id: arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
+        };
+        let binding = arkret_sdk::StationConnectionBinding {
+            service_id: account.station_id.clone(),
+            base_url: base,
+            trust_domain: arkret_sdk::TrustDomainId::new("ak:trust_domain:station.example")
+                .unwrap(),
+            auth_metadata: arkret_sdk::AuthMetadata::minimal(),
+        };
+        let session = OwnStationSessionSnapshot::new(
+            binding.clone(),
+            account.clone(),
+            account.station_id,
+            arkret_wire::SessionGrantId::from_issuance_digest([33; 32]),
+            1,
+            "inventory-fixture".into(),
+        )
+        .unwrap()
+        .with_provider_identity(Default::default());
+        let http = OwnStationResultClient::new(http, binding, std::sync::Arc::new(Source(session)))
+            .unwrap()
+            .http_client()
             .unwrap();
+        let snapshot =
+            fetch_kanban_projection_snapshot(http, realm, ProjectionReadSet::all(), None)
+                .await
+                .unwrap();
         assert_eq!(snapshot.containers, Some(Vec::new()));
         assert_eq!(snapshot.strands, Some(Vec::new()));
         assert_eq!(server.join().unwrap().len(), 2);

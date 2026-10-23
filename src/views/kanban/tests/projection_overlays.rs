@@ -330,7 +330,13 @@ fn pending_card_lifecycle_survives_reopen_without_claiming_acceptance() {
         if matches!(state, CardState::Conflict | CardState::SoftFailed) {
             assert!(card.is_none(), "refused write must not overlay current");
         } else {
-            assert_eq!(card.unwrap().card.state, expected);
+            let display = card.unwrap().card;
+            let expected_display = if settled { CardState::Queued } else { expected };
+            assert_eq!(display.state, expected_display);
+            assert!(
+                !display.state.is_settled(),
+                "a create receipt does not place the card"
+            );
         }
         assert_eq!(
             raw_operation_accepted_create_target_id(&rows[0].payload).is_some(),
@@ -1072,7 +1078,7 @@ fn card_create_stays_visible_through_commit_and_backfill_until_placement() {
     for (write_state, expected_id, expected_state) in [
         ("queued", local_id, CardState::Queued),
         ("pending_commit", strand_id, CardState::Submitted),
-        ("accepted", strand_id, CardState::Accepted),
+        ("accepted", strand_id, CardState::Queued),
     ] {
         store.update_raw_operation_write_state(
             local_id,
@@ -1124,6 +1130,27 @@ fn card_create_stays_visible_through_commit_and_backfill_until_placement() {
         1,
         "projection handoff must not duplicate the card"
     );
+
+    for (write_state, expected_state) in [
+        ("queued", CardState::Queued),
+        ("rejected", CardState::SoftFailed),
+        ("failed", CardState::SoftFailed),
+        ("cancelled", CardState::SoftFailed),
+    ] {
+        let mut pending_rows = rows.clone();
+        pending_rows.push(RawOperationRecord {
+            operation_id: "initial-placement".into(),
+            realm_id: Some(PENDING_TEST_REALM.into()),
+            received_at: chrono::Utc::now(),
+            payload: json!({"kind":"ak.strand.move", "board_space_id":board_id,
+                "strand_id":strand_id, "write_state":write_state,
+                "body":{"board_space_id":board_id,"strand_id":strand_id}}),
+        });
+        let shown = overlay_local_card_create_records(columns.clone(), &pending_rows, board_id);
+        assert_eq!(shown[0].cards.len(), 1);
+        assert_eq!(shown[0].cards[0].state, expected_state);
+        assert!(!shown[0].cards[0].state.is_settled());
+    }
 
     // Once placed, subsequent moves/archives must not resurrect the create's
     // original destination, even when that column no longer contains the card.

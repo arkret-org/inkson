@@ -665,10 +665,18 @@ pub(super) fn submit_kanban_card_create(
     ));
     let api_token = token();
     let realm_for_record = realm_id.clone();
-    let board_for_position = command.board_space_id.clone();
-    let list_for_position = command.list_space_id.clone();
-    let rank_for_position = command.rank.clone();
-    let actor_for_position = actor_id.clone();
+    let placement = match crate::outbound_store::card_placement::CardPlacement::new(
+        arkret_sdk::SpaceId::new(command.board_space_id).expect("validated Board"),
+        arkret_sdk::SpaceId::new(command.list_space_id).expect("validated List"),
+        command.rank,
+        op_id.clone(),
+    ) {
+        Ok(placement) => placement,
+        Err(error) => {
+            board_status.set(error.to_string());
+            return;
+        }
+    };
     let kind_for_record = kind.to_owned();
     let op_for_track = op_id.clone();
     let submit_event = event;
@@ -685,7 +693,7 @@ pub(super) fn submit_kanban_card_create(
         let result = with_authed_api(&base_url, api_token.clone(), |api| async move {
             api.event_submitter()?
                 .with_state_store(submit_state_store)
-                .submit_sdk_event(&submit_event)
+                .submit_card_create(&submit_event, placement)
                 .await
         })
         .await;
@@ -722,109 +730,6 @@ pub(super) fn submit_kanban_card_create(
                     kind = %kind_for_record,
                     "detached kanban card create accepted"
                 );
-
-                let accepted_event_id = match arkret_sdk::EventId::new(resp.event_id.clone()) {
-                    Ok(event_id) => event_id,
-                    Err(error) => {
-                        tracing::error!(%error, "accepted card create returned an invalid Event id");
-                        return;
-                    }
-                };
-                let strand_id =
-                    arkret_sdk::StrandId::from_event_id(&accepted_event_id).into_string();
-                let move_event = match crate::operation::ak_ops::strand_position_update(
-                    &realm_for_record,
-                    &actor_for_position,
-                    event_kind_str::STRAND_MOVE,
-                    &board_for_position,
-                    &strand_id,
-                    serde_json::Value::Null,
-                    json!({"list_space_id": list_for_position, "rank": rank_for_position}),
-                )
-                .and_then(|builder| builder.build_sdk_event("inkson"))
-                {
-                    Ok(event) => event,
-                    Err(error) => {
-                        tracing::error!(%error, %strand_id, "card created without placement; move authoring failed");
-                        return;
-                    }
-                };
-                let move_id = move_event.local_operation_id().to_string();
-                let move_body = match queued_strand_position_body(
-                    &move_event,
-                    event_kind_str::STRAND_MOVE,
-                ) {
-                    Ok(body) => body,
-                    Err(error) => {
-                        tracing::error!(%error, %strand_id, "card created without placement; move payload failed");
-                        return;
-                    }
-                };
-                let move_record = match serde_json::to_value(QueuedStrandPositionRecord {
-                    kind: event_kind_str::STRAND_MOVE,
-                    move_id: &move_id,
-                    cell: strand_position_queue_key(&board_for_position, &strand_id),
-                    board_space_id: &board_for_position,
-                    strand_id: &strand_id,
-                    expected_position: serde_json::Value::Null,
-                    target_position: json!({"list_space_id": list_for_position, "rank": rank_for_position}),
-                    body: move_body,
-                    write_state: "submitted",
-                }) {
-                    Ok(record) => record,
-                    Err(error) => {
-                        tracing::error!(%error, %strand_id, "card created without placement; move queue encoding failed");
-                        return;
-                    }
-                };
-                state_store.write().enqueue_local_projection_command(
-                    move_id.clone(),
-                    Some(realm_for_record.clone()),
-                    move_record,
-                );
-                let move_submit_state_store =
-                    crate::app::runtime_adapter::state_store_handle(state_store);
-                let move_result = with_authed_api(&base_url, api_token, |api| async move {
-                    api.event_submitter()?
-                        .with_state_store(move_submit_state_store)
-                        .submit_sdk_event(&move_event)
-                        .await
-                })
-                .await;
-                match move_result {
-                    Ok(move_response) => {
-                        let state =
-                            MoveSubmissionState::from_send_queue_status(move_response.status);
-                        state_store.write().update_raw_operation_write_state(
-                            &move_id,
-                            state.slug(),
-                            Some(move_response.event_id.clone()),
-                            move_response.rejection_reason_code.clone(),
-                        );
-                        state_store.write().record_move_submission_with_event_id(
-                            move_id.clone(),
-                            Some(move_response.event_id),
-                            realm_for_record,
-                            event_kind_str::STRAND_MOVE.to_owned(),
-                            state,
-                            move_response.rejection_reason_code,
-                            None,
-                        );
-                    }
-                    Err(error) if crate::event_submit::is_durably_queued_error(error.inner()) => {
-                        tracing::debug!(%strand_id, "card placement remains durably queued");
-                    }
-                    Err(error) => {
-                        let error = error.display().to_string();
-                        state_store.write().update_raw_operation_write_state(
-                            &move_id,
-                            "soft_failed",
-                            None,
-                            Some(error.clone()),
-                        );
-                        tracing::warn!(%error, %strand_id, "card create accepted; placement move remains retryable");
-                    }
-                }
             }
             Err(err) if crate::event_submit::is_durably_queued_error(err.inner()) => {
                 tracing::debug!(operation_id = %op_for_track, "card create remains durably queued");

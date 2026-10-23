@@ -76,6 +76,16 @@ impl<S: PartialEq, K> ProjectionReadOwner<S, K> {
     }
 }
 
+impl<S: PartialEq, K: PartialEq> ProjectionReadOwner<S, K> {
+    pub(super) fn cover_if_latest(&mut self, key: &K, material: ProjectionReadSet) -> bool {
+        if self.queue.last_requested.as_ref() != Some(key) {
+            return false;
+        }
+        self.cover(material);
+        true
+    }
+}
+
 pub(super) struct ProjectionReadQueue<K> {
     last_requested: Option<K>,
     pending: Option<K>,
@@ -143,6 +153,23 @@ mod tests {
         assert_eq!(reads.next(), Some(1_000));
         assert_eq!(reads.next(), None);
         assert!(reads.request(1_001));
+    }
+
+    #[test]
+    fn an_inflight_result_cannot_discard_the_latest_missing_baseline() {
+        let mut reads = ProjectionReadOwner::<&str, u64>::default();
+        reads.set_scope(Some("alice/realm-a"));
+        assert!(reads.queue.request(1));
+        assert_eq!(reads.queue.next(), Some(1));
+        for revision in 2..=21 {
+            assert!(!reads.queue.request(revision));
+        }
+        assert!(!reads.cover_if_latest(&1, ProjectionReadSet::all()));
+        assert_eq!(reads.missing(), ProjectionReadSet::all());
+        assert_eq!(reads.queue.next(), Some(21));
+        assert!(reads.cover_if_latest(&21, ProjectionReadSet::all()));
+        assert!(!reads.missing().any());
+        assert_eq!(reads.queue.next(), None);
     }
 
     #[test]

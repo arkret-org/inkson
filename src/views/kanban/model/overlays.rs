@@ -825,6 +825,21 @@ pub(crate) fn overlay_local_card_create_records(
         else {
             continue;
         };
+        // This is the holder's intended placement, not a committed position.
+        // A refused follow-up remains visible as a failed local action and
+        // cannot turn the accepted, unplaced create into a completed card.
+        if let Some(placement) = raw_operations.iter().rev().find(|row| {
+            raw_operation_kind_matches(&row.payload, event_kind_str::STRAND_MOVE)
+                && row.payload.get("board_space_id").and_then(Value::as_str)
+                    == Some(board_space_id.as_str())
+                && row.payload.get("strand_id").and_then(Value::as_str)
+                    == Some(local_create.card.id.as_str())
+        }) && matches!(
+            placement.payload.get("write_state").and_then(Value::as_str),
+            Some("rejected" | "failed" | "cancelled")
+        ) {
+            local_create.card.state = CardState::SoftFailed;
+        }
         existing_card_ids.insert(local_create.card.id.clone());
         column.cards.push(local_create.card);
         sort_kanban_cards(&mut column.cards);
@@ -877,7 +892,10 @@ pub(crate) fn local_card_create_from_raw_operation(
             title,
             rank,
             description,
-            raw_operation_card_state(payload),
+            match raw_operation_card_state(payload) {
+                CardState::Accepted | CardState::Synced => CardState::Queued,
+                state => state,
+            },
         ),
     })
 }
