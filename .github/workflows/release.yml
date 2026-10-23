@@ -1,0 +1,131 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/release*.y*ml"
+      - ".ci/package-release.py"
+      - ".ci/configure-windows-openssl.ps1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+
+jobs:
+  build:
+    name: Build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    defaults:
+      run:
+        working-directory: arkret-org/inkson
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            platform: linux
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            platform: linux
+          - os: windows-2025
+            target: x86_64-pc-windows-msvc
+            platform: windows
+          - os: macos-15
+            target: aarch64-apple-darwin
+            platform: macos
+    steps:
+      - name: Checkout inkson
+        uses: actions/checkout@v6
+        with:
+          path: arkret-org/inkson
+      - name: Checkout arkret-rust-sdk
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.repository_owner }}/arkret-rust-sdk
+          path: arkret-org/arkret-rust-sdk
+          ref: db0f5b44dec117b6b316690650efd0adb3a0f990
+          token: ${{ secrets.CI_REPO_TOKEN || github.token }}
+      - name: Checkout arkret-spec
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.repository_owner }}/arkret-spec
+          path: arkret-org/arkret-spec
+          ref: 8ae6fd0f14c630310a524e38b950b191918295e3
+          token: ${{ secrets.CI_REPO_TOKEN || github.token }}
+      - name: Checkout garth
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.repository_owner }}/garth
+          path: arkret-org/garth
+          ref: 8cfc6775b84528ff75c1ce37e6f879bfb1bfaf33
+          token: ${{ secrets.CI_REPO_TOKEN || github.token }}
+      - name: Checkout chime
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.repository_owner }}/chime
+          path: arkret-org/chime
+          ref: 830f0143d3d9c3f42546ec287be7c6f68abd66b3
+          token: ${{ secrets.CI_REPO_TOKEN || github.token }}
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Install Linux desktop dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev libdbus-1-dev libxdo-dev librsvg2-dev pkg-config
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: arkret-org/inkson
+          key: release-${{ matrix.target }}
+      - name: Install Dioxus CLI
+        run: cargo install dioxus-cli --version 0.7.10 --locked
+      - name: Build desktop application and assets
+        run: dx build --release --platform desktop --features desktop --target ${{ matrix.target }} --locked
+      - name: Package desktop application
+        run: python .ci/package-release.py --target ${{ matrix.target }} --dx ${{ matrix.platform }} --app inkson
+      - name: Upload release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          path: arkret-org/inkson/release-assets/*
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: release-assets
+      - name: Verify release checksums
+        working-directory: release-assets
+        run: sha256sum --check ./*.sha256
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          fail_on_unmatched_files: true
+          files: release-assets/*
