@@ -8,6 +8,77 @@ use super::*;
 
 const MAX_REPLAY_BYTES: usize = 64 * 1024 * 1024;
 const DISCOVERY_INTERVAL: Duration = Duration::from_secs(30);
+const MAX_HINT_BATCH: usize = 64;
+
+type HintFrame = arkret_models_collaboration::sync_frames::committed_event_subscribe::CommittedEventSubscribeFrame;
+
+/// Disposable wakeups, never historical or authorization evidence. Keep only
+/// bounded coordinates so a burst cannot retain dozens of large Event bodies.
+#[derive(Default)]
+struct HintBatch {
+    positions: BTreeMap<(CommitStreamRef, u64), arkret_sdk::RealmCommitId>,
+    streams: BTreeSet<CommitStreamRef>,
+    discover: bool,
+    cursor: Option<String>,
+}
+
+impl HintBatch {
+    fn push(&mut self, realm: &arkret_sdk::RealmId, frame: &HintFrame) -> garth::Result<bool> {
+        let Some(view) = frame.committed_event() else {
+            return Ok(false);
+        };
+        let commit = view.commit();
+        if commit.stream_ref.realm_id() != realm {
+            return Err(protocol("subscription names another Realm"));
+        }
+        let key = (commit.stream_ref.clone(), commit.stream_position);
+        if self
+            .positions
+            .insert(key, commit.commit_id.clone())
+            .is_some_and(|prior| prior != commit.commit_id)
+        {
+            return Err(protocol(
+                "subscription hints conflict at one stream position",
+            ));
+        }
+        self.streams.insert(commit.stream_ref.clone());
+        self.discover |= matches!(view, CommittedEventView::Full(full) if matches!(full.event.kind,
+            arkret_sdk::EventKind::CircleCreate | arkret_sdk::EventKind::CircleMemberState | arkret_sdk::EventKind::MemberState | arkret_sdk::EventKind::InviteAccept | arkret_sdk::EventKind::SidecarCreate | arkret_sdk::EventKind::SidecarContextAttach));
+        if let Some(cursor) = &frame.cursor {
+            self.cursor = Some(cursor.clone());
+        }
+        Ok(true)
+    }
+}
+
+fn collect_ready_hints<F: Fn() -> bool>(
+    realm: &arkret_sdk::RealmId,
+    mut frame: HintFrame,
+    stream: &mut crate::transport::websocket_rail::CommittedRailSource,
+    resume: &mut SubscriptionState,
+    is_active: &F,
+) -> garth::Result<(HintBatch, Option<HintFrame>, bool)> {
+    use futures_util::FutureExt;
+    let mut hints = HintBatch::default();
+    for index in 0..MAX_HINT_BATCH {
+        if !hints.push(realm, &frame)? {
+            return Ok((hints, Some(frame), false));
+        }
+        // Do not wait for another hint or consume beyond the batch budget.
+        // The outer loop checks cancellation and the independent discovery timer.
+        if index + 1 == MAX_HINT_BATCH || !is_active() {
+            break;
+        }
+        match stream.next_frame().now_or_never() {
+            Some(result) => match resume.hint_read(result)? {
+                Some(next) => frame = next,
+                None => return Ok((hints, None, true)),
+            },
+            None => break,
+        }
+    }
+    Ok((hints, None, false))
+}
 
 #[derive(Default)]
 pub(super) struct SubscriptionState {
@@ -90,31 +161,30 @@ pub(super) async fn subscription<F: Fn() -> bool>(
             }
         };
         client.check_session()?;
-        let Some(frame) = frame else {
+        let Some(mut frame) = frame else {
             return Ok(());
         };
-        if let Some(view) = frame.committed_event() {
-            if view.commit().stream_ref.realm_id() != realm {
-                return Err(protocol("subscription names another Realm"));
+        if frame.committed_event().is_some() {
+            let (hints, control, ended) =
+                collect_ready_hints(realm, frame, &mut stream, resume, is_active)?;
+            drain_hints(client, http, realm, &hints, projector, is_active, current).await?;
+            if !is_active() {
+                return Ok(());
             }
-            drain(
-                client,
-                http,
-                realm,
-                &view.commit().stream_ref,
-                projector,
-                is_active,
-                current,
-            )
-            .await?;
-            if matches!(view.commit().stream_ref, CommitStreamRef::Sidecar { .. }) {
-                refresh_sidecars(client, http, realm, projector, is_active, current).await?;
-            }
-            if matches!(view, CommittedEventView::Full(full) if matches!(full.event.kind,
-                arkret_sdk::EventKind::CircleCreate | arkret_sdk::EventKind::CircleMemberState | arkret_sdk::EventKind::MemberState | arkret_sdk::EventKind::InviteAccept | arkret_sdk::EventKind::SidecarCreate | arkret_sdk::EventKind::SidecarContextAttach))
-            {
+            if hints.discover {
                 follow_once(client, http, realm, projector, ctx, is_active, current).await?;
             }
+            client.check_session()?;
+            if let Some(cursor) = hints.cursor {
+                resume.cursor = Some(cursor);
+            }
+            if ended {
+                return Ok(());
+            }
+            let Some(next) = control else {
+                continue;
+            };
+            frame = next;
         }
         match frame.kind {
             Kind::ResyncRequired => {
@@ -242,7 +312,87 @@ async fn follow_once<F: Fn() -> bool>(
         );
     }
     if private && is_active() {
-        refresh_sidecars(client, http, realm, projector, is_active, current).await?;
+        refresh_sidecars_from_snapshot(
+            client,
+            http,
+            realm,
+            projector,
+            is_active,
+            current,
+            &snapshot,
+            &list_fence,
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+async fn drain_hints<F: Fn() -> bool>(
+    client: &OwnStationResultClient,
+    http: &arkret_sdk::http_client::Client,
+    realm: &arkret_sdk::RealmId,
+    hints: &HintBatch,
+    projector: &RealmIngestProjector,
+    is_active: &F,
+    current: &mut OwnStationReplica,
+) -> garth::Result<()> {
+    client.check_session()?;
+    if !is_active() || hints.streams.is_empty() {
+        return Ok(());
+    }
+    let list_fence = projector
+        .state_store
+        .read(|store| store.realm_list_read_fence(realm.as_str()));
+    let snapshot = client.snapshot_head(realm).await?;
+    for ((stream, position), commit_id) in &hints.positions {
+        let head = snapshot
+            .value()?
+            .visible_stream_heads
+            .iter()
+            .find(|head| &head.stream_ref == stream)
+            .ok_or_else(|| protocol("current cut omits a hinted stream"))?;
+        if head.stream_position < *position
+            || (head.stream_position == *position && &head.commit_id != commit_id)
+        {
+            return Err(protocol(
+                "current cut does not cover the hinted stream head",
+            ));
+        }
+    }
+    for stream in &hints.streams {
+        if !is_active() {
+            return Ok(());
+        }
+        drain_from_snapshot(
+            client,
+            http,
+            realm,
+            stream,
+            &snapshot,
+            projector,
+            is_active,
+            current,
+            Some(&list_fence),
+        )
+        .await?;
+    }
+    if hints
+        .streams
+        .iter()
+        .any(|stream| matches!(stream, CommitStreamRef::Sidecar { .. }))
+        && is_active()
+    {
+        refresh_sidecars_from_snapshot(
+            client,
+            http,
+            realm,
+            projector,
+            is_active,
+            current,
+            &snapshot,
+            &list_fence,
+        )
+        .await?;
     }
     Ok(())
 }
@@ -582,8 +732,31 @@ pub(super) async fn refresh_sidecars<F: Fn() -> bool>(
         .state_store
         .read(|store| store.realm_list_read_fence(realm.as_str()));
     let snapshot = client.snapshot_head(realm).await?;
+    refresh_sidecars_from_snapshot(
+        client,
+        http,
+        realm,
+        projector,
+        is_active,
+        current,
+        &snapshot,
+        &list_fence,
+    )
+    .await
+}
+
+async fn refresh_sidecars_from_snapshot<F: Fn() -> bool>(
+    client: &OwnStationResultClient,
+    http: &arkret_sdk::http_client::Client,
+    realm: &arkret_sdk::RealmId,
+    projector: &RealmIngestProjector,
+    is_active: &F,
+    current: &mut OwnStationReplica,
+    snapshot: &CreatorOwnSnapshot,
+    list_fence: &crate::state::RealmListReadFence,
+) -> garth::Result<()> {
     let mut candidate = current.clone();
-    candidate.install_bound_snapshot(&snapshot)?;
+    candidate.install_bound_snapshot(snapshot)?;
     own_station::validate_current_product(snapshot.value()?, realm)?;
     let mut pages = Vec::new();
     let mut retained_bytes = 0usize;
@@ -597,7 +770,7 @@ pub(super) async fn refresh_sidecars<F: Fn() -> bool>(
                 continue;
             }
             let mut replica = OwnStationReplica::new(realm.clone());
-            replica.install_bound_snapshot(&snapshot)?;
+            replica.install_bound_snapshot(snapshot)?;
             let end = head
                 .stream_position
                 .checked_add(1)
@@ -628,7 +801,7 @@ pub(super) async fn refresh_sidecars<F: Fn() -> bool>(
     client.check_session()?;
     projector
         .state_store
-        .read(|store| store.require_realm_list_read_fence(realm.as_str(), Some(&list_fence)))
+        .read(|store| store.require_realm_list_read_fence(realm.as_str(), Some(list_fence)))
         .map_err(crate::state::current_index::current_stage_error)?;
     projector
         .state_store
@@ -643,7 +816,7 @@ pub(super) async fn refresh_sidecars<F: Fn() -> bool>(
                 }
                 client.check_session().map_err(|e| e.to_string())?;
                 store
-                    .require_realm_list_read_fence(realm.as_str(), Some(&list_fence))
+                    .require_realm_list_read_fence(realm.as_str(), Some(list_fence))
                     .map_err(|error| error.to_string())?;
                 let mut changed = 0;
                 for page in &pages {
@@ -655,7 +828,7 @@ pub(super) async fn refresh_sidecars<F: Fn() -> bool>(
                 store
                     .sidecar_history_at_snapshot(snapshot.value().map_err(|e| e.to_string())?)
                     .map_err(|e| e.to_string())?;
-                changed += store.install_own_station_sidecar_current(&snapshot)?;
+                changed += store.install_own_station_sidecar_current(snapshot)?;
                 Ok(changed)
             })
         })
@@ -696,6 +869,276 @@ pub(super) mod tests {
     use garth::history_recovery::replay_with_admitted_replica;
 
     use super::*;
+
+    fn hint(row: CommittedEventView, cursor: usize) -> HintFrame {
+        serde_json::from_value(serde_json::json!({
+            "kind": "committed_event", "realm_id": row.commit().realm_id,
+            "cursor": format!("ak:cursor:batch{cursor}"), "payload": row
+        }))
+        .unwrap()
+    }
+
+    fn queued_hints(
+        realm: &arkret_sdk::RealmId,
+        frames: Vec<HintFrame>,
+    ) -> crate::transport::websocket_rail::CommittedRailSource {
+        use arkret_models_collaboration::sync_frames::websocket::*;
+        use arkret_wire::websocket_binding::WebSocketOperationId;
+        let connection = SharedConnection::new();
+        connection.set_ready(true);
+        let channel = connection
+            .open(WebSocketOpenParameters::Events(
+                WebSocketEventsOpenParameters {
+                    realm_ids: Some(vec![realm.clone()]),
+                    actor_ids: None,
+                    after: None,
+                    catchup: None,
+                },
+            ))
+            .unwrap()
+            .unwrap();
+        let Some(WebSocketClientFrame::Open { channel_id, .. }) = connection.next_command() else {
+            panic!("expected the real channel open");
+        };
+        connection
+            .publish(WebSocketServerFrame::Opened {
+                channel_id: channel_id.clone(),
+                operation_id: WebSocketOperationId::CommittedEventStreamSubscribe,
+            })
+            .unwrap();
+        for frame in frames {
+            let frame = if frame.committed_event().is_some() {
+                WebSocketServerFrame::Data {
+                    channel_id: channel_id.clone(),
+                    payload: WebSocketDataPayload::Events(Box::new(frame)),
+                }
+            } else {
+                WebSocketServerFrame::ChannelControl {
+                    frame_scope: WebSocketChannelScope::Channel,
+                    channel_id: channel_id.clone(),
+                    payload: WebSocketChannelControlPayload::Events(Box::new(frame)),
+                }
+            };
+            connection.publish(frame).unwrap();
+        }
+        crate::transport::websocket_rail::CommittedRailSource::Socket {
+            channel,
+            trace: arkret_models_collaboration::sync_frames::committed_event_subscribe::CommittedEventStreamTrace::new(false, None),
+        }
+    }
+
+    #[tokio::test]
+    async fn twenty_queued_hints_use_one_snapshot_and_one_real_scan() {
+        let (rows, snapshot) = burst_fixture();
+        let realm = snapshot.realm_id.clone();
+        let frames = rows
+            .iter()
+            .cloned()
+            .enumerate()
+            .map(|(i, row)| hint(row, i))
+            .collect();
+        let mut stream = queued_hints(&realm, frames);
+        let first = stream.next_frame().await.unwrap().unwrap();
+        let mut resume = SubscriptionState::default();
+        let (hints, control, ended) =
+            collect_ready_hints(&realm, first, &mut stream, &mut resume, &|| true).unwrap();
+        assert_eq!(hints.positions.len(), 20);
+        assert_eq!(hints.streams.len(), 1);
+        assert_eq!(hints.cursor.as_deref(), Some("ak:cursor:batch19"));
+        assert!(control.is_none() && !ended);
+        assert!(
+            resume.cursor.is_none(),
+            "collecting hints must not acknowledge them"
+        );
+
+        let directory = tempfile::tempdir().unwrap();
+        let account = crate::test_support::AccountFixture::new("did:web:alice.example")
+            .station("ak:did_core:web:station.example")
+            .build();
+        let mut local =
+            crate::state::LocalStateStore::with_path(directory.path().join("burst.json"));
+        local.switch_active_account(&account).unwrap();
+        let store = Arc::new(Mutex::new(local));
+        let projector = test_projector(store.clone(), &realm);
+        // This real HTTP server accepts exactly one snapshot and one scan.
+        // A third request fails instead of silently supplying a cached result.
+        let (client, _, server) = http(vec![
+            serde_json::to_value(&snapshot).unwrap(),
+            serde_json::json!({"committed_events": rows, "readable_floor": {
+                "oldest_position": 0, "floor_commit_id": rows[0].commit().commit_id,
+                "floor_reason": "stream_start"}, "truncated": false}),
+        ]);
+        let mut current = OwnStationReplica::new(realm.clone());
+        drain_hints(
+            &client,
+            &client.http_client().unwrap(),
+            &realm,
+            &hints,
+            &projector,
+            &|| true,
+            &mut current,
+        )
+        .await
+        .unwrap();
+        server.join().unwrap();
+        let head = &snapshot.visible_stream_heads[0];
+        assert_eq!(current.head(&head.stream_ref), Some(head));
+        assert_eq!(
+            store
+                .lock()
+                .unwrap()
+                .verified_commit_stream_cursor(&head.stream_ref)
+                .unwrap()
+                .as_ref(),
+            Some(head)
+        );
+    }
+
+    fn burst_fixture() -> (Vec<CommittedEventView>, arkret_sdk::RealmStateSnapshot) {
+        let (bundle, _, items) = crate::test_support::committed_event::verified_realm_fixture_as(
+            withheld(0, None).commit().realm_id.clone(),
+            (1..20).map(|number| (
+                arkret_sdk::EventKind::RealmProfile.as_str().to_owned(),
+                serde_json::json!({"schema":"ak.schema.realm_profile.v1","title":format!("Profile {number}")}),
+            )).collect(),
+            "alice.example", "ak:device:0196419b-0000-7000-8000-000000000001",
+        );
+        let rows = std::iter::once(bundle.genesis_commit.clone())
+            .chain(items.iter().map(|item| item.commit.clone()))
+            .map(|commit| {
+                serde_json::from_value(serde_json::json!({
+                    "commit":commit,"event_disclosure":{"status":"withheld"}
+                }))
+                .unwrap()
+            })
+            .collect::<Vec<_>>();
+        let mut snapshot = frozen(&rows);
+        let origin = &bundle.genesis_commit;
+        let latest = items.last().unwrap();
+        for (selector, commit, value) in [
+            (
+                arkret_sdk::CurrentSelector::RealmGenesis,
+                origin,
+                serde_json::to_value(&bundle.genesis_event.payload).unwrap()["object"].clone(),
+            ),
+            (
+                arkret_sdk::CurrentSelector::RealmAuthorityRoot,
+                origin,
+                serde_json::json!({
+                    "controller_actor_id":bundle.genesis_event.actor_id,"controller_epoch":0,
+                    "authority_generation":0,"authority_event_ref":bundle.realm_id.event_id()
+                }),
+            ),
+            (
+                arkret_sdk::CurrentSelector::RealmProfile,
+                &latest.commit,
+                serde_json::to_value(&latest.event.payload).unwrap(),
+            ),
+        ] {
+            snapshot
+                .current_state_entries
+                .push(arkret_sdk::TypedCurrentRow::Value {
+                    selector,
+                    source_stream_ref: commit.stream_ref.clone(),
+                    revision: arkret_sdk::CurrentRevision {
+                        commit_id: commit.commit_id.clone(),
+                        stream_position: commit.stream_position,
+                    },
+                    value,
+                });
+        }
+        seal_current_snapshot(&mut snapshot);
+        (rows, snapshot)
+    }
+
+    #[tokio::test]
+    async fn hint_batch_does_not_scan_or_advance_when_snapshot_does_not_cover_hint() {
+        let first = withheld(0, None);
+        let second = withheld(1, Some(first.commit().commit_id.clone()));
+        let realm = first.commit().realm_id.clone();
+        for candidate in [
+            second.clone(),
+            withheld(0, Some(second.commit().commit_id.clone())),
+        ] {
+            let mut hints = HintBatch::default();
+            hints.push(&realm, &hint(candidate, 0)).unwrap();
+            let snapshot = frozen(std::slice::from_ref(&first));
+            let (client, _, server) = http(vec![serde_json::to_value(&snapshot).unwrap()]);
+            let directory = tempfile::tempdir().unwrap();
+            let mut local =
+                crate::state::LocalStateStore::with_path(directory.path().join("stale.json"));
+            let account = crate::test_support::AccountFixture::new("did:web:alice.example")
+                .station("ak:did_core:web:station.example")
+                .build();
+            local.switch_active_account(&account).unwrap();
+            let store = Arc::new(Mutex::new(local));
+            let projector = test_projector(store.clone(), &realm);
+            let mut current = OwnStationReplica::new(realm.clone());
+            assert!(
+                drain_hints(
+                    &client,
+                    &client.http_client().unwrap(),
+                    &realm,
+                    &hints,
+                    &projector,
+                    &|| true,
+                    &mut current
+                )
+                .await
+                .is_err()
+            );
+            server.join().unwrap();
+            assert!(current.snapshot().is_none());
+            assert!(
+                store
+                    .lock()
+                    .unwrap()
+                    .verified_commit_stream_cursor(&first.commit().stream_ref)
+                    .unwrap()
+                    .is_none()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn hint_batch_preserves_control_barriers_and_conflicts() {
+        let row = withheld(0, None);
+        let realm = row.commit().realm_id.clone();
+        for kind in [
+            "resync_required",
+            "unauthorized",
+            "quarantined",
+            "epoch_rotation",
+        ] {
+            let control = match kind {
+                "quarantined" => serde_json::json!({"kind":kind,"payload":{
+                    "realm_id":realm,"error_code":"witness_disagreement",
+                    "affected_stream_refs":[row.commit().stream_ref]}}),
+                "epoch_rotation" => {
+                    serde_json::json!({"kind":kind,"realm_id":realm,"payload":{"new_epoch":1}})
+                }
+                _ => serde_json::json!({"kind":kind}),
+            };
+            let control: HintFrame = serde_json::from_value(control).unwrap();
+            control.validate().unwrap();
+            let mut stream = queued_hints(&realm, vec![hint(row.clone(), 0), control.clone()]);
+            let first = stream.next_frame().await.unwrap().unwrap();
+            let mut resume = SubscriptionState::default();
+            let (hints, barrier, ended) =
+                collect_ready_hints(&realm, first, &mut stream, &mut resume, &|| true).unwrap();
+            assert_eq!(hints.positions.len(), 1);
+            assert_eq!(barrier, Some(control));
+            assert!(!ended);
+            assert!(resume.cursor.is_none());
+        }
+        let mut hints = HintBatch::default();
+        hints.push(&realm, &hint(row.clone(), 0)).unwrap();
+        let mut conflict = row;
+        if let CommittedEventView::Withheld(withheld) = &mut conflict {
+            withheld.commit.commit_id = arkret_sdk::RealmCommitId::from_digest([77; 32]);
+        }
+        assert!(hints.push(&realm, &hint(conflict, 1)).is_err());
+    }
 
     struct Source(Mutex<OwnStationSessionSnapshot>);
     impl OwnStationSessionSource for Source {
