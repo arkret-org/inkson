@@ -2,8 +2,9 @@ import { expect, type Page, type Route } from "@playwright/test";
 import { spawnSync } from "node:child_process";
 import { Buffer } from "node:buffer";
 import { createHash, randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { closeSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { hasPendingRealmCreate } from "./pendingCreator";
 import {
@@ -455,38 +456,53 @@ function canonicalSha256(value: unknown) {
 
 export function inksonWire<T>(command: InksonWireCommand, input: unknown): T {
   const binary = process.env.INKSON_WIRE_BIN;
-  const result = spawnSync(
-    binary ?? "cargo",
-    binary
-      ? [command]
-      : [
-          "run",
-          "--quiet",
-          "--profile",
-          "joint-e2e",
-          "--features",
-          "spec-conformance",
-          "--bin",
-          "inkson-wire",
-          "--",
-          command,
-        ],
-    {
-      cwd: inksonRepoRoot,
-      encoding: "utf8",
-      input: JSON.stringify(input),
-      maxBuffer: 10 * 1024 * 1024,
-    },
-  );
-  if (result.error) {
-    throw result.error;
-  }
-  if (result.status !== 0) {
-    throw new Error(
-      `inkson-wire ${command} failed with exit ${result.status}:\n${result.stderr}`,
+  const directory = mkdtempSync(join(tmpdir(), "inkson-wire-input-"));
+  let inputFd: number | undefined;
+  try {
+    const path = join(directory, "input.json");
+    // A regular file has a deterministic EOF even when the browser worker is
+    // synchronously waiting for a native fixture to consume its complete stdin.
+    writeFileSync(path, JSON.stringify(input), { mode: 0o600 });
+    inputFd = openSync(path, "r");
+    const result = spawnSync(
+      binary ?? "cargo",
+      binary
+        ? [command]
+        : [
+            "run",
+            "--quiet",
+            "--profile",
+            "joint-e2e",
+            "--features",
+            "spec-conformance",
+            "--bin",
+            "inkson-wire",
+            "--",
+            command,
+          ],
+      {
+        cwd: inksonRepoRoot,
+        encoding: "utf8",
+        stdio: [inputFd, "pipe", "pipe"],
+        maxBuffer: 10 * 1024 * 1024,
+        // A prebuilt fixture must also yield control back to Playwright on error.
+        // Cargo fallback keeps its normal build window.
+        ...(binary ? { timeout: 60_000 } : {}),
+      },
     );
+    if (result.error) {
+      throw result.error;
+    }
+    if (result.status !== 0) {
+      throw new Error(
+        `inkson-wire ${command} failed with exit ${result.status}:\n${result.stderr}`,
+      );
+    }
+    return JSON.parse(result.stdout.trim()) as T;
+  } finally {
+    if (inputFd !== undefined) closeSync(inputFd);
+    rmSync(directory, { recursive: true, force: true });
   }
-  return JSON.parse(result.stdout.trim()) as T;
 }
 
 function validateMockResponse(route: Route, status: number, value?: unknown, contentType = "application/json") {

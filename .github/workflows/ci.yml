@@ -239,9 +239,9 @@ jobs:
         working-directory: inkson
         run: cargo clippy --locked --profile joint-e2e --features spec-conformance --bin inkson-wire -- -D warnings
 
-      - name: Stream error response contracts
+      - name: Native fixture and response contracts
         working-directory: inkson
-        run: npm run contract -- tests/contract/realm-streams-not-found.spec.ts tests/contract/stream-capability-denied.spec.ts tests/contract/mimi-client-boundary.spec.ts
+        run: npm run contract -- tests/contract/realm-streams-not-found.spec.ts tests/contract/stream-capability-denied.spec.ts tests/contract/mimi-client-boundary.spec.ts tests/contract/native-fixture-stdio.spec.ts
 
       - name: Browser regression preflight
         id: browser-preflight
