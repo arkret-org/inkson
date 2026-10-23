@@ -51,6 +51,7 @@ unknown-registry = "warn"
 unknown-git = "warn"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 allow-git = [
+  "https://github.com/arkret-org/openmls",
     # Reviewed dependency fixes live in organization forks, pinned by full revision.
     "https://github.com/arkret-org/dioxus",
     "https://github.com/arkret-org/ksni",
