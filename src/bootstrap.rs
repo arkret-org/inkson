@@ -664,7 +664,7 @@ async fn publish_fresh_local_mls_key_package_batch(
             return Err(error.display());
         }
     };
-    if outcome.accepted as usize != records.len() {
+    if outcome.accepted_count as usize != records.len() {
         for entry in &local_entries {
             delete_unpublished_local_mls_key_package_state(
                 secure_store,
