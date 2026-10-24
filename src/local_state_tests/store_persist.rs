@@ -394,7 +394,7 @@ fn local_state_store_persists_private_read_cursors() {
 fn local_state_store_persists_canonical_read_cursor_outcome() {
     let path = temp_state_path("read-cursor-outcome");
     let mut store = LocalStateStore::with_path(path.clone());
-    let outcome = arkret_sdk::ReadMarkerOutcome {
+    let outcome = arkret_sdk::ReadMarkerResponseBody {
         realm_id: arkret_sdk::RealmId::new("ak:realm:AV56KkeEaMSR4caEiVYFp1MtJk3sQ_Zn0VETrzEWQlU3")
             .unwrap(),
         actor_id: crate::mls_api_helpers::local_account_actor_id("did:web:alice.example").unwrap(),

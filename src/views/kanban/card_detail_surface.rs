@@ -252,7 +252,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                     return Err("authenticated Agent inventory is unavailable".to_owned());
                 }
                 with_authed_sdk_client(&base, api_token, |http| async move {
-                    let list = http.agent_list().await?;
+                    let list = http.agent_page().await?;
                     Ok::<_, anyhow::Error>(crate::views::agents::mentionable_owned_agent_slugs(
                         list.agents,
                     ))

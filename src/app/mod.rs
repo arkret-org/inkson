@@ -433,7 +433,7 @@ fn AppBootstrap() -> Element {
         use_hook(move || token.set(initial_credential));
     }
     // Bumped by Settings → My Agents on every owned-agent mutation so the
-    // Contacts sidebar can re-pull `agent_list`. See `SessionContext`.
+    // Contacts sidebar can re-pull `agent_page`. See `SessionContext`.
     let owned_agents_rev = use_signal(|| 0_u64);
 
     // A4 — provide the session-scoped shared handles (`state_store`, `base_url`)
@@ -601,7 +601,7 @@ fn AppBootstrap() -> Element {
     let own_agents_loaded = use_signal(|| false);
     // Keep the Contacts sidebar's owned-agent list in sync with Settings → My
     // Agents. That panel bumps `owned_agents_rev` after provisioning, pausing,
-    // resuming, or deactivating an agent; re-pull `agent_list` here so the
+    // resuming, or deactivating an agent; re-pull `agent_page` here so the
     // change is reflected without a manual reload. Only reload once the sidebar
     // has already loaded its agents — before that the lazy first load fetches
     // fresh state anyway, so there is nothing to keep in sync yet.
@@ -3237,7 +3237,7 @@ fn AppBootstrap() -> Element {
                                                             // T1.Y4 — re-resolved at
                                                             // logout time from the
                                                             // Station's
-                                                            // describe.auth_metadata.
+                                                            // describe.authentication_metadata.
                                                             gate_account_base_url: None,
                                                             base_url: active.server_url.clone(),
                                                             session_credential: api_token.clone(),

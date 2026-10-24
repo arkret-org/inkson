@@ -43,7 +43,7 @@ pub(crate) fn kanban_inventory_from_current(
     view: &crate::current_projection::RealmCurrentView,
     preferred_board: Option<&arkret_sdk::SpaceId>,
 ) -> anyhow::Result<Option<KanbanCurrentInventory>> {
-    use arkret_wire::{CommitStreamRef, CurrentSelector, TypedCurrentRow};
+    use arkret_wire::{CommitStreamRef, CurrentSelector, CurrentState};
 
     use crate::state::projection_views::{AssignedToRelationProjectionView, StrandProjectionView};
 
@@ -67,7 +67,7 @@ pub(crate) fn kanban_inventory_from_current(
     >::new();
     let mut assignments = BTreeMap::<String, Vec<AssignedToRelationProjectionView>>::new();
     for row in &view.entries {
-        let TypedCurrentRow::Value {
+        let CurrentState::Value {
             selector,
             source_stream_ref,
             value,
@@ -209,7 +209,7 @@ pub(crate) fn kanban_inventory_from_current(
 
 #[cfg(test)]
 mod tests {
-    use arkret_wire::{CurrentRevision, CurrentSelector, TypedCurrentRow};
+    use arkret_wire::{CurrentRevision, CurrentSelector, CurrentState};
 
     use super::*;
 
@@ -223,8 +223,8 @@ mod tests {
     fn actor() -> arkret_sdk::ActorId {
         crate::test_support::account_actor("ak:did_core:web:alice.example")
     }
-    fn row(selector: CurrentSelector, value: impl serde::Serialize) -> TypedCurrentRow {
-        TypedCurrentRow::Value {
+    fn row(selector: CurrentSelector, value: impl serde::Serialize) -> CurrentState {
+        CurrentState::Value {
             selector,
             source_stream_ref: arkret_sdk::CommitStreamRef::Realm {
                 realm_id: arkret_sdk::RealmId::new(REALM).unwrap(),
@@ -240,7 +240,7 @@ mod tests {
         id: &arkret_sdk::SpaceId,
         kind: &str,
         parent: Option<&arkret_sdk::SpaceId>,
-    ) -> Vec<TypedCurrentRow> {
+    ) -> Vec<CurrentState> {
         let value = arkret_sdk::Space::new(
             id.clone(),
             arkret_sdk::RealmId::new(REALM).unwrap(),
@@ -366,7 +366,7 @@ mod tests {
         let (mut view, board, first, second) = view(2);
         let id = arkret_sdk::StrandId::from_event_id(&event(1));
         for entry in &mut view.entries {
-            let TypedCurrentRow::Value {
+            let CurrentState::Value {
                 selector, value, ..
             } = entry;
             match selector {
@@ -408,7 +408,7 @@ mod tests {
         assert_eq!(moved.id, id.as_str());
         assert_eq!(moved.lifecycle, StrandLifecycleState::Archived);
         for entry in &mut view.entries {
-            let TypedCurrentRow::Value {
+            let CurrentState::Value {
                 selector, value, ..
             } = entry;
             if matches!(selector, CurrentSelector::StrandPosition { strand_id, .. } if strand_id == &id)
@@ -434,7 +434,7 @@ mod tests {
     fn a_mismatched_current_object_is_rejected_instead_of_replaced_by_history() {
         let (mut view, board, ..) = view(1);
         for entry in &mut view.entries {
-            let TypedCurrentRow::Value {
+            let CurrentState::Value {
                 selector, value, ..
             } = entry;
             if matches!(selector, CurrentSelector::Strand { .. }) {

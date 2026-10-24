@@ -226,11 +226,11 @@ pub(crate) fn verified_handle_claim(
         schema: HandleClaim::SCHEMA.to_owned(),
         claim: core,
         status: HandleClaimStatus::Verified,
-        as_of: issued_at,
+        evaluated_at: issued_at,
         verifier_id: issuer_id,
         verified_at: Some(issued_at),
         revocation: None,
-        fresh_until: issued_at + chrono::Duration::minutes(5),
+        cache_expires_at: issued_at + chrono::Duration::minutes(5),
         status_proof: proof(PayloadProofPurpose::StatusAttestation, placeholder),
     };
     claim.status_proof.domain = Some(arkret_models_identity::HANDLE_CLAIM_STATUS_DOMAIN.to_owned());
@@ -366,7 +366,7 @@ mod tests {
             "alice:acme.example",
             alice.clone(),
             crate::mls_api_helpers::principal_core_id("did:web:issuer.acme.example").unwrap(),
-            // `verified_handle_claim` freezes `fresh_until` at issued_at + 5
+            // `verified_handle_claim` freezes `cache_expires_at` at issued_at + 5
             // minutes, and §3.2.1 rejects any candidate whose freshness window
             // has closed. An issued_at outside that window would test the
             // stale ladder, not the verified tier this case is about.

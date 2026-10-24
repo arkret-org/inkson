@@ -1223,7 +1223,7 @@ pub(super) fn connect(
                     &mut session_credential,
                     &mut authed,
                 );
-                let Some(device_authorization_result) = session_scoped_bootstrap_request(
+                let Some(current_device_authorization) = session_scoped_bootstrap_request(
                     "device authorization check",
                     &session,
                     bootstrap_session_generation,
@@ -1233,7 +1233,7 @@ pub(super) fn connect(
                 else {
                     return;
                 };
-                match device_authorization_result {
+                match current_device_authorization {
                     Ok((needs_authorization, has_other)) => {
                         account_has_other_devices.set(has_other);
                         needs_device_authorization.set(needs_authorization);

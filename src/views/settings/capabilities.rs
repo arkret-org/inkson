@@ -70,7 +70,7 @@ struct RelinquishConfirmation {
 const CONFIRMED_ROW_CHANGED: &str = "capability row changed; reload and confirm relinquish again";
 
 /// Map one authoritative SDK row onto a display row without separating its
-/// grant value from the exact current-result revision read atomically with it.
+/// grant value from the exact current-state revision read atomically with it.
 fn decode_capability_row(
     effective: &EffectiveCapabilityGrantRow,
     queried_realm_id: &str,
@@ -173,7 +173,7 @@ pub fn CapabilitiesSettingsCard(principal_id: Signal<String>, token: Signal<Stri
     let mut status = use_signal(|| ("", Vec::<(&'static str, String)>::new()));
     let mut detail_for = use_signal(|| Option::<String>::None);
     // Subject-only relinquish confirmation binds the selected capability id
-    // and exact current-result revision. Any list refresh invalidates it.
+    // and exact current-state revision. Any list refresh invalidates it.
     let mut relinquish_for = use_signal(|| Option::<RelinquishConfirmation>::None);
     let mut relinquish_reason = use_signal(String::new);
     let mut refresh_nonce = use_signal(|| 0_u64);
@@ -695,14 +695,14 @@ mod tests {
                 "issuer_authority_refs": [{
                     "kind": "realm_root",
                     "realm_id": "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
-                    "authority_generation": 0,
+                    "authority_generation": "0",
                     "authority_event_ref": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
                 }],
                 "authority_depth": 0,
                 "authority_root_refs": [{
                     "kind": "realm_root",
                     "realm_id": "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
-                    "authority_generation": 0,
+                    "authority_generation": "0",
                     "authority_event_ref": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
                 }]
             },

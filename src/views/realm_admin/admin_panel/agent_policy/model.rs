@@ -169,7 +169,7 @@ impl RuleDraft {
             conditions: None,
             schema_ref: None,
             profile_ref: None,
-            params: None,
+            parameters: None,
         };
         Ok(value)
     }

@@ -80,7 +80,7 @@ pub(crate) fn prepare_inception(
         principal_endpoint: &endpoint,
         local_id,
         controller_principal_id,
-        version_time: crate::clock::now_utc(),
+        version_created_at: crate::clock::now_utc(),
         root_seed: &root_seed,
         next_root_public_key_multibase: &binding_public_key,
     })?;
@@ -116,12 +116,13 @@ pub(crate) fn prepare_binding_update(
 ) -> anyhow::Result<PreparedPrincipalRotation> {
     let binding_seed = keys.binding_seed()?;
     let next_public_key = keys.next_public_key()?;
-    let version_time = binding_version_time(&inception.version_time, crate::clock::now_utc())?;
+    let version_created_at =
+        binding_version_time(&inception.version_created_at, crate::clock::now_utc())?;
     Ok(prepare_agent_binding_update(&AgentBindingUpdateInput {
         did: &inception.did,
         local_id: &keys.local_id,
         previous_entries: std::slice::from_ref(&inception.log_entry),
-        version_time,
+        version_created_at,
         current_root_seed: &binding_seed,
         next_root_public_key_multibase: &next_public_key,
         controller_principal_id,

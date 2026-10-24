@@ -34,7 +34,7 @@ impl garth::AccountSubscribeTransport for InksonAccountTransport {
     /// re-derives reconnect policy.
     async fn subscribe(
         &self,
-        request: &arkret_models_collaboration::sync_frames::account_subscribe::SyncRequestBody,
+        request: &arkret_models_collaboration::sync_frames::account_subscribe::AccountSubscribeParameters,
     ) -> garth::Result<
         arkret_models_collaboration::sync_frames::account_subscribe::AccountSubscribeSnapshotResult,
     > {

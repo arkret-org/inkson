@@ -123,7 +123,7 @@ pub(super) fn use_avatar_selection_boundary(mut controller: SettingsController) 
 }
 
 impl SettingsController {
-    /// Publish display name and bio through the same create/update authoring
+    /// Publish display name and biography through the same create/update authoring
     /// path as avatar changes. Local mirrors advance only after acceptance.
     pub(super) fn save_profile_text(
         self,
@@ -140,7 +140,7 @@ impl SettingsController {
             ..
         } = self;
         let display_name = profile_display_name().trim().to_owned();
-        let bio = profile_bio().trim().to_owned();
+        let biography = profile_bio().trim().to_owned();
         if display_name.is_empty() {
             profile_text_status.set(crate::i18n::tr("settings.profile.display_name_required"));
             return;
@@ -171,7 +171,7 @@ impl SettingsController {
                             &authority_evidence,
                             &first_profile_display_name,
                             Some(&display_name),
-                            Some(&bio),
+                            Some(&biography),
                             None,
                         )
                         .await
@@ -548,7 +548,7 @@ impl SettingsController {
     where
         F: FnOnce(String) -> Fut + 'static,
         Fut: std::future::Future<
-                Output = Result<Option<arkret_sdk::InviteLocatorIssueOutcome>, String>,
+                Output = Result<Option<arkret_sdk::InviteLocatorIssueResponseBody>, String>,
             > + 'static,
     {
         let started = self.settings_session.capture();
@@ -860,7 +860,7 @@ impl SettingsController {
                     mimi_proxy_receipt.set(format!(
                         "proxy-download {} headers {}",
                         response.download_ref,
-                        response.headers.len()
+                        response.download_request_headers.len()
                     ));
                 }
                 Err(err) => {

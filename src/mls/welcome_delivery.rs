@@ -79,7 +79,7 @@ pub(crate) fn welcome_envelope_from_delivery(
         "MLS Commit governance binding scope differs from the Welcome delivery scope"
     );
     let recipient = endpoint_identity(delivery, agent_key_binding)?;
-    let welcome = delivery.ciphertext_b64.as_str().to_owned();
+    let welcome = delivery.ciphertext_base64url.as_str().to_owned();
     let welcome_bytes = arkret_sdk::base64url_decode(welcome.as_bytes())
         .map_err(|error| anyhow::anyhow!("Welcome ciphertext is not base64url: {error}"))?;
     let welcome_hash = Hash::new(arkret_sdk::canonical::sha256_digest(&welcome_bytes))?;
@@ -267,7 +267,7 @@ mod tests {
             verification_method: arkret_sdk::DidUrl::new("did:web:alice.example#device").unwrap(),
             signed_digest: Hash::new(format!("sha256:{}", "11".repeat(32))).unwrap(),
             created_at: "2026-09-16T00:00:00.000Z".parse().unwrap(),
-            sig: arkret_wire::Base64UrlString::new(arkret_sdk::base64url_encode([7_u8; 64]))
+            signature: arkret_wire::Base64UrlString::new(arkret_sdk::base64url_encode([7_u8; 64]))
                 .unwrap(),
         }
     }
@@ -331,7 +331,7 @@ mod tests {
                 "ak:keypackage_claim:0196419b-0000-7000-8000-00000000000b",
             )
             .unwrap(),
-            ciphertext_b64: arkret_wire::Base64UrlString::new(arkret_sdk::base64url_encode(
+            ciphertext_base64url: arkret_wire::Base64UrlString::new(arkret_sdk::base64url_encode(
                 [5_u8; 48],
             ))
             .unwrap(),

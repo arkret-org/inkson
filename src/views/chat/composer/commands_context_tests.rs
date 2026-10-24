@@ -289,7 +289,7 @@ async fn private_sidecar_file_drop_never_inherits_verified_plaintext_parent() {
     let frame: arkret_sdk::sync::AccountSubscribeFrame = serde_json::from_value(serde_json::json!({
         "kind":"delta","cursor":"ak:cursor:YQ",
         "realms":{realm:{
-            "current":{"realm_id":realm,"governance_generation":1,"stream_heads":[head.clone()],"entries":[]},
+            "current":{"realm_id":realm,"governance_generation":"1","stream_heads":[head.clone()],"entries":[]},
             "baseline":{"snapshot_cursor":"ak:cursor:YQ","cut_revision":1,"complete":true,
                 "coverage":{"realm_id":realm,"stream_heads":[head],"complete_for_authorized_streams":true}}
         }}

@@ -505,7 +505,7 @@ pub(super) fn ChatEffects(
                                 &base,
                                 api_token.clone(),
                                 |http| async move {
-                                    let list = http.agent_list().await?;
+                                    let list = http.agent_page().await?;
                                     Ok::<_, anyhow::Error>(
                                         crate::views::agents::mentionable_owned_agent_slugs(
                                             list.agents,

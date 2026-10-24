@@ -664,7 +664,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("settings.section.developer", "开发者工具");
     dict.set("settings.account.identity", "账号身份");
     dict.set("settings.profile.display_name", "显示名称");
-    dict.set("settings.profile.bio", "个人简介");
+    dict.set("settings.profile.biography", "个人简介");
     dict.set("settings.profile.save", "保存资料");
     dict.set("settings.profile.saving", "正在保存资料…");
     dict.set("settings.profile.saved", "资料已保存");
@@ -2639,7 +2639,10 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("realm_admin.roster.public", "公开");
     dict.set("realm_admin.roster.reply", "以 Agent 身份回复");
     dict.set("realm_admin.roster.mention", "接受 @提及");
-    dict.set("realm_admin.roster.act_on_behalf", "代表我执行操作");
+    dict.set(
+        "realm_admin.roster.acting_on_behalf_allowed",
+        "代表我执行操作",
+    );
     dict.set(
         "realm_admin.roster.load_more",
         "加载更多 — 已显示 {visible}/{total} 组",

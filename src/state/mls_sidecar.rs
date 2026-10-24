@@ -206,7 +206,7 @@ impl LocalStateStore {
     pub(crate) fn realm_current_state_entries(
         &self,
         realm_id: &str,
-    ) -> Vec<arkret_wire::TypedCurrentRow> {
+    ) -> Vec<arkret_wire::CurrentState> {
         self.realm_current_view_entries(realm_id)
             .unwrap_or_default()
     }
@@ -218,7 +218,7 @@ impl LocalStateStore {
     pub fn current_mls_group_for_scope(
         &self,
         effective_scope: &arkret_sdk::ScopeRef,
-    ) -> Option<arkret_wire::MlsGroupCurrent> {
+    ) -> Option<arkret_wire::MlsGroupValue> {
         let realm_id = effective_scope.realm_id_opt()?;
         let entries = if matches!(effective_scope, arkret_sdk::ScopeRef::Sidecar { .. }) {
             // Private current must reach its own signed stream head. The
@@ -1088,7 +1088,7 @@ impl LocalStateStore {
         }];
         let mut circles = std::collections::BTreeSet::new();
         for entry in self.realm_current_state_entries(realm.as_str()) {
-            if let arkret_wire::TypedCurrentRow::Value {
+            if let arkret_wire::CurrentState::Value {
                 selector: arkret_wire::CurrentSelector::MlsGroup { scope_ref },
                 ..
             } = &entry

@@ -75,7 +75,7 @@ impl LocalStateStore {
 
     pub fn apply_read_cursor_outcome(
         &mut self,
-        outcome: arkret_sdk::ReadMarkerOutcome,
+        outcome: arkret_sdk::ReadMarkerResponseBody,
     ) -> anyhow::Result<ReadMarkerRecord> {
         self.ensure_cached_loaded();
         let marker = ReadMarkerRecord {

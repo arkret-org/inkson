@@ -81,12 +81,12 @@ mod send_probe_presentation_tests {
                 .parse()
                 .unwrap(),
         };
-        let current: arkret_wire::MlsGroupCurrent = serde_json::from_value(json!({
+        let current: arkret_wire::MlsGroupValue = serde_json::from_value(json!({
             "effective_scope": scope,
             "genesis_event_ref": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
             "current_mls_commit_event_ref": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-            "cipher_suite": "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519", "epoch": 4,
-            "current_key_access_revision": 2, "covered_key_access_revision": 2,
+            "cipher_suite": "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519", "epoch": "4",
+            "current_key_access_revision": "2", "covered_key_access_revision": "2",
             "public_tree_ref": "ak:blob:sha256:431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460"
         })).unwrap();
         let probe = crate::mls::send_gate::decide_mls_send_gate(Ok(Some(current.clone())), None);
@@ -596,11 +596,11 @@ async fn submit_frozen_sidecar_ensure<'a, F, Fut>(
     expires_at: chrono::DateTime<chrono::Utc>,
     check_session: impl Fn() -> anyhow::Result<()>,
     mut submit: F,
-) -> anyhow::Result<arkret_sdk::SidecarEnsureOutcome>
+) -> anyhow::Result<arkret_sdk::SidecarEnsureResponseBody>
 where
     F: FnMut(&'a arkret_sdk::SidecarEnsureRequestBody) -> Fut,
     Fut: std::future::Future<
-            Output = arkret_sdk::http_client::Result<arkret_sdk::SidecarEnsureOutcome>,
+            Output = arkret_sdk::http_client::Result<arkret_sdk::SidecarEnsureResponseBody>,
         >,
 {
     anyhow::ensure!(
@@ -701,14 +701,14 @@ fn validate_native_prepared_sidecar_binding(
 }
 
 fn accepted_native_sidecar_id(
-    outcome: &arkret_sdk::SidecarEnsureOutcome,
+    outcome: &arkret_sdk::SidecarEnsureResponseBody,
     expected_operation_id: &arkret_sdk::ProtocolOperationId,
     expected_phase: arkret_sdk::SidecarEnsureAcceptedPhase,
     expected_sidecar_id: &arkret_sdk::SidecarId,
     expected_source_context: &arkret_sdk::SidecarContextRef,
 ) -> anyhow::Result<arkret_sdk::SidecarId> {
     match outcome {
-        arkret_sdk::SidecarEnsureOutcome::Accepted(accepted)
+        arkret_sdk::SidecarEnsureResponseBody::Accepted(accepted)
             if accepted.operation_id == *expected_operation_id
                 && accepted.accepted_phase == expected_phase
                 && accepted.sidecar_id == *expected_sidecar_id
@@ -719,11 +719,11 @@ fn accepted_native_sidecar_id(
             }
             Ok(accepted.sidecar_id.clone())
         }
-        arkret_sdk::SidecarEnsureOutcome::Accepted(_) => {
+        arkret_sdk::SidecarEnsureResponseBody::Accepted(_) => {
             anyhow::bail!("native Sidecar accepted outcome changed its reserved binding")
         }
-        arkret_sdk::SidecarEnsureOutcome::PreparedNew(_)
-        | arkret_sdk::SidecarEnsureOutcome::PreparedExisting(_) => {
+        arkret_sdk::SidecarEnsureResponseBody::PreparedNew(_)
+        | arkret_sdk::SidecarEnsureResponseBody::PreparedExisting(_) => {
             anyhow::bail!("native Sidecar commit returned another prepared outcome")
         }
     }
@@ -896,11 +896,11 @@ async fn ensure_owned_agent_sidecar(
                 let idempotency_key =
                     arkret_sdk::IdempotencyKey::new(uuid_v7()).map_err(anyhow::Error::msg)?;
                 match prepared {
-                arkret_sdk::SidecarEnsureOutcome::Accepted(_) => {
+                arkret_sdk::SidecarEnsureResponseBody::Accepted(_) => {
                     anyhow::bail!("native Sidecar prepare skipped its signed reservation ceremony")
                 }
-                        arkret_sdk::SidecarEnsureOutcome::PreparedNew(
-                            arkret_sdk::SidecarEnsurePreparedNewOutcome {
+                        arkret_sdk::SidecarEnsureResponseBody::PreparedNew(
+                            arkret_sdk::SidecarEnsurePreparedNewResponseBody {
                             operation_id,
                             reservation_handle,
                             expires_at,
@@ -976,8 +976,8 @@ async fn ensure_owned_agent_sidecar(
                                 expires_at,
                             )
                         }
-                        arkret_sdk::SidecarEnsureOutcome::PreparedExisting(
-                            arkret_sdk::SidecarEnsurePreparedExistingOutcome {
+                        arkret_sdk::SidecarEnsureResponseBody::PreparedExisting(
+                            arkret_sdk::SidecarEnsurePreparedExistingResponseBody {
                             operation_id,
                             reservation_handle,
                             expires_at,
@@ -2988,11 +2988,11 @@ pub fn ChatPanel(
                                 && target_matches
                                 && !(controller.strand_watch_pending)();
                             let explicit_level = observed.as_ref().and_then(|current| match current {
-                                arkret_sdk::StrandWatchCurrentOutcome::Current { result, .. } => match result.value {
-                                    arkret_sdk::StrandWatchCurrentValue::Set(value) => Some(value.level),
-                                    arkret_sdk::StrandWatchCurrentValue::Cleared(()) => None,
+                                arkret_sdk::StrandWatchCurrentResponseBody::Current { current_state: result, .. } => match result.value {
+                                    arkret_sdk::StrandWatchValue::Set(value) => Some(value.level),
+                                    arkret_sdk::StrandWatchValue::Cleared(()) => None,
                                 },
-                                arkret_sdk::StrandWatchCurrentOutcome::NeverWritten { .. } => None,
+                                arkret_sdk::StrandWatchCurrentResponseBody::NeverWritten { .. } => None,
                             });
                             let label = if (controller.strand_watch_pending)() { crate::i18n::tr("chat.watch_level.pending_short") }
                                 else if enabled && explicit_level.is_none() { crate::i18n::tr("chat.watch_level.default") }

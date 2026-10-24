@@ -4,7 +4,7 @@
 //! Pure structural split out of `push::mod`; behaviour and the wire
 //! shape of every request are unchanged.
 
-use arkret_models_integration::PushRegisterDeviceOutcome;
+use arkret_models_integration::PushRegisterDeviceResponseBody;
 use chime::{
     ChimePushRegisterDeviceRequest, ChimePushUnregisterDeviceRequest, GatewayBinding,
     PushDeviceConfig, PushGatewayType, PushRegistrationState, build_registration_state,
@@ -56,7 +56,7 @@ pub fn build_unregister_request(
 
 pub fn registration_state_from_response(
     request: &ChimePushRegisterDeviceRequest,
-    response: &PushRegisterDeviceOutcome,
+    response: &PushRegisterDeviceResponseBody,
 ) -> PushRegistrationState {
     let binding = GatewayBinding::new(PushGatewayType::Standard, request.push_gateway.clone());
     let registered_at = arkret_sdk::canonical::format_timestamp_canonical(Utc::now());

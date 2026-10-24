@@ -106,7 +106,7 @@ test("Contact receipt rejects modified core, signature and exact request binding
 test("Contact terminal failure remains typed, replayable and creates no outgoing row", async () => {
   const { handler, commit } = await fixture({ contactRequestOutcome: "failed" });
   const failed = await driveOnce(handler, { url: URL, method: "POST", postData: commit });
-  expect(failed?.body).toMatchObject({ status: "failed", result_kind: "request", reason: "contact_round_conflict" });
+  expect(failed?.body).toMatchObject({ status: "failed", operation_kind: "request", reason: "contact_round_conflict" });
   expect((await driveOnce(handler, { url: URL, method: "POST", postData: commit }))?.body).toEqual(failed?.body);
   const list = (await driveOnce(handler, { url: "https://local.host/_arkret/self/contacts", method: "GET" }))?.body as any;
   expect(list.contacts.some((row: any) => row.peer.account_id?.principal_id === prepare.peer.account_id.principal_id)).toBe(false);

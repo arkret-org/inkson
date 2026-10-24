@@ -44,7 +44,7 @@ try {
 
     $trivyReport = Join-Path $DistDir "trivy-image.json"
     $sbomPath = Join-Path $DistDir "sbom.spdx.json"
-    $cosignBundle = Join-Path $DistDir "cosign-image-tar.sig"
+    $cosignBundle = Join-Path $DistDir "cosign-image-tar.signature"
 
     $evidence = [ordered]@{
         generated_at = (Get-Date).ToUniversalTime().ToString("o")

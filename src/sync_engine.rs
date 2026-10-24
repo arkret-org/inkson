@@ -27,7 +27,7 @@ use std::time::Duration;
 
 use arkret_models_collaboration::sync_frames::account_subscribe::{
     AccountFilter, AccountSubscribeBatch, AccountSubscribeDeviceListChanges, AccountSubscribeFrame,
-    AccountSubscribeFrameKind, SyncRequestBody,
+    AccountSubscribeFrameKind, AccountSubscribeParameters,
 };
 use arkret_sdk::EventPayloadExt as _;
 use arkret_wire::AccountDataKey;
@@ -228,7 +228,7 @@ impl AccountTransportProvider {
     ///
     /// `after` is owned by [`AccountSubscription`], which loads it from the
     /// durable cursor store and advances it only after the projector committed.
-    fn account_request(&self) -> SyncRequestBody {
+    fn account_request(&self) -> AccountSubscribeParameters {
         let filter = Some(selected_account_filter(&self.ctx));
         let (previous, selected_detail_invalidated, selected_current_pending) =
             self.ctx.state_store.read(|store| {
@@ -257,16 +257,16 @@ impl AccountTransportProvider {
         let replace_filter = (previous.is_some()
             && (previous != filter || selected_detail_invalidated || selected_current_pending))
             .then_some(true);
-        SyncRequestBody {
+        AccountSubscribeParameters {
             after: None,
             catchup: Some(true),
             filter,
-            realm_list: self
+            realm_list_parameters: self
                 .ctx
                 .state_store
                 .read(|store| store.sync_requested_realm_list_after())
                 .map(|after| {
-                    arkret_models_collaboration::sync_frames::account_subscribe::RealmListRequest {
+                    arkret_models_collaboration::sync_frames::account_subscribe::RealmListParameters {
                         after: Some(after),
                         limit: Some(20),
                     }
@@ -419,7 +419,7 @@ pub struct NativeAccountHost {
     http: arkret_sdk::http_client::Client,
     projector: InksonAccountProjector,
     store: std::sync::Arc<std::sync::Mutex<LocalStateStore>>,
-    request: SyncRequestBody,
+    request: AccountSubscribeParameters,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -438,7 +438,7 @@ impl NativeAccountHost {
         scope: arkret_sdk::ScopeRef,
         material: &crate::signal::SignalKeyMaterial,
         payload: &crate::signal::SignalPayload,
-    ) -> anyhow::Result<arkret_sdk::CallInvitationSendOutcome> {
+    ) -> anyhow::Result<arkret_sdk::CallInvitationSendResponseBody> {
         let request = self
             .prepare_call_invitation(holder, scope, material, payload)
             .await?;
@@ -588,11 +588,11 @@ impl NativeAccountHost {
             effect,
             projection_sink: crate::runtime::projection::ProjectionRouter::default(),
         };
-        let request = SyncRequestBody {
+        let request = AccountSubscribeParameters {
             after: None,
             catchup: Some(true),
             filter: Some(selected_account_filter(&ctx)),
-            realm_list: None,
+            realm_list_parameters: None,
             replace_filter: None,
         };
         let selected_detail_invalidation_revision = ctx
@@ -687,7 +687,7 @@ impl NativeAccountHost {
         scope: arkret_sdk::ScopeRef,
         material: &crate::signal::SignalKeyMaterial,
         payload: &crate::signal::SignalPayload,
-    ) -> anyhow::Result<arkret_sdk::SignalSubmitOutcome> {
+    ) -> anyhow::Result<arkret_sdk::SignalSubmitResponseBody> {
         self.send_scope_signal_with_transport_observation(scope, material, payload)
             .await
             .map(|(outcome, _observation)| outcome)
@@ -701,7 +701,7 @@ impl NativeAccountHost {
         material: &crate::signal::SignalKeyMaterial,
         payload: &crate::signal::SignalPayload,
     ) -> anyhow::Result<(
-        arkret_sdk::SignalSubmitOutcome,
+        arkret_sdk::SignalSubmitResponseBody,
         arkret_sdk::http_client::SignalSendTransportObservation,
     )> {
         crate::event_submit::EventSubmitter::new(self.http.clone())
@@ -723,7 +723,7 @@ impl NativeAccountHost {
         realm: &str,
         strand: &str,
         latest_cursor: &str,
-    ) -> anyhow::Result<Option<arkret_sdk::SignalSubmitOutcome>> {
+    ) -> anyhow::Result<Option<arkret_sdk::SignalSubmitResponseBody>> {
         self.send_automatic_read_receipt_using(
             &crate::event_submit::EventSubmitter::new(self.http.clone()),
             realm,
@@ -739,7 +739,7 @@ impl NativeAccountHost {
         realm: &str,
         strand: &str,
         latest_cursor: &str,
-    ) -> anyhow::Result<Option<arkret_sdk::SignalSubmitOutcome>> {
+    ) -> anyhow::Result<Option<arkret_sdk::SignalSubmitResponseBody>> {
         let account = &self.projector.ctx.account.authority;
         let device = &self.projector.ctx.account.device_id;
         let actor = arkret_sdk::ActorId::account(account.clone()).to_string();
@@ -786,7 +786,10 @@ impl NativeAccountHost {
         self.catch_up_with_request(self.request.clone()).await
     }
 
-    async fn catch_up_with_request(&self, request: SyncRequestBody) -> garth::Result<()> {
+    async fn catch_up_with_request(
+        &self,
+        request: AccountSubscribeParameters,
+    ) -> garth::Result<()> {
         self.catch_up_with_transport(request, &self.projector.transport)
             .await
     }
@@ -805,7 +808,7 @@ impl NativeAccountHost {
 
     async fn catch_up_with_transport<T: garth::AccountSubscribeTransport>(
         &self,
-        request: SyncRequestBody,
+        request: AccountSubscribeParameters,
         transport: &T,
     ) -> garth::Result<()> {
         struct OneWindow<'a> {
@@ -955,7 +958,7 @@ impl AccountFrameStep {
         self.frame
             .to_device
             .as_ref()
-            .and_then(|container| container.ack_token.as_deref())
+            .and_then(|container| container.acknowledgement_token.as_deref())
     }
 
     /// The continuation cursor of a truncated or lost to-device window.
@@ -2511,7 +2514,7 @@ mod removal_schedule_tests {
         assert!(removal_scope_stamp(&store, &scope, &desired).is_some());
 
         let mut entries = store.realm_current_state_entries(REALM);
-        let arkret_wire::TypedCurrentRow::Value { value, .. } = &mut entries[0];
+        let arkret_wire::CurrentState::Value { value, .. } = &mut entries[0];
         value["covered_key_access_revision"] = serde_json::json!(6);
         crate::test_support::install_current_entries(&mut store, REALM, entries);
         assert!(removal_scope_stamp(&store, &scope, &desired).is_none());
@@ -3056,10 +3059,10 @@ async fn process_to_device_delivery(
     if durable_prefix
         && !response.to_device().is_empty()
         && to_device_window_safe_for_ingest_ack(response.to_device_window())
-        && let Some(ack_token) = response.to_device_ack_token()
+        && let Some(acknowledgement_token) = response.to_device_ack_token()
     {
         await_account_state_durable(ctx, "account to-device batch before ACK").await?;
-        keys.ack_device_messages(ack_token).await?;
+        keys.ack_device_messages(acknowledgement_token).await?;
     }
 
     let mut next_cursor = response.to_device_backfill_cursor();
@@ -3089,10 +3092,10 @@ async fn process_to_device_delivery(
                 page.lost.unwrap_or(false),
                 page.limited.unwrap_or(false),
             )))
-            && let Some(ack_token) = page.ack_token.as_deref()
+            && let Some(acknowledgement_token) = page.acknowledgement_token.as_deref()
         {
             await_account_state_durable(ctx, "paginated to-device batch before ACK").await?;
-            keys.ack_device_messages(ack_token).await?;
+            keys.ack_device_messages(acknowledgement_token).await?;
         }
         if !(page.has_more || page.limited.unwrap_or(false)) {
             break;
@@ -4101,13 +4104,13 @@ mod tests {
     #[test]
     fn blocklist_folder_checkpoint_requires_durable_valid_batch() {
         use arkret_models_collaboration::sync_frames::account_subscribe::{
-            AccountSubscribeSnapshotResult, SyncRequestBody,
+            AccountSubscribeParameters, AccountSubscribeSnapshotResult,
         };
-        let request = SyncRequestBody {
+        let request = AccountSubscribeParameters {
             after: None,
             catchup: Some(true),
             filter: None,
-            realm_list: None,
+            realm_list_parameters: None,
             replace_filter: None,
         };
         let mut folder = arkret_sdk::AccountSubscribeFolder::for_request(&request);
@@ -4846,7 +4849,7 @@ mod tests {
                     "device_id":device,"target_device_authorize_event_id":authorization_event,
                     "target_device_generation_ref":1,"proposal_event_id":proposal_event,
                     "accepted_at":"2026-09-22T00:00:00.000Z",
-                    "acceptance_seq":1,"status":"revoked",
+                    "acceptance_sequence":1,"status":"revoked",
                     "committed_at":"2026-09-22T00:00:01.000Z"
                 }]
             }]

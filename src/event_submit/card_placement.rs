@@ -258,7 +258,7 @@ mod tests {
                     .find(|item| item.event_id() == id)
                     .unwrap();
                 let outcome = if accepted {
-                    arkret_wire::AuthoritySubmitOutcome::Accepted {
+                    arkret_wire::AuthoritySubmitResponseBody::Accepted {
                         status: arkret_wire::AuthorityCommitStatus::Committed,
                         commit: crate::event_submit::tests::commit_for(
                             item.submission.primary_event(),
@@ -266,7 +266,7 @@ mod tests {
                         ),
                     }
                 } else {
-                    arkret_wire::AuthoritySubmitOutcome::Rejected {
+                    arkret_wire::AuthoritySubmitResponseBody::Rejected {
                         status: arkret_wire::AuthorityRejectionStatus::Rejected,
                         reason_code: "permission_denied".into(),
                     }

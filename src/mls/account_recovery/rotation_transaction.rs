@@ -448,21 +448,21 @@ async fn drive_security_rotation(
         transaction_request_digest: transaction.request_digest.clone(),
         prepared_plan_digest: transaction.prepared_plan_digest.clone(),
         artifact,
-        auth_data: arkret_models_crypto::ClientStepAttestationAuthData {
+        signature_proof: arkret_models_crypto::ClientStepAttestationSignatureProof {
             verification_method: arkret_sdk::DidUrl::new(signer.verification_method().to_owned())
                 .map_err(anyhow::Error::msg)?,
             signature_algorithm: "Ed25519".to_owned(),
             signature: Base64UrlString::new("AA".to_owned()).map_err(anyhow::Error::msg)?,
         },
     };
-    attestation.auth_data.signature = Base64UrlString::new(
+    attestation.signature_proof.signature = Base64UrlString::new(
         URL_SAFE_NO_PAD.encode(signer.sign_raw(&attestation.signing_bytes()?)?),
     )
     .map_err(anyhow::Error::msg)?;
     let completed = workflow
         .continue_with_signed_local_commit(
             &transaction.transaction_id,
-            &arkret_models_crypto::SecurityTransactionContinueRequest {
+            &arkret_models_crypto::SecurityTransactionContinueRequestBody {
                 request_digest: transaction.request_digest.clone(),
                 prepared_plan_digest: transaction.prepared_plan_digest.clone(),
                 expected_accepted_step_count: transaction.accepted_steps.len().try_into()?,

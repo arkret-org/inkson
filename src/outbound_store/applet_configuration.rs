@@ -2,7 +2,7 @@
 
 use arkret_models_integration::{
     AppletConfigurationAdmissionStatus as Status, AppletConfigurationCommand,
-    AppletConfigurationIntent, AppletConfigurationOutcome, AppletConfigurationRequest,
+    AppletConfigurationIntent, AppletConfigurationRequestBody, AppletConfigurationResponseBody,
 };
 
 use super::*;
@@ -13,7 +13,7 @@ pub(crate) struct ConfigurationRecord {
     pub authority: arkret_sdk::AccountId,
     pub applet_id: arkret_sdk::AppletId,
     pub intent: AppletConfigurationIntent,
-    pub outcome: Option<AppletConfigurationOutcome>,
+    pub outcome: Option<AppletConfigurationResponseBody>,
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -76,10 +76,10 @@ mod tests {
                 .len(),
             2
         );
-        let outcome = AppletConfigurationOutcome {
+        let outcome = AppletConfigurationResponseBody {
             request_id: frozen.intent.request_id.clone(),
             intent_digest: format!("sha256:{}", "7".repeat(64)).parse().unwrap(),
-            source_outcome: None,
+            source_response_body: None,
             admission_status: Status::Cancelled,
             review_request_id: None,
         };
@@ -118,8 +118,8 @@ impl ConfigurationRecord {
         })
     }
 
-    pub fn request(&self, command: AppletConfigurationCommand) -> AppletConfigurationRequest {
-        AppletConfigurationRequest {
+    pub fn request(&self, command: AppletConfigurationCommand) -> AppletConfigurationRequestBody {
+        AppletConfigurationRequestBody {
             command,
             intent: self.intent.clone(),
             approval_signatures: None,
@@ -132,7 +132,7 @@ impl ConfigurationRecord {
             .map_err(|error| garth::Error::Storage(error.to_string()))?;
         if let Some(outcome) = &self.outcome
             && (outcome.request_id != self.intent.request_id
-                || outcome.source_outcome.as_ref().is_some_and(|source| {
+                || outcome.source_response_body.as_ref().is_some_and(|source| {
                     source.request_id != self.intent.request_id
                         || source.service_id != self.intent.service_id
                         || source.intent_digest != outcome.intent_digest
@@ -223,7 +223,7 @@ impl InksonOutboundStore {
     pub(crate) async fn retain_applet_configuration_outcome(
         &self,
         original: &ConfigurationRecord,
-        outcome: AppletConfigurationOutcome,
+        outcome: AppletConfigurationResponseBody,
     ) -> garth::Result<ConfigurationRecord> {
         self.check_configuration_owner(&original.authority)?;
         let mut next = original.clone();

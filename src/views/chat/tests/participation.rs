@@ -17,9 +17,9 @@ fn participation_visibility_uses_most_specific_effective_scope() {
         },
         selection: ParticipationBits::ALL,
         version: 1,
-        next_replace_input: ParticipationNextReplaceInput {
+        next_replace_input: Some(ParticipationNextReplaceInput {
             expected_version: 1,
-        },
+        }),
     };
     let circle_entry = AgentParticipationEntry {
         scope: ParticipationScope::Circle {
@@ -28,9 +28,9 @@ fn participation_visibility_uses_most_specific_effective_scope() {
         },
         selection: ParticipationBits::NONE,
         version: 1,
-        next_replace_input: ParticipationNextReplaceInput {
+        next_replace_input: Some(ParticipationNextReplaceInput {
             expected_version: 1,
-        },
+        }),
     };
 
     assert!(participation_allows_public_reply(
@@ -63,9 +63,9 @@ fn participation_visibility_can_target_an_authoritative_discussion_strand() {
         },
         selection: ParticipationBits::ALL,
         version: 1,
-        next_replace_input: ParticipationNextReplaceInput {
+        next_replace_input: Some(ParticipationNextReplaceInput {
             expected_version: 1,
-        },
+        }),
     };
 
     assert!(participation_allows_public_reply(
@@ -85,11 +85,11 @@ fn mention_only_participation_does_not_expose_agent_in_roster() {
 
     let realm = "ak:realm:AUuXpUO-yBwwyCNB7AS1IIm5_sgsxyEsG7PBmmkXdFog";
     let mention_only = ParticipationBits {
-        reply_message: false,
-        reaction_add: false,
-        reaction_remove: false,
-        accept_third_party_mention: true,
-        act_on_behalf: false,
+        message_creation_allowed: false,
+        reaction_addition_allowed: false,
+        reaction_removal_allowed: false,
+        third_party_mention_delivery_allowed: true,
+        acting_on_behalf_allowed: false,
     };
     let entry = AgentParticipationEntry {
         scope: ParticipationScope::Realm {
@@ -97,9 +97,9 @@ fn mention_only_participation_does_not_expose_agent_in_roster() {
         },
         selection: mention_only,
         version: 1,
-        next_replace_input: ParticipationNextReplaceInput {
+        next_replace_input: Some(ParticipationNextReplaceInput {
             expected_version: 1,
-        },
+        }),
     };
 
     assert!(!participation_allows_public_reply(

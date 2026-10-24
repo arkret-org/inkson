@@ -736,7 +736,7 @@ mod tests {
                 created_at: chrono::DateTime::parse_from_rfc3339("2026-09-20T00:00:00Z")
                     .unwrap()
                     .with_timezone(&chrono::Utc),
-                sig: arkret_wire::Base64UrlString::new("AA").unwrap(),
+                signature: arkret_wire::Base64UrlString::new("AA").unwrap(),
             },
         };
         arkret_wire::CommittedEventView::Full(arkret_wire::CommittedEventFullView { commit, event })

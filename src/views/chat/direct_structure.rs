@@ -368,7 +368,7 @@ fn DirectAgentReplyPreference(
                                 anyhow::ensure!(existing.agent_id == agent.principal_id.as_str(), "Participation belongs to another Agent");
                                 let entry = existing.agent_participation_entries.iter().find(|entry| entry.scope == scope);
                                 let mut selection = entry.map(|entry| entry.selection).unwrap_or_default();
-                                selection.reply_message = true;
+                                selection.message_creation_allowed = true;
                                 let request = arkret_sdk::ParticipationReplaceRequestBody {
                                     target_scope: scope.clone(), selection,
                                     expected_version: entry.map(|entry| entry.version).unwrap_or(0),
@@ -1008,7 +1008,7 @@ pub(super) fn DirectStructurePanel(
                 .filter(|entry| {
                     matches!(
                         entry,
-                        arkret_sdk::TypedCurrentRow::Value {
+                        arkret_sdk::CurrentState::Value {
                             selector: arkret_sdk::CurrentSelector::Strand { .. },
                             ..
                         }

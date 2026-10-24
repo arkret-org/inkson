@@ -169,7 +169,7 @@ struct Builder {
     identity: FixtureIdentity,
     events: Vec<CommittedEventFullView>,
     facts: Vec<arkret_models_collaboration::authority_commit::AccountDeviceHistoricalSignerFact>,
-    rows: Vec<TypedCurrentRow>,
+    rows: Vec<CurrentState>,
     ids: BTreeMap<String, String>,
     public_blobs: BTreeMap<String, Base64UrlString>,
     managed_agent: Option<ManagedAgentFixture>,
@@ -222,7 +222,7 @@ impl Builder {
                     "alice"
                 },
                 also_known_as: &[],
-                version_time: at(0),
+                version_created_at: at(0),
                 did_key_fragment: Some("signing-1"),
             },
             &seed,
@@ -231,7 +231,7 @@ impl Builder {
         let mut resolver = arkret_identity::DidWebvhResolver::new();
         resolver.insert_from_https_response(
             &did,
-            arkret_identity::DidWebvhDocumentOutcome {
+            arkret_identity::DidWebvhDocumentHttpResponse {
                 url: arkret_identity::DidWebvhResolver::document_url(&did)?,
                 content_type: "application/json".into(),
                 body: serde_json::to_vec(&inception.log_entry["state"])?,
@@ -239,7 +239,7 @@ impl Builder {
         )?;
         resolver.ingest_log(
             &did,
-            arkret_identity::DidWebvhLogOutcome {
+            arkret_identity::DidWebvhLogHttpResponse {
                 url: arkret_identity::DidWebvhResolver::log_url(&did)?,
                 content_type: "application/jsonl".into(),
                 body: serde_json::to_vec(&inception.log_entry)?,
@@ -399,7 +399,7 @@ impl Builder {
             event: create.into_event(),
         };
         let key = arkret_models_identity::signer_key_operations::ResolvedSignerKey {
-            public_key_b64u: Base64UrlString::new(base64url_encode(
+            public_key_base64url: Base64UrlString::new(base64url_encode(
                 producer_key.verifying_key().as_bytes(),
             ))
             .map_err(anyhow::Error::msg)?,
@@ -484,7 +484,7 @@ impl Builder {
             &canonical::canonical_json_bytes(&event.digest_payload()?)?,
             &event.actor_id,
             &arkret_signatures::PublicKeyMaterial::Ed25519Raw {
-                bytes: base64url_decode(self.key.public_key_b64u.as_str())?,
+                bytes: base64url_decode(self.key.public_key_base64url.as_str())?,
             },
             DigestSuite::Sha256,
         )?;
@@ -553,7 +553,7 @@ impl Builder {
                 "assistant"
             },
             controller_principal_id: &controller.principal_id,
-            version_time: time(2),
+            version_created_at: time(2),
             root_seed: &[41; 32],
             next_root_public_key_multibase: &next,
         })?;
@@ -637,7 +637,7 @@ impl Builder {
             did: did.as_str(),
             local_id: &inception.local_id,
             previous_entries: std::slice::from_ref(&inception.log_entry),
-            version_time: time(4),
+            version_created_at: time(4),
             current_root_seed: &[42; 32],
             next_root_public_key_multibase: &successor,
             controller_principal_id: &controller.principal_id,
@@ -647,7 +647,7 @@ impl Builder {
         let mut resolver = arkret_identity::DidWebvhResolver::new();
         resolver.insert_from_https_response(
             &did,
-            arkret_identity::DidWebvhDocumentOutcome {
+            arkret_identity::DidWebvhDocumentHttpResponse {
                 url: arkret_identity::DidWebvhResolver::document_url(&did)?,
                 content_type: "application/json".into(),
                 body: serde_json::to_vec(&binding.log_entry["state"])?,
@@ -658,7 +658,7 @@ impl Builder {
         log.extend(serde_json::to_vec(&binding.log_entry)?);
         resolver.ingest_log(
             &did,
-            arkret_identity::DidWebvhLogOutcome {
+            arkret_identity::DidWebvhLogHttpResponse {
                 url: arkret_identity::DidWebvhResolver::log_url(&did)?,
                 content_type: "application/jsonl".into(),
                 body: log,
@@ -825,8 +825,8 @@ impl Builder {
                 && leaves[0].leaf_index == 0
                 && leaves[0].actor_id == self.actor
                 && leaves[0].signature_key
-                    == payload.creator_leaf_authority.leaf_signature_key_b64u
-                && leaves[0].signature_key == self.key.public_key_b64u,
+                    == payload.creator_leaf_authority.leaf_signature_key_base64url
+                && leaves[0].signature_key == self.key.public_key_base64url,
             "MLS Genesis creator leaf differs from the authorized fixture actor/key"
         );
         Ok(())
@@ -921,9 +921,9 @@ impl Builder {
         value: T,
     ) -> Result<()> {
         self.rows.retain(
-            |row| !matches!(row, TypedCurrentRow::Value { selector: old, .. } if old == &selector),
+            |row| !matches!(row, CurrentState::Value { selector: old, .. } if old == &selector),
         );
-        self.rows.push(TypedCurrentRow::Value {
+        self.rows.push(CurrentState::Value {
             selector,
             source_stream_ref: full.commit.stream_ref.clone(),
             revision: CurrentRevision {
@@ -1008,7 +1008,7 @@ impl Builder {
                     CurrentSelector::MemberState {
                         actor_id: payload.member_id,
                     },
-                    arkret_wire::MemberStateCurrent {
+                    arkret_wire::MemberStateValue {
                         membership: serde_json::from_value(serde_json::to_value(
                             payload.membership,
                         )?)?,
@@ -1031,7 +1031,7 @@ impl Builder {
                     CurrentSelector::MlsGroup {
                         scope_ref: payload.effective_scope().clone(),
                     },
-                    arkret_wire::MlsGroupCurrent {
+                    arkret_wire::MlsGroupValue {
                         effective_scope: payload.effective_scope().clone(),
                         genesis_event_ref: full.event.event_id.clone(),
                         cipher_suite: payload.cipher_suite,
@@ -1087,7 +1087,7 @@ impl Builder {
                     .rows
                     .iter()
                     .find_map(|row| match row {
-                        TypedCurrentRow::Value {
+                        CurrentState::Value {
                             selector: CurrentSelector::Strand { strand_id },
                             value,
                             ..
@@ -1112,24 +1112,24 @@ impl Builder {
                     .rows
                     .iter()
                     .find_map(|row| match row {
-                        TypedCurrentRow::Value {
+                        CurrentState::Value {
                             selector: existing,
                             value,
                             ..
                         } if existing == &selector => Some(value.clone()),
                         _ => None,
                     })
-                    .map(serde_json::from_value::<StrandWatchCurrentValue>)
+                    .map(serde_json::from_value::<StrandWatchValue>)
                     .transpose()?;
                 if current != watch.expected_value {
                     return Err(FixtureWatchConflict.into());
                 }
                 let value = match watch.level {
-                    Some(level) => StrandWatchCurrentValue::Set(StrandWatchExpectedValue {
+                    Some(level) => StrandWatchValue::Set(StrandWatchExpectedValue {
                         level,
                         level_public: watch.level_public,
                     }),
-                    None => StrandWatchCurrentValue::Cleared(()),
+                    None => StrandWatchValue::Cleared(()),
                 };
                 self.row(full, selector, value)?;
             }
@@ -1137,7 +1137,7 @@ impl Builder {
                 let message = full.event.typed_payload::<event_spec::MessageCreate>()?;
                 ensure!(
                     self.rows.iter().any(|row| matches!(row,
-                        TypedCurrentRow::Value {
+                        CurrentState::Value {
                             selector: CurrentSelector::Strand { strand_id }, ..
                         } if strand_id == &message.strand_id
                     )),
@@ -1181,11 +1181,11 @@ impl Builder {
                 let selector = CurrentSelector::ObjectRedaction {
                     target_ref: redaction.target_ref.to_string(),
                 };
-                if let Some(TypedCurrentRow::Value {
+                if let Some(CurrentState::Value {
                     value: previous, ..
                 }) = self.rows.iter().find(|row| {
                     matches!(row,
-                        TypedCurrentRow::Value { selector: held, .. } if held == &selector
+                        CurrentState::Value { selector: held, .. } if held == &selector
                     )
                 }) {
                     let previous: arkret_models_collaboration::events_payloads::redaction::ObjectRedactionCurrentValue = serde_json::from_value(previous.clone())?;
@@ -1315,7 +1315,7 @@ impl Builder {
                 for (selector, expected_value) in expected {
                     ensure!(
                         self.rows.iter().any(|row| matches!(row,
-                        TypedCurrentRow::Value { selector: actual, value, .. }
+                        CurrentState::Value { selector: actual, value, .. }
                             if actual == &selector && value == &expected_value)),
                         "directed Invite acceptance does not match its locked current prestate"
                     );
@@ -1324,7 +1324,7 @@ impl Builder {
                     actor_id: full.event.actor_id.clone(),
                 };
                 ensure!(self.rows.iter().any(|row| matches!(row,
-                    TypedCurrentRow::Value { selector, value, .. }
+                    CurrentState::Value { selector, value, .. }
                         if selector == &member && value.get("membership").and_then(Value::as_str) == Some("leave"))),
                     "directed Invite acceptance requires an accepted leave prestate");
                 // All preconditions precede the three writes; every result is
@@ -1339,7 +1339,7 @@ impl Builder {
                 self.row(
                     full,
                     member,
-                    arkret_wire::MemberStateCurrent {
+                    arkret_wire::MemberStateValue {
                         membership: arkret_wire::MembershipState::Join,
                         joined_at: None,
                     },
@@ -1459,7 +1459,7 @@ impl Builder {
         }
         use arkret_models_collaboration::sync_frames::account_subscribe::RealmSyncEntry;
         use arkret_models_collaboration::sync_frames::account_sync::RealmStreamWindow;
-        let current = AccountCurrentView {
+        let current = AccountStateView {
             realm_id: snapshot.realm_id.clone(),
             governance_generation: snapshot.governance_generation,
             stream_heads: snapshot.visible_stream_heads.clone(),
@@ -1573,7 +1573,7 @@ pub(super) fn realm_list(input: Value) -> Result<Value> {
             .current_state_entries
             .iter()
             .find_map(|row| {
-                let TypedCurrentRow::Value {
+                let CurrentState::Value {
                     selector, value, ..
                 } = row;
                 matches!(selector, CurrentSelector::RealmProfile)
@@ -1878,7 +1878,7 @@ pub(super) fn build(input: Value) -> Result<Value> {
             group_info_ref: info_ref,
             ratchet_tree_ref: tree_ref,
             creator_leaf_authority: MlsGenesisCreatorLeafAuthority {
-                leaf_signature_key_b64u: leaves[0].signature_key.clone(),
+                leaf_signature_key_base64url: leaves[0].signature_key.clone(),
                 endpoint: MlsWelcomeRecipientEndpoint::Device { device_id: device },
                 authorization_event_ref: builder.source_authorization.event.event_id.clone(),
             },
@@ -2076,7 +2076,7 @@ fn require_fixture_readable(fixture: &Fixture) -> Result<()> {
             actor_id: ActorId::account(recipient.identity.account_id.clone()),
         };
         ensure!(fixture.snapshot.current_state_entries.iter().any(|row| matches!(row,
-            TypedCurrentRow::Value { selector, value, .. }
+            CurrentState::Value { selector, value, .. }
                 if selector == &member && value.get("membership").and_then(Value::as_str) == Some("join"))),
             "directed Invite fixture is not ordinarily readable before accepted join");
     }
@@ -2167,7 +2167,7 @@ pub(super) fn streams(input: Value) -> Result<Value> {
     }
     let mut rows = Vec::new();
     for head in &fixture.snapshot.visible_stream_heads {
-        let scan = store.scan(&StreamScanRequest {
+        let scan = store.scan(&StreamScanRequestBody {
             realm_id: fixture.snapshot.realm_id.clone(),
             stream_ref: head.stream_ref.clone(),
             direction: arkret_wire::StreamScanDirection::After(None),
@@ -2192,7 +2192,7 @@ pub(super) fn streams(input: Value) -> Result<Value> {
         rows.len() <= usize::from(input.limit),
         "fixture requires paginated stream enumeration"
     );
-    let page = arkret_wire::RealmStreamList {
+    let page = arkret_wire::RealmStreamPage {
         realm_id: fixture.snapshot.realm_id,
         streams: rows.into_iter().map(|(_, row)| row).collect(),
         next_cursor: None,
@@ -2206,7 +2206,7 @@ pub(super) fn streams(input: Value) -> Result<Value> {
 #[serde(deny_unknown_fields)]
 struct ScanInput {
     fixture: Fixture,
-    request: StreamScanRequest,
+    request: StreamScanRequestBody,
 }
 
 pub(super) fn scan(input: Value) -> Result<Value> {
@@ -2285,22 +2285,22 @@ pub(super) fn signer_keys(input: Value) -> Result<Value> {
                 _ => false,
             });
         results.push(match fact {
-            Some(fact) => SignerKeyQueryOutcome::HistoricalResolved {
+            Some(fact) => SignerKeyResolution::HistoricalResolved {
                 selector: selector.clone(),
                 key: fact.key.clone(),
                 accepted_at: fact.accepted_at,
             },
-            None => SignerKeyQueryOutcome::Unavailable {
+            None => SignerKeyResolution::Unavailable {
                 selector: selector.clone(),
             },
         });
     }
-    let outcome = SignerKeysQueryOutcome {
+    let outcome = SignerKeyQueryResponseBody {
         recipient_actor_id: input.request.recipient_actor_id.clone(),
         request_id: input.request.request_id.clone(),
         realm_id: input.request.realm_id.clone(),
         recipient_account_id: input.request.recipient_account_id.clone(),
-        results,
+        resolutions: results,
     };
     outcome.validate_for_request(&input.request)?;
     serde_json::to_value(outcome).map_err(Into::into)
@@ -2310,7 +2310,7 @@ pub(super) fn signer_keys(input: Value) -> Result<Value> {
 #[serde(deny_unknown_fields)]
 struct ExactCurrentInput {
     fixture: Fixture,
-    request: arkret_models_collaboration::exact_current_results::ExactCurrentResultsReadRequestBody,
+    request: arkret_models_collaboration::exact_current_state::ExactCurrentStateReadRequestBody,
 }
 
 #[derive(Deserialize)]
@@ -2342,7 +2342,7 @@ pub(super) fn strand_watch_current(input: Value) -> Result<Value> {
             .current_state_entries
             .iter()
             .any(|row| matches!(row,
-        TypedCurrentRow::Value { selector: CurrentSelector::Strand { strand_id }, value, .. }
+        CurrentState::Value { selector: CurrentSelector::Strand { strand_id }, value, .. }
             if strand_id == &input.request.strand_id
                 && value.get("state").and_then(Value::as_str) == Some("active")
                 && value.get("scope_circle_id").is_none_or(Value::is_null))),
@@ -2368,7 +2368,7 @@ pub(super) fn strand_watch_current(input: Value) -> Result<Value> {
         .current_state_entries
         .iter()
         .find_map(|row| match row {
-            TypedCurrentRow::Value {
+            CurrentState::Value {
                 selector:
                     CurrentSelector::StrandWatch {
                         strand_id,
@@ -2385,11 +2385,11 @@ pub(super) fn strand_watch_current(input: Value) -> Result<Value> {
             _ => None,
         });
     let outcome = match current {
-        Some((source_stream_ref, revision, value)) => StrandWatchCurrentOutcome::Current {
+        Some((source_stream_ref, revision, value)) => StrandWatchCurrentResponseBody::Current {
             realm_id: input.request.realm_id.clone(),
             governance_generation: fixture.snapshot.governance_generation,
             stream_head: head,
-            result: StrandWatchCurrentRow {
+            current_state: CurrentStrandWatch {
                 selector,
                 source_stream_ref: source_stream_ref.clone(),
                 revision: revision.clone(),
@@ -2408,7 +2408,7 @@ pub(super) fn strand_watch_current(input: Value) -> Result<Value> {
                         == Some(&json!(input.request.watcher_actor_id))),
                 "accepted watch history cannot become never_written"
             );
-            StrandWatchCurrentOutcome::NeverWritten {
+            StrandWatchCurrentResponseBody::NeverWritten {
                 realm_id: input.request.realm_id.clone(),
                 governance_generation: fixture.snapshot.governance_generation,
                 stream_head: head,
@@ -2423,8 +2423,8 @@ pub(super) fn strand_watch_current(input: Value) -> Result<Value> {
 }
 
 pub(super) fn exact_current(input: Value) -> Result<Value> {
-    use arkret_models_collaboration::exact_current_results::{
-        ExactCurrentResultSelector, ExactCurrentResultsReadOutcome,
+    use arkret_models_collaboration::exact_current_state::{
+        ExactCurrentStateReadResponseBody, ExactCurrentStateSelector,
         NeverWrittenExactCurrentSelector,
     };
     let input: ExactCurrentInput = serde_json::from_value(input)?;
@@ -2435,7 +2435,7 @@ pub(super) fn exact_current(input: Value) -> Result<Value> {
         input.request.realm_id == fixture.snapshot.realm_id,
         "exact current request belongs to another Realm"
     );
-    let ExactCurrentResultSelector::AgentInteraction(selector) = &input.request.selector else {
+    let ExactCurrentStateSelector::AgentInteraction(selector) = &input.request.selector else {
         bail!("restricted fixture only reads its managed Agent interaction selector");
     };
     ensure!(
@@ -2459,7 +2459,7 @@ pub(super) fn exact_current(input: Value) -> Result<Value> {
         .find(|head| head.stream_ref == stream)
         .ok_or_else(|| anyhow::anyhow!("fixture lacks the complete Realm stream head"))?
         .clone();
-    let outcome = ExactCurrentResultsReadOutcome::NeverWritten {
+    let outcome = ExactCurrentStateReadResponseBody::NeverWritten {
         realm_id: fixture.snapshot.realm_id.clone(),
         governance_generation: fixture.snapshot.governance_generation,
         effective_stream_head: head,
@@ -2479,7 +2479,7 @@ pub(super) fn exact_current(input: Value) -> Result<Value> {
 #[serde(deny_unknown_fields)]
 struct SubmitInput {
     fixture: Option<Fixture>,
-    request: arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest,
+    request: arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequestBody,
     #[serde(default = "default_seed")]
     seed_b64url: String,
     #[serde(default = "default_device")]
@@ -2543,8 +2543,8 @@ pub(super) fn submit(input: Value) -> Result<Value> {
         builder.ids = fixture.ids;
     }
     let submissions = match &input.request {
-        SelfAuthoritySubmitRequest::Event(submission) => vec![submission.clone()],
-        SelfAuthoritySubmitRequest::OrdinaryRealmBootstrap(unit) => unit.events.clone(),
+        SelfAuthoritySubmitRequestBody::Event(submission) => vec![submission.clone()],
+        SelfAuthoritySubmitRequestBody::OrdinaryRealmBootstrap(unit) => unit.events.clone(),
         _ => bail!("fixture does not implement this registered atomic unit"),
     };
     let mut commits = Vec::new();
@@ -2573,8 +2573,8 @@ pub(super) fn submit(input: Value) -> Result<Value> {
         commits.push(builder.events.last().unwrap().commit.clone());
     }
     let outcome = match &input.request {
-        SelfAuthoritySubmitRequest::Event(_) => {
-            SelfAuthoritySubmitOutcome::Ordinary(AuthoritySubmitOutcome::Accepted {
+        SelfAuthoritySubmitRequestBody::Event(_) => {
+            SelfAuthoritySubmitResponseBody::Ordinary(AuthoritySubmitResponseBody::Accepted {
                 status: if duplicate {
                     AuthorityCommitStatus::Duplicate
                 } else {
@@ -2583,8 +2583,8 @@ pub(super) fn submit(input: Value) -> Result<Value> {
                 commit: commits.remove(0),
             })
         }
-        SelfAuthoritySubmitRequest::OrdinaryRealmBootstrap(_) => {
-            SelfAuthoritySubmitOutcome::OrdinaryRealmBootstrap(
+        SelfAuthoritySubmitRequestBody::OrdinaryRealmBootstrap(_) => {
+            SelfAuthoritySubmitResponseBody::OrdinaryRealmBootstrap(
                 OrdinaryRealmBootstrapAcceptanceOutcome {
                     unit_kind: OrdinaryRealmBootstrapUnitKind::OrdinaryRealmBootstrap,
                     status: if duplicate {
@@ -2617,7 +2617,7 @@ pub(super) fn current_principal(input: Value) -> Result<Value> {
         input.request.account_id == fixture.identity.account_id,
         "current principal fixture Account mismatch"
     );
-    let outcome = CurrentPrincipalOutcome {
+    let outcome = CurrentPrincipalResponseBody {
         request_id: input.request.request_id.clone(),
         account_id: fixture.identity.account_id,
         principal_control_realm_id: fixture.identity.principal_control_realm_id,
@@ -2658,14 +2658,14 @@ mod tests {
             strand_id: initial.ids["review"].parse()?,
             watcher_actor_id: ActorId::account(initial.identity.account_id.clone()),
         };
-        let read = |fixture: &Fixture| -> Result<StrandWatchCurrentOutcome> {
+        let read = |fixture: &Fixture| -> Result<StrandWatchCurrentResponseBody> {
             Ok(serde_json::from_value(strand_watch_current(
                 json!({"fixture":fixture,"request":request}),
             )?)?)
         };
         assert!(matches!(
             read(&initial)?,
-            StrandWatchCurrentOutcome::NeverWritten { .. }
+            StrandWatchCurrentResponseBody::NeverWritten { .. }
         ));
         let mut builder = watch_builder(&initial)?;
         let first = builder.author::<event_spec::StrandWatchSet>(
@@ -2679,7 +2679,11 @@ mod tests {
         )?;
         let first_fixture = builder.finish()?;
         validate_fixture(&first_fixture)?;
-        let StrandWatchCurrentOutcome::Current { result, .. } = read(&first_fixture)? else {
+        let StrandWatchCurrentResponseBody::Current {
+            current_state: result,
+            ..
+        } = read(&first_fixture)?
+        else {
             bail!("accepted watch is not current");
         };
         assert_eq!(
@@ -2693,7 +2697,7 @@ mod tests {
         );
         assert_eq!(
             result.value,
-            StrandWatchCurrentValue::Set(StrandWatchExpectedValue {
+            StrandWatchValue::Set(StrandWatchExpectedValue {
                 level: StrandWatchLevel::All,
                 level_public: Some(true)
             })
@@ -2722,10 +2726,14 @@ mod tests {
         )?;
         let cleared = builder.finish()?;
         validate_fixture(&cleared)?;
-        let StrandWatchCurrentOutcome::Current { result, .. } = read(&cleared)? else {
+        let StrandWatchCurrentResponseBody::Current {
+            current_state: result,
+            ..
+        } = read(&cleared)?
+        else {
             bail!("cleared watch became never_written");
         };
-        assert_eq!(result.value, StrandWatchCurrentValue::Cleared(()));
+        assert_eq!(result.value, StrandWatchValue::Cleared(()));
         let mut builder = watch_builder(&cleared)?;
         let second = builder.author::<event_spec::StrandWatchSet>(
             &request.realm_id,
@@ -2743,12 +2751,16 @@ mod tests {
         assert_eq!(replay["outcome"]["status"], "duplicate");
         assert_eq!(replay["fixture"], serde_json::to_value(&finished)?);
         let current = read(&finished)?;
-        let StrandWatchCurrentOutcome::Current { result, .. } = &current else {
+        let StrandWatchCurrentResponseBody::Current {
+            current_state: result,
+            ..
+        } = &current
+        else {
             bail!("watch disappeared");
         };
         assert_eq!(
             result.value,
-            StrandWatchCurrentValue::Set(StrandWatchExpectedValue {
+            StrandWatchValue::Set(StrandWatchExpectedValue {
                 level: StrandWatchLevel::Muted,
                 level_public: None
             })
@@ -2762,14 +2774,14 @@ mod tests {
             .find(|row| {
                 matches!(
                     row,
-                    TypedCurrentRow::Value {
+                    CurrentState::Value {
                         selector: CurrentSelector::StrandWatch { .. },
                         ..
                     }
                 )
             })
             .unwrap();
-        let TypedCurrentRow::Value { value, .. } = row;
+        let CurrentState::Value { value, .. } = row;
         *value = json!({"level":"all"});
         assert!(validate_fixture(&forged).is_err());
         let mut foreign = request.clone();
@@ -2785,7 +2797,7 @@ mod tests {
         let fixture: Fixture = serde_json::from_value(build(json!({
             "salt": 9, "title": "Discovery Realm", "board": true,
         }))?)?;
-        let page: arkret_wire::RealmStreamList = serde_json::from_value(streams(json!({
+        let page: arkret_wire::RealmStreamPage = serde_json::from_value(streams(json!({
             "fixture": fixture, "limit": 1,
         }))?)?;
         page.validate()?;
@@ -2836,9 +2848,9 @@ mod tests {
             .expect("message original");
         let message_id = MessageId::from_event_id(&original.event.event_id);
         let current = fixture.snapshot.current_state_entries.iter().find(|row| matches!(row,
-            TypedCurrentRow::Value { selector: CurrentSelector::MessageRevision { message_id: key }, .. } if key == &message_id
+            CurrentState::Value { selector: CurrentSelector::MessageRevision { message_id: key }, .. } if key == &message_id
         )).expect("message current");
-        let TypedCurrentRow::Value {
+        let CurrentState::Value {
             source_stream_ref,
             revision,
             value,
@@ -2939,10 +2951,10 @@ mod tests {
                 .iter()
                 .find(|row| {
                     matches!(row,
-                TypedCurrentRow::Value { selector: actual, .. } if actual == &selector)
+                CurrentState::Value { selector: actual, .. } if actual == &selector)
                 })
                 .ok_or_else(|| anyhow::anyhow!("atomic result missing"))?;
-            let TypedCurrentRow::Value {
+            let CurrentState::Value {
                 source_stream_ref,
                 revision,
                 value,

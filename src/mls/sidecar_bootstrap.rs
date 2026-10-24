@@ -1368,8 +1368,8 @@ pub(crate) mod tests {
         genesis: &EventId,
         base: &EventId,
         epoch: u64,
-    ) -> arkret_wire::MlsGroupCurrent {
-        arkret_wire::MlsGroupCurrent {
+    ) -> arkret_wire::MlsGroupValue {
+        arkret_wire::MlsGroupValue {
             effective_scope: scope.clone(),
             genesis_event_ref: genesis.clone(),
             current_mls_commit_event_ref: base.clone(),

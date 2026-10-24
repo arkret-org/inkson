@@ -241,7 +241,7 @@ pub(crate) fn overlay_local_card_update_records(
 pub(crate) fn overlay_pending_card_updates(
     mut columns: Vec<KanbanColumn>,
     operations: &[RawOperationRecord],
-    entries: &[arkret_wire::TypedCurrentRow],
+    entries: &[arkret_wire::CurrentState],
     decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
 ) -> Vec<KanbanColumn> {
     for record in operations {
@@ -273,14 +273,14 @@ pub(crate) fn overlay_pending_card_updates(
                     strand_id: strand.clone(),
                 };
                 let mut matching = entries.iter().filter(|entry| {
-                    let arkret_wire::TypedCurrentRow::Value {
+                    let arkret_wire::CurrentState::Value {
                         selector: found, ..
                     } = entry;
                     found == &selector
                 });
                 match matching.next() {
                     None => true,
-                    Some(arkret_wire::TypedCurrentRow::Value {
+                    Some(arkret_wire::CurrentState::Value {
                         source_stream_ref,
                         revision,
                         value,

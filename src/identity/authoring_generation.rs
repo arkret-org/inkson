@@ -133,7 +133,7 @@ enum PrincipalGenerationResolution {
 
 /// Derive evidence without installing it before the caller's async fence.
 pub(crate) fn principal_authoring_generation_from_keys(
-    outcome: &arkret_models_crypto::KeysQueryOutcome,
+    outcome: &arkret_models_crypto::KeysQueryResponseBody,
     account_id: &arkret_sdk::AccountId,
     device_id: &str,
 ) -> anyhow::Result<Option<AuthoringGeneration>> {
@@ -149,7 +149,7 @@ pub(crate) fn principal_authoring_generation_from_keys(
 }
 
 fn resolve_principal_authoring_generation_from_keys(
-    outcome: &arkret_models_crypto::KeysQueryOutcome,
+    outcome: &arkret_models_crypto::KeysQueryResponseBody,
     account_id: &arkret_sdk::AccountId,
     device_id: &str,
 ) -> anyhow::Result<PrincipalGenerationResolution> {
@@ -308,7 +308,7 @@ mod tests {
             }),
         )
         .unwrap();
-        let outcome = arkret_models_crypto::KeysQueryOutcome {
+        let outcome = arkret_models_crypto::KeysQueryResponseBody {
             device_keys: vec![arkret_models_crypto::QueryAccountDeviceEntry {
                 account_id: account_id.clone(),
                 device_keys: BTreeMap::from([(device.clone(), record)]),

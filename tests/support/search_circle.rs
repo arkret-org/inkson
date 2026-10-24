@@ -73,8 +73,8 @@ fn accepted(event: Event, previous: Option<&CommittedEventFullView>) -> Committe
     full
 }
 
-fn row(full: &CommittedEventFullView, selector: CurrentSelector, value: Value) -> TypedCurrentRow {
-    TypedCurrentRow::Value {
+fn row(full: &CommittedEventFullView, selector: CurrentSelector, value: Value) -> CurrentState {
+    CurrentState::Value {
         selector,
         source_stream_ref: full.commit.stream_ref.clone(),
         revision: CurrentRevision {
@@ -277,7 +277,7 @@ pub fn event_redaction_cases() -> Vec<(&'static str, Vec<DisclosureStep>)> {
         fixture.snapshot.current_state_entries.retain(|row| {
             !matches!(
                 row,
-                TypedCurrentRow::Value {
+                CurrentState::Value {
                     selector: CurrentSelector::ObjectRedaction { .. },
                     ..
                 }
@@ -498,7 +498,7 @@ impl Fixture {
             .current_state_entries
             .iter()
             .position(|current| {
-                matches!(current, TypedCurrentRow::Value {
+                matches!(current, CurrentState::Value {
                 selector: CurrentSelector::MessageRevision { message_id: key }, ..
             } if key == &message_id)
             })
@@ -506,7 +506,7 @@ impl Fixture {
         if scenario == "missing" {
             self.snapshot.current_state_entries.remove(position);
         } else {
-            let TypedCurrentRow::Value {
+            let CurrentState::Value {
                 selector,
                 source_stream_ref,
                 revision,
@@ -564,7 +564,7 @@ impl Fixture {
             message_id: MessageId::from_event_id(&self.message.event.event_id),
         };
         let current = self.snapshot.current_state_entries.iter_mut().find(|current| {
-            matches!(current, TypedCurrentRow::Value { selector: key, .. } if key == &selector)
+            matches!(current, CurrentState::Value { selector: key, .. } if key == &selector)
         }).unwrap();
         *current = row(&full, selector, json!(full.event.payload));
         self.originals.push(full);
@@ -781,7 +781,7 @@ impl Fixture {
     pub fn frame(&self, include_originals: bool) -> String {
         let realm = self.snapshot.realm_id.to_string();
         json!({"kind":"delta","cursor":"ak:cursor:YQ","realms":{realm:{
-            "current":{"realm_id":self.snapshot.realm_id,"governance_generation":0,"stream_heads":self.snapshot.visible_stream_heads,"entries":self.snapshot.current_state_entries},
+            "current":{"realm_id":self.snapshot.realm_id,"governance_generation":"0","stream_heads":self.snapshot.visible_stream_heads,"entries":self.snapshot.current_state_entries},
             "committed_events":if include_originals { self.originals.clone() } else { vec![] }
         }}}).to_string()
     }
@@ -792,7 +792,7 @@ impl Fixture {
         let head = &mut self.snapshot.visible_stream_heads[0];
         head.stream_position += 1;
         head.commit_id = RealmCommitId::from_digest([91; 32]);
-        let TypedCurrentRow::Value {
+        let CurrentState::Value {
             value, revision, ..
         } = &mut self.snapshot.current_state_entries[1];
         revision.stream_position = head.stream_position;
@@ -811,7 +811,7 @@ impl Fixture {
             }
             "wrong_schema" => value["schema"] = json!(SchemaId::STRAND_V1),
             "wrong_source" => {
-                let TypedCurrentRow::Value {
+                let CurrentState::Value {
                     source_stream_ref,
                     revision,
                     ..
@@ -918,7 +918,7 @@ pub fn authorization_cases() -> Vec<SearchAuthorizationCase> {
                     .position(|entry| {
                         matches!(
                             entry,
-                            TypedCurrentRow::Value {
+                            CurrentState::Value {
                                 selector: CurrentSelector::Strand { .. },
                                 ..
                             }
@@ -928,7 +928,7 @@ pub fn authorization_cases() -> Vec<SearchAuthorizationCase> {
                 if name == "missing_strand" {
                     fixture.snapshot.current_state_entries.remove(position);
                 } else {
-                    let TypedCurrentRow::Value { value, .. } =
+                    let CurrentState::Value { value, .. } =
                         &mut fixture.snapshot.current_state_entries[position];
                     match name {
                         "wrong_strand_id" => {

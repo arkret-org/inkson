@@ -7,7 +7,7 @@
 //! Every membership change follows the current v1 lifecycle: the Add or
 //! Remove proposal is inline in one Commit bound to the next-epoch governance
 //! binding, the Commit is installed only as an accepted `ak.mls.commit` Event
-//! with its `RealmCommit` against the exact pre-transition `MlsGroupCurrent`,
+//! with its `RealmCommit` against the exact pre-transition `MlsGroupValue`,
 //! and a new member joins only from an `MlsWelcomeDelivery` naming that
 //! accepted Commit.
 //!
@@ -69,7 +69,8 @@ fn detached_signature(
         ))
         .unwrap(),
         created_at: "2026-09-26T00:00:00.000Z".parse().unwrap(),
-        sig: arkret_sdk::Base64UrlString::new(arkret_sdk::base64url_encode([seed; 64])).unwrap(),
+        signature: arkret_sdk::Base64UrlString::new(arkret_sdk::base64url_encode([seed; 64]))
+            .unwrap(),
     }
 }
 
@@ -91,8 +92,8 @@ impl AcceptedGroupState {
         }
     }
 
-    fn current(&self) -> arkret_wire::MlsGroupCurrent {
-        arkret_wire::MlsGroupCurrent {
+    fn current(&self) -> arkret_wire::MlsGroupValue {
+        arkret_wire::MlsGroupValue {
             effective_scope: scope(),
             genesis_event_ref: self.genesis_event_ref.clone(),
             cipher_suite: arkret_wire::NonEmptyString::new(
@@ -195,7 +196,7 @@ fn welcome_delivery(
             device_id: device_id.clone(),
         },
         keypackage_claim_ref: draft.keypackage_claim_ref.clone(),
-        ciphertext_b64: draft.ciphertext_b64.clone(),
+        ciphertext_base64url: draft.ciphertext_base64url.clone(),
         producer_proof: detached_signature(
             arkret_sdk::DetachedSignatureContext::MlsWelcomeDelivery,
             0x77,
@@ -288,7 +289,7 @@ impl LocalMlsDevice {
     fn install(
         &mut self,
         accepted: &CommittedEventFullView,
-        base: &arkret_wire::MlsGroupCurrent,
+        base: &arkret_wire::MlsGroupValue,
     ) -> u64 {
         self.group()
             .install_accepted_commit(accepted, base)

@@ -13,7 +13,7 @@ test("retired mock response fields fail closed", () => {
   const retiredFixtures = [
     { [["registry", "mode"].join("_")]: "development" },
     { [["supported", "receipts"].join("_")]: [] },
-    { auth_metadata: { [mode]: "development" } },
+    { authentication_metadata: { [mode]: "development" } },
     { method_evidence: { [mode]: "development_local" } },
   ];
 

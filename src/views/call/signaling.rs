@@ -21,8 +21,8 @@ pub(super) async fn relay_local_signals(
 ) {
     let signals = transport.borrow_mut().drain_local_signals();
     for signal in signals {
-        let seq = call_seq() + 1;
-        call_seq.set(seq);
+        let sequence = call_seq() + 1;
+        call_seq.set(sequence);
         let signal = match signal {
             LocalSignal::Offer { sdp } => {
                 let offer = arkret_sdk::SessionDescription {
@@ -76,7 +76,7 @@ pub(super) async fn relay_local_signals(
             call_id,
             actor,
             device,
-            seq,
+            sequence,
             signal,
             state_store,
         )
@@ -306,8 +306,8 @@ pub(super) fn emit_async(
     if call_id.trim().is_empty() || realm_id.trim().is_empty() {
         return;
     }
-    let seq = call_seq() + 1;
-    call_seq.set(seq);
+    let sequence = call_seq() + 1;
+    call_seq.set(sequence);
     let (base, api_token, realm_id, call_id, actor, device) = (
         base.to_owned(),
         api_token.to_owned(),
@@ -324,7 +324,7 @@ pub(super) fn emit_async(
             &call_id,
             &actor,
             &device,
-            seq,
+            sequence,
             signal.clone(),
             &state_store,
         )
@@ -355,7 +355,7 @@ pub(super) async fn emit_signal(
     call_id: &str,
     actor: &str,
     device: &str,
-    seq: u64,
+    sequence: u64,
     signal: arkret_sdk::CallSignalData,
     state_store: &crate::runtime::input::StateStoreHandle,
 ) -> Result<(), String> {
@@ -378,7 +378,7 @@ pub(super) async fn emit_signal(
     let payload = crate::signal::SignalPayload::CallSignal {
         call_id: arkret_sdk::CallId::new(call_id)
             .map_err(|error| format!("invalid call_id: {error}"))?,
-        seq,
+        sequence,
         signal,
     };
     let authority = account.authority;

@@ -16,14 +16,14 @@ Realm's **current governance Station**, which answers with an authority-signed
 
 | Concern | Before | Now |
 | --- | --- | --- |
-| Submission DTO | `EventInitialSubmission` (+ lease, Control Proposal Ack, CBS proof bundles, submit context) | `arkret_wire::EventCommitSubmission { event }` inside `AuthoritySubmitRequest::Event` |
-| Submission result | `EventsSubmitOutcome { status, accepted[], duplicate[], rejections[], cursor, ingress_receipts[] }` | `AuthoritySubmitOutcome::{Accepted{status, commit}, Rejected{status, reason_code}}` |
+| Submission DTO | `EventInitialSubmission` (+ lease, Control Proposal Ack, CBS proof bundles, submit context) | `arkret_wire::EventCommitSubmission { event }` inside `AuthoritySubmitRequestBody::Event` |
+| Submission result | `EventsSubmitOutcome { status, accepted[], duplicate[], rejections[], cursor, ingress_receipts[] }` | `AuthoritySubmitResponseBody::{Accepted{status, commit}, Rejected{status, reason_code}}` |
 | Ordering | producer `actor_seq` + `hlc` + `prev_refs` | `RealmCommit { stream_ref, stream_position, previous_commit_ref }`, one commit per Event |
 | Streams | one Realm-global cursor | independent `CommitStreamRef::{Realm, Circle, Sidecar}` streams, each with its own position |
-| Catch-up | `ak.self.events.read.query` pages | `StreamScanRequest{realm_id, stream_ref, after_position, limit}` → `StreamScanOutcome{commits, truncated}` |
-| Current state | `ak:cell:*` current results | `RealmStateSnapshot.current_state_entries` — `TypedCurrentRow` keyed by `CurrentSelector` with a `CurrentRevision{commit_id, stream_position}` |
+| Catch-up | `ak.self.events.read.query` pages | `StreamScanRequestBody{realm_id, stream_ref, after_position, limit}` → `StreamScanResponseBody{commits, truncated}` |
+| Current state | `ak:cell:*` current results | `RealmStateSnapshot.current_state_entries` — `CurrentState` keyed by `CurrentSelector` with a `CurrentRevision{commit_id, stream_position}` |
 | Realm authority | `ak.component.realm.authority_root.v1` cell + controller epoch | `RealmAuthorityBundle` (genesis + double-signed handoff chain + nonce-bound current assertion); `IssuerAuthorityRef::RealmAuthority{realm_id, governance_station_id, authority_generation, basis}` |
-| "Is this scope encrypted?" | create-locked `encryption_profile` + encryption floor | the scope has an accepted `ak.mls.genesis` (`CurrentSelector::MlsGroup{scope_ref}` → `MlsGroupCurrent`) — plaintext before, irreversibly RFC 9420 after |
+| "Is this scope encrypted?" | create-locked `encryption_profile` + encryption floor | the scope has an accepted `ak.mls.genesis` (`CurrentSelector::MlsGroup{scope_ref}` → `MlsGroupValue`) — plaintext before, irreversibly RFC 9420 after |
 | MLS Welcome | `ak.mls.welcome` Event | `MlsWelcomeDelivery` (`ak:mls_welcome_delivery:<uuidv7>`), producer-signed, delivered inside `MlsCommitSubmission` |
 | MLS commit | Proposal Events + Commit Event + Welcome Events, staged | `MlsCommitSubmission { commit_event, welcomes[], idempotency_key }`, one atomic submission; staged state installs on Accepted without waiting for recipient ACK |
 | Recovery completion | Seal-chained PCR successor | two different commits at positions n and n+1 of the same PCR Realm stream, judged by `garth::validate_recovery_commit_boundary` |
@@ -37,7 +37,7 @@ Realm's **current governance Station**, which answers with an authority-signed
    independent stream.
 2. **Authoring is final.** With no actor sequence, HLC or precondition, the
    `event_id` derived at authoring time is the id that reaches the wire. The
-   durable queue stores a frozen `AuthoritySubmitRequest`; there is no re-author
+   durable queue stores a frozen `AuthoritySubmitRequestBody`; there is no re-author
    path and therefore no "queued id vs. accepted id" divergence.
 3. **Holder-local handles never reach the wire.** `Event` has no `unsigned`
    member any more, so the optimistic-UI alias (`local_operation_id`,
@@ -67,7 +67,7 @@ Realm's **current governance Station**, which answers with an authority-signed
 | Capability grants | `src/operation/ak_ops/capability.rs` with `IssuerRealmAuthorityBasis::from_verified_bundle` | inline tests above |
 | Consent | `src/operation/ak_ops/consent.rs::consent_replace` (`ConsentReplacePayload { peer, expected_current, permissions }`), `src/transport/account.rs` reads one complete exact-peer set through SDK `ConsentCurrentReadAuthority` verification and queues the holder-root-signed replacement; the editor preserves the full permission originals and requires confirmation of the complete diff | `src/views/settings/consent.rs` preservation tests, `src/transport/own_station_results.rs` authority tests, `src/event_submit/tests.rs` original pending replacement recovery test; current execution evidence is recorded separately |
 | MLS Welcome admission | `src/mls/welcome_delivery.rs` — the host conversion between `MlsWelcomeDelivery` (wire) and `MlsWelcomeEnvelope` (provider), plus `enqueue_admissible_welcomes` over `garth::retain_admissible_welcomes` | `src/mls/welcome_delivery.rs` inline tests (epoch comes from the Commit, wrong Commit refused, Agent runtime needs its accepted key binding, foreign endpoint never queued) |
-| Current-state projection | `src/current_projection.rs` over `TypedCurrentRow` / `CurrentSelector`, incl. `scope_has_accepted_mls_genesis` | `src/local_state_tests/projections.rs` |
+| Current-state projection | `src/current_projection.rs` over `CurrentState` / `CurrentSelector`, incl. `scope_has_accepted_mls_genesis` | `src/local_state_tests/projections.rs` |
 | Chat, Direct Conversation, reactions, polls, read receipts, mentions | `src/views/chat/`, `src/messaging/`, `src/state/direct_conversation.rs` | `src/views/chat/tests/`, `tests/e2e/inkson.strands.chat-discussion.spec.ts` |
 | Circle, Realm, Space, Strand, Kanban, calendar | `src/circle.rs`, `src/circle_mls.rs`, `src/realm_tree.rs`, `src/views/kanban/`, `src/calendar.rs` | `src/views/kanban/tests/`, `tests/e2e/inkson.strands.kanban.spec.ts` |
 | Media / WebRTC (SFrame RFC 9420 exporter), push | `src/media/`, `src/rtc_transport/`, `src/push/` | `src/push/tests.rs`, `tests/cross_platform/push_*.spec.ts` |
@@ -83,13 +83,13 @@ call sites are left failing rather than re-declared locally.
 | Missing SDK surface | Spec source | Blocked inkson capability |
 | --- | --- | --- |
 | `DeviceRevokePayload` + revocation reason; `event_spec::DeviceRevoke` has no payload binding although `EventKind::DeviceRevoke` is registered | `event-payload.schema.json#/$defs/device_revoke_payload` | device revoke |
-| `ak.realm.authority.reset` Event kind and its authoring helper, plus a `CurrentSelector` for the authority-root typed current result the payload's `expected_state_digest` has to CAS against (`RealmAuthorityResetPayload` exists but nothing can author it, and `CurrentSelector` is closed to profile / policy / member / strand / reactions / MLS group) | `spec/v1/zh/authz/capabilities.md` §148 (reset computes `authority_generation = checked_add(prestate, 1)` under an `expected_state_digest` CAS), §661 (`realm_root` refs fail a whole generation only on reset); `conformance-profiles.json` `stable_phase.allowed_root_control_actions` | Realm admin ownership card: current owner, controller epoch, owner transfer and "revoke all Realm-wide permissions" |
-| `MimiSubmitMessage{RequestBody,Outcome}`, `MimiIdentifierQueryOutcome`, `MimiProxyDownloadOutcome` | `mimi-operations.schema.json`; operations registered in `operation-registry.json` | MIMI interop send / identifier query / proxy download |
+| `ak.realm.authority.reset` Event kind and its authoring helper, plus a `CurrentSelector` for the authority-root current state the payload's `expected_state_digest` has to CAS against (`RealmAuthorityResetPayload` exists but nothing can author it, and `CurrentSelector` is closed to profile / policy / member / strand / reactions / MLS group) | `spec/v1/zh/authz/capabilities.md` §148 (reset computes `authority_generation = checked_add(prestate, 1)` under an `expected_state_digest` CAS), §661 (`realm_root` refs fail a whole generation only on reset); `conformance-profiles.json` `stable_phase.allowed_root_control_actions` | Realm admin ownership card: current owner, controller epoch, owner transfer and "revoke all Realm-wide permissions" |
+| `MimiSubmitMessage{RequestBody,Outcome}`, `MimiIdentifierQueryResponseBody`, `MimiProxyDownloadResponseBody` | `mimi-operations.schema.json`; operations registered in `operation-registry.json` | MIMI interop send / identifier query / proxy download |
 | `PolicySetStatePayload` | `event-payload.schema.json#/$defs/policy_set_state_payload` | Realm policy set-state |
-| `RecoveryPolicyPublishRequest` | `recovery-policy.schema.json#/$defs/recovery_policy_publish_request` | recovery policy publish |
+| `RecoveryPolicyPublishRequestBody` | `recovery-policy.schema.json#/$defs/recovery_policy_publish_request_body` | recovery policy publish |
 | `SidecarMlsBinding` (7 sites, `src/sidecar.rs`) | `sidecar-operations.schema.json` | Agent Sidecar MLS binding |
 | `MAX_PEER_RESOLVE_RESPONSE_BYTES` (3 sites, `src/transport/`) | `events-resolve` peer response ceiling | peer resolve response bound |
-| `CommandOutcome` / `command_unit_outcome` / `server_command_unit_outcome` (6 sites) | `command-unit.schema.json` | command unit result handling |
+| `CommandResponseBody` / `command_unit_outcome` / `server_command_unit_outcome` (6 sites) | `command-unit.schema.json` | command unit result handling |
 | `BackupSeriesErase{Outcome,RequestBody}` (3 sites, `src/key_backup/`) | `key-backup.schema.json` | backup series erase |
 | `DeviceReanchorPayload` (1 site, `src/fresh_device_recovery.rs`) | `event-payload.schema.json#/$defs/device_reanchor_payload`; `ak.device.reanchor` is the one action a recovery publication authority context may allow | fresh-device recovery re-anchor |
 | `RecoveryPreparedPlan`, `UnsignedClientStepAttestation`, `RecoveryBackupClassUnlocked`, `build_recovery_unlock_proof`, `signed_event_digest_claim`, `build_self_principal_pcr_genesis_unit`, `agent_inception_notary`, `CORE_REDUCER_PROFILE` | recovery / security-transaction and principal-genesis schemas | fresh-device recovery, PCR genesis, agent inception |
@@ -104,7 +104,7 @@ Likewise `BackupRotationKind`, `BackupRotationPlan`, `PreparedEventUnit`,
 in the SDK and were import-path problems, not gaps. Of those,
 `WindowStartRealmMetadata` is real but unreachable through the umbrella:
 `arkret_sdk::sync` re-exports `sync_frames::{account_subscribe,
-current_results, realm_state_snapshot}` and not `sync_frames::account_sync`,
+current_states, realm_state_snapshot}` and not `sync_frames::account_sync`,
 so the call site names `arkret_models_collaboration` directly.
 
 ## SDK gaps closed by this round
@@ -116,7 +116,7 @@ now ordinary typed reads:
 
 | Restored SDK surface | Where it now lives | Inkson capability it unblocked |
 | --- | --- | --- |
-| `ContactState`, `ContactListRow`, `ContactAgentProjection`, `DirectConversationSummary(State)`; `ContactList.contacts` is `Vec<ContactListRow>` again | `arkret_models_collaboration::contact_operations`, re-exported at `arkret_sdk::*`. `ContactListRow` deserializes through a private wire struct that enforces the schema's conditional requirements (`next_prepare_input` exactly for `accepted`, `request_event_ref` for `pending_incoming`, `request_message` only there, `effective_scopes == bidirectional_scopes`) | contacts list, contact request / accept / reject UI, sidebar direct-chat targets, `accepted_human_contact_principals` in local state |
+| `ContactState`, `ContactListRow`, `ContactAgentProjection`, `DirectConversationSummary(State)`; `ContactPage.contacts` is `Vec<ContactListRow>` again | `arkret_models_collaboration::contact_operations`, re-exported at `arkret_sdk::*`. `ContactListRow` deserializes through a private wire struct that enforces the schema's conditional requirements (`next_prepare_input` exactly for `accepted`, `request_event_ref` for `pending_incoming`, `request_message` only there, `effective_scopes == bidirectional_scopes`) | contacts list, contact request / accept / reject UI, sidebar direct-chat targets, `accepted_human_contact_principals` in local state |
 | Typed notification deltas: `NotificationDelta{id: NotificationIdentity, action, data: Option<NotificationData>}`, `NotificationData::{AgentRuntimeApproval, AgentRuntimeApprovalRemoval, OrdinaryProjection, OrdinaryRemoval}`, the two closed removal-reason vocabularies, and `verify_recipient_binding` | `arkret_models_collaboration::sync_frames::account_subscribe`, re-exported at `arkret_sdk::sync::*`. The branch is selected from the `id` form before `data` is parsed, so the overlapping `expired` / `superseded` reasons cannot cross branches | notification inbox, Agent runtime approval notifications, mention / message notification projections |
 | `MemberRosterEntry`, `MemberRosterMembership`, `MemberRoster`, `AgentRuntimeApprovalNotificationData` | already present in `arkret_models_collaboration::account_subscribe_projections`; only the `arkret_sdk::sync` re-export was missing | typed member roster, member display ladder, roster-driven Kanban assignment |
 
@@ -158,18 +158,18 @@ reverted except the six this round newly unmasked. Any per-repo error count
 quoted for this migration should be assumed to be a lower bound until that
 repo's signatures all resolve.
 
-## Blocked on the typed current result family (spec section 4)
+## Blocked on the current state family (spec section 4)
 
-Not registered as SDK gaps: these wait on `result_writes[]` reaching the event
+Not registered as SDK gaps: these wait on `state_writes[]` reaching the event
 kinds that would write the family, and on the `CurrentSelector` /
 `ResolvedCellState` projection shape being settled. Nothing here should be
 implemented locally first.
 
 | Inkson call sites | Waits on |
 | --- | --- |
-| `src/state/current_index.rs` (71 errors; `TypedCurrentRow::{revision, target}` at :1605-:1606, `CleanupTask.target` at :1552, and the projector arity from :1570 onward) | whether a typed current result carries its own `CurrentRevision` and target, or is addressed only through `CurrentSelector`. The whole local current index is written against the former. |
-| `src/operation/../operation_tests.rs` :586, :927, :969, :988, :1042, :1060, :1081; `src/transport/tests/envelopes_payloads.rs` :123, :144, :159, :213, :443, :453, :463 | the `*_cell_writes` / `cell_write_projector` family (`pre_authoring_cell_writes`, `project_registered_cell_writes(_with_pre_state)`, `direct_registered_cell_writes`) — 6 of 147 event kinds have `result_writes[]` today |
-| `src/views/realm_admin/admin_panel*`, `src/transport/realm_write.rs:817` (`RealmAuthorityRootValue`, `REALM_AUTHORITY_RESET`, `build_realm_authority_reset_intent`) | the authority-root typed current result and a `CurrentSelector` for it; see the `ak.realm.authority.reset` row under "Blocked by an SDK gap" |
+| `src/state/current_index.rs` (71 errors; `CurrentState::{revision, target}` at :1605-:1606, `CleanupTask.target` at :1552, and the projector arity from :1570 onward) | whether a current state carries its own `CurrentRevision` and target, or is addressed only through `CurrentSelector`. The whole local current index is written against the former. |
+| `src/operation/../operation_tests.rs` :586, :927, :969, :988, :1042, :1060, :1081; `src/transport/tests/envelopes_payloads.rs` :123, :144, :159, :213, :443, :453, :463 | the `*_cell_writes` / `cell_write_projector` family (`pre_authoring_cell_writes`, `project_registered_cell_writes(_with_pre_state)`, `direct_registered_cell_writes`) — 6 of 147 event kinds have `state_writes[]` today |
+| `src/views/realm_admin/admin_panel*`, `src/transport/realm_write.rs:817` (`RealmAuthorityRootValue`, `REALM_AUTHORITY_RESET`, `build_realm_authority_reset_intent`) | the authority-root current state and a `CurrentSelector` for it; see the `ak.realm.authority.reset` row under "Blocked by an SDK gap" |
 | `src/sync_engine.rs` `run_circle_scope_rotate_pass`; `src/circle_mls.rs` `MembershipRemovalSnapshot.{request, local_mls_leaves}` | the `member_state` family, one of the 7 registered families with no writer. The pass's premise was "local membership projections are never negative authority for an MLS Remove"; the successor authority is the member roster current result. |
 | `src/calendar.rs:21`, `src/views/kanban/tests/calendar_event.rs:161` (`calendar_schedule_revision_winner(_at_source)`) | `strand` family — registered, no writer |
 | `src/identity/principal_genesis.rs` :153, :206 (`composite_subject`, `seed_test_governance_result`) | the governance result seeding shape |
@@ -187,7 +187,7 @@ rename, so none of it was done as part of a naming pass.
 | governance / Seal / security frontier preflight (`refresh_realm_governance_frontier`, `seals_frontier_realm_{head,view}`, `seals_frontier_agent_head`, `frontier_request`, `fetch_and_cache_frontier`, `current_security_frontier_leaves`, `preview_security_frontier_with_added_keypackages`, `singleton_security_frontier_leaf`) | `src/event_submit.rs` consumers (15 sites), `src/views/realm_admin/members_panel/admission.rs` (33 errors) | `MlsCommitSubmission` + `src/mls/welcome_delivery.rs`; the admission flow's frontier preflight has no successor and should be deleted outright |
 | Agent Sidecar *exchange* vocabulary (`AgentSidecarExchangeId`, `SidecarExchange{Request,Agent,Control}Fact`, `fold_sidecar_exchange`, `evaluate_sidecar_exchange_cache`, `agent_sidecar_exchange_event_set_digest`, `MESSAGE_METADATA_SIDECAR_EXCHANGE_BINDING_KEY`) | `src/sidecar.rs` (102 errors), `src/views/agents/{bootstrap,admin/controller}.rs` | none — the vocabulary was removed with no successor |
 | RHRK history-secret family (`LocalAuthoritativeHistorySecret`, `PendingHistorySecrets`, `KeyBackupFrontierRef`, `derive_and_retain_realm_history_secret`, `KeyBackupKeybag::MlsHistory`, `HistorySecretRange`) | `src/key_backup/*`, `src/mls/account_recovery/backup_body.rs`, `src/key_backup/tests.rs:467` | none; the history exporter scheme was removed while the RFC 9420 RTC/Signal/reaction/blob labels were kept |
-| `EventInitialSubmission` / `EventsSubmitOutcome` / `AuthorizationLease` / Control Proposal Ack (`events_submit_rejected_for_reason`, `ensure_events_submit_accepted`, `acquire_for_{events,intent}`, `delayed_initial_submission`, `is_actor_seq_cas_conflict_error`, `ControlProposalAck::issue_with_signer`) | `src/transport/*`, `src/mls/account_recovery/recovery_transaction.rs:210-:230` | `EventCommitSubmission` / `AuthoritySubmitOutcome`; `PublicationAuthorityContext.authority_commit_id` replaces `authority_set_ref.authority_set_digest` |
+| `EventInitialSubmission` / `EventsSubmitOutcome` / `AuthorizationLease` / Control Proposal Ack (`events_submit_rejected_for_reason`, `ensure_events_submit_accepted`, `acquire_for_{events,intent}`, `delayed_initial_submission`, `is_actor_seq_cas_conflict_error`, `ControlProposalAck::issue_with_signer`) | `src/transport/*`, `src/mls/account_recovery/recovery_transaction.rs:210-:230` | `EventCommitSubmission` / `AuthoritySubmitResponseBody`; `PublicationAuthorityContext.authority_commit_id` replaces `authority_set_ref.authority_set_digest` |
 
 ## Removed with the protocol
 

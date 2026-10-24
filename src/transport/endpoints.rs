@@ -53,7 +53,7 @@ pub struct KeysEndpoints<'a> {
 impl KeysEndpoints<'_> {
     pub async fn receive_device_messages(
         &self,
-    ) -> anyhow::Result<crate::models::DeviceMessagesGetOutcome> {
+    ) -> anyhow::Result<crate::models::DeviceMessagesGetResponseBody> {
         self.receive_device_messages_page(None, None).await
     }
 
@@ -61,7 +61,7 @@ impl KeysEndpoints<'_> {
         &self,
         after: Option<&str>,
         limit: Option<u32>,
-    ) -> anyhow::Result<crate::models::DeviceMessagesGetOutcome> {
+    ) -> anyhow::Result<crate::models::DeviceMessagesGetResponseBody> {
         let after = after.map(str::trim).filter(|value| !value.is_empty());
         self.transport
             .http()
@@ -72,10 +72,10 @@ impl KeysEndpoints<'_> {
 
     pub async fn ack_device_messages(
         &self,
-        ack_token: &str,
-    ) -> anyhow::Result<crate::models::DeviceMessagesAckOutcome> {
-        let body = crate::models::DeviceMessagesAckRequestBody {
-            ack_token: ack_token.to_owned(),
+        acknowledgement_token: &str,
+    ) -> anyhow::Result<crate::models::DeviceMessagesAcknowledgementResponseBody> {
+        let body = crate::models::DeviceMessagesAcknowledgementRequestBody {
+            acknowledgement_token: acknowledgement_token.to_owned(),
         };
         self.transport
             .http()
@@ -106,7 +106,7 @@ impl KeysEndpoints<'_> {
     pub async fn device_pairing_claim_code(
         &self,
         body: &arkret_sdk::DevicePairingCodeClaimRequestBody,
-    ) -> anyhow::Result<arkret_sdk::DevicePairingCodeClaimOutcome> {
+    ) -> anyhow::Result<arkret_sdk::DevicePairingCodeClaimResponseBody> {
         self.transport
             .http()
             .device_pairing_claim_code(body)
@@ -122,7 +122,7 @@ impl MlsEndpoints<'_> {
     pub async fn unverified_member_roster_authority_page(
         &self,
         request: &arkret_sdk::MlsMemberRosterAuthorityReadRequestBody,
-    ) -> anyhow::Result<arkret_sdk::MlsSelfRosterAuthorityReadOutcome> {
+    ) -> anyhow::Result<arkret_sdk::MlsSelfRosterAuthorityReadResponseBody> {
         request.validate().map_err(anyhow::Error::from)?;
         let page = self
             .transport
@@ -143,7 +143,7 @@ impl MlsEndpoints<'_> {
     pub async fn unverified_member_roster_authority_pages(
         &self,
         request: &arkret_sdk::MlsMemberRosterAuthorityReadRequestBody,
-    ) -> anyhow::Result<Vec<arkret_sdk::MlsSelfRosterAuthorityReadOutcome>> {
+    ) -> anyhow::Result<Vec<arkret_sdk::MlsSelfRosterAuthorityReadResponseBody>> {
         let mut next_request = request.clone();
         let mut seen_cursors = std::collections::HashSet::new();
         let mut pages = Vec::new();
@@ -155,7 +155,7 @@ impl MlsEndpoints<'_> {
             if page.roster.page_index != page_number
                 || page_number >= page.roster.manifest.page_count
                 || pages.first().is_some_and(
-                    |first: &arkret_sdk::MlsSelfRosterAuthorityReadOutcome| {
+                    |first: &arkret_sdk::MlsSelfRosterAuthorityReadResponseBody| {
                         first.roster.manifest.page_count != page.roster.manifest.page_count
                     },
                 )
@@ -182,7 +182,7 @@ impl MlsEndpoints<'_> {
         &self,
         device_id: &str,
         records: &[arkret_sdk::MlsKeyPackageRecord],
-    ) -> anyhow::Result<arkret_sdk::KeyPackagesUploadOutcome> {
+    ) -> anyhow::Result<arkret_sdk::KeyPackagesUploadResponseBody> {
         let signer = crate::event_signer::active_signer().ok_or_else(|| {
             anyhow::anyhow!(
                 "keypackages/upload endpoint_signature requires an active event-signer (fail-closed)"
@@ -214,7 +214,7 @@ impl MlsEndpoints<'_> {
             .iter()
             .map(crate::mls_api_helpers::mls_key_package_record_upload_entry)
             .collect::<anyhow::Result<Vec<_>>>()?;
-        let unsigned = arkret_sdk::KeyPackagesUploadUnsignedRequest {
+        let unsigned = arkret_sdk::KeyPackagesUploadFields {
             actor_id: first.actor_id.clone(),
             principal_id,
             device_id: Some(device_id),
@@ -239,11 +239,11 @@ impl MlsEndpoints<'_> {
         &self,
         device_id: &arkret_sdk::DeviceId,
         key_package_refs: Vec<String>,
-    ) -> anyhow::Result<arkret_sdk::KeyPackagesRevokeOutcome> {
+    ) -> anyhow::Result<arkret_sdk::KeyPackagesRevokeResponseBody> {
         if key_package_refs.is_empty() {
             anyhow::bail!("KeyPackage revoke batch is empty");
         }
-        let unsigned = arkret_sdk::KeyPackagesRevokeUnsignedRequest {
+        let unsigned = arkret_sdk::KeyPackagesRevokeFields {
             key_package_refs,
             device_id: device_id.clone(),
             reason: None,
@@ -259,7 +259,7 @@ impl MlsEndpoints<'_> {
     pub async fn consume_key_package(
         &self,
         request: &arkret_sdk::KeyPackagesConsumeRequestBody,
-    ) -> anyhow::Result<arkret_sdk::KeyPackagesConsumeOutcome> {
+    ) -> anyhow::Result<arkret_sdk::KeyPackagesConsumeResponseBody> {
         request.validate_shape().map_err(anyhow::Error::msg)?;
         self.transport
             .http()
@@ -276,7 +276,10 @@ impl MlsEndpoints<'_> {
     pub async fn own_key_package_claim(
         &self,
         claim_id: &arkret_wire::KeypackageClaimId,
-    ) -> anyhow::Result<(arkret_sdk::KeyPackagesClaimOutcome, arkret_sdk::DidCoreId)> {
+    ) -> anyhow::Result<(
+        arkret_sdk::KeyPackagesClaimResponseBody,
+        arkret_sdk::DidCoreId,
+    )> {
         let station = self.transport.describe_cached().await?.service_id.clone();
         let outcome = self
             .transport
@@ -316,7 +319,7 @@ impl MlsEndpoints<'_> {
         target_device_id: Option<&str>,
         mls_group_id: &str,
         target_agent: Option<&arkret_sdk::MlsEndpointIdentity>,
-    ) -> anyhow::Result<arkret_sdk::KeyPackagesClaimOutcome> {
+    ) -> anyhow::Result<arkret_sdk::KeyPackagesClaimResponseBody> {
         let destination_id = destination_id
             .map(str::trim)
             .filter(|value| !value.is_empty())
@@ -423,7 +426,7 @@ impl AccountEndpoints<'_> {
         crate::transport::account::account_viewer(self.transport.http()).await
     }
 
-    pub async fn contacts(&self) -> anyhow::Result<crate::models::ContactList> {
+    pub async fn contacts(&self) -> anyhow::Result<crate::models::ContactPage> {
         crate::transport::account::contacts(self.transport.http()).await
     }
 }

@@ -1074,7 +1074,7 @@ impl InksonSignalSink {
             eprintln!("[call-product-cut] private_current_permitted=false");
             return Ok(false);
         }
-        let delivery_current = delivery.outcome.validate_for_request(
+        let delivery_current = delivery.decision.validate_for_request(
             &delivery.request,
             response.value()?.governance_generation,
             crate::clock::now_utc(),
@@ -1554,7 +1554,7 @@ pub(crate) async fn install_call_consent_current(
     account: &crate::config::ActiveAccountContext,
     response: &arkret_sdk::http_client::own_station_results::BoundOwnStationResponse<
         arkret_sdk::ConsentCurrentReadRequestBody,
-        arkret_sdk::ConsentCurrentReadOutcome,
+        arkret_sdk::ConsentCurrentReadResponseBody,
     >,
     consent_scope: arkret_sdk::ConsentScope,
     session_epoch: u64,
@@ -1578,7 +1578,7 @@ pub(crate) async fn install_consent_current_for_holder(
     pcr_realm: &arkret_sdk::RealmId,
     response: &arkret_sdk::http_client::own_station_results::BoundOwnStationResponse<
         arkret_sdk::ConsentCurrentReadRequestBody,
-        arkret_sdk::ConsentCurrentReadOutcome,
+        arkret_sdk::ConsentCurrentReadResponseBody,
     >,
     consent_scope: arkret_sdk::ConsentScope,
     session_epoch: u64,
@@ -1868,8 +1868,8 @@ mod tests {
             "issuer_id":signal.actor_id(), "subject":signal.actor_id(),
             "actions":[arkret_sdk::CapabilityActionId::TYPING_BROADCAST],
             "resources":[{"kind":"realm", "realm_id":signal.scope_ref().realm_id()}],
-            "issuer_authority_refs":[{"kind":"realm_root", "realm_id":signal.scope_ref().realm_id(), "authority_event_ref":arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256,[73;32]), "authority_generation":0}],
-            "authority_root_refs":[{"kind":"realm_root", "realm_id":signal.scope_ref().realm_id(), "authority_event_ref":arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256,[73;32]), "authority_generation":0}],
+            "issuer_authority_refs":[{"kind":"realm_root", "realm_id":signal.scope_ref().realm_id(), "authority_event_ref":arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256,[73;32]), "authority_generation":"0"}],
+            "authority_root_refs":[{"kind":"realm_root", "realm_id":signal.scope_ref().realm_id(), "authority_event_ref":arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256,[73;32]), "authority_generation":"0"}],
             "authority_depth":1, "status":"active", "issued_at":"2026-01-01T00:00:00.000Z"
         })).unwrap();
         signal.product_authority = Some(Box::new(arkret_sdk::SignalProductAuthority {
@@ -1939,7 +1939,7 @@ mod tests {
             .unwrap()
             .current_realm_head
             .clone();
-        let row = |selector, value| arkret_sdk::TypedCurrentRow::Value {
+        let row = |selector, value| arkret_sdk::CurrentState::Value {
             selector,
             source_stream_ref: stream.clone(),
             revision: arkret_sdk::CurrentRevision {
@@ -1974,7 +1974,7 @@ mod tests {
                 .unwrap(),
             ),
         ];
-        let frame = |position, entries: Vec<arkret_sdk::TypedCurrentRow>| {
+        let frame = |position, entries: Vec<arkret_sdk::CurrentState>| {
             let head = arkret_sdk::CommitStreamHead {
                 stream_ref: stream.clone(),
                 commit_id: head.commit_id.clone(),
@@ -1982,7 +1982,7 @@ mod tests {
             };
             serde_json::from_value::<arkret_sdk::sync::AccountSubscribeFrame>(json!({
                 "kind":"delta", "cursor":"ak:cursor:YQ", "realms": {realm.to_string(): {
-                    "current":{"realm_id":realm,"governance_generation":1,"stream_heads":[head],"entries":entries},
+                    "current":{"realm_id":realm,"governance_generation":"1","stream_heads":[head],"entries":entries},
                     "baseline":{"snapshot_cursor":if position == 1 {"ak:cursor:Yg"} else {"ak:cursor:Yw"}, "cut_revision":position,
                         "coverage":{"realm_id":realm,"stream_heads":[head],"complete_for_authorized_streams":true},"complete":true}
                 }}

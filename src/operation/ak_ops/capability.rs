@@ -1,7 +1,7 @@
 //! Capability grant / revoke builders.
 
 use arkret_models_collaboration::governance::authorization::{
-    EffectiveCapabilityGrantRow, GrantList,
+    EffectiveCapabilityGrantRow, EffectiveGrantSnapshot,
 };
 use arkret_models_integration::AppletCapabilityRevokeIntent;
 use arkret_wire::{CurrentRevision, event_kind_str};
@@ -141,7 +141,7 @@ fn capability_revoke_exact(
 /// The surrounding list digest, local projection and historical Event ids are
 /// deliberately not accepted as authoring inputs.
 pub fn effective_grant_row_for_revoke<'a>(
-    list: &'a GrantList,
+    list: &'a EffectiveGrantSnapshot,
     grant_id: &str,
 ) -> anyhow::Result<&'a EffectiveCapabilityGrantRow> {
     let grant_id = arkret_sdk::GrantId::new(grant_id.to_owned())
@@ -191,7 +191,7 @@ pub fn capability_revoke_from_effective_row(
 pub fn capability_revoke_from_owned_current(
     realm_id: &str,
     actor: &str,
-    row: &arkret_sdk::exact_current_results::CapabilityGrantExactCurrentRow,
+    row: &arkret_sdk::exact_current_state::CurrentCapabilityGrant,
     reason: Option<&str>,
 ) -> anyhow::Result<TypedOperationBuilder> {
     let realm = arkret_sdk::RealmId::new(trim_realm_id(realm_id))?;
@@ -427,7 +427,7 @@ mod tests {
         );
         for actions in [
             vec!["ak.realm.admin"],
-            vec!["act_on_behalf"],
+            vec!["acting_on_behalf_allowed"],
             vec!["ak.capability.grant"],
             vec!["ak.message.create", "ak.message.create"],
             vec![],
@@ -482,7 +482,7 @@ mod tests {
             json!([{
                 "kind": "realm_root",
                 "realm_id": "ak:realm:AV1bzsPGpTD74Cq12d9EOrCkieTddiSndS0kDtK1W2hM",
-                "authority_generation": 1,
+                "authority_generation": "1",
                 "authority_event_ref": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
             }])
         );

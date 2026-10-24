@@ -513,7 +513,7 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
             )
             .await?;
         resolved.validate_shape()?;
-        if let arkret_sdk::direct_conversation::DirectConversationResolveOutcome::Provisional {
+        if let arkret_sdk::direct_conversation::DirectConversationResolveResponseBody::Provisional {
             coordinates,
             peer_mls_admission,
             ..

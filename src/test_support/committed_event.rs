@@ -82,7 +82,7 @@ impl FixtureStation {
                 principal_endpoint: &url::Url::parse("https://station.example/").unwrap(),
                 local_id: "service",
                 also_known_as: &[],
-                version_time: inception_at,
+                version_created_at: inception_at,
                 did_key_fragment: Some("realm-authority"),
             },
             &[seed; 32],

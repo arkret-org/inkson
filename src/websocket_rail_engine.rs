@@ -367,7 +367,7 @@ where
                 reconnect = Some(payload.reconnect_after_ms);
                 drain = Some(
                     payload
-                        .deadline
+                        .close_at
                         .min(crate::clock::now_utc() + chrono::Duration::seconds(30)),
                 );
             }

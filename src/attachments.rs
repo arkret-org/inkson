@@ -467,7 +467,7 @@ impl AttachmentObject {
                 "attachment checkpoint is not the winning tree"
             );
             let key = arkret_sdk::mls::derive_attachment_content_key(&group, context)?;
-            let params = arkret_crypto::blob_aead::StreamEncryptParams {
+            let parameters = arkret_crypto::blob_aead::StreamEncryptParams {
                 key_ref: EncryptedAttachmentKeyRef {
                     algorithm: EncryptedAttachmentKeyAlgorithm::Mls,
                     group_state_ref: EncryptedAttachmentGroupStateRef::Event(reference.clone()),
@@ -494,7 +494,7 @@ impl AttachmentObject {
             let mut encoder = arkret_crypto::blob_aead::StreamEncryptor::new(
                 self.input_size,
                 &key,
-                &params,
+                &parameters,
                 prefix,
                 &resolver,
             )?;
@@ -700,7 +700,7 @@ pub(crate) fn attachment_receive_context(
     state: &crate::state::LocalStateStore,
     authority: &AccountId,
     scope: &ScopeRef,
-    current: &arkret_wire::MlsGroupCurrent,
+    current: &arkret_wire::MlsGroupValue,
     descriptor: &EncryptedAttachment,
 ) -> anyhow::Result<(
     AttachmentContentKeyContext,

@@ -202,7 +202,7 @@ pub async fn search_realms(
     http: &arkret_sdk::http_client::Client,
     query: &str,
     next_cursor: Option<&str>,
-) -> anyhow::Result<arkret_models_discovery::DirectoryRealmSearchOutcome> {
+) -> anyhow::Result<arkret_models_discovery::DirectoryRealmSearchResponseBody> {
     let cursor = next_cursor
         .map(validate_cursor)
         .transpose()?

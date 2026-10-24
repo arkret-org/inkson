@@ -1,6 +1,6 @@
 //! Capability revoke authoring only accepts governing-Station current carriers.
 
-use arkret_models_collaboration::governance::authorization::GrantList;
+use arkret_models_collaboration::governance::authorization::EffectiveGrantSnapshot;
 use arkret_models_integration::AppletCapabilityRevokeIntent;
 use inkson::operation::ak_ops::{
     capability_revoke, capability_revoke_from_applet_preview, capability_revoke_from_effective_row,
@@ -18,7 +18,7 @@ fn select_authoring_station() {
     ));
 }
 
-fn effective_grants() -> GrantList {
+fn effective_grants() -> EffectiveGrantSnapshot {
     serde_json::from_value(json!({
         "grants": [{
             "grant": {
@@ -38,14 +38,14 @@ fn effective_grants() -> GrantList {
                 "issuer_authority_refs": [{
                     "kind": "realm_root",
                     "realm_id": REALM_ID,
-                    "authority_generation": 0,
+                    "authority_generation": "0",
                     "authority_event_ref": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
                 }],
                 "authority_depth": 0,
                 "authority_root_refs": [{
                     "kind": "realm_root",
                     "realm_id": REALM_ID,
-                    "authority_generation": 0,
+                    "authority_generation": "0",
                     "authority_event_ref": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
                 }],
                 "issued_at": "2026-01-01T00:00:00.000Z",
@@ -77,15 +77,14 @@ fn owned_issuer_revoke_uses_exact_current_even_without_effective_grant_list() {
     value["authority_root_refs"] = json!([authority]);
     value["authority_depth"] = json!(1);
     value["constraints"] = json!([{"constraint_kind":"authority_control","effect":"allow","max_authority_depth":0,"authority_regrant_allowed":false}]);
-    let mut row: arkret_sdk::exact_current_results::CapabilityGrantExactCurrentRow =
+    let mut row: arkret_sdk::exact_current_state::CurrentCapabilityGrant =
         serde_json::from_value(json!({
             "selector":{"kind":"capability_grant","grant_id":GRANT_ID},
             "source_stream_ref":{"kind":"realm","realm_id":REALM_ID},
             "revision":effective.revision, "value":value
         }))
         .unwrap();
-    let build = |row: &arkret_sdk::exact_current_results::CapabilityGrantExactCurrentRow,
-                 actor: &str| {
+    let build = |row: &arkret_sdk::exact_current_state::CurrentCapabilityGrant, actor: &str| {
         inkson::operation::ak_ops::capability_revoke_from_owned_current(REALM_ID, actor, row, None)
     };
     let operation = build(&row, "did:web:alice.example")

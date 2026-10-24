@@ -235,7 +235,7 @@ impl Changes {
         }
         Ok(())
     }
-    pub fn seq<C: Sequence>(
+    pub fn sequence<C: Sequence>(
         &mut self,
         path: Vec<String>,
         old: &Shared<C>,
@@ -410,7 +410,7 @@ impl super::ClientLocalState {
                 Ok(())
             })
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        changes.seq(
+        changes.sequence(
             vec!["client_core_pending_deliveries".into()],
             &old.client_core_pending_deliveries,
             &self.client_core_pending_deliveries,
@@ -429,27 +429,27 @@ impl super::ClientLocalState {
                 Ok(())
             },
         )?;
-        changes.seq(
+        changes.sequence(
             vec!["client_core_seen_event_ids".into()],
             &old.client_core_seen_event_ids,
             &self.client_core_seen_event_ids,
         )?;
-        changes.seq(
+        changes.sequence(
             vec!["raw_operations".into()],
             &old.raw_operations,
             &self.raw_operations,
         )?;
-        changes.seq(
+        changes.sequence(
             vec!["verified_message_commits".into()],
             &old.verified_message_commits,
             &self.verified_message_commits,
         )?;
-        changes.seq(
+        changes.sequence(
             vec!["verified_poll_inputs".into()],
             &old.verified_poll_inputs,
             &self.verified_poll_inputs,
         )?;
-        changes.seq(
+        changes.sequence(
             vec!["verified_reaction_assertions".into()],
             &old.verified_reaction_assertions,
             &self.verified_reaction_assertions,
@@ -553,12 +553,12 @@ impl super::ClientLocalState {
                 Ok(())
             },
         )?;
-        changes.seq(
+        changes.sequence(
             vec!["notification_projection".into()],
             &old.notification_projection,
             &self.notification_projection,
         )?;
-        changes.seq(
+        changes.sequence(
             vec!["presence_projection".into()],
             &old.presence_projection,
             &self.presence_projection,
@@ -573,7 +573,7 @@ impl super::ClientLocalState {
             Some(&old.presence_preference),
             Some(&self.presence_preference),
         )?;
-        changes.seq(
+        changes.sequence(
             vec!["to_device_inbox".into()],
             &old.to_device_inbox,
             &self.to_device_inbox,
@@ -909,7 +909,7 @@ impl super::ClientLocalState {
                 Ok(())
             },
         )?;
-        changes.seq(
+        changes.sequence(
             vec!["client_blocklist".into()],
             &old.client_blocklist,
             &self.client_blocklist,

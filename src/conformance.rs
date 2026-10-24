@@ -114,7 +114,7 @@ impl Drop for NativeAccountSession {
 /// persistence and transport restoration used after an accepted login.
 #[cfg(all(not(target_arch = "wasm32"), feature = "spec-conformance"))]
 pub async fn restore_native_account_session(
-    outcome: &arkret_sdk::SessionGrantOutcome,
+    outcome: &arkret_sdk::SessionGrantResponseBody,
     station_url: &str,
     holder_seed_b64url: &str,
     principal: &arkret_sdk::Did,
@@ -446,7 +446,7 @@ pub async fn send_native_automatic_read_receipt(
     realm: &str,
     strand: &str,
     latest_cursor: &str,
-) -> anyhow::Result<Option<arkret_sdk::SignalSubmitOutcome>> {
+) -> anyhow::Result<Option<arkret_sdk::SignalSubmitResponseBody>> {
     host.send_automatic_read_receipt_using(
         &crate::event_submit::EventSubmitter::new(http),
         realm,
@@ -673,7 +673,7 @@ pub async fn consume_native_consent_current(
     consent_scope: arkret_sdk::ConsentScope,
     response: &arkret_sdk::http_client::own_station_results::BoundOwnStationResponse<
         arkret_sdk::ConsentCurrentReadRequestBody,
-        arkret_sdk::ConsentCurrentReadOutcome,
+        arkret_sdk::ConsentCurrentReadResponseBody,
     >,
 ) -> anyhow::Result<bool> {
     let account = host.active_account_context();
@@ -707,7 +707,7 @@ pub async fn read_native_consent_current(
 ) -> anyhow::Result<
     arkret_sdk::http_client::own_station_results::BoundOwnStationResponse<
         arkret_sdk::ConsentCurrentReadRequestBody,
-        arkret_sdk::ConsentCurrentReadOutcome,
+        arkret_sdk::ConsentCurrentReadResponseBody,
     >,
 > {
     let account = host.active_account_context();

@@ -15,8 +15,8 @@ use arkret_models_crypto::{
     SecurityTransactionTerminalOutcome,
 };
 use arkret_sdk::{
-    PcrPolicyRecoveryIntent, PreparedEventUnit, RecoveryTransactionCreateRequest,
-    SecurityTransaction, SecurityTransactionCreateRequest,
+    PcrPolicyRecoveryIntent, PreparedEventUnit, RecoveryTransactionCreateRequestBody,
+    SecurityTransaction, SecurityTransactionCreateRequestBody,
 };
 use arkret_wire::{CommitStreamRef, Hash, NonEmptyString, ReceiptId, TransactionId};
 use zeroize::Zeroizing;
@@ -26,7 +26,7 @@ fn non_empty(value: String) -> anyhow::Result<NonEmptyString> {
 }
 
 pub(crate) struct PreparedPcrPolicyRecovery {
-    pub create_request: RecoveryTransactionCreateRequest,
+    pub security_transaction_create_request_body: RecoveryTransactionCreateRequestBody,
     pub publication_context: arkret_sdk::ProducerVerificationContext,
     pub proof_summary: arkret_models_crypto::RecoverySessionProofSummary,
     pub recovery_private_key: Zeroizing<[u8; 32]>,
@@ -133,7 +133,7 @@ pub(crate) async fn prepare_pcr_policy_recovery(
     api: &crate::transport::TransportClient,
     principal_did: &arkret_sdk::Did,
     session: &arkret_sdk::RecoverySession,
-    proof_outcome: &arkret_sdk::RecoverySessionProofSubmitOutcome,
+    proof_outcome: &arkret_sdk::RecoverySessionProofSubmitResponseBody,
     recovery_words: &str,
 ) -> anyhow::Result<PreparedPcrPolicyRecovery> {
     // A 2xx submit reply already means the proof verified and the session
@@ -316,12 +316,12 @@ pub(crate) async fn prepare_pcr_policy_recovery(
         recovery_session_id: verified_session.recovery_session_id.clone(),
         replacement_device_id: verified_session.requesting_device_id.clone(),
         previous_model_generation_ref: previous_device_generation,
-        result_model_generation_ref: result_device_generation,
+        new_model_generation_ref: result_device_generation,
         terminal_receipt_id: ReceiptId::new(format!("ak:receipt:{}", crate::operation::uuid_v7()))?,
         reanchor_unit: PreparedEventUnit::new(digest_suite, reanchor_submission)?,
         reanchor_commit_intent,
     };
-    let create_request = RecoveryTransactionCreateRequest::new(
+    let security_transaction_create_request_body = RecoveryTransactionCreateRequestBody::new(
         TransactionId::new(format!("ak:transaction:{}", crate::operation::uuid_v7()))?,
         verified_session.account_id.clone(),
         std::cmp::min(
@@ -334,7 +334,7 @@ pub(crate) async fn prepare_pcr_policy_recovery(
         publication_context: device_signer.publication_context(&arkret_sdk::ActorId::account(
             verified_session.account_id.clone(),
         ))?,
-        create_request,
+        security_transaction_create_request_body,
         proof_summary,
         recovery_private_key: Zeroizing::new(backup_material.backup_hpke_serialized_private_key),
         verified_session,
@@ -429,7 +429,7 @@ pub(crate) async fn execute_pcr_policy_recovery(
     state_store: &crate::runtime::input::StateStoreHandle,
     principal_did: &arkret_sdk::Did,
     session: &arkret_sdk::RecoverySession,
-    proof_outcome: &arkret_sdk::RecoverySessionProofSubmitOutcome,
+    proof_outcome: &arkret_sdk::RecoverySessionProofSubmitResponseBody,
     recovery_words: &str,
 ) -> anyhow::Result<CompletedFreshDeviceRecovery> {
     let prepared =
@@ -463,7 +463,10 @@ pub(crate) async fn execute_pcr_policy_recovery(
         .wait()
         .await?;
 
-    let transaction_id = prepared.create_request.transaction_id.clone();
+    let transaction_id = prepared
+        .security_transaction_create_request_body
+        .transaction_id
+        .clone();
     crate::security_transaction::store_pending_fresh_device_recovery(
         secure_store.as_ref(),
         &transaction_id,
@@ -475,7 +478,11 @@ pub(crate) async fn execute_pcr_policy_recovery(
     );
     let workflow = crate::fresh_device_recovery::FreshDeviceRecovery::new(engine);
     let mut transaction = workflow
-        .create_or_resume(prepared.create_request, None, &prepared.publication_context)
+        .create_or_resume(
+            prepared.security_transaction_create_request_body,
+            None,
+            &prepared.publication_context,
+        )
         .await?;
     if let Some(retried) = workflow
         .retry_byte_identical_pending(&transaction_id)
@@ -543,9 +550,9 @@ pub(crate) async fn resume_pending_pcr_policy_recovery(
         crate::security_transaction::clear_pending_fresh_device_recovery(secure_store.as_ref())?;
         return Ok(None);
     };
-    let create: SecurityTransactionCreateRequest =
+    let create: SecurityTransactionCreateRequestBody =
         serde_json::from_slice(&local.canonical_create_request)?;
-    let SecurityTransactionCreateRequest::Recovery(create) = create else {
+    let SecurityTransactionCreateRequestBody::Recovery(create) = create else {
         anyhow::bail!("pending fresh-device recovery is not a recovery transaction");
     };
     anyhow::ensure!(

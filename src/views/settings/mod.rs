@@ -560,7 +560,7 @@ pub fn SettingsPanel(
     let mut new_realm_remark_id = use_signal(String::new);
     let mut new_realm_remark_name = use_signal(String::new);
     let contact_remarks_snapshot = use_signal(|| state_store.read().contact_remarks());
-    // A4b — profile (display_name / bio / avatar) state.
+    // A4b — profile (display_name / biography / avatar) state.
     // `avatar_blob_ref` mirrors the most-recently uploaded avatar via
     // `ak.account_data.set("ak.client.ui_state", { avatar_blob_ref })` and is also
     // published through the spec profile endpoint so directory projections can index it.
@@ -679,7 +679,7 @@ pub fn SettingsPanel(
                             profile_bio.set(
                                 profile
                                     .profile_fields
-                                    .get("bio")
+                                    .get("biography")
                                     .and_then(serde_json::Value::as_str)
                                     .unwrap_or_default()
                                     .to_owned(),
@@ -850,9 +850,9 @@ pub fn SettingsPanel(
                                         }
                                     }
                                     label { class: "form-field",
-                                        span { {crate::i18n::tr("settings.profile.bio")} }
+                                        span { {crate::i18n::tr("settings.profile.biography")} }
                                         textarea {
-                                            "data-testid": "settings-profile-bio",
+                                            "data-testid": "settings-profile-biography",
                                             value: "{profile_bio}",
                                             disabled: profile_text_saving(),
                                             oninput: move |event: FormEvent| profile_bio.set(event.value()),

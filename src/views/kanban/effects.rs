@@ -892,7 +892,7 @@ mod projection_read_tests {
             .build()
             .unwrap();
         use arkret_sdk::http_client::own_station_results::{
-            OwnStationResultClient, OwnStationSessionSnapshot, OwnStationSessionSource,
+            OwnStationSessionSnapshot, OwnStationSessionSource, OwnStationStateClient,
         };
         struct Source(OwnStationSessionSnapshot);
         impl OwnStationSessionSource for Source {
@@ -909,7 +909,7 @@ mod projection_read_tests {
             base_url: base,
             trust_domain: arkret_sdk::TrustDomainId::new("ak:trust_domain:station.example")
                 .unwrap(),
-            auth_metadata: arkret_sdk::AuthMetadata::minimal(),
+            authentication_metadata: arkret_sdk::AuthenticationMetadata::minimal(),
         };
         let session = OwnStationSessionSnapshot::new(
             binding.clone(),
@@ -921,7 +921,7 @@ mod projection_read_tests {
         )
         .unwrap()
         .with_provider_identity(Default::default());
-        let http = OwnStationResultClient::new(http, binding, std::sync::Arc::new(Source(session)))
+        let http = OwnStationStateClient::new(http, binding, std::sync::Arc::new(Source(session)))
             .unwrap()
             .http_client()
             .unwrap();

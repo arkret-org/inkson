@@ -349,7 +349,7 @@ impl garth::SecurityTransactionTransport for InksonSecurityTransactionTransport 
     async fn create(
         &self,
         request: &arkret_sdk::VerifiedSubmission<
-            arkret_models_crypto::SecurityTransactionCreateRequest,
+            arkret_models_crypto::SecurityTransactionCreateRequestBody,
         >,
     ) -> garth::Result<arkret_models_crypto::SecurityTransaction> {
         self.client
@@ -371,7 +371,7 @@ impl garth::SecurityTransactionTransport for InksonSecurityTransactionTransport 
     async fn continue_transaction(
         &self,
         transaction_id: &arkret_sdk::TransactionId,
-        request: &arkret_models_crypto::SecurityTransactionContinueRequest,
+        request: &arkret_models_crypto::SecurityTransactionContinueRequestBody,
     ) -> garth::Result<arkret_models_crypto::SecurityTransaction> {
         self.client
             .continue_security_transaction(transaction_id, request)
@@ -541,7 +541,7 @@ mod tests {
             "identity_model": "pcr_policy",
             "recovery_authority_kind": "pcr_policy",
             "previous_model_generation_ref": 7,
-            "result_model_generation_ref": 8,
+            "new_model_generation_ref": 8,
             "authorization_event_id": "ak:event:AWKDhmQTc5zyfilaLwPF3xnhoZAjxSha7Z-6grioN9aW",
             "reanchor_event_id": "ak:event:AR8bu-n-kOOB3nRUvYuIEglCX5B-JpFaNTex9gxs_cWY",
             "proof_summary": {
@@ -553,7 +553,7 @@ mod tests {
             "outcome": "completed",
             "started_at": "2026-09-19T10:00:00.000Z",
             "completed_at": "2026-09-19T10:00:01.000Z",
-            "auth_data": {
+            "signature_proof": {
                 "verification_method": "did:web:alice.example#device-1",
                 "signature_algorithm": "Ed25519",
                 "signature": "AA"

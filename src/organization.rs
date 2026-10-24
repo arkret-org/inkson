@@ -149,7 +149,7 @@ pub fn prepare_organization_inception(
         principal_endpoint: &endpoint,
         local_id,
         also_known_as: &aka,
-        version_time: crate::clock::now_utc(),
+        version_created_at: crate::clock::now_utc(),
         did_key_fragment: None,
     };
     let mut rng = rand_core::UnwrapErr(getrandom::SysRng);
@@ -334,7 +334,8 @@ mod tests {
         let sig_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .decode(proof.as_bytes())
             .expect("base64url decode");
-        let signature = ed25519_dalek::Signature::from_slice(&sig_bytes).expect("64-byte sig");
+        let signature =
+            ed25519_dalek::Signature::from_slice(&sig_bytes).expect("64-byte signature");
         let signing_bytes = arkret_models_collaboration::events_payloads::realm_organization_statement_signing_bytes(&signed)
             .expect("signing bytes");
         use ed25519_dalek::Verifier;

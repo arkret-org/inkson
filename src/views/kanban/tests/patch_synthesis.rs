@@ -10,7 +10,7 @@ fn saved_card_content_never_rolls_back_between_receipt_backfill_and_current() {
         commit_id: arkret_wire::RealmCommitId::from_digest([position as u8; 32]),
         stream_position: position,
     };
-    let current = |position, value: Value| arkret_wire::TypedCurrentRow::Value {
+    let current = |position, value: Value| arkret_wire::CurrentState::Value {
         selector: arkret_wire::CurrentSelector::Strand {
             strand_id: arkret_sdk::StrandId::new(id).unwrap(),
         },
@@ -1278,7 +1278,7 @@ fn card_current_keeps_value_and_revision_together_across_remote_replacement() {
             commit_id: arkret_wire::RealmCommitId::from_digest([byte; 32]),
             stream_position: u64::from(byte),
         };
-        let entry = arkret_wire::TypedCurrentRow::Value {
+        let entry = arkret_wire::CurrentState::Value {
             selector: arkret_wire::CurrentSelector::Strand {
                 strand_id: arkret_sdk::StrandId::new(id.to_owned()).unwrap(),
             },

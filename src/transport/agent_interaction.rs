@@ -1,5 +1,5 @@
 //! Agent mode reads consume the original exact cut through the accepted own Station.
-use arkret_sdk::exact_current_results::{ExactCurrentResultEntry, ExactCurrentResultsReadOutcome};
+use arkret_sdk::exact_current_state::{ExactCurrentStateEntry, ExactCurrentStateReadResponseBody};
 use arkret_sdk::{
     AccountId, AgentInteractionCurrentValue, AgentInteractionMode, AgentInteractionSetPayload,
     CurrentRevision, RealmId,
@@ -20,11 +20,11 @@ pub(crate) async fn read(
             .await?;
     let current = response.into_value()?;
     match current {
-        ExactCurrentResultsReadOutcome::NeverWritten { .. } => {
+        ExactCurrentStateReadResponseBody::NeverWritten { .. } => {
             Ok((AgentInteractionMode::Private, None, None))
         }
-        ExactCurrentResultsReadOutcome::Present {
-            entry: ExactCurrentResultEntry::AgentInteraction(entry),
+        ExactCurrentStateReadResponseBody::Present {
+            entry: ExactCurrentStateEntry::AgentInteraction(entry),
             ..
         } => Ok((
             entry.value.interaction_mode,

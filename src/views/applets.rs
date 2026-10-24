@@ -11,8 +11,8 @@ use std::collections::BTreeSet;
 
 use arkret_models_integration::{
     AppletActorPolicy, AppletApprovalRequest, AppletGhostActorMode,
-    AppletInstallAuthoringRequestBasis, AppletInstallPlan, AppletInstallPreviewOutcome,
-    AppletInstallPreviewRequestBody, AppletInstallRequestBody, AppletManagedActorPurpose,
+    AppletInstallAuthoringRequestBasis, AppletInstallPlan, AppletInstallPreviewRequestBody,
+    AppletInstallPreviewResponseBody, AppletInstallRequestBody, AppletManagedActorPurpose,
     AppletPackage, AppletRegistrationEpochEvidence, AppletRevokeRequestBody,
 };
 use arkret_wire::{AppletRevokeMode, DidCoreId, ScopeRef, event_kind_str};
@@ -98,7 +98,7 @@ pub fn parse_applet_approval_actions(raw: &str) -> Vec<String> {
 struct AppletInstallPreviewSnapshot {
     package: AppletPackage,
     basis: AppletInstallAuthoringRequestBasis,
-    preview: AppletInstallPreviewOutcome,
+    preview: AppletInstallPreviewResponseBody,
 }
 
 fn approved_actions_from_plan(
@@ -551,7 +551,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
         .realm_current_view_entries(&crate::operation::trim_realm_id(&selected_realm_id))
     {
         for entry in entries {
-            let arkret_wire::TypedCurrentRow::Value {
+            let arkret_wire::CurrentState::Value {
                 selector, value, ..
             } = entry;
             if let arkret_wire::CurrentSelector::AppletRegistration {
@@ -820,23 +820,23 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                                let authored_package = package.clone();
                                                let authored_scope = effective_scope.clone();
                                                let result = with_event_submitter(&base, api_token, |submitter| async move {
-                                                   use arkret_sdk::exact_current_results::{
+                                                   use arkret_sdk::exact_current_state::{
                                                        AppletRegistrationExactCurrentSelector, AppletRegistrationExactCurrentSelectorKind,
-                                                       ExactCurrentResultSelector, ExactCurrentResultEntry, ExactCurrentResultsReadRequestBody,
-                                                       ExactCurrentResultsReadOutcome, NeverWrittenExactCurrentSelector,
+                                                       ExactCurrentStateSelector, ExactCurrentStateEntry, ExactCurrentStateReadRequestBody,
+                                                       ExactCurrentStateReadResponseBody, NeverWrittenExactCurrentSelector,
                                                    };
-                                                   let registration_current = submitter.http().exact_current_result(
-                                                       &ExactCurrentResultsReadRequestBody {
+                                                   let registration_current = submitter.http().exact_current_state(
+                                                       &ExactCurrentStateReadRequestBody {
                                                            realm_id: authored_scope.realm_id().clone(),
-                                                           selector: ExactCurrentResultSelector::AppletRegistration(AppletRegistrationExactCurrentSelector {
+                                                           selector: ExactCurrentStateSelector::AppletRegistration(AppletRegistrationExactCurrentSelector {
                                                                kind: AppletRegistrationExactCurrentSelectorKind::AppletRegistration,
                                                                applet_id: authored_package.applet_id.clone(), service_id: authored_package.service_id.clone(),
                                                            }),
                                                        }, issuer_authority_basis.authority_generation,
                                                    ).await?;
                                                    let expected_revision = match registration_current {
-                                                       ExactCurrentResultsReadOutcome::Present { entry: ExactCurrentResultEntry::AppletRegistration(row), .. } => Some(row.revision),
-                                                       ExactCurrentResultsReadOutcome::NeverWritten { selector: NeverWrittenExactCurrentSelector::AppletRegistration(_), .. } => None,
+                                                       ExactCurrentStateReadResponseBody::Present { entry: ExactCurrentStateEntry::AppletRegistration(row), .. } => Some(row.revision),
+                                                       ExactCurrentStateReadResponseBody::NeverWritten { selector: NeverWrittenExactCurrentSelector::AppletRegistration(_), .. } => None,
                                                        _ => anyhow::bail!("registration current returned a different selector"),
                                                    };
                                                    let (registration, grants) =

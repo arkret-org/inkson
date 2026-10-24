@@ -16,14 +16,14 @@ impl LocalStateStore {
         realm: &str,
         strand: &arkret_sdk::StrandId,
     ) -> anyhow::Result<Option<arkret_sdk::AgentSidecar>> {
-        use arkret_sdk::{CurrentSelector, EventKind, SidecarContextRef, TypedCurrentRow};
+        use arkret_sdk::{CurrentSelector, CurrentState, EventKind, SidecarContextRef};
         let (snapshot, histories) = self.verified_sidecar_inputs(realm)?;
         let source = SidecarContextRef::Strand {
             strand_id: strand.clone(),
         };
         let mut found = None;
         for row in &snapshot.current_state_entries {
-            let TypedCurrentRow::Value {
+            let CurrentState::Value {
                 selector:
                     CurrentSelector::SidecarContext {
                         sidecar_id,
@@ -78,7 +78,7 @@ impl LocalStateStore {
                 "Sidecar source context differs from its accepted attachment"
             );
             for current in &snapshot.current_state_entries {
-                let TypedCurrentRow::Value {
+                let CurrentState::Value {
                     selector:
                         CurrentSelector::Sidecar {
                             sidecar_id: candidate,
@@ -501,7 +501,7 @@ mod tests {
                     signed_digest: arkret_sdk::Hash::new(format!("sha256:{}", "a".repeat(64)))
                         .unwrap(),
                     created_at: at,
-                    sig: arkret_sdk::Base64UrlString::new("AA").unwrap(),
+                    signature: arkret_sdk::Base64UrlString::new("AA").unwrap(),
                 },
             };
             let mut unsigned = serde_json::to_value(&snapshot).unwrap();

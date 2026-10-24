@@ -195,7 +195,7 @@ pub(super) enum PairingActionPhase {
 pub(super) fn apply_renewed_pairing(
     rows: &mut [AgentView],
     renewed_agent_id: &str,
-    outcome: &AgentRenewPairingOutcome,
+    outcome: &AgentRenewPairingResponseBody,
     now: chrono::DateTime<chrono::Utc>,
 ) -> Result<(), &'static str> {
     if outcome.agent_id.as_str() != renewed_agent_id {
@@ -253,7 +253,7 @@ pub(super) fn reconcile_refreshed_pairing(
     rows: &mut Vec<AgentView>,
     refreshed_view: AgentView,
     renewed_agent_id: &str,
-    outcome: &AgentRenewPairingOutcome,
+    outcome: &AgentRenewPairingResponseBody,
     now: chrono::DateTime<chrono::Utc>,
 ) -> Result<(), &'static str> {
     let mut refreshed = vec![refreshed_view];

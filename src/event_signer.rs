@@ -407,7 +407,7 @@ impl InksonEventSigner {
 
     /// Produce a raw Ed25519 signature over `bytes` (not a detached JWS).
     /// Used for protocol control-plane proofs such as key backup
-    /// `auth_data.signature` and recovery proofs, whose wire form is a
+    /// `signature_proof.signature` and recovery proofs, whose wire form is a
     /// single base64url token over canonical JSON bytes.
     pub fn sign_raw(&self, bytes: &[u8]) -> Result<Vec<u8>, EventSignerError> {
         let Some(signing_key) = &self.raw_signing_key else {
@@ -571,7 +571,7 @@ impl InksonEventSigner {
         Ok(())
     }
 
-    /// Produce a detached JWS (`<b64u header>..<b64u sig>`) over `bytes`
+    /// Produce a detached JWS (`<b64u header>..<b64u signature>`) over `bytes`
     /// using the active backend, matching the alg-only protected header
     /// shape [`Self::sign_envelope_with_context`] uses. Control-plane
     /// signatures that are NOT [`Event`] proofs — notably the
@@ -609,7 +609,7 @@ impl InksonEventSigner {
             .map_err(|error| EventSignerError::Encoding(error.to_string()))
     }
 
-    /// Produce a detached compact JWS (`<b64u header>..<b64u sig>`) with a
+    /// Produce a detached compact JWS (`<b64u header>..<b64u signature>`) with a
     /// `kid` protected-header claim. Unlike [`Self::detached_jws_over`], this
     /// follows RFC 7515 signing input rules and signs
     /// `b64u(header) "." b64u(payload)`. The session-grant refresh endpoint
@@ -1327,8 +1327,8 @@ mod tests {
         }))
         .unwrap();
 
-        let sig = signer.sign_raw(&bytes).expect("raw sign");
-        let signature = Signature::from_slice(&sig).expect("64-byte signature");
+        let signature = signer.sign_raw(&bytes).expect("raw sign");
+        let signature = Signature::from_slice(&signature).expect("64-byte signature");
         let verifying_key = SigningKey::from_bytes(&seed).verifying_key();
 
         verifying_key
@@ -1624,11 +1624,11 @@ mod tests {
         use base64::engine::general_purpose::URL_SAFE_NO_PAD;
         let parts: Vec<&str> = proof.jws.split('.').collect();
         assert_eq!(parts.len(), 3);
-        let sig = URL_SAFE_NO_PAD.decode(parts[2]).expect("sig b64");
+        let signature = URL_SAFE_NO_PAD.decode(parts[2]).expect("signature b64");
 
         let verifier = Ed25519DetachedJwsVerifier::new();
         verifier
-            .verify(&proof_binding_bytes, &sig, &public_key)
+            .verify(&proof_binding_bytes, &signature, &public_key)
             .expect("SDK verifier accepts the proof");
     }
 
@@ -1681,9 +1681,9 @@ mod tests {
         use base64::Engine;
         use base64::engine::general_purpose::URL_SAFE_NO_PAD;
         let parts: Vec<&str> = proof.jws.split('.').collect();
-        let sig = URL_SAFE_NO_PAD.decode(parts[2]).expect("sig b64");
+        let signature = URL_SAFE_NO_PAD.decode(parts[2]).expect("signature b64");
         Ed25519DetachedJwsVerifier::new()
-            .verify(&proof_binding_bytes, &sig, &public_key)
+            .verify(&proof_binding_bytes, &signature, &public_key)
             .expect("SDK verifier accepts domain/audience-bound proof");
     }
 

@@ -7,8 +7,8 @@ fn scope() -> arkret_sdk::ScopeRef {
     }
 }
 
-fn policy_row(value: serde_json::Value) -> TypedCurrentRow {
-    TypedCurrentRow::Value {
+fn policy_row(value: serde_json::Value) -> CurrentState {
+    CurrentState::Value {
         selector: CurrentSelector::ScopeReadReceiptPolicy { scope_ref: scope() },
         source_stream_ref: arkret_sdk::CommitStreamRef::Realm {
             realm_id: REALM.parse().unwrap(),
@@ -118,7 +118,7 @@ async fn read_receipt_policy_independent_scopes_require_their_own_complete_cover
         arkret_sdk::ReadReceiptPolicy::default()
     );
     let mut own = policy_row(json!({"disclosure":"required","visibility":"members"}));
-    let TypedCurrentRow::Value {
+    let CurrentState::Value {
         selector,
         source_stream_ref,
         ..
@@ -129,7 +129,7 @@ async fn read_receipt_policy_independent_scopes_require_their_own_complete_cover
     *source_stream_ref =
         arkret_sdk::CommitStreamRef::from_scope(&circle, Some(REALM.parse().unwrap())).unwrap();
     let policy_commit = arkret_sdk::RealmCommitId::from_digest([82; 32]);
-    let TypedCurrentRow::Value { revision, .. } = &mut own;
+    let CurrentState::Value { revision, .. } = &mut own;
     revision.stream_position = 3;
     revision.commit_id = policy_commit.clone();
     cut["snapshot_cursor"] = json!(CURSORS[2]);

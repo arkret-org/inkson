@@ -187,14 +187,15 @@ pub(super) async fn issue_recovery_session_transport(
         .bound_principal_id
         .as_ref()
         .context("bound recovery handoff has no principal")?;
-    let request =
-        arkret_sdk::SessionGrantRequestBody::Recovery(arkret_sdk::RecoverySessionGrantRequest {
+    let request = arkret_sdk::SessionGrantRequestBody::Recovery(
+        arkret_sdk::RecoverySessionGrantRequestBody {
             credential_class: arkret_sdk::SessionGrantCredentialClass::RecoverySession,
             request_id: arkret_sdk::RequestId::new(handoff.request_id.clone())?,
             principal_id: principal_id.clone(),
             device_id: arkret_sdk::DeviceId::new(handoff.device_id.clone())?,
             audience_id: handoff.audience_id.clone(),
-        });
+        },
+    );
     request.validate()?;
     let outcome = account_http.auth_issue_session_grant(&request).await?;
     let expected_session_public_key = holder.canonical_session_public_jwk()?;

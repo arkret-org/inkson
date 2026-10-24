@@ -406,8 +406,8 @@ impl PairingApprovalReview {
                 .as_ref()
                 .map(|name| name.as_str().to_owned())
                 .unwrap_or_else(|| unknown.clone()),
-            device_id: bootstrap.new_device_pubkey.kid.as_str().to_owned(),
-            key_fingerprint: device_key_fingerprint(&bootstrap.new_device_pubkey),
+            device_id: bootstrap.new_device_public_key.kid.as_str().to_owned(),
+            key_fingerprint: device_key_fingerprint(&bootstrap.new_device_public_key),
             platform: bootstrap
                 .device_metadata
                 .as_ref()
@@ -849,7 +849,7 @@ fn render_pair_flow(
                                     // a shorter check for having been typed.
                                     let server_challenge = arkret_sdk::signatures::device_pairing::ServerDevicePairingChallenge::from_bootstrap(&claimed.bootstrap);
                                     if let Err(error) = arkret_sdk::signatures::device_pairing::verify_server_device_pairing_target_proof(
-                                        &claimed.bootstrap.new_device_pubkey,
+                                        &claimed.bootstrap.new_device_public_key,
                                         &server_challenge,
                                         &scope.authority,
                                         &claimed.target_proof,
@@ -956,7 +956,7 @@ fn render_pair_flow(
                                     };
                                     let server_challenge = arkret_sdk::signatures::device_pairing::ServerDevicePairingChallenge::from_bootstrap(&bootstrap);
                                     if let Err(error) = arkret_sdk::signatures::device_pairing::verify_server_device_pairing_target_proof(
-                                        &bootstrap.new_device_pubkey,
+                                        &bootstrap.new_device_public_key,
                                         &server_challenge,
                                         &scope.authority,
                                         &target_proof,

@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 
 use arkret_sdk::signatures::PublicKeyMaterial;
 #[cfg(test)]
-use arkret_sdk::{DidCoreId, SignerKeyQueryOutcome, SignerKeysQueryRequestBody};
+use arkret_sdk::{DidCoreId, SignerKeyResolution, SignerKeysQueryRequestBody};
 use arkret_sdk::{DidUrl, RealmId};
 #[cfg(test)]
 use garth::historical_agent_keys::{EventAgentSelector, query_selector};
@@ -347,7 +347,7 @@ mod historical_result_tests {
                 .created_at,
             actor: selector.agent_actor_id.clone(),
             verification_method: selector.verification_method.clone(),
-            public_key_b64u: arkret_sdk::Base64UrlString::new(arkret_sdk::base64url_encode(
+            public_key_base64url: arkret_sdk::Base64UrlString::new(arkret_sdk::base64url_encode(
                 public_key,
             ))
             .unwrap(),
@@ -399,7 +399,7 @@ mod historical_result_tests {
                         .as_ref()
                         .unwrap()
                         .created_at,
-                    sig: arkret_sdk::Base64UrlString::new("AA").unwrap(),
+                    signature: arkret_sdk::Base64UrlString::new("AA").unwrap(),
                 },
             },
         })
@@ -633,15 +633,15 @@ mod historical_result_tests {
             };
             assert_eq!(request.recipient_account_id, Some(recipient));
             assert_eq!(request.queries, vec![expected_selector.clone()]);
-            let outcome = arkret_sdk::SignerKeysQueryOutcome {
+            let outcome = arkret_sdk::SignerKeyQueryResponseBody {
                 recipient_actor_id: None,
                 request_id: request.request_id.clone(),
                 realm_id: request.realm_id.clone(),
                 recipient_account_id: request.recipient_account_id.clone(),
-                results: vec![SignerKeyQueryOutcome::HistoricalResolved {
+                resolutions: vec![SignerKeyResolution::HistoricalResolved {
                     selector: expected_selector,
                     key: arkret_sdk::ResolvedSignerKey {
-                        public_key_b64u: entry.public_key_b64u,
+                        public_key_base64url: entry.public_key_base64url,
                         authorization_ref: entry.authorization_ref,
                         revision: entry.revision,
                         governance_generation: entry.governance_generation,

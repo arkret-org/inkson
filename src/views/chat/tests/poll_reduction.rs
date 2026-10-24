@@ -1,7 +1,7 @@
 use arkret_identity::RealmAuthorityFreshness;
 use arkret_sdk::{
-    CommittedEventView, ReadableFloor, ReadableFloorReason, StreamScanDirection, StreamScanOutcome,
-    StreamScanRequest,
+    CommittedEventView, ReadableFloor, ReadableFloorReason, StreamScanDirection,
+    StreamScanRequestBody, StreamScanResponseBody,
 };
 
 use super::*;
@@ -16,7 +16,7 @@ const DEVICE: &str = "ak:device:0196419b-0000-7000-8000-000000000001";
 fn definition_payload() -> Value {
     json!({"strand_id":STRAND,"track_name":"discussion","content":{
         "kind":"ak.content.poll","body":"Ship?","poll":{
-            "kind":"disclosed","max_selections":1,"answers":[
+            "kind":"disclosed","max_selection_count":1,"answers":[
                 {"id":"yes","text":{"kind":"ak.content.text","body":"Yes"}},
                 {"id":"no","text":{"kind":"ak.content.text","body":"No"}}
             ]
@@ -139,7 +139,7 @@ fn verified_page_variant(
     let mut replica = garth::RealmReplica::new(realm.clone());
     replica
         .install_verified_authority(
-            &arkret_sdk::AuthorityBundleRequest {
+            &arkret_sdk::RealmAuthorityBundleRequestBody {
                 realm_id: realm.clone(),
                 nonce,
             },
@@ -158,7 +158,7 @@ fn verified_page_variant(
             ReadableFloorReason::StreamStart
         },
     };
-    let request = StreamScanRequest {
+    let request = StreamScanRequestBody {
         realm_id: realm,
         stream_ref: stream,
         direction: StreamScanDirection::After(None),
@@ -167,7 +167,7 @@ fn verified_page_variant(
     let page = replica
         .apply_verified_scan(
             &request,
-            StreamScanOutcome {
+            StreamScanResponseBody {
                 committed_events: committed,
                 readable_floor: Some(floor),
                 truncated: false,
@@ -289,7 +289,7 @@ fn verified_circle_page() -> (garth::VerifiedScanPage, Value) {
     let mut replica = garth::RealmReplica::new(realm.clone());
     replica
         .install_verified_authority(
-            &arkret_sdk::AuthorityBundleRequest {
+            &arkret_sdk::RealmAuthorityBundleRequestBody {
                 realm_id: realm.clone(),
                 nonce: bundle.current_assertion.nonce.clone(),
             },
@@ -300,13 +300,13 @@ fn verified_circle_page() -> (garth::VerifiedScanPage, Value) {
         .unwrap();
     let page = replica
         .apply_verified_scan(
-            &StreamScanRequest {
+            &StreamScanRequestBody {
                 realm_id: realm,
                 stream_ref: stream,
                 direction: StreamScanDirection::After(None),
                 limit: 100,
             },
-            StreamScanOutcome {
+            StreamScanResponseBody {
                 committed_events: rows,
                 readable_floor: Some(ReadableFloor {
                     oldest_position: 0,

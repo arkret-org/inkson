@@ -227,7 +227,7 @@ impl<'a> BlobEndpoints<'a> {
         &self,
         bytes: Vec<u8>,
         content_type: &str,
-    ) -> anyhow::Result<crate::models::BlobUploadOutcome> {
+    ) -> anyhow::Result<crate::models::BlobUploadResponseBody> {
         self.upload_bytes_scoped(bytes, content_type, None, None)
             .await
     }
@@ -238,7 +238,7 @@ impl<'a> BlobEndpoints<'a> {
         content_type: &str,
         realm_id: Option<&str>,
         filename: Option<&str>,
-    ) -> anyhow::Result<crate::models::BlobUploadOutcome> {
+    ) -> anyhow::Result<crate::models::BlobUploadResponseBody> {
         let filename = filename.and_then(crate::wire_helpers::safe_blob_filename_header);
         let metadata = Self::upload_metadata(
             bytes.len(),

@@ -15,7 +15,7 @@ fn plaintext_item(
     Ok(SecretStorageSecret {
         item_kind: item.item_kind,
         secret_id: item.secret_id.clone(),
-        secret_b64u: Base64UrlString::new(B64.encode(secret)).map_err(anyhow::Error::msg)?,
+        secret_base64url: Base64UrlString::new(B64.encode(secret)).map_err(anyhow::Error::msg)?,
         secret_generation,
         extra: Default::default(),
     })
@@ -35,7 +35,7 @@ fn public_content_item(item: &SecretStorageSecret) -> anyhow::Result<SecretStora
 /// The metadata (backup_id, created_at, contents, domain separation) is built
 /// FIRST so the SDK-derived AEAD AAD and nonce transcript can be bound before
 /// encryption — the inverse of the old "encrypt then wrap"
-/// strand. `root` is the Argon2id root key (its salt/params travel on the wire).
+/// strand. `root` is the Argon2id root key (its salt/parameters travel on the wire).
 pub fn build_passphrase_kdf_backup_body(
     backup_id: &str,
     // The closed account actor the envelope belongs to. Every production
@@ -144,7 +144,7 @@ fn recovery_public_key_info(body: &KeyBackup) -> anyhow::Result<Vec<u8>> {
     let info = json!({
         "backup_id": body.backup_id,
         "series_id": body.series_id,
-        "series_seq": body.series_seq,
+        "series_sequence": body.series_sequence,
         "actor_id": body.actor_id,
         "backup_kind": body.backup_kind,
         "backup_version": body.backup_version,
@@ -295,7 +295,7 @@ fn build_recovery_public_key_backup_body_for_items_and_index_in_series(
         ciphertext: Base64UrlString::new("AA".to_owned()).map_err(anyhow::Error::msg)?,
         ciphertext_digest: arkret_sdk::Hash::new(format!("sha256:{}", "0".repeat(64)))?,
         plaintext_commitment: None,
-        auth_data: arkret_sdk::KeyBackupAuthData {
+        signature_proof: arkret_sdk::KeyBackupSignatureProof {
             device_id: auth.device_id.clone(),
             verification_method: auth.verification_method.clone(),
             signature_algorithm: auth.signature_algorithm,
@@ -308,7 +308,7 @@ fn build_recovery_public_key_backup_body_for_items_and_index_in_series(
                 .map(str::to_owned)
                 .unwrap_or_else(|| format!("ak:backup_series:{}", crate::operation::uuid_v7())),
         )?,
-        series_seq: 0,
+        series_sequence: 0,
         supersedes_id: None,
         supersedes_digest: None,
         source_commit_ref,
@@ -324,10 +324,10 @@ fn build_recovery_public_key_backup_body_for_items_and_index_in_series(
         let supersedes_digest =
             crate::mls::account_recovery::series_supersedes_digest(&predecessor)?;
         body.series_id = predecessor.series_id;
-        body.series_seq = predecessor
-            .series_seq
+        body.series_sequence = predecessor
+            .series_sequence
             .checked_add(1)
-            .ok_or_else(|| anyhow::anyhow!("key backup successor series_seq overflow"))?;
+            .ok_or_else(|| anyhow::anyhow!("key backup successor series_sequence overflow"))?;
         body.supersedes_id = Some(predecessor.backup_id);
         body.supersedes_digest = Some(supersedes_digest);
     }
@@ -352,7 +352,7 @@ fn build_recovery_public_key_backup_body_for_items_and_index_in_series(
             .strip_prefix("sha256:")
             .unwrap_or_default()
     ))?;
-    body.auth_data.signature = Base64UrlString::new(
+    body.signature_proof.signature = Base64UrlString::new(
         B64.encode(
             sign(&body.signing_payload_bytes()?)
                 .map_err(|error| anyhow::anyhow!("sign key backup: {error}"))?,

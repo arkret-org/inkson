@@ -535,15 +535,15 @@ impl EventSubmitter {
     /// treating a gate refusal as an authority rejection.
     pub(super) async fn ensure_creator_genesis_replay_gate(
         &self,
-        request: &arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest,
+        request: &arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequestBody,
     ) -> anyhow::Result<
         Option<(
             arkret_sdk::EventId,
             arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapVerifiedAbsence,
-            arkret_sdk::http_client::own_station_results::OwnStationResultClient,
+            arkret_sdk::http_client::own_station_results::OwnStationStateClient,
         )>,
     > {
-        let arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest::Event(
+        let arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequestBody::Event(
             submission,
         ) = request
         else {
@@ -615,7 +615,7 @@ impl EventSubmitter {
         record: arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapRecord,
         accepted: arkret_wire::CommittedEventFullView,
         bundle: arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapAuthority,
-        own_client: &arkret_sdk::http_client::own_station_results::OwnStationResultClient,
+        own_client: &arkret_sdk::http_client::own_station_results::OwnStationStateClient,
     ) -> anyhow::Result<()> {
         use arkret_models_collaboration::mls_creator_bootstrap::{
             MlsCreatorBootstrapInvariant, MlsCreatorBootstrapKnownGenesis,
@@ -928,7 +928,7 @@ impl EventSubmitter {
     ) -> anyhow::Result<(
         arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapAcceptedCreate,
         arkret_wire::RealmStateSnapshot,
-        arkret_sdk::http_client::own_station_results::OwnStationResultClient,
+        arkret_sdk::http_client::own_station_results::OwnStationStateClient,
     )> {
         crate::realm_events_engine::verified_creator_create(&self.http, intent)
             .await

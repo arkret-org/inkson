@@ -772,7 +772,7 @@ mod blocklist_freshness_tests {
     #[test]
     fn malformed_blocklist_prevents_catchup_from_authorizing_signals() {
         use arkret_models_collaboration::sync_frames::account_subscribe::{
-            AccountSubscribeSnapshotResult, SyncRequestBody,
+            AccountSubscribeParameters, AccountSubscribeSnapshotResult,
         };
         use base64::Engine as _;
         let (directory, mut store) = store();
@@ -818,11 +818,11 @@ mod blocklist_freshness_tests {
                 Some(old.clone())
             );
             let catchup = store.begin_blocklist_catchup();
-            let request = SyncRequestBody {
+            let request = AccountSubscribeParameters {
                 after: Some(old.cursor.clone()),
                 catchup: Some(true),
                 filter: None,
-                realm_list: None,
+                realm_list_parameters: None,
                 replace_filter: None,
             };
             if repaired {

@@ -740,7 +740,7 @@ fn toast_editor_bootstrap_script(
     // extracts the picked file's bytes and hands them to Rust over the
     // bidirectional eval channel; the upload runs through the canonical
     // `BlobEndpoints::upload_bytes_scoped` pipeline and Rust sends the
-    // typed `BlobUploadOutcome` fields back for the markdown insert.
+    // typed `BlobUploadResponseBody` fields back for the markdown insert.
     let nextUploadId = 1;
     const pendingUploads = new Map();
 

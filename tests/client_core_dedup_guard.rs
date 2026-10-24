@@ -83,7 +83,7 @@ fn mls_readiness_remains_commit_proven() {
         .unwrap_or_else(|error| panic!("failed to read {}: {error}", submit_path.display()));
     assert!(
         submit.contains("PostAccept::InstallMlsCommit")
-            && submit.contains("AuthoritySubmitRequest::MlsCommit")
+            && submit.contains("AuthoritySubmitRequestBody::MlsCommit")
             && submit.contains("drain_mls_outbound")
             && submit.contains("install_accepted_transition("),
         "MLS admission must remain durable without treating ingress acceptance as group readiness"
@@ -94,7 +94,7 @@ fn mls_readiness_remains_commit_proven() {
         .unwrap_or_else(|error| panic!("failed to read {}: {error}", consumer_path.display()));
     assert!(
         consumer.contains("accepted_commit_for_welcome(api, &delivery)")
-            && consumer.contains(".scan_commit_stream(&arkret_wire::StreamScanRequest")
+            && consumer.contains(".scan_commit_stream(&arkret_wire::StreamScanRequestBody")
             && consumer.contains("consume_bound_scan_row(&client, &reference, exact)")
             && consumer.contains("client.check_session()")
             && consumer.contains("install_accepted_welcome(")

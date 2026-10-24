@@ -21,7 +21,7 @@ test("invite locator revoke preserves the actual locator in the closed current o
     });
     expect(result?.status).toBe(200);
     expect(result?.body).toEqual({ locator_id: locatorId, revoked_at: "2026-10-20T00:00:00.000Z" });
-    expect(() => validateMockSchema("schemas/principal-locator.schema.json#/$defs/invite_locator_revoke_outcome", {
+    expect(() => validateMockSchema("schemas/principal-locator.schema.json#/$defs/invite_locator_revoke_response_body", {
       ...(result?.body as Record<string, unknown>), status: "revoked",
     })).toThrow();
   }
@@ -39,7 +39,7 @@ test("ICE response preserves the typed Account actor from the actual request", a
   const handler = await fixture();
   const body = { realm_id: DEMO_REALM, call_id: "ak:call:AbhvODyrIRCskAIoS9IXLjMfD-Zsr8lwDpiCU_zLR4it", actor_id: CURRENT_ACCOUNT_ACTOR_ID,
     device_id: "ak:device:01964137-0000-7000-8000-0000000000a1", mode: "p2p" };
-  validateMockSchema("schemas/media-operations.schema.json#/$defs/media_ice_config_request_body", body);
+  validateMockSchema("schemas/media-operations.schema.json#/$defs/media_ice_configuration_request_body", body);
   const result = await driveOnce(handler, { method: "POST", url: "https://local.host/_arkret/self/rtc/ice-config", postData: body });
   expect(result?.status).toBe(200);
   expect(result?.body).toMatchObject({ realm_id: body.realm_id, call_id: body.call_id, actor_id: body.actor_id, device_id: body.device_id });

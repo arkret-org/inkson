@@ -1,6 +1,6 @@
 //! Ordinary live projection consumes bound own-Station originals. Subscription
 //! frames are hints; only the independent admitted stream scan moves a cursor.
-use arkret_sdk::http_client::own_station_results::OwnStationResultClient;
+use arkret_sdk::http_client::own_station_results::OwnStationStateClient;
 use garth::history_recovery::replay_with_admitted_replica;
 use garth::own_station_results::{OwnStationReplica, OwnStationScanPage};
 
@@ -73,7 +73,7 @@ struct HintCoverage {
 impl HintCoverage {
     fn covers(
         &self,
-        client: &OwnStationResultClient,
+        client: &OwnStationStateClient,
         hints: &HintBatch,
         projector: &RealmIngestProjector,
         current: &OwnStationReplica,
@@ -229,7 +229,7 @@ impl SubscriptionState {
 }
 
 pub(super) async fn subscription<F: Fn() -> bool>(
-    client: &OwnStationResultClient,
+    client: &OwnStationStateClient,
     http: &arkret_sdk::http_client::Client,
     realm: &arkret_sdk::RealmId,
     projector: &RealmIngestProjector,
@@ -365,7 +365,7 @@ pub(super) async fn subscription<F: Fn() -> bool>(
 }
 
 async fn follow_once<F: Fn() -> bool>(
-    client: &OwnStationResultClient,
+    client: &OwnStationStateClient,
     http: &arkret_sdk::http_client::Client,
     realm: &arkret_sdk::RealmId,
     projector: &RealmIngestProjector,
@@ -469,7 +469,7 @@ async fn follow_once<F: Fn() -> bool>(
 }
 
 async fn drain_hints<F: Fn() -> bool>(
-    client: &OwnStationResultClient,
+    client: &OwnStationStateClient,
     http: &arkret_sdk::http_client::Client,
     realm: &arkret_sdk::RealmId,
     hints: &HintBatch,
@@ -580,7 +580,7 @@ async fn drain_hints<F: Fn() -> bool>(
 
 #[cfg(test)]
 async fn replay(
-    client: &OwnStationResultClient,
+    client: &OwnStationStateClient,
     realm: &arkret_sdk::RealmId,
     stream: &CommitStreamRef,
     snapshot: &CreatorOwnSnapshot,
@@ -598,7 +598,7 @@ async fn replay(
 }
 
 pub(super) async fn drain<F: Fn() -> bool>(
-    client: &OwnStationResultClient,
+    client: &OwnStationStateClient,
     http: &arkret_sdk::http_client::Client,
     realm: &arkret_sdk::RealmId,
     stream: &CommitStreamRef,
@@ -626,7 +626,7 @@ pub(super) async fn drain<F: Fn() -> bool>(
 }
 
 async fn drain_from_snapshot<F: Fn() -> bool>(
-    client: &OwnStationResultClient,
+    client: &OwnStationStateClient,
     http: &arkret_sdk::http_client::Client,
     realm: &arkret_sdk::RealmId,
     stream: &CommitStreamRef,
@@ -712,7 +712,7 @@ async fn drain_from_snapshot<F: Fn() -> bool>(
 /// the Account cursor is deliberately outside this independent transaction.
 #[cfg(test)]
 async fn install_live_current_snapshot<F: Fn() -> bool>(
-    client: &OwnStationResultClient,
+    client: &OwnStationStateClient,
     snapshot: &arkret_sdk::http_client::own_station_results::BoundOwnStationResponse<
         arkret_sdk::RealmId,
         arkret_sdk::RealmStateSnapshot,
@@ -749,7 +749,7 @@ async fn install_live_current_snapshot<F: Fn() -> bool>(
 }
 
 async fn install_live_cut<F: Fn() -> bool>(
-    client: &OwnStationResultClient,
+    client: &OwnStationStateClient,
     snapshot: &CreatorOwnSnapshot,
     realm: &arkret_sdk::RealmId,
     streams: &[CommitStreamRef],
@@ -963,7 +963,7 @@ async fn rollback_live_current_pointer(
 }
 
 pub(super) async fn refresh_sidecars<F: Fn() -> bool>(
-    client: &OwnStationResultClient,
+    client: &OwnStationStateClient,
     http: &arkret_sdk::http_client::Client,
     realm: &arkret_sdk::RealmId,
     projector: &RealmIngestProjector,
@@ -989,7 +989,7 @@ pub(super) async fn refresh_sidecars<F: Fn() -> bool>(
 }
 
 async fn refresh_sidecars_from_snapshot<F: Fn() -> bool>(
-    client: &OwnStationResultClient,
+    client: &OwnStationStateClient,
     http: &arkret_sdk::http_client::Client,
     realm: &arkret_sdk::RealmId,
     projector: &RealmIngestProjector,
@@ -1287,7 +1287,7 @@ pub(super) mod tests {
                 origin,
                 serde_json::json!({
                     "controller_actor_id":bundle.genesis_event.actor_id,"controller_epoch":0,
-                    "authority_generation":0,"authority_event_ref":bundle.realm_id.event_id()
+                    "authority_generation":"0","authority_event_ref":bundle.realm_id.event_id()
                 }),
             ),
             (
@@ -1298,7 +1298,7 @@ pub(super) mod tests {
         ] {
             snapshot
                 .current_state_entries
-                .push(arkret_sdk::TypedCurrentRow::Value {
+                .push(arkret_sdk::CurrentState::Value {
                     selector,
                     source_stream_ref: commit.stream_ref.clone(),
                     revision: arkret_sdk::CurrentRevision {
@@ -1374,7 +1374,7 @@ pub(super) mod tests {
             arkret_sdk::DidUrl::new(format!("did:web:alice.example#{device}")).unwrap(),
         );
         let key = arkret_models_identity::ResolvedSignerKey {
-            public_key_b64u: arkret_sdk::Base64UrlString::new(
+            public_key_base64url: arkret_sdk::Base64UrlString::new(
                 arkret_sdk::canonical::base64url_encode(signer.verifying_key().as_bytes()),
             )
             .unwrap(),
@@ -1691,7 +1691,7 @@ pub(super) mod tests {
                     .unwrap(),
                 signed_digest: arkret_sdk::Hash::new(format!("sha256:{}", "a".repeat(64))).unwrap(),
                 created_at: "2026-10-05T00:00:01.000Z".parse().unwrap(),
-                sig: arkret_sdk::Base64UrlString::new("AA").unwrap(),
+                signature: arkret_sdk::Base64UrlString::new("AA").unwrap(),
             },
         };
         let mut body = serde_json::to_value(&commit).unwrap();
@@ -1748,7 +1748,7 @@ pub(super) mod tests {
     fn http(
         bodies: Vec<serde_json::Value>,
     ) -> (
-        OwnStationResultClient,
+        OwnStationStateClient,
         Arc<Source>,
         std::thread::JoinHandle<()>,
     ) {
@@ -1767,7 +1767,7 @@ pub(super) mod tests {
         account: arkret_sdk::AccountId,
         exact_checkpoint: Option<arkret_sdk::CommitStreamHead>,
     ) -> (
-        OwnStationResultClient,
+        OwnStationStateClient,
         Arc<Source>,
         std::thread::JoinHandle<()>,
     ) {
@@ -1780,7 +1780,7 @@ pub(super) mod tests {
         exact_checkpoint: Option<arkret_sdk::CommitStreamHead>,
         observed: Option<Arc<Mutex<Vec<String>>>>,
     ) -> (
-        OwnStationResultClient,
+        OwnStationStateClient,
         Arc<Source>,
         std::thread::JoinHandle<()>,
     ) {
@@ -1792,7 +1792,7 @@ pub(super) mod tests {
             base_url: base.clone(),
             trust_domain: arkret_sdk::TrustDomainId::new("ak:trust_domain:station.example")
                 .unwrap(),
-            auth_metadata: arkret_sdk::AuthMetadata::minimal(),
+            authentication_metadata: arkret_sdk::AuthenticationMetadata::minimal(),
         };
         let session = OwnStationSessionSnapshot::new(
             binding.clone(),
@@ -1852,23 +1852,23 @@ pub(super) mod tests {
                 }
                 if let Some(expected) = body.get("__scan_request") {
                     assert!(headers.starts_with("post /_arkret/self/streams/scan "));
-                    let request: StreamScanRequest =
+                    let request: StreamScanRequestBody =
                         serde_json::from_slice(&bytes[end..end + len]).unwrap();
                     assert_eq!(serde_json::to_value(request).unwrap(), *expected);
                     body = body["response"].clone();
                 } else if let Some(key) = body.get("__signer_key") {
                     use arkret_models_identity::signer_key_operations::{
-                        SignerKeyQueryOutcome, SignerKeysQueryOutcome, SignerKeysQueryRequestBody,
+                        SignerKeyQueryResponseBody, SignerKeyResolution, SignerKeysQueryRequestBody,
                     };
                     assert!(headers.starts_with("post /_arkret/self/signer-keys/query "));
                     let request: SignerKeysQueryRequestBody =
                         serde_json::from_slice(&bytes[end..end + len]).unwrap();
-                    body = serde_json::to_value(SignerKeysQueryOutcome {
+                    body = serde_json::to_value(SignerKeyQueryResponseBody {
                         request_id: request.request_id,
                         realm_id: request.realm_id,
                         recipient_account_id: request.recipient_account_id,
                         recipient_actor_id: request.recipient_actor_id,
-                        results: vec![SignerKeyQueryOutcome::HistoricalResolved {
+                        resolutions: vec![SignerKeyResolution::HistoricalResolved {
                             selector: request.queries[0].clone(),
                             key: serde_json::from_value(key.clone()).unwrap(),
                             accepted_at: crate::test_support::committed_event::fixture_time(1),
@@ -1879,7 +1879,7 @@ pub(super) mod tests {
                     assert!(headers.starts_with("get "));
                 } else if index > 0 {
                     assert!(headers.starts_with("post /_arkret/self/streams/scan "));
-                    let request: StreamScanRequest =
+                    let request: StreamScanRequestBody =
                         serde_json::from_slice(&bytes[end..end + len]).unwrap();
                     if let Some(head) = &exact_checkpoint {
                         assert_eq!(request.realm_id, request.stream_ref.realm_id().clone());
@@ -1916,7 +1916,7 @@ pub(super) mod tests {
             }
         });
         (
-            OwnStationResultClient::new(raw, binding, source.clone()).unwrap(),
+            OwnStationStateClient::new(raw, binding, source.clone()).unwrap(),
             source,
             server,
         )
@@ -1952,7 +1952,7 @@ pub(super) mod tests {
             let revision = rows[number.min(rows.len() - 1)].commit();
             snapshot
                 .current_state_entries
-                .push(arkret_sdk::TypedCurrentRow::Value {
+                .push(arkret_sdk::CurrentState::Value {
                     selector: arkret_sdk::CurrentSelector::Strand { strand_id },
                     source_stream_ref: revision.stream_ref.clone(),
                     revision: arkret_sdk::CurrentRevision {

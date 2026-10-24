@@ -525,7 +525,7 @@ fn host_bridge_biometric_blocks_store_and_get_on_reject() {
     bridge.set_biometric_required(true);
     bridge.set_biometric_accept(false);
     let store =
-        HostBridgeSecureKeyStore::new("svc.bio", bridge.clone() as Arc<dyn HostSecretBridge>);
+        HostBridgeSecureKeyStore::new("svc.biography", bridge.clone() as Arc<dyn HostSecretBridge>);
 
     let err = store
         .store_secret("rt", "secret")
@@ -551,7 +551,7 @@ fn host_bridge_biometric_allows_store_and_get_on_accept() {
     let bridge = Arc::new(TestHostSecretBridge::new("biometric-bridge"));
     bridge.set_biometric_required(true);
     bridge.set_biometric_accept(true);
-    let store = HostBridgeSecureKeyStore::new("svc.bio", bridge as Arc<dyn HostSecretBridge>);
+    let store = HostBridgeSecureKeyStore::new("svc.biography", bridge as Arc<dyn HostSecretBridge>);
 
     store.store_secret("rt", "secret").expect("store accepted");
     assert_eq!(
@@ -565,10 +565,11 @@ fn host_bridge_biometric_disabled_does_not_prompt() {
     // biometric_challenge_required() defaults to false; the bridge
     // never calls biometric_authenticate, so a bridge that would
     // reject still permits store/get.
-    let bridge = Arc::new(TestHostSecretBridge::new("no-bio"));
+    let bridge = Arc::new(TestHostSecretBridge::new("no-biography"));
     bridge.set_biometric_required(false);
     bridge.set_biometric_accept(false);
-    let store = HostBridgeSecureKeyStore::new("svc.no-bio", bridge as Arc<dyn HostSecretBridge>);
+    let store =
+        HostBridgeSecureKeyStore::new("svc.no-biography", bridge as Arc<dyn HostSecretBridge>);
     store.store_secret("rt", "secret").expect("not gated");
     assert_eq!(
         store.get_secret("rt").expect("not gated").as_deref(),

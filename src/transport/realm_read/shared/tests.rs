@@ -2,7 +2,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use arkret_sdk::http_client::own_station_results::{
-    OwnStationResultClient, OwnStationSessionIdentity, OwnStationSessionSource,
+    OwnStationSessionIdentity, OwnStationSessionSource, OwnStationStateClient,
 };
 use tokio::sync::oneshot;
 
@@ -23,7 +23,7 @@ fn session(
         service_id: account.station_id.clone(),
         base_url: base.into(),
         trust_domain: arkret_sdk::TrustDomainId::new("ak:trust_domain:station.example").unwrap(),
-        auth_metadata: arkret_sdk::AuthMetadata::minimal(),
+        authentication_metadata: arkret_sdk::AuthenticationMetadata::minimal(),
     };
     OwnStationSessionSnapshot::new(
         binding,
@@ -320,7 +320,7 @@ async fn actual_http_exit_coalesces_waiters_and_refuses_a_replaced_session() {
             ))
             .build()
             .unwrap();
-        let http = OwnStationResultClient::new(http, binding, source.clone())
+        let http = OwnStationStateClient::new(http, binding, source.clone())
             .unwrap()
             .http_client()
             .unwrap();

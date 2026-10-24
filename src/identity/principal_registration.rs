@@ -44,7 +44,7 @@ pub fn prepare_registration_checkpoint(
             principal_endpoint: &endpoint,
             local_id: &local_id,
             also_known_as: &[],
-            version_time: created_at,
+            version_created_at: created_at,
             root_seed: &key_material.root_seed,
             next_root_public_key_multibase: &key_material.next_root_public_key_multikey,
             witness_policy: None,
@@ -685,7 +685,7 @@ async fn issue_identity_binding_challenge_with_retry(
     request: &arkret_sdk::IdentityBindingChallengeRequestBody,
     retry_deadline: DateTime<Utc>,
     on_rate_limit: &mut impl FnMut(Duration),
-) -> anyhow::Result<arkret_sdk::IdentityBindingChallengeOutcome> {
+) -> anyhow::Result<arkret_sdk::IdentityBindingChallengeResponseBody> {
     let started_at = Utc::now();
     let retry_window_deadline = started_at
         + chrono::Duration::from_std(arkret_retry::SPEC_RETRY_WINDOW)

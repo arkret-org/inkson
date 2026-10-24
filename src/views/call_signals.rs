@@ -40,7 +40,7 @@ pub struct IncomingCallInfo {
 pub struct CallSignalInboxItem {
     pub realm_id: String,
     pub call_id: String,
-    pub seq: u64,
+    pub sequence: u64,
     /// Canonical complete sender ActorId (`envelope.actor_id`).
     pub sender_actor: String,
     /// Sender device id (`envelope.device_id`).
@@ -49,7 +49,7 @@ pub struct CallSignalInboxItem {
 }
 
 /// Dedup identity for a single inbound signal:
-/// `(realm, call, sender_actor, sender_device, seq)`. coland already delivers
+/// `(realm, call, sender_actor, sender_device, sequence)`. coland already delivers
 /// once; this is the client-side belt-and-braces guard so a redelivered sync
 /// frame (catchup overlap, reconnect replay) never double-drives the FSM.
 pub type SignalDedupKey = (String, String, String, String, u64);
@@ -69,7 +69,7 @@ pub struct CallSignalHub {
     pub inbox: Signal<BTreeMap<String, VecDeque<CallSignalInboxItem>>>,
     /// Processed-signal dedup set.
     pub seen: Signal<BTreeSet<SignalDedupKey>>,
-    /// Highest accepted seq per `(realm, call, sender_actor, sender_device)`.
+    /// Highest accepted sequence per `(realm, call, sender_actor, sender_device)`.
     pub last_seq: Signal<BTreeMap<SignalSeqKey, u64>>,
     /// Call ids the local client currently owns an active session for. An
     /// `invite` for a call already in this set is treated as a re-invite and
@@ -148,7 +148,7 @@ impl Default for CallSignalHub {
 pub struct DecodedCallSignal {
     pub realm_id: String,
     pub call_id: String,
-    pub seq: u64,
+    pub sequence: u64,
     pub sender_actor: String,
     pub sender_device: String,
     pub signal: arkret_sdk::CallSignalData,
@@ -176,7 +176,7 @@ pub fn decode_call_signal(signal: &AdmittedSignal) -> Option<DecodedCallSignal> 
     Some(DecodedCallSignal {
         realm_id: signal.scope_ref().realm_id().as_str().to_owned(),
         call_id: body.call_id.as_str().to_owned(),
-        seq: body.seq,
+        sequence: body.sequence,
         sender_actor: signal.actor_id().to_string(),
         sender_device: sender_endpoint,
         signal: body.signal.clone(),
@@ -320,7 +320,7 @@ pub fn decide_route(
     RouteDecision::Enqueue(CallSignalInboxItem {
         realm_id: decoded.realm_id.clone(),
         call_id: decoded.call_id.clone(),
-        seq: decoded.seq,
+        sequence: decoded.sequence,
         sender_actor: decoded.sender_actor.clone(),
         sender_device: decoded.sender_device.clone(),
         signal: decoded.signal.clone(),
@@ -355,10 +355,13 @@ fn advance_signal_seq(
         decoded.sender_device.clone(),
     );
     let mut last_seq = hub.last_seq.write();
-    if last_seq.get(&key).is_some_and(|prev| decoded.seq <= *prev) {
+    if last_seq
+        .get(&key)
+        .is_some_and(|prev| decoded.sequence <= *prev)
+    {
         return false;
     }
-    last_seq.insert(key, decoded.seq);
+    last_seq.insert(key, decoded.sequence);
     true
 }
 
@@ -375,7 +378,7 @@ pub fn route_decoded_signal(
         decoded.call_id.clone(),
         decoded.sender_actor.clone(),
         decoded.sender_device.clone(),
-        decoded.seq,
+        decoded.sequence,
     );
     // Compute duplicate status and insert atomically: a self-echo never
     // reaches here as a duplicate (it is dropped first), so only genuine
@@ -433,7 +436,7 @@ mod tests {
     /// out of it.
     ///
     /// The pre-v1 fixture hand-wrote a plaintext wire envelope with
-    /// `payload.{call_id,signal_kind,seq}` on the header. That object no longer
+    /// `payload.{call_id,signal_kind,sequence}` on the header. That object no longer
     /// exists: `signal.md` §6 makes exactly those fields ciphertext, so the
     /// fixture now goes through the production sender path and the assertions
     /// move to the decrypted body.
@@ -480,7 +483,7 @@ mod tests {
         seed: u8,
         actor: &str,
         device: &str,
-        seq: u64,
+        sequence: u64,
         signal: arkret_sdk::CallSignalData,
     ) -> (arkret_wire::SignalEnvelope, Value) {
         let signer = std::sync::Arc::new(crate::event_signer::build_ed25519_device_signer(
@@ -490,13 +493,13 @@ mod tests {
             signer.as_ref(),
             &crate::signal::SignalPayload::CallSignal {
                 call_id: arkret_sdk::CallId::new(TEST_CALL).unwrap(),
-                seq,
+                sequence,
                 signal,
             },
             &arkret_sdk::RealmId::new(TEST_REALM).unwrap(),
             &crate::mls_api_helpers::principal_core_id(actor).unwrap(),
             &arkret_sdk::DeviceId::new(device).unwrap(),
-            crate::signal::SignalSequence::new(seq),
+            crate::signal::SignalSequence::new(sequence),
         )
         .expect("fixture signal must seal")
     }
@@ -558,7 +561,7 @@ mod tests {
             decoded.signal,
             arkret_sdk::CallSignalData::Candidate(_)
         ));
-        assert_eq!(decoded.seq, 2);
+        assert_eq!(decoded.sequence, 2);
         // The outer header exposes only the scope and the class — never the
         // call id or the signal kind (`signal.md` §6).
         let header = serde_json::to_value(&envelope).unwrap();
@@ -576,7 +579,7 @@ mod tests {
             &envelope,
             json!({
                 "kind": "ak.typing",
-                "payload_sequence": 1,
+                "payload_sequence": "1",
                 "strand_id": "ak:strand:Aa6k_ga4nHTT-mJwrlDP8oeaq3P1Wg9B6K8RtTXZyUY0",
                 "typing": true
             }),
@@ -592,18 +595,18 @@ mod tests {
                     "kind": "ak.call.signal",
                     "call_id": TEST_CALL,
                     "signal_kind": "sdp_offer",
-                    "payload_sequence": 1
+                    "payload_sequence": "1"
                 })
             )
             .is_err()
         );
     }
 
-    fn decoded(signal: arkret_sdk::CallSignalData, seq: u64) -> DecodedCallSignal {
+    fn decoded(signal: arkret_sdk::CallSignalData, sequence: u64) -> DecodedCallSignal {
         DecodedCallSignal {
             realm_id: "ak:realm:r".into(),
             call_id: "ak:call:1".into(),
-            seq,
+            sequence,
             sender_actor: "did:web:bob".into(),
             sender_device: "dev-b".into(),
             signal,

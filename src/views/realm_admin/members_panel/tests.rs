@@ -106,11 +106,11 @@ fn agent(id: &str, controller: &str, name: &str) -> MemberAgentRow {
         runtime_state: "ready".to_owned(),
         mention_policy: AgentMentionPolicy::Allowed,
         selection: ParticipationBits {
-            reply_message: false,
-            reaction_add: false,
-            reaction_remove: false,
-            accept_third_party_mention: true,
-            act_on_behalf: false,
+            message_creation_allowed: false,
+            reaction_addition_allowed: false,
+            reaction_removal_allowed: false,
+            third_party_mention_delivery_allowed: true,
+            acting_on_behalf_allowed: false,
         },
     }
 }
@@ -346,7 +346,7 @@ fn groups_agent_members_under_reported_controller() {
 const PANEL_ISSUER: &str = "ak:did_core:web:acme.example";
 
 /// The Station-selected Realm policy bundle from the typed current snapshot.
-fn acme_policy_current() -> Vec<arkret_wire::TypedCurrentRow> {
+fn acme_policy_current() -> Vec<arkret_wire::CurrentState> {
     serde_json::from_value(serde_json::json!([{
         "selector": {"kind": "realm_policy_bundle"},
         "source_stream_ref": {"kind": "realm", "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"},
@@ -480,7 +480,7 @@ fn projected_member_profiles_do_not_promote_retired_local_authority_root() {
                 "result": {"status": "value", "value": {
                     "controller_actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}},
                     "controller_epoch": 0,
-                    "authority_generation": 0,
+                    "authority_generation": "0",
                     "authority_event_ref": realm_id.replacen("ak:realm:", "ak:event:", 1)
                 }}
             }]}
@@ -1147,16 +1147,16 @@ fn mention_policy_reads_realm_effective_bit() {
     let entries = vec![AgentParticipationEntry {
         scope: ParticipationScope::Realm { realm_id },
         selection: ParticipationBits {
-            reply_message: true,
-            reaction_add: true,
-            reaction_remove: false,
-            accept_third_party_mention: true,
-            act_on_behalf: false,
+            message_creation_allowed: true,
+            reaction_addition_allowed: true,
+            reaction_removal_allowed: false,
+            third_party_mention_delivery_allowed: true,
+            acting_on_behalf_allowed: false,
         },
         version: 1,
-        next_replace_input: ParticipationNextReplaceInput {
+        next_replace_input: Some(ParticipationNextReplaceInput {
             expected_version: 1,
-        },
+        }),
     }];
 
     let (policy, selection) = mention_state_from_entries(
@@ -1164,7 +1164,7 @@ fn mention_policy_reads_realm_effective_bit() {
         "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
     );
     assert_eq!(policy, AgentMentionPolicy::Allowed);
-    assert!(selection.accept_third_party_mention);
+    assert!(selection.third_party_mention_delivery_allowed);
 }
 
 #[test]
@@ -1174,22 +1174,22 @@ fn mention_state_uses_realm_participation_entry() {
     let entry = AgentParticipationEntry {
         scope: ParticipationScope::Realm { realm_id },
         selection: ParticipationBits {
-            reply_message: true,
-            reaction_add: true,
-            reaction_remove: false,
-            accept_third_party_mention: true,
-            act_on_behalf: false,
+            message_creation_allowed: true,
+            reaction_addition_allowed: true,
+            reaction_removal_allowed: false,
+            third_party_mention_delivery_allowed: true,
+            acting_on_behalf_allowed: false,
         },
         version: 1,
-        next_replace_input: ParticipationNextReplaceInput {
+        next_replace_input: Some(ParticipationNextReplaceInput {
             expected_version: 1,
-        },
+        }),
     };
 
     let (policy, selection) = mention_state_from_entries(&[entry], realm);
 
     assert_eq!(policy, AgentMentionPolicy::Allowed);
-    assert!(selection.accept_third_party_mention);
+    assert!(selection.third_party_mention_delivery_allowed);
 }
 
 #[test]

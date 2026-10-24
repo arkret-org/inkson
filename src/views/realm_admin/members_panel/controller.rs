@@ -8,7 +8,7 @@
 
 use super::*;
 
-fn invite_delivery_summary(outcome: &arkret_sdk::InviteDeliveryOutcome) -> &'static str {
+fn invite_delivery_summary(outcome: &arkret_sdk::InviteDeliveryResponseBody) -> &'static str {
     use arkret_sdk::{DisclosedOutcome, InviteDeliveryOutcomeStatus};
     if outcome.status == InviteDeliveryOutcomeStatus::Deferred {
         return "private delivery is deferred; retry later";
@@ -70,7 +70,7 @@ pub(super) async fn fetch_owned_agent_rows(
     realm: &str,
     fallback_controller_principal_id: &str,
 ) -> anyhow::Result<Vec<MemberAgentRow>> {
-    let list = http.agent_list().await?;
+    let list = http.agent_page().await?;
     let mut rows = Vec::<MemberAgentRow>::new();
     for value in list.agents {
         let Some(mut row) = member_agent_row_from_value(value, fallback_controller_principal_id)

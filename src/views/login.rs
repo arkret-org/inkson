@@ -762,7 +762,7 @@ fn connection_review_details(change: &crate::station_connection::ConnectionTrust
             if change.previous.trust_domain != change.candidate.trust_domain {
                 li { {crate::i18n::tr("login.connection.domain_changed")} }
             }
-            if change.previous.auth_metadata != change.candidate.auth_metadata {
+            if change.previous.authentication_metadata != change.candidate.authentication_metadata {
                 li { {crate::i18n::tr("login.connection.provider_changed")} }
             }
         }
@@ -838,19 +838,20 @@ mod connection_review_locale_tests {
             "base_url": "https://station.example/",
             "service_id": "ak:did_core:webvh:z6mkfixture",
             "trust_domain": "ak:trust_domain:station.example",
-            "auth_metadata": {
+            "authentication_metadata": {
                 "account_authority": { "origin": "https://auth.example", "gate_account_base_url": "https://auth.example/_arkret/gate/account" },
                 "methods": [{ "method": "oidc", "issuer_uri": "https://auth.example/", "client_id": "login.connection.new", "scopes": ["openid", "profile"], "grant_exchange": { "kind": "account_handoff" } }]
             }
         })).unwrap();
-        let mut second = previous.auth_metadata.methods[0].clone();
+        let mut second = previous.authentication_metadata.methods[0].clone();
         second.client_id = Some("unchanged-client".to_owned());
-        previous.auth_metadata.methods.push(second);
+        previous.authentication_metadata.methods.push(second);
         let mut candidate = previous.clone();
         candidate.service_id = arkret_sdk::DidCoreId::new("ak:did_core:webvh:z6mkchanged").unwrap();
         candidate.trust_domain =
             arkret_sdk::TrustDomainId::new("ak:trust_domain:new-station.example").unwrap();
-        candidate.auth_metadata.methods[0].client_id = Some("{index} {method} / 原文".to_owned());
+        candidate.authentication_metadata.methods[0].client_id =
+            Some("{index} {method} / 原文".to_owned());
         let change = crate::station_connection::ConnectionTrustChange {
             previous,
             candidate,

@@ -1212,23 +1212,23 @@ fn board_first_mls_bootstrap_key_never_prompts_for_passphrase() {
 const ENCRYPTED_REALM: &str = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
 
 #[cfg(not(target_arch = "wasm32"))]
-fn encrypted_realm_current() -> arkret_wire::TypedCurrentRow {
+fn encrypted_realm_current() -> arkret_wire::CurrentState {
     let scope = arkret_sdk::ScopeRef::Realm {
         realm_id: arkret_sdk::RealmId::new(ENCRYPTED_REALM).unwrap(),
     };
-    let group: arkret_wire::MlsGroupCurrent = serde_json::from_value(serde_json::json!({
+    let group: arkret_wire::MlsGroupValue = serde_json::from_value(serde_json::json!({
         "effective_scope": scope,
         "genesis_event_ref": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
         "cipher_suite": "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519",
         "current_mls_commit_event_ref": "ak:event:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL",
-        "epoch": 4,
-        "current_key_access_revision": 2,
-        "covered_key_access_revision": 2,
+        "epoch": "4",
+        "current_key_access_revision": "2",
+        "covered_key_access_revision": "2",
         "public_tree_ref": "ak:blob:sha256:431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460"
     }))
     .expect("valid MLS current value");
 
-    arkret_wire::TypedCurrentRow::Value {
+    arkret_wire::CurrentState::Value {
         selector: arkret_wire::CurrentSelector::MlsGroup { scope_ref: scope },
         source_stream_ref: arkret_wire::CommitStreamRef::Realm {
             realm_id: arkret_wire::RealmId::new(ENCRYPTED_REALM).unwrap(),

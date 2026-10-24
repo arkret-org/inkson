@@ -66,7 +66,7 @@ fn creator_leaf_authority_from_group(
         ),
     };
     let result = arkret_sdk::MlsGenesisCreatorLeafAuthority {
-        leaf_signature_key_b64u: creator.signature_key.clone(),
+        leaf_signature_key_base64url: creator.signature_key.clone(),
         endpoint,
         authorization_event_ref,
     };

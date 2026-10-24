@@ -24,7 +24,7 @@ test("Realm stream enumeration returns the same closed not_found for absent and 
   validateMockSchema("schemas/http-problem-details.schema.json", missing!.body);
   const accepted = await read(DEMO_REALM);
   expect(accepted?.status).toBe(200);
-  validateMockSchema("schemas/realm-read-operations.schema.json#/$defs/realm_stream_list", accepted!.body);
+  validateMockSchema("schemas/realm-read-operations.schema.json#/$defs/realm_stream_page", accepted!.body);
   expect(accepted).toEqual(await read(DEMO_REALM));
   expect(JSON.stringify(accepted!.body)).toContain("head_commit_ref");
 

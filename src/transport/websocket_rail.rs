@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::{Arc, Mutex};
 
 use arkret_models_collaboration::sync_frames::account_subscribe::{
-    AccountSubscribeFrameKind, AccountSubscribeSnapshotResult, SyncRequestBody,
+    AccountSubscribeFrameKind, AccountSubscribeParameters, AccountSubscribeSnapshotResult,
 };
 use arkret_models_collaboration::sync_frames::websocket::*;
 use arkret_wire::websocket_binding::WebSocketOperationId;
@@ -504,14 +504,14 @@ impl<H> StreamRail<H> {
 impl<H: garth::AccountSubscribeTransport> garth::AccountSubscribeTransport for StreamRail<H> {
     async fn subscribe(
         &self,
-        request: &SyncRequestBody,
+        request: &AccountSubscribeParameters,
     ) -> garth::Result<AccountSubscribeSnapshotResult> {
         let parameters = WebSocketOpenParameters::Account(WebSocketAccountOpenParameters {
             after: request.after.clone(),
             catchup: request.catchup,
             filter: request.filter.clone(),
             wait_for: None,
-            realm_list: request.realm_list.clone(),
+            realm_list_parameters: request.realm_list_parameters.clone(),
             replace_filter: request.replace_filter,
         });
         if let Some(mut channel) = self.rail.open(parameters.clone())? {
@@ -804,7 +804,7 @@ mod tests {
         impl garth::AccountSubscribeTransport for Http {
             async fn subscribe(
                 &self,
-                _: &SyncRequestBody,
+                _: &AccountSubscribeParameters,
             ) -> garth::Result<AccountSubscribeSnapshotResult> {
                 let _cancelled = Cancelled(self.cancelled.clone());
                 self.started.store(true, Ordering::SeqCst);
@@ -822,8 +822,11 @@ mod tests {
             },
         );
         let attempt = tokio::spawn(async move {
-            garth::AccountSubscribeTransport::subscribe(&transport, &SyncRequestBody::default())
-                .await
+            garth::AccountSubscribeTransport::subscribe(
+                &transport,
+                &AccountSubscribeParameters::default(),
+            )
+            .await
         });
         while !started.load(Ordering::SeqCst) {
             tokio::task::yield_now().await;

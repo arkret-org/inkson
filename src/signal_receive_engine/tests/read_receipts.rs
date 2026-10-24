@@ -86,7 +86,7 @@ async fn routed_policy(value: Option<Value>, complete: bool) -> Vec<arkret_sdk::
         realm_id: realm.clone(),
     };
     let commit = arkret_sdk::RealmCommitId::from_digest([93; 32]);
-    let row = |selector, value| arkret_sdk::TypedCurrentRow::Value {
+    let row = |selector, value| arkret_sdk::CurrentState::Value {
         selector,
         source_stream_ref: stream.clone(),
         revision: arkret_sdk::CurrentRevision {
@@ -128,7 +128,7 @@ async fn routed_policy(value: Option<Value>, complete: bool) -> Vec<arkret_sdk::
     };
     let frame: arkret_sdk::sync::AccountSubscribeFrame = serde_json::from_value(json!({
         "kind":"delta", "cursor":"ak:cursor:YQ", "realms":{realm.to_string(): {
-            "current":{"realm_id":realm,"governance_generation":1,"stream_heads":[head],"entries":entries},
+            "current":{"realm_id":realm,"governance_generation":"1","stream_heads":[head],"entries":entries},
             "baseline":{"snapshot_cursor":"ak:cursor:Yg", "cut_revision":1,
                 "coverage":{"realm_id":realm,"stream_heads":[head],"complete_for_authorized_streams":true},"complete":complete}
         }}

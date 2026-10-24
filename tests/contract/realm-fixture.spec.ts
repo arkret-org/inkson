@@ -59,7 +59,7 @@ test("Plaintext-visible service bootstrap retains the signed declaration and exa
       value: payload,
     });
     expect(fixture.account_entry.current.entries).toContainEqual(row);
-    validateMockSchema("schemas/typed-current-result.schema.json", row);
+    validateMockSchema("schemas/current-state.schema.json", row);
   }
 });
 
@@ -174,7 +174,7 @@ test("Encrypted native Realm has authenticated public MLS material and exact Gen
     kind: "device", device_id: fixture.source_authorization.event.payload.device_id,
   });
   const fact = fixture.signer_facts.find(fact => fact.event_id === full.event.event_id)!;
-  expect(payload.creator_leaf_authority.leaf_signature_key_b64u).toBe(fact.key.public_key_b64u);
+  expect(payload.creator_leaf_authority.leaf_signature_key_base64url).toBe(fact.key.public_key_base64url);
   const rows = fixture.snapshot.current_state_entries.filter((row: any) => row.selector.kind === "mls_group");
   expect(rows).toHaveLength(1);
   expect(rows[0].source_stream_ref).toEqual(full.commit.stream_ref);
@@ -204,7 +204,7 @@ test("Encrypted native Realm rejects altered public MLS bytes and Genesis author
     if (mutation === "missing tree") delete changed.public_blobs![payload.ratchet_tree_ref];
     if (mutation === "creator authorization") payload.creator_leaf_authority.authorization_event_ref = fixture.committed_events[0].event.event_id;
     if (mutation === "creator device") payload.creator_leaf_authority.endpoint.device_id = "ak:device:01964137-0000-7000-8000-0000000000a2";
-    if (mutation === "creator leaf") payload.creator_leaf_authority.leaf_signature_key_b64u = "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI";
+    if (mutation === "creator leaf") payload.creator_leaf_authority.leaf_signature_key_base64url = "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI";
     const current = changed.snapshot.current_state_entries.find((row: any) => row.selector.kind === "mls_group");
     if (mutation === "current epoch") current.value.epoch += 1;
     if (mutation === "current source") current.revision = structuredClone(fixture.snapshot.current_state_entries[0].revision);
@@ -259,7 +259,7 @@ test("Managed Agent native verification rejects altered delegation, possession a
     if (mutation === "delegation") agent.controller_authorization_ref = `${agent.did}#other-controller`;
     if (mutation === "possession signature") agent.runtime_proof.signature = changedSignature(agent.runtime_proof.signature);
     if (mutation === "source commit") agent.provision.commit.event_ref = fixture.committed_events[0].event.event_id;
-    if (mutation === "runtime commit") agent.runtime_authorization.commit.signature.sig = changedSignature(agent.runtime_authorization.commit.signature.sig);
+    if (mutation === "runtime commit") agent.runtime_authorization.commit.signature.signature = changedSignature(agent.runtime_authorization.commit.signature.signature);
     const current = changed.snapshot.current_state_entries.find((row: any) => row.selector.kind === "member_state"
       && row.selector.actor_id?.account_id?.principal_id === agent.account_id.principal_id);
     if (mutation === "member Account") current.selector.actor_id.account_id.station_id = fixture.identity.account_id.principal_id;
@@ -295,8 +295,8 @@ test("Native read entry rejects changed signatures, source authorization and his
   const fixture = build();
   for (const mutation of ["snapshot signature", "commit signature", "producer signature", "source authorization", "historical key", "inception"] as const) {
     const changed = structuredClone(fixture);
-    if (mutation === "snapshot signature") changed.snapshot.signature.sig = changedSignature(changed.snapshot.signature.sig);
-    if (mutation === "commit signature") changed.committed_events[1].commit.signature.sig = changedSignature(changed.committed_events[1].commit.signature.sig);
+    if (mutation === "snapshot signature") changed.snapshot.signature.signature = changedSignature(changed.snapshot.signature.signature);
+    if (mutation === "commit signature") changed.committed_events[1].commit.signature.signature = changedSignature(changed.committed_events[1].commit.signature.signature);
     if (mutation === "producer signature") {
       const proof = changed.committed_events[1].event.producer_proof;
       const parts = proof.jws.split(".");
@@ -304,7 +304,7 @@ test("Native read entry rejects changed signatures, source authorization and his
       proof.jws = parts.join(".");
     }
     if (mutation === "source authorization") changed.source_authorization.commit.event_ref = fixture.committed_events[0].event.event_id;
-    if (mutation === "historical key") changed.signer_facts[1].key.public_key_b64u = "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI";
+    if (mutation === "historical key") changed.signer_facts[1].key.public_key_base64url = "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI";
     if (mutation === "inception") changed.identity.inception_log_entry.versionId = "1-forged";
     expect(() => scan(changed), mutation).toThrow();
   }
@@ -359,7 +359,7 @@ test("Self Watch current reads the SDK-verified complete cell without advancing 
     stream_head: fixture.snapshot.visible_stream_heads[0],
     selector: { kind: "strand_watch", strand_id: request.strand_id, watcher_actor_id: request.watcher_actor_id },
   });
-  validateMockSchema("schemas/service-operation-dtos.schema.json#/$defs/StrandWatchCurrentOutcome", current);
+  validateMockSchema("schemas/service-operation-dtos.schema.json#/$defs/StrandWatchCurrentResponseBody", current);
   expect(fixture).toEqual(original);
   for (const field of ["Realm", "Strand", "Account", "Station"] as const) {
     const changed = structuredClone(request);
@@ -560,9 +560,9 @@ test("Exact managed Agent current read proves never-written at the unchanged ver
       && head.stream_ref.realm_id === request.realm_id),
     selector: request.selector,
   });
-  expect(() => validateMockSchema("schemas/exact-current-results-read.schema.json#/$defs/exact_current_results_read_outcome", outcome)).not.toThrow();
+  expect(() => validateMockSchema("schemas/exact-current-state-read.schema.json#/$defs/exact_current_state_read_response_body", outcome)).not.toThrow();
   const response = await driveOnce(route, {
-    url: "https://local.host/_arkret/self/current-results/exact", method: "POST", postData: request,
+    url: "https://local.host/_arkret/self/current-state/exact", method: "POST", postData: request,
   });
   expect(response?.status).toBe(200);
   expect(response?.body).toEqual(outcome);

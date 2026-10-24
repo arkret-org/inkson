@@ -54,7 +54,7 @@ fn pending_welcome_delivery(
             device_id: recipient_device,
         },
         keypackage_claim_ref: draft.keypackage_claim_ref.clone(),
-        ciphertext_b64: draft.ciphertext_b64.clone(),
+        ciphertext_base64url: draft.ciphertext_base64url.clone(),
         producer_proof: arkret_wire::DetachedObjectSignature {
             context: arkret_wire::DetachedSignatureContext::MlsWelcomeDelivery,
             signature_algorithm: arkret_wire::DetachedSignatureAlgorithm::Ed25519,
@@ -62,7 +62,7 @@ fn pending_welcome_delivery(
                 .unwrap(),
             signed_digest: arkret_sdk::Hash::new(format!("sha256:{}", "11".repeat(32))).unwrap(),
             created_at: "2026-09-22T00:00:00.000Z".parse().unwrap(),
-            sig: arkret_sdk::Base64UrlString::new("A".repeat(86)).unwrap(),
+            signature: arkret_sdk::Base64UrlString::new("A".repeat(86)).unwrap(),
         },
     };
     delivery.validate_shape().unwrap();

@@ -105,7 +105,7 @@ fn encrypted_poll_sidecar_is_not_a_formal_v1_poll() {
         "body": "Deploy now?",
         "poll": {
             "kind": "disclosed",
-            "max_selections": 1,
+            "max_selection_count": 1,
             "answers": [
                 {
                     "id": "opt-0",

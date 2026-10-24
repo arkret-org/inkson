@@ -257,7 +257,7 @@ mod tests {
                     "version": "1.0",
                     "content_type": "application/vnd.arkret.sidecar-control+json",
                     "encryption_context": {
-                        "epoch": 1,
+                        "epoch": "1",
                         "group_state_ref": "ak:event:AbHexNOxiiU334tA-ZHyM5pRxJxbMY0jvwlMVDY3Xjrz"
                     },
                     "ciphertext": "AQIDBA"

@@ -315,7 +315,7 @@ pub type VerifiedMediaBinding =
             arkret_sdk::MediaServiceBindingRequestBody,
             arkret_sdk::DidCoreId,
         ),
-        arkret_sdk::MediaServiceBindingOutcome,
+        arkret_sdk::MediaServiceBindingResponseBody,
     >;
 
 pub async fn binding_for_http(
@@ -402,7 +402,7 @@ async fn fetch_current_service_material(
                 let mut resolver = DidWebvhResolver::new();
                 resolver.insert_from_https_response(
                     did,
-                    arkret_identity::DidWebvhDocumentOutcome {
+                    arkret_identity::DidWebvhDocumentHttpResponse {
                         url: doc_url,
                         content_type: doc_type,
                         body: doc_body,
@@ -412,7 +412,7 @@ async fn fetch_current_service_material(
                     arkret_identity::verify_did_webvh_v1_chain_bytes(did, &log_body)?;
                 resolver.ingest_log(
                     did,
-                    arkret_identity::DidWebvhLogOutcome {
+                    arkret_identity::DidWebvhLogHttpResponse {
                         url: log_url,
                         content_type: log_type,
                         body: log_body,

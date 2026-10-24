@@ -37,7 +37,7 @@
 //! }, &local_state_store).await?;
 //! ```
 
-use arkret_models_integration::{PushRegisterDeviceOutcome, PushUnregisterDeviceOutcome};
+use arkret_models_integration::{PushRegisterDeviceResponseBody, PushUnregisterDeviceResponseBody};
 use chime::{
     ArkretPushClient, ChimePushRegisterDeviceRequest, GatewayBinding, PushDeviceConfig,
     PushGatewayType, PushPreferences, PushRegistrationState, build_register_device_request,
@@ -136,7 +136,7 @@ pub struct UnregisterContext {
 #[derive(Clone, Debug)]
 pub struct RegisterOutcome {
     pub state: PushRegistrationState,
-    pub response: PushRegisterDeviceOutcome,
+    pub response: PushRegisterDeviceResponseBody,
 }
 
 #[derive(Clone, Debug)]
@@ -185,7 +185,7 @@ pub async fn unregister_via_chime(
     ctx: UnregisterContext,
     persisted_grant: Option<PersistedSessionGrant>,
     registration: Option<chime::PushRegistrationState>,
-) -> Result<PushUnregisterDeviceOutcome, PushRegistrationError> {
+) -> Result<PushUnregisterDeviceResponseBody, PushRegistrationError> {
     let mut grant_ctx = RegisterContext {
         station_url: ctx.station_url.clone(),
         floria_gateway_url: String::new(),

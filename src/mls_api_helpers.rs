@@ -150,10 +150,10 @@ mod principal_id_tests {
 }
 pub(crate) fn sign_keypackage_upload_batch_with_signer(
     signer: &crate::event_signer::InksonEventSigner,
-    unsigned: &arkret_sdk::KeyPackagesUploadUnsignedRequest,
+    unsigned: &arkret_sdk::KeyPackagesUploadFields,
 ) -> anyhow::Result<arkret_sdk::KeyOperationSignature> {
     let input = arkret_sdk::keypackages_upload_signing_input(unsigned)?;
-    let sig = signer.sign_raw(&input).map_err(|err| {
+    let signature = signer.sign_raw(&input).map_err(|err| {
         anyhow::anyhow!("keypackages/upload endpoint_signature sign failed: {err}")
     })?;
     Ok(arkret_sdk::KeyOperationSignature {
@@ -162,13 +162,13 @@ pub(crate) fn sign_keypackage_upload_batch_with_signer(
         signature_algorithm: Some(
             arkret_sdk::NonEmptyString::new(signer.algorithm()).map_err(anyhow::Error::msg)?,
         ),
-        sig: arkret_sdk::Base64UrlString::new(URL_SAFE_NO_PAD.encode(sig))
+        signature: arkret_sdk::Base64UrlString::new(URL_SAFE_NO_PAD.encode(signature))
             .map_err(anyhow::Error::msg)?,
     })
 }
 
 pub(crate) fn sign_keypackage_revoke_batch(
-    unsigned: &arkret_sdk::KeyPackagesRevokeUnsignedRequest,
+    unsigned: &arkret_sdk::KeyPackagesRevokeFields,
 ) -> anyhow::Result<arkret_sdk::KeyOperationSignature> {
     let signer = crate::event_signer::active_signer().ok_or_else(|| {
         anyhow::anyhow!(
@@ -176,7 +176,7 @@ pub(crate) fn sign_keypackage_revoke_batch(
         )
     })?;
     let input = arkret_sdk::keypackages_revoke_signing_input(unsigned)?;
-    let sig = signer
+    let signature = signer
         .sign_raw(&input)
         .map_err(|error| anyhow::anyhow!("keypackages/revoke signature failed: {error}"))?;
     Ok(arkret_sdk::KeyOperationSignature {
@@ -185,7 +185,7 @@ pub(crate) fn sign_keypackage_revoke_batch(
         signature_algorithm: Some(
             arkret_sdk::NonEmptyString::new(signer.algorithm()).map_err(anyhow::Error::msg)?,
         ),
-        sig: arkret_sdk::Base64UrlString::new(URL_SAFE_NO_PAD.encode(sig))
+        signature: arkret_sdk::Base64UrlString::new(URL_SAFE_NO_PAD.encode(signature))
             .map_err(anyhow::Error::msg)?,
     })
 }
@@ -331,7 +331,7 @@ fn build_mls_keypackage_claim_request_with_requester(
         source_id.clone(),
     ));
     let signed_at = crate::clock::now_utc();
-    let unsigned = arkret_sdk::PeerKeyPackagesClaimUnsignedRequest {
+    let unsigned = arkret_sdk::PeerKeyPackagesClaimFields {
         target_actor_id: None,
         requester_actor_id: None,
         claim_request_id: arkret_sdk::Base64UrlString::new(claim_request_id.trim().to_owned())
@@ -394,7 +394,7 @@ fn build_mls_keypackage_claim_request_with_requester(
         }
         | arkret_sdk::PeerKeyPackageRequesterAuthorization::Agent {
             signature: proof, ..
-        } => proof.sig = signature,
+        } => proof.signature = signature,
         arkret_sdk::PeerKeyPackageRequesterAuthorization::RealmDevice { .. } => {
             anyhow::bail!("Realm Device claim requires its exact Realm authority signer")
         }
@@ -437,7 +437,7 @@ fn placeholder_key_operation_signature(
         signature_algorithm: Some(
             arkret_sdk::NonEmptyString::new(signer.algorithm()).map_err(anyhow::Error::msg)?,
         ),
-        sig: arkret_sdk::Base64UrlString::new("YQ").map_err(anyhow::Error::msg)?,
+        signature: arkret_sdk::Base64UrlString::new("YQ").map_err(anyhow::Error::msg)?,
     })
 }
 

@@ -81,7 +81,7 @@ async fn authorized_durable_cut_resolves_history_and_alias_without_a_product_vie
         drop(state);
         let state = crate::state::LocalStateStore::with_path(&path);
         assert!(state.current_mls_group_for_scope(&scope).is_none());
-        let current = arkret_wire::MlsGroupCurrent {
+        let current = arkret_wire::MlsGroupValue {
             effective_scope: scope.clone(),
             genesis_event_ref: event(20),
             cipher_suite: arkret_sdk::NonEmptyString::new(

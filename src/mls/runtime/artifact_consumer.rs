@@ -328,7 +328,7 @@ pub(crate) async fn install_accepted_welcome(
 /// endpoint's own Station.
 pub(crate) struct VerifiedWelcomeClaim {
     pub(crate) record: arkret_sdk::KeyPackageClaimRecord,
-    pub(crate) outcome: arkret_sdk::KeyPackagesClaimOutcome,
+    pub(crate) outcome: arkret_sdk::KeyPackagesClaimResponseBody,
     pub(crate) station: arkret_sdk::DidCoreId,
 }
 
@@ -578,18 +578,18 @@ type RecoverySnapshot = arkret_sdk::http_client::own_station_results::BoundOwnSt
     arkret_wire::RealmStateSnapshot,
 >;
 type RecoveryAnchor = arkret_sdk::http_client::own_station_results::BoundOwnStationResponse<
-    arkret_wire::StreamScanRequest,
-    arkret_wire::StreamScanOutcome,
+    arkret_wire::StreamScanRequestBody,
+    arkret_wire::StreamScanResponseBody,
 >;
 
 /// Original private HTTP carriers remain live until the last durable install.
 /// The local base is a candidate identity, never an authorization predecessor.
 struct OwnRecoveryTail {
-    client: arkret_sdk::http_client::own_station_results::OwnStationResultClient,
+    client: arkret_sdk::http_client::own_station_results::OwnStationStateClient,
     snapshot: RecoverySnapshot,
     anchor: RecoveryAnchor,
     pages: Vec<garth::own_station_results::OwnStationScanPage>,
-    current: arkret_wire::MlsGroupCurrent,
+    current: arkret_wire::MlsGroupValue,
     replica: garth::own_station_results::OwnStationReplica,
     expected_head: arkret_wire::CommitStreamHead,
 }
@@ -698,7 +698,7 @@ pub(super) fn require_unchanged_recovery_base(
 }
 
 async fn own_recovery_tail(
-    client: arkret_sdk::http_client::own_station_results::OwnStationResultClient,
+    client: arkret_sdk::http_client::own_station_results::OwnStationStateClient,
     scope: &arkret_sdk::ScopeRef,
     base_ref: &arkret_sdk::EventId,
 ) -> Result<OwnRecoveryTail, String> {
@@ -729,14 +729,14 @@ async fn own_recovery_tail(
         .current_state_entries
         .iter()
         .filter_map(|row| match row {
-            arkret_wire::TypedCurrentRow::Value {
+            arkret_wire::CurrentState::Value {
                 selector: arkret_wire::CurrentSelector::MlsGroup { scope_ref },
                 value,
                 ..
             } if scope_ref == scope => Some(value),
             _ => None,
         });
-    let current: arkret_wire::MlsGroupCurrent = serde_json::from_value(
+    let current: arkret_wire::MlsGroupValue = serde_json::from_value(
         currents
             .next()
             .ok_or("MLS recovery current omits the scope MLS result")?
@@ -771,7 +771,7 @@ async fn own_recovery_tail(
         stream_position: base.commit.stream_position,
     };
     let anchor = client
-        .scan_commit_stream(&arkret_wire::StreamScanRequest {
+        .scan_commit_stream(&arkret_wire::StreamScanRequestBody {
             realm_id: realm.clone(),
             stream_ref: stream.clone(),
             direction: arkret_wire::StreamScanDirection::Before(Some(
@@ -822,7 +822,7 @@ async fn own_recovery_tail(
     while after < head.stream_position {
         let remaining = head.stream_position - after;
         let response = client
-            .scan_commit_stream(&arkret_wire::StreamScanRequest {
+            .scan_commit_stream(&arkret_wire::StreamScanRequestBody {
                 realm_id: realm.clone(),
                 stream_ref: stream.clone(),
                 direction: arkret_wire::StreamScanDirection::After(Some(after)),
@@ -1067,7 +1067,7 @@ async fn verified_welcome_claim(
 /// to look it up in, so the scan walks the one independent stream the Welcome's
 /// `effective_scope` belongs to.
 pub(crate) struct AcceptedWelcomeCommit {
-    client: arkret_sdk::http_client::own_station_results::OwnStationResultClient,
+    client: arkret_sdk::http_client::own_station_results::OwnStationStateClient,
     response: RecoveryAnchor,
 }
 
@@ -1113,7 +1113,7 @@ async fn accepted_commit_for_welcome(
 }
 
 async fn accepted_welcome_original(
-    client: arkret_sdk::http_client::own_station_results::OwnStationResultClient,
+    client: arkret_sdk::http_client::own_station_results::OwnStationStateClient,
     delivery: &arkret_wire::MlsWelcomeDelivery,
 ) -> Result<Option<AcceptedWelcomeCommit>, String> {
     let stream_ref = arkret_wire::CommitStreamRef::from_scope(&delivery.effective_scope, None)
@@ -1121,7 +1121,7 @@ async fn accepted_welcome_original(
     let mut after_position = None;
     loop {
         let response = client
-            .scan_commit_stream(&arkret_wire::StreamScanRequest {
+            .scan_commit_stream(&arkret_wire::StreamScanRequestBody {
                 realm_id: delivery.realm_id.clone(),
                 stream_ref: stream_ref.clone(),
                 direction: arkret_wire::StreamScanDirection::After(after_position),
@@ -1148,7 +1148,7 @@ async fn accepted_welcome_original(
                 stream_position: item.commit.stream_position,
             };
             let exact = client
-                .scan_commit_stream(&arkret_wire::StreamScanRequest {
+                .scan_commit_stream(&arkret_wire::StreamScanRequestBody {
                     realm_id: delivery.realm_id.clone(),
                     stream_ref: stream_ref.clone(),
                     direction: arkret_wire::StreamScanDirection::Before(Some(
@@ -1426,7 +1426,7 @@ mod tests {
                 "ak:keypackage_claim:01904100-0000-7000-8000-00000000000a".to_owned(),
             )
             .unwrap(),
-            ciphertext_b64: arkret_sdk::Base64UrlString::new("AQID").unwrap(),
+            ciphertext_base64url: arkret_sdk::Base64UrlString::new("AQID").unwrap(),
             producer_proof: arkret_wire::DetachedObjectSignature {
                 context: arkret_wire::DetachedSignatureContext::MlsWelcomeDelivery,
                 signature_algorithm: arkret_wire::DetachedSignatureAlgorithm::Ed25519,
@@ -1435,7 +1435,7 @@ mod tests {
                 signed_digest: arkret_sdk::Hash::new(format!("sha256:{}", "11".repeat(32)))
                     .unwrap(),
                 created_at: chrono::Utc::now(),
-                sig: arkret_sdk::Base64UrlString::new("A".repeat(86)).unwrap(),
+                signature: arkret_sdk::Base64UrlString::new("A".repeat(86)).unwrap(),
             },
         }
     }
@@ -1489,7 +1489,7 @@ mod tests {
         let signature = || arkret_sdk::KeyOperationSignature {
             kid: arkret_sdk::NonEmptyString::new(method.as_str().to_owned()).unwrap(),
             signature_algorithm: Some(arkret_sdk::NonEmptyString::new("Ed25519").unwrap()),
-            sig: arkret_sdk::Base64UrlString::new("A".repeat(86)).unwrap(),
+            signature: arkret_sdk::Base64UrlString::new("A".repeat(86)).unwrap(),
         };
         let delivery = welcome_delivery(arkret_wire::MlsWelcomeRecipientEndpoint::Device {
             device_id: device_id(),
@@ -1963,7 +1963,7 @@ mod tests {
                 .clone(),
         );
         let key = arkret_sdk::ResolvedSignerKey {
-            public_key_b64u: arkret_sdk::Base64UrlString::new(
+            public_key_base64url: arkret_sdk::Base64UrlString::new(
                 arkret_sdk::canonical::base64url_encode(signer.verifying_key().as_bytes()),
             )
             .unwrap(),
@@ -2058,7 +2058,7 @@ mod tests {
             rows[1].commit.previous_commit_ref = rows[0].commit.previous_commit_ref.clone();
             rows[1].commit = recovery_seal_commit(rows[1].commit.clone());
         }
-        let current = arkret_wire::MlsGroupCurrent {
+        let current = arkret_wire::MlsGroupValue {
             effective_scope: scope.clone(),
             genesis_event_ref: initial_ref,
             cipher_suite: arkret_sdk::NonEmptyString::new(
@@ -2094,7 +2094,7 @@ mod tests {
                 stream_position: 2,
                 commit_id: rows[1].commit.commit_id.clone(),
             }],
-            current_state_entries: vec![arkret_wire::TypedCurrentRow::Value {
+            current_state_entries: vec![arkret_wire::CurrentState::Value {
                 selector: arkret_wire::CurrentSelector::MlsGroup { scope_ref: scope },
                 source_stream_ref: stream,
                 revision: arkret_wire::CurrentRevision {
@@ -2135,7 +2135,7 @@ mod tests {
         bodies: Vec<serde_json::Value>,
         original: &CommittedEventFullView,
     ) -> (
-        arkret_sdk::http_client::own_station_results::OwnStationResultClient,
+        arkret_sdk::http_client::own_station_results::OwnStationStateClient,
         std::sync::Arc<RecoverySource>,
         std::thread::JoinHandle<()>,
     ) {
@@ -2149,7 +2149,7 @@ mod tests {
             base_url: base.clone(),
             trust_domain: arkret_sdk::TrustDomainId::new("ak:trust_domain:station.example")
                 .unwrap(),
-            auth_metadata: arkret_sdk::AuthMetadata::minimal(),
+            authentication_metadata: arkret_sdk::AuthenticationMetadata::minimal(),
         };
         let session = OwnStationSessionSnapshot::new(
             binding.clone(),
@@ -2206,12 +2206,12 @@ mod tests {
                         serde_json::from_slice(&bytes[start..start + len]).unwrap();
                     assert_eq!(request.queries.len(), 1);
                     assert!(request.queries[0].committed_event_ref().is_some());
-                    serde_json::to_value(arkret_sdk::SignerKeysQueryOutcome {
+                    serde_json::to_value(arkret_sdk::SignerKeyQueryResponseBody {
                         recipient_actor_id: None,
                         request_id: request.request_id,
                         realm_id: request.realm_id,
                         recipient_account_id: request.recipient_account_id,
-                        results: vec![arkret_sdk::SignerKeyQueryOutcome::HistoricalResolved {
+                        resolutions: vec![arkret_sdk::SignerKeyResolution::HistoricalResolved {
                             selector: request.queries[0].clone(),
                             accepted_at: original_accepted_at,
                             key: original_key.clone(),
@@ -2227,7 +2227,7 @@ mod tests {
             }
         });
         (
-            OwnStationResultClient::new(raw, binding, source.clone()).unwrap(),
+            OwnStationStateClient::new(raw, binding, source.clone()).unwrap(),
             source,
             server,
         )

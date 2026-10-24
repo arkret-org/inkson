@@ -14,8 +14,8 @@ fn accepted_mls_base_current(
     genesis_event_ref: arkret_sdk::EventId,
     current_event_ref: arkret_sdk::EventId,
     epoch: u64,
-) -> arkret_wire::MlsGroupCurrent {
-    arkret_wire::MlsGroupCurrent {
+) -> arkret_wire::MlsGroupValue {
+    arkret_wire::MlsGroupValue {
         effective_scope: effective_scope.clone(),
         genesis_event_ref,
         cipher_suite: arkret_wire::NonEmptyString::new(
@@ -767,7 +767,7 @@ fn encrypted_write_blocks_complete_roster_ahead_of_local_group() {
 }
 
 /// An accepted MLS group is the content-scheme authority. A legacy projection
-/// field must not be required once that typed current result is installed.
+/// field must not be required once that current state is installed.
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn encrypted_write_uses_accepted_mls_group_without_legacy_scheme_projection() {
@@ -2013,7 +2013,7 @@ fn calendar_current_source_opens_metadata_without_old_events_or_plaintext_cache(
         }),
     };
     let rows = vec![
-        arkret_wire::TypedCurrentRow::Value {
+        arkret_wire::CurrentState::Value {
             selector: arkret_wire::CurrentSelector::Strand {
                 strand_id: strand_id.clone(),
             },
@@ -2021,7 +2021,7 @@ fn calendar_current_source_opens_metadata_without_old_events_or_plaintext_cache(
             revision: revision.clone(),
             value: serde_json::to_value(strand).unwrap(),
         },
-        arkret_wire::TypedCurrentRow::Value {
+        arkret_wire::CurrentState::Value {
             selector: arkret_wire::CurrentSelector::CalendarScheduleSource {
                 strand_id: strand_id.clone(),
             },
@@ -2029,7 +2029,7 @@ fn calendar_current_source_opens_metadata_without_old_events_or_plaintext_cache(
             revision: revision.clone(),
             value: serde_json::to_value(source).unwrap(),
         },
-        arkret_wire::TypedCurrentRow::Value {
+        arkret_wire::CurrentState::Value {
             selector: arkret_wire::CurrentSelector::MlsGroup {
                 scope_ref: scope.clone(),
             },
@@ -2063,7 +2063,7 @@ fn calendar_current_source_opens_metadata_without_old_events_or_plaintext_cache(
         )
     };
     let mut bad = rows.clone();
-    let arkret_wire::TypedCurrentRow::Value { value, .. } = &mut bad[1];
+    let arkret_wire::CurrentState::Value { value, .. } = &mut bad[1];
     value["metadata_context"]["signer_id"] =
         json!(fixture::account_actor("did:web:mallory.example"));
     fixture::install_current_entries(&mut state, realm, bad);

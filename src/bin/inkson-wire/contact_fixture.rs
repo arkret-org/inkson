@@ -46,7 +46,7 @@ struct Material {
     ceremony: ContactCeremonyFixture,
     requester: ContactPeer,
     responder: ContactPeer,
-    history: arkret_sdk::IdentityLogListOutcome,
+    history: arkret_sdk::IdentityLogListResponseBody,
     observed_at: DateTime<Utc>,
 }
 
@@ -54,7 +54,8 @@ impl AuthorityDidHistoryResolver for Material {
     fn resolve_complete_history(
         &self,
         did: &arkret_sdk::Did,
-    ) -> std::result::Result<arkret_sdk::IdentityLogListOutcome, AuthorityHistoryUnavailable> {
+    ) -> std::result::Result<arkret_sdk::IdentityLogListResponseBody, AuthorityHistoryUnavailable>
+    {
         if *did == self.history.did {
             Ok(self.history.clone())
         } else {
@@ -241,9 +242,9 @@ pub fn verify(input: Value) -> Result<Value> {
 #[serde(deny_unknown_fields)]
 struct OperationInput {
     material: Material,
-    result_kind: ContactResultKind,
+    operation_kind: ContactResultKind,
     body: Value,
-    prepared: Option<ContactOperationOutcome>,
+    prepared: Option<ContactOperationResponseBody>,
 }
 
 pub fn operation(input: Value) -> Result<Value> {
@@ -251,7 +252,7 @@ pub fn operation(input: Value) -> Result<Value> {
     verify_material(&input.material)?;
     let m = &input.material;
     let f = &m.ceremony;
-    let carrier = match input.result_kind {
+    let carrier = match input.operation_kind {
         ContactResultKind::Response => &f.response,
         ContactResultKind::Reject => &f.reject,
         ContactResultKind::ScopeUpdate => &f.scope_update,
@@ -266,7 +267,7 @@ pub fn operation(input: Value) -> Result<Value> {
         _ => unreachable!(),
     };
     let event_draft = arkret_sdk::PreparedEventDraft {
-        unsigned_event_bytes: arkret_sdk::Base64UrlString::new(arkret_sdk::base64url_encode(
+        unsigned_event_base64url: arkret_sdk::Base64UrlString::new(arkret_sdk::base64url_encode(
             arkret_sdk::canonical::canonical_json_bytes(&original.digest_payload()?)?,
         ))
         .map_err(anyhow::Error::msg)?,
@@ -283,7 +284,7 @@ pub fn operation(input: Value) -> Result<Value> {
             PeerContactSubmitRequestBody::Request { signed_event, .. } => &signed_event.event_id,
             _ => unreachable!(),
         };
-        let (peer, request, round, version, predecessor, scopes) = match input.result_kind {
+        let (peer, request, round, version, predecessor, scopes) = match input.operation_kind {
             ContactResultKind::Response => {
                 let body: ContactAcceptPrepareRequestBody = serde_json::from_value(input.body)?;
                 operation_id = body.operation_id;
@@ -370,26 +371,26 @@ pub fn operation(input: Value) -> Result<Value> {
                 "Contact prepare changed scopes"
             );
         }
-        let outcome = match input.result_kind {
-            ContactResultKind::Response => ContactPreparedOutcome::Response {
+        let outcome = match input.operation_kind {
+            ContactResultKind::Response => ContactPreparedResponseBody::Response {
                 operation_id,
                 reservation_handle,
                 expires_at,
                 event_draft,
             },
-            ContactResultKind::Reject => ContactPreparedOutcome::Reject {
+            ContactResultKind::Reject => ContactPreparedResponseBody::Reject {
                 operation_id,
                 reservation_handle,
                 expires_at,
                 event_draft,
             },
-            ContactResultKind::ScopeUpdate => ContactPreparedOutcome::ScopeUpdate {
+            ContactResultKind::ScopeUpdate => ContactPreparedResponseBody::ScopeUpdate {
                 operation_id,
                 reservation_handle,
                 expires_at,
                 event_draft,
             },
-            ContactResultKind::Tombstone => ContactPreparedOutcome::Tombstone {
+            ContactResultKind::Tombstone => ContactPreparedResponseBody::Tombstone {
                 operation_id,
                 reservation_handle,
                 expires_at,
@@ -397,9 +398,9 @@ pub fn operation(input: Value) -> Result<Value> {
             },
             _ => unreachable!(),
         };
-        return Ok(serde_json::to_value(ContactOperationOutcome::Prepared {
-            outcome,
-        })?);
+        return Ok(serde_json::to_value(
+            ContactOperationResponseBody::Prepared { outcome },
+        )?);
     }
     let body: ContactCommitRequestBody = serde_json::from_value(input.body)?;
     let prepared = input
@@ -408,12 +409,12 @@ pub fn operation(input: Value) -> Result<Value> {
     let prepared_value = serde_json::to_value(&prepared)?;
     ensure!(
         prepared_value["operation_id"] == body.operation_id.as_str()
-            && prepared_value["result_kind"] == serde_json::to_value(input.result_kind)?
+            && prepared_value["operation_kind"] == serde_json::to_value(input.operation_kind)?
             && prepared_value["reservation_handle"] == body.reservation_handle.as_str()
             && body.reservation_handle == reservation_handle,
         "Contact commit changed its reservation"
     );
-    let ContactOperationOutcome::Prepared { outcome } = prepared else {
+    let ContactOperationResponseBody::Prepared { outcome } = prepared else {
         anyhow::bail!("Contact commit needs prepared outcome")
     };
     ensure!(
@@ -471,7 +472,7 @@ pub fn operation(input: Value) -> Result<Value> {
     let authority = authority(accepted_at)?;
     let refresh_current = |proof: &mut ContactCurrentProof| -> Result<()> {
         proof.issued_at = accepted_at;
-        proof.fresh_until = accepted_at + chrono::Duration::minutes(15);
+        proof.cache_expires_at = accepted_at + chrono::Duration::minutes(15);
         proof.signature = authority.sign(&proof.canonical_signing_bytes()?, accepted_at)?;
         Ok(())
     };
@@ -524,14 +525,14 @@ pub fn operation(input: Value) -> Result<Value> {
             response_receipt,
             current_proof,
             ..
-        } => ContactAcceptedOutcome::Response {
+        } => ContactAcceptedResponseBody::Response {
             operation_id,
             normal_response_acceptance_receipt: response_receipt,
             lineage: response_lineage,
             current_proof: current_proof.context("response current")?,
         },
         PeerContactSubmitRequestBody::Reject { reject_receipt, .. } => {
-            ContactAcceptedOutcome::Reject {
+            ContactAcceptedResponseBody::Reject {
                 operation_id,
                 reject_acceptance_receipt: reject_receipt,
             }
@@ -540,7 +541,7 @@ pub fn operation(input: Value) -> Result<Value> {
             lineage,
             current_proof,
             ..
-        } => ContactAcceptedOutcome::ScopeUpdate {
+        } => ContactAcceptedResponseBody::ScopeUpdate {
             operation_id,
             lineage,
             current_proof,
@@ -549,14 +550,14 @@ pub fn operation(input: Value) -> Result<Value> {
             lineage,
             current_proof,
             ..
-        } => ContactAcceptedOutcome::Tombstone {
+        } => ContactAcceptedResponseBody::Tombstone {
             operation_id,
             lineage,
             current_proof,
         },
         _ => unreachable!(),
     };
-    Ok(serde_json::to_value(ContactOperationOutcome::Accepted {
-        outcome,
-    })?)
+    Ok(serde_json::to_value(
+        ContactOperationResponseBody::Accepted { outcome },
+    )?)
 }

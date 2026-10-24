@@ -296,7 +296,7 @@ pub(super) fn load_own_agents_for_sidebar(
     own_agents_loaded.set(true);
     spawn(async move {
         match crate::transport::auth::with_authed_sdk_client(&base, api_token, |http| async move {
-            http.agent_list().await.map_err(anyhow::Error::from)
+            http.agent_page().await.map_err(anyhow::Error::from)
         })
         .await
         {
@@ -334,7 +334,7 @@ pub(super) fn load_direct_contacts_and_agents_for_sidebar(
     spawn(async move {
         match crate::transport::auth::with_authed_sdk_client(&base, api_token, |http| async move {
             let contacts = crate::transport::account::contacts(&http).await;
-            let agents = http.agent_list().await.map_err(anyhow::Error::from);
+            let agents = http.agent_page().await.map_err(anyhow::Error::from);
             Ok((contacts, agents))
         })
         .await

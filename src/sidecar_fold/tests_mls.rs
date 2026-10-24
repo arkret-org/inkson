@@ -90,7 +90,7 @@ impl MlsFixture {
             .unwrap();
         let accepted =
             fixture::accepted_mls_commit_with_binding(agent.clone(), &add.commit, binding, 22);
-        let current = arkret_wire::MlsGroupCurrent {
+        let current = arkret_wire::MlsGroupValue {
             effective_scope: scope.clone(),
             genesis_event_ref: base.clone(),
             cipher_suite: arkret_sdk::NonEmptyString::new(
@@ -269,11 +269,13 @@ impl MlsFixture {
                 accepted_at,
                 actor: self.agent.clone(),
                 verification_method: method,
-                public_key_b64u: arkret_sdk::Base64UrlString::new(arkret_sdk::base64url_encode(
-                    ed25519_dalek::SigningKey::from_bytes(&AGENT_SEED)
-                        .verifying_key()
-                        .to_bytes(),
-                ))
+                public_key_base64url: arkret_sdk::Base64UrlString::new(
+                    arkret_sdk::base64url_encode(
+                        ed25519_dalek::SigningKey::from_bytes(&AGENT_SEED)
+                            .verifying_key()
+                            .to_bytes(),
+                    ),
+                )
                 .unwrap(),
                 authorization_ref: arkret_wire::CommittedEventRef {
                     event_id: id(31),

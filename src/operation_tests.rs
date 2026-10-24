@@ -859,7 +859,7 @@ fn sign_ed25519_attaches_typed_proof() {
     let proof = event.producer_proof.as_ref().expect("proof present");
     assert_eq!(proof.verification_method, "did:web:alice#k1");
     assert!(proof.event_digest.as_str().starts_with("sha256:"));
-    // JWS layout: header.. (detached) ..sig — 3 parts separated by '.'.
+    // JWS layout: header.. (detached) ..signature — 3 parts separated by '.'.
     assert_eq!(proof.jws.matches('.').count(), 2);
     assert!(event.require_proof().is_ok());
     // Attaching the proof does not move the identity it committed to.

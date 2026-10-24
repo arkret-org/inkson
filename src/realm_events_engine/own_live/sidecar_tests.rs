@@ -41,7 +41,7 @@ impl PrivateFixture {
             serde_json::from_value(serde_json::to_value(&row.event.payload).unwrap()).unwrap();
         snapshot
             .current_state_entries
-            .push(arkret_sdk::TypedCurrentRow::Value {
+            .push(arkret_sdk::CurrentState::Value {
                 selector: arkret_sdk::CurrentSelector::SidecarContext {
                     sidecar_id: sidecar_id.clone(),
                     source_context_ref: payload.source_context_ref,
@@ -65,7 +65,7 @@ impl PrivateFixture {
                 serde_json::json!({"commit":row.commit,"event_disclosure":{"status":"withheld"}})
             } else { serde_json::to_value(row).unwrap() }
         }).collect::<Vec<_>>();
-        serde_json::json!({"__scan_request": StreamScanRequest {
+        serde_json::json!({"__scan_request": StreamScanRequestBody {
             realm_id: self.base.realm_id.clone(), stream_ref: self.rows[0].commit.stream_ref.clone(),
             direction: arkret_sdk::StreamScanDirection::After(after), limit: (end - start + 1) as u16,
         }, "response":{"committed_events": rows, "readable_floor": {
@@ -364,7 +364,7 @@ async fn cold_private_recovery_reaccepts_originals_instead_of_reusing_persistent
     .auth(arkret_sdk::http_client::Auth::Bearer("test-grant".into()))
     .build()
     .unwrap();
-    let client = OwnStationResultClient::new(raw, prior.binding().clone(), source).unwrap();
+    let client = OwnStationStateClient::new(raw, prior.binding().clone(), source).unwrap();
     assert!(
         old.complete_sidecar_head(&client, &fixture.rows[0].commit.stream_ref)
             .is_err()
@@ -414,7 +414,7 @@ async fn private_tail_failure_never_advances_the_durable_cut_and_retries_indepen
             rejected = fixture.snapshot(1);
             let wrong = arkret_sdk::RealmCommitId::from_digest([99; 32]);
             rejected.visible_stream_heads[1].commit_id = wrong.clone();
-            let arkret_sdk::TypedCurrentRow::Value { revision, .. } =
+            let arkret_sdk::CurrentState::Value { revision, .. } =
                 rejected.current_state_entries.last_mut().unwrap();
             revision.commit_id = wrong;
         }

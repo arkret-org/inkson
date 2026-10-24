@@ -406,11 +406,11 @@ fn preferred_account_secret_requires_recovery_public_key() {
 fn select_account_secret_prefers_highest_series_seq() {
     let mut older = wrap();
     older["backup_id"] = serde_json::json!("ak:backup:01964137-0000-7000-8000-00000000bee1");
-    older["series_seq"] = serde_json::json!(1);
+    older["series_sequence"] = serde_json::json!(1);
     older["series_id"] = serde_json::json!(ACTIVE_SECRET_STORAGE_SERIES);
     let mut newer = wrap();
     newer["backup_id"] = serde_json::json!("ak:backup:01964137-0000-7000-8000-00000000bee2");
-    newer["series_seq"] = serde_json::json!(2);
+    newer["series_sequence"] = serde_json::json!(2);
     newer["series_id"] = serde_json::json!(ACTIVE_SECRET_STORAGE_SERIES);
     let payload = serde_json::json!({
         "active_series": current_series(vec![
@@ -428,22 +428,22 @@ fn select_account_secret_prefers_highest_series_seq() {
 fn verify_series_chain_accepts_single_genesis() {
     let genesis = wrap();
     let genesis: arkret_sdk::KeyBackup = serde_json::from_value(genesis).unwrap();
-    assert_eq!(genesis.series_seq, 0);
+    assert_eq!(genesis.series_sequence, 0);
     verify_series_chain(&genesis, std::slice::from_ref(&genesis))
         .expect("a lone genesis envelope is a valid one-link chain");
 }
 
 #[test]
 fn verify_series_chain_rejects_missing_intermediate() {
-    // Genesis + a forged seq=2 tail with no seq=1 link present: a withholding
+    // Genesis + a forged sequence=2 tail with no sequence=1 link present: a withholding
     // server signature that must be rejected.
     let mut genesis = wrap();
     genesis["series_id"] =
         serde_json::json!("ak:backup_series:01964137-0000-7000-8000-0000000000c1");
-    genesis["series_seq"] = serde_json::json!(0);
+    genesis["series_sequence"] = serde_json::json!(0);
     let mut forged_tail = genesis.clone();
     forged_tail["backup_id"] = serde_json::json!("ak:backup:01964137-0000-7000-8000-0000000000c2");
-    forged_tail["series_seq"] = serde_json::json!(2);
+    forged_tail["series_sequence"] = serde_json::json!(2);
     forged_tail["supersedes_id"] =
         serde_json::json!("ak:backup:01964137-0000-7000-8000-000000000099");
     forged_tail["supersedes_digest"] = serde_json::json!(format!("sha256:{}", "d".repeat(64)));
@@ -451,7 +451,7 @@ fn verify_series_chain_rejects_missing_intermediate() {
     let forged_tail: arkret_sdk::KeyBackup = serde_json::from_value(forged_tail).unwrap();
 
     let err = verify_series_chain(&forged_tail, &[genesis, forged_tail.clone()])
-        .expect_err("a chain missing series_seq 1 must be rejected");
+        .expect_err("a chain missing series_sequence 1 must be rejected");
     assert!(err.to_string().contains("series_chain_broken"));
 }
 
@@ -478,7 +478,10 @@ fn verify_series_chain_accepts_well_formed_successor() {
         .expect("an SDK-built successor must verify");
     let successor_envelope: arkret_sdk::KeyBackup =
         serde_json::from_value(successor_wire.clone()).unwrap();
-    assert_eq!(successor_envelope.series_seq, predecessor.series_seq + 1);
+    assert_eq!(
+        successor_envelope.series_sequence,
+        predecessor.series_sequence + 1
+    );
     assert_eq!(
         successor_envelope.supersedes_id.as_ref(),
         Some(&predecessor.backup_id)
@@ -525,7 +528,7 @@ fn private_plaintext_successor_is_sealed_with_final_series_metadata() {
     .unwrap();
     let successor_wire = key_backup_wire(&successor);
     assert_eq!(successor.series_id, genesis.series_id);
-    assert_eq!(successor.series_seq, 1);
+    assert_eq!(successor.series_sequence, 1);
     assert_eq!(
         decrypt_mls_private_plaintext_backup(ACCOUNT_SECRET.as_bytes(), &successor_wire).unwrap(),
         br#"{"realm":{"strand":{"title":"successor"}}}"#
@@ -632,7 +635,7 @@ fn recovery_public_key_successor_is_sealed_with_final_series_metadata() {
     .unwrap();
 
     assert_eq!(&successor.series_id, &genesis.series_id);
-    assert_eq!(successor.series_seq, 1);
+    assert_eq!(successor.series_sequence, 1);
     assert_eq!(successor.supersedes_id.as_ref(), Some(&genesis.backup_id));
     let successor_wire = key_backup_wire(&successor);
     let (secret, version) = open_mls_account_secret_recovery_public_key_backup(
@@ -822,19 +825,19 @@ fn backup_prompt_not_required_when_server_backup_present() {
 
 #[test]
 fn select_account_secret_prefers_tail_seq_over_newer_timestamp() {
-    // P1 rollback guard: within one active series, a low-seq
-    // link with a NEWER created_at MUST NOT beat the true higher-seq tail.
+    // P1 rollback guard: within one active series, a low-sequence
+    // link with a NEWER created_at MUST NOT beat the true higher-sequence tail.
     let series = "ak:backup_series:01964137-0000-7000-8000-0000000000e0";
     let mut tail = wrap();
     tail["backup_id"] = serde_json::json!("ak:backup:01964137-0000-7000-8000-0000000000e2");
     tail["series_id"] = serde_json::json!(series);
-    tail["series_seq"] = serde_json::json!(2);
+    tail["series_sequence"] = serde_json::json!(2);
     tail["created_at"] = serde_json::json!("2026-01-01T00:00:00.000Z");
-    // A resurrected old seq=1 with a LATER timestamp (server injection).
+    // A resurrected old sequence=1 with a LATER timestamp (server injection).
     let mut stale = wrap();
     stale["backup_id"] = serde_json::json!("ak:backup:01964137-0000-7000-8000-0000000000e1");
     stale["series_id"] = serde_json::json!(series);
-    stale["series_seq"] = serde_json::json!(1);
+    stale["series_sequence"] = serde_json::json!(1);
     stale["created_at"] = serde_json::json!("2026-12-31T23:59:59.000Z");
 
     let payload = serde_json::json!({
@@ -844,7 +847,7 @@ fn select_account_secret_prefers_tail_seq_over_newer_timestamp() {
     let found = select_mls_account_secret_backup(&payload).expect("account secret present");
     assert_eq!(
         found["backup_id"], tail["backup_id"],
-        "higher series_seq tail must win even with an older timestamp"
+        "higher series_sequence tail must win even with an older timestamp"
     );
 }
 
@@ -853,13 +856,13 @@ fn select_account_secret_honors_active_series_pointer() {
     let mut active = wrap();
     active["backup_id"] = serde_json::json!("ak:backup:01964137-0000-7000-8000-0000000000a1");
     active["series_id"] = serde_json::json!(ACTIVE_SECRET_STORAGE_SERIES);
-    active["series_seq"] = serde_json::json!(0);
+    active["series_sequence"] = serde_json::json!(0);
     active["created_at"] = serde_json::json!("2026-01-01T00:00:00.000Z");
 
     let mut stale = wrap();
     stale["backup_id"] = serde_json::json!("ak:backup:01964137-0000-7000-8000-0000000000a2");
     stale["series_id"] = serde_json::json!(STALE_SECRET_STORAGE_SERIES);
-    stale["series_seq"] = serde_json::json!(99);
+    stale["series_sequence"] = serde_json::json!(99);
     stale["created_at"] = serde_json::json!("2026-12-31T23:59:59.000Z");
 
     let payload = serde_json::json!({
@@ -877,7 +880,7 @@ fn select_account_secret_honors_active_series_pointer() {
 fn select_account_secret_fails_closed_when_active_series_is_missing() {
     let mut backup = wrap();
     backup["series_id"] = serde_json::json!(STALE_SECRET_STORAGE_SERIES);
-    backup["series_seq"] = serde_json::json!(42);
+    backup["series_sequence"] = serde_json::json!(42);
     let payload = serde_json::json!({
         "active_series": current_series(vec![
             active_series_pointer("secret_storage", ACTIVE_SECRET_STORAGE_SERIES)
@@ -1044,10 +1047,10 @@ fn select_sidecar_finds_and_prefers_highest_series_seq() {
     let (_json, base_body) = wrap_sidecar();
     let mut older = base_body.clone();
     older["backup_id"] = serde_json::json!("ak:backup:01964137-0000-7000-8000-0000000000a1");
-    older["series_seq"] = serde_json::json!(1);
+    older["series_sequence"] = serde_json::json!(1);
     let mut newer = base_body.clone();
     newer["backup_id"] = serde_json::json!("ak:backup:01964137-0000-7000-8000-0000000000a2");
-    newer["series_seq"] = serde_json::json!(2);
+    newer["series_sequence"] = serde_json::json!(2);
     let payload = payload_with_current_series(vec![older, newer.clone()]);
     let found = select_mls_private_plaintext_backup(&payload).expect("sidecar present");
     assert!(is_mls_private_plaintext_backup(&found));
@@ -1062,13 +1065,13 @@ fn select_sidecar_honors_active_series_pointer() {
     let mut active = base_body.clone();
     active["backup_id"] = serde_json::json!("ak:backup:01964137-0000-7000-8000-0000000000c1");
     active["series_id"] = serde_json::json!(ACTIVE_SECRET_STORAGE_SERIES);
-    active["series_seq"] = serde_json::json!(0);
+    active["series_sequence"] = serde_json::json!(0);
     active["created_at"] = serde_json::json!("2026-01-01T00:00:00.000Z");
 
     let mut stale = base_body;
     stale["backup_id"] = serde_json::json!("ak:backup:01964137-0000-7000-8000-0000000000c2");
     stale["series_id"] = serde_json::json!(STALE_SECRET_STORAGE_SERIES);
-    stale["series_seq"] = serde_json::json!(99);
+    stale["series_sequence"] = serde_json::json!(99);
     stale["created_at"] = serde_json::json!("2026-12-31T23:59:59.000Z");
 
     let payload = serde_json::json!({

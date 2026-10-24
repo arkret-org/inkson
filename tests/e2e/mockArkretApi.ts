@@ -635,7 +635,7 @@ export function assertNoRetiredMockFields(value: unknown, path = "$"): void {
       throw new Error(`retired mock response field ${path}.${key}`);
     }
   }
-  for (const key of ["auth_metadata", "method_evidence"]) {
+  for (const key of ["authentication_metadata", "method_evidence"]) {
     const nested = object[key];
     if (
       nested !== null &&
@@ -783,7 +783,7 @@ export async function mockArkretApi(
   // when — wraps it. The client reads it that way
   // (`transport::account::primary_handle_from_viewer` filters on
   // `claim.claim.subject_account_id`, `status`, `revocation` and
-  // `fresh_until`), so a flat claim is a handle the panel silently drops.
+  // `cache_expires_at`), so a flat claim is a handle the panel silently drops.
   // Both the account viewer and the directory's handle list serve this shape,
   // so it is built once.
   const handleClaimStatusView = (handle: string, subjectPrincipalId: string) => ({
@@ -825,11 +825,11 @@ export async function mockArkretApi(
       ],
     },
     status: "verified",
-    as_of: "2026-04-28T12:00:00.000Z",
+    evaluated_at: "2026-04-28T12:00:00.000Z",
     verifier_id: CURRENT_STATION_ID,
     verified_at: "2026-04-28T12:00:00.000Z",
     revocation: null,
-    fresh_until: "2099-04-28T12:00:00.000Z",
+    cache_expires_at: "2099-04-28T12:00:00.000Z",
     status_proof: {
       kind: "detached_jws",
       verification_method: `${CURRENT_STATION_DID}#handle-claim-key`,
@@ -892,7 +892,7 @@ export async function mockArkretApi(
         : "ak:operation:01964137-0000-7000-8000-0000000000f2";
     const failed = (reason = "contact_round_conflict") => ({
         status: "failed",
-        result_kind: resultKind,
+        operation_kind: resultKind,
         operation_id: operationId,
         reason,
     });
@@ -907,7 +907,7 @@ export async function mockArkretApi(
           : resultKind === "scope_update" ? "accepted" : "updated";
         if (ceremonyState !== expected) return failed(ceremonyState === "terminal" ? "contact_terminal" : "contact_lineage_conflict");
         const prepared = inksonWire<Record<string, any>>("contact-ceremony-operation", {
-          material: ceremony, result_kind: resultKind, body,
+          material: ceremony, operation_kind: resultKind, body,
         });
         ceremonyReservations.set(operationId, { kind: resultKind, prepareBytes,
           idempotencyKey: body.idempotency_key, prepared });
@@ -922,7 +922,7 @@ export async function mockArkretApi(
         : resultKind === "scope_update" ? "accepted" : "updated";
       if (ceremonyState !== expected) return failed(ceremonyState === "terminal" ? "contact_terminal" : "contact_lineage_conflict");
       const outcome = inksonWire<Record<string, any>>("contact-ceremony-operation", {
-        material: ceremony, result_kind: resultKind, body, prepared: existing.prepared,
+        material: ceremony, operation_kind: resultKind, body, prepared: existing.prepared,
       });
       existing.commitBytes = commitBytes;
       existing.terminal = outcome;
@@ -1174,7 +1174,7 @@ export async function mockArkretApi(
         recipient_key_ref: "recovery-key-e2e",
       },
       series_id: "ak:backup_series:019a6aa0-0000-7000-8000-000000000003",
-      series_seq: 0,
+      series_sequence: 0,
     });
   }
   const personalAgents = new Map<string, Record<string, unknown>>();
@@ -1238,7 +1238,7 @@ export async function mockArkretApi(
       presence: {
         state: "unknown",
         expires_at: "2099-01-01T00:00:30.000Z",
-        refresh_after: "2099-01-01T00:00:00.000Z",
+        refresh_at: "2099-01-01T00:00:00.000Z",
       },
     };
   };
@@ -2147,7 +2147,7 @@ export async function mockArkretApi(
           verification_method: `${CURRENT_STATION_ID}#realm-commit`,
           signed_digest: `sha256:${"5".repeat(64)}`,
           created_at: createdAt,
-          sig: "e2e-realm-commit-signature",
+          signature: "e2e-realm-commit-signature",
         };
         return {
           binding_receipt: {
@@ -2236,9 +2236,9 @@ export async function mockArkretApi(
         typeof patch.avatar_blob_ref === "string"
           ? patch.avatar_blob_ref
           : undefined;
-      const bio =
-        typeof patch["profile_fields.bio"] === "string"
-          ? patch["profile_fields.bio"]
+      const biography =
+        typeof patch["profile_fields.biography"] === "string"
+          ? patch["profile_fields.biography"]
           : undefined;
       return json(route, {
         profile: {
@@ -2250,7 +2250,7 @@ export async function mockArkretApi(
           display_name: displayName,
           handle: primaryHandle ?? "alice:local.host",
           avatar_blob_ref: avatarBlobRef,
-          profile_fields: bio ? { bio } : {},
+          profile_fields: biography ? { biography } : {},
           accountable_principal_ids: [],
           created_at: "2026-04-28T12:00:00.000Z",
           updated_at: "2026-04-28T12:10:00.000Z",
@@ -2754,7 +2754,7 @@ export async function mockArkretApi(
     // invite-addressing.md §7 — `ak.self.invites.command.dispatch.v1`. The client
     // hands raw `introduction_evidence` plus the accepted Event to its OWN
     // Station; it never signs federation material and never calls the
-    // peer surface. The response is the closed `invite_delivery_outcome`: §5.1
+    // peer surface. The response is the closed `invite_delivery_response_body`: §5.1
     // keeps the low-trust tier opaque (`deferred`, no `disclosed_outcome`) and
     // only lets the high-trust tier disclose `delivered | blocked`.
     if (
@@ -2780,7 +2780,7 @@ export async function mockArkretApi(
       });
     }
 
-    if (url.pathname === "/_arkret/self/current-results/exact" && route.request().method() === "POST") {
+    if (url.pathname === "/_arkret/self/current-state/exact" && route.request().method() === "POST") {
       const request = route.request().postDataJSON();
       const fixture = nativeFixtures.get(String(request.realm_id));
       if (!fixture || !nativeReadable(fixture)) throw new Error("exact current request has no readable native Realm");
@@ -3262,7 +3262,7 @@ export async function mockArkretApi(
         // it, when, until when — wraps it. The client reads it that way
         // (`transport::account::primary_handle_from_viewer` filters on
         // `claim.claim.subject_account_id`, `status`, `revocation` and
-        // `fresh_until`), so a flat claim here is a Realm the panel silently
+        // `cache_expires_at`), so a flat claim here is a Realm the panel silently
         // shows as handle-less.
         viewer.primary_handle_claim = handleClaimStatusView(
           primaryHandle,
@@ -3840,7 +3840,7 @@ export async function mockArkretApi(
     ) {
       const body = await route.request().postDataJSON();
       const deviceId =
-        body.new_device_pubkey?.kid ??
+        body.new_device_public_key?.kid ??
         "ak:device:01964137-0000-7000-8000-0000000000b2";
       return json(route, {
         device_id: deviceId,
@@ -3873,7 +3873,7 @@ export async function mockArkretApi(
         device_pairing_request_id:
           "device_pairing_request:01964137-0000-7000-8000-0000000000c1",
         pairing_code: "7H2K9M4Q",
-        new_device_pubkey: {
+        new_device_public_key: {
           kty: "OKP",
           kid: "ak:device:01964137-0000-7000-8000-0000000000b2",
           algorithm: "Ed25519",
@@ -3906,7 +3906,7 @@ export async function mockArkretApi(
     ) {
       return json(route, {
         deliveries: [],
-        ack_token: "mock-device-messages-ack",
+        acknowledgement_token: "mock-device-messages-ack",
         next_cursor: "ak:cursor:devmsg-1",
         has_more: false,
         limited: false,
@@ -3995,7 +3995,7 @@ export async function mockArkretApi(
       route.request().method() === "POST"
     ) {
       const body = await route.request().postDataJSON();
-      validateMockSchema("schemas/media-operations.schema.json#/$defs/media_ice_config_request_body", body);
+      validateMockSchema("schemas/media-operations.schema.json#/$defs/media_ice_configuration_request_body", body);
       return json(route, inksonWire("mock-ice-config", body));
     }
 
@@ -4213,7 +4213,7 @@ function directoryServiceDescribe() {
       "https://directory.example/",
     ),
     supported_features: [],
-    auth_metadata: {},
+    authentication_metadata: {},
     limits: {},
     plaintext_visibility: {},
     rate_limit_policy: {},
@@ -4258,7 +4258,7 @@ function principalServiceDescribe(baseUrl = "https://local.host/") {
       PRINCIPAL_DESCRIBE_BUNDLE,
       PRINCIPAL_HTTP_CORE_BUNDLE,
     ], baseUrl),
-    auth_metadata: {
+    authentication_metadata: {
       account_authority: {
         origin: "https://auth.local.host",
         gate_account_base_url: "https://auth.local.host/_arkret/gate/account",
@@ -4285,7 +4285,7 @@ function principalServiceDescribe(baseUrl = "https://local.host/") {
           endpoint: "/_arkret",
           rate_limit_scope: "service",
           window_seconds: 60,
-          max_requests: 120,
+          max_request_count: 120,
         },
       ],
     },
@@ -4336,7 +4336,7 @@ function identityResolveOutcome(
   return {
     did_document:
       did === CURRENT_STATION_DID ? serverDidDocument : { id: did },
-    seq: 0,
+    sequence: 0,
     receipts: [],
   };
 }

@@ -1428,7 +1428,7 @@ pub(crate) fn poll_cards_from_events_with_sidecar(
     decrypt_identity: Option<(&arkret_sdk::AccountId, &str, &arkret_sdk::DeviceId)>,
 ) -> Vec<crate::messaging::polls::PollCard> {
     let mut cards = Vec::<crate::messaging::polls::PollCard>::new();
-    use arkret_models_collaboration::poll::{PollPartition, PollResponseSet, VerifiedPollResponse};
+    use arkret_models_collaboration::poll::{PollPartition, PollResponseSet, VerifiedPollVote};
     let verified_inputs = state_store
         .map(LocalStateStore::verified_poll_inputs)
         .unwrap_or_default();
@@ -1716,13 +1716,14 @@ pub(crate) fn poll_cards_from_events_with_sidecar(
             .iter()
             .map(|option| option.id.clone())
             .collect::<std::collections::BTreeSet<_>>();
-        let max_selections = usize::try_from(cards[index].max_selections).unwrap_or(usize::MAX);
-        let Ok(response) = VerifiedPollResponse::new(
+        let max_selection_count =
+            usize::try_from(cards[index].max_selection_count).unwrap_or(usize::MAX);
+        let Ok(response) = VerifiedPollVote::new(
             partition.clone(),
             accepted_ref.clone(),
             &selections,
             &answers,
-            max_selections,
+            max_selection_count,
             heads,
             |id| accepted_responses.get(id).cloned(),
         ) else {

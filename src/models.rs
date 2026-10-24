@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use arkret_models_collaboration::sync_frames::account_subscribe::RealmSyncEntry;
 use arkret_sdk::contact_operations::ContactScope;
 pub use arkret_sdk::{
-    ContactAgentProjection, ContactList, ContactListRow, ContactState, DirectConversationSummary,
+    ContactAgentProjection, ContactListRow, ContactPage, ContactState, DirectConversationSummary,
     DirectConversationSummaryState, InteropSurfaceEntry, ServiceDescribe, VerifiedProfileEntry,
 };
 use arkret_wire::ProfileId;
@@ -367,14 +367,14 @@ pub(crate) const MEMBER_ROSTER_CURRENT_CHANGES: &str = "member_roster_current_ch
 fn member_state_changes_from_current(
     entry: &RealmSyncEntry,
 ) -> serde_json::Result<Option<Vec<Value>>> {
-    use arkret_wire::{CurrentSelector, MemberStateCurrent, TypedCurrentRow};
+    use arkret_wire::{CurrentSelector, CurrentState, MemberStateValue};
 
     let Some(current) = entry.current.as_ref() else {
         return Ok(None);
     };
     let mut changes = Vec::new();
     for row in &current.entries {
-        let TypedCurrentRow::Value {
+        let CurrentState::Value {
             selector: CurrentSelector::MemberState { actor_id },
             value,
             ..
@@ -382,7 +382,7 @@ fn member_state_changes_from_current(
         else {
             continue;
         };
-        let state: MemberStateCurrent = serde_json::from_value(value.clone())?;
+        let state: MemberStateValue = serde_json::from_value(value.clone())?;
         changes.push(serde_json::json!({
             "actor_id": actor_id,
             "membership": state.membership,
@@ -445,13 +445,13 @@ pub(crate) fn merge_member_roster_current_changes(
 }
 
 // `resolve-realm` decodes into the canonical SDK wire types so the client stays
-// byte-compatible with coland's `DirectoryRealmResolutionOutcome` response. A
+// byte-compatible with coland's `PublicRealmDirectoryEntry` response. A
 // inkson-local duplicate previously drifted from the wire (a required
 // `public`/`title` on the preview node, a non-optional `join_rule`) and broke
 // invite-accept with "error decoding response body" whenever the server omitted
 // those fields. The SDK type is the single source of truth.
-pub use arkret_models_discovery::DirectoryRealmResolutionOutcome;
-pub use arkret_models_identity::IdentityResolveOutcome;
+pub use arkret_models_discovery::PublicRealmDirectoryEntry;
+pub use arkret_models_identity::IdentityResolveResponseBody;
 
 /// Sidebar tag distinguishing a security-boundary Realm from a product
 /// Space. Wire signal is either the `ak.schema.{realm,space}.v1` schema
@@ -728,7 +728,7 @@ mod tests {
             let entry: RealmSyncEntry = serde_json::from_value(serde_json::json!({
                 "current":{
                     "realm_id":"ak:realm:AYlS_mnxn8_f65A0YrWEeLzd0F1vnM347xZzMSQEcrlz",
-                    "governance_generation":1,
+                    "governance_generation":"1",
                     "stream_heads":[],
                     "entries":rows
                 }
@@ -811,7 +811,7 @@ mod tests {
 
     #[test]
     fn submit_event_result_reports_the_station_rejection_reason_code() {
-        let outcome: arkret_wire::AuthoritySubmitOutcome = serde_json::from_value(
+        let outcome: arkret_wire::AuthoritySubmitResponseBody = serde_json::from_value(
             serde_json::json!({"status": "rejected", "reason_code": "policy_violation"}),
         )
         .unwrap();
@@ -872,7 +872,7 @@ mod tests {
             }],
             "has_more": false
         });
-        let decoded: arkret_sdk::ContactList = serde_json::from_value(value).unwrap();
+        let decoded: arkret_sdk::ContactPage = serde_json::from_value(value).unwrap();
         assert_eq!(decoded.contacts.len(), 1);
         assert_eq!(decoded.contacts[0].contact_agent_projections.len(), 1);
     }
@@ -986,7 +986,7 @@ mod tests {
 /// catching up and this view never mixes two of them.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(transparent)]
-pub struct BackfillView(pub arkret_wire::StreamScanOutcome);
+pub struct BackfillView(pub arkret_wire::StreamScanResponseBody);
 
 impl BackfillView {
     /// The stream this page belongs to, or `None` for an empty page.
@@ -1049,8 +1049,8 @@ impl BackfillView {
     }
 }
 
-impl From<arkret_wire::StreamScanOutcome> for BackfillView {
-    fn from(outcome: arkret_wire::StreamScanOutcome) -> Self {
+impl From<arkret_wire::StreamScanResponseBody> for BackfillView {
+    fn from(outcome: arkret_wire::StreamScanResponseBody) -> Self {
         Self(outcome)
     }
 }
@@ -1060,8 +1060,9 @@ impl From<arkret_wire::StreamScanOutcome> for BackfillView {
 // `api::TransportClient::realm_state_snapshot_head`.
 
 pub use arkret_models_collaboration::device_messages::{
-    DeviceMessageEnvelope, DeviceMessagesAckOutcome, DeviceMessagesAckRequestBody,
-    DeviceMessagesGetOutcome, DeviceMessagesSendOutcome,
+    DeviceMessageEnvelope, DeviceMessagesAcknowledgementRequestBody,
+    DeviceMessagesAcknowledgementResponseBody, DeviceMessagesGetResponseBody,
+    DeviceMessagesSendResponseBody,
 };
 /// Structured mention node embedded in message body. Spec
 /// `models/strand-and-message.md §9.4` + `identity/identity-handles.md §3.8`.
@@ -1073,28 +1074,30 @@ pub use arkret_models_collaboration::device_messages::{
 /// DID) remains the ONLY authoritative field — the `*_at_time` fields
 /// are compose-time audit metadata only.
 pub use arkret_models_collaboration::events_payloads::mention::Mention;
-pub use arkret_models_collaboration::governance::authorization::AuthzCheckOutcome;
+pub use arkret_models_collaboration::governance::authorization::AuthorizationCheckResponseBody;
 /// `ak.self.authz.invites` decodes into the SDK's authoritative
-/// `AuthzInviteList` (`invites: Vec<Invite>`, `next_cursor`, `has_more`); the
+/// `AuthorizationInvitePage` (`invites: Vec<Invite>`, `next_cursor`, `has_more`); the
 /// former inkson-local `InvitesView` mirror was removed in favor of the wire
 /// type.
-pub use arkret_models_collaboration::governance::authorization::AuthzInviteList;
+pub use arkret_models_collaboration::governance::authorization::AuthorizationInvitePage;
 /// `ak.self.authz.grants.read.effective.v1` response. Each SDK row atomically
-/// binds an effective grant to the exact current-result revision that may be
+/// binds an effective grant to the exact current-state revision that may be
 /// copied into a subject-signed relinquish; the list digest is never a CAS
 /// substitute.
 pub use arkret_models_collaboration::governance::authorization::{
-    EffectiveCapabilityGrantRow, GrantList,
+    EffectiveCapabilityGrantRow, EffectiveGrantSnapshot,
 };
 /// `POST /_arkret/self/moderation/report` response. coland emits the SDK
-/// `ModerationReportOutcome` wire shape verbatim (`status: "submitted"`,
+/// `ModerationReportResponseBody` wire shape verbatim (`status: "submitted"`,
 /// `routed_to: Vec<Did>` — scalar DIDs only, no fragments, per
-/// `service-operation-dtos.schema.json#/$defs/ModerationReportOutcome`).
-pub use arkret_models_collaboration::governance::moderation::ModerationReportOutcome;
-pub use arkret_models_collaboration::objects::blob::BlobUploadOutcome;
-pub use arkret_models_crypto::{KeysClaimOutcome, KeysQueryOutcome, KeysUploadOutcome};
-pub use arkret_models_integration::OkOutcome;
-pub use arkret_models_integration::models_push::PushRegisterDeviceOutcome;
+/// `service-operation-dtos.schema.json#/$defs/ModerationReportResponseBody`).
+pub use arkret_models_collaboration::governance::moderation::ModerationReportResponseBody;
+pub use arkret_models_collaboration::objects::blob::BlobUploadResponseBody;
+pub use arkret_models_crypto::{
+    KeysClaimResponseBody, KeysQueryResponseBody, KeysUploadResponseBody,
+};
+pub use arkret_models_integration::AcknowledgementResponseBody;
+pub use arkret_models_integration::models_push::PushRegisterDeviceResponseBody;
 
 // ── Realm / Space Management ────────────────────────────────────
 
@@ -1175,16 +1178,16 @@ impl SubmitEventResult {
     }
 }
 
-impl From<arkret_wire::AuthoritySubmitOutcome> for SubmitEventResult {
-    fn from(outcome: arkret_wire::AuthoritySubmitOutcome) -> Self {
+impl From<arkret_wire::AuthoritySubmitResponseBody> for SubmitEventResult {
+    fn from(outcome: arkret_wire::AuthoritySubmitResponseBody) -> Self {
         match outcome {
-            arkret_wire::AuthoritySubmitOutcome::Accepted { commit, .. } => Self {
+            arkret_wire::AuthoritySubmitResponseBody::Accepted { commit, .. } => Self {
                 event_id: commit.event_ref.as_str().to_owned(),
                 status: garth::SendQueueStatus::Committed,
                 commit: Some(commit),
                 rejection_reason_code: None,
             },
-            arkret_wire::AuthoritySubmitOutcome::Rejected { reason_code, .. } => Self {
+            arkret_wire::AuthoritySubmitResponseBody::Rejected { reason_code, .. } => Self {
                 event_id: String::new(),
                 status: garth::SendQueueStatus::Rejected,
                 commit: None,
@@ -1216,7 +1219,7 @@ impl From<&garth::SendQueueItem> for SubmitEventResult {
 // and pass `IceServer::validate_credential_privacy()` (rejects TURN
 // usernames embedding cross-Realm stable DIDs, B-14).
 pub use arkret_models_collaboration::objects::media::{
-    MediaIceConfigOutcome, MediaIceConfigRequestBody,
+    MediaIceConfigurationRequestBody, MediaIceConfigurationResponseBody,
 };
 
 // WebRTC call signaling/recording no longer round-trips through bespoke
@@ -1234,6 +1237,6 @@ pub use arkret_models_collaboration::objects::media::{
 // mirrors drifted from `agent-operations.schema.json` (extra required
 // fields, non-spec `todos`, wrong outcome shapes) and were removed. The
 // agent surface now uses the SDK's authoritative types
-// (`arkret_sdk::AgentProvisionOutcome` / `AgentList` / `AgentView` /
+// (`arkret_sdk::AgentProvisionResponseBody` / `AgentPage` / `AgentView` /
 // Sidecar SDK DTOs directly in `views::agents`
 // (via `with_authed_sdk_client`).

@@ -12,7 +12,7 @@ pub(crate) fn annotate_agents_from_current(
         return;
     };
     for row in &view.entries {
-        let arkret_wire::TypedCurrentRow::Value {
+        let arkret_wire::CurrentState::Value {
             selector: arkret_wire::CurrentSelector::AgentInteraction { agent_account_id },
             source_stream_ref:
                 arkret_wire::CommitStreamRef::Realm {
@@ -70,7 +70,7 @@ fn public_agent_identity_uses_exact_authorized_current_without_private_inventory
             None,
         );
     }
-    let row = arkret_wire::TypedCurrentRow::Value {
+    let row = arkret_wire::CurrentState::Value {
         selector: arkret_wire::CurrentSelector::AgentInteraction {
             agent_account_id: agent.clone(),
         },
@@ -125,7 +125,7 @@ fn public_agent_identity_uses_exact_authorized_current_without_private_inventory
     let mut incomplete = view.clone();
     incomplete.complete_cut = false;
     let mut wrong_stream = view.clone();
-    let arkret_wire::TypedCurrentRow::Value {
+    let arkret_wire::CurrentState::Value {
         source_stream_ref, ..
     } = &mut wrong_stream.entries[0];
     *source_stream_ref = arkret_wire::CommitStreamRef::Realm {
@@ -133,7 +133,7 @@ fn public_agent_identity_uses_exact_authorized_current_without_private_inventory
             .unwrap(),
     };
     let mut malformed = view.clone();
-    let arkret_wire::TypedCurrentRow::Value { value, .. } = &mut malformed.entries[0];
+    let arkret_wire::CurrentState::Value { value, .. } = &mut malformed.entries[0];
     *value = serde_json::json!({"interaction_mode":"public"});
     for invalid in [&incomplete, &wrong_stream, &malformed] {
         let mut participants = ordinary.clone();
@@ -200,7 +200,7 @@ pub(crate) fn participation_allows_public_reply(
     strand_match
         .or(circle_match)
         .or(realm_match)
-        .is_some_and(|entry| entry.selection.reply_message)
+        .is_some_and(|entry| entry.selection.message_creation_allowed)
 }
 
 pub(crate) fn agent_metadata_from_mentions(

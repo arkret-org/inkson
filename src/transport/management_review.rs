@@ -5,7 +5,7 @@ use arkret_sdk::{
     ApprovalSignature, ApprovalSignatureInput, ApprovalSignatureProof, ApprovalSignatureProofKind,
     ApprovalTarget, CapabilityActionId, DidUrl, Event, ManagementOperation,
     ManagementReviewDecision, ManagementReviewDecisionRequestBody,
-    ManagementReviewLookupRequestBody, ManagementReviewOutcome, ManagementReviewRequestBody,
+    ManagementReviewLookupRequestBody, ManagementReviewRequestBody, ManagementReviewResponseBody,
     ManagementReviewStatus, ManagementReviewTarget, RealmId, ScopeRef,
 };
 use zeroize::Zeroizing;
@@ -14,7 +14,7 @@ use zeroize::Zeroizing;
 #[derive(Clone)]
 pub(crate) struct FrozenReview {
     pub request: ManagementReviewRequestBody,
-    pub outcome: ManagementReviewOutcome,
+    pub outcome: ManagementReviewResponseBody,
     pub account: AccountId,
     pub session_generation: u64,
     pub accepted_commit: Option<arkret_sdk::RealmCommit>,
@@ -107,7 +107,7 @@ pub(crate) fn candidate(
 
 pub(crate) fn bind_outcome(
     request: &ManagementReviewRequestBody,
-    outcome: &ManagementReviewOutcome,
+    outcome: &ManagementReviewResponseBody,
 ) -> anyhow::Result<()> {
     let (event, _) = candidate(request)?;
     anyhow::ensure!(
@@ -370,7 +370,7 @@ pub(crate) async fn approve<F: FnOnce(PreparedDecision)>(
     root_generation: u64,
     retained: Option<PreparedDecision>,
     retain: F,
-) -> anyhow::Result<ManagementReviewOutcome> {
+) -> anyhow::Result<ManagementReviewResponseBody> {
     if let Some(prepared) = retained {
         anyhow::ensure!(
             prepared.body.decision == ManagementReviewDecision::Approve,
@@ -533,7 +533,7 @@ async fn send_prepared_decision(
     http: &arkret_sdk::http_client::Client,
     review: &FrozenReview,
     prepared: &PreparedDecision,
-) -> anyhow::Result<ManagementReviewOutcome> {
+) -> anyhow::Result<ManagementReviewResponseBody> {
     check_session(&prepared.account, prepared.session_generation)?;
     anyhow::ensure!(
         prepared.account == review.account
@@ -584,7 +584,7 @@ pub(crate) async fn retry_decision(
     http: &arkret_sdk::http_client::Client,
     review: &FrozenReview,
     prepared: &PreparedDecision,
-) -> anyhow::Result<ManagementReviewOutcome> {
+) -> anyhow::Result<ManagementReviewResponseBody> {
     send_prepared_decision(http, review, prepared).await
 }
 
@@ -594,7 +594,7 @@ pub(crate) async fn decide_without_approval<F: FnOnce(PreparedDecision)>(
     decision: ManagementReviewDecision,
     retained: Option<PreparedDecision>,
     retain: F,
-) -> anyhow::Result<ManagementReviewOutcome> {
+) -> anyhow::Result<ManagementReviewResponseBody> {
     anyhow::ensure!(
         decision != ManagementReviewDecision::Approve,
         "Approval requires a native control signature"

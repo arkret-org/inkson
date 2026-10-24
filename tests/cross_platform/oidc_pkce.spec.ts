@@ -83,7 +83,7 @@ test.describe("OIDC PKCE flow start", () => {
   }) => {
     const result = await page.evaluate(
       ({ endpoint, clientId, redirectUri }) => {
-        const params = new URLSearchParams({
+        const parameters = new URLSearchParams({
           response_type: "code",
           client_id: clientId,
           redirect_uri: redirectUri,
@@ -92,7 +92,7 @@ test.describe("OIDC PKCE flow start", () => {
           code_challenge: "x".repeat(43),
           code_challenge_method: "S256",
         });
-        const built = `${endpoint}?${params.toString()}`;
+        const built = `${endpoint}?${parameters.toString()}`;
         const parsed = new URL(built);
         return {
           builtScheme: parsed.protocol,

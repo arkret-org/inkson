@@ -31,7 +31,7 @@ pub(crate) fn backup_matches_summary(
         && backup.backup_kind == summary.backup_kind
         && backup.backup_version == summary.backup_version.as_str()
         && backup.series_id == summary.series_id
-        && backup.series_seq == summary.series_seq
+        && backup.series_sequence == summary.series_sequence
         && backup.ciphertext_digest == summary.ciphertext_digest
         && backup.supersedes_id == summary.supersedes_id.clone().flatten()
         && backup.supersedes_digest == summary.supersedes_digest
@@ -74,9 +74,9 @@ impl fmt::Display for KeyBackupUnlockBackoff {
 impl std::error::Error for KeyBackupUnlockBackoff {}
 
 #[cfg(test)]
-/// Check a key-backup envelope's `auth_data.signature` against
+/// Check a key-backup envelope's `signature_proof.signature` against
 /// `verifying_key`, recomputing `canonical_json(envelope without
-/// auth_data.signature)`. SDK validation first enforces the closed transcript
+/// signature_proof.signature)`. SDK validation first enforces the closed transcript
 /// shape and all envelope cross-field invariants.
 /// Returns `Err` (caller maps to `untrusted_backup_signature`) on any mismatch.
 pub fn verify_key_backup_auth_data(
@@ -84,15 +84,15 @@ pub fn verify_key_backup_auth_data(
     verifying_key: &VerifyingKey,
 ) -> Result<(), String> {
     backup.validate().map_err(|error| error.to_string())?;
-    let auth = &backup.auth_data;
+    let auth = &backup.signature_proof;
     if auth.signature_algorithm != arkret_sdk::KeyBackupSignatureAlgorithm::Ed25519 {
-        return Err("auth_data.signature_algorithm must be Ed25519".to_owned());
+        return Err("signature_proof.signature_algorithm must be Ed25519".to_owned());
     }
     let sig_bytes: [u8; 64] = B64
         .decode(auth.signature.as_str())
         .ok()
         .and_then(|bytes| bytes.try_into().ok())
-        .ok_or_else(|| "auth_data.signature must be 64-byte base64url".to_owned())?;
+        .ok_or_else(|| "signature_proof.signature must be 64-byte base64url".to_owned())?;
     let signature = Signature::from_bytes(&sig_bytes);
     let payload = backup
         .signing_payload_bytes()
@@ -193,7 +193,7 @@ pub fn build_key_backup_unlock_proof(
             .map_err(anyhow::Error::msg)?,
         issued_at,
         expires_at,
-        auth_data: arkret_sdk::KeyBackupUnlockProofAuthData {
+        signature_proof: arkret_sdk::KeyBackupUnlockSignatureProof {
             verification_method: arkret_sdk::DidUrl::new(method).map_err(anyhow::Error::msg)?,
             signature_algorithm: arkret_sdk::KeyBackupSignatureAlgorithm::Ed25519,
             // The signature is excluded from the canonical transcript. A
@@ -204,7 +204,7 @@ pub fn build_key_backup_unlock_proof(
         },
     };
     let signature = signer.sign_raw(&proof.signing_payload_bytes()?)?;
-    proof.auth_data.signature =
+    proof.signature_proof.signature =
         arkret_sdk::Base64UrlString::new(B64.encode(signature)).map_err(anyhow::Error::msg)?;
     proof.validate()?;
     Ok(proof)
@@ -568,7 +568,7 @@ mod tests {
         ));
         assert!(!backup_matches_summary(&body, &changed));
         let mut changed = summary;
-        changed.series_seq += 1;
+        changed.series_sequence += 1;
         assert!(!backup_matches_summary(&body, &changed));
     }
 
@@ -605,7 +605,7 @@ mod tests {
                 "ak:backup_series:0196419b-0000-7000-8000-000000000002",
             )
             .unwrap(),
-            series_seq: 0,
+            series_sequence: 0,
         };
 
         let account = backup.actor_id.as_account_id().unwrap().clone();
@@ -640,9 +640,11 @@ mod tests {
         )
         .unwrap();
         proof.validate().expect("unlock proof validates");
-        let signature =
-            Signature::from_slice(&B64.decode(proof.auth_data.signature.as_str()).unwrap())
-                .unwrap();
+        let signature = Signature::from_slice(
+            &B64.decode(proof.signature_proof.signature.as_str())
+                .unwrap(),
+        )
+        .unwrap();
         ed25519_dalek::SigningKey::from_bytes(&[11u8; 32])
             .verifying_key()
             .verify_strict(&proof.signing_payload_bytes().unwrap(), &signature)
@@ -679,7 +681,7 @@ mod tests {
             serde_json::to_vec(&proof).unwrap()
         );
         let proof_value = serde_json::to_value(&proof).unwrap();
-        assert!(proof_value["auth_data"].get("device_id").is_none());
+        assert!(proof_value["signature_proof"].get("device_id").is_none());
         assert_eq!(proof_value["kind"], "current_device");
         assert!(proof_value.get("recovery_session_id").is_none());
         assert!(proof_value.get("proof_digest").is_none());
@@ -724,7 +726,7 @@ mod tests {
                 "ak:backup_series:0196419b-0000-7000-8000-000000000002",
             )
             .unwrap(),
-            series_seq: 0,
+            series_sequence: 0,
         };
         let account = backup.actor_id.as_account_id().unwrap().clone();
         let multibase = signer.public_key_multibase().unwrap();
@@ -805,14 +807,16 @@ mod tests {
             arkret_sdk::KeyBackupUnlockAuthority::RecoverySession { .. }
         ));
         assert_eq!(
-            proof.auth_data.verification_method.as_str(),
+            proof.signature_proof.verification_method.as_str(),
             verification_method
         );
         assert_eq!(proof.challenge.as_str(), session.challenge.as_str());
         assert_eq!(proof.expires_at, session.expires_at);
-        let signature =
-            Signature::from_slice(&B64.decode(proof.auth_data.signature.as_str()).unwrap())
-                .unwrap();
+        let signature = Signature::from_slice(
+            &B64.decode(proof.signature_proof.signature.as_str())
+                .unwrap(),
+        )
+        .unwrap();
         ed25519_dalek::SigningKey::from_bytes(&[12u8; 32])
             .verifying_key()
             .verify_strict(&proof.signing_payload_bytes().unwrap(), &signature)

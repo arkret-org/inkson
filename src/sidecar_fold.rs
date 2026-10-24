@@ -5,10 +5,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use arkret_sdk::{
     AccountId, AgentSidecar, AgentSidecarEventExchangeBinding, AgentSidecarExchangeAction,
     AgentSidecarExchangeControl, AgentSidecarExchangeControlPayload,
-    AgentSidecarExchangeControlsCurrentValue, AgentSidecarExchangeProjection,
-    AgentSidecarExchangeRole, AgentSidecarExchangeStatus, AgentSidecarFoldedCheckpoint,
-    CurrentSelector, EncryptedEnvelope, Event, EventId, EventKind, Hash, MessageMetadata, ScopeRef,
-    SidecarContextRef, TypedCurrentRow,
+    AgentSidecarExchangeControlsValue, AgentSidecarExchangeProjection, AgentSidecarExchangeRole,
+    AgentSidecarExchangeStatus, AgentSidecarFoldedCheckpoint, CurrentSelector, CurrentState,
+    EncryptedEnvelope, Event, EventId, EventKind, Hash, MessageMetadata, ScopeRef,
+    SidecarContextRef,
 };
 
 use crate::state::LocalStateStore;
@@ -292,7 +292,7 @@ pub(crate) fn rebuild_with_closes(
     let mut result = Vec::new();
     let mut closes = Vec::new();
     for row in &snapshot.current_state_entries {
-        let TypedCurrentRow::Value {
+        let CurrentState::Value {
             selector: CurrentSelector::Sidecar { sidecar_id },
             value,
             ..
@@ -319,7 +319,7 @@ pub(crate) fn rebuild_with_closes(
         let mut controls = BTreeMap::new();
         let mut attached = BTreeSet::new();
         for row in &snapshot.current_state_entries {
-            let TypedCurrentRow::Value {
+            let CurrentState::Value {
                 selector,
                 source_stream_ref,
                 revision,
@@ -338,7 +338,7 @@ pub(crate) fn rebuild_with_closes(
                     sidecar_id: candidate,
                     source_context_ref,
                 } if candidate == sidecar_id => {
-                    let current: AgentSidecarExchangeControlsCurrentValue =
+                    let current: AgentSidecarExchangeControlsValue =
                         serde_json::from_value(value.clone())?;
                     current.validate_for_context(sidecar_id, source_context_ref)?;
                     anyhow::ensure!(

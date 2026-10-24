@@ -4,7 +4,7 @@
 //! content-bound `event_id` exactly once: there is no chain position, no
 //! predecessor, no basis and no precondition to resolve, so nothing after the
 //! authoring boundary can change the identity. The frozen
-//! [`arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest`] is what the
+//! [`arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequestBody`] is what the
 //! durable queue stores, and the current governance Station's authority-signed
 //! [`arkret_wire::RealmCommit`] is the only finality signal.
 //!
@@ -79,7 +79,7 @@ impl garth::HostClock for InksonHostClock {
 type InksonOutboundEngine = OutboundEngine<InksonOutboundStore, InksonHostClock>;
 #[cfg(not(all(not(target_arch = "wasm32"), feature = "spec-conformance")))]
 type InksonAuthorityClient =
-    garth::AuthorityClient<arkret_sdk::http_client::own_station_results::OwnStationResultClient>;
+    garth::AuthorityClient<arkret_sdk::http_client::own_station_results::OwnStationStateClient>;
 #[cfg(all(not(target_arch = "wasm32"), feature = "spec-conformance"))]
 type InksonAuthorityClient = garth::AuthorityClient<conformance_transport::ObservedTransport>;
 
@@ -120,7 +120,7 @@ pub(crate) async fn scan_stream_with(
     after_position: Option<u64>,
     limit: u16,
 ) -> anyhow::Result<BackfillView> {
-    let request = arkret_wire::StreamScanRequest {
+    let request = arkret_wire::StreamScanRequestBody {
         realm_id: stream_ref.realm_id().clone(),
         stream_ref: stream_ref.clone(),
         direction: arkret_wire::StreamScanDirection::After(after_position),
@@ -840,7 +840,7 @@ fn reconcile_settled_outbound_item(
 fn settled_outbound_result(item: &garth::SendQueueItem) -> anyhow::Result<SubmitEventResult> {
     match &item.submission.state {
         garth::SubmissionState::Committed { status, commit } => {
-            ensure_authority_accepted(arkret_wire::AuthoritySubmitOutcome::Accepted {
+            ensure_authority_accepted(arkret_wire::AuthoritySubmitResponseBody::Accepted {
                 status: *status,
                 commit: (**commit).clone(),
             })
@@ -852,7 +852,7 @@ fn settled_outbound_result(item: &garth::SendQueueItem) -> anyhow::Result<Submit
         garth::SubmissionState::Rejected {
             status,
             reason_code,
-        } => ensure_authority_accepted(arkret_wire::AuthoritySubmitOutcome::Rejected {
+        } => ensure_authority_accepted(arkret_wire::AuthoritySubmitResponseBody::Rejected {
             status: *status,
             reason_code: reason_code.clone(),
         })
@@ -950,9 +950,9 @@ impl VerifiedRelationCurrent {
 /// against the locally installed governance generation.
 #[derive(Clone, Debug)]
 pub(crate) struct VerifiedModerationCurrent {
-    target_ref: arkret_models_collaboration::exact_current_results::ExactModerationTargetRef,
+    target_ref: arkret_models_collaboration::exact_current_state::ExactModerationTargetRef,
     revision: arkret_wire::CurrentRevision,
-    assertions: Vec<arkret_models_collaboration::exact_current_results::ModerationDecisionEntry>,
+    assertions: Vec<arkret_models_collaboration::exact_current_state::ModerationDecisionEntry>,
 }
 
 impl VerifiedModerationCurrent {
@@ -960,13 +960,11 @@ impl VerifiedModerationCurrent {
     pub(crate) fn for_test(
         target_ref: &str,
         revision: arkret_wire::CurrentRevision,
-        assertions: Vec<
-            arkret_models_collaboration::exact_current_results::ModerationDecisionEntry,
-        >,
+        assertions: Vec<arkret_models_collaboration::exact_current_state::ModerationDecisionEntry>,
     ) -> Self {
         Self {
             target_ref:
-                arkret_models_collaboration::exact_current_results::ExactModerationTargetRef::new(
+                arkret_models_collaboration::exact_current_state::ExactModerationTargetRef::new(
                     target_ref.to_owned(),
                 )
                 .unwrap(),
@@ -988,7 +986,7 @@ impl VerifiedModerationCurrent {
             assertion.tag_id.event_id() == decision_ref
                 && matches!(
                     &assertion.value,
-                    arkret_models_collaboration::exact_current_results::ModerationAssertionValue::Decision(_)
+                    arkret_models_collaboration::exact_current_state::ModerationAssertionValue::Decision(_)
                 )
         });
         anyhow::ensure!(
@@ -1042,11 +1040,11 @@ impl EventSubmitter {
         &self.http
     }
 
-    async fn exact_current_result(
+    async fn exact_current_state(
         &self,
-        request: &arkret_models_collaboration::exact_current_results::ExactCurrentResultsReadRequestBody,
+        request: &arkret_models_collaboration::exact_current_state::ExactCurrentStateReadRequestBody,
     ) -> anyhow::Result<
-        arkret_models_collaboration::exact_current_results::ExactCurrentResultsReadOutcome,
+        arkret_models_collaboration::exact_current_state::ExactCurrentStateReadResponseBody,
     > {
         let authority = self.authority()?.clone();
         let state_store = self.state_store.as_ref().ok_or_else(|| {
@@ -1087,7 +1085,7 @@ impl EventSubmitter {
             anyhow::anyhow!("exact current read lacks a verified governance generation")
         })?;
         self.http
-            .exact_current_result(request, governance_generation)
+            .exact_current_state(request, governance_generation)
             .await
             .map_err(anyhow::Error::from)
     }
@@ -1097,31 +1095,32 @@ impl EventSubmitter {
         realm_id: arkret_sdk::RealmId,
         primary_conflict_domain: arkret_sdk::RelationPrimaryConflictDomain,
     ) -> anyhow::Result<VerifiedRelationCurrent> {
-        use arkret_models_collaboration::exact_current_results::{
-            ExactCurrentResultEntry, ExactCurrentResultSelector, ExactCurrentResultsReadOutcome,
-            ExactCurrentResultsReadRequestBody, RelationExactCurrentSelector,
+        use arkret_models_collaboration::exact_current_state::{
+            ExactCurrentStateEntry, ExactCurrentStateReadRequestBody,
+            ExactCurrentStateReadResponseBody, ExactCurrentStateSelector,
+            RelationExactCurrentSelector,
         };
 
         let selector = RelationExactCurrentSelector::new(primary_conflict_domain.clone())?;
-        let request = ExactCurrentResultsReadRequestBody {
+        let request = ExactCurrentStateReadRequestBody {
             realm_id,
-            selector: ExactCurrentResultSelector::Relation(selector),
+            selector: ExactCurrentStateSelector::Relation(selector),
         };
-        match self.exact_current_result(&request).await? {
-            ExactCurrentResultsReadOutcome::NeverWritten { .. } => Ok(VerifiedRelationCurrent {
+        match self.exact_current_state(&request).await? {
+            ExactCurrentStateReadResponseBody::NeverWritten { .. } => Ok(VerifiedRelationCurrent {
                 primary_conflict_domain,
                 revision: None,
                 value: None,
             }),
-            ExactCurrentResultsReadOutcome::Present {
-                entry: ExactCurrentResultEntry::Relation(entry),
+            ExactCurrentStateReadResponseBody::Present {
+                entry: ExactCurrentStateEntry::Relation(entry),
                 ..
             } => Ok(VerifiedRelationCurrent {
                 primary_conflict_domain,
                 revision: Some(entry.revision),
                 value: Some(entry.value),
             }),
-            ExactCurrentResultsReadOutcome::Present { .. } => {
+            ExactCurrentStateReadResponseBody::Present { .. } => {
                 anyhow::bail!("exact Relation current read returned another result family")
             }
         }
@@ -1132,35 +1131,35 @@ impl EventSubmitter {
         realm_id: arkret_sdk::RealmId,
         target_ref: &str,
     ) -> anyhow::Result<VerifiedModerationCurrent> {
-        use arkret_models_collaboration::exact_current_results::{
-            ExactCurrentResultEntry, ExactCurrentResultSelector, ExactCurrentResultsReadOutcome,
-            ExactCurrentResultsReadRequestBody, ExactModerationTargetRef,
+        use arkret_models_collaboration::exact_current_state::{
+            ExactCurrentStateEntry, ExactCurrentStateReadRequestBody,
+            ExactCurrentStateReadResponseBody, ExactCurrentStateSelector, ExactModerationTargetRef,
             ModerationStateExactCurrentSelector, ModerationStateExactCurrentSelectorKind,
         };
 
         let target_ref = ExactModerationTargetRef::new(target_ref.to_owned())?;
-        let request = ExactCurrentResultsReadRequestBody {
+        let request = ExactCurrentStateReadRequestBody {
             realm_id,
-            selector: ExactCurrentResultSelector::ModerationState(
+            selector: ExactCurrentStateSelector::ModerationState(
                 ModerationStateExactCurrentSelector {
                     kind: ModerationStateExactCurrentSelectorKind::ModerationState,
                     target_ref: target_ref.clone(),
                 },
             ),
         };
-        match self.exact_current_result(&request).await? {
-            ExactCurrentResultsReadOutcome::Present {
-                entry: ExactCurrentResultEntry::ModerationState(entry),
+        match self.exact_current_state(&request).await? {
+            ExactCurrentStateReadResponseBody::Present {
+                entry: ExactCurrentStateEntry::ModerationState(entry),
                 ..
             } => Ok(VerifiedModerationCurrent {
                 target_ref,
                 revision: entry.revision,
                 assertions: entry.value.assertions,
             }),
-            ExactCurrentResultsReadOutcome::Present { .. } => {
+            ExactCurrentStateReadResponseBody::Present { .. } => {
                 anyhow::bail!("exact moderation current read returned another result family")
             }
-            ExactCurrentResultsReadOutcome::NeverWritten { .. } => anyhow::bail!(
+            ExactCurrentStateReadResponseBody::NeverWritten { .. } => anyhow::bail!(
                 "governing Station returned never_written for moderation current; that branch is Relation-only"
             ),
         }
@@ -1970,7 +1969,7 @@ impl EventSubmitter {
         check_session()?;
         // Original Event/proof and approval set are retained byte-for-byte.
         // Unknown delivery retries this queue item; it never reauthors intent.
-        let submission = QueuedSubmission::new(arkret_wire::AuthoritySubmitRequest::Event(
+        let submission = QueuedSubmission::new(arkret_wire::AuthoritySubmitRequestBody::Event(
             arkret_wire::EventAdmissionSubmission {
                 event: event.clone(),
                 approval_signatures: Some(approvals),
@@ -2077,7 +2076,7 @@ impl EventSubmitter {
             settled_outbound_result(&item)?;
             anyhow::bail!("Realm bootstrap completed without its aggregate outcome");
         };
-        let arkret_models_collaboration::authority_commit::SelfAuthoritySubmitOutcome::OrdinaryRealmBootstrap(outcome) = outcome.as_ref() else {
+        let arkret_models_collaboration::authority_commit::SelfAuthoritySubmitResponseBody::OrdinaryRealmBootstrap(outcome) = outcome.as_ref() else {
             anyhow::bail!("Realm bootstrap returned a different aggregate unit");
         };
         outcome.validate()?;
@@ -2236,7 +2235,7 @@ impl EventSubmitter {
             settled_outbound_result(&item)?;
             anyhow::bail!("Direct Conversation founding completed without its aggregate outcome");
         };
-        let arkret_models_collaboration::authority_commit::SelfAuthoritySubmitOutcome::DirectConversationFounding(outcome) = outcome.as_ref() else {
+        let arkret_models_collaboration::authority_commit::SelfAuthoritySubmitResponseBody::DirectConversationFounding(outcome) = outcome.as_ref() else {
             anyhow::bail!("Direct Conversation founding returned a different aggregate unit");
         };
         Ok(events
@@ -2304,7 +2303,7 @@ impl EventSubmitter {
         validate_signed_sdk_event_for_submit(commit.event(), commit.digest_suite())?;
         let mut welcomes = welcomes;
         welcomes.sort_by(|left, right| left.welcome_id.cmp(&right.welcome_id));
-        let submission = QueuedSubmission::new(arkret_wire::AuthoritySubmitRequest::MlsCommit(
+        let submission = QueuedSubmission::new(arkret_wire::AuthoritySubmitRequestBody::MlsCommit(
             arkret_wire::MlsCommitSubmission {
                 commit_event: commit.event().clone(),
                 welcomes,
@@ -2490,7 +2489,7 @@ impl EventSubmitter {
             decisions.insert(
                 item.event_id().clone(),
                 match item.request() {
-                    arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest::OrdinaryRealmBootstrap(unit) => {
+                    arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequestBody::OrdinaryRealmBootstrap(unit) => {
                         let mut decision = GenerationFenceDecision::Current;
                         for submission in &unit.events {
                             let candidate = queued_event_generation_decision(&submission.event)?;
@@ -2501,7 +2500,7 @@ impl EventSubmitter {
                         }
                         decision
                     }
-                    arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest::DirectConversationFounding(unit) => {
+                    arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequestBody::DirectConversationFounding(unit) => {
                         let mut decision = GenerationFenceDecision::Current;
                         for submission in &unit.events {
                             let candidate = queued_event_generation_decision(&submission.event)?;
@@ -2547,22 +2546,22 @@ impl EventSubmitter {
 
     async fn ensure_creator_quarantine_replay_fence(
         &self,
-        request: &arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest,
+        request: &arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequestBody,
     ) -> anyhow::Result<()> {
-        use arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest;
+        use arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequestBody;
         let events: Vec<&arkret_sdk::Event> = match request {
-            SelfAuthoritySubmitRequest::Event(value) => vec![&value.event],
-            SelfAuthoritySubmitRequest::MlsCommit(value) => vec![&value.commit_event],
-            SelfAuthoritySubmitRequest::OrdinaryRealmBootstrap(value) => {
+            SelfAuthoritySubmitRequestBody::Event(value) => vec![&value.event],
+            SelfAuthoritySubmitRequestBody::MlsCommit(value) => vec![&value.commit_event],
+            SelfAuthoritySubmitRequestBody::OrdinaryRealmBootstrap(value) => {
                 value.events.iter().map(|event| &event.event).collect()
             }
-            SelfAuthoritySubmitRequest::DirectConversationFounding(value) => {
+            SelfAuthoritySubmitRequestBody::DirectConversationFounding(value) => {
                 value.events.iter().map(|event| &event.event).collect()
             }
-            SelfAuthoritySubmitRequest::AuditPairedEvent(value) => {
+            SelfAuthoritySubmitRequestBody::AuditPairedEvent(value) => {
                 value.events.iter().map(|event| &event.event).collect()
             }
-            SelfAuthoritySubmitRequest::MembershipCompensation(value) => {
+            SelfAuthoritySubmitRequestBody::MembershipCompensation(value) => {
                 vec![&value.event_submission.event]
             }
         };
@@ -3504,7 +3503,7 @@ impl EventSubmitter {
                 accepted_principal_control = true;
             }
         }
-        let policy: arkret_models_crypto::RecoveryPolicyActiveOutcome = self
+        let policy: arkret_models_crypto::RecoveryPolicyStatusView = self
             .http
             .get("/_arkret/root/identity/recovery-policy")
             .await
@@ -3659,9 +3658,9 @@ impl EventSubmitter {
 
     async fn ensure_queued_application_send_gate(
         &self,
-        request: &arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest,
+        request: &arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequestBody,
     ) -> anyhow::Result<()> {
-        let arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest::Event(
+        let arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequestBody::Event(
             submission,
         ) = request
         else {
@@ -3847,7 +3846,7 @@ impl EventSubmitter {
         material: &crate::signal::SignalKeyMaterial,
         payload: &crate::signal::SignalPayload,
         state_store: &crate::runtime::input::StateStoreHandle,
-    ) -> anyhow::Result<arkret_sdk::SignalSubmitOutcome> {
+    ) -> anyhow::Result<arkret_sdk::SignalSubmitResponseBody> {
         self.send_scope_signal_with_transport_observation(
             scope_ref,
             authority,
@@ -3870,7 +3869,7 @@ impl EventSubmitter {
         payload: &crate::signal::SignalPayload,
         state_store: &crate::runtime::input::StateStoreHandle,
     ) -> anyhow::Result<(
-        arkret_sdk::SignalSubmitOutcome,
+        arkret_sdk::SignalSubmitResponseBody,
         arkret_sdk::http_client::SignalSendTransportObservation,
     )> {
         state_store.read(|store| store.require_blocklist_signal_freshness(payload))?;
@@ -3917,7 +3916,7 @@ impl EventSubmitter {
         material: &crate::signal::SignalKeyMaterial,
         payload: &crate::signal::SignalPayload,
         state_store: &crate::runtime::input::StateStoreHandle,
-    ) -> anyhow::Result<arkret_sdk::SignalSubmitOutcome> {
+    ) -> anyhow::Result<arkret_sdk::SignalSubmitResponseBody> {
         self.send_signal_with_transport_observation(
             authority,
             header,
@@ -3937,7 +3936,7 @@ impl EventSubmitter {
         payload: &crate::signal::SignalPayload,
         state_store: &crate::runtime::input::StateStoreHandle,
     ) -> anyhow::Result<(
-        arkret_sdk::SignalSubmitOutcome,
+        arkret_sdk::SignalSubmitResponseBody,
         arkret_sdk::http_client::SignalSendTransportObservation,
     )> {
         let envelope = self
@@ -4294,7 +4293,7 @@ impl EventSubmitter {
     pub async fn submit_signal_envelope(
         &self,
         envelope: &arkret_wire::SignalEnvelope,
-    ) -> anyhow::Result<arkret_sdk::SignalSubmitOutcome> {
+    ) -> anyhow::Result<arkret_sdk::SignalSubmitResponseBody> {
         self.submit_signal_envelope_with_transport_observation(envelope)
             .await
             .map(|(outcome, _observation)| outcome)
@@ -4304,7 +4303,7 @@ impl EventSubmitter {
         &self,
         envelope: &arkret_wire::SignalEnvelope,
     ) -> anyhow::Result<(
-        arkret_sdk::SignalSubmitOutcome,
+        arkret_sdk::SignalSubmitResponseBody,
         arkret_sdk::http_client::SignalSendTransportObservation,
     )> {
         envelope
@@ -4321,7 +4320,8 @@ impl EventSubmitter {
     pub(crate) async fn agent_key_pair(
         &self,
         body: &arkret_models_collaboration::agent_operations::AgentKeyPairRequestBody,
-    ) -> anyhow::Result<arkret_models_collaboration::agent_operations::AgentKeyPairOutcome> {
+    ) -> anyhow::Result<arkret_models_collaboration::agent_operations::AgentKeyPairResponseBody>
+    {
         let station_url = self.http.base_url().as_str();
         let authority =
             crate::identity::account_auth::AuthorityResolver::discover(station_url).await?;

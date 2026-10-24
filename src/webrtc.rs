@@ -42,7 +42,7 @@ pub fn build_call_recording_start(
         capture_kind,
         mode,
         visible_notice: arkret_sdk::VisibleCaptureNotice,
-        result: arkret_sdk::RecordingStartOutcome {
+        capture_metadata: arkret_sdk::RecordingStartMetadata {
             retention: arkret_sdk::CallRecordingRetention {
                 retention_expires_at: None,
                 deletion_trigger: None,

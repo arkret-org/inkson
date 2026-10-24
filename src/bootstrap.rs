@@ -788,7 +788,7 @@ pub(crate) async fn bootstrap_mls_welcome_for_scope(
     )
     .await
     .map_err(|error| error.display())?;
-    let ack_token = messages.ack_token.clone();
+    let acknowledgement_token = messages.acknowledgement_token.clone();
     let delivered = messages.deliveries.len();
 
     // The durable inbox is the only source the Welcome installer reads, so the
@@ -891,12 +891,17 @@ pub(crate) async fn bootstrap_mls_welcome_for_scope(
     }
 
     if should_ack_device_message_batch(journalled == delivered, persist_error.as_deref())
-        && let Some(ack_token) = ack_token
+        && let Some(acknowledgement_token) = acknowledgement_token
         && let Err(error) = crate::transport::auth::with_endpoint_clients(
             &base_url,
             session_credential.clone(),
             None,
-            |clients| async move { clients.keys().ack_device_messages(&ack_token).await },
+            |clients| async move {
+                clients
+                    .keys()
+                    .ack_device_messages(&acknowledgement_token)
+                    .await
+            },
         )
         .await
     {

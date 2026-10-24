@@ -23,7 +23,7 @@ registerStrandsBeforeEach();
 
 async function rejectCircleControl(page: import("@playwright/test").Page, kind: string) {
   const outcome = { status: "rejected", reason_code: "capability_denied" };
-  validateMockSchema("schemas/authority-commit-operations.schema.json#/$defs/self_submit_outcome", outcome);
+  validateMockSchema("schemas/authority-commit-operations.schema.json#/$defs/self_submit_response_body", outcome);
   await page.route("**/_arkret/self/events", async route => {
     const event = submittedEvent(route.request().postDataJSON());
     if (event?.kind !== kind) { await route.fallback(); return; }

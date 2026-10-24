@@ -63,7 +63,7 @@ const PROBES: Probe[] = [
 // Several routes only exist under an option — the seeded recovery policy, the
 // Sidecar Circle row, the low-floor Realm. Driving the default install alone
 // leaves those branches unchecked, which is how
-// `recovery_policy_active_outcome` stayed stale while this gate was green.
+// `recovery_policy_status_view` stayed stale while this gate was green.
 const INSTALLS: Record<string, unknown>[] = [
   {},
   {

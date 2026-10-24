@@ -1,6 +1,6 @@
 //! Resume the same durable units through the normal authenticated APIs.
 
-use arkret_sdk::{AgentProvisionOutcome, AgentProvisionRequestBody};
+use arkret_sdk::{AgentProvisionRequestBody, AgentProvisionResponseBody};
 
 use super::*;
 use crate::transport::auth::{
@@ -71,7 +71,7 @@ async fn commit(
     record: &ProvisionCeremony,
     credential: &str,
     fence: &AuthoringSessionFence,
-) -> anyhow::Result<AgentProvisionOutcome> {
+) -> anyhow::Result<AgentProvisionResponseBody> {
     check_holder(record, fence)?;
     let body = AgentProvisionRequestBody::Commit(
         record
@@ -106,7 +106,7 @@ async fn commit(
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("Agent ceremony has no frozen commit"))?;
     let matches = match &outcome {
-        AgentProvisionOutcome::AwaitingPcrGenesis(value) => {
+        AgentProvisionResponseBody::AwaitingPcrGenesis(value) => {
             value.agent_id == prepared.agent_id
                 && value.did == prepared.did
                 && value.initial_resolution == prepared.initial_resolution
@@ -114,7 +114,7 @@ async fn commit(
                 && value.controller_authorization_ref == prepared.controller_authorization_ref
                 && value.principal_control_realm_id == authored.commit.principal_control_realm_id
         }
-        AgentProvisionOutcome::AwaitingDidBinding(value) => {
+        AgentProvisionResponseBody::AwaitingDidBinding(value) => {
             value.agent_id == prepared.agent_id
                 && value.did == prepared.did
                 && value.initial_resolution == prepared.initial_resolution
@@ -122,14 +122,14 @@ async fn commit(
                 && value.controller_authorization_ref == prepared.controller_authorization_ref
                 && value.principal_control_realm_id == authored.commit.principal_control_realm_id
         }
-        AgentProvisionOutcome::Complete(value) => {
+        AgentProvisionResponseBody::Complete(value) => {
             value.agent_id == prepared.agent_id
                 && value.did == prepared.did
                 && value.initial_resolution == prepared.initial_resolution
                 && value.controller_authorization_ref == prepared.controller_authorization_ref
                 && value.principal_control_realm_id == authored.commit.principal_control_realm_id
         }
-        AgentProvisionOutcome::AwaitingControllerEvent(_) => false,
+        AgentProvisionResponseBody::AwaitingControllerEvent(_) => false,
     };
     anyhow::ensure!(
         matches,
@@ -212,7 +212,7 @@ pub(crate) async fn resume_ceremony(
             .await
             .map_err(|error| anyhow::anyhow!(error.display()))?;
         check_holder(&record, &fence)?;
-        let AgentProvisionOutcome::AwaitingControllerEvent(preparation) = preparation else {
+        let AgentProvisionResponseBody::AwaitingControllerEvent(preparation) = preparation else {
             anyhow::bail!("unfrozen provision returned an already committed allocation")
         };
         let mut next = record.clone();
@@ -330,7 +330,7 @@ pub(crate) async fn resume_ceremony(
         publish_binding(&record, &credential, &fence).await?;
     }
     let mut outcome = commit(&record, &credential, &fence).await?;
-    if matches!(outcome, AgentProvisionOutcome::AwaitingPcrGenesis(_)) {
+    if matches!(outcome, AgentProvisionResponseBody::AwaitingPcrGenesis(_)) {
         let genesis = record
             .authored
             .as_ref()
@@ -350,7 +350,7 @@ pub(crate) async fn resume_ceremony(
         .map_err(|error| anyhow::anyhow!(error.display()))?;
         outcome = commit(&record, &credential, &fence).await?;
     }
-    if matches!(outcome, AgentProvisionOutcome::AwaitingDidBinding(_)) {
+    if matches!(outcome, AgentProvisionResponseBody::AwaitingDidBinding(_)) {
         if record.binding_operation.is_none() {
             check_holder(&record, &fence)?;
             let authored = record
@@ -376,7 +376,7 @@ pub(crate) async fn resume_ceremony(
         publish_binding(&record, &credential, &fence).await?;
         outcome = commit(&record, &credential, &fence).await?;
     }
-    let AgentProvisionOutcome::Complete(outcome) = outcome else {
+    let AgentProvisionResponseBody::Complete(outcome) = outcome else {
         anyhow::bail!("Agent ceremony remains pending at its current authority stage")
     };
     check_holder(&record, &fence)?;

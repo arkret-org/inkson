@@ -500,7 +500,7 @@ impl SidecarPrivacyGate {
         {
             for (realm, snapshot) in &state.verified_sidecar_current {
                 for row in &snapshot.current_state_entries {
-                    if let arkret_sdk::TypedCurrentRow::Value {
+                    if let arkret_sdk::CurrentState::Value {
                         selector: arkret_sdk::CurrentSelector::Sidecar { sidecar_id },
                         value,
                         ..

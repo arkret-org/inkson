@@ -3,17 +3,17 @@
 use std::sync::{Arc, Mutex, OnceLock};
 
 use arkret_models_collaboration::authority_commit::{
-    SelfAuthoritySubmitOutcome, SelfAuthoritySubmitRequest,
+    SelfAuthoritySubmitRequestBody, SelfAuthoritySubmitResponseBody,
 };
 use arkret_sdk::http_client::ClientRequestOptions;
-use arkret_sdk::http_client::own_station_results::OwnStationResultClient;
+use arkret_sdk::http_client::own_station_results::OwnStationStateClient;
 use arkret_sdk::*;
 use garth::AuthorityTransport;
 
 struct LostResponse {
     account: AccountId,
     scope: ScopeRef,
-    accepted: Mutex<Option<(SelfAuthoritySubmitRequest, RealmCommit)>>,
+    accepted: Mutex<Option<(SelfAuthoritySubmitRequestBody, RealmCommit)>>,
     ready: tokio::sync::Notify,
 }
 
@@ -42,7 +42,7 @@ impl MessageResponseLoss {
         Ok(Self(state))
     }
 
-    pub async fn accepted(&self) -> anyhow::Result<(SelfAuthoritySubmitRequest, RealmCommit)> {
+    pub async fn accepted(&self) -> anyhow::Result<(SelfAuthoritySubmitRequestBody, RealmCommit)> {
         self.0.ready.notified().await;
         self.0
             .accepted
@@ -69,36 +69,38 @@ impl Drop for MessageResponseLoss {
     }
 }
 
-pub(crate) struct ObservedTransport(pub OwnStationResultClient);
+pub(crate) struct ObservedTransport(pub OwnStationStateClient);
 
 impl AuthorityTransport for ObservedTransport {
     async fn submit(
         &self,
-        request: &VerifiedSubmission<AuthoritySubmitRequest>,
+        request: &VerifiedSubmission<AuthoritySubmitRequestBody>,
         options: &ClientRequestOptions,
-    ) -> garth::Result<AuthoritySubmitOutcome> {
+    ) -> garth::Result<AuthoritySubmitResponseBody> {
         AuthorityTransport::submit(&self.0, request, options).await
     }
 
     async fn submit_self(
         &self,
-        request: &VerifiedSubmission<SelfAuthoritySubmitRequest>,
+        request: &VerifiedSubmission<SelfAuthoritySubmitRequestBody>,
         options: &ClientRequestOptions,
-    ) -> garth::Result<SelfAuthoritySubmitOutcome> {
+    ) -> garth::Result<SelfAuthoritySubmitResponseBody> {
         let outcome = AuthorityTransport::submit_self(&self.0, request, options).await?;
         let observer = slot()
             .lock()
             .map_err(|_| garth::Error::Storage("response-loss observer lock poisoned".into()))?
             .clone();
         if let Some(observer) = observer
-            && let SelfAuthoritySubmitRequest::Event(submission) = request.wire()
+            && let SelfAuthoritySubmitRequestBody::Event(submission) = request.wire()
             && submission.event.kind == EventKind::MessageCreate
             && submission.event.actor_id == ActorId::account(observer.account.clone())
             && submission.event.scope_ref == observer.scope
-            && let SelfAuthoritySubmitOutcome::Ordinary(AuthoritySubmitOutcome::Accepted {
-                status: AuthorityCommitStatus::Committed,
-                commit,
-            }) = &outcome
+            && let SelfAuthoritySubmitResponseBody::Ordinary(
+                AuthoritySubmitResponseBody::Accepted {
+                    status: AuthorityCommitStatus::Committed,
+                    commit,
+                },
+            ) = &outcome
         {
             *observer
                 .accepted
@@ -113,18 +115,18 @@ impl AuthorityTransport for ObservedTransport {
         Ok(outcome)
     }
 
-    async fn scan(&self, request: &StreamScanRequest) -> garth::Result<StreamScanOutcome> {
+    async fn scan(&self, request: &StreamScanRequestBody) -> garth::Result<StreamScanResponseBody> {
         AuthorityTransport::scan(&self.0, request).await
     }
     async fn authority_bundle(
         &self,
-        request: &AuthorityBundleRequest,
+        request: &RealmAuthorityBundleRequestBody,
     ) -> garth::Result<RealmAuthorityBundle> {
         AuthorityTransport::authority_bundle(&self.0, request).await
     }
     async fn install_handoff(
         &self,
-        request: &AuthorityHandoffRequest,
+        request: &AuthorityRealmAuthorityHandoffRequestBody,
         options: &ClientRequestOptions,
     ) -> garth::Result<RealmAuthorityHandoff> {
         AuthorityTransport::install_handoff(&self.0, request, options).await

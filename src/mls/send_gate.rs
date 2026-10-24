@@ -21,7 +21,7 @@ pub(crate) enum MlsSendGate {
     /// The scope has an accepted Genesis, its key-access checkpoint is covered
     /// by the winning Commit, and this device's installed group sits exactly at
     /// that current state.
-    Encrypted(arkret_wire::MlsGroupCurrent),
+    Encrypted(arkret_wire::MlsGroupValue),
 }
 
 /// Why the gate cannot open for a new application body yet.
@@ -108,7 +108,7 @@ impl MlsSendGateInput {
 pub(crate) async fn read_durable_mls_current(
     input: &MlsSendGateInput,
     scope: &arkret_sdk::ScopeRef,
-) -> anyhow::Result<Option<arkret_wire::MlsGroupCurrent>> {
+) -> anyhow::Result<Option<arkret_wire::MlsGroupValue>> {
     let authority = input
         .authority
         .as_ref()
@@ -134,7 +134,7 @@ pub(crate) async fn read_durable_mls_current(
 
 /// Decide the gate from the durable read and this device's installed group.
 pub(crate) fn decide_mls_send_gate(
-    current: anyhow::Result<Option<arkret_wire::MlsGroupCurrent>>,
+    current: anyhow::Result<Option<arkret_wire::MlsGroupValue>>,
     local: Option<&LocalMlsGroup>,
 ) -> Result<MlsSendGate, MlsSendGateBlocked> {
     let current = current.map_err(|error| MlsSendGateBlocked::NotReady(error.to_string()))?;
@@ -306,7 +306,7 @@ pub(crate) async fn resolve_mls_send_gate(
 pub(crate) fn validate_ready_creator_private_group(
     record: &arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapRecord,
     group: &arkret_sdk::ArkretMlsGroup,
-    current: &arkret_wire::MlsGroupCurrent,
+    current: &arkret_wire::MlsGroupValue,
 ) -> anyhow::Result<()> {
     let accepted = record
         .accepted_genesis()
@@ -345,7 +345,7 @@ pub(crate) fn validate_ready_creator_private_group(
 pub(crate) fn validate_superseded_private_group(
     record: &arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapRecord,
     group: &arkret_sdk::ArkretMlsGroup,
-    current: &arkret_wire::MlsGroupCurrent,
+    current: &arkret_wire::MlsGroupValue,
 ) -> anyhow::Result<()> {
     let winner = record
         .superseded_winner()
@@ -559,7 +559,7 @@ pub(crate) async fn check_application_body(
 }
 
 pub(crate) fn check_application_body_against(
-    current: anyhow::Result<Option<arkret_wire::MlsGroupCurrent>>,
+    current: anyhow::Result<Option<arkret_wire::MlsGroupValue>>,
     local: Option<&LocalMlsGroup>,
     body: ApplicationBody,
 ) -> Result<(), MlsSendGateBlocked> {
@@ -604,8 +604,8 @@ mod tests {
         arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [seed; 32])
     }
 
-    fn current(epoch: u64, current_revision: u64, covered: u64) -> arkret_wire::MlsGroupCurrent {
-        arkret_wire::MlsGroupCurrent {
+    fn current(epoch: u64, current_revision: u64, covered: u64) -> arkret_wire::MlsGroupValue {
+        arkret_wire::MlsGroupValue {
             effective_scope: scope(),
             genesis_event_ref: event(1),
             cipher_suite: arkret_wire::NonEmptyString::new(

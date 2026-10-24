@@ -748,10 +748,12 @@ mod tests {
     }
 
     fn station_rejection(reason_code: &str) -> anyhow::Error {
-        crate::ephemeral::ensure_authority_accepted(arkret_wire::AuthoritySubmitOutcome::Rejected {
-            status: arkret_wire::AuthorityRejectionStatus::Rejected,
-            reason_code: reason_code.to_owned(),
-        })
+        crate::ephemeral::ensure_authority_accepted(
+            arkret_wire::AuthoritySubmitResponseBody::Rejected {
+                status: arkret_wire::AuthorityRejectionStatus::Rejected,
+                reason_code: reason_code.to_owned(),
+            },
+        )
         .unwrap_err()
     }
 

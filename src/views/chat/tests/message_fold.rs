@@ -552,7 +552,7 @@ fn chat_messages_fold_revision_chain_into_latest_message() {
         None,
         None,
     );
-    // A current-result batch can omit an earlier accepted revision. The
+    // A current-state batch can omit an earlier accepted revision. The
     // later accepted revision still supplies the visible current value.
     assert_eq!(incomplete[0].body, "v3");
     assert_eq!(

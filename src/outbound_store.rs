@@ -1,6 +1,6 @@
 //! Product storage adapter for garth's durable outbound queue.
 //!
-//! One queue item is one `AuthoritySubmitRequest` frozen at authoring time plus
+//! One queue item is one `AuthoritySubmitRequestBody` frozen at authoring time plus
 //! its retry ledger. Physical queues are partitioned by the exact
 //! [`arkret_sdk::AccountId`] that owns the authenticated session and by lane;
 //! actor ids never serve as account-storage coordinates.
@@ -138,7 +138,7 @@ impl DurableOutboundState {
         decision: &Option<(
             arkret_sdk::EventId,
             MlsCreatorBootstrapVerifiedAbsence,
-            Option<arkret_sdk::http_client::own_station_results::OwnStationResultClient>,
+            Option<arkret_sdk::http_client::own_station_results::OwnStationStateClient>,
         )>,
     ) -> garth::Result<()> {
         for record in &mut self.creator_bootstrap_records {
@@ -411,7 +411,7 @@ impl DurableOutboundState {
                         "scheduled dispatch lost its frozen queue item".to_owned(),
                     )
                 })?;
-            let arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest::Event(
+            let arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequestBody::Event(
                 event,
             ) = &item.submission.request
             else {
@@ -854,7 +854,7 @@ async fn mutate_state_in_file<R>(
 type CreatorDecision = (
     arkret_sdk::EventId,
     MlsCreatorBootstrapVerifiedAbsence,
-    Option<arkret_sdk::http_client::own_station_results::OwnStationResultClient>,
+    Option<arkret_sdk::http_client::own_station_results::OwnStationStateClient>,
 );
 
 #[derive(Clone)]
@@ -907,7 +907,7 @@ fn outbound_storage_scope(
 }
 
 fn check_creator_own_source(
-    own_client: Option<&arkret_sdk::http_client::own_station_results::OwnStationResultClient>,
+    own_client: Option<&arkret_sdk::http_client::own_station_results::OwnStationStateClient>,
     intent: &arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapIntent,
 ) -> garth::Result<()> {
     if let Some(client) = own_client {
@@ -1153,7 +1153,7 @@ impl InksonOutboundStore {
     pub(crate) fn remember_creator_absence_guarded(
         &self,
         decision: (arkret_sdk::EventId, MlsCreatorBootstrapVerifiedAbsence),
-        source: Option<arkret_sdk::http_client::own_station_results::OwnStationResultClient>,
+        source: Option<arkret_sdk::http_client::own_station_results::OwnStationStateClient>,
     ) -> garth::Result<()> {
         if let Some(client) = &source {
             client.check_session()?;
@@ -1184,7 +1184,7 @@ impl InksonOutboundStore {
     ) -> garth::Result<()> {
         self.mutate_state(|state| {
             if !matches!(submission.request,
-                arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest::OrdinaryRealmBootstrap(_)) {
+                arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequestBody::OrdinaryRealmBootstrap(_)) {
                 return Err(garth::Error::Protocol("Realm initializer requires an ordinary founding unit".into()));
             }
             let realm = intent.effective_scope().realm_id().clone();
@@ -1293,7 +1293,7 @@ impl InksonOutboundStore {
         expected: MlsCreatorBootstrapRecord,
         accepted_create: arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapAcceptedCreate,
         genesis_absence: arkret_wire::RealmStateSnapshot,
-        own_client: Option<&arkret_sdk::http_client::own_station_results::OwnStationResultClient>,
+        own_client: Option<&arkret_sdk::http_client::own_station_results::OwnStationStateClient>,
     ) -> garth::Result<()> {
         let mut next = expected.clone();
         next.accept_realm(accepted_create, genesis_absence)?;
@@ -1315,7 +1315,7 @@ impl InksonOutboundStore {
         &self,
         expected: MlsCreatorBootstrapRecord,
         evidence: arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapGovernanceEvidence,
-        own_client: Option<&arkret_sdk::http_client::own_station_results::OwnStationResultClient>,
+        own_client: Option<&arkret_sdk::http_client::own_station_results::OwnStationStateClient>,
     ) -> garth::Result<()> {
         let mut next = expected.clone();
         next.pin_governance(evidence)?;
@@ -1392,7 +1392,7 @@ impl InksonOutboundStore {
         &self,
         expected: MlsCreatorBootstrapRecord,
         accepted: arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapAcceptedGenesis,
-        own_client: Option<&arkret_sdk::http_client::own_station_results::OwnStationResultClient>,
+        own_client: Option<&arkret_sdk::http_client::own_station_results::OwnStationStateClient>,
     ) -> garth::Result<()> {
         let mut next = expected.clone();
         next.accept_genesis(accepted.clone())?;
@@ -1465,7 +1465,7 @@ impl InksonOutboundStore {
         known: Option<
             arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapKnownGenesis,
         >,
-        own_client: Option<&arkret_sdk::http_client::own_station_results::OwnStationResultClient>,
+        own_client: Option<&arkret_sdk::http_client::own_station_results::OwnStationStateClient>,
     ) -> garth::Result<()> {
         self.mutate_state(|state| {
             check_creator_own_source(own_client, expected.intent())?;
@@ -1507,7 +1507,7 @@ impl InksonOutboundStore {
         &self,
         expected: MlsCreatorBootstrapRecord,
         winner: arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapWinner,
-        own_client: Option<&arkret_sdk::http_client::own_station_results::OwnStationResultClient>,
+        own_client: Option<&arkret_sdk::http_client::own_station_results::OwnStationStateClient>,
     ) -> garth::Result<()> {
         let mut next = expected.clone();
         next.supersede(winner)?;
@@ -1557,7 +1557,7 @@ impl InksonOutboundStore {
         &self,
         expected: MlsCreatorBootstrapRecord,
         absence: MlsCreatorBootstrapVerifiedAbsence,
-        own_client: Option<&arkret_sdk::http_client::own_station_results::OwnStationResultClient>,
+        own_client: Option<&arkret_sdk::http_client::own_station_results::OwnStationStateClient>,
     ) -> garth::Result<()> {
         let old_id = expected
             .rejection()
@@ -1714,7 +1714,7 @@ impl InksonOutboundStore {
         &self,
         expected: MlsCreatorBootstrapRecord,
         next: MlsCreatorBootstrapRecord,
-        own_client: Option<&arkret_sdk::http_client::own_station_results::OwnStationResultClient>,
+        own_client: Option<&arkret_sdk::http_client::own_station_results::OwnStationStateClient>,
     ) -> garth::Result<()> {
         next.validate()?;
         self.mutate_state(|state| {
@@ -1848,7 +1848,7 @@ impl OutboundQueueStore for InksonOutboundStore {
                 let result = mutation(&mut queue)?;
                 state.items = queue.snapshot().items;
                 for item in &state.items {
-                    if let arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest::Event(submission) = item.request()
+                    if let arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequestBody::Event(submission) = item.request()
                         && submission.event.kind == arkret_sdk::EventKind::MessageCreate
                     {
                         let payload: arkret_sdk::MessageCreatePayload = serde_json::from_value(serde_json::Value::Object(submission.event.payload.clone().into_iter().collect()))
@@ -2057,7 +2057,7 @@ mod tests {
         arkret_wire::RealmStateSnapshot,
     ) {
         use arkret_wire::*;
-        let arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest::OrdinaryRealmBootstrap(unit) = intent.signed_scope_create_unit() else { panic!("fixture is a Realm bootstrap") };
+        let arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequestBody::OrdinaryRealmBootstrap(unit) = intent.signed_scope_create_unit() else { panic!("fixture is a Realm bootstrap") };
         let event = unit.events[0].event.clone();
         let time = event.created_at;
         // Shape-only acceptance for storage fault tests. Cryptographic source
@@ -2068,7 +2068,7 @@ mod tests {
             verification_method: DidUrl::new("did:web:principal.example#key").unwrap(),
             signed_digest: Hash::new(format!("sha256:{}", "a".repeat(64))).unwrap(),
             created_at: time,
-            sig: Base64UrlString::new("AA").unwrap(),
+            signature: Base64UrlString::new("AA").unwrap(),
         };
         let commit = RealmCommit {
             commit_id: RealmCommitId::from_digest([7; 32]),
@@ -2136,7 +2136,7 @@ mod tests {
     async fn own_station_creator_vault_lock_session_aba_preserves_original_and_frozen_queue() {
         let _creator_watch = creator_watch_test_gate().lock().await;
         use arkret_sdk::http_client::own_station_results::{
-            OwnStationResultClient, OwnStationSessionSnapshot, OwnStationSessionSource,
+            OwnStationSessionSnapshot, OwnStationSessionSource, OwnStationStateClient,
         };
         struct Source(std::sync::Mutex<OwnStationSessionSnapshot>);
         impl OwnStationSessionSource for Source {
@@ -2163,7 +2163,7 @@ mod tests {
                 .unwrap();
         snapshot
             .current_state_entries
-            .push(arkret_sdk::TypedCurrentRow::Value {
+            .push(arkret_sdk::CurrentState::Value {
                 selector: arkret_sdk::CurrentSelector::RealmGenesis,
                 source_stream_ref: native.covering_commit().stream_ref.clone(),
                 revision: arkret_sdk::CurrentRevision {
@@ -2185,7 +2185,7 @@ mod tests {
             base_url: "https://station.example/".into(),
             trust_domain: arkret_sdk::TrustDomainId::new("ak:trust_domain:station.example")
                 .unwrap(),
-            auth_metadata: arkret_sdk::AuthMetadata::minimal(),
+            authentication_metadata: arkret_sdk::AuthenticationMetadata::minimal(),
         };
         let grant = arkret_wire::SessionGrantId::from_issuance_digest([9; 32]);
         let session = |epoch| {
@@ -2209,7 +2209,7 @@ mod tests {
         .build()
         .unwrap();
         let client =
-            OwnStationResultClient::new(raw.clone(), binding.clone(), source.clone()).unwrap();
+            OwnStationStateClient::new(raw.clone(), binding.clone(), source.clone()).unwrap();
         let cut = arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapAuthority::own_station(snapshot.clone(), payload.object.clone(), account.clone(), grant.clone(), 1, 1).unwrap();
         let accepted = arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapAcceptedCreate::new(&intent, native.accepted_event().clone(), native.covering_commit().clone(), native.digest_suite(), cut).unwrap();
         let original = std::fs::read(&path).unwrap();
@@ -2236,7 +2236,7 @@ mod tests {
                 .unwrap(),
             Some(expected.clone())
         );
-        let current = OwnStationResultClient::new(raw, binding, source).unwrap();
+        let current = OwnStationStateClient::new(raw, binding, source).unwrap();
         let fresh_cut = arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapAuthority::own_station(snapshot.clone(), payload.object, account, grant, 3, 2).unwrap();
         let fresh_accepted = arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapAcceptedCreate::new(&intent, native.accepted_event().clone(), native.covering_commit().clone(), native.digest_suite(), fresh_cut).unwrap();
         reopened
@@ -2831,7 +2831,7 @@ mod tests {
             .unwrap();
         let now = accepted.authority_root().unwrap().bundle_issued_at;
         // These fixtures check atomic storage, not authenticated source evidence.
-        let outcome: arkret_models_crypto::KeysQueryOutcome = serde_json::from_value(serde_json::json!({
+        let outcome: arkret_models_crypto::KeysQueryResponseBody = serde_json::from_value(serde_json::json!({
             "device_keys": [{"account_id": intent.owner_actor_id().as_account_id().unwrap(), "device_keys": {
                 CREATOR_DEVICE: {"signer_evidence_ref": "ak:signer_evidence:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                     "algorithms": {}, "trust_algorithms": [], "device_projection": {
@@ -3217,7 +3217,7 @@ mod tests {
                     .is_err()
             );
             assert_eq!(std::fs::read(&rival_path).unwrap(), before);
-            let current = arkret_wire::MlsGroupCurrent {
+            let current = arkret_wire::MlsGroupValue {
                 effective_scope: intent.effective_scope().clone(),
                 genesis_event_ref: rival_event.event_id().clone(),
                 cipher_suite: arkret_wire::NonEmptyString::new(
@@ -3854,7 +3854,7 @@ mod tests {
             .unwrap();
         let mut commit = base.covering_commit().clone();
         match &item.submission.request {
-            SelfAuthoritySubmitRequest::OrdinaryRealmBootstrap(unit) => {
+            SelfAuthoritySubmitRequestBody::OrdinaryRealmBootstrap(unit) => {
                 let mut previous = None;
                 let commits = unit
                     .events
@@ -3871,7 +3871,7 @@ mod tests {
                     })
                     .collect();
                 item.submission
-                    .apply_self_outcome(SelfAuthoritySubmitOutcome::OrdinaryRealmBootstrap(
+                    .apply_self_outcome(SelfAuthoritySubmitResponseBody::OrdinaryRealmBootstrap(
                         OrdinaryRealmBootstrapAcceptanceOutcome {
                             unit_kind: unit.unit_kind,
                             status: AggregateAcceptanceStatus::Committed,
@@ -3880,10 +3880,10 @@ mod tests {
                     ))
                     .unwrap();
             }
-            SelfAuthoritySubmitRequest::Event(event) => {
+            SelfAuthoritySubmitRequestBody::Event(event) => {
                 commit.event_ref = event.event.event_id.clone();
                 item.submission
-                    .apply_outcome(arkret_wire::AuthoritySubmitOutcome::Accepted {
+                    .apply_outcome(arkret_wire::AuthoritySubmitResponseBody::Accepted {
                         status: arkret_wire::AuthorityCommitStatus::Committed,
                         commit,
                     })
@@ -4488,7 +4488,7 @@ mod tests {
             )
             .expect("fixture Event has a real producer proof");
         let event = event.into_event();
-        garth::QueuedSubmission::new(arkret_wire::AuthoritySubmitRequest::Event(
+        garth::QueuedSubmission::new(arkret_wire::AuthoritySubmitRequestBody::Event(
             arkret_wire::EventAdmissionSubmission {
                 event,
                 approval_signatures: None,
@@ -4538,7 +4538,7 @@ mod tests {
             )
             .unwrap();
         let submission = garth::QueuedSubmission::new(
-            arkret_wire::AuthoritySubmitRequest::MlsCommit(arkret_wire::MlsCommitSubmission {
+            arkret_wire::AuthoritySubmitRequestBody::MlsCommit(arkret_wire::MlsCommitSubmission {
                 commit_event: authored.into_event(),
                 welcomes: Vec::new(),
                 idempotency_key: arkret_wire::UuidV7::new(arkret_sdk::identifiers::uuid_v7_at(
@@ -4616,11 +4616,12 @@ mod tests {
                     .iter_mut()
                     .find(|item| item.event_id() == &submission.event_id)
                     .unwrap();
-                item.submission
-                    .apply_outcome(arkret_wire::AuthoritySubmitOutcome::Rejected {
+                item.submission.apply_outcome(
+                    arkret_wire::AuthoritySubmitResponseBody::Rejected {
                         status: arkret_wire::AuthorityRejectionStatus::Rejected,
                         reason_code: "failed_precondition".into(),
-                    })?;
+                    },
+                )?;
                 item.status = garth::SendQueueStatus::Rejected;
                 item.settled_at = Some(crate::clock::now_utc());
                 Ok(())

@@ -36,7 +36,7 @@ use garth::AuthorityClient;
 #[cfg(test)]
 use garth::RealmReplica;
 #[cfg(test)]
-use garth::StreamScanRequest;
+use garth::StreamScanRequestBody;
 use garth::current_ingest::committed_views_to_client_events;
 #[cfg(test)]
 use garth::current_ingest::validate_floor_product_rows;
@@ -176,8 +176,8 @@ fn realm_live_digest_suite(realm_id: &arkret_sdk::RealmId) -> arkret_sdk::Digest
 #[cfg(test)]
 fn stage_verified_page(
     replica: &mut RealmReplica,
-    request: &StreamScanRequest,
-    outcome: arkret_sdk::StreamScanOutcome,
+    request: &StreamScanRequestBody,
+    outcome: arkret_sdk::StreamScanResponseBody,
     freshness: &arkret_identity::RealmAuthorityFreshness,
     keys: &arkret_identity::RealmAuthorityKeyMap,
     pages: &mut Vec<garth::VerifiedScanPage>,
@@ -369,8 +369,8 @@ pub(crate) async fn verified_sidecar_mls_current(
     api: &crate::transport::TransportClient,
     scope: &arkret_sdk::ScopeRef,
 ) -> garth::Result<(
-    arkret_wire::MlsGroupCurrent,
-    arkret_sdk::http_client::own_station_results::OwnStationResultClient,
+    arkret_wire::MlsGroupValue,
+    arkret_sdk::http_client::own_station_results::OwnStationStateClient,
 )> {
     if !matches!(scope, arkret_sdk::ScopeRef::Sidecar { .. }) {
         return Err(protocol(
@@ -446,7 +446,7 @@ pub(crate) async fn verified_creator_create(
 ) -> garth::Result<(
     arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapAcceptedCreate,
     arkret_sdk::RealmStateSnapshot,
-    arkret_sdk::http_client::own_station_results::OwnStationResultClient,
+    arkret_sdk::http_client::own_station_results::OwnStationStateClient,
 )> {
     for attempt in 0..3 {
         let result = verified_creator_create_at_cut(http, intent).await;
@@ -470,7 +470,7 @@ async fn verified_creator_create_at_cut(
 ) -> garth::Result<(
     arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapAcceptedCreate,
     arkret_sdk::RealmStateSnapshot,
-    arkret_sdk::http_client::own_station_results::OwnStationResultClient,
+    arkret_sdk::http_client::own_station_results::OwnStationStateClient,
 )> {
     let (client, response, cut) = creator_own_station_cut(http, intent).await?;
     let full_response = client
@@ -514,7 +514,7 @@ async fn creator_own_station_cut(
     http: &arkret_sdk::http_client::Client,
     intent: &arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapIntent,
 ) -> garth::Result<(
-    arkret_sdk::http_client::own_station_results::OwnStationResultClient,
+    arkret_sdk::http_client::own_station_results::OwnStationStateClient,
     CreatorOwnSnapshot,
     arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapAuthority,
 )> {
@@ -537,7 +537,7 @@ async fn creator_own_station_cut(
         .current_state_entries
         .iter()
         .find_map(|row| match row {
-            arkret_wire::TypedCurrentRow::Value {
+            arkret_wire::CurrentState::Value {
                 source_stream_ref: stream_ref,
                 selector: arkret_wire::CurrentSelector::RealmGenesis,
                 value,
@@ -578,7 +578,7 @@ async fn creator_own_station_cut(
 }
 
 async fn creator_own_station_unchanged(
-    client: &arkret_sdk::http_client::own_station_results::OwnStationResultClient,
+    client: &arkret_sdk::http_client::own_station_results::OwnStationStateClient,
     before: &CreatorOwnSnapshot,
 ) -> garth::Result<()> {
     let after = client.snapshot_head(&before.value()?.realm_id).await?;
@@ -603,7 +603,7 @@ pub(crate) async fn verified_creator_genesis(
     arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapAuthority,
     arkret_sdk::RealmStateSnapshot,
     Option<arkret_sdk::CommittedEventFullView>,
-    arkret_sdk::http_client::own_station_results::OwnStationResultClient,
+    arkret_sdk::http_client::own_station_results::OwnStationStateClient,
 )> {
     for attempt in 0..3 {
         let result = verified_creator_genesis_at_cut(http, intent, pinned_create).await;
@@ -625,7 +625,7 @@ async fn verified_creator_genesis_at_cut(
     arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapAuthority,
     arkret_sdk::RealmStateSnapshot,
     Option<arkret_sdk::CommittedEventFullView>,
-    arkret_sdk::http_client::own_station_results::OwnStationResultClient,
+    arkret_sdk::http_client::own_station_results::OwnStationStateClient,
 )> {
     let realm = intent.effective_scope().realm_id();
     let stream = CommitStreamRef::from_scope(intent.effective_scope(), Some(realm.clone()))?;
@@ -700,7 +700,7 @@ async fn refresh_verified_realm<T: garth::AuthorityTransport>(
     let mut nonce = [0_u8; 32];
     getrandom::fill(&mut nonce)
         .map_err(|error| garth::Error::Protocol(format!("authority nonce: {error}")))?;
-    let request = arkret_sdk::AuthorityBundleRequest {
+    let request = arkret_sdk::RealmAuthorityBundleRequestBody {
         realm_id: realm_id.clone(),
         nonce: arkret_sdk::Base64UrlString::new(arkret_sdk::base64url_encode(nonce))
             .map_err(|error| garth::Error::Protocol(error.to_string()))?,
@@ -870,7 +870,7 @@ async fn verified_stream_pages<T: garth::AuthorityTransport>(
         let limit = remaining.map_or(SCAN_LIMIT, |count| {
             count.min(u64::from(SCAN_LIMIT)).max(1) as u16
         });
-        let request = StreamScanRequest {
+        let request = StreamScanRequestBody {
             realm_id: realm_id.clone(),
             stream_ref: stream_ref.clone(),
             direction: arkret_wire::StreamScanDirection::After(after_position),
@@ -900,7 +900,7 @@ async fn verified_stream_pages<T: garth::AuthorityTransport>(
                 );
                 // Every declared dependency has an exact verified scan.
                 // This legacy native adapter is fixture-only. Production binds
-                // the expected Account through OwnStationResultClient.
+                // the expected Account through OwnStationStateClient.
                 let fixture_account = &snapshot
                     .history_basis
                     .as_ref()
@@ -992,7 +992,9 @@ impl StreamPages {
 }
 
 #[cfg(test)]
-fn require_genesis_readable_floor(outcome: &arkret_sdk::StreamScanOutcome) -> garth::Result<()> {
+fn require_genesis_readable_floor(
+    outcome: &arkret_sdk::StreamScanResponseBody,
+) -> garth::Result<()> {
     if outcome
         .readable_floor
         .as_ref()
@@ -1012,7 +1014,7 @@ pub struct VerifiedAccountFrame {
     pages: Vec<garth::VerifiedScanPage>,
     own_pages: Vec<garth::own_station_results::OwnStationScanPage>,
     own_replicas: BTreeMap<CommitStreamRef, garth::own_station_results::OwnStationReplica>,
-    own_client: Option<arkret_sdk::http_client::own_station_results::OwnStationResultClient>,
+    own_client: Option<arkret_sdk::http_client::own_station_results::OwnStationStateClient>,
     own_windows: Vec<(
         arkret_models_collaboration::sync_frames::account_sync::RealmStreamWindow,
         usize,
@@ -1105,7 +1107,7 @@ impl VerifiedCurrentSnapshot {
 
 pub(crate) fn snapshot_covers_account_cut(
     snapshot: &arkret_wire::RealmStateSnapshot,
-    current: &arkret_models_collaboration::sync_frames::current_results::AccountCurrentView,
+    current: &arkret_models_collaboration::sync_frames::current_states::AccountStateView,
 ) -> bool {
     snapshot.realm_id == current.realm_id
         && snapshot.governance_generation >= current.governance_generation
@@ -1122,7 +1124,7 @@ pub(crate) fn snapshot_covers_account_cut(
 impl VerifiedAccountFrame {
     #[cfg(test)]
     pub(crate) fn test_own_context(
-        client: arkret_sdk::http_client::own_station_results::OwnStationResultClient,
+        client: arkret_sdk::http_client::own_station_results::OwnStationStateClient,
     ) -> Self {
         Self {
             own_client: Some(client),
@@ -1327,9 +1329,9 @@ impl VerifiedAccountFrame {
 }
 
 #[cfg(test)]
-fn row_source(row: &arkret_wire::TypedCurrentRow) -> &CommitStreamRef {
+fn row_source(row: &arkret_wire::CurrentState) -> &CommitStreamRef {
     match row {
-        arkret_wire::TypedCurrentRow::Value {
+        arkret_wire::CurrentState::Value {
             source_stream_ref, ..
         } => source_stream_ref,
     }
@@ -1368,7 +1370,7 @@ fn validate_signed_floor_rows(
     bundle: &arkret_sdk::RealmAuthorityBundle,
     signed_head: &arkret_wire::CommitStreamHead,
     history_access: arkret_sdk::HistoryAccess,
-    rows: &[arkret_wire::TypedCurrentRow],
+    rows: &[arkret_wire::CurrentState],
 ) -> garth::Result<()> {
     let realm_stream = CommitStreamRef::Realm {
         realm_id: realm_id.clone(),
@@ -1688,7 +1690,7 @@ fn require_verified_window_head(
 /// preview so the cut stays out of the product current).
 #[cfg(test)]
 fn require_floor_current_cut(
-    current: &arkret_models_collaboration::sync_frames::current_results::AccountCurrentView,
+    current: &arkret_models_collaboration::sync_frames::current_states::AccountStateView,
     floor_snapshots: &[&garth::VerifiedFloorSnapshot],
     current_generation: u64,
     replica: &RealmReplica,
@@ -1924,7 +1926,7 @@ fn require_exact_window_head(
 
 #[cfg(test)]
 mod tests {
-    use arkret_wire::TypedCurrentRow;
+    use arkret_wire::CurrentState;
     use garth::CursorScope;
     use serde_json::json;
 
@@ -2065,8 +2067,8 @@ mod tests {
         assert!(holder_pcr_root_authorization(&collaboration, &realm, &actor).is_err());
     }
 
-    fn set_row_value(row: &mut TypedCurrentRow, next: serde_json::Value) {
-        let TypedCurrentRow::Value { value, .. } = row;
+    fn set_row_value(row: &mut CurrentState, next: serde_json::Value) {
+        let CurrentState::Value { value, .. } = row;
         *value = next;
     }
 
@@ -2117,7 +2119,7 @@ mod tests {
             ]);
             let mut snapshot = snapshot_at(&bundle, &items, bundle.bundle_issued_at);
             station.sign_snapshot(&mut snapshot);
-            let request = arkret_sdk::AuthorityBundleRequest {
+            let request = arkret_sdk::RealmAuthorityBundleRequestBody {
                 realm_id: realm_id.clone(),
                 nonce: bundle.current_assertion.nonce.clone(),
             };
@@ -2146,14 +2148,14 @@ mod tests {
                 .find(|row| {
                     matches!(
                         row,
-                        TypedCurrentRow::Value {
+                        CurrentState::Value {
                             selector: arkret_sdk::CurrentSelector::StrandWatch { .. },
                             ..
                         }
                     )
                 })
                 .unwrap();
-            let TypedCurrentRow::Value { value, .. } = watch_row;
+            let CurrentState::Value { value, .. } = watch_row;
             assert_eq!(
                 *value,
                 if level.is_some() {
@@ -2169,7 +2171,7 @@ mod tests {
                 .find(|row| {
                     matches!(
                         row,
-                        TypedCurrentRow::Value {
+                        CurrentState::Value {
                             selector: arkret_sdk::CurrentSelector::StrandWatch { .. },
                             ..
                         }
@@ -2228,7 +2230,7 @@ mod tests {
             "Board",
             bundle.genesis_event.actor_id.clone(),
         );
-        let row = |selector, value| TypedCurrentRow::Value {
+        let row = |selector, value| CurrentState::Value {
             selector,
             source_stream_ref: head.stream_ref.clone(),
             revision: arkret_wire::CurrentRevision {
@@ -2258,7 +2260,7 @@ mod tests {
                 json!(null),
             ),
         ]);
-        let validate = |rows: &[TypedCurrentRow]| {
+        let validate = |rows: &[CurrentState]| {
             validate_signed_floor_rows(
                 &realm_id,
                 &bundle,
@@ -2324,7 +2326,7 @@ mod tests {
             commit_id: created.commit.commit_id.clone(),
         };
         let rows = coland_bootstrap_rows(&bundle, &items);
-        let validate = |rows: &[TypedCurrentRow]| {
+        let validate = |rows: &[CurrentState]| {
             validate_signed_floor_rows(
                 &realm_id,
                 &bundle,
@@ -2351,12 +2353,12 @@ mod tests {
             ("extra", json!(true)),
         ] {
             let mut forged = rows.clone();
-            let TypedCurrentRow::Value { value, .. } = forged.last_mut().unwrap();
+            let CurrentState::Value { value, .. } = forged.last_mut().unwrap();
             value[field] = invalid;
             assert!(validate(&forged).is_err(), "accepted invalid {field}");
         }
         let mut private_source = rows.clone();
-        let TypedCurrentRow::Value {
+        let CurrentState::Value {
             source_stream_ref, ..
         } = private_source.last_mut().unwrap();
         *source_stream_ref = CommitStreamRef::Sidecar {
@@ -2399,7 +2401,7 @@ mod tests {
             commit_id: head_commit.commit_id.clone(),
         };
         let rows = coland_bootstrap_rows(&bundle, &items);
-        let validate = |rows: &[TypedCurrentRow]| {
+        let validate = |rows: &[CurrentState]| {
             validate_signed_floor_rows(
                 &realm_id,
                 &bundle,
@@ -2411,21 +2413,21 @@ mod tests {
         validate(&rows).unwrap();
         let index = rows.len() - 1;
         let mut substituted = rows.clone();
-        let TypedCurrentRow::Value { value, .. } = &mut substituted[index];
+        let CurrentState::Value { value, .. } = &mut substituted[index];
         value["id"] = json!(arkret_sdk::CircleId::from_event_id(
             &items[0].event.event_id
         ));
         assert!(validate(&substituted).is_err());
         let mut foreign = rows.clone();
-        let TypedCurrentRow::Value { value, .. } = &mut foreign[index];
+        let CurrentState::Value { value, .. } = &mut foreign[index];
         value["realm_id"] = json!(arkret_sdk::RealmId::from_event_id(&items[0].event.event_id));
         assert!(validate(&foreign).is_err());
         let mut open = rows.clone();
-        let TypedCurrentRow::Value { value, .. } = &mut open[index];
+        let CurrentState::Value { value, .. } = &mut open[index];
         value["unregistered"] = json!(true);
         assert!(validate(&open).is_err());
         let mut child_source = rows.clone();
-        let TypedCurrentRow::Value {
+        let CurrentState::Value {
             source_stream_ref,
             selector,
             ..
@@ -2469,20 +2471,20 @@ mod tests {
             commit_id: bundle.genesis_commit.commit_id.clone(),
             stream_position: 0,
         };
-        let row = TypedCurrentRow::Value {
+        let row = CurrentState::Value {
             selector: arkret_wire::CurrentSelector::RealmGenesis,
             source_stream_ref: stream_ref.clone(),
             revision: genesis_revision.clone(),
             value: serde_json::to_value(&genesis).unwrap(),
         };
-        let root = TypedCurrentRow::Value {
+        let root = CurrentState::Value {
             selector: arkret_wire::CurrentSelector::RealmAuthorityRoot,
             source_stream_ref: stream_ref.clone(),
             revision: genesis_revision,
             value: json!({
                 "controller_actor_id": bundle.genesis_event.actor_id,
                 "controller_epoch": 0,
-                "authority_generation": 0,
+                "authority_generation": "0",
                 "authority_event_ref": realm_id.event_id(),
             }),
         };
@@ -2492,11 +2494,11 @@ mod tests {
 
         let mut forged_rows = Vec::new();
         let mut bad_value = row.clone();
-        let TypedCurrentRow::Value { value, .. } = &mut bad_value;
+        let CurrentState::Value { value, .. } = &mut bad_value;
         value.as_object_mut().unwrap().remove("schema");
         forged_rows.push(vec![bad_value, root.clone()]);
         let mut extra_member = row.clone();
-        let TypedCurrentRow::Value { value, .. } = &mut extra_member;
+        let CurrentState::Value { value, .. } = &mut extra_member;
         value["unknown"] = json!(true);
         forged_rows.push(vec![extra_member, root.clone()]);
         let mut other_genesis = row.clone();
@@ -2509,11 +2511,11 @@ mod tests {
         );
         forged_rows.push(vec![other_genesis, root.clone()]);
         let mut unsupported = row.clone();
-        let TypedCurrentRow::Value { selector, .. } = &mut unsupported;
+        let CurrentState::Value { selector, .. } = &mut unsupported;
         *selector = arkret_wire::CurrentSelector::DeviceGeneration;
         forged_rows.push(vec![unsupported, root.clone()]);
         let mut wrong_source = row.clone();
-        let TypedCurrentRow::Value {
+        let CurrentState::Value {
             source_stream_ref, ..
         } = &mut wrong_source;
         *source_stream_ref = CommitStreamRef::Realm {
@@ -2524,7 +2526,7 @@ mod tests {
         };
         forged_rows.push(vec![wrong_source, root.clone()]);
         let mut readable_revision = row.clone();
-        let TypedCurrentRow::Value { revision, .. } = &mut readable_revision;
+        let CurrentState::Value { revision, .. } = &mut readable_revision;
         revision.stream_position = 1;
         revision.commit_id = items[0].commit.commit_id.clone();
         forged_rows.push(vec![readable_revision, root.clone()]);
@@ -2534,7 +2536,7 @@ mod tests {
             json!({
                 "controller_actor_id": {"kind":"service", "service_id":"ak:did_core:web:wrong.example"},
                 "controller_epoch": 0,
-                "authority_generation": 0,
+                "authority_generation": "0",
                 "authority_event_ref": realm_id.event_id(),
             }),
         );
@@ -2545,7 +2547,7 @@ mod tests {
             json!({
                 "controller_actor_id": bundle.genesis_event.actor_id,
                 "controller_epoch": 1,
-                "authority_generation": 0,
+                "authority_generation": "0",
                 "authority_event_ref": realm_id.event_id(),
             }),
         );
@@ -2567,7 +2569,7 @@ mod tests {
         };
         for (epoch, generation) in [(1, 0), (0, 1)] {
             let mut advanced = root.clone();
-            let TypedCurrentRow::Value {
+            let CurrentState::Value {
                 revision, value, ..
             } = &mut advanced;
             *revision = arkret_wire::CurrentRevision {
@@ -2584,7 +2586,7 @@ mod tests {
                 &[row.clone(), advanced.clone()],
             )
             .unwrap();
-            let TypedCurrentRow::Value { value, .. } = &mut advanced;
+            let CurrentState::Value { value, .. } = &mut advanced;
             value["controller_epoch"] = json!(9_007_199_254_740_992_u64);
             assert!(
                 validate_signed_floor_rows(
@@ -2764,20 +2766,20 @@ mod tests {
                 stream_position: 0,
             };
             let rows = vec![
-                TypedCurrentRow::Value {
+                CurrentState::Value {
                     selector: arkret_wire::CurrentSelector::RealmGenesis,
                     source_stream_ref: stream_ref.clone(),
                     revision: revision.clone(),
                     value: serde_json::to_value(&genesis).unwrap(),
                 },
-                TypedCurrentRow::Value {
+                CurrentState::Value {
                     selector: arkret_wire::CurrentSelector::RealmAuthorityRoot,
                     source_stream_ref: stream_ref,
                     revision,
                     value: json!({
                             "controller_actor_id": bundle.genesis_event.actor_id,
                             "controller_epoch": 0,
-                            "authority_generation": 0,
+                            "authority_generation": "0",
                     "authority_event_ref": realm_id.event_id(),
                         }),
                 },
@@ -2797,12 +2799,12 @@ mod tests {
             // Only a Direct Conversation genesis writes history access in
             // its own covering Commit.
             let mut with_history = rows.clone();
-            let TypedCurrentRow::Value {
+            let CurrentState::Value {
                 source_stream_ref,
                 revision,
                 ..
             } = rows[0].clone();
-            with_history.push(TypedCurrentRow::Value {
+            with_history.push(CurrentState::Value {
                 selector: arkret_wire::CurrentSelector::RealmHistoryAccess,
                 source_stream_ref,
                 revision,
@@ -2872,7 +2874,7 @@ mod tests {
             stream_position: head_commit.stream_position,
             commit_id: head_commit.commit_id.clone(),
         };
-        let facet = |selector, value| TypedCurrentRow::Value {
+        let facet = |selector, value| CurrentState::Value {
             selector,
             source_stream_ref: items[0].commit.stream_ref.clone(),
             revision: arkret_wire::CurrentRevision {
@@ -2914,9 +2916,9 @@ mod tests {
 
         let mut updated = rows.clone();
         let row = updated.iter_mut().find(|row| matches!(row,
-            TypedCurrentRow::Value { selector: arkret_wire::CurrentSelector::Strand { strand_id: id }, .. } if id == &strand_id
+            CurrentState::Value { selector: arkret_wire::CurrentSelector::Strand { strand_id: id }, .. } if id == &strand_id
         )).unwrap();
-        let TypedCurrentRow::Value {
+        let CurrentState::Value {
             revision, value, ..
         } = row;
         *revision = arkret_wire::CurrentRevision {
@@ -2931,7 +2933,7 @@ mod tests {
             .position(|row| {
                 matches!(
                     row,
-                    TypedCurrentRow::Value {
+                    CurrentState::Value {
                         selector: arkret_wire::CurrentSelector::MessageRevision { .. },
                         ..
                     }
@@ -2948,21 +2950,21 @@ mod tests {
             forged.push(invalid_media);
         }
         let mut insecure_media = rows.clone();
-        let TypedCurrentRow::Value { value, .. } = &mut insecure_media[media_index];
+        let CurrentState::Value { value, .. } = &mut insecure_media[media_index];
         value["foci"][0]["token_endpoint"] = json!("http://station.example/token");
         forged.push(insecure_media);
         let mut unknown_strand = rows.clone();
-        let TypedCurrentRow::Value { value, .. } = &mut unknown_strand[message_index];
+        let CurrentState::Value { value, .. } = &mut unknown_strand[message_index];
         value["strand_id"] = json!(arkret_sdk::StrandId::from_event_id(
             &bundle.genesis_event.event_id
         ));
         forged.push(unknown_strand);
         let mut open_message = rows.clone();
-        let TypedCurrentRow::Value { value, .. } = &mut open_message[message_index];
+        let CurrentState::Value { value, .. } = &mut open_message[message_index];
         value["unknown"] = json!(true);
         forged.push(open_message);
         let mut future_message = rows.clone();
-        let TypedCurrentRow::Value { revision, .. } = &mut future_message[message_index];
+        let CurrentState::Value { revision, .. } = &mut future_message[message_index];
         revision.stream_position = head.stream_position + 1;
         forged.push(future_message);
         let mut open_alias = rows.clone();
@@ -3005,7 +3007,7 @@ mod tests {
         };
         let rows_with = |value| {
             let mut rows = coland_bootstrap_rows(&bundle, &items);
-            rows.push(TypedCurrentRow::Value {
+            rows.push(CurrentState::Value {
                 selector: arkret_wire::CurrentSelector::CallState {
                     call_id: arkret_sdk::CallId::from_event_id(&items[1].event.event_id),
                 },
@@ -3041,7 +3043,7 @@ mod tests {
             );
         }
         let mut foreign = rows_with(json!({"from":null,"to":"ringing"}));
-        let TypedCurrentRow::Value {
+        let CurrentState::Value {
             source_stream_ref, ..
         } = foreign.last_mut().unwrap();
         *source_stream_ref = CommitStreamRef::Realm {
@@ -3071,7 +3073,7 @@ mod tests {
             commit_id: commit.commit_id.clone(),
         };
         let mut rows = coland_bootstrap_rows(&bundle, &items[..items.len() - 1]);
-        rows.push(TypedCurrentRow::Value {
+        rows.push(CurrentState::Value {
             selector: arkret_wire::CurrentSelector::Rsvp {
                 event_ref: arkret_sdk::StrandId::from_event_id(&items[1].event.event_id),
                 occurrence: None,
@@ -3096,21 +3098,21 @@ mod tests {
             ("scope_ref", json!({"realm_id": realm_id})),
         ] {
             let mut forged = rows.clone();
-            let TypedCurrentRow::Value { value, .. } = forged.last_mut().unwrap();
+            let CurrentState::Value { value, .. } = forged.last_mut().unwrap();
             value[key] = invalid;
             assert!(
                 validate_signed_floor_rows(&realm_id, &bundle, &head, access, &forged).is_err()
             );
         }
         let mut foreign = rows.clone();
-        let TypedCurrentRow::Value {
+        let CurrentState::Value {
             source_stream_ref, ..
         } = foreign.last_mut().unwrap();
         *source_stream_ref = CommitStreamRef::Realm {
             realm_id: arkret_sdk::RealmId::from_event_id(&items[2].event.event_id),
         };
         assert!(validate_signed_floor_rows(&realm_id, &bundle, &head, access, &foreign).is_err());
-        let TypedCurrentRow::Value { selector, .. } = rows.last_mut().unwrap();
+        let CurrentState::Value { selector, .. } = rows.last_mut().unwrap();
         let arkret_wire::CurrentSelector::Rsvp { occurrence, .. } = selector else {
             unreachable!()
         };
@@ -3147,7 +3149,7 @@ mod tests {
             controller.station_id.clone(),
         );
         let mut rows = coland_bootstrap_rows(&bundle, &items);
-        rows.push(TypedCurrentRow::Value {
+        rows.push(CurrentState::Value {
             selector: arkret_wire::CurrentSelector::AgentInteraction {
                 agent_account_id: agent,
             },
@@ -3163,7 +3165,7 @@ mod tests {
         });
         let access = arkret_sdk::HistoryAccess::SinceJoin;
         for mode in ["public", "private"] {
-            let TypedCurrentRow::Value { value, .. } = rows.last_mut().unwrap();
+            let CurrentState::Value { value, .. } = rows.last_mut().unwrap();
             value["interaction_mode"] = json!(mode);
             validate_signed_floor_rows(&realm_id, &bundle, &head, access, &rows).unwrap();
         }
@@ -3174,14 +3176,14 @@ mod tests {
             ("scope_ref", json!({"realm_id": realm_id})),
         ] {
             let mut forged = rows.clone();
-            let TypedCurrentRow::Value { value, .. } = forged.last_mut().unwrap();
+            let CurrentState::Value { value, .. } = forged.last_mut().unwrap();
             value[key] = invalid;
             assert!(
                 validate_signed_floor_rows(&realm_id, &bundle, &head, access, &forged).is_err()
             );
         }
         let mut foreign = rows.clone();
-        let TypedCurrentRow::Value {
+        let CurrentState::Value {
             source_stream_ref, ..
         } = foreign.last_mut().unwrap();
         *source_stream_ref = CommitStreamRef::Realm {
@@ -3224,7 +3226,7 @@ mod tests {
             "signature": "signed-receipt"
         });
         let mut rows = coland_bootstrap_rows(&bundle, &items);
-        rows.push(TypedCurrentRow::Value {
+        rows.push(CurrentState::Value {
             selector: arkret_wire::CurrentSelector::ModerationFrankingProof {
                 event_id: proven_event,
             },
@@ -3306,7 +3308,7 @@ mod tests {
             commit_id: accepted.commit.commit_id.clone(),
         };
         let mut rows = coland_bootstrap_rows(&bundle, &items[..items.len() - 1]);
-        rows.push(TypedCurrentRow::Value {
+        rows.push(CurrentState::Value {
             selector: arkret_wire::CurrentSelector::MessageReactions {
                 target_ref: message.to_string(),
             },
@@ -3336,7 +3338,7 @@ mod tests {
             json!({"assertions":[],"count":1}),
         ] {
             let mut forged = rows.clone();
-            let TypedCurrentRow::Value { value, .. } = forged.last_mut().unwrap();
+            let CurrentState::Value { value, .. } = forged.last_mut().unwrap();
             *value = invalid;
             assert!(
                 validate_signed_floor_rows(
@@ -3398,7 +3400,7 @@ mod tests {
             commit_id: accepted.commit.commit_id.clone(),
         };
         let mut rows = coland_bootstrap_rows(&bundle, &items[..items.len() - 1]);
-        rows.push(TypedCurrentRow::Value {
+        rows.push(CurrentState::Value {
             selector: arkret_wire::CurrentSelector::Pin {
                 pin_scope: arkret_sdk::PinScope::Realm {
                     id: realm_id.clone(),
@@ -3430,7 +3432,7 @@ mod tests {
             json!({"assertions":[],"count":1}),
         ] {
             let mut forged = rows.clone();
-            let TypedCurrentRow::Value { value, .. } = forged.last_mut().unwrap();
+            let CurrentState::Value { value, .. } = forged.last_mut().unwrap();
             *value = invalid;
             assert!(
                 validate_signed_floor_rows(
@@ -3496,14 +3498,14 @@ mod tests {
             .position(|row| {
                 matches!(
                     row,
-                    TypedCurrentRow::Value {
+                    CurrentState::Value {
                         selector: arkret_wire::CurrentSelector::MessageRevision { .. },
                         ..
                     }
                 )
             })
             .unwrap();
-        let TypedCurrentRow::Value {
+        let CurrentState::Value {
             selector: arkret_wire::CurrentSelector::MessageRevision { message_id },
             ..
         } = rows[message_index].clone()
@@ -3519,7 +3521,7 @@ mod tests {
         );
         let retracted = arkret_sdk::MessageId::from_event_id(&items[5].event.event_id);
         let redaction_tag = format!("{}:0", items.last().unwrap().event.event_id);
-        let redaction = |target: &str, value: serde_json::Value| TypedCurrentRow::Value {
+        let redaction = |target: &str, value: serde_json::Value| CurrentState::Value {
             selector: arkret_wire::CurrentSelector::ObjectRedaction {
                 target_ref: target.to_owned(),
             },
@@ -3543,11 +3545,11 @@ mod tests {
         let redaction_index = rows.len() - 1;
         let mut forged = Vec::new();
         let mut foreign_revision = rows.clone();
-        let TypedCurrentRow::Value { value, .. } = &mut foreign_revision[message_index];
+        let CurrentState::Value { value, .. } = &mut foreign_revision[message_index];
         value["message_id"] = json!(retracted);
         forged.push(foreign_revision);
         let mut open_revision = rows.clone();
-        let TypedCurrentRow::Value { value, .. } = &mut open_revision[message_index];
+        let CurrentState::Value { value, .. } = &mut open_revision[message_index];
         value["unknown"] = json!(true);
         forged.push(open_revision);
         let mut foreign_redaction = rows.clone();
@@ -3645,7 +3647,7 @@ mod tests {
         let assertion = json!({"tag_id": tag, "value": {"target_ref": target, "key": "+1"}});
         let value = json!({"assertions": [assertion]});
         let mut rows = coland_bootstrap_rows(&bundle, &items);
-        rows.push(TypedCurrentRow::Value {
+        rows.push(CurrentState::Value {
             selector: arkret_wire::CurrentSelector::MessageReactions {
                 target_ref: target.to_string(),
             },
@@ -3656,7 +3658,7 @@ mod tests {
             },
             value: value.clone(),
         });
-        let validate = |rows: &[TypedCurrentRow]| {
+        let validate = |rows: &[CurrentState]| {
             validate_signed_floor_rows(
                 &realm_id,
                 &bundle,
@@ -3667,7 +3669,7 @@ mod tests {
         };
         validate(&rows).unwrap();
         let mut foreign_anchor = rows.clone();
-        let TypedCurrentRow::Value { value, .. } = &mut foreign_anchor[1];
+        let CurrentState::Value { value, .. } = &mut foreign_anchor[1];
         value["authority_event_ref"] = json!(items[2].event.event_id);
         assert!(validate(&foreign_anchor).is_err());
         for bad in [
@@ -3682,7 +3684,7 @@ mod tests {
             assert!(validate(&forged).is_err());
         }
         let mut unsupported = rows.clone();
-        let TypedCurrentRow::Value { selector, .. } = unsupported.last_mut().unwrap();
+        let CurrentState::Value { selector, .. } = unsupported.last_mut().unwrap();
         *selector = arkret_wire::CurrentSelector::MessageReactions {
             target_ref: items[1].event.event_id.to_string(),
         };
@@ -3718,7 +3720,7 @@ mod tests {
         let event_id = &items[2].event.event_id;
         let target = arkret_sdk::MessageId::from_event_id(&items[1].event.event_id);
         let tag = format!("{event_id}:0");
-        let validate = |rows: &[TypedCurrentRow]| {
+        let validate = |rows: &[CurrentState]| {
             validate_signed_floor_rows(
                 &realm_id,
                 &bundle,
@@ -3745,7 +3747,7 @@ mod tests {
                 "pin_scope": scope, "target_ref": target, "rank": "a0"
             }});
             let mut rows = coland_bootstrap_rows(&bundle, &items);
-            rows.push(TypedCurrentRow::Value {
+            rows.push(CurrentState::Value {
                 selector: arkret_wire::CurrentSelector::Pin {
                     pin_scope: scope.clone(),
                 },
@@ -3783,7 +3785,7 @@ mod tests {
                 assert!(validate(&forged).is_err());
             }
             let mut foreign = rows.clone();
-            let TypedCurrentRow::Value { selector, .. } = foreign.last_mut().unwrap();
+            let CurrentState::Value { selector, .. } = foreign.last_mut().unwrap();
             *selector = arkret_wire::CurrentSelector::Pin {
                 pin_scope: arkret_wire::PinScope::Realm {
                     id: arkret_sdk::RealmId::from_event_id(&items[3].event.event_id),
@@ -3826,7 +3828,7 @@ mod tests {
         let rows_with = |join_policy: Option<serde_json::Value>, rule: &str| {
             let mut rows = coland_bootstrap_rows(&bundle, &items);
             for row in &mut rows {
-                let TypedCurrentRow::Value {
+                let CurrentState::Value {
                     selector, value, ..
                 } = row;
                 match selector {
@@ -3905,9 +3907,9 @@ mod tests {
     pub(in crate::realm_events_engine) fn coland_bootstrap_rows(
         bundle: &arkret_sdk::RealmAuthorityBundle,
         items: &[arkret_sdk::CommittedEventFullView],
-    ) -> Vec<TypedCurrentRow> {
+    ) -> Vec<CurrentState> {
         use arkret_wire::CurrentSelector;
-        let row = |selector, commit: &arkret_sdk::RealmCommit, value| TypedCurrentRow::Value {
+        let row = |selector, commit: &arkret_sdk::RealmCommit, value| CurrentState::Value {
             selector,
             source_stream_ref: commit.stream_ref.clone(),
             revision: arkret_wire::CurrentRevision {
@@ -3929,7 +3931,7 @@ mod tests {
                 json!({
                     "controller_actor_id": bundle.genesis_event.actor_id,
                     "controller_epoch": 0,
-                    "authority_generation": 0,
+                    "authority_generation": "0",
                 "authority_event_ref": bundle.realm_id.event_id(),
                 }),
             ),
@@ -4011,13 +4013,13 @@ mod tests {
                     let watch: arkret_sdk::StrandWatchSetPayload =
                         serde_json::from_value(payload).unwrap();
                     let value = match watch.level {
-                        Some(level) => arkret_sdk::StrandWatchCurrentValue::Set(
+                        Some(level) => arkret_sdk::StrandWatchValue::Set(
                             arkret_sdk::StrandWatchExpectedValue {
                                 level,
                                 level_public: watch.level_public,
                             },
                         ),
-                        None => arkret_sdk::StrandWatchCurrentValue::Cleared(()),
+                        None => arkret_sdk::StrandWatchValue::Cleared(()),
                     };
                     row(
                         CurrentSelector::StrandWatch {
@@ -4106,7 +4108,7 @@ mod tests {
                 DEVICE_ID,
             );
         let realm = bundle.realm_id.clone();
-        let request = arkret_sdk::AuthorityBundleRequest {
+        let request = arkret_sdk::RealmAuthorityBundleRequestBody {
             realm_id: realm.clone(),
             nonce: bundle.current_assertion.nonce.clone(),
         };
@@ -4126,13 +4128,13 @@ mod tests {
         let stream = arkret_sdk::CommitStreamRef::Realm {
             realm_id: realm.clone(),
         };
-        let scan = StreamScanRequest {
+        let scan = StreamScanRequestBody {
             realm_id: realm,
             stream_ref: stream.clone(),
             direction: arkret_sdk::StreamScanDirection::After(None),
             limit: 200,
         };
-        let outcome = arkret_sdk::StreamScanOutcome {
+        let outcome = arkret_sdk::StreamScanResponseBody {
             committed_events: std::iter::once(arkret_sdk::CommittedEventFullView {
                 event: bundle.genesis_event.clone(),
                 commit: bundle.genesis_commit.clone(),
@@ -4157,7 +4159,7 @@ mod tests {
         let CommittedEventView::Full(last) = forged.committed_events.last_mut().unwrap() else {
             unreachable!()
         };
-        last.commit.signature.sig = arkret_sdk::Base64UrlString::new("AA").unwrap();
+        last.commit.signature.signature = arkret_sdk::Base64UrlString::new("AA").unwrap();
         assert!(
             replay
                 .apply_verified_scan(&scan, forged, &freshness, &keys)
@@ -4197,7 +4199,7 @@ mod tests {
                 DEVICE_ID,
             );
         let realm = bundle.realm_id.clone();
-        let request = arkret_sdk::AuthorityBundleRequest {
+        let request = arkret_sdk::RealmAuthorityBundleRequestBody {
             realm_id: realm.clone(),
             nonce: bundle.current_assertion.nonce.clone(),
         };
@@ -4274,7 +4276,7 @@ mod tests {
             commit_id: native[0].commit.commit_id.clone(),
             stream_position: 0,
         };
-        let mls_current = arkret_wire::MlsGroupCurrent {
+        let mls_current = arkret_wire::MlsGroupValue {
             effective_scope: scope.clone(),
             genesis_event_ref: native[0].event.event_id.clone(),
             cipher_suite: arkret_sdk::NonEmptyString::new(
@@ -4292,7 +4294,7 @@ mod tests {
             .unwrap(),
         };
         snapshot.current_state_entries.extend([
-            TypedCurrentRow::Value {
+            CurrentState::Value {
                 selector: arkret_sdk::CurrentSelector::MlsGroup {
                     scope_ref: scope.clone(),
                 },
@@ -4300,7 +4302,7 @@ mod tests {
                 revision: revision.clone(),
                 value: serde_json::to_value(&mls_current).unwrap(),
             },
-            TypedCurrentRow::Value {
+            CurrentState::Value {
                 selector: arkret_sdk::CurrentSelector::Sidecar {
                     sidecar_id: sidecar.clone(),
                 },
@@ -4310,7 +4312,7 @@ mod tests {
                     "realm_id":realm,"controller_account_id":controller,"state":"active",
                     "created_at":"2026-01-01T00:00:00.000Z"}),
             },
-            TypedCurrentRow::Value {
+            CurrentState::Value {
                 selector: arkret_sdk::CurrentSelector::SidecarContext {
                     sidecar_id: sidecar.clone(),
                     source_context_ref: arkret_sdk::SidecarContextRef::Strand {
@@ -4348,7 +4350,7 @@ mod tests {
         assert!(store.verified_sidecar_inputs(realm.as_str()).is_err());
         assert!(store.current_mls_group_for_scope(&scope).is_none());
         let mut replay = replica.fork_verified_authority().unwrap();
-        let scan = arkret_sdk::StreamScanRequest {
+        let scan = arkret_sdk::StreamScanRequestBody {
             realm_id: realm.clone(),
             stream_ref: stream.clone(),
             direction: arkret_sdk::StreamScanDirection::After(None),
@@ -4357,7 +4359,7 @@ mod tests {
         let page = replay
             .apply_verified_scan(
                 &scan,
-                arkret_sdk::StreamScanOutcome {
+                arkret_sdk::StreamScanResponseBody {
                     committed_events: vec![CommittedEventView::Full(native[0].clone())],
                     readable_floor: Some(arkret_sdk::ReadableFloor {
                         oldest_position: 0,
@@ -4556,14 +4558,14 @@ mod tests {
                 .verified_sidecar_for_source(&controller, realm.as_str(), &source_strand)
                 .is_err()
         );
-        let scan = arkret_sdk::StreamScanRequest {
+        let scan = arkret_sdk::StreamScanRequestBody {
             direction: arkret_sdk::StreamScanDirection::After(Some(0)),
             ..scan
         };
         let page = replay
             .apply_verified_scan(
                 &scan,
-                arkret_sdk::StreamScanOutcome {
+                arkret_sdk::StreamScanResponseBody {
                     committed_events: vec![CommittedEventView::Full(native[1].clone())],
                     readable_floor: Some(arkret_sdk::ReadableFloor {
                         oldest_position: 0,
@@ -4866,7 +4868,7 @@ mod tests {
                 DEVICE_ID,
             );
         let realm_id = bundle.realm_id.clone();
-        let request = arkret_sdk::AuthorityBundleRequest {
+        let request = arkret_sdk::RealmAuthorityBundleRequestBody {
             realm_id: realm_id.clone(),
             nonce: bundle.current_assertion.nonce.clone(),
         };
@@ -4884,12 +4886,12 @@ mod tests {
             .install_verified_current_snapshot_heads(&snapshot, &freshness, &keys)
             .unwrap();
         let selector = match &snapshot.current_state_entries[0] {
-            arkret_wire::TypedCurrentRow::Value { selector, .. } => selector.clone(),
+            arkret_wire::CurrentState::Value { selector, .. } => selector.clone(),
         };
         let mut frame: arkret_sdk::sync::AccountSubscribeFrame = serde_json::from_value(json!({
             "kind":"delta", "cursor":"ak:cursor:YQ",
             "realms":{realm_id.as_str():{"current":{
-                "realm_id":realm_id, "governance_generation":snapshot.governance_generation,
+                "realm_id":realm_id, "governance_generation":(snapshot.governance_generation).to_string(),
                 "stream_heads":snapshot.visible_stream_heads, "entries":[]
             }}}
         }))
@@ -5092,14 +5094,14 @@ mod tests {
                 .position(|row| {
                     matches!(
                         row,
-                        arkret_wire::TypedCurrentRow::Value {
+                        arkret_wire::CurrentState::Value {
                             selector: arkret_wire::CurrentSelector::ScopeReadReceiptPolicy { .. },
                             ..
                         }
                     )
                 })
                 .unwrap();
-            let arkret_wire::TypedCurrentRow::Value { value, .. } = &rows[index];
+            let arkret_wire::CurrentState::Value { value, .. } = &rows[index];
             assert_eq!(*value, policy);
             for invalid in [
                 json!({}),
@@ -5154,7 +5156,7 @@ mod tests {
         let accepted = items.last().unwrap();
         let head = bundle.current_assertion.realm_stream_head.clone();
         let mut rows = coland_bootstrap_rows(&bundle, &items[..items.len() - 1]);
-        rows.push(arkret_wire::TypedCurrentRow::Value {
+        rows.push(arkret_wire::CurrentState::Value {
             selector: serde_json::from_value(json!({"kind":"relation",
                 "primary_conflict_domain":domain}))
             .unwrap(),
@@ -5172,7 +5174,7 @@ mod tests {
                 "created_at":accepted.event.created_at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
             }),
         });
-        let validate = |rows: &[arkret_wire::TypedCurrentRow]| {
+        let validate = |rows: &[arkret_wire::CurrentState]| {
             validate_signed_floor_rows(
                 &realm_id,
                 &bundle,
@@ -5182,7 +5184,7 @@ mod tests {
             )
         };
         validate(&rows).unwrap();
-        let arkret_wire::TypedCurrentRow::Value { value, .. } = rows.last().unwrap();
+        let arkret_wire::CurrentState::Value { value, .. } = rows.last().unwrap();
         let valid = value.clone();
         for invalid in [
             {
@@ -5217,7 +5219,7 @@ mod tests {
             assert!(validate(&rejected).is_err());
         }
         let mut rejected = rows.clone();
-        let arkret_wire::TypedCurrentRow::Value { selector, .. } = rejected.last_mut().unwrap();
+        let arkret_wire::CurrentState::Value { selector, .. } = rejected.last_mut().unwrap();
         let foreign = arkret_wire::RealmId::from_event_id(&arkret_wire::EventId::from_digest(
             arkret_sdk::DigestSuite::Sha256,
             [0x73; 32],
@@ -5509,7 +5511,7 @@ mod tests {
         let stream_ref = arkret_sdk::CommitStreamRef::Realm {
             realm_id: realm_id.clone(),
         };
-        let request = arkret_sdk::AuthorityBundleRequest {
+        let request = arkret_sdk::RealmAuthorityBundleRequestBody {
             realm_id: realm_id.clone(),
             nonce: bundle.current_assertion.nonce.clone(),
         };
@@ -5522,7 +5524,7 @@ mod tests {
             .install_verified_authority(&request, bundle.clone(), &freshness, &keys)
             .unwrap();
         let first_event_id = items[0].event.event_id.clone();
-        let first = arkret_sdk::StreamScanOutcome {
+        let first = arkret_sdk::StreamScanResponseBody {
             committed_events: vec![
                 arkret_sdk::CommittedEventView::Full(arkret_sdk::CommittedEventFullView {
                     commit: bundle.genesis_commit.clone(),
@@ -5537,7 +5539,7 @@ mod tests {
             }),
             truncated: true,
         };
-        let first_request = StreamScanRequest {
+        let first_request = StreamScanRequestBody {
             realm_id: realm_id.clone(),
             stream_ref: stream_ref.clone(),
             direction: arkret_sdk::StreamScanDirection::After(None),
@@ -5588,7 +5590,7 @@ mod tests {
             .is_err()
         );
         assert!(pages.is_empty());
-        let restricted_floor = arkret_sdk::StreamScanOutcome {
+        let restricted_floor = arkret_sdk::StreamScanResponseBody {
             committed_events: Vec::new(),
             readable_floor: Some(arkret_sdk::ReadableFloor {
                 oldest_position: 4,
@@ -5655,7 +5657,7 @@ mod tests {
         let mut forged = items[1].clone();
         forged.commit.signature.signed_digest =
             arkret_sdk::Hash::new(format!("sha256:{}", "f".repeat(64))).unwrap();
-        let second = arkret_sdk::StreamScanOutcome {
+        let second = arkret_sdk::StreamScanResponseBody {
             committed_events: vec![arkret_sdk::CommittedEventView::Full(forged)],
             readable_floor: Some(arkret_sdk::ReadableFloor {
                 oldest_position: 0,
@@ -5664,7 +5666,7 @@ mod tests {
             }),
             truncated: false,
         };
-        let second_request = StreamScanRequest {
+        let second_request = StreamScanRequestBody {
             realm_id: realm_id.clone(),
             stream_ref: stream_ref.clone(),
             direction: arkret_sdk::StreamScanDirection::After(Some(1)),
@@ -5716,16 +5718,16 @@ mod tests {
     impl garth::AuthorityTransport for FrameStation {
         async fn submit(
             &self,
-            _request: &arkret_sdk::VerifiedSubmission<arkret_wire::AuthoritySubmitRequest>,
+            _request: &arkret_sdk::VerifiedSubmission<arkret_wire::AuthoritySubmitRequestBody>,
             _options: &arkret_sdk::http_client::ClientRequestOptions,
-        ) -> garth::Result<arkret_wire::AuthoritySubmitOutcome> {
+        ) -> garth::Result<arkret_wire::AuthoritySubmitResponseBody> {
             unreachable!("frame verification never submits")
         }
 
         async fn scan(
             &self,
-            request: &StreamScanRequest,
-        ) -> garth::Result<arkret_sdk::StreamScanOutcome> {
+            request: &StreamScanRequestBody,
+        ) -> garth::Result<arkret_sdk::StreamScanResponseBody> {
             self.scans.lock().unwrap().push(request.stream_ref.clone());
             let realm = &self.realms[&request.realm_id];
             if request.stream_ref
@@ -5734,7 +5736,7 @@ mod tests {
                 })
             {
                 // The caller joined every other stream above its genesis.
-                return Ok(arkret_sdk::StreamScanOutcome {
+                return Ok(arkret_sdk::StreamScanResponseBody {
                     committed_events: Vec::new(),
                     readable_floor: Some(arkret_sdk::ReadableFloor {
                         oldest_position: 1,
@@ -5748,7 +5750,7 @@ mod tests {
                 unreachable!("frame verification replays forward")
             };
             let floor = &realm.rows[realm.readable_floor as usize];
-            Ok(arkret_sdk::StreamScanOutcome {
+            Ok(arkret_sdk::StreamScanResponseBody {
                 committed_events: realm
                     .rows
                     .iter()
@@ -5783,7 +5785,7 @@ mod tests {
 
         async fn authority_bundle(
             &self,
-            request: &arkret_sdk::AuthorityBundleRequest,
+            request: &arkret_sdk::RealmAuthorityBundleRequestBody,
         ) -> garth::Result<arkret_sdk::RealmAuthorityBundle> {
             let mut bundle = self.realms[&request.realm_id].bundle.clone();
             self.station
@@ -5793,7 +5795,7 @@ mod tests {
 
         async fn install_handoff(
             &self,
-            _request: &arkret_sdk::AuthorityHandoffRequest,
+            _request: &arkret_sdk::AuthorityRealmAuthorityHandoffRequestBody,
             _options: &arkret_sdk::http_client::ClientRequestOptions,
         ) -> garth::Result<arkret_wire::RealmAuthorityHandoff> {
             unreachable!("frame verification never installs a handoff")
@@ -5858,7 +5860,7 @@ mod tests {
             ]),
             committed_events: Some(realm.rows[realm.rows.len() - window_rows..].to_vec()),
             current: Some(
-                arkret_models_collaboration::sync_frames::current_results::AccountCurrentView {
+                arkret_models_collaboration::sync_frames::current_states::AccountStateView {
                     realm_id: head.realm_id.clone(),
                     governance_generation: 0,
                     stream_heads: vec![arkret_wire::CommitStreamHead {
@@ -5866,7 +5868,7 @@ mod tests {
                         stream_position: head.stream_position,
                         commit_id: head.commit_id.clone(),
                     }],
-                    entries: vec![TypedCurrentRow::Value {
+                    entries: vec![CurrentState::Value {
                         selector: arkret_wire::CurrentSelector::RealmProfile,
                         source_stream_ref: first.stream_ref.clone(),
                         revision: arkret_wire::CurrentRevision {
@@ -6411,7 +6413,7 @@ mod tests {
         let anchored_entry = |bundle: &arkret_sdk::RealmAuthorityBundle,
                               items: &[arkret_sdk::CommittedEventFullView],
                               snapshot: &arkret_sdk::RealmStateSnapshot,
-                              current_rows: Vec<TypedCurrentRow>,
+                              current_rows: Vec<CurrentState>,
                               circle: bool| {
             let head = &items.last().unwrap().commit;
             let mut streams = vec![RealmStreamWindow {
@@ -6455,7 +6457,7 @@ mod tests {
                         .collect(),
                 ),
                 current: Some(
-                    arkret_models_collaboration::sync_frames::current_results::AccountCurrentView {
+                    arkret_models_collaboration::sync_frames::current_states::AccountStateView {
                         realm_id: realm_id.clone(),
                         governance_generation: 0,
                         stream_heads,

@@ -393,7 +393,7 @@ async fn invite_delayed_completion_cannot_cross_any_session_coordinate() {
             )),
             _ => generation.set(1),
         });
-        send.send(Ok(Some(arkret_sdk::InviteLocatorIssueOutcome {
+        send.send(Ok(Some(arkret_sdk::InviteLocatorIssueResponseBody {
             locator_id: arkret_sdk::InviteLocatorId::new(
                 "ak:invite_locator:0196419b-0000-7000-8000-000000000000",
             )

@@ -357,7 +357,7 @@ pub(super) struct ChatController {
     pub new_channel_create_card: Signal<bool>,
     pub create_dialog_open: Signal<bool>,
     pub strand_watch_level: Signal<WatchLevel>,
-    pub strand_watch_current: Signal<Option<arkret_sdk::StrandWatchCurrentOutcome>>,
+    pub strand_watch_current: Signal<Option<arkret_sdk::StrandWatchCurrentResponseBody>>,
     pub strand_watch_pending: Signal<bool>,
     pub strand_watch_queued: Signal<bool>,
     pub strand_watch_request: Signal<u64>,
@@ -1884,7 +1884,10 @@ impl ChatController {
         mut self,
         ticket: u64,
         target: WatchRefreshTarget,
-        result: Result<arkret_sdk::StrandWatchCurrentOutcome, crate::transport::auth::ApiCallError>,
+        result: Result<
+            arkret_sdk::StrandWatchCurrentResponseBody,
+            crate::transport::auth::ApiCallError,
+        >,
     ) {
         let mut queue = self.strand_watch_refresh.peek().clone();
         if !queue.finish_write(ticket, &target) {

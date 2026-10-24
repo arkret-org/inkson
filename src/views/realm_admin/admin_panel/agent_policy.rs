@@ -2,9 +2,9 @@
 use arkret_models_collaboration::governance::operation_wire::{
     Policy, PolicySetStatePayload, PolicySetValue,
 };
-use arkret_sdk::exact_current_results::{
-    ExactCurrentResultEntry, ExactCurrentResultSelector, ExactCurrentResultsReadOutcome,
-    ExactCurrentResultsReadRequestBody, PolicyExactCurrentSelector, PolicyExactCurrentSelectorKind,
+use arkret_sdk::exact_current_state::{
+    ExactCurrentStateEntry, ExactCurrentStateReadRequestBody, ExactCurrentStateReadResponseBody,
+    ExactCurrentStateSelector, PolicyExactCurrentSelector, PolicyExactCurrentSelectorKind,
 };
 use arkret_sdk::{AccountId, CommitStreamRef, CurrentRevision, PolicyId, RealmId, ScopeRef};
 use dioxus::prelude::*;
@@ -45,15 +45,15 @@ async fn read_policy(
     let client = crate::transport::own_station_results::client_for_http(http).await?;
     let before = client.snapshot_head(realm).await?;
     garth::own_station_results::consume_bound_snapshot(&before, realm)?;
-    let request = ExactCurrentResultsReadRequestBody {
+    let request = ExactCurrentStateReadRequestBody {
         realm_id: realm.clone(),
-        selector: ExactCurrentResultSelector::Policy(PolicyExactCurrentSelector {
+        selector: ExactCurrentStateSelector::Policy(PolicyExactCurrentSelector {
             kind: PolicyExactCurrentSelectorKind::Policy,
             policy_id: id.clone(),
         }),
     };
     let result = client
-        .exact_current_result(&request, before.value()?.governance_generation)
+        .exact_current_state(&request, before.value()?.governance_generation)
         .await?;
     let after = client.snapshot_head(realm).await?;
     garth::own_station_results::consume_bound_snapshot(&after, realm)?;
@@ -61,12 +61,12 @@ async fn read_policy(
         .value()?
         .validate_for_request(&request, before.value()?.governance_generation)?;
     let (result_head, result_generation) = match result.value()? {
-        ExactCurrentResultsReadOutcome::Present {
+        ExactCurrentStateReadResponseBody::Present {
             effective_stream_head,
             governance_generation,
             ..
         }
-        | ExactCurrentResultsReadOutcome::NeverWritten {
+        | ExactCurrentStateReadResponseBody::NeverWritten {
             effective_stream_head,
             governance_generation,
             ..
@@ -92,15 +92,15 @@ async fn read_policy(
     );
     check_session(&account, generation)?;
     let (policy, revision, scope) = match result.into_value()? {
-        ExactCurrentResultsReadOutcome::NeverWritten { .. } => (
+        ExactCurrentStateReadResponseBody::NeverWritten { .. } => (
             None,
             None,
             ScopeRef::Realm {
                 realm_id: realm.clone(),
             },
         ),
-        ExactCurrentResultsReadOutcome::Present {
-            entry: ExactCurrentResultEntry::Policy(row),
+        ExactCurrentStateReadResponseBody::Present {
+            entry: ExactCurrentStateEntry::Policy(row),
             ..
         } => {
             let PolicySetValue::Governance(policy) = row.value else {

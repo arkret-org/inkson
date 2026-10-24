@@ -39,9 +39,9 @@ pub(super) fn media_service_decrypts_enabled(
         })
         .as_ref()
         .and_then(|body| {
-            body.get("media_service_decrypts")
-                .or_else(|| body.pointer("/components/media_service_decrypts"))
-                .or_else(|| body.pointer("/media/media_service_decrypts"))
+            body.get("media_service_decryption_allowed")
+                .or_else(|| body.pointer("/components/media_service_decryption_allowed"))
+                .or_else(|| body.pointer("/media/media_service_decryption_allowed"))
         })
         .and_then(Value::as_bool)
         .unwrap_or(false)

@@ -43,8 +43,8 @@ fn build_register_request_with_gateway(
     )?)
 }
 
-fn register_outcome(registration_id: Option<&str>) -> PushRegisterDeviceOutcome {
-    PushRegisterDeviceOutcome {
+fn register_outcome(registration_id: Option<&str>) -> PushRegisterDeviceResponseBody {
+    PushRegisterDeviceResponseBody {
         push_target_id: arkret_wire::PushTargetId::new(
             "ak:pseudonym:push:kosc9iQ4gVct1OB-b6X364WIFIsJFVbVzn7BMBs1sm8".to_owned(),
         )

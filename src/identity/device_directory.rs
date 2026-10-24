@@ -291,7 +291,7 @@ pub(crate) fn restore_persisted_device_authoring_authority(
 }
 
 pub(crate) fn persisted_device_authoring_authority_from_outcome(
-    outcome: &arkret_models_crypto::KeysQueryOutcome,
+    outcome: &arkret_models_crypto::KeysQueryResponseBody,
     account_id: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
     authoring_generation: crate::identity::authoring_generation::AuthoringGeneration,
@@ -541,7 +541,7 @@ struct AcceptedDeviceEvidence {
 }
 
 fn accepted_device_evidence(
-    outcome: &arkret_models_crypto::KeysQueryOutcome,
+    outcome: &arkret_models_crypto::KeysQueryResponseBody,
     account_id: &arkret_sdk::AccountId,
     device: &str,
 ) -> Option<AcceptedDeviceEvidence> {
@@ -569,7 +569,7 @@ fn accepted_device_evidence(
 
 pub(crate) fn cache_accepted_device_evidence_from_outcome(
     expected_epoch: u64,
-    outcome: &arkret_models_crypto::KeysQueryOutcome,
+    outcome: &arkret_models_crypto::KeysQueryResponseBody,
     account_id: &arkret_sdk::AccountId,
     device: &str,
 ) -> Option<PublicKeyMaterial> {
@@ -739,7 +739,7 @@ mod verification_method_controller_tests {
         account: &arkret_sdk::AccountId,
         device: &arkret_sdk::DeviceId,
         projection: &arkret_models_crypto::VerifiedDeviceProjection,
-    ) -> arkret_models_crypto::KeysQueryOutcome {
+    ) -> arkret_models_crypto::KeysQueryResponseBody {
         serde_json::from_value(serde_json::json!({
             "device_keys": [{"account_id": account, "device_keys": {
                 device.as_str(): {
@@ -1031,7 +1031,7 @@ mod verification_method_controller_tests {
             .unwrap()
             .remove("signer_evidence_ref");
         assert!(
-            serde_json::from_value::<arkret_models_crypto::KeysQueryOutcome>(missing_evidence)
+            serde_json::from_value::<arkret_models_crypto::KeysQueryResponseBody>(missing_evidence)
                 .is_err()
         );
 
@@ -1039,7 +1039,8 @@ mod verification_method_controller_tests {
         revoked_wire["device_keys"][0]["device_keys"][device.as_str()]["device_projection"]["device_status"] =
             serde_json::json!("revoked");
         assert!(
-            serde_json::from_value::<arkret_models_crypto::KeysQueryOutcome>(revoked_wire).is_err(),
+            serde_json::from_value::<arkret_models_crypto::KeysQueryResponseBody>(revoked_wire)
+                .is_err(),
             "self keys/query cannot carry a revoked device projection"
         );
         let mut revoked = outcome;

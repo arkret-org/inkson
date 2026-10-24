@@ -271,7 +271,7 @@ pub enum SignalPayload {
         call_id: arkret_sdk::CallId,
         /// Per-call anti-rollback sequence, independent of the common Signal
         /// rail `payload_sequence`.
-        seq: u64,
+        sequence: u64,
         signal: arkret_sdk::CallSignalData,
     },
     MessageStream(arkret_sdk::MessageStreamFrame),
@@ -359,15 +359,15 @@ impl SignalPayload {
             }
             Self::CallSignal {
                 call_id,
-                seq,
+                sequence: call_sequence,
                 signal,
             } => {
-                // `payload_sequence` and the per-call `seq` are independent axes;
+                // `payload_sequence` and the per-call `sequence` are independent axes;
                 // this profile carries both and may omit neither.
                 let payload = arkret_sdk::CallSignalPlaintext::new(
                     sequence.get(),
                     call_id.clone(),
-                    *seq,
+                    *call_sequence,
                     signal.clone(),
                 )?;
                 plaintext(arkret_sdk::seal_signal_plaintext(&payload), "call signal")
@@ -1021,7 +1021,7 @@ mod tests {
                 .unwrap();
         let invite = SignalPayload::CallSignal {
             call_id: call_id.clone(),
-            seq: 4,
+            sequence: 4,
             signal: arkret_sdk::CallSignalData::Invite(arkret_sdk::CallInviteSignalData {
                 lifetime_ms: 60_000,
                 offer: arkret_sdk::SessionDescription {
@@ -1040,7 +1040,7 @@ mod tests {
 
         let moderation = SignalPayload::CallSignal {
             call_id: call_id.clone(),
-            seq: 5,
+            sequence: 5,
             signal: arkret_sdk::CallSignalData::Moderation(arkret_sdk::CallModerationSignalData {
                 action: arkret_sdk::CallModerationAction::EndForAll,
                 target_actor_id: None,
@@ -1056,7 +1056,7 @@ mod tests {
 
         let moderator_mute = SignalPayload::CallSignal {
             call_id: call_id.clone(),
-            seq: 6,
+            sequence: 6,
             signal: arkret_sdk::CallSignalData::MuteState(arkret_sdk::CallMuteStateSignalData {
                 audio_muted: true,
                 video_muted: false,
@@ -1077,7 +1077,7 @@ mod tests {
 
         let candidate = SignalPayload::CallSignal {
             call_id,
-            seq: 6,
+            sequence: 6,
             signal: arkret_sdk::CallSignalData::Candidate(arkret_sdk::CallCandidateSignalData {
                 candidates: vec![arkret_sdk::IceCandidate {
                     candidate: "candidate:1".to_owned(),
@@ -1094,7 +1094,10 @@ mod tests {
         )
         .unwrap();
         assert_eq!(body["payload_sequence"], 1024);
-        assert_eq!(body["seq"], 6, "per-call seq is an independent axis");
+        assert_eq!(
+            body["sequence"], 6,
+            "per-call sequence is an independent axis"
+        );
     }
 
     /// Restates the deleted `presence_proof_round_trips_through_ephemeral_sdk_verifier`

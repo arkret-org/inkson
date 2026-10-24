@@ -1,7 +1,7 @@
 //! Kanban presentation and pending local-operation overlays.
 //!
 //! Complete object content and its authority-signed revision come from the
-//! Realm snapshot's typed current result for each Strand. The projection rows
+//! Realm snapshot's current state for each Strand. The projection rows
 //! and the folded Event stream supply placement, lifecycle and audit context;
 //! they are never a substitute for that current result. The production caller
 //! installs current before applying pending UI overlays.
@@ -546,7 +546,7 @@ pub(crate) fn space_container_views_from_projection_and_ops(
     projected: &[crate::state::projection_views::SpaceContainerProjectionView],
     ops: &[RawOperationRecord],
     realm_id: &str,
-    current_entries: &[arkret_wire::TypedCurrentRow],
+    current_entries: &[arkret_wire::CurrentState],
 ) -> Vec<crate::state::projection_views::SpaceContainerProjectionView> {
     let terminal_ids = terminal_space_ids_from_current(current_entries, realm_id);
     let aliases = event_derived_target_aliases(ops);
@@ -716,7 +716,7 @@ pub(crate) fn project_board_with_projection_for_actor(
     realm_id: &str,
     decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
     self_actor_id: &str,
-    current_entries: &[arkret_wire::TypedCurrentRow],
+    current_entries: &[arkret_wire::CurrentState],
 ) -> (Vec<KanbanColumn>, Vec<BoardSpaceOption>, Option<String>) {
     project_board_with_current_inventory_for_actor(
         ops,
@@ -739,7 +739,7 @@ pub(crate) fn project_board_with_current_inventory_for_actor(
     realm_id: &str,
     decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
     self_actor_id: &str,
-    current_entries: &[arkret_wire::TypedCurrentRow],
+    current_entries: &[arkret_wire::CurrentState],
     complete_current: bool,
 ) -> (Vec<KanbanColumn>, Vec<BoardSpaceOption>, Option<String>) {
     let aliases = event_derived_target_aliases(ops);
@@ -861,7 +861,7 @@ pub(crate) fn project_board_with_current_inventory_for_actor(
     (columns, board_options, board_id)
 }
 
-/// Readiness of the Station's typed current result for one Strand.
+/// Readiness of the Station's current state for one Strand.
 ///
 /// The snapshot carries the whole Strand object under
 /// `CurrentSelector::Strand`, signed at an exact `RealmCommit` revision, so
@@ -879,19 +879,19 @@ pub(crate) enum StrandCurrentBasis {
 }
 
 pub(crate) fn strand_current_basis(
-    entries: &[arkret_wire::TypedCurrentRow],
+    entries: &[arkret_wire::CurrentState],
     strand_id: &arkret_sdk::StrandId,
 ) -> StrandCurrentBasis {
     let selector = arkret_wire::CurrentSelector::Strand {
         strand_id: strand_id.clone(),
     };
     let mut matching = entries.iter().filter(|entry| {
-        let arkret_wire::TypedCurrentRow::Value {
+        let arkret_wire::CurrentState::Value {
             selector: found, ..
         } = entry;
         *found == selector
     });
-    let Some(arkret_wire::TypedCurrentRow::Value { revision, .. }) = matching.next() else {
+    let Some(arkret_wire::CurrentState::Value { revision, .. }) = matching.next() else {
         return StrandCurrentBasis::Missing;
     };
     if matching.next().is_some() {
@@ -915,7 +915,7 @@ fn clear_unavailable_card_content(card: &mut KanbanCard) {
     card.state = CardState::Quarantined;
 }
 
-/// The Strand ids whose typed current result the board should demand, bounded
+/// The Strand ids whose current state the board should demand, bounded
 /// to the protocol's per-request target budget.
 pub(crate) fn card_current_page(
     columns: &[KanbanColumn],
@@ -954,7 +954,7 @@ pub(crate) fn card_current_page(
 /// this card was folded from; they are not re-derived here.
 pub(crate) fn install_current_card_sources(
     columns: &mut [KanbanColumn],
-    entries: &[arkret_wire::TypedCurrentRow],
+    entries: &[arkret_wire::CurrentState],
     projected: &[crate::state::projection_views::StrandProjectionView],
     operations: &[RawOperationRecord],
     decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
@@ -1041,13 +1041,13 @@ pub(crate) fn install_current_card_sources(
             view.rsvps = card.calendar_rsvp_cells.clone();
             view.schedule_revision_source = decrypt_ctx.and_then(|ctx| {
                 let source_stream = entries.iter().find_map(|entry| {
-                    let arkret_sdk::TypedCurrentRow::Value { selector, source_stream_ref, .. } = entry;
+                    let arkret_sdk::CurrentState::Value { selector, source_stream_ref, .. } = entry;
                     matches!(selector, arkret_sdk::CurrentSelector::Strand { strand_id: id } if id == &strand_id)
                         .then_some(source_stream_ref)
                 })?;
                 let _ = ctx;
                 let mut sources = entries.iter().filter_map(|entry| {
-                    let arkret_sdk::TypedCurrentRow::Value { selector, source_stream_ref, revision: paired_revision, value } = entry;
+                    let arkret_sdk::CurrentState::Value { selector, source_stream_ref, revision: paired_revision, value } = entry;
                     matches!(selector, arkret_sdk::CurrentSelector::CalendarScheduleSource { strand_id: id } if id == &strand_id)
                         .then_some((source_stream_ref, paired_revision, value))
                 });
@@ -1105,7 +1105,7 @@ pub(crate) fn install_current_card_sources(
 
 /// Decode the Strand object the Station selected as current for `strand_id`.
 fn current_strand_value(
-    entries: &[arkret_wire::TypedCurrentRow],
+    entries: &[arkret_wire::CurrentState],
     strand_id: &arkret_sdk::StrandId,
 ) -> Option<arkret_sdk::Strand> {
     crate::current_projection::current_strand(entries, strand_id)
@@ -1508,7 +1508,7 @@ mod tests {
             crate::test_support::account_actor("ak:did_core:web:alice.example"),
         );
         strand.state = Some(arkret_sdk::ObjectState::Archived);
-        let entries = vec![arkret_wire::TypedCurrentRow::Value {
+        let entries = vec![arkret_wire::CurrentState::Value {
             selector: arkret_wire::CurrentSelector::Strand { strand_id: id },
             source_stream_ref: arkret_wire::CommitStreamRef::Realm {
                 realm_id: arkret_sdk::RealmId::new(REALM).unwrap(),

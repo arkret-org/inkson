@@ -93,7 +93,7 @@ pub(crate) async fn refresh(
         let realm_id = realm_id.clone();
         let pending = pending.clone();
         move |http| async move {
-            let request = arkret_sdk::ActorProfileResolveRequest::new(realm_id, pending);
+            let request = arkret_sdk::ActorProfileResolveRequestBody::new(realm_id, pending);
             http.actor_profile_resolve(&request)
                 .await
                 .map_err(anyhow::Error::from)

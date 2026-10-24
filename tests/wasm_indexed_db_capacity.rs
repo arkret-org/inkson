@@ -347,7 +347,7 @@ fn creator_submission(
     let scope = arkret_sdk::ScopeRef::Realm {
         realm_id: create.realm_id.clone(),
     };
-    let submission = garth::QueuedSubmission::new(arkret_wire::AuthoritySubmitRequest::Event(
+    let submission = garth::QueuedSubmission::new(arkret_wire::AuthoritySubmitRequestBody::Event(
         arkret_wire::EventAdmissionSubmission::new(create.into_event()),
     ))
     .unwrap();
@@ -475,7 +475,7 @@ fn contract_submission(nth: usize) -> garth::QueuedSubmission {
             &ed25519_dalek::SigningKey::from_bytes(&[7; 32]),
         )
         .expect("contract Event has a real producer proof");
-    garth::QueuedSubmission::new(arkret_wire::AuthoritySubmitRequest::Event(
+    garth::QueuedSubmission::new(arkret_wire::AuthoritySubmitRequestBody::Event(
         arkret_wire::EventAdmissionSubmission {
             event: event.into_event(),
             approval_signatures: None,

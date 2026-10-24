@@ -324,7 +324,7 @@ pub struct MemberHandleCacheEntry {
     pub claims_count: usize,
     pub fetched_at: DateTime<Utc>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub as_of: Option<DateTime<Utc>>,
+    pub evaluated_at: Option<DateTime<Utc>>,
     pub cache_expires_at: DateTime<Utc>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub member_display_state_digest: Option<String>,

@@ -1,13 +1,13 @@
 //! Self watch writes use the Station's exact current value as their CAS preimage.
 
 use arkret_sdk::{
-    StrandWatchCurrentOutcome, StrandWatchCurrentRequestBody, StrandWatchCurrentValue,
-    StrandWatchLevel, StrandWatchSetPayload,
+    StrandWatchCurrentRequestBody, StrandWatchCurrentResponseBody, StrandWatchLevel,
+    StrandWatchSetPayload, StrandWatchValue,
 };
 
 pub(crate) fn payload_from_current(
     request: &StrandWatchCurrentRequestBody,
-    current: &StrandWatchCurrentOutcome,
+    current: &StrandWatchCurrentResponseBody,
     level: Option<StrandWatchLevel>,
 ) -> anyhow::Result<StrandWatchSetPayload> {
     anyhow::ensure!(
@@ -18,8 +18,8 @@ pub(crate) fn payload_from_current(
         .validate_for_request(request)
         .map_err(anyhow::Error::msg)?;
     let head = match current {
-        StrandWatchCurrentOutcome::NeverWritten { stream_head, .. }
-        | StrandWatchCurrentOutcome::Current { stream_head, .. } => stream_head,
+        StrandWatchCurrentResponseBody::NeverWritten { stream_head, .. }
+        | StrandWatchCurrentResponseBody::Current { stream_head, .. } => stream_head,
     };
     anyhow::ensure!(
         matches!(&head.stream_ref,
@@ -27,11 +27,14 @@ pub(crate) fn payload_from_current(
         "self watch requires a current Realm-stream cut"
     );
     let publication = match current {
-        StrandWatchCurrentOutcome::Current { result, .. } => match result.value {
-            StrandWatchCurrentValue::Set(value) => value.level_public,
-            StrandWatchCurrentValue::Cleared(()) => None,
+        StrandWatchCurrentResponseBody::Current {
+            current_state: result,
+            ..
+        } => match result.value {
+            StrandWatchValue::Set(value) => value.level_public,
+            StrandWatchValue::Cleared(()) => None,
         },
-        StrandWatchCurrentOutcome::NeverWritten { .. } => None,
+        StrandWatchCurrentResponseBody::NeverWritten { .. } => None,
     };
     let mut payload = match level {
         Some(level) => StrandWatchSetPayload::set(
@@ -46,19 +49,26 @@ pub(crate) fn payload_from_current(
         ),
     };
     // A written null is a CAS value; it must never become an omitted guard.
-    if let StrandWatchCurrentOutcome::Current { result, .. } = current {
+    if let StrandWatchCurrentResponseBody::Current {
+        current_state: result,
+        ..
+    } = current
+    {
         payload = payload.with_expected_value(result.value);
     }
     Ok(payload)
 }
 
-pub(crate) fn current_level(current: &StrandWatchCurrentOutcome) -> StrandWatchLevel {
+pub(crate) fn current_level(current: &StrandWatchCurrentResponseBody) -> StrandWatchLevel {
     match current {
-        StrandWatchCurrentOutcome::Current { result, .. } => match result.value {
-            StrandWatchCurrentValue::Set(value) => value.level,
-            StrandWatchCurrentValue::Cleared(()) => StrandWatchLevel::MentionsOnly,
+        StrandWatchCurrentResponseBody::Current {
+            current_state: result,
+            ..
+        } => match result.value {
+            StrandWatchValue::Set(value) => value.level,
+            StrandWatchValue::Cleared(()) => StrandWatchLevel::MentionsOnly,
         },
-        StrandWatchCurrentOutcome::NeverWritten { .. } => StrandWatchLevel::MentionsOnly,
+        StrandWatchCurrentResponseBody::NeverWritten { .. } => StrandWatchLevel::MentionsOnly,
     }
 }
 
@@ -67,18 +77,18 @@ pub(crate) fn current_level(current: &StrandWatchCurrentOutcome) -> StrandWatchL
 struct WatchCutChanging;
 
 fn validate_own_observation(
-    current: &StrandWatchCurrentOutcome,
+    current: &StrandWatchCurrentResponseBody,
     before: &arkret_sdk::RealmStateSnapshot,
     after: &arkret_sdk::RealmStateSnapshot,
 ) -> anyhow::Result<()> {
     let (realm, generation, head) = match current {
-        StrandWatchCurrentOutcome::NeverWritten {
+        StrandWatchCurrentResponseBody::NeverWritten {
             realm_id,
             governance_generation,
             stream_head,
             ..
         }
-        | StrandWatchCurrentOutcome::Current {
+        | StrandWatchCurrentResponseBody::Current {
             realm_id,
             governance_generation,
             stream_head,
@@ -105,7 +115,11 @@ fn validate_own_observation(
     if before_head != after_head || head != after_head {
         return Err(WatchCutChanging.into());
     }
-    if let StrandWatchCurrentOutcome::Current { result, .. } = current {
+    if let StrandWatchCurrentResponseBody::Current {
+        current_state: result,
+        ..
+    } = current
+    {
         let original = serde_json::to_value(result)?;
         anyhow::ensure!(
             after
@@ -121,7 +135,7 @@ fn validate_own_observation(
 pub(crate) async fn read(
     http: &arkret_sdk::http_client::Client,
     request: &StrandWatchCurrentRequestBody,
-) -> anyhow::Result<StrandWatchCurrentOutcome> {
+) -> anyhow::Result<StrandWatchCurrentResponseBody> {
     // Only reobserve a changing read cut. No Event has been authored here;
     // submission refusal, unknown outcome and whole-value CAS are never retried.
     for attempt in 0..3 {
@@ -141,7 +155,7 @@ pub(crate) async fn read(
 async fn read_once(
     http: &arkret_sdk::http_client::Client,
     request: &StrandWatchCurrentRequestBody,
-) -> anyhow::Result<StrandWatchCurrentOutcome> {
+) -> anyhow::Result<StrandWatchCurrentResponseBody> {
     let client = crate::transport::own_station_results::client_for_http(http).await?;
     anyhow::ensure!(
         request.watcher_actor_id.as_account_id() == Some(client.session()?.account_id()),
@@ -169,7 +183,7 @@ pub(crate) async fn write(
     http: &arkret_sdk::http_client::Client,
     request: &StrandWatchCurrentRequestBody,
     level: Option<StrandWatchLevel>,
-) -> anyhow::Result<StrandWatchCurrentOutcome> {
+) -> anyhow::Result<StrandWatchCurrentResponseBody> {
     let before = read(http, request).await?;
     let payload = payload_from_current(request, &before, level)?;
     let operation =
@@ -197,21 +211,21 @@ pub(crate) async fn write(
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("watch submission omits Commit"))?;
     let after = read(http, request).await?;
-    let StrandWatchCurrentOutcome::Current {
+    let StrandWatchCurrentResponseBody::Current {
         governance_generation,
         stream_head,
-        result,
+        current_state: result,
         ..
     } = &after
     else {
         anyhow::bail!("accepted watch write has no durable current result");
     };
     let before_generation = match before {
-        StrandWatchCurrentOutcome::NeverWritten {
+        StrandWatchCurrentResponseBody::NeverWritten {
             governance_generation,
             ..
         }
-        | StrandWatchCurrentOutcome::Current {
+        | StrandWatchCurrentResponseBody::Current {
             governance_generation,
             ..
         } => governance_generation,
@@ -245,7 +259,7 @@ mod tests {
         value: Option<serde_json::Value>,
     ) -> (
         StrandWatchCurrentRequestBody,
-        StrandWatchCurrentOutcome,
+        StrandWatchCurrentResponseBody,
         arkret_sdk::RealmAuthorityBundle,
     ) {
         let realm =
@@ -272,10 +286,10 @@ mod tests {
         let selector = json!({"kind":"strand_watch","strand_id":strand,"watcher_actor_id":request.watcher_actor_id});
         let current = match value {
             None => {
-                json!({"status":"never_written","realm_id":realm,"governance_generation":bundle.current_generation,"stream_head":bundle.realm_stream_head,"selector":selector})
+                json!({"status":"never_written","realm_id":realm,"governance_generation":bundle.current_generation.to_string(),"stream_head":bundle.realm_stream_head,"selector":selector})
             }
             Some(value) => {
-                json!({"status":"current","realm_id":realm,"governance_generation":bundle.current_generation,"stream_head":bundle.realm_stream_head,"result":{
+                json!({"status":"current","realm_id":realm,"governance_generation":bundle.current_generation.to_string(),"stream_head":bundle.realm_stream_head,"current_state":{
                 "selector":selector,"source_stream_ref":rows[0].commit.stream_ref,
                 "revision":{"commit_id":rows[0].commit.commit_id,"stream_position":rows[0].commit.stream_position},"value":value}})
             }
@@ -340,7 +354,7 @@ mod tests {
         let mut wire = serde_json::to_value(current).unwrap();
         wire["stream_head"]["stream_ref"] = json!({"kind":"circle","realm_id":request.realm_id,
             "circle_id":arkret_sdk::CircleId::from_event_id(&arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256,[7;32]))});
-        let circle: StrandWatchCurrentOutcome = serde_json::from_value(wire).unwrap();
+        let circle: StrandWatchCurrentResponseBody = serde_json::from_value(wire).unwrap();
         assert!(payload_from_current(&request, &circle, None).is_err());
     }
 
@@ -394,7 +408,11 @@ mod tests {
     fn same_cut_watch_value_requires_the_original_signed_row() {
         let (_, current, bundle) = observation(Some(json!({"level":"all","level_public":false})));
         let mut original = cut(&bundle);
-        let StrandWatchCurrentOutcome::Current { result, .. } = &current else {
+        let StrandWatchCurrentResponseBody::Current {
+            current_state: result,
+            ..
+        } = &current
+        else {
             unreachable!();
         };
         original
@@ -406,7 +424,7 @@ mod tests {
         let error = validate_own_observation(&current, &original, &missing).unwrap_err();
         assert!(!error.is::<WatchCutChanging>());
         let mut wrong = original.clone();
-        let arkret_sdk::TypedCurrentRow::Value { value, .. } = &mut wrong.current_state_entries[0];
+        let arkret_sdk::CurrentState::Value { value, .. } = &mut wrong.current_state_entries[0];
         *value = json!({"level":"muted","level_public":false});
         assert!(validate_own_observation(&current, &original, &wrong).is_err());
     }

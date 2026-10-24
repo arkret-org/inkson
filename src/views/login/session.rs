@@ -228,7 +228,7 @@ pub(super) fn pending_handoff_from_authority(
     trust_domain: &str,
     holder_jkt: &str,
     oidc_state: &str,
-    outcome: &arkret_sdk::AccountHandoffOutcome,
+    outcome: &arkret_sdk::AccountHandoffResponseBody,
     disposition: &AccountHandoffDisposition,
 ) -> crate::state::PendingAccountHandoff {
     let (
@@ -582,7 +582,7 @@ pub(crate) async fn prepare_oidc_authorization(
 
 /// Standard OIDC discovery URL for an auth method: the explicit
 /// `openid_configuration` when present, else `{issuer}/.well-known/openid-configuration`.
-pub(super) fn oidc_discovery_url(method: &arkret_sdk::AuthMethod) -> Option<String> {
+pub(super) fn oidc_discovery_url(method: &arkret_sdk::AuthenticationMethod) -> Option<String> {
     if let Some(config) = method
         .openid_configuration_url
         .as_deref()
@@ -793,7 +793,7 @@ pub(super) async fn finish_oidc_callback(
         .auth(Auth::Dpop(dpop_handle.sdk_dpop_proof_only_auth()))
         .build()
         .map_err(|error| format!("Build Account Authority OIDC client failed: {error}"))?;
-    let handoff_request = garth::oidc_account_handoff_request(
+    let realm_authority_handoff_request_body = garth::oidc_account_handoff_request(
         OidcAccountHandoffInput {
             request_id: arkret_sdk::RequestId::new_v7_at(crate::clock::now_unix_ms()),
             audience_id: principal_audience.clone(),
@@ -813,7 +813,7 @@ pub(super) async fn finish_oidc_callback(
     )
     .map_err(|error| format!("Account handoff request failed: {error}"))?;
     let handoff = http
-        .auth_create_account_handoff(&handoff_request)
+        .auth_create_account_handoff(&realm_authority_handoff_request_body)
         .await
         .map_err(|error| format!("Account Authority handoff failed: {error}"))?;
     let disposition = garth::account_handoff_disposition(&handoff)

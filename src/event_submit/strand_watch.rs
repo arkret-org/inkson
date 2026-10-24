@@ -47,7 +47,7 @@ fn authority_settled_watch(item: &garth::SendQueueItem) -> anyhow::Result<bool> 
             // Validate the covering Commit against these exact frozen bytes.
             // A local terminal flag alone is not an authority answer.
             let mut checked = item.submission.clone();
-            checked.apply_outcome(arkret_wire::AuthoritySubmitOutcome::Accepted {
+            checked.apply_outcome(arkret_wire::AuthoritySubmitResponseBody::Accepted {
                 status: *status,
                 commit: (**commit).clone(),
             })?;
@@ -61,7 +61,7 @@ fn authority_settled_watch(item: &garth::SendQueueItem) -> anyhow::Result<bool> 
             },
         ) => {
             let mut checked = item.submission.clone();
-            checked.apply_outcome(arkret_wire::AuthoritySubmitOutcome::Rejected {
+            checked.apply_outcome(arkret_wire::AuthoritySubmitResponseBody::Rejected {
                 status: arkret_wire::AuthorityRejectionStatus::Rejected,
                 reason_code: reason_code.clone(),
             })?;
@@ -265,7 +265,7 @@ mod tests {
             level,
             None,
         )
-        .with_expected_value(arkret_sdk::StrandWatchCurrentValue::Cleared(()));
+        .with_expected_value(arkret_sdk::StrandWatchValue::Cleared(()));
         let intent = arkret_sdk::TypedEventDraft::<arkret_sdk::event_spec::StrandWatchSet>::new(
             arkret_sdk::ScopeRef::Realm {
                 realm_id: request.realm_id.clone(),
@@ -397,7 +397,7 @@ mod tests {
         let commit = crate::event_submit::tests::commit_for(original.primary_event(), 1);
         snapshot.items[0]
             .submission
-            .apply_outcome(arkret_wire::AuthoritySubmitOutcome::Accepted {
+            .apply_outcome(arkret_wire::AuthoritySubmitResponseBody::Accepted {
                 status: arkret_wire::AuthorityCommitStatus::Committed,
                 commit,
             })
@@ -511,7 +511,7 @@ mod tests {
         );
         assert_eq!(queue.snapshot(), before);
         let mut changed_proof = original.clone();
-        let arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest::Event(
+        let arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequestBody::Event(
             submission,
         ) = &mut changed_proof.request
         else {

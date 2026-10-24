@@ -61,7 +61,7 @@ fn main() -> Result<()> {
             serde_json::to_value(service_resolution(input)?.normalized_did_document)?
         }
         "mock-ice-config" => {
-            let request: arkret_models_collaboration::objects::media::MediaIceConfigRequestBody =
+            let request: arkret_models_collaboration::objects::media::MediaIceConfigurationRequestBody =
                 serde_json::from_value(input)?;
             let endpoint = url::Url::parse("https://server.local/")?;
             let at = chrono::DateTime::parse_from_rfc3339("2026-06-01T00:00:00Z")?
@@ -156,7 +156,7 @@ struct ContactRequestPrepareInput {
 
 fn contact_request_prepare(input: Value) -> Result<Value> {
     use arkret_sdk::contact_operations::{
-        ContactOperationOutcome, ContactPeer, ContactPreparedOutcome,
+        ContactOperationResponseBody, ContactPeer, ContactPreparedResponseBody,
     };
     let input: ContactRequestPrepareInput = serde_json::from_value(input)?;
     let holder = ContactPeer::Human {
@@ -200,7 +200,7 @@ fn contact_request_prepare(input: Value) -> Result<Value> {
         )?
         .author_with_digest_suite(created_at, arkret_sdk::DigestSuite::Sha256)?;
     let draft = arkret_sdk::PreparedEventDraft {
-        unsigned_event_bytes: arkret_sdk::Base64UrlString::new(arkret_sdk::base64url_encode(
+        unsigned_event_base64url: arkret_sdk::Base64UrlString::new(arkret_sdk::base64url_encode(
             arkret_sdk::canonical::canonical_json_bytes(&event.digest_payload()?)?,
         ))
         .map_err(anyhow::Error::msg)?,
@@ -209,8 +209,8 @@ fn contact_request_prepare(input: Value) -> Result<Value> {
         )?,
     };
     draft.unsigned_event_for_kind(arkret_wire::event_kind_str::CONTACT_REQUESTED)?;
-    serde_json::to_value(ContactOperationOutcome::Prepared {
-        outcome: ContactPreparedOutcome::Request {
+    serde_json::to_value(ContactOperationResponseBody::Prepared {
+        outcome: ContactPreparedResponseBody::Request {
             operation_id: input.body.operation_id,
             reservation_handle: arkret_sdk::ReservationHandle::new(format!(
                 "e2e-contact-{}",
@@ -226,7 +226,7 @@ fn contact_request_prepare(input: Value) -> Result<Value> {
 
 #[derive(Deserialize)]
 struct ContactRequestCommitInput {
-    prepared: arkret_sdk::contact_operations::ContactOperationOutcome,
+    prepared: arkret_sdk::contact_operations::ContactOperationResponseBody,
     body: arkret_sdk::contact_operations::ContactCommitRequestBody,
     producer_verification_method: arkret_sdk::DidUrl,
     producer_public_key_b64url: arkret_sdk::Base64UrlString,
@@ -235,9 +235,9 @@ struct ContactRequestCommitInput {
 fn contact_request_commit(input: Value) -> Result<Value> {
     use arkret_sdk::contact_operations::*;
     let input: ContactRequestCommitInput = serde_json::from_value(input)?;
-    let ContactOperationOutcome::Prepared {
+    let ContactOperationResponseBody::Prepared {
         outcome:
-            ContactPreparedOutcome::Request {
+            ContactPreparedResponseBody::Request {
                 operation_id,
                 reservation_handle,
                 event_draft,
@@ -357,8 +357,8 @@ fn contact_request_commit(input: Value) -> Result<Value> {
         peer_endpoint: None,
     };
     list_row.validate_shape()?;
-    let outcome = ContactOperationOutcome::Accepted {
-        outcome: ContactAcceptedOutcome::Request {
+    let outcome = ContactOperationResponseBody::Accepted {
+        outcome: ContactAcceptedResponseBody::Request {
             operation_id,
             request_acceptance_receipt: receipt,
         },
@@ -368,7 +368,7 @@ fn contact_request_commit(input: Value) -> Result<Value> {
 
 #[derive(Deserialize)]
 struct ContactRequestSignInput {
-    prepared: arkret_sdk::contact_operations::ContactOperationOutcome,
+    prepared: arkret_sdk::contact_operations::ContactOperationResponseBody,
     seed_b64url: String,
     holder_did: String,
     device_id: String,
@@ -376,7 +376,7 @@ struct ContactRequestSignInput {
 
 fn contact_request_sign(input: Value) -> Result<Value> {
     let input: ContactRequestSignInput = serde_json::from_value(input)?;
-    let arkret_sdk::contact_operations::ContactOperationOutcome::Prepared { outcome } =
+    let arkret_sdk::contact_operations::ContactOperationResponseBody::Prepared { outcome } =
         input.prepared
     else {
         bail!("Contact signer requires prepared outcome")
@@ -410,16 +410,18 @@ fn contact_request_sign(input: Value) -> Result<Value> {
 
 #[derive(Deserialize)]
 struct ContactRequestVerifyInput {
-    outcome: arkret_sdk::contact_operations::ContactOperationOutcome,
+    outcome: arkret_sdk::contact_operations::ContactOperationResponseBody,
     event: arkret_sdk::Event,
 }
 
 fn contact_request_verify(input: Value) -> Result<Value> {
-    use arkret_sdk::contact_operations::{ContactAcceptedOutcome, ContactOperationOutcome};
+    use arkret_sdk::contact_operations::{
+        ContactAcceptedResponseBody, ContactOperationResponseBody,
+    };
     let input: ContactRequestVerifyInput = serde_json::from_value(input)?;
-    let ContactOperationOutcome::Accepted {
+    let ContactOperationResponseBody::Accepted {
         outcome:
-            ContactAcceptedOutcome::Request {
+            ContactAcceptedResponseBody::Request {
                 request_acceptance_receipt,
                 ..
             },

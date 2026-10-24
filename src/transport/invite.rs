@@ -244,7 +244,7 @@ impl crate::transport::TransportClient {
         &self,
         accepted_event_id: &str,
         invitee: &InviteeResolution,
-    ) -> anyhow::Result<arkret_sdk::InviteDeliveryOutcome> {
+    ) -> anyhow::Result<arkret_sdk::InviteDeliveryResponseBody> {
         let event_id = arkret_sdk::EventId::new(accepted_event_id.to_owned())
             .map_err(|error| anyhow::anyhow!("accepted invite event id is invalid: {error}"))?;
         let idempotency_key = arkret_sdk::InviteId::from_event_id(&event_id).to_string();
@@ -394,7 +394,7 @@ mod invite_addressing_tests {
                     "verification_method": "did:web:ps.bob.example#server-key-1",
                     "payload_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
                     "created_at": "2026-06-07T00:00:00.000Z",
-                    "jws": "header..sig"
+                    "jws": "header..signature"
                 }
             }],
         })

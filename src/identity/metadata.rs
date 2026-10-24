@@ -14,7 +14,7 @@ fn current_metadata_context(
     let strand_id: arkret_sdk::StrandId = id.parse().ok()?;
     let entries = store.realm_current_state_entries(realm);
     let mut strands = entries.iter().filter_map(|entry| {
-        let arkret_wire::TypedCurrentRow::Value { selector, source_stream_ref, revision, value } = entry;
+        let arkret_wire::CurrentState::Value { selector, source_stream_ref, revision, value } = entry;
         matches!(selector, arkret_wire::CurrentSelector::Strand { strand_id: target } if target == &strand_id).then_some((source_stream_ref, revision, value))
     });
     let (stream, revision, strand) = strands.next()?;
@@ -24,7 +24,7 @@ fn current_metadata_context(
         return None;
     }
     let mut sources = entries.iter().filter_map(|entry| {
-        let arkret_wire::TypedCurrentRow::Value { selector, source_stream_ref, revision, value } = entry;
+        let arkret_wire::CurrentState::Value { selector, source_stream_ref, revision, value } = entry;
         matches!(selector, arkret_wire::CurrentSelector::CalendarScheduleSource { strand_id: target } if target == &strand_id).then_some((source_stream_ref, revision, value))
     });
     let (source_stream, source_revision, value) = sources.next()?;

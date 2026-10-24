@@ -34,7 +34,7 @@ OUTPUT_PATH = REPO / "tests" / "e2e" / "mock-operation-inventory.json"
 MOCK_SOURCES = (REPO / "tests" / "e2e" / "mockArkretApi.ts",)
 HTTP_METHODS = {"get", "post", "put", "patch", "delete", "query", "head"}
 RETIRED_MOCK_FIELDS = {"registry_mode", "supported_receipts"}
-RETIRED_NESTED_MOCK_FIELDS = {"auth_metadata": "mode", "method_evidence": "mode"}
+RETIRED_NESTED_MOCK_FIELDS = {"authentication_metadata": "mode", "method_evidence": "mode"}
 
 
 def load_json(path: Path) -> Any:

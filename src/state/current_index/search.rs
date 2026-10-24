@@ -290,7 +290,7 @@ impl CurrentIndex {
             })
             .unwrap_or_default();
         for row in rows {
-            let TypedCurrentRow::Value {
+            let CurrentState::Value {
                 selector: CurrentSelector::ObjectRedaction { target_ref },
                 source_stream_ref,
                 value,
@@ -449,7 +449,7 @@ impl CurrentIndex {
         carrier: &CommittedEventFullView,
         generation: u64,
     ) -> anyhow::Result<bool> {
-        let Some(TypedCurrentRow::Value {
+        let Some(CurrentState::Value {
             source_stream_ref,
             revision,
             value,
@@ -518,7 +518,7 @@ impl CurrentIndex {
         // the Station's canonical-byte disclosure gate, without manufacturing
         // a Message tombstone or rewriting the producer's signed payload.
         for subject in [message.to_string(), full.event.event_id.to_string()] {
-            if let Some(TypedCurrentRow::Value { value, .. }) = self
+            if let Some(CurrentState::Value { value, .. }) = self
                 .ready_selector(
                     realm.as_str(),
                     &CurrentSelector::ObjectRedaction {
@@ -575,7 +575,7 @@ impl CurrentIndex {
             return Ok(false);
         };
         if let arkret_sdk::ScopeRef::Circle { circle_id, .. } = &full.event.scope_ref {
-            let Some(TypedCurrentRow::Value {
+            let Some(CurrentState::Value {
                 source_stream_ref,
                 value,
                 ..
@@ -607,7 +607,7 @@ impl CurrentIndex {
             {
                 return Ok(false);
             }
-            let Some(TypedCurrentRow::Value {
+            let Some(CurrentState::Value {
                 source_stream_ref,
                 value,
                 ..
@@ -624,8 +624,8 @@ impl CurrentIndex {
             else {
                 return Ok(false);
             };
-            let membership: arkret_wire::CircleMemberStateCurrent = serde_json::from_value(value)?;
-            let TypedCurrentRow::Value {
+            let membership: arkret_wire::CircleMemberStateValue = serde_json::from_value(value)?;
+            let CurrentState::Value {
                 source_stream_ref: parent_stream,
                 ..
             } = &parent;
@@ -690,7 +690,7 @@ impl CurrentIndex {
         }
         let mut active = Vec::new();
         for policy_id in policies {
-            let Some(TypedCurrentRow::Value { value, .. }) = self
+            let Some(CurrentState::Value { value, .. }) = self
                 .ready_selector(
                     realm.as_str(),
                     &CurrentSelector::Policy {
@@ -1328,7 +1328,7 @@ pub(crate) mod tests {
                 .finish();
             let target = MessageId::from_event_id(&fixture.message.event.event_id);
             fixture.redact_message_current(target.as_str());
-            let TypedCurrentRow::Value {
+            let CurrentState::Value {
                 value,
                 source_stream_ref,
                 revision,
@@ -1829,7 +1829,7 @@ pub(crate) mod tests {
         let full = later.last().unwrap();
         snapshot.visible_stream_heads[0].stream_position = full.commit.stream_position;
         snapshot.visible_stream_heads[0].commit_id = full.commit.commit_id.clone();
-        snapshot.current_state_entries.push(TypedCurrentRow::Value {
+        snapshot.current_state_entries.push(CurrentState::Value {
             selector: CurrentSelector::Policy {
                 policy_id: policies.last().unwrap().id.clone(),
             },
@@ -1892,7 +1892,7 @@ pub(crate) mod tests {
         let redaction = &later[1];
         snapshot.visible_stream_heads[0].stream_position = redaction.commit.stream_position;
         snapshot.visible_stream_heads[0].commit_id = redaction.commit.commit_id.clone();
-        snapshot.current_state_entries.push(TypedCurrentRow::Value {
+        snapshot.current_state_entries.push(CurrentState::Value {
             selector: CurrentSelector::ObjectRedaction { target_ref: subject },
             source_stream_ref: redaction.commit.stream_ref.clone(),
             revision: CurrentRevision { commit_id: redaction.commit.commit_id.clone(), stream_position: redaction.commit.stream_position },
@@ -1960,7 +1960,7 @@ pub(crate) mod tests {
                 selector_of(current),
                 CurrentSelector::MessageRevision { .. }
             ) {
-                *current = TypedCurrentRow::Value {
+                *current = CurrentState::Value {
                     selector: selector_of(current).clone(),
                     source_stream_ref: revision.commit.stream_ref.clone(),
                     revision: CurrentRevision {
@@ -2034,7 +2034,7 @@ pub(crate) mod tests {
                 stream_position: create.commit.stream_position,
             }],
             current_state_entries: vec![
-                TypedCurrentRow::Value {
+                CurrentState::Value {
                     selector: CurrentSelector::MemberState {
                         actor_id: actor.clone(),
                     },
@@ -2042,7 +2042,7 @@ pub(crate) mod tests {
                     revision: revision.clone(),
                     value: json!({"membership":"join"}),
                 },
-                TypedCurrentRow::Value {
+                CurrentState::Value {
                     selector: CurrentSelector::Strand {
                         strand_id: strand.clone(),
                     },
@@ -2056,7 +2056,7 @@ pub(crate) mod tests {
                     ))
                     .unwrap(),
                 },
-                TypedCurrentRow::Value {
+                CurrentState::Value {
                     selector: CurrentSelector::MessageRevision {
                         message_id: MessageId::from_event_id(&create.event.event_id),
                     },
@@ -2086,7 +2086,7 @@ pub(crate) mod tests {
         generation: u64,
     ) -> CurrentStage {
         let realm = snapshot.realm_id.to_string();
-        let frame = serde_json::from_value(json!({"kind":"delta", "cursor":"ak:cursor:YQ", "realms":{&realm:{"current":{"realm_id":snapshot.realm_id,"governance_generation":0,"stream_heads":snapshot.visible_stream_heads,"entries":snapshot.current_state_entries},"committed_events":rows}}})).unwrap();
+        let frame = serde_json::from_value(json!({"kind":"delta", "cursor":"ak:cursor:YQ", "realms":{&realm:{"current":{"realm_id":snapshot.realm_id,"governance_generation":"0","stream_heads":snapshot.visible_stream_heads,"entries":snapshot.current_state_entries},"committed_events":rows}}})).unwrap();
         index
             .stage_current_install(
                 || Ok(generation),
@@ -2205,8 +2205,7 @@ pub(crate) mod tests {
             .finish();
             match scenario {
                 "leave" => {
-                    let TypedCurrentRow::Value { value, .. } =
-                        &mut snapshot.current_state_entries[0];
+                    let CurrentState::Value { value, .. } = &mut snapshot.current_state_entries[0];
                     *value = json!({"membership":"leave"});
                 }
                 "floor" => {
@@ -2214,8 +2213,7 @@ pub(crate) mod tests {
                         originals[0].commit.stream_position + 1
                 }
                 "wrong_scope" => {
-                    let TypedCurrentRow::Value { value, .. } =
-                        &mut snapshot.current_state_entries[1];
+                    let CurrentState::Value { value, .. } = &mut snapshot.current_state_entries[1];
                     value["scope_circle_id"] = json!(arkret_sdk::CircleId::from_event_id(
                         &originals[0].event.event_id
                     ));
@@ -2234,7 +2232,7 @@ pub(crate) mod tests {
                 ) {
                     continue;
                 }
-                let TypedCurrentRow::Value { revision, .. } = row;
+                let CurrentState::Value { revision, .. } = row;
                 revision.stream_position += 1;
                 revision.commit_id = arkret_sdk::RealmCommitId::from_digest([83; 32]);
             }
@@ -2300,7 +2298,7 @@ pub(crate) mod tests {
             snapshot.visible_stream_heads[0].stream_position = row.commit.stream_position;
             snapshot.visible_stream_heads[0].commit_id = row.commit.commit_id.clone();
             if row.event.kind == EventKind::MessageRevise {
-                snapshot.current_state_entries[2] = TypedCurrentRow::Value {
+                snapshot.current_state_entries[2] = CurrentState::Value {
                     selector: CurrentSelector::MessageRevision {
                         message_id: message.clone(),
                     },

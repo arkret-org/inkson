@@ -1,5 +1,7 @@
 use crate::event_submit::EventSubmitter;
-use crate::models::{MediaIceConfigOutcome, MediaIceConfigRequestBody, SubmitEventResult};
+use crate::models::{
+    MediaIceConfigurationRequestBody, MediaIceConfigurationResponseBody, SubmitEventResult,
+};
 
 pub struct MediaEndpoints<'a> {
     transport: &'a super::TransportClient,
@@ -12,8 +14,8 @@ impl<'a> MediaEndpoints<'a> {
 
     pub async fn ice_config(
         &self,
-        request: &MediaIceConfigRequestBody,
-    ) -> anyhow::Result<MediaIceConfigOutcome> {
+        request: &MediaIceConfigurationRequestBody,
+    ) -> anyhow::Result<MediaIceConfigurationResponseBody> {
         self.transport
             .http()
             .media_ice_config(request)
@@ -24,7 +26,7 @@ impl<'a> MediaEndpoints<'a> {
     pub async fn token_exchange(
         &self,
         request: &arkret_sdk::CallMediaTokenExchangeRequestBody,
-    ) -> anyhow::Result<arkret_sdk::CallMediaTokenExchangeOutcome> {
+    ) -> anyhow::Result<arkret_sdk::CallMediaTokenExchangeResponseBody> {
         self.transport
             .http()
             .media_token_exchange(request)

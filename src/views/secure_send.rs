@@ -65,7 +65,7 @@ fn scope_current_evidence(
         })
         .and_then(|entries| {
             entries.iter().find_map(|entry| match entry {
-                arkret_sdk::TypedCurrentRow::Value {
+                arkret_sdk::CurrentState::Value {
                     selector: arkret_sdk::CurrentSelector::MlsGroup { scope_ref },
                     source_stream_ref,
                     revision,
@@ -185,7 +185,7 @@ pub(crate) fn use_scope_send_probe(
                     view.entries.iter().any(|entry| {
                         matches!(
                             entry,
-                            arkret_sdk::TypedCurrentRow::Value {
+                            arkret_sdk::CurrentState::Value {
                                 selector: arkret_sdk::CurrentSelector::RealmGenesis,
                                 ..
                             }
@@ -904,7 +904,7 @@ pub(crate) async fn submit_secure_send(
 
 #[cfg(test)]
 mod readiness_current_tests {
-    use arkret_sdk::{CommitStreamRef, CurrentRevision, CurrentSelector, TypedCurrentRow};
+    use arkret_sdk::{CommitStreamRef, CurrentRevision, CurrentSelector, CurrentState};
 
     use super::*;
     use crate::current_projection::RealmCurrentView;
@@ -938,9 +938,9 @@ mod readiness_current_tests {
         }
     }
 
-    fn row(epoch: u64, position: u64) -> TypedCurrentRow {
+    fn row(epoch: u64, position: u64) -> CurrentState {
         let scope = scope();
-        TypedCurrentRow::Value {
+        CurrentState::Value {
             selector: CurrentSelector::MlsGroup {
                 scope_ref: scope.clone(),
             },
@@ -955,8 +955,8 @@ mod readiness_current_tests {
                 "effective_scope": scope,
                 "genesis_event_ref": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
                 "current_mls_commit_event_ref": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-                "cipher_suite": "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519", "epoch": epoch,
-                "current_key_access_revision": 2, "covered_key_access_revision": 2,
+                "cipher_suite": "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519", "epoch": (epoch).to_string(),
+                "current_key_access_revision": "2", "covered_key_access_revision": "2",
                 "public_tree_ref": "ak:blob:sha256:431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460"
             }),
         }

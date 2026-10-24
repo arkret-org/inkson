@@ -339,7 +339,7 @@ async fn search_current_message_redaction_is_terminal_without_history_and_scrubs
         fixture.snapshot.current_state_entries.retain(|row| {
             !matches!(
                 row,
-                arkret_sdk::TypedCurrentRow::Value {
+                arkret_sdk::CurrentState::Value {
                     selector: arkret_sdk::CurrentSelector::ObjectRedaction { .. },
                     ..
                 }
@@ -390,7 +390,7 @@ async fn search_current_message_redaction_rejects_bad_evidence_without_publicati
             .unwrap();
         let target = arkret_sdk::MessageId::from_event_id(&fixture.message.event.event_id);
         fixture.redact_message_current(target.as_str());
-        let arkret_sdk::TypedCurrentRow::Value {
+        let arkret_sdk::CurrentState::Value {
             value,
             source_stream_ref,
             revision,
@@ -618,7 +618,7 @@ fn realm_frame(
     }]);
     let mut entry = json!({"current":{
         "realm_id":realm,
-        "governance_generation":1,
+        "governance_generation":"1",
         "stream_heads": if baseline.is_some() { heads.clone() } else { json!([]) },
         "entries":[{
             "selector":selector,
@@ -651,7 +651,7 @@ fn frame(revision: u64, removed: bool) -> String {
     });
     json!({"kind":"delta","cursor":"ak:cursor:YQ",
     "realms":{REALM:{"current":{
-        "realm_id":REALM,"governance_generation":1,"stream_heads":[],"entries":[entry]
+        "realm_id":REALM,"governance_generation":"1","stream_heads":[],"entries":[entry]
     }}}})
     .to_string()
 }
@@ -1019,7 +1019,7 @@ fn member_frame(
         .collect::<Vec<_>>();
     let mut entry = json!({"current":{
         "realm_id":realm,
-        "governance_generation":1,
+        "governance_generation":"1",
         "stream_heads": baseline.map_or_else(|| json!([]), |(_, cut, _)| heads(cut)),
         "entries":entries
     }});

@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Input {
-    outcome: arkret_sdk::SessionGrantOutcome,
+    outcome: arkret_sdk::SessionGrantResponseBody,
     station_url: url::Url,
     holder_seed_b64url: String,
     identity_did: arkret_sdk::Did,

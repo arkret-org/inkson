@@ -24,10 +24,10 @@
 /// §8.1`). Re-exported from the SDK so the renderer pins exactly one value.
 use arkret_crypto::sframe::{FrameKeyContext, MlsExporterSource, derive_frame_key};
 use arkret_sdk::{
-    CallId, CallMediaDesiredMedia, CallMediaParticipantBinding, CallMediaTokenExchangeOutcome,
-    CallMediaTokenExchangeRequestBody, DeviceId, DidCoreId, MediaBackendKind, MediaBackendToken,
-    MediaIceConfigRequestBody, MediaIceMode, MlsGovernanceBindingPayload, PlaintextDataClassKind,
-    PlaintextVisibleServicesPayload, RealmId,
+    CallId, CallMediaDesiredMedia, CallMediaParticipantBinding, CallMediaTokenExchangeRequestBody,
+    CallMediaTokenExchangeResponseBody, DeviceId, DidCoreId, MediaBackendKind, MediaBackendToken,
+    MediaIceConfigurationRequestBody, MediaIceMode, MlsGovernanceBindingPayload,
+    PlaintextDataClassKind, PlaintextVisibleServicesPayload, RealmId,
 };
 use arkret_signatures::media::{
     IceConfig, MediaServiceAnchors, call_media_token_exchange, verify_call_media_token_outcome,
@@ -358,7 +358,7 @@ pub fn verified_binding_anchors(
             .map_err(|_| RtcClientError::TokenIssuerUnauthorised)?
             .signing_keys
         {
-            let bytes = arkret_sdk::canonical::base64url_decode(&key.public_key_b64u)
+            let bytes = arkret_sdk::canonical::base64url_decode(&key.public_key_base64url)
                 .map_err(|_| RtcClientError::TokenIssuerUnauthorised)?;
             let bytes: [u8; 32] = bytes
                 .try_into()
@@ -507,9 +507,9 @@ fn policy_media_service_decrypts(payload: Option<&Value>) -> bool {
     payload
         .and_then(|value| {
             value
-                .get("media_service_decrypts")
-                .or_else(|| value.pointer("/components/media_service_decrypts"))
-                .or_else(|| value.pointer("/media/media_service_decrypts"))
+                .get("media_service_decryption_allowed")
+                .or_else(|| value.pointer("/components/media_service_decryption_allowed"))
+                .or_else(|| value.pointer("/media/media_service_decryption_allowed"))
         })
         .and_then(Value::as_bool)
         .unwrap_or(false)
@@ -673,7 +673,7 @@ pub async fn join_call_media(
     );
     token_request.desired_media = Some(request.desired_media.into_wire());
 
-    let outcome: CallMediaTokenExchangeOutcome = async {
+    let outcome: CallMediaTokenExchangeResponseBody = async {
         crate::transport::EndpointClients::from_http(api.sdk_http_client()?)
             .media()
             .token_exchange(&token_request)
@@ -706,7 +706,7 @@ pub async fn join_call_media(
 
     // ICE config — verified against the same anchors. A focus-bound call
     // always relays through the SFU media plane.
-    let ice_request = MediaIceConfigRequestBody {
+    let ice_request = MediaIceConfigurationRequestBody {
         realm_id: ids.realm_id.clone(),
         call_id: request.call_id.clone(),
         actor_id: arkret_sdk::ActorId::account(request.account_id.clone()),
@@ -830,7 +830,7 @@ impl RealmMlsExporter {
     pub fn current_governance_binding(
         &self,
         checkpoint: &garth::mls::checkpoint::MlsLocalCheckpointEnvelope,
-        current: &arkret_wire::MlsGroupCurrent,
+        current: &arkret_wire::MlsGroupValue,
     ) -> Result<MlsGovernanceBindingPayload, RtcClientError> {
         let binding = self
             .group
@@ -994,7 +994,7 @@ pub(crate) fn current_media_governance_evidence(
     let policy_bundle_payload =
         crate::current_projection::current_realm_policy_bundle_value(&view.entries);
     let plaintext_visible_services_payload = view.entries.iter().find_map(|row| {
-        let arkret_wire::TypedCurrentRow::Value {
+        let arkret_wire::CurrentState::Value {
             selector, value, ..
         } = row;
         (*selector == arkret_wire::CurrentSelector::RealmPlaintextVisibleServices)
@@ -1242,12 +1242,12 @@ mod tests {
     }
 
     fn media_governance_evidence(
-        media_service_decrypts: bool,
+        media_service_decryption_allowed: bool,
         media_plaintext_ui_confirmed: bool,
     ) -> MediaGovernanceEvidence {
         let media_service_payload = json!({
             "service_id": "ak:did_core:web:media.example",
-            "ice_config_endpoint": "https://media.example/_arkret/self/rtc/ice-config",
+            "ice_configuration_url": "https://media.example/_arkret/self/rtc/ice-config",
             "foci": [
                 {
                     "focus_id": "fra-1",
@@ -1256,13 +1256,13 @@ mod tests {
                 }
             ]
         });
-        let policy_bundle_payload = media_service_decrypts.then(|| {
+        let policy_bundle_payload = media_service_decryption_allowed.then(|| {
             json!({
                 "policy_revision": 3,
-                "media_service_decrypts": true
+                "media_service_decryption_allowed": true
             })
         });
-        let plaintext_visible_services_payload = media_service_decrypts.then(|| {
+        let plaintext_visible_services_payload = media_service_decryption_allowed.then(|| {
             PlaintextVisibleServicesPayload::new(vec![arkret_sdk::PlaintextVisibleService::new(
                 crate::mls_api_helpers::principal_core_id("did:web:media.example").unwrap(),
                 "media_service",
@@ -1563,7 +1563,7 @@ mod tests {
             &accepted_commit,
             1_760_000_000_002,
         );
-        let base_current = arkret_wire::MlsGroupCurrent {
+        let base_current = arkret_wire::MlsGroupValue {
             effective_scope: effective_scope.clone(),
             genesis_event_ref: base_event_ref.clone(),
             cipher_suite: arkret_wire::NonEmptyString::new(

@@ -183,7 +183,7 @@ mod tests {
         assert!(store.direct_message_context(realm, &actor).is_none());
         assert!(store.direct_structure_context(realm, &actor).is_none());
         let row = |selector: serde_json::Value, value: serde_json::Value| {
-            serde_json::from_value::<arkret_wire::TypedCurrentRow>(serde_json::json!({
+            serde_json::from_value::<arkret_wire::CurrentState>(serde_json::json!({
                 "selector": selector,
                 "source_stream_ref": {"kind": "realm", "realm_id": realm},
                 "revision": {"commit_id": "ak:realm_commit:AT33EWBTXdTx5CjY-ogbIIF2T4vh-v7jCMCQ80Fss2Rq", "stream_position": 1},
@@ -233,7 +233,7 @@ mod tests {
             "structural authority does not reopen Messages"
         );
         let mut left = rows.clone();
-        let arkret_wire::TypedCurrentRow::Value { value, .. } = &mut left[2];
+        let arkret_wire::CurrentState::Value { value, .. } = &mut left[2];
         *value = serde_json::json!({"membership": "leave"});
         store
             .install_current_product_view(

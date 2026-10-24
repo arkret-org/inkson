@@ -303,7 +303,7 @@ pub(super) fn mention_state_from_entries(
             } if entry_realm.as_str() == realm_id => {
                 matched = true;
                 selection = entry.selection;
-                if entry.selection.accept_third_party_mention {
+                if entry.selection.third_party_mention_delivery_allowed {
                     return (AgentMentionPolicy::Allowed, selection);
                 }
             }

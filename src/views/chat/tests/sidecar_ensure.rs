@@ -27,7 +27,7 @@ fn attach_request() -> arkret_sdk::SidecarEnsureRequestBody {
     .unwrap()
 }
 
-fn accepted() -> arkret_sdk::SidecarEnsureOutcome {
+fn accepted() -> arkret_sdk::SidecarEnsureResponseBody {
     serde_json::from_value(json!({
         "status":"accepted",
         "operation_id":"ak:operation:01964137-0000-7000-8000-0000000000a1",
@@ -81,7 +81,7 @@ fn sidecar_operation_uses_canonical_id_and_restores_the_exact_reservation_bindin
     assert_eq!(serde_json::to_vec(&restored).unwrap(), bytes);
     assert_eq!(restored.request.operation_id(), &operation_id);
     let mut outcome = accepted();
-    let arkret_sdk::SidecarEnsureOutcome::Accepted(result) = &mut outcome else {
+    let arkret_sdk::SidecarEnsureResponseBody::Accepted(result) = &mut outcome else {
         unreachable!()
     };
     result.operation_id = operation_id.clone();

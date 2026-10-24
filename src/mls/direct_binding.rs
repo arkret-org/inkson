@@ -59,9 +59,9 @@ static QUERY_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU
 pub(crate) fn mls_authoring_intent(
     intent: &crate::operation::EventIntent,
     genesis: &arkret_sdk::Event,
-    outcome: &arkret_sdk::direct_conversation::DirectConversationResolveOutcome,
+    outcome: &arkret_sdk::direct_conversation::DirectConversationResolveResponseBody,
 ) -> anyhow::Result<crate::operation::EventIntent> {
-    use arkret_sdk::direct_conversation::DirectConversationResolveOutcome;
+    use arkret_sdk::direct_conversation::DirectConversationResolveResponseBody;
     outcome.validate_shape()?;
     let realm = intent
         .realm_id_opt()
@@ -90,7 +90,7 @@ pub(crate) fn mls_authoring_intent(
         "Direct MLS resolver names another Realm"
     );
     let (source, reference) = match outcome {
-        DirectConversationResolveOutcome::Provisional { .. } => {
+        DirectConversationResolveResponseBody::Provisional { .. } => {
             anyhow::ensure!(
                 outcome.provisional_history_send_allowed(),
                 "Direct founding completion only permits its first binding confirmation"
@@ -104,7 +104,7 @@ pub(crate) fn mls_authoring_intent(
                 genesis.event_id.clone(),
             )
         }
-        DirectConversationResolveOutcome::Found { .. } => (
+        DirectConversationResolveResponseBody::Found { .. } => (
             arkret_wire::AuthoritySourceId::DIRECT_CONVERSATION_PARTICIPANT_V1,
             coordinates
                 .binding_event_ref
@@ -258,9 +258,9 @@ pub(crate) async fn install_resolved_message_context(
     epoch: u64,
     query_sequence: u64,
     peer: arkret_sdk::contact_operations::ContactPeer,
-    outcome: &arkret_sdk::direct_conversation::DirectConversationResolveOutcome,
+    outcome: &arkret_sdk::direct_conversation::DirectConversationResolveResponseBody,
 ) -> anyhow::Result<()> {
-    use arkret_sdk::direct_conversation::DirectConversationResolveOutcome;
+    use arkret_sdk::direct_conversation::DirectConversationResolveResponseBody;
     outcome.validate_shape()?;
     // A refresh in flight is not a revocation. Only a current authenticated
     // result may replace or invalidate an installed authoring context.
@@ -273,7 +273,7 @@ pub(crate) async fn install_resolved_message_context(
         );
         if matches!(
             outcome,
-            DirectConversationResolveOutcome::TemporarilyUnavailable { .. }
+            DirectConversationResolveResponseBody::TemporarilyUnavailable { .. }
         ) {
             return Ok(());
         }
@@ -283,10 +283,10 @@ pub(crate) async fn install_resolved_message_context(
         };
         let realm = coordinates.realm_id.to_string();
         let retain = match outcome {
-            DirectConversationResolveOutcome::Found { send_blockers, .. } => {
+            DirectConversationResolveResponseBody::Found { send_blockers, .. } => {
                 send_blockers.is_empty()
             }
-            DirectConversationResolveOutcome::Provisional {
+            DirectConversationResolveResponseBody::Provisional {
                 group_state_ref: Some(_),
                 ..
             } if outcome.provisional_history_send_allowed()
@@ -314,7 +314,7 @@ pub(crate) async fn install_resolved_message_context(
     };
     let realm = coordinates.realm_id.clone();
     let (authority_source, authority_event_ref, group_state_ref, structure_only) = match outcome {
-        DirectConversationResolveOutcome::Found {
+        DirectConversationResolveResponseBody::Found {
             coordinates,
             group_state_ref,
             send_blockers,
@@ -332,7 +332,7 @@ pub(crate) async fn install_resolved_message_context(
                 false,
             )
         }
-        DirectConversationResolveOutcome::Suspended {
+        DirectConversationResolveResponseBody::Suspended {
             coordinates,
             blockers,
             group_state_ref: Some(group_state_ref),
@@ -354,7 +354,7 @@ pub(crate) async fn install_resolved_message_context(
                 true,
             )
         }
-        DirectConversationResolveOutcome::Provisional {
+        DirectConversationResolveResponseBody::Provisional {
             group_state_ref: Some(group_state_ref),
             ..
         } if outcome.provisional_history_send_allowed()
@@ -516,7 +516,7 @@ async fn founding_own_station_prefix_inner(
     replica
         .restore_bound_anchor(&client, &reference, genesis)
         .await?;
-    let request = arkret_sdk::StreamScanRequest {
+    let request = arkret_sdk::StreamScanRequestBody {
         realm_id: realm.clone(),
         stream_ref: reference.stream_ref.clone(),
         direction: arkret_sdk::StreamScanDirection::After(Some(0)),
@@ -672,11 +672,11 @@ pub(crate) async fn ensure_binding(
             },
         )
         .await?;
-    use arkret_sdk::direct_conversation::DirectConversationResolveOutcome;
+    use arkret_sdk::direct_conversation::DirectConversationResolveResponseBody;
     resolved.validate_shape()?;
     let (coordinates, authorization_basis, initial_state_ref) = match resolved {
-        DirectConversationResolveOutcome::Found { .. } => {
-            diagnostic_stage("resolve_outcome", "found");
+        DirectConversationResolveResponseBody::Found { .. } => {
+            diagnostic_stage("resolve_response_body", "found");
             install_resolved_message_context(
                 &http,
                 state_store,
@@ -690,7 +690,7 @@ pub(crate) async fn ensure_binding(
             fence.check()?;
             return Ok(());
         }
-        DirectConversationResolveOutcome::Provisional {
+        DirectConversationResolveResponseBody::Provisional {
             coordinates,
             authorization_basis,
             initial_exact_pair_group_state_ref: Some(initial),
@@ -698,21 +698,21 @@ pub(crate) async fn ensure_binding(
                 arkret_sdk::direct_conversation::DirectConversationPeerMlsAdmission::Durable,
             ..
         } => {
-            diagnostic_stage("resolve_outcome", "provisional_ready");
+            diagnostic_stage("resolve_response_body", "provisional_ready");
             diagnostic_provisional(
                 true,
                 arkret_sdk::direct_conversation::DirectConversationPeerMlsAdmission::Durable,
             );
             (coordinates, authorization_basis, initial)
         }
-        DirectConversationResolveOutcome::Provisional {
+        DirectConversationResolveResponseBody::Provisional {
             initial_exact_pair_group_state_ref,
             peer_mls_admission,
             ..
         } => {
             let initial_present = initial_exact_pair_group_state_ref.is_some();
             diagnostic_stage(
-                "resolve_outcome",
+                "resolve_response_body",
                 if initial_present {
                     "provisional_not_durable"
                 } else {
@@ -903,7 +903,7 @@ mod tests {
     async fn cold_agent_chat_waits_for_binding_and_durable_peer_closes_human_bootstrap() {
         use arkret_sdk::direct_conversation::{
             DirectConversationPeerMlsAdmission as Admission,
-            DirectConversationResolveOutcome as Outcome,
+            DirectConversationResolveResponseBody as Outcome,
         };
         let directory = tempfile::tempdir().unwrap();
         let account = crate::test_support::authority_at_station(
@@ -1059,7 +1059,7 @@ mod tests {
             crate::test_support::committed_event::fixture_time(100),
             bundle.current_assertion.nonce.clone(),
         );
-        let backfill = crate::models::BackfillView(arkret_wire::StreamScanOutcome {
+        let backfill = crate::models::BackfillView(arkret_wire::StreamScanResponseBody {
             committed_events: items
                 .into_iter()
                 .map(arkret_wire::CommittedEventView::Full)
@@ -1216,7 +1216,7 @@ mod tests {
             }))
             .unwrap();
         let provisional =
-            arkret_sdk::direct_conversation::DirectConversationResolveOutcome::Provisional {
+            arkret_sdk::direct_conversation::DirectConversationResolveResponseBody::Provisional {
                 coordinates: coordinates.clone(),
                 authorization_basis:
                     arkret_sdk::DirectConversationAuthorizationBasis::accepted_contact(vec![
@@ -1257,7 +1257,7 @@ mod tests {
         );
         assert!(mls_authoring_intent(&authorized, &create, &provisional).is_err());
         let mut completing = provisional.clone();
-        if let arkret_sdk::direct_conversation::DirectConversationResolveOutcome::Provisional {
+        if let arkret_sdk::direct_conversation::DirectConversationResolveResponseBody::Provisional {
             initial_exact_pair_group_state_ref,
             peer_mls_admission,
             ..
@@ -1277,7 +1277,7 @@ mod tests {
         let binding = arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [3; 32]);
         let mut bound_coordinates = coordinates;
         bound_coordinates.binding_event_ref = Some(binding.clone());
-        let found = arkret_sdk::direct_conversation::DirectConversationResolveOutcome::Found {
+        let found = arkret_sdk::direct_conversation::DirectConversationResolveResponseBody::Found {
             coordinates: bound_coordinates,
             group_state_ref: binding.clone(),
             send_blockers: vec![],
@@ -1335,10 +1335,10 @@ mod tests {
             )
             .is_err()
         );
-        let unavailable = arkret_sdk::direct_conversation::DirectConversationResolveOutcome::TemporarilyUnavailable { retry_after_ms:None };
+        let unavailable = arkret_sdk::direct_conversation::DirectConversationResolveResponseBody::TemporarilyUnavailable { retry_after_ms:None };
         assert!(mls_authoring_intent(&intent, &create, &unavailable).is_err());
         let mut wrong = found;
-        if let arkret_sdk::direct_conversation::DirectConversationResolveOutcome::Found {
+        if let arkret_sdk::direct_conversation::DirectConversationResolveResponseBody::Found {
             coordinates,
             ..
         } = &mut wrong
@@ -1353,7 +1353,7 @@ mod tests {
     #[test]
     fn direct_binding_never_invents_a_missing_founding_prefix() {
         let (bundle, keys, freshness, _) = founding_fixture();
-        let empty = crate::models::BackfillView(arkret_wire::StreamScanOutcome {
+        let empty = crate::models::BackfillView(arkret_wire::StreamScanResponseBody {
             committed_events: Vec::new(),
             readable_floor: None,
             truncated: false,

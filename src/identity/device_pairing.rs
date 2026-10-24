@@ -137,7 +137,7 @@ fn validate_pair_request_against_target_proof(
     let event = &request.authorize_event.event;
     let payload = arkret_sdk::DeviceAuthorizePayload::try_from(event)
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-    let requested_key = arkret_sdk::base64url_decode(request.new_device_pubkey.key.as_bytes())
+    let requested_key = arkret_sdk::base64url_decode(request.new_device_public_key.key.as_bytes())
         .map_err(|error| anyhow::anyhow!("decode requested pairing key: {error}"))?;
     let proof_key = arkret_sdk::decode_ed25519_multibase(
         proof
@@ -148,7 +148,7 @@ fn validate_pair_request_against_target_proof(
     )
     .map_err(|error| anyhow::anyhow!("decode pairing proof key: {error}"))?;
     if event.actor_id.as_account_id() != Some(&proof.account_id)
-        || request.new_device_pubkey.kid.as_str() != proof.device_id.as_str()
+        || request.new_device_public_key.kid.as_str() != proof.device_id.as_str()
         || requested_key.as_slice() != proof_key.as_slice()
         || payload.device_id != proof.device_id
         || payload.device_public_key_did.as_str() != proof.device_public_key_did.as_str()
@@ -229,8 +229,8 @@ pub async fn author_pairing_request_body(
 ) -> anyhow::Result<arkret_sdk::AccountDevicePairRequestBody> {
     let attestation = payload.target_proof.clone();
     arkret_sdk::signatures::device_pairing::verify_device_pairing_target_proof(&attestation)?;
-    let new_device_pubkey = payload.bootstrap.new_device_pubkey.clone();
-    if new_device_pubkey.kid.as_str() != attestation.device_id.as_str() {
+    let new_device_public_key = payload.bootstrap.new_device_public_key.clone();
+    if new_device_public_key.kid.as_str() != attestation.device_id.as_str() {
         anyhow::bail!("pairing public key and target attestation name different devices");
     }
     let server_challenge =
@@ -242,7 +242,7 @@ pub async fn author_pairing_request_body(
     // Same core, different Station is a different account and MUST be refused:
     // the comparison is over the whole AccountId, not its principal half.
     arkret_sdk::signatures::device_pairing::verify_server_device_pairing_target_proof(
-        &new_device_pubkey,
+        &new_device_public_key,
         &server_challenge,
         &active_scope.authority,
         &attestation,
@@ -321,7 +321,7 @@ pub async fn author_pairing_request_body(
 
     let request = arkret_sdk::AccountDevicePairRequestBody {
         pairing_code: payload.bootstrap.pairing_code.clone(),
-        new_device_pubkey,
+        new_device_public_key,
         authorize_event,
         display_name: payload
             .bootstrap
@@ -341,7 +341,7 @@ pub async fn author_pairing_request_body(
 pub async fn approve_device_pairing(
     api: &crate::transport::TransportClient,
     payload: &ResolvedPairingApproval,
-) -> anyhow::Result<arkret_sdk::AccountDevicePairOutcome> {
+) -> anyhow::Result<arkret_sdk::AccountDevicePairResponseBody> {
     let scope = crate::secure_key_store::active_device_seed_scope()
         .ok_or_else(|| anyhow::anyhow!("no active account can approve pairing"))?;
     let store = crate::secure_key_store::default_secure_key_store("inkson");
@@ -408,7 +408,7 @@ pub async fn verify_authorized_pairing_event_for_authority(
     http: &arkret_sdk::http_client::Client,
     principal: &arkret_sdk::Did,
     authority: &arkret_sdk::AccountId,
-    outcome: &arkret_sdk::DevicePairingStatusOutcome,
+    outcome: &arkret_sdk::DevicePairingStatusResponseBody,
     attestation: &arkret_sdk::DevicePairingTargetProof,
 ) -> anyhow::Result<arkret_sdk::Event> {
     outcome.validate()?;

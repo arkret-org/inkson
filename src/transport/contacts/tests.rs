@@ -156,9 +156,9 @@ fn contact_operation_binding_uses_the_registered_uuidv7_identifier() {
 fn request_success_exit_rejects_terminal_failure_and_another_preparation() {
     let request = event(arkret_wire::event_kind_str::CONTACT_REQUESTED);
     assert!(successful_contact_request(accepted(&request)).is_ok());
-    let failed = ContactOperationOutcome::Failed {
-        outcome: ContactFailedOutcome {
-            result_kind: ContactResultKind::Request,
+    let failed = ContactOperationResponseBody::Failed {
+        outcome: ContactFailedResponseBody {
+            operation_kind: ContactResultKind::Request,
             operation_id: operation_id(),
             reason: ContactOperationRejectReason::ContactRoundConflict,
         },
@@ -169,13 +169,13 @@ fn request_success_exit_rejects_terminal_failure_and_another_preparation() {
             .to_string()
             .contains("ContactRoundConflict")
     );
-    let prepared = ContactOperationOutcome::Prepared {
-        outcome: ContactPreparedOutcome::Request {
+    let prepared = ContactOperationResponseBody::Prepared {
+        outcome: ContactPreparedResponseBody::Request {
             operation_id: operation_id(),
             reservation_handle: ReservationHandle::new("contact-fixture-reservation").unwrap(),
             expires_at: request.created_at,
             event_draft: PreparedEventDraft {
-                unsigned_event_bytes: arkret_sdk::Base64UrlString::new(
+                unsigned_event_base64url: arkret_sdk::Base64UrlString::new(
                     arkret_sdk::base64url_encode(
                         arkret_sdk::canonical::canonical_json_bytes(
                             &request.digest_payload().unwrap(),
@@ -206,7 +206,7 @@ fn signature() -> arkret_sdk::ProtocolSignature {
     .unwrap()
 }
 
-fn accepted(event: &arkret_sdk::Event) -> ContactOperationOutcome {
+fn accepted(event: &arkret_sdk::Event) -> ContactOperationResponseBody {
     let peer: ContactPeer = serde_json::from_value(event.payload["peer"].clone()).unwrap();
     let holder = ContactPeer::Human {
         account_id: event.actor_id.as_account_id().unwrap().clone(),
@@ -270,16 +270,16 @@ fn accepted(event: &arkret_sdk::Event) -> ContactOperationOutcome {
         scope_instances: vec![],
         closed_round: None,
         issued_at: signature().created_at,
-        fresh_until: signature().created_at + chrono::Duration::minutes(15),
+        cache_expires_at: signature().created_at + chrono::Duration::minutes(15),
         signature: signature(),
     };
     let operation_id = operation_id();
     let outcome = match event.kind.as_str() {
-        arkret_wire::event_kind_str::CONTACT_REQUESTED => ContactAcceptedOutcome::Request {
+        arkret_wire::event_kind_str::CONTACT_REQUESTED => ContactAcceptedResponseBody::Request {
             operation_id,
             request_acceptance_receipt: request,
         },
-        arkret_wire::event_kind_str::CONTACT_ACCEPTED => ContactAcceptedOutcome::Response {
+        arkret_wire::event_kind_str::CONTACT_ACCEPTED => ContactAcceptedResponseBody::Response {
             operation_id,
             normal_response_acceptance_receipt: NormalResponseAcceptanceReceipt {
                 trust_domain_id: domain(),
@@ -298,7 +298,7 @@ fn accepted(event: &arkret_sdk::Event) -> ContactOperationOutcome {
             lineage,
             current_proof,
         },
-        arkret_wire::event_kind_str::CONTACT_REJECTED => ContactAcceptedOutcome::Reject {
+        arkret_wire::event_kind_str::CONTACT_REJECTED => ContactAcceptedResponseBody::Reject {
             operation_id,
             reject_acceptance_receipt: RejectAcceptanceReceipt {
                 trust_domain_id: domain(),
@@ -313,19 +313,21 @@ fn accepted(event: &arkret_sdk::Event) -> ContactOperationOutcome {
                 signature: signature(),
             },
         },
-        arkret_wire::event_kind_str::CONTACT_SCOPE_UPDATE => ContactAcceptedOutcome::ScopeUpdate {
-            operation_id,
-            lineage,
-            current_proof,
-        },
-        arkret_wire::event_kind_str::CONTACT_TOMBSTONE => ContactAcceptedOutcome::Tombstone {
+        arkret_wire::event_kind_str::CONTACT_SCOPE_UPDATE => {
+            ContactAcceptedResponseBody::ScopeUpdate {
+                operation_id,
+                lineage,
+                current_proof,
+            }
+        }
+        arkret_wire::event_kind_str::CONTACT_TOMBSTONE => ContactAcceptedResponseBody::Tombstone {
             operation_id,
             lineage,
             current_proof,
         },
         _ => unreachable!(),
     };
-    ContactOperationOutcome::Accepted { outcome }
+    ContactOperationResponseBody::Accepted { outcome }
 }
 
 fn problem(status: u16, code: &str) -> arkret_sdk::http_client::Error {
@@ -369,10 +371,10 @@ async fn all_five_contacts_retry_only_the_exact_commit() {
 #[tokio::test]
 async fn terminal_success_failure_and_permission_denial_are_not_retried() {
     let event = event(arkret_wire::event_kind_str::CONTACT_REQUESTED);
-    let failed = ContactOperationOutcome::Failed {
-        outcome: ContactFailedOutcome {
+    let failed = ContactOperationResponseBody::Failed {
+        outcome: ContactFailedResponseBody {
             operation_id: operation_id(),
-            result_kind: ContactResultKind::Request,
+            operation_kind: ContactResultKind::Request,
             reason: ContactOperationRejectReason::ContactTerminal,
         },
     };
@@ -437,8 +439,8 @@ fn exact_branch_operation_and_event_are_required_but_later_current_head_is_valid
     let event = event(arkret_wire::event_kind_str::CONTACT_SCOPE_UPDATE);
     let mut outcome = accepted(&event);
     let other = self::event(arkret_wire::event_kind_str::CONTACT_TOMBSTONE);
-    if let ContactOperationOutcome::Accepted {
-        outcome: ContactAcceptedOutcome::ScopeUpdate { current_proof, .. },
+    if let ContactOperationResponseBody::Accepted {
+        outcome: ContactAcceptedResponseBody::ScopeUpdate { current_proof, .. },
     } = &mut outcome
     {
         current_proof.head_event_ref = other.event_id.clone();
@@ -458,8 +460,8 @@ fn exact_branch_operation_and_event_are_required_but_later_current_head_is_valid
         )
         .is_err()
     );
-    if let ContactOperationOutcome::Accepted {
-        outcome: ContactAcceptedOutcome::ScopeUpdate { lineage, .. },
+    if let ContactOperationResponseBody::Accepted {
+        outcome: ContactAcceptedResponseBody::ScopeUpdate { lineage, .. },
     } = &mut outcome
     {
         lineage.event_ref = other.event_id;
@@ -498,15 +500,15 @@ fn every_contact_result_binds_original_producer_method_and_local_key() {
             };
             for index in 0..count {
                 let mut changed = result.clone();
-                let ContactOperationOutcome::Accepted { outcome } = &mut changed else {
+                let ContactOperationResponseBody::Accepted { outcome } = &mut changed else {
                     unreachable!()
                 };
                 let descriptor = match outcome {
-                    ContactAcceptedOutcome::Request {
+                    ContactAcceptedResponseBody::Request {
                         request_acceptance_receipt,
                         ..
                     } => &mut request_acceptance_receipt.core.producer_signer,
-                    ContactAcceptedOutcome::Response {
+                    ContactAcceptedResponseBody::Response {
                         normal_response_acceptance_receipt,
                         lineage,
                         ..
@@ -517,12 +519,12 @@ fn every_contact_result_binds_original_producer_method_and_local_key() {
                             &mut lineage.producer_signer
                         }
                     }
-                    ContactAcceptedOutcome::Reject {
+                    ContactAcceptedResponseBody::Reject {
                         reject_acceptance_receipt,
                         ..
                     } => &mut reject_acceptance_receipt.producer_signer,
-                    ContactAcceptedOutcome::ScopeUpdate { lineage, .. }
-                    | ContactAcceptedOutcome::Tombstone { lineage, .. } => {
+                    ContactAcceptedResponseBody::ScopeUpdate { lineage, .. }
+                    | ContactAcceptedResponseBody::Tombstone { lineage, .. } => {
                         &mut lineage.producer_signer
                     }
                 };
@@ -533,7 +535,7 @@ fn every_contact_result_binds_original_producer_method_and_local_key() {
                         descriptor.verification_method().clone()
                     },
                     if method_mutation {
-                        descriptor.public_key_b64u().clone()
+                        descriptor.public_key_base64url().clone()
                     } else {
                         arkret_sdk::Base64UrlString::new(other_key.public_key_base64url().unwrap())
                             .unwrap()
@@ -585,9 +587,9 @@ fn nested_peer_request_keeps_its_own_producer_and_original_event_signature_is_re
         .expect("the fixture original Event is signed by the bound local device");
     let mut result = accepted(&event);
     validate_contact_commit_outcome(&result, &event, &operation_id(), &local_signer()).unwrap();
-    if let ContactOperationOutcome::Accepted {
+    if let ContactOperationResponseBody::Accepted {
         outcome:
-            ContactAcceptedOutcome::Response {
+            ContactAcceptedResponseBody::Response {
                 normal_response_acceptance_receipt,
                 ..
             },
@@ -599,7 +601,7 @@ fn nested_peer_request_keeps_its_own_producer_and_original_event_signature_is_re
             .producer_signer;
         *producer = ContactProducerSigner::direct(
             arkret_sdk::DidUrl::new("did:web:bob.example#peer-device").unwrap(),
-            producer.public_key_b64u().clone(),
+            producer.public_key_base64url().clone(),
         )
         .unwrap();
     }
@@ -607,9 +609,9 @@ fn nested_peer_request_keeps_its_own_producer_and_original_event_signature_is_re
         validate_contact_commit_outcome(&result, &event, &operation_id(), &local_signer()).is_err(),
         "the response Event binds the exact peer receipt, including its independent producer"
     );
-    if let ContactOperationOutcome::Accepted {
+    if let ContactOperationResponseBody::Accepted {
         outcome:
-            ContactAcceptedOutcome::Response {
+            ContactAcceptedResponseBody::Response {
                 normal_response_acceptance_receipt,
                 ..
             },

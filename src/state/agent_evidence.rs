@@ -188,15 +188,16 @@ impl LocalStateStore {
             return Err("historical Agent key carries inconsistent commit coordinates".to_owned());
         }
         arkret_sdk::ResolvedSignerKey {
-            public_key_b64u: entry.public_key_b64u.clone(),
+            public_key_base64url: entry.public_key_base64url.clone(),
             authorization_ref: entry.authorization_ref.clone(),
             revision: entry.revision.clone(),
             governance_generation: entry.governance_generation,
         }
         .validate()
         .map_err(|error| error.to_string())?;
-        let key_bytes = arkret_sdk::base64url_decode(entry.public_key_b64u.as_str().as_bytes())
-            .map_err(|error| error.to_string())?;
+        let key_bytes =
+            arkret_sdk::base64url_decode(entry.public_key_base64url.as_str().as_bytes())
+                .map_err(|error| error.to_string())?;
         if key_bytes.len() != 32 {
             return Err("historical Agent key must be 32 bytes".to_owned());
         }

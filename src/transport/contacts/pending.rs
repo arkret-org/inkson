@@ -2,7 +2,7 @@
 
 use std::sync::{Arc, LazyLock, Mutex, Weak};
 
-use arkret_sdk::contact_operations::{ContactCommitRequestBody, ContactOperationOutcome};
+use arkret_sdk::contact_operations::{ContactCommitRequestBody, ContactOperationResponseBody};
 use serde::{Deserialize, Serialize};
 
 use super::{AuthoringSessionFence, ContactCommitContext};
@@ -160,7 +160,7 @@ impl PendingOperation {
     pub(crate) async fn resume(
         &self,
         http: &arkret_sdk::http_client::Client,
-    ) -> anyhow::Result<Option<ContactOperationOutcome>> {
+    ) -> anyhow::Result<Option<ContactOperationResponseBody>> {
         let Some(journal) = &self.pending else {
             return Ok(None);
         };

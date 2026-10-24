@@ -71,7 +71,7 @@ async function install() {
     const commit = { phase: "commit", operation_id: body.operation_id, idempotency_key: body.idempotency_key,
       reservation_handle: prepared.reservation_handle, signed_event };
     const accepted = (await invoke(kind, commit))?.body as Record<string, any>;
-    expect(accepted).toMatchObject({ status: "accepted", result_kind: kind });
+    expect(accepted).toMatchObject({ status: "accepted", operation_kind: kind });
     expect((await invoke(kind, commit))?.body).toEqual(accepted);
     expect((await invoke(kind, { ...commit, idempotency_key: "changed" }))?.body).toMatchObject({ status: "failed", reason: "contact_idempotency_conflict" });
     return accepted;

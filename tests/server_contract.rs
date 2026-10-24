@@ -84,7 +84,7 @@ fn inkson_accepts_server_contract_payloads() {
             "extension_profile_required": null
         }],
         "supported_features": [],
-        "auth_metadata": {},
+        "authentication_metadata": {},
         "limits": {},
         "rate_limit_policy": {},
         "plaintext_visibility": {"data_classes": [], "max_visibility": "none"},
@@ -109,15 +109,16 @@ fn inkson_accepts_server_contract_payloads() {
         .validate()
         .expect("identity describe uses canonical ServiceDescribe");
 
-    let resolved_identity: inkson::models::IdentityResolveOutcome = serde_json::from_value(json!({
-        "did_document": {
-            "id": "did:web:alice.example"
-        },
-        "key_log_head": null,
-        "seq": 0,
-        "receipts": []
-    }))
-    .unwrap();
+    let resolved_identity: inkson::models::IdentityResolveResponseBody =
+        serde_json::from_value(json!({
+            "did_document": {
+                "id": "did:web:alice.example"
+            },
+            "key_log_head": null,
+            "sequence": 0,
+            "receipts": []
+        }))
+        .unwrap();
     assert_eq!(
         resolved_identity.did_document["id"],
         "did:web:alice.example"
@@ -140,7 +141,7 @@ fn inkson_accepts_server_contract_payloads() {
             "extension_profile_required": null
         }],
         "supported_features": [],
-        "auth_metadata": {},
+        "authentication_metadata": {},
         "limits": {},
         "rate_limit_policy": {},
         "plaintext_visibility": {"data_classes": [], "max_visibility": "none"},
@@ -195,7 +196,7 @@ fn inkson_accepts_server_contract_payloads() {
             "extension_profile_required": null
         }],
         "supported_features": [],
-        "auth_metadata": {},
+        "authentication_metadata": {},
         "limits": {},
         "plaintext_visibility": {},
         "rate_limit_policy": {},
@@ -213,18 +214,18 @@ fn inkson_accepts_server_contract_payloads() {
         arkret_sdk::ServiceKind::DirectoryService
     );
 
-    let authz: inkson::models::AuthzCheckOutcome = serde_json::from_value(json!({
+    let authz: inkson::models::AuthorizationCheckResponseBody = serde_json::from_value(json!({
         "decision": "allow",
         "reason_code": null,
         "matched_grants": [{"actor_id": "ak:did_core:web:alice.example"}],
         "obligations": []
     }))
     .unwrap();
-    assert_eq!(authz.decision, arkret_wire::AuthzDecision::Allow);
+    assert_eq!(authz.decision, arkret_wire::AuthorizationDecision::Allow);
 
-    // `GrantList` is the SDK authoritative wire type. Every row binds the
-    // canonical grant and its exact current-result revision atomically.
-    let grants: inkson::models::GrantList = serde_json::from_value(json!({
+    // `EffectiveGrantSnapshot` is the SDK authoritative wire type. Every row binds the
+    // canonical grant and its exact current-state revision atomically.
+    let grants: inkson::models::EffectiveGrantSnapshot = serde_json::from_value(json!({
         "grants": [{
             "grant": {
                 "id": "ak:grant:AfpU2UOijpNUdGOoAgQdaqV0xwreLXwLE3yXXHvB6n7X",
@@ -248,14 +249,14 @@ fn inkson_accepts_server_contract_payloads() {
                     "kind": "realm_root",
                     "realm_id": "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
                     "authority_event_ref": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-                    "authority_generation": 0
+                    "authority_generation": "0"
                 }],
                 "authority_depth": 1,
                 "authority_root_refs": [{
                     "kind": "realm_root",
                     "realm_id": "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
                     "authority_event_ref": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-                    "authority_generation": 0
+                    "authority_generation": "0"
                 }],
                 "actions": ["ak.message.create"],
                 "status": "active",
@@ -277,7 +278,7 @@ fn inkson_accepts_server_contract_payloads() {
     assert_eq!(grants.grants[0].grant.issuer_authority_refs.len(), 1);
     assert_eq!(grants.grants[0].revision.stream_position, 2);
 
-    let invites: inkson::models::AuthzInviteList = serde_json::from_value(json!({
+    let invites: inkson::models::AuthorizationInvitePage = serde_json::from_value(json!({
         "invites": [],
         "next_cursor": null,
         "has_more": false
@@ -285,7 +286,7 @@ fn inkson_accepts_server_contract_payloads() {
     .unwrap();
     assert!(invites.invites.is_empty());
 
-    let keys: inkson::models::KeysUploadOutcome = serde_json::from_value(json!({
+    let keys: inkson::models::KeysUploadResponseBody = serde_json::from_value(json!({
         "one_time_key_counts": {"signed_curve25519": 1},
         "fallback_keys": {}
     }))
@@ -293,7 +294,7 @@ fn inkson_accepts_server_contract_payloads() {
     let signed_curve25519 = arkret_sdk::NonEmptyString::new("signed_curve25519").unwrap();
     assert_eq!(keys.one_time_key_counts[&signed_curve25519], 1);
 
-    let claimed: inkson::models::KeysClaimOutcome = serde_json::from_value(json!({
+    let claimed: inkson::models::KeysClaimResponseBody = serde_json::from_value(json!({
         "one_time_keys": [{
             "account_id": {
                 "principal_id": "ak:did_core:web:alice.example",
@@ -307,7 +308,7 @@ fn inkson_accepts_server_contract_payloads() {
                         "signature": {
                             "kid": "did:web:alice.example#device-key",
                             "signature_algorithm": "Ed25519",
-                            "sig": "c2ln"
+                            "signature": "c2ln"
                         },
                         "key_id": "alice-otk-1"
                     }
@@ -319,7 +320,7 @@ fn inkson_accepts_server_contract_payloads() {
     .unwrap();
     assert!(!claimed.one_time_keys.is_empty());
 
-    let push: inkson::models::PushRegisterDeviceOutcome = serde_json::from_value(json!({
+    let push: inkson::models::PushRegisterDeviceResponseBody = serde_json::from_value(json!({
         "push_target_id": "ak:pseudonym:push:kosc9iQ4gVct1OB-b6X364WIFIsJFVbVzn7BMBs1sm8",
         "registration_id": "push:dev_alice",
         "expires_at": null
@@ -327,14 +328,15 @@ fn inkson_accepts_server_contract_payloads() {
     .unwrap();
     assert_eq!(push.registration_id.as_deref(), Some("push:dev_alice"));
 
-    let ok: inkson::models::OkOutcome = serde_json::from_value(json!({"ok": true})).unwrap();
+    let ok: inkson::models::AcknowledgementResponseBody =
+        serde_json::from_value(json!({"ok": true})).unwrap();
     assert!(ok.ok);
 
     // The content-addressed `blob_ref` is the sole carrier of the content
     // digest; the outcome and its receipt carry no sibling `content_digest`
     // (`conformance/encoding.md` §4.0.1).
     let blob_digest = format!("sha256:{}", "ab".repeat(32));
-    let blob: inkson::models::BlobUploadOutcome = serde_json::from_value(json!({
+    let blob: inkson::models::BlobUploadResponseBody = serde_json::from_value(json!({
         "blob_ref": format!("ak:blob:{blob_digest}"),
         "size_bytes": 23,
         "media_type": "application/octet-stream",
@@ -346,7 +348,7 @@ fn inkson_accepts_server_contract_payloads() {
             "signature": {
                 "kid": "did:web:server.local#key-1",
                 "signature_algorithm": "Ed25519",
-                "sig": "c2ln"
+                "signature": "c2ln"
             }
         }
     }))
@@ -354,7 +356,7 @@ fn inkson_accepts_server_contract_payloads() {
     assert_eq!(blob.size_bytes, 23);
     assert_eq!(blob.blob_ref.as_str(), format!("ak:blob:{blob_digest}"));
     assert!(
-        serde_json::from_value::<inkson::models::BlobUploadOutcome>(json!({
+        serde_json::from_value::<inkson::models::BlobUploadResponseBody>(json!({
             "blob_ref": format!("ak:blob:{blob_digest}"),
             "size_bytes": 23,
             "content_digest": blob_digest
@@ -363,7 +365,7 @@ fn inkson_accepts_server_contract_payloads() {
     );
 
     // SDK spec shape: status is `submitted`, and routed_to_ids carries principal cores.
-    let report: inkson::models::ModerationReportOutcome = serde_json::from_value(json!({
+    let report: inkson::models::ModerationReportResponseBody = serde_json::from_value(json!({
         "report_id": "ak:report:AV1bzsPGpTD74Cq12d9EOrCkieTddiSndS0kDtK1W2hM",
         "status": "submitted",
         "routed_to_ids": ["ak:did_core:web:server.local"]
@@ -395,12 +397,13 @@ fn current_submit_outcome_binds_a_verified_event_and_commit() {
             "content": {"kind": "ak.content.text", "body": "accepted message"}
         }),
     );
-    let request = arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest::Event(
-        arkret_wire::EventAdmissionSubmission::new(accepted.event.clone()),
-    );
+    let request =
+        arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequestBody::Event(
+            arkret_wire::EventAdmissionSubmission::new(accepted.event.clone()),
+        );
     let response =
-        arkret_models_collaboration::authority_commit::SelfAuthoritySubmitOutcome::Ordinary(
-            arkret_wire::AuthoritySubmitOutcome::Accepted {
+        arkret_models_collaboration::authority_commit::SelfAuthoritySubmitResponseBody::Ordinary(
+            arkret_wire::AuthoritySubmitResponseBody::Accepted {
                 status: arkret_wire::AuthorityCommitStatus::Committed,
                 commit: accepted.commit.clone(),
             },
@@ -408,10 +411,10 @@ fn current_submit_outcome_binds_a_verified_event_and_commit() {
     response
         .validate_for_request(&request)
         .expect("formal accepted outcome binds submitted Event");
-    let decoded: arkret_models_collaboration::authority_commit::SelfAuthoritySubmitOutcome =
+    let decoded: arkret_models_collaboration::authority_commit::SelfAuthoritySubmitResponseBody =
         serde_json::from_value(serde_json::to_value(response).unwrap()).unwrap();
-    let arkret_models_collaboration::authority_commit::SelfAuthoritySubmitOutcome::Ordinary(
-        arkret_wire::AuthoritySubmitOutcome::Accepted { status, commit },
+    let arkret_models_collaboration::authority_commit::SelfAuthoritySubmitResponseBody::Ordinary(
+        arkret_wire::AuthoritySubmitResponseBody::Accepted { status, commit },
     ) = decoded
     else {
         panic!("ordinary Event must have a single accepted commit")
@@ -440,14 +443,14 @@ fn current_to_device_outcome_retains_exact_delivery_coordinates() {
         status:
             arkret_models_collaboration::device_messages::DeviceMessageDeliveredStatus::Delivered,
     };
-    let sent = inkson::models::DeviceMessagesSendOutcome {
+    let sent = inkson::models::DeviceMessagesSendResponseBody {
         delivered: std::collections::BTreeMap::from([(
             principal_id.clone(),
             std::collections::BTreeMap::from([(device_id.clone(), delivered_row)]),
         )]),
         unknown_devices: std::collections::BTreeMap::new(),
     };
-    let device_send: inkson::models::DeviceMessagesSendOutcome =
+    let device_send: inkson::models::DeviceMessagesSendResponseBody =
         serde_json::from_value(serde_json::to_value(sent).unwrap()).unwrap();
     let delivered = &device_send.delivered[&principal_id][&device_id];
     assert_eq!(delivered.device_message_id, device_message_id);
@@ -457,15 +460,15 @@ fn current_to_device_outcome_retains_exact_delivery_coordinates() {
     );
     assert!(device_send.unknown_devices.is_empty());
 
-    let received = inkson::models::DeviceMessagesGetOutcome {
+    let received = inkson::models::DeviceMessagesGetResponseBody {
         deliveries: vec![],
-        ack_token: None,
+        acknowledgement_token: None,
         next_cursor: Some("ak:cursor:device-messages".to_owned()),
         has_more: false,
         limited: Some(false),
         lost: None,
     };
-    let device_receive: inkson::models::DeviceMessagesGetOutcome =
+    let device_receive: inkson::models::DeviceMessagesGetResponseBody =
         serde_json::from_value(serde_json::to_value(received).unwrap()).unwrap();
     assert!(device_receive.deliveries.is_empty());
     assert_eq!(device_receive.limited, Some(false));
@@ -475,7 +478,7 @@ fn current_to_device_outcome_retains_exact_delivery_coordinates() {
 #[test]
 fn directory_preview_and_join_locator_keep_separate_authority_boundaries() {
     let realm_id = "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk";
-    let resolved: inkson::models::DirectoryRealmResolutionOutcome = public_realm_entry(
+    let resolved: inkson::models::PublicRealmDirectoryEntry = public_realm_entry(
         realm_id,
         "Arkret Demo Realm",
         Some("Shared demo Realm served by server"),
@@ -536,7 +539,7 @@ fn server_description_gates_event_envelope_write_plane() {
             "extension_profile_required": null
         }],
         "supported_features": [],
-        "auth_metadata": {},
+        "authentication_metadata": {},
         "limits": {},
         "rate_limit_policy": {},
         "plaintext_visibility": {"data_classes": [], "max_visibility": "none"},
@@ -579,7 +582,7 @@ fn server_description_gates_event_envelope_write_plane() {
             "extension_profile_required": null
         }],
         "supported_features": [],
-        "auth_metadata": {},
+        "authentication_metadata": {},
         "limits": {},
         "rate_limit_policy": {},
         "plaintext_visibility": {"data_classes": [], "max_visibility": "none"},
@@ -641,7 +644,7 @@ fn server_description_gates_event_envelope_write_plane() {
             "extension_profile_required": null
         }],
         "supported_features": [],
-        "auth_metadata": {},
+        "authentication_metadata": {},
         "limits": {},
         "rate_limit_policy": {},
         "plaintext_visibility": {"data_classes": [], "max_visibility": "none"},
@@ -811,7 +814,7 @@ fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() 
     };
     assert_no_secret("search", &search, secret);
 
-    let directory = arkret_models_discovery::DirectoryRealmSearchOutcome {
+    let directory = arkret_models_discovery::DirectoryRealmSearchResponseBody {
         realms: vec![public_realm_entry(
             "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
             "Contract Realm",

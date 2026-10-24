@@ -152,12 +152,12 @@ pub(crate) fn test_handle_claim(
         schema: HandleClaim::SCHEMA.to_owned(),
         claim: core,
         status,
-        as_of: now,
+        evaluated_at: now,
         verifier_id: arkret_sdk::DidCoreId::new(issuer_did.to_owned()).unwrap(),
         verified_at: matches!(status, arkret_models_identity::HandleClaimStatus::Verified)
             .then_some(now),
         revocation: None,
-        fresh_until: now + chrono::Duration::minutes(5),
+        cache_expires_at: now + chrono::Duration::minutes(5),
         status_proof: proof(
             PayloadProofPurpose::StatusAttestation,
             HANDLE_CLAIM_STATUS_DOMAIN,

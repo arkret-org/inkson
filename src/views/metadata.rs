@@ -14,7 +14,7 @@ pub(crate) fn current_metadata(
 ) -> Option<Value> {
     let entries = store.realm_current_state_entries(realm);
     let mut values = entries.iter().filter_map(|entry| {
-        let arkret_sdk::TypedCurrentRow::Value {
+        let arkret_sdk::CurrentState::Value {
             selector, value, ..
         } = entry;
         let target = match selector {

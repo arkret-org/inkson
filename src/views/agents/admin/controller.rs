@@ -37,7 +37,7 @@ pub(super) struct AgentAdminController {
     /// race for the same runtime key.
     pub(super) pairing_action_agent_id: Signal<String>,
     pub(super) pairing_action_phase: Signal<PairingActionPhase>,
-    /// Bumped so the Contacts sidebar re-pulls `agent_list`.
+    /// Bumped so the Contacts sidebar re-pulls `agent_page`.
     pub(super) owned_agents_rev: Signal<u64>,
     pub(super) state_store: SyncSignal<crate::state::LocalStateStore>,
 }
@@ -64,7 +64,7 @@ async fn renew_agent_pairing(
     base: String,
     api_token: String,
     agent_id: String,
-) -> Result<AgentRenewPairingOutcome, crate::transport::auth::ApiCallError> {
+) -> Result<AgentRenewPairingResponseBody, crate::transport::auth::ApiCallError> {
     with_authed_sdk_client(&base, api_token, move |http| {
         let agent_id = agent_id.clone();
         async move {
@@ -93,7 +93,7 @@ async fn fetch_agent_details(
 }
 
 /// Notify the Contacts sidebar that this account's owned-agent set changed, so
-/// it re-pulls `agent_list`. Signal-based (not `SessionContext::get()`) because
+/// it re-pulls `agent_page`. Signal-based (not `SessionContext::get()`) because
 /// callers bump from inside spawned futures, where hooks must not run; the
 /// `Signal<u64>` is captured during render and moved in.
 fn bump_owned_agents_rev(mut owned_agents_rev: Signal<u64>) {
@@ -113,7 +113,7 @@ impl AgentAdminController {
         base: &str,
         api_token: &str,
         renewed_agent_id: &str,
-        outcome: &AgentRenewPairingOutcome,
+        outcome: &AgentRenewPairingResponseBody,
         track_phase: bool,
     ) -> Result<PairingReconcileOutcome, PairingReconcileError> {
         let Self {
@@ -180,7 +180,7 @@ impl AgentAdminController {
                 return;
             }
             match with_authed_sdk_client(&base, api_token, |http| async move {
-                http.agent_list().await.map_err(anyhow::Error::from)
+                http.agent_page().await.map_err(anyhow::Error::from)
             })
             .await
             {
@@ -629,7 +629,7 @@ impl AgentAdminController {
             };
             let recovery =
                 match with_authed_sdk_client(&base, api_token.clone(), |http| async move {
-                    http.get::<arkret_sdk::RecoveryPolicyActiveOutcome>(
+                    http.get::<arkret_sdk::RecoveryPolicyStatusView>(
                         "/_arkret/root/identity/recovery-policy",
                     )
                     .await

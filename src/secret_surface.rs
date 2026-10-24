@@ -26,7 +26,7 @@ const FORBIDDEN_SECRET_FIELD_NAMES: &[&str] = &[
     "renewal_credential",
     "root_private_key",
     "root_seed",
-    "secret_b64u",
+    "secret_base64url",
     "seed",
     "session_credential",
     "session_private_key_pem",

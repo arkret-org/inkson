@@ -2,7 +2,7 @@
 //! distinct and are never manufactured from authenticated client responses.
 
 use arkret_sdk::CommittedEventView;
-use arkret_sdk::http_client::own_station_results::OwnStationResultClient;
+use arkret_sdk::http_client::own_station_results::OwnStationStateClient;
 
 mod sealed {
     pub trait Sealed {}
@@ -36,7 +36,7 @@ impl AcceptedPageRows for garth::own_station_results::OwnStationScanPage {
 
 pub(crate) async fn client_for_http(
     http: &arkret_sdk::http_client::Client,
-) -> garth::Result<OwnStationResultClient> {
+) -> garth::Result<OwnStationStateClient> {
     if let Some(client) = http.own_station_result_client()? {
         return Ok(client);
     }
@@ -50,7 +50,7 @@ pub(crate) async fn client_for_http(
 /// use a fresh verified authority chain and its independently resolved route.
 pub(crate) async fn consent_current_authority(
     http: &arkret_sdk::http_client::Client,
-    client: &OwnStationResultClient,
+    client: &OwnStationStateClient,
     holder: &arkret_sdk::AccountId,
     registered_pcr: &arkret_sdk::RealmId,
 ) -> anyhow::Result<arkret_sdk::http_client::own_station_results::ConsentCurrentReadAuthority> {
@@ -106,7 +106,7 @@ pub(crate) async fn consent_current_authority(
         "Consent authority is not a PCR"
     );
     governance.require_transferable()?;
-    let request = arkret_sdk::AuthorityBundleRequest {
+    let request = arkret_sdk::RealmAuthorityBundleRequestBody {
         realm_id: registered_pcr.clone(),
         nonce: arkret_sdk::Base64UrlString::new(crate::random::base64url_token(
             32,
@@ -168,7 +168,7 @@ pub(crate) async fn accepted_genesis(
 }
 
 pub(crate) async fn genesis_response(
-    client: &OwnStationResultClient,
+    client: &OwnStationStateClient,
     realm: &arkret_sdk::RealmId,
 ) -> garth::Result<
     arkret_sdk::http_client::own_station_results::BoundOwnStationResponse<
@@ -352,7 +352,7 @@ pub(crate) mod test_http {
     pub(crate) fn client(
         account: &arkret_sdk::AccountId,
         bodies: Vec<serde_json::Value>,
-    ) -> (OwnStationResultClient, std::thread::JoinHandle<()>) {
+    ) -> (OwnStationStateClient, std::thread::JoinHandle<()>) {
         client_with_status(
             account,
             bodies.into_iter().map(|body| (200, body)).collect(),
@@ -362,7 +362,7 @@ pub(crate) mod test_http {
     pub(crate) fn client_with_status(
         account: &arkret_sdk::AccountId,
         bodies: Vec<(u16, serde_json::Value)>,
-    ) -> (OwnStationResultClient, std::thread::JoinHandle<()>) {
+    ) -> (OwnStationStateClient, std::thread::JoinHandle<()>) {
         let (client, server, _) = revocable_client(account, bodies, false);
         (client, server)
     }
@@ -372,7 +372,7 @@ pub(crate) mod test_http {
         bodies: Vec<(u16, serde_json::Value)>,
         invalidate_on_response: bool,
     ) -> (
-        OwnStationResultClient,
+        OwnStationStateClient,
         std::thread::JoinHandle<()>,
         Arc<std::sync::atomic::AtomicBool>,
     ) {
@@ -383,7 +383,7 @@ pub(crate) mod test_http {
             base_url: base.clone(),
             trust_domain: arkret_sdk::TrustDomainId::new("ak:trust_domain:station.example")
                 .unwrap(),
-            auth_metadata: arkret_sdk::AuthMetadata::minimal(),
+            authentication_metadata: arkret_sdk::AuthenticationMetadata::minimal(),
         };
         let session = OwnStationSessionSnapshot::new(
             binding.clone(),
@@ -443,7 +443,7 @@ pub(crate) mod test_http {
             }
         });
         (
-            OwnStationResultClient::new(raw, binding, Arc::new(Source(session, active.clone())))
+            OwnStationStateClient::new(raw, binding, Arc::new(Source(session, active.clone())))
                 .unwrap(),
             server,
             active,

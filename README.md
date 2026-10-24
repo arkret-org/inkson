@@ -39,7 +39,7 @@ several client-visible changes. The canonical wire-breaking list is this
 section plus the protocol spec history in `../arkret-spec/spec/v1/`.
 
 - **`ak.call.signal` v2** — 13 signal types, required device `proof`,
-  per-`(realm, call, actor, device)` monotonic `seq`. Seq rollback
+  per-`(realm, call, actor, device)` monotonic `sequence`. Seq rollback
   aborts the call.
 - **Typed `EventsSubscribe` frames** — NDJSON parser switched to
   `EventsSubscribeFrame`; `dropped` resumes from the embedded cursor,

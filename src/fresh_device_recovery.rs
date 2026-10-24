@@ -8,17 +8,17 @@
 // identifier newtypes, while the recovery/rotation plan shapes are model types.
 use arkret_models_crypto::{
     BackupObjectRef, BackupRotationBinding, BackupRotationKind, BackupRotationPlan,
-    ClientStepAttestation, ClientStepAttestationArtifact, ClientStepAttestationAuthData,
+    ClientStepAttestation, ClientStepAttestationArtifact, ClientStepAttestationSignatureProof,
     PreparedEventUnit, RecoveryBackupUnlocked, RecoveryProofSummary, RecoveryReceipt,
-    RecoveryReceiptAuthData, RecoveryReceiptOutcome, RecoveryTerminalCommit,
-    RecoveryTransactionCreateRequest, RecoveryWelcomeRealmSummary,
-    SecurityRotationTransactionCreateRequest, SecurityTransaction,
-    SecurityTransactionContinueRequest, SecurityTransactionCreateRequest,
+    RecoveryReceiptOutcome, RecoveryReceiptSignatureProof, RecoveryTerminalCommit,
+    RecoveryTransactionCreateRequestBody, RecoveryWelcomeRealmSummary,
+    SecurityRotationTransactionCreateRequestBody, SecurityTransaction,
+    SecurityTransactionContinueRequestBody, SecurityTransactionCreateRequestBody,
     SecurityTransactionPreparedPlan, SecurityTransactionStep, SecurityTransactionTerminalOutcome,
 };
 use arkret_wire::{
     BackupSeriesId, Base64UrlString, Did, EventId, EventsSubmitBatchRequestBody, Hash,
-    IssueRecoveryCompletionGrantRequest, SchemaId, TransactionId,
+    RecoveryCompletionGrantRequestBody, SchemaId, TransactionId,
 };
 use garth::{SecurityTransactionEngine, SecurityTransactionStore, SecurityTransactionTransport};
 use zeroize::{Zeroize, Zeroizing};
@@ -94,7 +94,7 @@ pub fn sign_recovery_terminal_commit_continue(
     resource: &SecurityTransaction,
     observation: RecoveryTerminalObservation,
     signer: &crate::event_signer::InksonEventSigner,
-) -> anyhow::Result<SecurityTransactionContinueRequest> {
+) -> anyhow::Result<SecurityTransactionContinueRequestBody> {
     resource.validate_structural()?;
     if resource.next_required_step()? != Some(SecurityTransactionStep::CommitRecoveryUnit) {
         anyhow::bail!("recovery terminal commit requires canonical device-attestation readiness");
@@ -153,7 +153,7 @@ pub fn sign_recovery_terminal_commit_continue(
         identity_model: arkret_sdk::RecoveryIdentityModel::PcrPolicy,
         recovery_authority_kind: arkret_sdk::RecoveryAuthorityKind::PcrPolicy,
         previous_model_generation_ref: plan.previous_model_generation_ref,
-        result_model_generation_ref: plan.result_model_generation_ref,
+        new_model_generation_ref: plan.new_model_generation_ref,
         authorization_event_id: binding.authorize_event_id.clone(),
         reanchor_event_id: binding.reanchor_event_id.clone(),
         proof_summary: observation.proof_summary,
@@ -164,14 +164,14 @@ pub fn sign_recovery_terminal_commit_continue(
         outcome_reason_code: None,
         started_at: observation.started_at,
         completed_at: observation.completed_at,
-        auth_data: RecoveryReceiptAuthData {
+        signature_proof: RecoveryReceiptSignatureProof {
             verification_method: verification_method.clone(),
             signature_algorithm: "Ed25519".to_owned(),
             signature: placeholder_signature.clone(),
         },
         extra: Default::default(),
     };
-    receipt.auth_data.signature = Base64UrlString::new(arkret_sdk::base64url_encode(
+    receipt.signature_proof.signature = Base64UrlString::new(arkret_sdk::base64url_encode(
         signer.sign_raw(&receipt.signature_transcript_bytes()?)?,
     ))
     .map_err(anyhow::Error::msg)?;
@@ -188,18 +188,18 @@ pub fn sign_recovery_terminal_commit_continue(
         transaction_request_digest: resource.request_digest.clone(),
         prepared_plan_digest: resource.prepared_plan_digest.clone(),
         artifact: ClientStepAttestationArtifact::Recovery(commit),
-        auth_data: ClientStepAttestationAuthData {
+        signature_proof: ClientStepAttestationSignatureProof {
             verification_method,
             signature_algorithm: "Ed25519".to_owned(),
             signature: placeholder_signature,
         },
     };
-    attestation.auth_data.signature = Base64UrlString::new(arkret_sdk::base64url_encode(
+    attestation.signature_proof.signature = Base64UrlString::new(arkret_sdk::base64url_encode(
         signer.sign_raw(&attestation.signing_bytes()?)?,
     ))
     .map_err(anyhow::Error::msg)?;
     attestation.validate()?;
-    let request = SecurityTransactionContinueRequest {
+    let request = SecurityTransactionContinueRequestBody {
         request_digest: resource.request_digest.clone(),
         prepared_plan_digest: resource.prepared_plan_digest.clone(),
         expected_accepted_step_count: 0,
@@ -232,12 +232,12 @@ where
 
     pub async fn create_or_resume(
         &self,
-        request: RecoveryTransactionCreateRequest,
+        request: RecoveryTransactionCreateRequestBody,
         encrypted_staged_material_ref: Option<String>,
         context: &arkret_sdk::ProducerVerificationContext,
     ) -> garth::Result<SecurityTransaction> {
         let request = arkret_sdk::VerifiedSubmission::verify(
-            SecurityTransactionCreateRequest::Recovery(request),
+            SecurityTransactionCreateRequestBody::Recovery(request),
             |_| Ok(context.clone()),
         )
         .map_err(|error| garth::Error::Protocol(error.to_string()))?;
@@ -256,7 +256,7 @@ where
     pub async fn continue_with_signed_artifact(
         &self,
         transaction_id: &TransactionId,
-        request: &SecurityTransactionContinueRequest,
+        request: &SecurityTransactionContinueRequestBody,
     ) -> garth::Result<SecurityTransaction> {
         self.engine
             .continue_transaction(transaction_id, request)
@@ -274,7 +274,7 @@ where
         &self,
         transaction_id: &TransactionId,
         initial_session: arkret_sdk::InitialSessionGrantIntent,
-    ) -> anyhow::Result<IssueRecoveryCompletionGrantRequest> {
+    ) -> anyhow::Result<RecoveryCompletionGrantRequestBody> {
         let local = self
             .engine
             .local_state(transaction_id)?
@@ -313,7 +313,7 @@ where
                 ))? == completion_attestation.terminal_receipt_digest,
             "recovery completion grant differs from the durable receipt or replacement device"
         );
-        let mut request = IssueRecoveryCompletionGrantRequest {
+        let mut request = RecoveryCompletionGrantRequestBody {
             transaction_id: transaction_id.clone(),
             transaction_request_digest: resource.request_digest.clone(),
             terminal_receipt: serde_json::to_value(receipt)?,
@@ -322,7 +322,7 @@ where
                 .device_authorization_event_ref
                 .event_id
                 .clone(),
-            result_model_generation_ref: completion_attestation.result_model_generation_ref,
+            new_model_generation_ref: completion_attestation.new_model_generation_ref,
             initial_session: serde_json::to_value(initial_session)?,
             canonical_request_digest: Hash::new(format!("sha256:{}", "0".repeat(64)))?,
         };
@@ -366,7 +366,9 @@ pub struct SecurityRotationDraft {
 }
 
 impl SecurityRotationDraft {
-    pub fn into_create_request(self) -> anyhow::Result<SecurityRotationTransactionCreateRequest> {
+    pub fn into_create_request(
+        self,
+    ) -> anyhow::Result<SecurityRotationTransactionCreateRequestBody> {
         let revoke_unit = PreparedEventUnit::new(
             arkret_sdk::canonical::DigestSuite::Sha256,
             self.revoke_submission,
@@ -404,7 +406,7 @@ impl SecurityRotationDraft {
                 )?,
             });
         }
-        SecurityRotationTransactionCreateRequest::from_prepared_rotations(
+        SecurityRotationTransactionCreateRequestBody::from_prepared_rotations(
             self.transaction_id,
             self.account_id,
             self.authorizing_device_id,
@@ -449,12 +451,12 @@ where
 
     pub async fn create_or_resume(
         &self,
-        request: SecurityRotationTransactionCreateRequest,
+        request: SecurityRotationTransactionCreateRequestBody,
         encrypted_staged_material_ref: String,
         context: &arkret_sdk::ProducerVerificationContext,
     ) -> garth::Result<SecurityTransaction> {
         let request = arkret_sdk::VerifiedSubmission::verify(
-            SecurityTransactionCreateRequest::SecurityRotation(request),
+            SecurityTransactionCreateRequestBody::SecurityRotation(request),
             |_| Ok(context.clone()),
         )
         .map_err(|error| garth::Error::Protocol(error.to_string()))?;
@@ -488,7 +490,7 @@ where
     pub async fn continue_with_signed_local_commit(
         &self,
         transaction_id: &TransactionId,
-        request: &SecurityTransactionContinueRequest,
+        request: &SecurityTransactionContinueRequestBody,
     ) -> garth::Result<SecurityTransaction> {
         self.engine
             .continue_transaction(transaction_id, request)

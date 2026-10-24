@@ -9,10 +9,10 @@ use crate::models::SubmitEventResult;
 pub(crate) enum InvitePreviewOutcome {
     /// The governance Station disclosed these policy-permitted fields,
     /// verified under a nonce-bound assertion that is fresh until
-    /// `fresh_until`.
+    /// `cache_expires_at`.
     Disclosed {
         preview: arkret_sdk::RealmPublicPreview,
-        fresh_until: chrono::DateTime<chrono::Utc>,
+        cache_expires_at: chrono::DateTime<chrono::Utc>,
     },
     /// The governance Station discloses nothing to this account. Unknown,
     /// hidden and undisclosed targets share this one answer.
@@ -81,7 +81,7 @@ impl crate::transport::TransportClient {
                 }
                 Ok(InvitePreviewOutcome::Disclosed {
                     preview: outcome.preview,
-                    fresh_until: outcome.authority_bundle.current_assertion.expires_at,
+                    cache_expires_at: outcome.authority_bundle.current_assertion.expires_at,
                 })
             }
             Err(arkret_sdk::http_client::Error::Api { status: 404, .. }) => {

@@ -271,9 +271,9 @@ impl LocalStateStore {
             .filter(|view| view.view.realm_id == realm.as_str())
             .map(|view| view.view.entries.clone())
             .unwrap_or_default();
-        entries.retain(|entry| !matches!(entry, arkret_wire::TypedCurrentRow::Value { selector: found, .. } if found == &selector));
+        entries.retain(|entry| !matches!(entry, arkret_wire::CurrentState::Value { selector: found, .. } if found == &selector));
         if let Some(value) = policy {
-            entries.push(arkret_wire::TypedCurrentRow::Value {
+            entries.push(arkret_wire::CurrentState::Value {
                 selector,
                 source_stream_ref: arkret_wire::CommitStreamRef::from_scope(
                     &scope,
@@ -287,8 +287,8 @@ impl LocalStateStore {
         let parent_selector = arkret_wire::CurrentSelector::MemberState {
             actor_id: actor.clone(),
         };
-        entries.retain(|entry| !matches!(entry, arkret_wire::TypedCurrentRow::Value { selector, .. } if selector == &parent_selector));
-        entries.push(arkret_wire::TypedCurrentRow::Value {
+        entries.retain(|entry| !matches!(entry, arkret_wire::CurrentState::Value { selector, .. } if selector == &parent_selector));
+        entries.push(arkret_wire::CurrentState::Value {
             selector: parent_selector,
             source_stream_ref: arkret_wire::CommitStreamRef::Realm {
                 realm_id: realm.clone(),
@@ -301,8 +301,8 @@ impl LocalStateStore {
                 circle_id: circle_id.clone(),
                 member_actor_id: actor,
             };
-            entries.retain(|entry| !matches!(entry, arkret_wire::TypedCurrentRow::Value { selector, .. } if selector == &member));
-            entries.push(arkret_wire::TypedCurrentRow::Value { selector: member, source_stream_ref: arkret_wire::CommitStreamRef::from_scope(&scope, Some(realm.clone())).unwrap(), revision: revision.clone(), value: serde_json::json!({"membership":"join","parent_membership_revision":revision,"effective_at":"2026-10-19T00:00:00.000Z"}) });
+            entries.retain(|entry| !matches!(entry, arkret_wire::CurrentState::Value { selector, .. } if selector == &member));
+            entries.push(arkret_wire::CurrentState::Value { selector: member, source_stream_ref: arkret_wire::CommitStreamRef::from_scope(&scope, Some(realm.clone())).unwrap(), revision: revision.clone(), value: serde_json::json!({"membership":"join","parent_membership_revision":revision,"effective_at":"2026-10-19T00:00:00.000Z"}) });
         }
         *guard = Some(super::CurrentProductView {
             account_key: self.cached_account_key.clone(),
@@ -334,7 +334,7 @@ impl LocalStateStore {
     pub(crate) fn realm_current_view_entries(
         &self,
         realm_id: &str,
-    ) -> Option<Vec<arkret_wire::TypedCurrentRow>> {
+    ) -> Option<Vec<arkret_wire::CurrentState>> {
         self.current_product_view()
             .and_then(|view| view.entries_for(realm_id).map(<[_]>::to_vec))
     }
@@ -432,7 +432,7 @@ impl LocalStateStore {
             .realm_current_state_entries(realm_id)
             .iter()
             .any(|entry| {
-                let arkret_wire::TypedCurrentRow::Value {
+                let arkret_wire::CurrentState::Value {
                     selector, value, ..
                 } = entry;
                 *selector == arkret_wire::CurrentSelector::RealmGenesis

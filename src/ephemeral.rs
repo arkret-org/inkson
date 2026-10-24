@@ -45,11 +45,11 @@ pub(crate) fn authority_rejection_reason(error: &anyhow::Error) -> Option<&str> 
 /// Turn one authority submit outcome into the accepted commit, or into the
 /// typed refusal above.
 pub(crate) fn ensure_authority_accepted(
-    outcome: arkret_wire::AuthoritySubmitOutcome,
+    outcome: arkret_wire::AuthoritySubmitResponseBody,
 ) -> anyhow::Result<arkret_wire::RealmCommit> {
     match outcome {
-        arkret_wire::AuthoritySubmitOutcome::Accepted { commit, .. } => Ok(commit),
-        arkret_wire::AuthoritySubmitOutcome::Rejected {
+        arkret_wire::AuthoritySubmitResponseBody::Accepted { commit, .. } => Ok(commit),
+        arkret_wire::AuthoritySubmitResponseBody::Rejected {
             status,
             reason_code,
         } => Err(AuthorityRejectedError {

@@ -1975,7 +1975,7 @@ mod tests {
     /// Install a product view carrying the Realm's required current values.
     fn install_ready_view(store: &mut LocalStateStore) {
         let row = |selector: arkret_wire::CurrentSelector, value: Value| {
-            serde_json::from_value::<arkret_wire::TypedCurrentRow>(json!({
+            serde_json::from_value::<arkret_wire::CurrentState>(json!({
                 "selector": selector,
                 "source_stream_ref": {"kind":"realm","realm_id":REALM},
                 "revision": {

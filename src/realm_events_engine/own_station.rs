@@ -1,5 +1,5 @@
 //! Ordinary Account projection through the accepted authenticated Station.
-use arkret_sdk::http_client::own_station_results::OwnStationResultClient;
+use arkret_sdk::http_client::own_station_results::OwnStationStateClient;
 use garth::current_ingest::closed_current_value as closed_value;
 pub(super) use garth::current_ingest::validate_current_product;
 pub(super) use garth::history_recovery::{genesis_pages, window_pages};
@@ -161,7 +161,7 @@ pub(crate) async fn refresh_sidecar_history<F: Fn() -> bool>(
 }
 
 fn require_readback_session(
-    client: &OwnStationResultClient,
+    client: &OwnStationStateClient,
     account: &arkret_sdk::AccountId,
     request_epoch: u64,
 ) -> garth::Result<()> {
@@ -338,7 +338,7 @@ pub(super) async fn account_frame(
                 ));
             }
             for row in &snapshot.current_state_entries {
-                if let arkret_wire::TypedCurrentRow::Value {
+                if let arkret_wire::CurrentState::Value {
                     selector: arkret_wire::CurrentSelector::RealmGenesis,
                     value,
                     ..
@@ -352,13 +352,13 @@ pub(super) async fn account_frame(
                             .then_some(arkret_sdk::CollaborationRealmRole::DirectConversation),
                     );
                 }
-                if let arkret_wire::TypedCurrentRow::Value {
+                if let arkret_wire::CurrentState::Value {
                     selector: arkret_wire::CurrentSelector::MlsGroup { scope_ref },
                     value,
                     ..
                 } = row
                 {
-                    let group: arkret_wire::MlsGroupCurrent =
+                    let group: arkret_wire::MlsGroupValue =
                         serde_json::from_value(value.clone()).map_err(protocol)?;
                     if &group.effective_scope != scope_ref {
                         return Err(protocol("own Station MLS selector has another scope"));

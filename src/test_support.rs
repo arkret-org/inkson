@@ -71,7 +71,8 @@ fn detached_signature(
         ))
         .unwrap(),
         created_at: "2026-09-22T00:00:00.000Z".parse().unwrap(),
-        sig: arkret_sdk::Base64UrlString::new(arkret_sdk::base64url_encode([seed; 64])).unwrap(),
+        signature: arkret_sdk::Base64UrlString::new(arkret_sdk::base64url_encode([seed; 64]))
+            .unwrap(),
     }
 }
 
@@ -182,7 +183,7 @@ pub(crate) fn accepted_mls_welcome(
         recipient_actor_id,
         recipient_endpoint,
         keypackage_claim_ref: draft.keypackage_claim_ref.clone(),
-        ciphertext_b64: draft.ciphertext_b64.clone(),
+        ciphertext_base64url: draft.ciphertext_base64url.clone(),
         producer_proof: detached_signature(
             arkret_sdk::DetachedSignatureContext::MlsWelcomeDelivery,
             0x77,
@@ -348,13 +349,13 @@ pub(crate) fn install_accepted_mls_group_at_epoch(
             "genesis_event_ref": genesis_ref,
             "cipher_suite": "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519",
             "current_mls_commit_event_ref": genesis_ref,
-            "epoch": epoch,
-            "current_key_access_revision": key_access_revision,
-            "covered_key_access_revision": key_access_revision,
+            "epoch": (epoch).to_string(),
+            "current_key_access_revision": (key_access_revision).to_string(),
+            "covered_key_access_revision": (key_access_revision).to_string(),
             "public_tree_ref": format!("ak:blob:sha256:{}", "a".repeat(64)),
         },
     });
-    let entry: arkret_wire::TypedCurrentRow = serde_json::from_value(entry).unwrap();
+    let entry: arkret_wire::CurrentState = serde_json::from_value(entry).unwrap();
     install_current_entries(state, &realm_id, vec![entry]);
 }
 
@@ -370,14 +371,14 @@ pub(crate) fn install_complete_joined_members(
     entries.retain(|entry| {
         !matches!(
             entry,
-            arkret_wire::TypedCurrentRow::Value {
+            arkret_wire::CurrentState::Value {
                 selector: arkret_wire::CurrentSelector::MemberState { .. },
                 ..
             }
         )
     });
     for actor_id in members {
-        entries.push(arkret_wire::TypedCurrentRow::Value {
+        entries.push(arkret_wire::CurrentState::Value {
             selector: arkret_wire::CurrentSelector::MemberState { actor_id },
             source_stream_ref: arkret_wire::CommitStreamRef::Realm {
                 realm_id: arkret_sdk::RealmId::new(realm_id).unwrap(),
@@ -386,7 +387,7 @@ pub(crate) fn install_complete_joined_members(
                 commit_id: arkret_wire::RealmCommitId::from_digest([0x32; 32]),
                 stream_position: 2,
             },
-            value: serde_json::to_value(arkret_wire::MemberStateCurrent {
+            value: serde_json::to_value(arkret_wire::MemberStateValue {
                 membership: arkret_wire::MembershipState::Join,
                 joined_at: Some("2026-09-27T00:00:00.000Z".parse().unwrap()),
             })
@@ -406,10 +407,10 @@ pub(crate) fn install_complete_joined_members(
 pub(crate) fn install_current_entries(
     state: &mut crate::state::LocalStateStore,
     realm_id: &str,
-    rows: Vec<arkret_wire::TypedCurrentRow>,
+    rows: Vec<arkret_wire::CurrentState>,
 ) {
-    let selector = |entry: &arkret_wire::TypedCurrentRow| match entry {
-        arkret_wire::TypedCurrentRow::Value { selector, .. } => selector.clone(),
+    let selector = |entry: &arkret_wire::CurrentState| match entry {
+        arkret_wire::CurrentState::Value { selector, .. } => selector.clone(),
     };
     let mut entries = state
         .realm_current_view_entries(realm_id)
@@ -435,7 +436,7 @@ pub(crate) fn key_backup_summary_fixture(body: &serde_json::Value) -> arkret_sdk
         backup_kind: backup.backup_kind,
         backup_version: arkret_sdk::NonEmptyString::new(backup.backup_version).unwrap(),
         series_id: backup.series_id,
-        series_seq: backup.series_seq,
+        series_sequence: backup.series_sequence,
         supersedes_id: backup.supersedes_id.map(Some),
         supersedes_digest: backup.supersedes_digest,
         expires_at: backup.expires_at.map(Some),
@@ -451,13 +452,13 @@ pub(crate) fn key_backup_summary_fixture(body: &serde_json::Value) -> arkret_sdk
 }
 
 pub(crate) fn key_backup_envelope_fixture(
-    seq: u64,
+    sequence: u64,
     series: &str,
     item_kind: &str,
     recipient_method: &str,
 ) -> serde_json::Value {
     let value = serde_json::json!({
-        "backup_id": format!("ak:backup:0196419b-0000-7000-8000-00000000003{seq}"),
+        "backup_id": format!("ak:backup:0196419b-0000-7000-8000-00000000003{sequence}"),
         "actor_id": {
             "kind": "account",
             "account_id": {
@@ -468,8 +469,8 @@ pub(crate) fn key_backup_envelope_fixture(
         "backup_kind": "secret_storage",
         "backup_version": "kb_test_v1",
         "series_id": series,
-        "series_seq": seq,
-        "created_at": format!("2026-05-{:02}T00:00:00.000Z", seq + 1),
+        "series_sequence": sequence,
+        "created_at": format!("2026-05-{:02}T00:00:00.000Z", sequence + 1),
         "encryption": {
             "recipient_method": recipient_method,
             "aead": {"name": "chacha20_poly1305", "nonce": "AAAAAAAAAAAAAAAA"}
@@ -478,7 +479,7 @@ pub(crate) fn key_backup_envelope_fixture(
         "contents": [{"item_kind": item_kind, "secret_id": "test_secret"}],
         "ciphertext": "AA",
         "ciphertext_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "auth_data": {
+        "signature_proof": {
             "device_id": "ak:device:0196419b-0000-7000-8000-000000000001",
             "verification_method": "did:web:alice.example#device",
             "signature_algorithm": "Ed25519",

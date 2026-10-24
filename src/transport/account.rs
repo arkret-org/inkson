@@ -24,7 +24,7 @@ use std::collections::BTreeMap;
 use serde_json::Value;
 
 use crate::event_submit::EventSubmitter;
-use crate::models::{ContactList, CurrentAccount};
+use crate::models::{ContactPage, CurrentAccount};
 use crate::state::LocalStateStore;
 
 pub async fn account_viewer(
@@ -46,7 +46,7 @@ pub async fn account_me(http: &arkret_sdk::http_client::Client) -> anyhow::Resul
 pub(crate) async fn current_principal_for_authority(
     http: &arkret_sdk::http_client::Client,
     authority: &arkret_sdk::AccountId,
-) -> anyhow::Result<arkret_sdk::CurrentPrincipalOutcome> {
+) -> anyhow::Result<arkret_sdk::CurrentPrincipalResponseBody> {
     let own = http.own_station_result_client()?;
     if let Some(own) = &own {
         anyhow::ensure!(
@@ -122,9 +122,9 @@ pub async fn update_profile(
     authority_evidence: &crate::state::RecoveryMaterialEvidence,
     first_profile_display_name: &str,
     display_name: Option<&str>,
-    bio: Option<&str>,
+    biography: Option<&str>,
     avatar_blob_ref: Option<&str>,
-) -> anyhow::Result<arkret_models_identity::AccountUpdateProfileOutcome> {
+) -> anyhow::Result<arkret_models_identity::AccountUpdateProfileResponseBody> {
     let mut patch = arkret_sdk::Patch::new();
     if let Some(display_name) = display_name {
         let display_name = display_name.trim();
@@ -134,12 +134,12 @@ pub async fn update_profile(
             patch.insert("display_name", display_name)?;
         }
     }
-    if let Some(bio) = bio {
-        let bio = bio.trim();
-        if bio.is_empty() {
-            patch.insert_op("profile_fields.bio", arkret_sdk::PatchOp::unset())?;
+    if let Some(biography) = biography {
+        let biography = biography.trim();
+        if biography.is_empty() {
+            patch.insert_op("profile_fields.biography", arkret_sdk::PatchOp::unset())?;
         } else {
-            patch.insert("profile_fields.bio", bio)?;
+            patch.insert("profile_fields.biography", biography)?;
         }
     }
     if let Some(avatar_blob_ref) = avatar_blob_ref {
@@ -221,8 +221,8 @@ pub async fn update_profile(
             );
         }
         let mut profile_fields = BTreeMap::new();
-        if let Some(bio) = bio.map(str::trim).filter(|value| !value.is_empty()) {
-            profile_fields.insert("bio".to_owned(), Value::String(bio.to_owned()));
+        if let Some(biography) = biography.map(str::trim).filter(|value| !value.is_empty()) {
+            profile_fields.insert("biography".to_owned(), Value::String(biography.to_owned()));
         }
         let avatar_blob_ref = avatar_blob_ref
             .map(str::trim)
@@ -348,9 +348,9 @@ async fn submit_contact_response(
     let session = crate::transport::auth::AuthoringSessionFence::capture()?;
     use arkret_sdk::contact_operations::{
         ContactAcceptAction, ContactAcceptPrepareRequestBody, ContactAcceptRequestBody,
-        ContactCommitPhase, ContactCommitRequestBody, ContactOperationOutcome, ContactPreparePhase,
-        ContactPreparedOutcome, ContactRejectAction, ContactRejectPrepareRequestBody,
-        ContactRejectRequestBody,
+        ContactCommitPhase, ContactCommitRequestBody, ContactOperationResponseBody,
+        ContactPreparePhase, ContactPreparedResponseBody, ContactRejectAction,
+        ContactRejectPrepareRequestBody, ContactRejectRequestBody,
     };
 
     let (operation_id, idempotency_key) =
@@ -373,16 +373,16 @@ async fn submit_contact_response(
             )?)
             .await?;
         let (returned_operation_id, reservation_handle, event_draft) = match prepared {
-            ContactOperationOutcome::Prepared {
+            ContactOperationResponseBody::Prepared {
                 outcome:
-                    ContactPreparedOutcome::Response {
+                    ContactPreparedResponseBody::Response {
                         operation_id,
                         reservation_handle,
                         event_draft,
                         ..
                     },
             } => (operation_id, reservation_handle, event_draft),
-            ContactOperationOutcome::Failed { outcome } => {
+            ContactOperationResponseBody::Failed { outcome } => {
                 anyhow::bail!("Contact accept prepare failed: {:?}", outcome.reason)
             }
             _ => anyhow::bail!("Contact accept prepare returned the wrong result kind"),
@@ -424,8 +424,8 @@ async fn submit_contact_response(
         )
         .await?
         {
-            ContactOperationOutcome::Accepted { .. } => Ok(()),
-            ContactOperationOutcome::Failed { outcome } => {
+            ContactOperationResponseBody::Accepted { .. } => Ok(()),
+            ContactOperationResponseBody::Failed { outcome } => {
                 anyhow::bail!("Contact accept commit failed: {:?}", outcome.reason)
             }
             _ => anyhow::bail!("Contact accept commit returned the wrong result kind"),
@@ -439,23 +439,23 @@ async fn submit_contact_response(
             request_event_ref: request_event_ref.clone(),
             action: ContactRejectAction::Reject,
         });
-        let prepared: ContactOperationOutcome = http
+        let prepared: ContactOperationResponseBody = http
             .contacts_reject(&arkret_sdk::VerifiedSubmission::from_verified_events(
                 prepare,
                 &[],
             )?)
             .await?;
         let (returned_operation_id, reservation_handle, event_draft) = match prepared {
-            ContactOperationOutcome::Prepared {
+            ContactOperationResponseBody::Prepared {
                 outcome:
-                    ContactPreparedOutcome::Reject {
+                    ContactPreparedResponseBody::Reject {
                         operation_id,
                         reservation_handle,
                         event_draft,
                         ..
                     },
             } => (operation_id, reservation_handle, event_draft),
-            ContactOperationOutcome::Failed { outcome } => {
+            ContactOperationResponseBody::Failed { outcome } => {
                 anyhow::bail!("Contact reject prepare failed: {:?}", outcome.reason)
             }
             _ => anyhow::bail!("Contact reject prepare returned the wrong result kind"),
@@ -493,8 +493,8 @@ async fn submit_contact_response(
         )
         .await?
         {
-            ContactOperationOutcome::Accepted { .. } => Ok(()),
-            ContactOperationOutcome::Failed { outcome } => {
+            ContactOperationResponseBody::Accepted { .. } => Ok(()),
+            ContactOperationResponseBody::Failed { outcome } => {
                 anyhow::bail!("Contact reject commit failed: {:?}", outcome.reason)
             }
             _ => anyhow::bail!("Contact reject commit returned the wrong result kind"),
@@ -504,7 +504,7 @@ async fn submit_contact_response(
     }
 }
 
-pub async fn contacts(http: &arkret_sdk::http_client::Client) -> anyhow::Result<ContactList> {
+pub async fn contacts(http: &arkret_sdk::http_client::Client) -> anyhow::Result<ContactPage> {
     http.contacts_list().await.map_err(anyhow::Error::from)
 }
 
@@ -561,7 +561,7 @@ pub async fn direct_conversation_resolve(
     peer: &str,
     peer_controller: Option<&str>,
     enable_owned_agent_reply: bool,
-) -> anyhow::Result<arkret_sdk::direct_conversation::DirectConversationResolveOutcome> {
+) -> anyhow::Result<arkret_sdk::direct_conversation::DirectConversationResolveResponseBody> {
     let authority = state_store
         .read(|store| store.active_authority())
         .ok_or_else(|| anyhow::anyhow!("Direct Conversation requires active account"))?;
@@ -621,7 +621,7 @@ pub async fn direct_conversation_resolve(
 /// never authors or substitutes coordinates.
 pub async fn direct_conversation_found(
     submitter: &crate::event_submit::EventSubmitter,
-    resolve: &arkret_sdk::direct_conversation::DirectConversationResolveOutcome,
+    resolve: &arkret_sdk::direct_conversation::DirectConversationResolveResponseBody,
     authored: Vec<arkret_sdk::AuthoredEvent>,
 ) -> anyhow::Result<Vec<crate::models::SubmitEventResult>> {
     if !matches!(
@@ -642,9 +642,9 @@ pub async fn direct_conversation_found(
 /// back by re-resolving after acceptance. The accepted authored unit already
 /// provides the exact Realm/main coordinates for navigation; it grants no MLS readiness.
 fn founding_evidence_for_resolve(
-    resolve: &arkret_sdk::DirectConversationResolveOutcome,
+    resolve: &arkret_sdk::DirectConversationResolveResponseBody,
 ) -> anyhow::Result<&arkret_sdk::DirectConversationFoundingAuthorityEvidence> {
-    let arkret_sdk::DirectConversationResolveOutcome::CreationRequired {
+    let arkret_sdk::DirectConversationResolveResponseBody::CreationRequired {
         next_founding_input,
     } = resolve
     else {
@@ -655,7 +655,7 @@ fn founding_evidence_for_resolve(
 
 pub async fn create_direct_conversation_from_resolve(
     submitter: &crate::event_submit::EventSubmitter,
-    resolve: &arkret_sdk::DirectConversationResolveOutcome,
+    resolve: &arkret_sdk::DirectConversationResolveResponseBody,
     founder_account: &arkret_sdk::AccountId,
     peer_account: &arkret_sdk::AccountId,
 ) -> anyhow::Result<arkret_sdk::direct_conversation::DirectConversationFoundingPlan> {
@@ -717,7 +717,7 @@ fn direct_conversation_peer_descriptor(
 }
 
 pub(crate) fn direct_conversation_coordinates(
-    outcome: &arkret_sdk::direct_conversation::DirectConversationResolveOutcome,
+    outcome: &arkret_sdk::direct_conversation::DirectConversationResolveResponseBody,
 ) -> Option<&arkret_sdk::direct_conversation::DirectConversationCoordinates> {
     outcome.coordinates()
 }
@@ -739,9 +739,9 @@ pub(crate) enum DirectConversationEntry {
 }
 
 pub(crate) fn direct_conversation_entry(
-    outcome: &arkret_sdk::direct_conversation::DirectConversationResolveOutcome,
+    outcome: &arkret_sdk::direct_conversation::DirectConversationResolveResponseBody,
 ) -> DirectConversationEntry {
-    use arkret_sdk::direct_conversation::DirectConversationResolveOutcome as Outcome;
+    use arkret_sdk::direct_conversation::DirectConversationResolveResponseBody as Outcome;
     match outcome {
         Outcome::CreationRequired { .. } => DirectConversationEntry::ReadyToCreate,
         Outcome::AwaitingFounder { .. } => DirectConversationEntry::AwaitingFounder,
@@ -770,7 +770,7 @@ pub(crate) fn direct_conversation_client_local_blockers(
 }
 
 pub(crate) fn direct_conversation_entry_with_local_blockers(
-    outcome: &arkret_sdk::direct_conversation::DirectConversationResolveOutcome,
+    outcome: &arkret_sdk::direct_conversation::DirectConversationResolveResponseBody,
     local_blockers: &std::collections::BTreeSet<
         arkret_sdk::direct_conversation::DirectConversationClientLocalBlocker,
     >,
@@ -805,7 +805,7 @@ pub(crate) fn cached_direct_conversation_peer(
 /// into an unavailable navigation target.
 fn preserve_resolved_direct_conversation(
     agent_id: &str,
-    outcome: &arkret_sdk::direct_conversation::DirectConversationResolveOutcome,
+    outcome: &arkret_sdk::direct_conversation::DirectConversationResolveResponseBody,
     reply_enablement: anyhow::Result<()>,
 ) {
     if let Err(error) = reply_enablement {
@@ -822,7 +822,7 @@ fn preserve_resolved_direct_conversation(
 async fn ensure_owned_agent_direct_reply(
     http: &arkret_sdk::http_client::Client,
     agent_id: &str,
-    outcome: &arkret_sdk::direct_conversation::DirectConversationResolveOutcome,
+    outcome: &arkret_sdk::direct_conversation::DirectConversationResolveResponseBody,
 ) -> anyhow::Result<()> {
     let coordinates = direct_conversation_coordinates(outcome)
         .ok_or_else(|| anyhow::anyhow!("owned-Agent Direct Conversation omitted realm_id"))?;
@@ -847,7 +847,7 @@ async fn ensure_owned_agent_direct_reply(
         .find(|entry| entry.scope == scope)
         .map(|entry| entry.selection)
         .unwrap_or_default();
-    selection.reply_message = true;
+    selection.message_creation_allowed = true;
     let updated = replace_agent_participation(http, agent_id, scope.clone(), selection).await?;
     if !participation_reply_is_effective(&updated, &scope) {
         anyhow::bail!("owned-Agent Direct Conversation reply participation remains disabled");
@@ -860,7 +860,7 @@ pub(crate) async fn replace_agent_participation(
     agent_id: &str,
     scope: arkret_sdk::ParticipationScope,
     selection: arkret_sdk::ParticipationBits,
-) -> anyhow::Result<arkret_sdk::AgentParticipationOutcome> {
+) -> anyhow::Result<arkret_sdk::AgentParticipationResponseBody> {
     let current = http.agent_participation_get(agent_id).await?;
     let expected_version = current
         .agent_participation_entries
@@ -879,17 +879,17 @@ pub(crate) async fn replace_agent_participation(
 }
 
 fn participation_reply_is_effective(
-    outcome: &arkret_sdk::AgentParticipationOutcome,
+    outcome: &arkret_sdk::AgentParticipationResponseBody,
     scope: &arkret_sdk::ParticipationScope,
 ) -> bool {
     outcome
         .agent_participation_entries
         .iter()
-        .any(|entry| &entry.scope == scope && entry.selection.reply_message)
+        .any(|entry| &entry.scope == scope && entry.selection.message_creation_allowed)
 }
 
 fn owned_agent_reply_update_needed(
-    outcome: &arkret_sdk::AgentParticipationOutcome,
+    outcome: &arkret_sdk::AgentParticipationResponseBody,
     scope: &arkret_sdk::ParticipationScope,
 ) -> bool {
     !participation_reply_is_effective(outcome, scope)
@@ -950,7 +950,7 @@ pub(crate) fn primary_handle_from_viewer(
             claim.claim.subject_account_id.principal_id == viewer.principal_id
                 && claim.status == arkret_models_identity::HandleClaimStatus::Verified
                 && claim.revocation.is_none()
-                && claim.fresh_until > chrono::Utc::now()
+                && claim.cache_expires_at > chrono::Utc::now()
         })
         .map(|claim| &claim.claim.handle)
         .map(|handle| handle.canonical().trim())
@@ -1004,8 +1004,8 @@ pub async fn update_contact_scopes(
 ) -> anyhow::Result<()> {
     let session = crate::transport::auth::AuthoringSessionFence::capture()?;
     use arkret_sdk::contact_operations::{
-        ContactCommitPhase, ContactCommitRequestBody, ContactOperationOutcome,
-        ContactPreparedOutcome, ContactScopeUpdateRequestBody,
+        ContactCommitPhase, ContactCommitRequestBody, ContactOperationResponseBody,
+        ContactPreparedResponseBody, ContactScopeUpdateRequestBody,
     };
 
     let peer_actor: arkret_sdk::ActorId = serde_json::from_str(peer)?;
@@ -1038,23 +1038,23 @@ pub async fn update_contact_scopes(
         operation_id.clone(),
         idempotency_key.clone(),
     )?;
-    let prepared: ContactOperationOutcome = http
+    let prepared: ContactOperationResponseBody = http
         .contacts_scope_update(&arkret_sdk::VerifiedSubmission::from_verified_events(
             prepare,
             &[],
         )?)
         .await?;
     let (returned_operation_id, reservation_handle, event_draft) = match prepared {
-        ContactOperationOutcome::Prepared {
+        ContactOperationResponseBody::Prepared {
             outcome:
-                ContactPreparedOutcome::ScopeUpdate {
+                ContactPreparedResponseBody::ScopeUpdate {
                     operation_id,
                     reservation_handle,
                     event_draft,
                     ..
                 },
         } => (operation_id, reservation_handle, event_draft),
-        ContactOperationOutcome::Failed { outcome } => {
+        ContactOperationResponseBody::Failed { outcome } => {
             anyhow::bail!("Contact scope update prepare failed: {:?}", outcome.reason)
         }
         _ => anyhow::bail!("Contact scope update prepare returned the wrong result kind"),
@@ -1080,8 +1080,8 @@ pub async fn update_contact_scopes(
         crate::transport::contacts::finish_contact_commit(http, commit_context, &pending, &commit)
             .await?;
     match committed {
-        ContactOperationOutcome::Accepted { .. } => Ok(()),
-        ContactOperationOutcome::Failed { outcome } => {
+        ContactOperationResponseBody::Accepted { .. } => Ok(()),
+        ContactOperationResponseBody::Failed { outcome } => {
             anyhow::bail!("Contact scope update commit failed: {:?}", outcome.reason)
         }
         _ => anyhow::bail!("Contact scope update commit returned the wrong result kind"),
@@ -1101,8 +1101,9 @@ pub async fn tombstone_contact(
 ) -> anyhow::Result<()> {
     let session = crate::transport::auth::AuthoringSessionFence::capture()?;
     use arkret_sdk::contact_operations::{
-        ContactCommitPhase, ContactCommitRequestBody, ContactOperationOutcome, ContactPreparePhase,
-        ContactPreparedOutcome, ContactTombstonePrepareRequestBody, ContactTombstoneRequestBody,
+        ContactCommitPhase, ContactCommitRequestBody, ContactOperationResponseBody,
+        ContactPreparePhase, ContactPreparedResponseBody, ContactTombstonePrepareRequestBody,
+        ContactTombstoneRequestBody,
     };
 
     let peer_actor: arkret_sdk::ActorId = serde_json::from_str(peer)?;
@@ -1150,16 +1151,16 @@ pub async fn tombstone_contact(
         )?)
         .await?;
     let (returned_operation_id, reservation_handle, event_draft) = match prepared {
-        ContactOperationOutcome::Prepared {
+        ContactOperationResponseBody::Prepared {
             outcome:
-                ContactPreparedOutcome::Tombstone {
+                ContactPreparedResponseBody::Tombstone {
                     operation_id,
                     reservation_handle,
                     event_draft,
                     ..
                 },
         } => (operation_id, reservation_handle, event_draft),
-        ContactOperationOutcome::Failed { outcome } => {
+        ContactOperationResponseBody::Failed { outcome } => {
             anyhow::bail!("Contact tombstone prepare failed: {:?}", outcome.reason)
         }
         _ => anyhow::bail!("Contact tombstone prepare returned the wrong result kind"),
@@ -1184,8 +1185,8 @@ pub async fn tombstone_contact(
     match crate::transport::contacts::finish_contact_commit(http, commit_context, &pending, &commit)
         .await?
     {
-        ContactOperationOutcome::Accepted { .. } => Ok(()),
-        ContactOperationOutcome::Failed { outcome } => {
+        ContactOperationResponseBody::Accepted { .. } => Ok(()),
+        ContactOperationResponseBody::Failed { outcome } => {
             anyhow::bail!("Contact tombstone commit failed: {:?}", outcome.reason)
         }
         _ => anyhow::bail!("Contact tombstone commit returned the wrong result kind"),
@@ -1197,7 +1198,7 @@ pub async fn tombstone_contact(
 pub(crate) struct ConsentEdit {
     response: arkret_sdk::http_client::own_station_results::BoundOwnStationResponse<
         arkret_sdk::ConsentCurrentReadRequestBody,
-        arkret_sdk::ConsentCurrentReadOutcome,
+        arkret_sdk::ConsentCurrentReadResponseBody,
     >,
     fence: crate::transport::auth::AuthoringSessionFence,
 }
@@ -1359,7 +1360,7 @@ pub async fn request_consent(
     // a stand-in for it (account-lifecycle.md §156).
     holder: &arkret_sdk::AccountId,
     scope: &str,
-) -> anyhow::Result<arkret_sdk::ConsentRequestOutcome> {
+) -> anyhow::Result<arkret_sdk::ConsentRequestResponseBody> {
     let body = arkret_sdk::ConsentRequestRequestBody {
         holder_account_id: holder.clone(),
         consent_scope: scope.trim().parse()?,
@@ -1377,7 +1378,7 @@ pub async fn request_consent(
 pub async fn submit_did_operation(
     http: &arkret_sdk::http_client::Client,
     body: &arkret_models_identity::DidOperationSubmitRequestBody,
-) -> anyhow::Result<arkret_models_identity::DidOperationSubmitOutcome> {
+) -> anyhow::Result<arkret_models_identity::DidOperationSubmitResponseBody> {
     http.identity_submit_did_operation(body)
         .await
         .map_err(anyhow::Error::from)
@@ -1796,7 +1797,7 @@ pub async fn cancel_scheduled_send_plan(
 pub async fn submit_read_cursor_advance(
     submitter: &EventSubmitter,
     marker: &crate::state::ReadMarkerRecord,
-) -> anyhow::Result<arkret_sdk::ReadMarkerOutcome> {
+) -> anyhow::Result<arkret_sdk::ReadMarkerResponseBody> {
     let authority = submitter.authority()?;
     if crate::mls_api_helpers::principal_core_id(&marker.actor)? != authority.principal_id {
         anyhow::bail!("read marker actor does not belong to the authenticated account");
@@ -1853,7 +1854,7 @@ mod tests {
             controller_binding_digest: arkret_sdk::Hash::new(format!("sha256:{}", "a".repeat(64)))
                 .unwrap(),
         };
-        let authorized = arkret_sdk::DirectConversationResolveOutcome::CreationRequired {
+        let authorized = arkret_sdk::DirectConversationResolveResponseBody::CreationRequired {
             next_founding_input: arkret_sdk::DirectConversationFoundingInput {
                 founding_authority_evidence: evidence.clone(),
             },
@@ -1862,7 +1863,7 @@ mod tests {
             founding_evidence_for_resolve(&authorized).unwrap(),
             &evidence
         );
-        let blocked = arkret_sdk::DirectConversationResolveOutcome::CreationBlocked {
+        let blocked = arkret_sdk::DirectConversationResolveResponseBody::CreationBlocked {
             blockers: Vec::new(),
         };
         assert!(founding_evidence_for_resolve(&blocked).is_err());
@@ -2110,16 +2111,16 @@ mod tests {
             )
             .expect("strand id"),
         };
-        let outcome: arkret_sdk::AgentParticipationOutcome = serde_json::from_value(json!({
+        let outcome: arkret_sdk::AgentParticipationResponseBody = serde_json::from_value(json!({
             "agent_id": "ak:did_core:web:agent.example",
             "participation_entries": [{
                 "target_scope": scope,
                 "selection": {
-                    "reply_message": true,
-                    "reaction_add": false,
-                    "reaction_remove": false,
-                    "accept_third_party_mention": false,
-                    "act_on_behalf": false
+                    "message_creation_allowed": true,
+                    "reaction_addition_allowed": false,
+                    "reaction_removal_allowed": false,
+                    "third_party_mention_delivery_allowed": false,
+                    "acting_on_behalf_allowed": false
                 },
                 "version": 1,
                 "next_replace_input": {
@@ -2134,7 +2135,7 @@ mod tests {
 
     #[test]
     fn reply_enablement_failure_does_not_invalidate_resolved_direct_conversation() {
-        let outcome: arkret_sdk::direct_conversation::DirectConversationResolveOutcome =
+        let outcome: arkret_sdk::direct_conversation::DirectConversationResolveResponseBody =
             serde_json::from_value(json!({
                 "state": "found",
                 "coordinates": {
@@ -2180,7 +2181,7 @@ mod tests {
 
     #[test]
     fn suspended_direct_conversation_never_offers_recreation() {
-        let outcome: arkret_sdk::direct_conversation::DirectConversationResolveOutcome =
+        let outcome: arkret_sdk::direct_conversation::DirectConversationResolveResponseBody =
             serde_json::from_value(json!({
                 "state": "suspended",
                 "coordinates": {

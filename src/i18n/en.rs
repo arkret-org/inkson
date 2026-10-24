@@ -2189,7 +2189,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("settings.avatar.error", "Avatar upload failed");
     dict.set("settings.account.identity", "Account identity");
     dict.set("settings.profile.display_name", "Display name");
-    dict.set("settings.profile.bio", "Bio");
+    dict.set("settings.profile.biography", "Bio");
     dict.set("settings.profile.save", "Save profile");
     dict.set("settings.profile.saving", "Saving profile…");
     dict.set("settings.profile.saved", "Profile saved");
@@ -2890,7 +2890,10 @@ pub fn english_translations() -> TranslationDict {
     dict.set("realm_admin.roster.public", "Public");
     dict.set("realm_admin.roster.reply", "Reply as agent");
     dict.set("realm_admin.roster.mention", "Accept @mentions");
-    dict.set("realm_admin.roster.act_on_behalf", "Act on my behalf");
+    dict.set(
+        "realm_admin.roster.acting_on_behalf_allowed",
+        "Act on my behalf",
+    );
     dict.set(
         "realm_admin.roster.load_more",
         "Load more — showing {visible} of {total} groups",

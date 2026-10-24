@@ -1,9 +1,9 @@
 //! Explicit controller confirmation, using original accepted membership and
 //! exact grant currents through the authenticated own Station.
-use arkret_sdk::exact_current_results::{
-    CapabilityGrantExactCurrentRow, CapabilityGrantExactCurrentSelector,
-    CapabilityGrantExactCurrentSelectorKind, ExactCurrentResultEntry, ExactCurrentResultSelector,
-    ExactCurrentResultsReadOutcome, ExactCurrentResultsReadRequestBody,
+use arkret_sdk::exact_current_state::{
+    CapabilityGrantExactCurrentSelector, CapabilityGrantExactCurrentSelectorKind,
+    CurrentCapabilityGrant, ExactCurrentStateEntry, ExactCurrentStateReadRequestBody,
+    ExactCurrentStateReadResponseBody, ExactCurrentStateSelector,
 };
 
 use super::*;
@@ -19,14 +19,14 @@ struct JoinBasis {
 #[derive(Clone, Debug)]
 struct AuthorityView {
     basis: Option<JoinBasis>,
-    strands: Vec<arkret_sdk::ProjectionStrandRow>,
-    grants: Vec<CapabilityGrantExactCurrentRow>,
+    strands: Vec<arkret_sdk::StrandRow>,
+    grants: Vec<CurrentCapabilityGrant>,
     effective: Vec<String>,
     join_status: String,
     management_rules: Vec<String>,
 }
 
-fn decision_label(outcome: &arkret_sdk::AuthzCheckOutcome) -> &'static str {
+fn decision_label(outcome: &arkret_sdk::AuthorizationCheckResponseBody) -> &'static str {
     if matches!(
         outcome.freshness_state,
         Some(arkret_sdk::FreshnessState::Stale | arkret_sdk::FreshnessState::Unknown)
@@ -48,21 +48,19 @@ fn decision_label(outcome: &arkret_sdk::AuthzCheckOutcome) -> &'static str {
         });
     if current_precheck {
         return match outcome.decision {
-            arkret_sdk::AuthzDecision::Allow => "当前权限/管理预检允许（运行时仍需验收）",
-            arkret_sdk::AuthzDecision::SoftDeny | arkret_sdk::AuthzDecision::HardDeny => {
-                "当前权限/管理预检拒绝"
-            }
-            arkret_sdk::AuthzDecision::Quarantine => "当前权限/管理预检隔离",
-            arkret_sdk::AuthzDecision::RequireReview => "当前权限/管理预检需批准",
+            arkret_sdk::AuthorizationDecision::Allow => "当前权限/管理预检允许（运行时仍需验收）",
+            arkret_sdk::AuthorizationDecision::SoftDeny
+            | arkret_sdk::AuthorizationDecision::HardDeny => "当前权限/管理预检拒绝",
+            arkret_sdk::AuthorizationDecision::Quarantine => "当前权限/管理预检隔离",
+            arkret_sdk::AuthorizationDecision::RequireReview => "当前权限/管理预检需批准",
         };
     }
     match outcome.decision {
-        arkret_sdk::AuthzDecision::Allow => "基础权限允许；完整动态判定未确认",
-        arkret_sdk::AuthzDecision::SoftDeny | arkret_sdk::AuthzDecision::HardDeny => {
-            "基础权限拒绝；完整动态判定未确认"
-        }
-        arkret_sdk::AuthzDecision::Quarantine => "基础权限隔离；完整动态判定未确认",
-        arkret_sdk::AuthzDecision::RequireReview => "基础权限需批准；完整动态判定未确认",
+        arkret_sdk::AuthorizationDecision::Allow => "基础权限允许；完整动态判定未确认",
+        arkret_sdk::AuthorizationDecision::SoftDeny
+        | arkret_sdk::AuthorizationDecision::HardDeny => "基础权限拒绝；完整动态判定未确认",
+        arkret_sdk::AuthorizationDecision::Quarantine => "基础权限隔离；完整动态判定未确认",
+        arkret_sdk::AuthorizationDecision::RequireReview => "基础权限需批准；完整动态判定未确认",
     }
 }
 
@@ -91,7 +89,7 @@ fn OwnedAgentScopePreview(
                 let scope = arkret_sdk::WireResourceSelector::strand(realm, arkret_sdk::StrandId::new(strand)?);
                 let mut messages = Vec::new();
                 for action in actions {
-                    let request = |account| arkret_models_collaboration::governance::authorization::AuthzCheckRequestBody {
+                    let request = |account| arkret_models_collaboration::governance::authorization::AuthorizationCheckRequestBody {
                         actor_id: arkret_sdk::ActorId::account(account), action: action.clone(), resource: Some(scope.clone()), context: None,
                     };
                     let owner = crate::transport::realm_read::authz_check_request(&http, &request(controller.clone())).await?;
@@ -186,7 +184,7 @@ async fn join_basis(
         .filter(|row| {
             matches!(
                 row,
-                arkret_sdk::TypedCurrentRow::Value {
+                arkret_sdk::CurrentState::Value {
                     selector: arkret_sdk::CurrentSelector::RealmGenesis,
                     ..
                 }
@@ -197,7 +195,7 @@ async fn join_basis(
         genesis_rows.len() == 1,
         "Realm Genesis current is unavailable"
     );
-    let arkret_sdk::TypedCurrentRow::Value {
+    let arkret_sdk::CurrentState::Value {
         source_stream_ref,
         revision,
         value,
@@ -282,22 +280,20 @@ async fn exact_grant(
     http: &arkret_sdk::http_client::Client,
     realm: &arkret_sdk::RealmId,
     grant: &arkret_sdk::GrantId,
-) -> anyhow::Result<CapabilityGrantExactCurrentRow> {
+) -> anyhow::Result<CurrentCapabilityGrant> {
     let client = crate::transport::own_station_results::client_for_http(http).await?;
     // Original issuers retain their dedicated withdrawal even after leaving.
     // Public nonce-bound authority acquisition cannot impose a member read gate.
     let before = current_authority(http, realm).await?;
-    let request = ExactCurrentResultsReadRequestBody {
+    let request = ExactCurrentStateReadRequestBody {
         realm_id: realm.clone(),
-        selector: ExactCurrentResultSelector::CapabilityGrant(
-            CapabilityGrantExactCurrentSelector {
-                kind: CapabilityGrantExactCurrentSelectorKind::CapabilityGrant,
-                grant_id: grant.clone(),
-            },
-        ),
+        selector: ExactCurrentStateSelector::CapabilityGrant(CapabilityGrantExactCurrentSelector {
+            kind: CapabilityGrantExactCurrentSelectorKind::CapabilityGrant,
+            grant_id: grant.clone(),
+        }),
     };
     let result = client
-        .exact_current_result(&request, before.current_generation)
+        .exact_current_state(&request, before.current_generation)
         .await?;
     let after = current_authority(http, realm).await?;
     result
@@ -311,8 +307,8 @@ async fn exact_grant(
         "Grant read crossed a current cut; refresh and confirm again"
     );
     match result.into_value()? {
-        ExactCurrentResultsReadOutcome::Present {
-            entry: ExactCurrentResultEntry::CapabilityGrant(row),
+        ExactCurrentStateReadResponseBody::Present {
+            entry: ExactCurrentStateEntry::CapabilityGrant(row),
             effective_stream_head,
             ..
         } => {
@@ -332,7 +328,7 @@ async fn current_authority(
 ) -> anyhow::Result<arkret_sdk::RealmAuthorityBundle> {
     let mut nonce = [0_u8; 32];
     getrandom::fill(&mut nonce).map_err(|error| anyhow::anyhow!("authority nonce: {error}"))?;
-    let request = arkret_sdk::AuthorityBundleRequest {
+    let request = arkret_sdk::RealmAuthorityBundleRequestBody {
         realm_id: realm.clone(),
         nonce: arkret_sdk::Base64UrlString::new(arkret_sdk::base64url_encode(nonce))
             .map_err(|error| anyhow::anyhow!(error))?,
@@ -506,7 +502,7 @@ async fn withdraw_owned_grant(
 /// must not hide the original issuer's withdrawal surface.
 #[component]
 pub(super) fn OwnedAgentWithdrawal(realm_id: String, token: Signal<String>) -> Element {
-    let mut rows = use_signal(Vec::<CapabilityGrantExactCurrentRow>::new);
+    let mut rows = use_signal(Vec::<CurrentCapabilityGrant>::new);
     let mut message = use_signal(String::new);
     let mut pending = use_signal(|| false);
     let mut refresh = use_signal(|| 0_u64);
@@ -594,7 +590,7 @@ async fn load(
     let mut effective = Vec::new();
     let mut management_rules = Vec::new();
     for row in &before.value()?.current_state_entries {
-        let arkret_sdk::TypedCurrentRow::Value {
+        let arkret_sdk::CurrentState::Value {
             selector: arkret_sdk::CurrentSelector::Policy { .. },
             source_stream_ref,
             revision,
@@ -645,7 +641,7 @@ async fn load(
         }
     }
     for row in &before.value()?.current_state_entries {
-        let arkret_sdk::TypedCurrentRow::Value {
+        let arkret_sdk::CurrentState::Value {
             selector: arkret_sdk::CurrentSelector::CapabilityGrant { grant_id },
             value,
             ..
@@ -671,7 +667,7 @@ async fn load(
         for action in &row.value.actions {
             for resource in &row.value.resources {
                 let result = crate::transport::realm_read::authz_check_request(http,
-                    &arkret_models_collaboration::governance::authorization::AuthzCheckRequestBody {
+                    &arkret_models_collaboration::governance::authorization::AuthorizationCheckRequestBody {
                         actor_id: arkret_sdk::ActorId::account(agent.clone()), action: action.clone(),
                         resource: Some(resource.clone()), context: None,
                     }).await;

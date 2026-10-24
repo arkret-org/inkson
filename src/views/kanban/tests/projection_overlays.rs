@@ -5,8 +5,8 @@ fn current_space_siblings(
     kind: &str,
     title: &str,
     parent: Option<&str>,
-) -> Vec<arkret_wire::TypedCurrentRow> {
-    use arkret_wire::{CommitStreamRef, CurrentRevision, CurrentSelector, TypedCurrentRow};
+) -> Vec<arkret_wire::CurrentState> {
+    use arkret_wire::{CommitStreamRef, CurrentRevision, CurrentSelector, CurrentState};
     let space_id = arkret_sdk::SpaceId::new(id).unwrap();
     let space = arkret_sdk::Space::new(
         space_id.clone(),
@@ -34,7 +34,7 @@ fn current_space_siblings(
         ),
     ]
     .into_iter()
-    .map(|(selector, value)| TypedCurrentRow::Value {
+    .map(|(selector, value)| CurrentState::Value {
         selector,
         source_stream_ref: CommitStreamRef::Realm {
             realm_id: arkret_sdk::RealmId::new(PENDING_TEST_REALM).unwrap(),
@@ -160,7 +160,7 @@ fn current_space_requires_exact_realm_and_complete_resolved_siblings() {
     ));
     assert!(space_container_views_from_current(&cycle, PENDING_TEST_REALM).is_empty());
     let mut foreign = entries.clone();
-    let arkret_wire::TypedCurrentRow::Value {
+    let arkret_wire::CurrentState::Value {
         source_stream_ref, ..
     } = &mut foreign[1];
     *source_stream_ref = arkret_wire::CommitStreamRef::Realm {
@@ -704,7 +704,7 @@ fn terminal_current_suppresses_history_when_projection_omits_the_board() {
         .unwrap(),
     );
     space.state = Some(arkret_sdk::SpaceState::Tombstoned);
-    let entry = arkret_wire::TypedCurrentRow::Value {
+    let entry = arkret_wire::CurrentState::Value {
         selector: arkret_wire::CurrentSelector::Space {
             space_id: space.id.clone().unwrap(),
         },
@@ -746,7 +746,7 @@ fn terminal_current_suppresses_history_when_projection_omits_the_board() {
     );
 
     let mut foreign = entries.clone();
-    let arkret_wire::TypedCurrentRow::Value {
+    let arkret_wire::CurrentState::Value {
         source_stream_ref, ..
     } = &mut foreign[0];
     *source_stream_ref = arkret_wire::CommitStreamRef::Realm {
@@ -755,7 +755,7 @@ fn terminal_current_suppresses_history_when_projection_omits_the_board() {
     };
     assert!(terminal_space_ids_from_current(&foreign, PENDING_TEST_REALM).is_empty());
     foreign = entries.clone();
-    let arkret_wire::TypedCurrentRow::Value { selector, .. } = &mut foreign[0];
+    let arkret_wire::CurrentState::Value { selector, .. } = &mut foreign[0];
     *selector = arkret_wire::CurrentSelector::Space {
         space_id: arkret_sdk::SpaceId::new("ak:space:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-")
             .unwrap(),
@@ -1259,7 +1259,7 @@ fn remote_encrypted_strand_update_overlay_marks_private_fields_locked() {
         "ciphertext": "AAAA",
         "content_type": KANBAN_STRAND_PATCH_VALUE_CONTENT_TYPE,
         "group_id": "g",
-        "epoch": 0,
+        "epoch": "0",
     });
     let events = vec![json!({
         "event_id": "ak:event:AYiSAxDIS8PlP8d9iucotDVTdZ9-CahOJVw2Km3R38HU",

@@ -422,7 +422,7 @@ mod tests {
 
     fn session() -> JoinedMediaSession {
         let participant_binding = arkret_sdk::CallMediaParticipantBinding {
-            sig: "sig".to_owned(),
+            signature: "signature".to_owned(),
             issuer_kid: arkret_sdk::DidUrl::new("did:web:media.example#key-1").unwrap(),
             expires_at: chrono::DateTime::parse_from_rfc3339("2026-04-26T00:05:00.000Z")
                 .unwrap()

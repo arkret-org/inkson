@@ -74,7 +74,7 @@ pub enum AgentGrantPreset {
     Draft,
     /// `reply_as_agent` — agent posts as itself.
     ReplyAsAgent,
-    /// `act_on_behalf` — controller is actor_id, agent is executed_by.
+    /// `acting_on_behalf_allowed` — controller is actor_id, agent is executed_by.
     /// High risk: the expanded grant carries a controller-approval
     /// constraint per §4.10.
     ActOnBehalf,
@@ -98,7 +98,7 @@ impl AgentGrantPreset {
             Self::Read => "read",
             Self::Draft => "draft",
             Self::ReplyAsAgent => "reply_as_agent",
-            Self::ActOnBehalf => "act_on_behalf",
+            Self::ActOnBehalf => "acting_on_behalf_allowed",
             Self::Organizer => "organizer",
         }
     }
@@ -742,7 +742,7 @@ fn validate_runtime_approval_candidate(
 /// bounds the TTL. This is a separate Realm-scoped grant and is never
 /// materialized by provisioning.
 ///
-/// `act_on_behalf` additionally attaches a `claim_based` /
+/// `acting_on_behalf_allowed` additionally attaches a `claim_based` /
 /// `accountability` constraint (`controller_approval_required=true`) per
 /// §4.10 so the high-risk executor path cannot run without controller
 /// approval.

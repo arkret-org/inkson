@@ -270,7 +270,7 @@ fn build_mls_genesis_payload_has_required_fields() {
         arkret_sdk::base64url_decode(
             typed_payload
                 .creator_leaf_authority
-                .leaf_signature_key_b64u
+                .leaf_signature_key_base64url
                 .as_str()
         )
         .unwrap()
@@ -297,11 +297,15 @@ fn build_mls_genesis_payload_has_required_fields() {
     // governance_binding present and carries the genesis 0 -> 0 epochs.
     assert!(payload.get("governance_binding").is_some());
     assert_eq!(
-        payload["governance_binding"]["previous_epoch"].as_u64(),
+        arkret_sdk::canonical::serde_helpers::parse_uint64_decimal_value(
+            &payload["governance_binding"]["previous_epoch"]
+        ),
         Some(0)
     );
     assert_eq!(
-        payload["governance_binding"]["next_epoch"].as_u64(),
+        arkret_sdk::canonical::serde_helpers::parse_uint64_decimal_value(
+            &payload["governance_binding"]["next_epoch"]
+        ),
         Some(0)
     );
     assert_eq!(typed_payload.effective_scope(), binding.effective_scope());

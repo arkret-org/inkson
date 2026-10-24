@@ -428,16 +428,16 @@ test("account settings split account/server info and surface Agents", async ({ p
       "[data-testid='settings-profile-display-name']",
     );
     const displayNameLabel = displayName?.closest("label")?.querySelector<HTMLElement>("span");
-    const bio = document.querySelector<HTMLTextAreaElement>("[data-testid='settings-profile-bio']");
+    const biography = document.querySelector<HTMLTextAreaElement>("[data-testid='settings-profile-biography']");
     const avatar = document.querySelector<HTMLElement>(".settings-avatar-actions");
     const identity = document.querySelector<HTMLElement>(".settings-account-identity-grid");
-    if (!profile || !displayName || !displayNameLabel || !bio || !avatar || !identity) {
+    if (!profile || !displayName || !displayNameLabel || !biography || !avatar || !identity) {
       return null;
     }
     const profileBox = profile.getBoundingClientRect();
     const displayNameBox = displayName.getBoundingClientRect();
     const displayNameLabelBox = displayNameLabel.getBoundingClientRect();
-    const bioBox = bio.getBoundingClientRect();
+    const bioBox = biography.getBoundingClientRect();
     const avatarBox = avatar.getBoundingClientRect();
     const identityBox = identity.getBoundingClientRect();
     return {

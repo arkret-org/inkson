@@ -18,7 +18,7 @@ pub(super) fn build_invite_locator_url(base_url: &str, locator_token: &str) -> S
 
 pub(super) async fn issue_invite_locator(
     client: arkret_sdk::http_client::Client,
-) -> anyhow::Result<arkret_sdk::InviteLocatorIssueOutcome> {
+) -> anyhow::Result<arkret_sdk::InviteLocatorIssueResponseBody> {
     client
         .issue_invite_locator(&arkret_sdk::InviteLocatorIssueRequestBody {
             ttl_seconds: Some(arkret_sdk::INVITE_LOCATOR_DEFAULT_TTL_SECONDS),
@@ -32,7 +32,7 @@ pub(super) async fn issue_invite_locator(
 pub(super) async fn rotate_invite_locator(
     client: arkret_sdk::http_client::Client,
     locator_id: String,
-) -> anyhow::Result<arkret_sdk::InviteLocatorIssueOutcome> {
+) -> anyhow::Result<arkret_sdk::InviteLocatorIssueResponseBody> {
     let result = client
         .rotate_invite_locator(&arkret_sdk::InviteLocatorRotateRequestBody {
             locator_id: arkret_identifiers::InviteLocatorId::new(locator_id)?,
