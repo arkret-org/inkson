@@ -15,7 +15,7 @@ pub(super) struct ShellEffectState {
     pub account_identity_lookup_key: Signal<String>,
     pub contact_handles_lookup_key: Signal<String>,
     pub contact_handles_fetching: Signal<BTreeSet<String>>,
-    pub direct_contact_rows: Signal<Vec<crate::models::ContactListRow>>,
+    pub direct_contact_rows: Signal<Vec<crate::models::ContactView>>,
     pub did_resolution_health: Signal<crate::components::DidResolutionHealth>,
 }
 

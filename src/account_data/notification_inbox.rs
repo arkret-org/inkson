@@ -71,7 +71,7 @@ pub fn merge_notification_inbox_account_data(
     authority: &arkret_sdk::AccountId,
     account_data_key: &str,
     candidate: &NotificationInboxValue,
-    current: Option<&arkret_sdk::AccountDataRow>,
+    current: Option<&arkret_sdk::AccountDataEntry>,
 ) -> anyhow::Result<Value> {
     let remote = match current {
         Some(current) => {

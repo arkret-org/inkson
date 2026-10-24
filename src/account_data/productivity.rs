@@ -110,7 +110,7 @@ pub fn merge_scheduled_send_account_data(
     authority: &arkret_sdk::AccountId,
     account_data_key: &str,
     candidate: &arkret_sdk::ScheduledSendValue,
-    current: Option<&arkret_sdk::AccountDataRow>,
+    current: Option<&arkret_sdk::AccountDataEntry>,
 ) -> anyhow::Result<Value> {
     let remote = match current {
         Some(current) => {

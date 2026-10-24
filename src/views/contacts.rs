@@ -5,7 +5,7 @@ use dioxus_router::hooks::use_navigator;
 
 use crate::components::DismissiblePopup;
 use crate::i18n::tr;
-use crate::models::ContactListRow;
+use crate::models::ContactView;
 use crate::routes::Route;
 use crate::transport::auth::{with_authed_api, with_authed_sdk_client};
 use crate::ui::button::{Button, ButtonVariant};
@@ -255,7 +255,7 @@ pub fn ContactNewPanel(
 #[component]
 fn ContactRow(
     token: Signal<String>,
-    contact: ContactListRow,
+    contact: ContactView,
     on_changed: EventHandler<()>,
     #[props(default)] advanced: bool,
 ) -> Element {
@@ -1210,7 +1210,7 @@ pub fn ContactsPanel(token: Signal<String>, #[props(default)] advanced: bool) ->
     // context instead of props.
     let base_url = crate::app::SessionContext::base_url_string();
     let mut state_store = crate::app::SessionContext::get().state_store;
-    let mut contacts = use_signal(Vec::<ContactListRow>::new);
+    let mut contacts = use_signal(Vec::<ContactView>::new);
     use_effect(move || contacts.set(contact_inbox.0()));
     let mut status = use_signal(|| "loading".to_owned());
     let mut error =

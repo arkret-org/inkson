@@ -450,7 +450,7 @@ pub fn RealmMembersPanel(
     // U3 - "Add from contacts" picker state. `invite_contacts` holds the user's
     // accepted contacts (lazily loaded when the modal opens); `selected_contacts`
     // is the multi-select set of DIDs to invite via the consent-grant path.
-    let invite_contacts = use_signal(Vec::<crate::models::ContactListRow>::new);
+    let invite_contacts = use_signal(Vec::<crate::models::ContactView>::new);
     let invite_contacts_loaded = use_signal(|| false);
     let invite_contacts_status = use_signal(String::new);
     let mut selected_contacts = use_signal(std::collections::BTreeSet::<String>::new);

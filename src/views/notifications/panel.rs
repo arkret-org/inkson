@@ -533,7 +533,7 @@ pub fn NotificationsPanel(
 
 #[component]
 fn ContactRequestNotification(
-    contact: crate::models::ContactListRow,
+    contact: crate::models::ContactView,
     token: Signal<String>,
 ) -> Element {
     let session = crate::app::SessionContext::get();

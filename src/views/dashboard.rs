@@ -744,9 +744,7 @@ fn dashboard_recent_strands(
         .collect()
 }
 
-fn dashboard_contacts_summary(
-    contacts: &[crate::models::ContactListRow],
-) -> DashboardContactsSummary {
+fn dashboard_contacts_summary(contacts: &[crate::models::ContactView]) -> DashboardContactsSummary {
     let mut summary = DashboardContactsSummary::default();
     for contact in contacts {
         match contact.state {
@@ -860,7 +858,7 @@ mod tests {
         contact_summary_delta, dashboard_contacts_summary, dashboard_recent_strands,
         projection_collection_label, projection_kind_label, recent_projection_collection_label,
     };
-    use crate::models::{ContactListRow, RealmTreeNodeKind};
+    use crate::models::{ContactView, RealmTreeNodeKind};
     use crate::state::RawOperationRecord;
 
     #[test]
@@ -890,12 +888,8 @@ mod tests {
 
     #[test]
     fn contact_summary_counts_actionable_rows() {
-        fn contact(
-            peer: &str,
-            state: arkret_sdk::ContactState,
-            direct_ready: bool,
-        ) -> ContactListRow {
-            ContactListRow {
+        fn contact(peer: &str, state: arkret_sdk::ContactState, direct_ready: bool) -> ContactView {
+            ContactView {
                 peer: arkret_sdk::contact_operations::ContactPeer::Human {
                     account_id: arkret_sdk::AccountId::new(
                         crate::mls_api_helpers::principal_core_id(peer).unwrap(),

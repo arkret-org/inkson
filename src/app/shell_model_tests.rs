@@ -359,8 +359,8 @@ fn identity_labels_prefer_display_name_then_handle_then_protocol_id() {
     assert_eq!(without_handle.handles_title, without_handle.handles_label);
 }
 
-fn contact_row(principal: &str) -> crate::models::ContactListRow {
-    crate::models::ContactListRow {
+fn contact_row(principal: &str) -> crate::models::ContactView {
+    crate::models::ContactView {
         peer: arkret_sdk::contact_operations::ContactPeer::Human {
             account_id: crate::test_support::authority(principal),
         },

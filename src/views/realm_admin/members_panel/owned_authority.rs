@@ -19,7 +19,7 @@ struct JoinBasis {
 #[derive(Clone, Debug)]
 struct AuthorityView {
     basis: Option<JoinBasis>,
-    strands: Vec<arkret_sdk::StrandRow>,
+    strands: Vec<arkret_sdk::StrandView>,
     grants: Vec<CurrentCapabilityGrant>,
     effective: Vec<String>,
     join_status: String,

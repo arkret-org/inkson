@@ -1558,7 +1558,7 @@ impl Builder {
 
 pub(super) fn realm_list(input: Value) -> Result<Value> {
     use arkret_models_collaboration::sync_frames::demand_sync::{
-        RealmListMembership, RealmListPage, RealmListRow,
+        AccountRealmView, RealmListMembership, RealmListPage,
     };
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
@@ -1581,7 +1581,7 @@ pub(super) fn realm_list(input: Value) -> Result<Value> {
             })
             .transpose()?
             .map(|profile| profile.title);
-        items.push(RealmListRow {
+        items.push(AccountRealmView {
             realm_id: fixture.snapshot.realm_id,
             revision: fixture.committed_events.len() as u64,
             activity_position: index as u64,
@@ -2173,7 +2173,7 @@ pub(super) fn streams(input: Value) -> Result<Value> {
             direction: arkret_wire::StreamScanDirection::After(None),
             limit: 1,
         })?;
-        let row = arkret_wire::RealmStreamRow {
+        let row = arkret_wire::RealmStreamView {
             stream_ref: head.stream_ref.clone(),
             head_commit_ref: head.commit_id.clone(),
             next_position: head

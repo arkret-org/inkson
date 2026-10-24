@@ -994,7 +994,7 @@ pub struct ClientLocalState {
     pub invite_credentials: imbl::OrdMap<String, StoredInviteCredential>,
     /// Authoritative Station-CAS Account Data projection from account subscribe.
     #[serde(default)]
-    pub station_cas_account_data: imbl::OrdMap<String, arkret_sdk::AccountDataRow>,
+    pub station_cas_account_data: imbl::OrdMap<String, arkret_sdk::AccountDataEntry>,
     /// Per-realm watch level overrides (spec
     /// `discovery/push-notifications.md` §4.3.2). Only non-default entries are
     /// stored; an absent realm resolves to `WatchLevel::MentionsOnly`.

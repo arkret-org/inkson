@@ -336,7 +336,7 @@ pub(super) struct RealmMembersController {
     pub(super) permissions: Signal<RealmMemberCapabilities>,
     /// The caller's accepted contacts, loaded the first time the invite modal
     /// opens and not again.
-    pub(super) invite_contacts: Signal<Vec<crate::models::ContactListRow>>,
+    pub(super) invite_contacts: Signal<Vec<crate::models::ContactView>>,
     pub(super) invite_contacts_loaded: Signal<bool>,
     pub(super) invite_contacts_status: Signal<String>,
     pub(super) state_store: SyncSignal<LocalStateStore>,

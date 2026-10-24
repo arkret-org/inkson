@@ -340,7 +340,7 @@ fn contact_request_commit(input: Value) -> Result<Value> {
         &event.event_id,
         &authority.signing_key.verifying_key(),
     )?;
-    let list_row = ContactListRow {
+    let list_row = ContactView {
         peer: receipt.core.peer.clone(),
         state: ContactState::PendingOutgoing,
         request_event_ref: Some(event.event_id.clone()),

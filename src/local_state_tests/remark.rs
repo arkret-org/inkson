@@ -92,7 +92,7 @@ fn contact_remark_set_tombstone_and_display_name() {
     let did = "ak:did_core:web:alice.example";
     assert!(store.active_contact_remark(did).is_none());
 
-    let accepted = crate::models::ContactListRow {
+    let accepted = crate::models::ContactView {
         peer: arkret_sdk::contact_operations::ContactPeer::Human {
             account_id: arkret_sdk::AccountId::new(
                 arkret_sdk::DidCoreId::new(did).unwrap(),

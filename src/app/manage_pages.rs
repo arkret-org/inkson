@@ -1,7 +1,7 @@
 use super::*;
 use crate::components::HelpTip;
 
-pub(super) fn contact_manage_scope_summary(contact: &crate::models::ContactListRow) -> String {
+pub(super) fn contact_manage_scope_summary(contact: &crate::models::ContactView) -> String {
     let mut seen = BTreeSet::<String>::new();
     for scope in contact
         .bidirectional_scopes
@@ -268,7 +268,7 @@ pub(super) fn PrincipalControlRealmPage(realm_id: Option<String>) -> Element {
 pub(super) fn ContactsManagePage(
     token: Signal<String>,
     has_session: bool,
-    mut contact_rows: Signal<Vec<crate::models::ContactListRow>>,
+    mut contact_rows: Signal<Vec<crate::models::ContactView>>,
     mut contacts_loaded: Signal<bool>,
     mut query: Signal<String>,
 ) -> Element {

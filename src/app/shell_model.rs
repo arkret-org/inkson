@@ -260,13 +260,13 @@ fn remark_display_name(remarks: &BTreeMap<String, RealmRemark>, node: &RealmTree
 ///
 /// `query` is already trimmed and lowercased by the caller.
 pub(super) fn filter_and_sort_direct_contacts(
-    rows: &[crate::models::ContactListRow],
+    rows: &[crate::models::ContactView],
     query: &str,
     store: &LocalStateStore,
     contact_remarks: &BTreeMap<String, ContactRemark>,
-) -> Vec<crate::models::ContactListRow> {
+) -> Vec<crate::models::ContactView> {
     let blocklist = store.client_blocklist();
-    let mut filtered: Vec<crate::models::ContactListRow> = rows
+    let mut filtered: Vec<crate::models::ContactView> = rows
         .iter()
         .filter(|contact| {
             contact.state != arkret_sdk::ContactState::PendingIncoming

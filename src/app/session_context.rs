@@ -20,7 +20,7 @@ pub(super) struct AppStateStore(pub SyncSignal<LocalStateStore>);
 
 /// Current account's contact inbox, shared by the sidebar and notifications.
 #[derive(Clone, Copy)]
-pub(crate) struct ContactInbox(pub Signal<Vec<crate::models::ContactListRow>>);
+pub(crate) struct ContactInbox(pub Signal<Vec<crate::models::ContactView>>);
 
 impl ContactInbox {
     pub(crate) fn pending_count(self, snapshot: &crate::state::ClientLocalState) -> usize {
@@ -40,7 +40,7 @@ impl ContactInbox {
     pub(crate) fn visible_pending(
         self,
         snapshot: &crate::state::ClientLocalState,
-    ) -> Vec<crate::models::ContactListRow> {
+    ) -> Vec<crate::models::ContactView> {
         self.0
             .read()
             .iter()

@@ -647,8 +647,8 @@ mod petname_tests {
         )
     }
 
-    fn accepted_human(principal_id: &str) -> crate::models::ContactListRow {
-        crate::models::ContactListRow {
+    fn accepted_human(principal_id: &str) -> crate::models::ContactView {
+        crate::models::ContactView {
             peer: arkret_sdk::contact_operations::ContactPeer::Human {
                 account_id: arkret_sdk::AccountId::new(
                     arkret_sdk::DidCoreId::new(principal_id).unwrap(),

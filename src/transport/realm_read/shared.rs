@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use arkret_sdk::http_client::Client;
 use arkret_sdk::http_client::own_station_results::OwnStationSessionSnapshot;
-use arkret_sdk::{RealmId, SpaceRow, StrandRow};
+use arkret_sdk::{RealmId, SpaceView, StrandView};
 use futures_util::FutureExt;
 use futures_util::future::{Shared, WeakShared};
 
@@ -84,8 +84,8 @@ impl<T> ReadFlights<T> {
 
 #[derive(Default)]
 struct ProjectionFlights {
-    spaces: ReadFlights<SpaceRow>,
-    strands: ReadFlights<StrandRow>,
+    spaces: ReadFlights<SpaceView>,
+    strands: ReadFlights<StrandView>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -156,7 +156,7 @@ pub(super) async fn spaces(
     http: &Client,
     realm: RealmId,
     read_fence: Option<crate::state::RealmListReadFence>,
-) -> anyhow::Result<Vec<SpaceRow>> {
+) -> anyhow::Result<Vec<SpaceView>> {
     read(
         http,
         realm,
@@ -178,7 +178,7 @@ pub(super) async fn strands(
     http: &Client,
     realm: RealmId,
     read_fence: Option<crate::state::RealmListReadFence>,
-) -> anyhow::Result<Vec<StrandRow>> {
+) -> anyhow::Result<Vec<StrandView>> {
     read(
         http,
         realm,

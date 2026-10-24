@@ -438,7 +438,7 @@ fn current_to_device_outcome_retains_exact_delivery_coordinates() {
         arkret_sdk::DeviceId::new("ak:device:0196419b-0000-7000-8000-000000000000".to_owned())
             .unwrap();
     let device_message_id = arkret_sdk::DeviceMessageId::new_v7_at(1_760_000_000_000);
-    let delivered_row = arkret_models_collaboration::device_messages::DeviceMessageDeliveredRow {
+    let delivered_row = arkret_models_collaboration::device_messages::DeviceMessageDeliveredEntry {
         device_message_id: device_message_id.clone(),
         status:
             arkret_models_collaboration::device_messages::DeviceMessageDeliveredStatus::Delivered,

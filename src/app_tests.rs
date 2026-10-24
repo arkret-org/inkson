@@ -76,7 +76,7 @@ fn test_authority(principal: &str) -> arkret_sdk::AccountId {
 
 #[test]
 fn direct_route_resolves_agent_peer_independently_of_reply_participation() {
-    let contacts: Vec<crate::models::ContactListRow> = serde_json::from_value(serde_json::json!([
+    let contacts: Vec<crate::models::ContactView> = serde_json::from_value(serde_json::json!([
         {
             "peer": {"kind": "human", "account_id": {
                 "principal_id": "ak:did_core:web:example.com:users:alice",

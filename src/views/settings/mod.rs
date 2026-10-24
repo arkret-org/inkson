@@ -441,7 +441,7 @@ pub(crate) async fn save_contact_remark_edit(
                 chrono::Utc::now(),
             ));
         }
-        let row: arkret_sdk::AccountDataRow = serde_json::from_value(result)?;
+        let row: arkret_sdk::AccountDataEntry = serde_json::from_value(result)?;
         let remark: crate::account_data::ContactRemark = serde_json::from_value(
             crate::account_data::decrypt_account_data_entry(&authority, &key, &row)?,
         )?;

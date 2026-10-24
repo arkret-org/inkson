@@ -594,7 +594,7 @@ fn AppBootstrap() -> Element {
     let mut direct_sidebar_query = use_signal(String::new);
     let realm_manage_query = use_signal(String::new);
     let contact_manage_query = use_signal(String::new);
-    let direct_contact_rows = use_signal(Vec::<crate::models::ContactListRow>::new);
+    let direct_contact_rows = use_signal(Vec::<crate::models::ContactView>::new);
     use_context_provider(|| ContactInbox(direct_contact_rows));
     let direct_contacts_loaded = use_signal(|| false);
     let own_agent_rows = use_signal(Vec::<arkret_sdk::AgentProjection>::new);

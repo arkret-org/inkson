@@ -1,7 +1,7 @@
 //! Capability grant / revoke builders.
 
 use arkret_models_collaboration::governance::authorization::{
-    EffectiveCapabilityGrantRow, EffectiveGrantSnapshot,
+    EffectiveCapabilityGrantView, EffectiveGrantSnapshot,
 };
 use arkret_models_integration::AppletCapabilityRevokeIntent;
 use arkret_wire::{CurrentRevision, event_kind_str};
@@ -111,7 +111,7 @@ pub fn capability_revoke(
 ) -> anyhow::Result<TypedOperationBuilder> {
     anyhow::bail!(
         "capability revoke blocked: exact accepted CurrentRevision is unavailable; read an \
-         EffectiveCapabilityGrantRow or use an Applet revoke preview intent"
+         EffectiveCapabilityGrantView or use an Applet revoke preview intent"
     )
 }
 
@@ -143,7 +143,7 @@ fn capability_revoke_exact(
 pub fn effective_grant_row_for_revoke<'a>(
     list: &'a EffectiveGrantSnapshot,
     grant_id: &str,
-) -> anyhow::Result<&'a EffectiveCapabilityGrantRow> {
+) -> anyhow::Result<&'a EffectiveCapabilityGrantView> {
     let grant_id = arkret_sdk::GrantId::new(grant_id.to_owned())
         .map_err(|error| anyhow::anyhow!("capability revoke grant_id {grant_id:?}: {error}"))?;
     let mut matches = list.grants.iter().filter(|row| row.grant.id == grant_id);
@@ -167,7 +167,7 @@ pub fn effective_grant_row_for_revoke<'a>(
 pub fn capability_revoke_from_effective_row(
     realm_id: &str,
     actor: &str,
-    row: &EffectiveCapabilityGrantRow,
+    row: &EffectiveCapabilityGrantView,
     reason: Option<&str>,
 ) -> anyhow::Result<TypedOperationBuilder> {
     let realm_id = arkret_sdk::RealmId::new(trim_realm_id(realm_id))?;

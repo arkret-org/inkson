@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) fn direct_conversation_peer_id(
-    contacts: &[crate::models::ContactListRow],
+    contacts: &[crate::models::ContactView],
     realm_id: &str,
     strand_id: &str,
 ) -> String {
@@ -58,7 +58,7 @@ pub(super) struct RouteSurfaceState {
     pub(super) routed_control_realm_id: Option<String>,
     pub(super) manage_realm_rows: Vec<RealmManageRow>,
     pub(super) realm_manage_query: Signal<String>,
-    pub(super) direct_contact_rows: Signal<Vec<crate::models::ContactListRow>>,
+    pub(super) direct_contact_rows: Signal<Vec<crate::models::ContactView>>,
     pub(super) direct_contacts_loaded: Signal<bool>,
     pub(super) contact_manage_query: Signal<String>,
     pub(super) secure_store_bootstrap_ready: Signal<bool>,

@@ -226,7 +226,7 @@ impl LocalStateStore {
 
     /// Replace the transient eligibility projection used by live labels.
     /// Only accepted human Contacts contribute a canonical principal.
-    pub fn replace_accepted_human_contacts(&mut self, contacts: &[crate::models::ContactListRow]) {
+    pub fn replace_accepted_human_contacts(&mut self, contacts: &[crate::models::ContactView]) {
         self.ensure_cached_loaded();
         let mut changed = false;
         for contact in contacts {

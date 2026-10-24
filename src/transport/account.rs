@@ -960,7 +960,7 @@ pub(crate) fn primary_handle_from_viewer(
 }
 
 fn contact_scope_update_prepare(
-    row: arkret_sdk::ContactListRow,
+    row: arkret_sdk::ContactView,
     mut granted_to_peer_scopes: Vec<arkret_sdk::contact_operations::ContactScope>,
     operation_id: arkret_sdk::ProtocolOperationId,
     idempotency_key: arkret_sdk::IdempotencyKey,
@@ -1389,7 +1389,7 @@ const MAX_ACCOUNT_DATA_CAS_ATTEMPTS: usize = 4;
 #[derive(Clone, Debug)]
 pub(crate) struct AccountDataSnapshot {
     pub revision: u64,
-    pub entry: Option<arkret_sdk::AccountDataRow>,
+    pub entry: Option<arkret_sdk::AccountDataEntry>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1869,7 +1869,7 @@ mod tests {
         assert!(founding_evidence_for_resolve(&blocked).is_err());
     }
 
-    fn accepted_contact_row_for_scope_update() -> arkret_sdk::ContactListRow {
+    fn accepted_contact_row_for_scope_update() -> arkret_sdk::ContactView {
         serde_json::from_value(json!({
             "peer": {"kind": "human", "account_id": {
                 "principal_id": "ak:did_core:web:bob.example",

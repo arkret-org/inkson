@@ -62,7 +62,7 @@ fn realm_projection_path(
 pub async fn list_realm_spaces(
     http: &arkret_sdk::http_client::Client,
     realm_id: &str,
-) -> anyhow::Result<Vec<arkret_sdk::SpaceRow>> {
+) -> anyhow::Result<Vec<arkret_sdk::SpaceView>> {
     let realm_id = arkret_sdk::RealmId::new(trim_realm_id(realm_id))?;
     shared::spaces(http, realm_id, None).await
 }
@@ -71,7 +71,7 @@ pub(crate) async fn list_realm_spaces_scoped(
     http: &arkret_sdk::http_client::Client,
     realm_id: &str,
     read_fence: &crate::state::RealmListReadFence,
-) -> anyhow::Result<Vec<arkret_sdk::SpaceRow>> {
+) -> anyhow::Result<Vec<arkret_sdk::SpaceView>> {
     let realm_id = arkret_sdk::RealmId::new(trim_realm_id(realm_id))?;
     shared::spaces(http, realm_id, Some(read_fence.clone())).await
 }
@@ -79,7 +79,7 @@ pub(crate) async fn list_realm_spaces_scoped(
 async fn list_realm_spaces_pages(
     http: &arkret_sdk::http_client::Client,
     realm_id: &arkret_sdk::RealmId,
-) -> anyhow::Result<Vec<arkret_sdk::SpaceRow>> {
+) -> anyhow::Result<Vec<arkret_sdk::SpaceView>> {
     let bound = http
         .own_station_result_client()?
         .ok_or_else(|| anyhow::anyhow!("Space read requires its captured session"))?;
@@ -121,7 +121,7 @@ async fn list_realm_spaces_pages(
 pub async fn list_realm_strands(
     http: &arkret_sdk::http_client::Client,
     realm_id: &str,
-) -> anyhow::Result<Vec<arkret_sdk::StrandRow>> {
+) -> anyhow::Result<Vec<arkret_sdk::StrandView>> {
     let realm_id = arkret_sdk::RealmId::new(trim_realm_id(realm_id))?;
     shared::strands(http, realm_id, None).await
 }
@@ -130,7 +130,7 @@ pub(crate) async fn list_realm_strands_scoped(
     http: &arkret_sdk::http_client::Client,
     realm_id: &str,
     read_fence: &crate::state::RealmListReadFence,
-) -> anyhow::Result<Vec<arkret_sdk::StrandRow>> {
+) -> anyhow::Result<Vec<arkret_sdk::StrandView>> {
     let realm_id = arkret_sdk::RealmId::new(trim_realm_id(realm_id))?;
     shared::strands(http, realm_id, Some(read_fence.clone())).await
 }
@@ -138,7 +138,7 @@ pub(crate) async fn list_realm_strands_scoped(
 async fn list_realm_strands_pages(
     http: &arkret_sdk::http_client::Client,
     realm_id: &arkret_sdk::RealmId,
-) -> anyhow::Result<Vec<arkret_sdk::StrandRow>> {
+) -> anyhow::Result<Vec<arkret_sdk::StrandView>> {
     let bound = http
         .own_station_result_client()?
         .ok_or_else(|| anyhow::anyhow!("Strand read requires its captured session"))?;

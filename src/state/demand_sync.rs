@@ -147,7 +147,7 @@ impl FrameViews {
 }
 
 fn realm_row(
-    row: &arkret_models_collaboration::sync_frames::demand_sync::RealmListRow,
+    row: &arkret_models_collaboration::sync_frames::demand_sync::AccountRealmView,
 ) -> RealmRow {
     RealmRow {
         realm_id: row.realm_id.clone(),

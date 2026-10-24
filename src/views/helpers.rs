@@ -15,7 +15,7 @@ pub(crate) use super::member_display::{account_display_label, actor_display_labe
 /// falls back to the principal-only ladder.
 pub(crate) fn contact_peer_label(
     store: &crate::state::LocalStateStore,
-    contact: &crate::models::ContactListRow,
+    contact: &crate::models::ContactView,
 ) -> String {
     match crate::models::contact_peer_account_id(contact) {
         Some(account_id) => account_display_label(store, &account_id),

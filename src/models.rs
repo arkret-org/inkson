@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use arkret_models_collaboration::sync_frames::account_subscribe::RealmSyncEntry;
 use arkret_sdk::contact_operations::ContactScope;
 pub use arkret_sdk::{
-    ContactAgentProjection, ContactListRow, ContactPage, ContactState, DirectConversationSummary,
+    ContactAgentProjection, ContactPage, ContactState, ContactView, DirectConversationSummary,
     DirectConversationSummaryState, InteropSurfaceEntry, ServiceDescribe, VerifiedProfileEntry,
 };
 use arkret_wire::ProfileId;
@@ -61,7 +61,7 @@ pub fn direct_conversation_binding_state_wire(
     }
 }
 
-pub fn contact_peer_id(contact: &ContactListRow) -> arkret_sdk::DidCoreId {
+pub fn contact_peer_id(contact: &ContactView) -> arkret_sdk::DidCoreId {
     contact
         .peer
         .contact_actor_id()
@@ -73,7 +73,7 @@ pub fn contact_peer_id(contact: &ContactListRow) -> arkret_sdk::DidCoreId {
 /// Directory subject. `None` for a `service` actor, which has no account
 /// subject at all. Both components stay together: the same principal at
 /// another Station is a different subject.
-pub fn contact_peer_account_id(contact: &ContactListRow) -> Option<arkret_sdk::AccountId> {
+pub fn contact_peer_account_id(contact: &ContactView) -> Option<arkret_sdk::AccountId> {
     match contact.peer.contact_actor_id() {
         arkret_sdk::ActorId::Account { account_id } => Some(account_id),
         arkret_sdk::ActorId::Service { .. } | arkret_sdk::ActorId::Realm { .. } => None,
@@ -90,7 +90,7 @@ pub fn contact_scope_wire(scope: ContactScope) -> &'static str {
     }
 }
 
-pub fn contact_grants_me_invite(contact: &ContactListRow) -> bool {
+pub fn contact_grants_me_invite(contact: &ContactView) -> bool {
     contact
         .granted_by_peer_scopes
         .contains(&ContactScope::Invite)
@@ -938,7 +938,7 @@ mod tests {
 
     #[test]
     fn contact_row_invite_gate_uses_directional_contact_scopes() {
-        let row = super::ContactListRow {
+        let row = super::ContactView {
             peer: arkret_sdk::contact_operations::ContactPeer::Human {
                 account_id: arkret_sdk::AccountId::new(
                     crate::mls_api_helpers::principal_core_id("did:web:bob.example").unwrap(),
@@ -1085,7 +1085,7 @@ pub use arkret_models_collaboration::governance::authorization::AuthorizationInv
 /// copied into a subject-signed relinquish; the list digest is never a CAS
 /// substitute.
 pub use arkret_models_collaboration::governance::authorization::{
-    EffectiveCapabilityGrantRow, EffectiveGrantSnapshot,
+    EffectiveCapabilityGrantView, EffectiveGrantSnapshot,
 };
 /// `POST /_arkret/self/moderation/report` response. coland emits the SDK
 /// `ModerationReportResponseBody` wire shape verbatim (`status: "submitted"`,
