@@ -3161,11 +3161,11 @@ export async function mockArkretApi(
         string,
         unknown
       >;
-      const keyPackages = Array.isArray(body.key_packages)
-        ? (body.key_packages as Array<Record<string, unknown>>)
+      const keyPackages = Array.isArray(body.keypackages)
+        ? (body.keypackages as Array<Record<string, unknown>>)
         : [];
       return json(route, {
-        accepted: keyPackages.length,
+        accepted_count: keyPackages.length,
         rejections: [],
         // `keypackage_ref_array` is non-empty by definition, so the member is
         // absent rather than `[]` when nothing was accepted.
