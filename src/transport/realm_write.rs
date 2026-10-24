@@ -24,7 +24,9 @@ use crate::event_builders::{
     recommended_realm_policy_bundle_value,
 };
 use crate::event_submit::EventSubmitter;
-use crate::models::{RealmCreateResult, RealmPolicyResult, SpaceCreateResult, SubmitEventResult};
+use crate::models::{
+    EventSubmissionProgress, RealmCreationView, RealmPolicyView, SpaceCreationView,
+};
 use crate::operation::{EventKind, LocalOperation, ak_ops};
 use crate::realm_helpers::validate_join_rule_v1;
 
@@ -59,7 +61,7 @@ pub async fn create_realm(
     plaintext_visible_services: Vec<String>,
     alias: Option<&str>,
     mls_creator_device: Option<&arkret_sdk::DeviceId>,
-) -> anyhow::Result<RealmCreateResult> {
+) -> anyhow::Result<RealmCreationView> {
     let actor_id = actor_id.trim();
     if actor_id.is_empty() {
         return Err(anyhow::anyhow!(
@@ -115,7 +117,7 @@ pub async fn create_realm(
         .await?;
     let realm_id = committed.realm_id.to_string();
 
-    Ok(RealmCreateResult {
+    Ok(RealmCreationView {
         ok: true,
         realm_id,
         first_commit: committed.first_commit,
@@ -138,7 +140,7 @@ pub async fn create_space_under_realm(
     summary: Option<&str>,
     kind: &str,
     parent_space_id: Option<&str>,
-) -> anyhow::Result<SpaceCreateResult> {
+) -> anyhow::Result<SpaceCreationView> {
     let actor_id = actor_id.trim();
     if actor_id.is_empty() {
         return Err(anyhow::anyhow!("actor_id is required for ak.space.create"));
@@ -164,7 +166,7 @@ pub async fn create_space_under_realm(
         arkret_sdk::SpaceId::from_event_id(&arkret_sdk::EventId::new(accepted.event_id.clone())?)
             .into_string();
 
-    Ok(SpaceCreateResult {
+    Ok(SpaceCreationView {
         ok: true,
         space_id,
         owner: actor_id.to_owned(),
@@ -212,7 +214,7 @@ pub async fn transition_member_state(
     from_state: Option<&str>,
     to_state: &str,
     reason: &str,
-) -> anyhow::Result<SubmitEventResult> {
+) -> anyhow::Result<EventSubmissionProgress> {
     let member: arkret_sdk::ActorId = serde_json::from_str(member).map_err(|error| {
         anyhow::anyhow!("membership target must be a complete ActorId: {error}")
     })?;
@@ -230,7 +232,7 @@ pub async fn add_owned_agent_to_realm(
     realm_id: &str,
     actor_id: &str,
     member: &str,
-) -> anyhow::Result<SubmitEventResult> {
+) -> anyhow::Result<EventSubmissionProgress> {
     let member: arkret_sdk::ActorId = serde_json::from_str(member)?;
     let realm = arkret_sdk::RealmId::new(realm_id.to_owned())?;
     let binding = submitter
@@ -257,7 +259,7 @@ pub async fn update_realm_metadata(
     actor_id: &str,
     digest_suite: arkret_sdk::DigestSuite,
     patch: Value,
-) -> anyhow::Result<SubmitEventResult> {
+) -> anyhow::Result<EventSubmissionProgress> {
     let fields = patch
         .as_object()
         .ok_or_else(|| anyhow::anyhow!("Realm profile update must be an object"))?;
@@ -310,7 +312,7 @@ pub async fn set_realm_alias(
     realm_id: &str,
     actor_id: &str,
     alias: Option<&str>,
-) -> anyhow::Result<SubmitEventResult> {
+) -> anyhow::Result<EventSubmissionProgress> {
     let realm_id = arkret_sdk::RealmId::new(realm_id.to_owned())?;
     let rows = submitter
         .http()
@@ -373,7 +375,7 @@ pub async fn update_space_metadata(
     space_id: &str,
     actor_id: &str,
     patch: Value,
-) -> anyhow::Result<SubmitEventResult> {
+) -> anyhow::Result<EventSubmissionProgress> {
     let event = ak_ops::space_update_patch(realm_id, actor_id, space_id, patch)?
         .build_sdk_event("inkson")?;
     submitter.submit_sdk_event(&event).await
@@ -389,7 +391,7 @@ pub async fn set_realm_policy_events(
     join_rule: &str,
     tighten_history_access: bool,
     join_policy: Option<Value>,
-) -> anyhow::Result<RealmPolicyResult> {
+) -> anyhow::Result<RealmPolicyView> {
     let actor_id = actor_id.trim();
     if actor_id.is_empty() {
         return Err(anyhow::anyhow!(
@@ -448,7 +450,7 @@ pub async fn set_realm_policy_events(
     for event in events {
         submitter.submit_sdk_event(&event).await?;
     }
-    Ok(RealmPolicyResult {
+    Ok(RealmPolicyView {
         ok: true,
         realm_id: realm_id.to_owned(),
         join_rule: join_rule.to_owned(),
@@ -469,7 +471,7 @@ pub async fn cancel_realm_invite(
     invitee: &arkret_sdk::AccountId,
     target_state: &str,
     reason: Option<&str>,
-) -> anyhow::Result<SubmitEventResult> {
+) -> anyhow::Result<EventSubmissionProgress> {
     let event =
         ak_ops::invite_cancel(realm_id, actor_id, invite_id, invitee, target_state, reason)?
             .build_sdk_event("inkson")?;
@@ -484,7 +486,7 @@ pub async fn revoke_realm_invite(
     invitee: Option<&arkret_sdk::AccountId>,
     target_state: &str,
     reason_code: &str,
-) -> anyhow::Result<SubmitEventResult> {
+) -> anyhow::Result<EventSubmissionProgress> {
     let event = ak_ops::invite_revoke(
         realm_id,
         actor_id,
@@ -503,7 +505,7 @@ pub async fn leave_realm(
     submitter: &EventSubmitter,
     realm_id: &str,
     actor_id: &str,
-) -> anyhow::Result<SubmitEventResult> {
+) -> anyhow::Result<EventSubmissionProgress> {
     transition_member_state(
         submitter,
         realm_id,
@@ -523,7 +525,7 @@ pub async fn rejoin_direct_conversation(
     submitter: &EventSubmitter,
     realm_id: &arkret_sdk::RealmId,
     actor_did: &arkret_sdk::Did,
-) -> anyhow::Result<SubmitEventResult> {
+) -> anyhow::Result<EventSubmissionProgress> {
     let actor_id = arkret_sdk::project_did_to_core_id(actor_did)?;
     transition_member_state(
         submitter,
@@ -542,7 +544,7 @@ pub async fn archive_realm(
     submitter: &EventSubmitter,
     realm_id: &str,
     actor_id: &str,
-) -> anyhow::Result<SubmitEventResult> {
+) -> anyhow::Result<EventSubmissionProgress> {
     let event = build_realm_archive_event(realm_id, actor_id, true, Some("operator_request"))?;
     submitter.submit_sdk_event(&event).await
 }
@@ -553,7 +555,7 @@ pub async fn destroy_realm(
     realm_id: &str,
     actor_id: &str,
     reason: &str,
-) -> anyhow::Result<SubmitEventResult> {
+) -> anyhow::Result<EventSubmissionProgress> {
     let event = build_realm_destroy_event(realm_id, actor_id, reason)?;
     submitter.submit_sdk_event(&event).await
 }
@@ -564,7 +566,7 @@ pub async fn transfer_realm_owner(
     submitter: &EventSubmitter,
     actor_id: &str,
     payload: arkret_sdk::RealmOwnerTransferPayload,
-) -> anyhow::Result<SubmitEventResult> {
+) -> anyhow::Result<EventSubmissionProgress> {
     let event = LocalOperation::new(build_realm_owner_transfer_control_intent(
         actor_id, payload,
     )?);
@@ -576,7 +578,7 @@ pub async fn reset_realm_authority(
     submitter: &EventSubmitter,
     actor_id: &str,
     payload: arkret_sdk::RealmAuthorityResetPayload,
-) -> anyhow::Result<SubmitEventResult> {
+) -> anyhow::Result<EventSubmissionProgress> {
     let event = LocalOperation::new(build_realm_authority_reset_control_intent(
         actor_id, payload,
     )?);
@@ -590,7 +592,7 @@ pub async fn relinquish_capability(
     realm_id: arkret_sdk::RealmId,
     subject_id: &str,
     payload: arkret_sdk::CapabilityRelinquishPayload,
-) -> anyhow::Result<SubmitEventResult> {
+) -> anyhow::Result<EventSubmissionProgress> {
     let event = LocalOperation::new(build_capability_relinquish_control_intent(
         realm_id, subject_id, payload,
     )?);
@@ -603,7 +605,7 @@ pub async fn ban_member(
     realm_id: &str,
     actor_id: &str,
     member: &str,
-) -> anyhow::Result<SubmitEventResult> {
+) -> anyhow::Result<EventSubmissionProgress> {
     transition_member_state(
         submitter,
         realm_id,
@@ -639,7 +641,7 @@ pub async fn grant_realm_admin(
     actor_id: &str,
     subject: &arkret_sdk::AccountId,
     root_basis: &ak_ops::IssuerRealmAuthorityBasis,
-) -> anyhow::Result<SubmitEventResult> {
+) -> anyhow::Result<EventSubmissionProgress> {
     let event = ak_ops::capability_grant_actions(
         realm_id,
         actor_id,
@@ -665,7 +667,7 @@ pub async fn moderation_decide(
     target_ref: &str,
     decision: &str,
     reason_code: &str,
-) -> anyhow::Result<SubmitEventResult> {
+) -> anyhow::Result<EventSubmissionProgress> {
     let event = ak_ops::moderation_decision(realm_id, actor_id, target_ref, decision, reason_code)?
         .build_sdk_event("inkson")?;
     submitter.submit_sdk_event(&event).await
@@ -683,7 +685,7 @@ pub async fn moderation_lift(
     target_ref: &str,
     decision_ref: &str,
     reason_code: &str,
-) -> anyhow::Result<SubmitEventResult> {
+) -> anyhow::Result<EventSubmissionProgress> {
     let realm = arkret_sdk::RealmId::new(realm_id.to_owned())?;
     let current = submitter.read_moderation_current(realm, target_ref).await?;
     let event = ak_ops::moderation_decision_lift(

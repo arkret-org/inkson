@@ -11,7 +11,7 @@ pub async fn send_native_ordinary_mls_message(
     realm: &arkret_sdk::RealmId,
     strand: &arkret_sdk::StrandId,
     body: &str,
-) -> anyhow::Result<crate::models::SubmitEventResult> {
+) -> anyhow::Result<crate::models::EventSubmissionProgress> {
     let account = host.active_account_context();
     let scope = arkret_sdk::ScopeRef::Realm {
         realm_id: realm.clone(),

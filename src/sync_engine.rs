@@ -3448,7 +3448,7 @@ fn device_summary_revokes_local_device(
     };
     let exact_committed_revocation = device.revocation_states.as_ref().is_some_and(|states| {
         states.iter().any(|state| {
-            let arkret_wire::DeviceRevocationGateRecord::Revoked(revoked) = state else {
+            let arkret_wire::AccountDeviceRevocationGateRecord::Revoked(revoked) = state else {
                 return false;
             };
             revoked.account_id == *account_id
@@ -4104,7 +4104,7 @@ mod tests {
     #[test]
     fn blocklist_folder_checkpoint_requires_durable_valid_batch() {
         use arkret_models_collaboration::sync_frames::account_subscribe::{
-            AccountSubscribeParameters, AccountSubscribeSnapshotResult,
+            AccountSubscribeParameters, AccountSubscribeReadAction,
         };
         let request = AccountSubscribeParameters {
             after: None,
@@ -4130,7 +4130,7 @@ mod tests {
                 .unwrap(),
             )
             .unwrap();
-        let AccountSubscribeSnapshotResult::Batch(batch) = folder.finish().unwrap() else {
+        let AccountSubscribeReadAction::Batch(batch) = folder.finish().unwrap() else {
             panic!("validated batch required")
         };
         assert_eq!(batch.frames.len(), 1);
@@ -4878,7 +4878,7 @@ mod tests {
             device
         ));
         let mut wrong_binding = viewer.clone();
-        let arkret_wire::DeviceRevocationGateRecord::Revoked(state) =
+        let arkret_wire::AccountDeviceRevocationGateRecord::Revoked(state) =
             &mut wrong_binding.devices[0].revocation_states.as_mut().unwrap()[0]
         else {
             panic!("fixture must contain a committed revoked record");
@@ -4890,11 +4890,11 @@ mod tests {
             device
         ));
         let mut wrong_record_station = viewer.clone();
-        let arkret_wire::DeviceRevocationGateRecord::Revoked(state) = &mut wrong_record_station
-            .devices[0]
-            .revocation_states
-            .as_mut()
-            .unwrap()[0]
+        let arkret_wire::AccountDeviceRevocationGateRecord::Revoked(state) =
+            &mut wrong_record_station.devices[0]
+                .revocation_states
+                .as_mut()
+                .unwrap()[0]
         else {
             panic!("fixture must contain a committed revoked record");
         };
@@ -4905,11 +4905,11 @@ mod tests {
             device
         ));
         let mut wrong_record_device = viewer.clone();
-        let arkret_wire::DeviceRevocationGateRecord::Revoked(state) = &mut wrong_record_device
-            .devices[0]
-            .revocation_states
-            .as_mut()
-            .unwrap()[0]
+        let arkret_wire::AccountDeviceRevocationGateRecord::Revoked(state) =
+            &mut wrong_record_device.devices[0]
+                .revocation_states
+                .as_mut()
+                .unwrap()[0]
         else {
             panic!("fixture must contain a committed revoked record");
         };

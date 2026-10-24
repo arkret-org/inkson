@@ -1,6 +1,6 @@
 use crate::event_submit::EventSubmitter;
 use crate::models::{
-    MediaIceConfigurationRequestBody, MediaIceConfigurationResponseBody, SubmitEventResult,
+    EventSubmissionProgress, MediaIceConfigurationRequestBody, MediaIceConfigurationResponseBody,
 };
 
 pub struct MediaEndpoints<'a> {
@@ -42,7 +42,7 @@ pub async fn submit_call_recording_start(
     call_id: &str,
     recording_id: &str,
     mode: arkret_sdk::RecordingMode,
-) -> anyhow::Result<SubmitEventResult> {
+) -> anyhow::Result<EventSubmissionProgress> {
     submit_call_capture_start(
         submitter,
         realm_id,
@@ -62,7 +62,7 @@ pub async fn submit_call_transcription_start(
     call_id: &str,
     transcript_id: &str,
     mode: arkret_sdk::RecordingMode,
-) -> anyhow::Result<SubmitEventResult> {
+) -> anyhow::Result<EventSubmissionProgress> {
     submit_call_capture_start(
         submitter,
         realm_id,
@@ -84,7 +84,7 @@ async fn submit_call_capture_start(
     recording_id: &str,
     capture_kind: arkret_sdk::RecordingCaptureKind,
     mode: arkret_sdk::RecordingMode,
-) -> anyhow::Result<SubmitEventResult> {
+) -> anyhow::Result<EventSubmissionProgress> {
     let event = crate::webrtc::build_call_recording_start(
         realm_id,
         actor_id,

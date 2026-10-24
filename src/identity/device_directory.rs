@@ -168,7 +168,7 @@ pub(crate) fn retained_device_authoring_key(
 /// map. What remains the client's own check happens here: an `active` status
 /// and a positive observation window.
 pub(crate) fn validate_self_device_row(
-    record: &arkret_models_crypto::QueryDeviceRecord,
+    record: &arkret_models_crypto::DeviceKeyView,
 ) -> anyhow::Result<&arkret_models_crypto::VerifiedDeviceProjection> {
     let projection = &record.device_projection;
     if projection.device_status != arkret_models_crypto::DeviceStatus::Active {

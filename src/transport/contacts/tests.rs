@@ -158,7 +158,7 @@ fn request_success_exit_rejects_terminal_failure_and_another_preparation() {
     assert!(successful_contact_request(accepted(&request)).is_ok());
     let failed = ContactOperationResponseBody::Failed {
         outcome: ContactFailedResponseBody {
-            operation_kind: ContactResultKind::Request,
+            operation_kind: ContactOperationKind::Request,
             operation_id: operation_id(),
             reason: ContactOperationRejectReason::ContactRoundConflict,
         },
@@ -374,7 +374,7 @@ async fn terminal_success_failure_and_permission_denial_are_not_retried() {
     let failed = ContactOperationResponseBody::Failed {
         outcome: ContactFailedResponseBody {
             operation_id: operation_id(),
-            operation_kind: ContactResultKind::Request,
+            operation_kind: ContactOperationKind::Request,
             reason: ContactOperationRejectReason::ContactTerminal,
         },
     };

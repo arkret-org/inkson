@@ -291,13 +291,13 @@ pub(super) fn member_agent_row_from_value(
 }
 
 pub(super) fn mention_state_from_entries(
-    entries: &[AgentParticipationEntry],
+    entries: &[AgentParticipationView],
     realm_id: &str,
 ) -> (AgentMentionPolicy, ParticipationBits) {
     let mut selection = ParticipationBits::NONE;
     let mut matched = false;
     for entry in entries {
-        match &entry.scope {
+        match &entry.target_scope {
             ParticipationScope::Realm {
                 realm_id: entry_realm,
             } if entry_realm.as_str() == realm_id => {

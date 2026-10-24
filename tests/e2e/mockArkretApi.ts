@@ -2185,7 +2185,7 @@ export async function mockArkretApi(
               signature: commitSignature,
             },
           ],
-          session_grant_outcome: {
+          issued_session: {
             principal_id: body.principal_id,
             device_id: registrationDeviceId,
             session_grant: "e2e-standard-session-grant",
@@ -2899,7 +2899,7 @@ export async function mockArkretApi(
         reason_code: "frontier_current",
         matched_grants: [],
         applied_constraints: [],
-        policy_results: [],
+        policy_evaluations: [],
         missing_proofs: [],
         obligations: [{ type: "audit", reason_required: false }],
       });

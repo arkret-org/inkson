@@ -611,10 +611,7 @@ pub async fn complete_account_handoff_binding(
     {
         anyhow::bail!("Account Authority binding receipt does not match the frozen account or DID");
     }
-    let pcr_genesis_commits = register_outcome
-        .pcr_genesis_commits
-        .clone()
-        .context("Account Authority omitted PCR genesis commits")?;
+    let pcr_genesis_commits = register_outcome.pcr_genesis_commits.clone();
 
     // Preserve the exact response with the frozen request before installing
     // the session, so a restart resumes the same registration terminal.
@@ -630,9 +627,7 @@ pub async fn complete_account_handoff_binding(
     }
 
     check_registration_result_binding(checkpoint, &register_request, &binding_receipt)?;
-    let grant = register_outcome
-        .session_grant_outcome
-        .context("Account Authority omitted initial Standard grant")?;
+    let grant = register_outcome.issued_session;
     let session_grant =
         garth::SessionGrantState::from_initial_registration_outcome(&initial, grant, Utc::now())?;
     let session_private_key_pem = dpop.session_signing_key_pkcs8_pem()?.to_string();

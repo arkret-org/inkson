@@ -366,7 +366,7 @@ fn DirectAgentReplyPreference(
                                         "Direct Conversation ownership is pending");
                                 }
                                 anyhow::ensure!(existing.agent_id == agent.principal_id.as_str(), "Participation belongs to another Agent");
-                                let entry = existing.agent_participation_entries.iter().find(|entry| entry.scope == scope);
+                                let entry = existing.participation_entries.iter().find(|entry| entry.target_scope == scope);
                                 let mut selection = entry.map(|entry| entry.selection).unwrap_or_default();
                                 selection.message_creation_allowed = true;
                                 let request = arkret_sdk::ParticipationReplaceRequestBody {
@@ -376,7 +376,7 @@ fn DirectAgentReplyPreference(
                                 let accepted = http.agent_participation_replace(agent.principal_id.as_str(), &request).await?;
                                 fence.check()?;
                                 anyhow::ensure!(accepted.agent_id == agent.principal_id.as_str()
-                                    && accepted.agent_participation_entries.iter().any(|entry| entry.scope == scope && entry.selection == selection),
+                                    && accepted.participation_entries.iter().any(|entry| entry.target_scope == scope && entry.selection == selection),
                                     "Reply preference was not confirmed");
                                 Ok(())
                             }).await.map_err(|error| anyhow::anyhow!(error.display()))
@@ -740,7 +740,7 @@ async fn submit_structure(
     account: arkret_sdk::AccountId,
     device: arkret_sdk::DeviceId,
     mut store: SyncSignal<LocalStateStore>,
-) -> anyhow::Result<(crate::models::SubmitEventResult, Option<String>)> {
+) -> anyhow::Result<(crate::models::EventSubmissionProgress, Option<String>)> {
     #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
     tracing::warn!(action = %write.action, stage = "starting", "Direct structure write diagnostic");
     let fence = crate::transport::auth::AuthoringSessionFence::capture()?;

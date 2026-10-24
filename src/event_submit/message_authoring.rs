@@ -150,7 +150,7 @@ impl EventSubmitter {
         &self,
         submission: QueuedSubmission,
         local_operation_id: &str,
-    ) -> std::result::Result<SubmitEventResult, MessageAuthoringFailure> {
+    ) -> std::result::Result<EventSubmissionProgress, MessageAuthoringFailure> {
         let write = QueuedWrite {
             lane: OutboundLane::Standard,
             submission,
@@ -184,7 +184,7 @@ impl EventSubmitter {
         tracing::warn!(stage = "settled", "ordinary message outbound stage");
         match item.rejection_reason_code() {
             Some(reason_code) => Err(garth::classify_authority_rejection(reason_code)),
-            None => Ok(SubmitEventResult::from(&item)),
+            None => Ok(EventSubmissionProgress::from(&item)),
         }
     }
 }
@@ -215,7 +215,7 @@ pub(crate) fn message_attempt_may_retry(failure: &MessageAuthoringFailure) -> bo
 pub(crate) async fn drive_message_send(
     submitter: &EventSubmitter,
     attempt: MessageSendAttempt,
-) -> std::result::Result<SubmitEventResult, MessageAuthoringFailure> {
+) -> std::result::Result<EventSubmissionProgress, MessageAuthoringFailure> {
     #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
     tracing::warn!(stage = "freezing", "ordinary message pre-submit stage");
     let submission = submitter.freeze_authored_message(&attempt).await?;
@@ -230,11 +230,11 @@ pub(crate) async fn drive_message_send(
 pub(crate) async fn retry_frozen_message<F, Fut>(
     submission: QueuedSubmission,
     mut send: F,
-) -> std::result::Result<SubmitEventResult, MessageAuthoringFailure>
+) -> std::result::Result<EventSubmissionProgress, MessageAuthoringFailure>
 where
     F: FnMut(QueuedSubmission) -> Fut,
     Fut: std::future::Future<
-            Output = std::result::Result<SubmitEventResult, MessageAuthoringFailure>,
+            Output = std::result::Result<EventSubmissionProgress, MessageAuthoringFailure>,
         >,
 {
     const MAX_RETRIES: usize = 1;
@@ -325,7 +325,9 @@ mod tests {
                     detail: "response lost".to_owned(),
                 })
             } else {
-                Ok(SubmitEventResult::queued(submission.event_id.to_string()))
+                Ok(EventSubmissionProgress::queued(
+                    submission.event_id.to_string(),
+                ))
             };
             std::future::ready(answer)
         })

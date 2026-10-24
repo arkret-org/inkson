@@ -164,14 +164,14 @@ pub(crate) fn merge_agent_metadata(
 }
 
 pub(crate) fn participation_allows_public_reply(
-    entries: &[arkret_models_collaboration::governance::agent_participation::AgentParticipationEntry],
+    entries: &[arkret_models_collaboration::governance::agent_participation::AgentParticipationView],
     realm_id: &str,
     circle_id: Option<&str>,
     strand_id: &str,
 ) -> bool {
     let strand_match = entries.iter().find(|entry| {
         matches!(
-            &entry.scope,
+            &entry.target_scope,
             arkret_models_collaboration::governance::agent_participation::ParticipationScope::Strand {
                 realm_id: entry_realm,
                 strand_id: entry_strand,
@@ -180,7 +180,7 @@ pub(crate) fn participation_allows_public_reply(
     });
     let realm_match = entries.iter().find(|entry| {
         matches!(
-            &entry.scope,
+            &entry.target_scope,
             arkret_models_collaboration::governance::agent_participation::ParticipationScope::Realm {
                 realm_id: entry_realm,
             } if entry_realm.as_str() == realm_id
@@ -189,7 +189,7 @@ pub(crate) fn participation_allows_public_reply(
     let circle_match = circle_id.and_then(|circle_id| {
         entries.iter().find(|entry| {
             matches!(
-                &entry.scope,
+                &entry.target_scope,
                 arkret_models_collaboration::governance::agent_participation::ParticipationScope::Circle {
                     realm_id: entry_realm,
                     circle_id: entry_circle,

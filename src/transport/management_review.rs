@@ -624,7 +624,7 @@ pub(crate) async fn decide_without_approval<F: FnOnce(PreparedDecision)>(
 pub(crate) async fn submit_approved(
     http: &arkret_sdk::http_client::Client,
     review: &FrozenReview,
-) -> anyhow::Result<crate::models::SubmitEventResult> {
+) -> anyhow::Result<crate::models::EventSubmissionProgress> {
     check_session(&review.account, review.session_generation)?;
     anyhow::ensure!(
         review.request.requester_actor_id == ActorId::account(review.account.clone()),

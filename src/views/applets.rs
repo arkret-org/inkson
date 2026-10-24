@@ -822,7 +822,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                                let result = with_event_submitter(&base, api_token, |submitter| async move {
                                                    use arkret_sdk::exact_current_state::{
                                                        AppletRegistrationExactCurrentSelector, AppletRegistrationExactCurrentSelectorKind,
-                                                       ExactCurrentStateSelector, ExactCurrentStateEntry, ExactCurrentStateReadRequestBody,
+                                                       ExactCurrentStateSelector, ExactCurrentState, ExactCurrentStateReadRequestBody,
                                                        ExactCurrentStateReadResponseBody, NeverWrittenExactCurrentSelector,
                                                    };
                                                    let registration_current = submitter.http().exact_current_state(
@@ -835,7 +835,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                                        }, issuer_authority_basis.authority_generation,
                                                    ).await?;
                                                    let expected_revision = match registration_current {
-                                                       ExactCurrentStateReadResponseBody::Present { entry: ExactCurrentStateEntry::AppletRegistration(row), .. } => Some(row.revision),
+                                                       ExactCurrentStateReadResponseBody::Present { current_state: ExactCurrentState::AppletRegistration(row), .. } => Some(row.revision),
                                                        ExactCurrentStateReadResponseBody::NeverWritten { selector: NeverWrittenExactCurrentSelector::AppletRegistration(_), .. } => None,
                                                        _ => anyhow::bail!("registration current returned a different selector"),
                                                    };

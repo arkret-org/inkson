@@ -123,7 +123,7 @@ pub use arkret_wire::{InviteReceiveAction, UnknownInviteAction};
 /// `deleted: bool`, matching the spec lifecycle-state enum
 /// (`active` / `archived` / `tombstoned`, `common-fields.md §5.1`).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct RealmCreateResult {
+pub struct RealmCreationView {
     pub ok: bool,
     pub realm_id: String,
     /// The governance Station's first commit for this Realm. UI completion is
@@ -137,9 +137,9 @@ pub struct RealmCreateResult {
 
 /// R15: result of `ak.space.create`. A Space (`ak:space:*`) lives inside a
 /// Realm and inherits its membership / encryption. `state` mirrors the spec
-/// lifecycle enum (see [`RealmCreateResult`]).
+/// lifecycle enum (see [`RealmCreationView`]).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SpaceCreateResult {
+pub struct SpaceCreationView {
     pub ok: bool,
     pub space_id: String,
     pub owner: String,
@@ -149,7 +149,7 @@ pub struct SpaceCreateResult {
 }
 
 // (Move/Seal pipeline DTOs deleted; all writes now go through
-// ak.self.events.command.submit.v1 via SubmitEventResult.)
+// ak.self.events.command.submit.v1 via EventSubmissionProgress.)
 
 /// Return whether the canonical service description advertises a profile.
 pub fn service_supports_profile(description: &ServiceDescribe, profile: &str) -> bool {
@@ -815,7 +815,7 @@ mod tests {
             serde_json::json!({"status": "rejected", "reason_code": "policy_violation"}),
         )
         .unwrap();
-        let result = super::SubmitEventResult::from(outcome);
+        let result = super::EventSubmissionProgress::from(outcome);
         assert_eq!(result.status, garth::SendQueueStatus::Rejected);
         assert_eq!(
             result.rejection_reason_code.as_deref(),
@@ -1089,7 +1089,7 @@ pub use arkret_models_collaboration::governance::authorization::{
 };
 /// `POST /_arkret/self/moderation/report` response. coland emits the SDK
 /// `ModerationReportResponseBody` wire shape verbatim (`status: "submitted"`,
-/// `routed_to: Vec<Did>` — scalar DIDs only, no fragments, per
+/// `routed_to_ids: Vec<Did>` — scalar DIDs only, no fragments, per
 /// `service-operation-dtos.schema.json#/$defs/ModerationReportResponseBody`).
 pub use arkret_models_collaboration::governance::moderation::ModerationReportResponseBody;
 pub use arkret_models_collaboration::objects::blob::BlobUploadResponseBody;
@@ -1102,7 +1102,7 @@ pub use arkret_models_integration::models_push::PushRegisterDeviceResponseBody;
 // ── Realm / Space Management ────────────────────────────────────
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct RealmPolicyResult {
+pub struct RealmPolicyView {
     pub ok: bool,
     pub realm_id: String,
     pub join_rule: String,
@@ -1122,7 +1122,7 @@ pub struct RealmPolicyResult {
 /// `event_id` stays a plain `String` so synthetic fixture ids do not trip the
 /// strict `EventId` validator.
 #[derive(Clone, Debug, PartialEq)]
-pub struct SubmitEventResult {
+pub struct EventSubmissionProgress {
     pub event_id: String,
     pub status: garth::SendQueueStatus,
     /// The authority-signed commit that covers this Event. Present exactly when
@@ -1133,7 +1133,7 @@ pub struct SubmitEventResult {
     pub rejection_reason_code: Option<String>,
 }
 
-impl SubmitEventResult {
+impl EventSubmissionProgress {
     pub fn committed(event_id: String, commit: arkret_wire::RealmCommit) -> Self {
         Self {
             event_id,
@@ -1178,7 +1178,7 @@ impl SubmitEventResult {
     }
 }
 
-impl From<arkret_wire::AuthoritySubmitResponseBody> for SubmitEventResult {
+impl From<arkret_wire::AuthoritySubmitResponseBody> for EventSubmissionProgress {
     fn from(outcome: arkret_wire::AuthoritySubmitResponseBody) -> Self {
         match outcome {
             arkret_wire::AuthoritySubmitResponseBody::Accepted { commit, .. } => Self {
@@ -1197,7 +1197,7 @@ impl From<arkret_wire::AuthoritySubmitResponseBody> for SubmitEventResult {
     }
 }
 
-impl From<&garth::SendQueueItem> for SubmitEventResult {
+impl From<&garth::SendQueueItem> for EventSubmissionProgress {
     fn from(item: &garth::SendQueueItem) -> Self {
         Self {
             event_id: item.event_id().as_str().to_owned(),
@@ -1225,7 +1225,7 @@ pub use arkret_models_collaboration::objects::media::{
 // WebRTC call signaling/recording no longer round-trips through bespoke
 // `/_arkret/self/webrtc/*` outcomes: signaling is a `ak.call.signal`
 // ephemeral envelope (EphemeralSubmitResult) and recording is a durable
-// `ak.call.recording.start` event (SubmitEventResult). See
+// `ak.call.recording.start` event (EventSubmissionProgress). See
 // `crypto-media/webrtc-signaling.md` §5/§7. The former
 // CreateWebrtcSessionOutcome / WebrtcSignalOutcome / CallRecordingStartOutcome
 // mirrors were removed.

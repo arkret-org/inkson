@@ -79,7 +79,7 @@ impl LocalStateStore {
     /// send-gate, not a submission verdict.
     pub fn apply_move_submission_result(
         &mut self,
-        result: &crate::models::SubmitEventResult,
+        result: &crate::models::EventSubmissionProgress,
     ) -> bool {
         self.ensure_cached_loaded();
         let Some(record_key) = self.move_submission_lookup_key(&result.event_id) else {

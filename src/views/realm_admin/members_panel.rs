@@ -5,7 +5,7 @@ use std::sync::Arc;
 #[cfg(test)]
 use arkret_models_collaboration::governance::agent_participation::ParticipationNextReplaceInput;
 use arkret_models_collaboration::governance::agent_participation::{
-    AgentParticipationEntry, ParticipationBits, ParticipationScope,
+    AgentParticipationView, ParticipationBits, ParticipationScope,
 };
 use arkret_wire::{CapabilityActionId, event_kind_str};
 use dioxus::prelude::*;

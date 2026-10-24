@@ -30,7 +30,7 @@ fn holder_record_with_event(state: &str, event: Option<Value>) -> Value {
     record
 }
 
-fn queued_answer() -> Result<crate::models::SubmitEventResult, ApiCallError> {
+fn queued_answer() -> Result<crate::models::EventSubmissionProgress, ApiCallError> {
     Err(ApiCallError::Failed(
         crate::event_submit::DurablyQueuedError {
             operation_id: EVENT.to_owned(),
@@ -135,7 +135,7 @@ fn partial_archive_failure_preserves_submitted_outcomes_and_cancels_only_unsent_
     assert!(local_card_create_from_raw_operation(&after.raw_operations[3]).is_none());
 }
 
-fn verified_response() -> crate::models::SubmitEventResult {
+fn verified_response() -> crate::models::EventSubmissionProgress {
     let realm: arkret_sdk::RealmId = REALM.parse().unwrap();
     let actor = crate::test_support::account_actor("ak:did_core:web:alice.example");
     let mut space = arkret_sdk::Space::create_object(realm.clone(), "board", "", actor);
@@ -148,7 +148,7 @@ fn verified_response() -> crate::models::SubmitEventResult {
     );
     // This shared fixture verifies both real producer and Station signatures,
     // content identities and the fresh authority chain before returning.
-    crate::models::SubmitEventResult::committed(
+    crate::models::EventSubmissionProgress::committed(
         accepted.event.event_id.to_string(),
         accepted.commit,
     )
@@ -166,7 +166,7 @@ fn typed_submit_results_require_the_exact_verified_covering_commit_for_acceptanc
         garth::SendQueueStatus::Queued,
         garth::SendQueueStatus::Forwarding,
     ] {
-        let mut pending = crate::models::SubmitEventResult::queued(response.event_id.clone());
+        let mut pending = crate::models::EventSubmissionProgress::queued(response.event_id.clone());
         pending.status = status;
         reconcile_kanban_operation_submission(&mut store, LOCAL, &Ok(pending));
         assert_eq!(store.load().raw_operations[0].payload, initial);
@@ -229,7 +229,7 @@ fn contradictory_or_uncovered_typed_result_never_claims_acceptance() {
         (garth::SendQueueStatus::Cancelled, "cancelled"),
     ] {
         store.upsert_raw_operation(LOCAL, Some(REALM.to_owned()), holder_record("queued"));
-        let mut result = crate::models::SubmitEventResult::rejected(
+        let mut result = crate::models::EventSubmissionProgress::rejected(
             EVENT.to_owned(),
             "capability_denied".to_owned(),
         );

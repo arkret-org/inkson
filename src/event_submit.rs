@@ -30,7 +30,7 @@ use crate::ephemeral::ensure_authority_accepted;
 use crate::identity::authoring_generation::{
     GenerationFenceDecision, ResolvedQueueGenerationFence,
 };
-use crate::models::{BackfillView, ServiceDescribe, SubmitEventResult};
+use crate::models::{BackfillView, EventSubmissionProgress, ServiceDescribe};
 use crate::operation::{EventIntent, LocalOperation};
 use crate::outbound_store::{InksonOutboundStore, OutboundLane};
 
@@ -837,14 +837,14 @@ fn reconcile_settled_outbound_item(
 
 /// Turn one settled queue item into the caller-facing result, or into the
 /// typed authority refusal.
-fn settled_outbound_result(item: &garth::SendQueueItem) -> anyhow::Result<SubmitEventResult> {
+fn settled_outbound_result(item: &garth::SendQueueItem) -> anyhow::Result<EventSubmissionProgress> {
     match &item.submission.state {
         garth::SubmissionState::Committed { status, commit } => {
             ensure_authority_accepted(arkret_wire::AuthoritySubmitResponseBody::Accepted {
                 status: *status,
                 commit: (**commit).clone(),
             })
-            .map(|commit| SubmitEventResult::committed(item.event_id().to_string(), commit))
+            .map(|commit| EventSubmissionProgress::committed(item.event_id().to_string(), commit))
         }
         garth::SubmissionState::UnitCommitted { .. } => Err(anyhow::anyhow!(
             "aggregate unit requires its complete Commit result"
@@ -856,7 +856,7 @@ fn settled_outbound_result(item: &garth::SendQueueItem) -> anyhow::Result<Submit
             status: *status,
             reason_code: reason_code.clone(),
         })
-        .map(|commit| SubmitEventResult::committed(item.event_id().to_string(), commit)),
+        .map(|commit| EventSubmissionProgress::committed(item.event_id().to_string(), commit)),
         garth::SubmissionState::Queued => Err(DurablyQueuedError {
             operation_id: item.event_id().to_string(),
             reason: item.last_error.clone(),
@@ -1096,9 +1096,8 @@ impl EventSubmitter {
         primary_conflict_domain: arkret_sdk::RelationPrimaryConflictDomain,
     ) -> anyhow::Result<VerifiedRelationCurrent> {
         use arkret_models_collaboration::exact_current_state::{
-            ExactCurrentStateEntry, ExactCurrentStateReadRequestBody,
-            ExactCurrentStateReadResponseBody, ExactCurrentStateSelector,
-            RelationExactCurrentSelector,
+            ExactCurrentState, ExactCurrentStateReadRequestBody, ExactCurrentStateReadResponseBody,
+            ExactCurrentStateSelector, RelationExactCurrentSelector,
         };
 
         let selector = RelationExactCurrentSelector::new(primary_conflict_domain.clone())?;
@@ -1113,7 +1112,7 @@ impl EventSubmitter {
                 value: None,
             }),
             ExactCurrentStateReadResponseBody::Present {
-                entry: ExactCurrentStateEntry::Relation(entry),
+                current_state: ExactCurrentState::Relation(entry),
                 ..
             } => Ok(VerifiedRelationCurrent {
                 primary_conflict_domain,
@@ -1132,8 +1131,8 @@ impl EventSubmitter {
         target_ref: &str,
     ) -> anyhow::Result<VerifiedModerationCurrent> {
         use arkret_models_collaboration::exact_current_state::{
-            ExactCurrentStateEntry, ExactCurrentStateReadRequestBody,
-            ExactCurrentStateReadResponseBody, ExactCurrentStateSelector, ExactModerationTargetRef,
+            ExactCurrentState, ExactCurrentStateReadRequestBody, ExactCurrentStateReadResponseBody,
+            ExactCurrentStateSelector, ExactModerationTargetRef,
             ModerationStateExactCurrentSelector, ModerationStateExactCurrentSelectorKind,
         };
 
@@ -1149,7 +1148,7 @@ impl EventSubmitter {
         };
         match self.exact_current_state(&request).await? {
             ExactCurrentStateReadResponseBody::Present {
-                entry: ExactCurrentStateEntry::ModerationState(entry),
+                current_state: ExactCurrentState::ModerationState(entry),
                 ..
             } => Ok(VerifiedModerationCurrent {
                 target_ref,
@@ -1695,7 +1694,7 @@ impl EventSubmitter {
     pub(crate) async fn submit_sdk_event(
         &self,
         operation: &LocalOperation,
-    ) -> anyhow::Result<SubmitEventResult> {
+    ) -> anyhow::Result<EventSubmissionProgress> {
         let result = self.submit_sdk_event_inner(operation, None).await;
         #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
         if let Err(error) = &result {
@@ -1709,7 +1708,7 @@ impl EventSubmitter {
         &self,
         operation: &LocalOperation,
         card_placement: Option<crate::outbound_store::card_placement::CardPlacement>,
-    ) -> anyhow::Result<SubmitEventResult> {
+    ) -> anyhow::Result<EventSubmissionProgress> {
         let intent = operation.intent().clone();
         self.ensure_recovery_material_ready(&intent).await?;
         self.await_application_current(&intent).await?;
@@ -1903,7 +1902,7 @@ impl EventSubmitter {
         event: &arkret_sdk::Event,
         approvals: Vec<arkret_sdk::ApprovalSignature>,
         check_session: impl Fn() -> anyhow::Result<()>,
-    ) -> anyhow::Result<SubmitEventResult> {
+    ) -> anyhow::Result<EventSubmissionProgress> {
         let account = self.authority()?.clone();
         check_session()?;
         anyhow::ensure!(
@@ -1997,7 +1996,7 @@ impl EventSubmitter {
     pub(crate) async fn submit_signed_sdk_events_in_order(
         &self,
         sdk_events: &[arkret_sdk::AuthoredEvent],
-    ) -> anyhow::Result<Vec<SubmitEventResult>> {
+    ) -> anyhow::Result<Vec<EventSubmissionProgress>> {
         let first = sdk_events
             .first()
             .ok_or_else(|| anyhow::anyhow!("an ordered submission must not be empty"))?;
@@ -2208,7 +2207,7 @@ impl EventSubmitter {
     pub(crate) async fn submit_direct_conversation_founding_durable(
         &self,
         events: Vec<arkret_sdk::AuthoredEvent>,
-    ) -> anyhow::Result<Vec<SubmitEventResult>> {
+    ) -> anyhow::Result<Vec<EventSubmissionProgress>> {
         let _single_writer = outbound_submit_lock().lock().await;
         #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
         let _trace = OutboundWriterTrace::acquired("found_direct");
@@ -2242,7 +2241,7 @@ impl EventSubmitter {
             .iter()
             .zip(&outcome.commits)
             .map(|(event, commit)| {
-                SubmitEventResult::committed(event.event_id().to_string(), commit.clone())
+                EventSubmissionProgress::committed(event.event_id().to_string(), commit.clone())
             })
             .collect())
     }
@@ -2254,7 +2253,7 @@ impl EventSubmitter {
         &self,
         scheduled_send_id: arkret_identifiers::ScheduledSendId,
         submission: QueuedSubmission,
-    ) -> anyhow::Result<SubmitEventResult> {
+    ) -> anyhow::Result<EventSubmissionProgress> {
         let _single_writer = outbound_submit_lock().lock().await;
         #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
         let _trace = OutboundWriterTrace::acquired("dispatch_scheduled");
@@ -2291,7 +2290,7 @@ impl EventSubmitter {
         authority_hints: Vec<crate::mls::governance_proof::MlsLeafAuthorityHint>,
         state_store: &crate::runtime::input::StateStoreHandle,
         mut staged_checkpoint: garth::mls::checkpoint::MlsLocalCheckpointEnvelope,
-    ) -> anyhow::Result<SubmitEventResult> {
+    ) -> anyhow::Result<EventSubmissionProgress> {
         anyhow::ensure!(
             commit.kind == arkret_sdk::EventKind::MlsCommit,
             "the MLS commit lane carries only ak.mls.commit"
@@ -2946,7 +2945,7 @@ impl EventSubmitter {
     pub(crate) async fn recover_pending_consent(
         &self,
         peer: &arkret_sdk::ConsentPeer,
-    ) -> anyhow::Result<Option<SubmitEventResult>> {
+    ) -> anyhow::Result<Option<EventSubmissionProgress>> {
         let authority = self.authority()?.clone();
         let epoch = crate::identity::device_directory::session_cache_epoch();
         let fence = crate::transport::auth::AuthoringSessionFence::capture()?;

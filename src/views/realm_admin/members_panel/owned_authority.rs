@@ -2,7 +2,7 @@
 //! exact grant currents through the authenticated own Station.
 use arkret_sdk::exact_current_state::{
     CapabilityGrantExactCurrentSelector, CapabilityGrantExactCurrentSelectorKind,
-    CurrentCapabilityGrant, ExactCurrentStateEntry, ExactCurrentStateReadRequestBody,
+    CurrentCapabilityGrant, ExactCurrentState, ExactCurrentStateReadRequestBody,
     ExactCurrentStateReadResponseBody, ExactCurrentStateSelector,
 };
 
@@ -42,7 +42,7 @@ fn decision_label(outcome: &arkret_sdk::AuthorizationCheckResponseBody) -> &'sta
     }
     let current_precheck = outcome.freshness_state == Some(arkret_sdk::FreshnessState::Fresh)
         && outcome.authority_status == Some(arkret_sdk::AuthorityStatus::Fresh)
-        && outcome.policy_results.iter().any(|row| {
+        && outcome.policy_evaluations.iter().any(|row| {
             row.get("reason_detail").and_then(Value::as_str)
                 == Some("owned_agent_current_capability_and_management")
         });
@@ -308,7 +308,7 @@ async fn exact_grant(
     );
     match result.into_value()? {
         ExactCurrentStateReadResponseBody::Present {
-            entry: ExactCurrentStateEntry::CapabilityGrant(row),
+            current_state: ExactCurrentState::CapabilityGrant(row),
             effective_stream_head,
             ..
         } => {
@@ -346,7 +346,7 @@ async fn current_authority(
 async fn retain_accepted_grant_locator(
     submitter: &crate::event_submit::EventSubmitter,
     controller: &arkret_sdk::AccountId,
-    accepted: &crate::models::SubmitEventResult,
+    accepted: &crate::models::EventSubmissionProgress,
 ) -> anyhow::Result<()> {
     let commit = accepted
         .commit

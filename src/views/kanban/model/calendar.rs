@@ -738,7 +738,7 @@ fn location_value_from_text(value: &str) -> Option<arkret_sdk::CalendarEventLoca
             title: Some(trimmed.to_owned()),
             address: None,
             geo_uri: None,
-            url: None,
+            uri: None,
         })
     })
 }

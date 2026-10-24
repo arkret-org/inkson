@@ -217,7 +217,7 @@ fn validate_contact_commit_outcome(
     signer: &crate::event_signer::InksonEventSigner,
 ) -> anyhow::Result<()> {
     use arkret_sdk::contact_operations::{
-        ContactAcceptedResponseBody as Accepted, ContactResultKind as Kind,
+        ContactAcceptedResponseBody as Accepted, ContactOperationKind as Kind,
     };
     let expected = match event.kind.as_str() {
         arkret_wire::event_kind_str::CONTACT_REQUESTED => Kind::Request,

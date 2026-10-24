@@ -19,7 +19,7 @@ use crate::state::MoveSubmissionState;
 pub(super) fn reconcile_kanban_operation_submission(
     store: &mut LocalStateStore,
     operation_id: &str,
-    result: &Result<crate::models::SubmitEventResult, crate::transport::auth::ApiCallError>,
+    result: &Result<crate::models::EventSubmissionProgress, crate::transport::auth::ApiCallError>,
 ) {
     let retained_event = store
         .load()

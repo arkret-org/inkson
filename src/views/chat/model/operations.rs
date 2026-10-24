@@ -547,7 +547,7 @@ pub(crate) async fn send_ordinary_chat_message(
     content: arkret_sdk::MessageAuthoringContent,
     reply_to: Option<&str>,
     local_operation_id: String,
-) -> std::result::Result<SubmitEventResult, garth::MessageAuthoringFailure> {
+) -> std::result::Result<EventSubmissionProgress, garth::MessageAuthoringFailure> {
     send_ordinary_chat_message_with_blob_refs(
         api,
         state_store,
@@ -572,7 +572,7 @@ pub(crate) async fn send_ordinary_chat_message_with_blob_refs(
     reply_to: Option<&str>,
     local_operation_id: String,
     blob_refs: Vec<String>,
-) -> std::result::Result<SubmitEventResult, garth::MessageAuthoringFailure> {
+) -> std::result::Result<EventSubmissionProgress, garth::MessageAuthoringFailure> {
     let refused = |error: anyhow::Error| garth::MessageAuthoringFailure::Refused {
         code: "failed_precondition".to_owned(),
         detail: format!("{error:#}"),

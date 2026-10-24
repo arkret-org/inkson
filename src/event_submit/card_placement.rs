@@ -8,7 +8,7 @@ impl EventSubmitter {
         &self,
         operation: &LocalOperation,
         placement: CardPlacement,
-    ) -> anyhow::Result<SubmitEventResult> {
+    ) -> anyhow::Result<EventSubmissionProgress> {
         self.submit_sdk_event_inner(operation, Some(placement))
             .await
     }

@@ -1897,7 +1897,7 @@ async fn frozen_message_real_mls_retry_and_durable_reopen_preserve_sender_state(
                     detail: "transport response lost after sending frozen ciphertext".to_owned(),
                 })
             } else {
-                Ok(crate::models::SubmitEventResult::queued(
+                Ok(crate::models::EventSubmissionProgress::queued(
                     queued.event_id.to_string(),
                 ))
             };

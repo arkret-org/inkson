@@ -896,7 +896,7 @@ pub(super) fn RealmsSection(
                                                     ).await {
                                                     Ok(realm) => {
                                                         // R15: ak.realm.create now returns
-                                                        // RealmCreateResult with the new
+                                                        // RealmCreationView with the new
                                                         // `ak:realm:*` id under `realm_id`.
                                                         let realm_id = realm.realm_id.clone();
                                                         if realm.first_commit.realm_id.as_str() != realm_id

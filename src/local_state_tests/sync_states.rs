@@ -19,10 +19,11 @@ fn submit_result_updates_submission_by_event_id() {
         None,
     );
 
-    let updated = store.apply_move_submission_result(&crate::models::SubmitEventResult::rejected(
-        event_id.to_owned(),
-        "failed_precondition".to_owned(),
-    ));
+    let updated =
+        store.apply_move_submission_result(&crate::models::EventSubmissionProgress::rejected(
+            event_id.to_owned(),
+            "failed_precondition".to_owned(),
+        ));
 
     assert!(updated);
     let listed = store.move_submissions_for_realm(realm);
@@ -48,10 +49,11 @@ fn submit_result_updates_submission_keyed_by_event_id() {
         None,
     );
 
-    let updated = store.apply_move_submission_result(&crate::models::SubmitEventResult::rejected(
-        event_id.to_owned(),
-        "schema_violation".to_owned(),
-    ));
+    let updated =
+        store.apply_move_submission_result(&crate::models::EventSubmissionProgress::rejected(
+            event_id.to_owned(),
+            "schema_violation".to_owned(),
+        ));
 
     assert!(updated);
     let listed = store.move_submissions_for_realm(realm);

@@ -3,7 +3,7 @@ use arkret_models_collaboration::governance::operation_wire::{
     Policy, PolicySetStatePayload, PolicySetValue,
 };
 use arkret_sdk::exact_current_state::{
-    ExactCurrentStateEntry, ExactCurrentStateReadRequestBody, ExactCurrentStateReadResponseBody,
+    ExactCurrentState, ExactCurrentStateReadRequestBody, ExactCurrentStateReadResponseBody,
     ExactCurrentStateSelector, PolicyExactCurrentSelector, PolicyExactCurrentSelectorKind,
 };
 use arkret_sdk::{AccountId, CommitStreamRef, CurrentRevision, PolicyId, RealmId, ScopeRef};
@@ -100,7 +100,7 @@ async fn read_policy(
             },
         ),
         ExactCurrentStateReadResponseBody::Present {
-            entry: ExactCurrentStateEntry::Policy(row),
+            current_state: ExactCurrentState::Policy(row),
             ..
         } => {
             let PolicySetValue::Governance(policy) = row.value else {

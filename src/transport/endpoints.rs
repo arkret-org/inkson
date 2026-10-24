@@ -238,13 +238,13 @@ impl MlsEndpoints<'_> {
     pub async fn revoke_key_packages(
         &self,
         device_id: &arkret_sdk::DeviceId,
-        key_package_refs: Vec<String>,
+        keypackage_refs: Vec<String>,
     ) -> anyhow::Result<arkret_sdk::KeyPackagesRevokeResponseBody> {
-        if key_package_refs.is_empty() {
+        if keypackage_refs.is_empty() {
             anyhow::bail!("KeyPackage revoke batch is empty");
         }
         let unsigned = arkret_sdk::KeyPackagesRevokeFields {
-            key_package_refs,
+            keypackage_refs,
             device_id: device_id.clone(),
             reason: None,
         };

@@ -1502,7 +1502,7 @@ mod tests {
                 )
                 .unwrap(),
                 claim_request_id: arkret_sdk::Base64UrlString::new("Y2xhaW0tcmVxdWVzdA").unwrap(),
-                key_package_ref: arkret_sdk::NonEmptyString::new(format!(
+                keypackage_ref: arkret_sdk::NonEmptyString::new(format!(
                     "sha256:{}",
                     "33".repeat(32)
                 ))

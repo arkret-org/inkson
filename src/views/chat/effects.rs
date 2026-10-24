@@ -900,7 +900,7 @@ pub(super) fn ChatEffects(
                                 visible.insert(
                                     agent_id,
                                     participation_allows_public_reply(
-                                        &outcome.agent_participation_entries,
+                                        &outcome.participation_entries,
                                         &realm,
                                         circle.as_deref(),
                                         &strand,

@@ -286,7 +286,7 @@ mod tests {
         // The self row carries the Station-verified projection; no origin
         // proof shell reaches the client, and the projection repeats neither
         // account nor device.
-        let record: arkret_models_crypto::QueryDeviceRecord = serde_json::from_value(
+        let record: arkret_models_crypto::DeviceKeyView = serde_json::from_value(
             serde_json::json!({
                 "signer_evidence_ref":
                     "ak:signer_evidence:sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",

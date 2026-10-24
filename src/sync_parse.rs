@@ -15,7 +15,7 @@ use std::collections::BTreeSet;
 
 pub use arkret_models_collaboration::sync_frames::account_subscribe::{
     AccountSubscribeBatch, AccountSubscribeFrame, AccountSubscribeFrameKind,
-    AccountSubscribeSnapshotResult,
+    AccountSubscribeReadAction,
 };
 use arkret_wire::{DeviceId, Did, Event, project_did_to_core_id};
 use serde_json::Value;

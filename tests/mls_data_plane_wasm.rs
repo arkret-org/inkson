@@ -21,8 +21,9 @@
 use arkret_sdk::{
     ArkretMlsGroup, ArkretMlsIdentity, CommittedEventFullView, DeviceId, EncryptedMessage,
     EncryptedPayload, EventId, MessageCrypto, MessageCryptoDecrypt, MessageCryptoUnavailable,
-    MlsAddMemberResult, MlsCommitEnvelope, MlsGovernanceBindingPayload, MlsKeyPackageRecord,
-    MlsRemoveMemberResult, MlsWelcomeDelivery, MlsWelcomeDraft, ScopeRef,
+    MlsCommitEnvelope, MlsGovernanceBindingPayload, MlsKeyPackageRecord,
+    MlsMemberAdditionArtifacts, MlsMemberRemovalArtifacts, MlsWelcomeDelivery, MlsWelcomeDraft,
+    ScopeRef,
 };
 use wasm_bindgen_test::*;
 
@@ -267,7 +268,7 @@ impl LocalMlsDevice {
         &mut self,
         member_key_package: &MlsKeyPackageRecord,
         state: &AcceptedGroupState,
-    ) -> MlsAddMemberResult {
+    ) -> MlsMemberAdditionArtifacts {
         let binding = state.next_binding();
         self.group()
             .add_member_with_governance_binding(member_key_package, &binding)
@@ -278,7 +279,7 @@ impl LocalMlsDevice {
         &mut self,
         target: &arkret_sdk::ActorId,
         state: &AcceptedGroupState,
-    ) -> MlsRemoveMemberResult {
+    ) -> MlsMemberRemovalArtifacts {
         let binding = state.next_binding();
         self.group()
             .remove_members_by_actor_with_governance_binding(std::slice::from_ref(target), &binding)

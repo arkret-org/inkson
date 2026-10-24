@@ -1546,7 +1546,7 @@ async fn a_station_refusal_settles_the_item_with_its_exact_reason_code() {
     assert_eq!(reason_code, "mls_activation_required");
     assert_eq!(item.status, SendQueueStatus::Rejected);
     assert_eq!(
-        SubmitEventResult::from(&*item)
+        EventSubmissionProgress::from(&*item)
             .rejection_reason_code
             .as_deref(),
         Some("mls_activation_required"),

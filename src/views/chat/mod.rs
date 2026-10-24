@@ -14,7 +14,7 @@ use crate::components::{
     ActorIdentityLabel, CircleScopePicker, HelpTip, SecurityStateBadge, SelfAttributionBadge,
     UiIcon,
 };
-use crate::models::SubmitEventResult;
+use crate::models::EventSubmissionProgress;
 use crate::operation::{ak_ops, trim_realm_id, uuid_v7};
 use crate::payload::sdk_payload_value;
 use crate::routes::Route;

@@ -422,7 +422,7 @@ fn current_submit_outcome_binds_a_verified_event_and_commit() {
     assert_eq!(status, arkret_wire::AuthorityCommitStatus::Committed);
     assert_eq!(commit.event_ref, accepted.event.event_id);
     assert_eq!(commit.stream_position, 1);
-    let submit = inkson::models::SubmitEventResult::committed(
+    let submit = inkson::models::EventSubmissionProgress::committed(
         accepted.event.event_id.to_string(),
         commit.clone(),
     );
@@ -840,7 +840,7 @@ fn inkson_config_store_preserves_signed_out_state_without_placeholder_identity()
 }
 
 // (Move/Seal pipeline tests removed — all writes now go through
-// ak.self.events.command.submit.v1; the SubmitEventResult decoder is exercised by
+// ak.self.events.command.submit.v1; the EventSubmissionProgress decoder is exercised by
 // coland's own integration tests and the arkret-spec fixtures.)
 
 /// Regression: `is_auth_expired_error` MUST treat a bare 401

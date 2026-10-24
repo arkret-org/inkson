@@ -485,7 +485,7 @@ impl EventSubmitter {
     pub(crate) async fn submit_creator_genesis(
         &self,
         mut record: arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapRecord,
-    ) -> anyhow::Result<SubmitEventResult> {
+    ) -> anyhow::Result<EventSubmissionProgress> {
         let _single_writer = outbound_submit_lock().lock().await;
         #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
         let _trace = OutboundWriterTrace::acquired("creator_genesis");

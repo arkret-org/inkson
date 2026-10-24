@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::{Arc, Mutex};
 
 use arkret_models_collaboration::sync_frames::account_subscribe::{
-    AccountSubscribeFrameKind, AccountSubscribeParameters, AccountSubscribeSnapshotResult,
+    AccountSubscribeFrameKind, AccountSubscribeParameters, AccountSubscribeReadAction,
 };
 use arkret_models_collaboration::sync_frames::websocket::*;
 use arkret_wire::websocket_binding::WebSocketOperationId;
@@ -505,7 +505,7 @@ impl<H: garth::AccountSubscribeTransport> garth::AccountSubscribeTransport for S
     async fn subscribe(
         &self,
         request: &AccountSubscribeParameters,
-    ) -> garth::Result<AccountSubscribeSnapshotResult> {
+    ) -> garth::Result<AccountSubscribeReadAction> {
         let parameters = WebSocketOpenParameters::Account(WebSocketAccountOpenParameters {
             after: request.after.clone(),
             catchup: request.catchup,
@@ -805,7 +805,7 @@ mod tests {
             async fn subscribe(
                 &self,
                 _: &AccountSubscribeParameters,
-            ) -> garth::Result<AccountSubscribeSnapshotResult> {
+            ) -> garth::Result<AccountSubscribeReadAction> {
                 let _cancelled = Cancelled(self.cancelled.clone());
                 self.started.store(true, Ordering::SeqCst);
                 futures_util::future::pending().await

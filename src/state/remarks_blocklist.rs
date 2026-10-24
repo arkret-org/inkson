@@ -772,7 +772,7 @@ mod blocklist_freshness_tests {
     #[test]
     fn malformed_blocklist_prevents_catchup_from_authorizing_signals() {
         use arkret_models_collaboration::sync_frames::account_subscribe::{
-            AccountSubscribeParameters, AccountSubscribeSnapshotResult,
+            AccountSubscribeParameters, AccountSubscribeReadAction,
         };
         use base64::Engine as _;
         let (directory, mut store) = store();
@@ -837,7 +837,7 @@ mod blocklist_freshness_tests {
             let mut folder = arkret_sdk::AccountSubscribeFolder::for_request(&request);
             folder.push(serde_json::from_value(serde_json::json!({"kind":"delta","cursor":"ak:cursor:repair-delta","partial":false,"account_data":{"events":[entry.clone()]}})).unwrap()).unwrap();
             folder.push(serde_json::from_value(serde_json::json!({"kind":"catchup_complete","cursor":"ak:cursor:repair-complete"})).unwrap()).unwrap();
-            let AccountSubscribeSnapshotResult::Batch(batch) = folder.finish().unwrap() else {
+            let AccountSubscribeReadAction::Batch(batch) = folder.finish().unwrap() else {
                 panic!("validated batch required")
             };
             let checkpoint = garth::AccountCursorCheckpoint {

@@ -314,10 +314,10 @@ pub(super) async fn issue_recovery_completion_grant(
     let outcome = account_http
         .issue_recovery_completion_grant(&request)
         .await?;
-    let session_grant_outcome = serde_json::from_value(outcome.session_grant_outcome)?;
+    let issued_session = serde_json::from_value(outcome.issued_session)?;
     let session = garth::SessionGrantState::from_initial_registration_outcome(
         &initial_session,
-        session_grant_outcome,
+        issued_session,
         chrono::Utc::now(),
     )?;
     let principal_id = handoff

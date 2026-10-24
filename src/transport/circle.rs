@@ -132,7 +132,7 @@ pub async fn archive_circle(
     actor: &str,
     circle_id: &str,
     reason: Option<&str>,
-) -> anyhow::Result<crate::models::SubmitEventResult> {
+) -> anyhow::Result<crate::models::EventSubmissionProgress> {
     let event = crate::operation::ak_ops::circle_lifecycle(
         realm_id,
         actor,
@@ -151,7 +151,7 @@ pub async fn restore_circle(
     actor: &str,
     circle_id: &str,
     reason: Option<&str>,
-) -> anyhow::Result<crate::models::SubmitEventResult> {
+) -> anyhow::Result<crate::models::EventSubmissionProgress> {
     let event = crate::operation::ak_ops::circle_lifecycle(
         realm_id,
         actor,

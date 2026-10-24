@@ -1,4 +1,4 @@
-use crate::models::SubmitEventResult;
+use crate::models::EventSubmissionProgress;
 
 /// What this account may see of one invited Realm before it accepts.
 ///
@@ -116,7 +116,7 @@ impl crate::transport::TransportClient {
         invite_id: &str,
         credential: Option<&crate::state::StoredInviteCredential>,
         invitee_account_id: Option<arkret_sdk::AccountId>,
-    ) -> anyhow::Result<(SubmitEventResult, Option<String>)> {
+    ) -> anyhow::Result<(EventSubmissionProgress, Option<String>)> {
         let account_id = invitee_account_id.ok_or_else(|| {
             anyhow::anyhow!("directed invite acceptance requires the current complete account")
         })?;

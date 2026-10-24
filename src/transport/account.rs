@@ -623,7 +623,7 @@ pub async fn direct_conversation_found(
     submitter: &crate::event_submit::EventSubmitter,
     resolve: &arkret_sdk::direct_conversation::DirectConversationResolveResponseBody,
     authored: Vec<arkret_sdk::AuthoredEvent>,
-) -> anyhow::Result<Vec<crate::models::SubmitEventResult>> {
+) -> anyhow::Result<Vec<crate::models::EventSubmissionProgress>> {
     if !matches!(
         garth::direct_conversation_action(resolve),
         garth::DirectConversationAction::SubmitCreation { .. }
@@ -842,9 +842,9 @@ async fn ensure_owned_agent_direct_reply(
         return Ok(());
     }
     let mut selection = existing
-        .agent_participation_entries
+        .participation_entries
         .iter()
-        .find(|entry| entry.scope == scope)
+        .find(|entry| entry.target_scope == scope)
         .map(|entry| entry.selection)
         .unwrap_or_default();
     selection.message_creation_allowed = true;
@@ -863,9 +863,9 @@ pub(crate) async fn replace_agent_participation(
 ) -> anyhow::Result<arkret_sdk::AgentParticipationResponseBody> {
     let current = http.agent_participation_get(agent_id).await?;
     let expected_version = current
-        .agent_participation_entries
+        .participation_entries
         .iter()
-        .find(|entry| entry.scope == scope)
+        .find(|entry| entry.target_scope == scope)
         .map(|entry| entry.version)
         .unwrap_or(0);
     let request = arkret_sdk::ParticipationReplaceRequestBody {
@@ -883,9 +883,9 @@ fn participation_reply_is_effective(
     scope: &arkret_sdk::ParticipationScope,
 ) -> bool {
     outcome
-        .agent_participation_entries
+        .participation_entries
         .iter()
-        .any(|entry| &entry.scope == scope && entry.selection.message_creation_allowed)
+        .any(|entry| &entry.target_scope == scope && entry.selection.message_creation_allowed)
 }
 
 fn owned_agent_reply_update_needed(
@@ -1310,7 +1310,7 @@ pub(crate) async fn replace_consent(
     submitter: &crate::event_submit::EventSubmitter,
     edit: &ConsentEdit,
     replacement: arkret_sdk::ConsentReplacePayload,
-) -> anyhow::Result<crate::models::SubmitEventResult> {
+) -> anyhow::Result<crate::models::EventSubmissionProgress> {
     edit.check()?;
     let holder = &edit.response.request().holder_account_id;
     anyhow::ensure!(

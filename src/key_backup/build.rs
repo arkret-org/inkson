@@ -332,6 +332,10 @@ fn build_recovery_public_key_backup_body_for_items_and_index_in_series(
         body.supersedes_digest = Some(supersedes_digest);
     }
     let plaintext = arkret_sdk::KeyBackupPlaintext {
+        schema: arkret_sdk::SchemaId::KeyBackupPlaintextV1,
+        backup_id: body.backup_id.clone(),
+        series_id: body.series_id.clone(),
+        series_sequence: body.series_sequence,
         backup_kind: class,
         items: plaintext_items,
     };

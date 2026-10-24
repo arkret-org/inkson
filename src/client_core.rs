@@ -28,7 +28,7 @@ impl InksonAccountTransport {
 impl garth::AccountSubscribeTransport for InksonAccountTransport {
     /// One bounded delivery window of the account aggregate.
     ///
-    /// `AccountSubscribeSnapshotResult` already folds the Station's control
+    /// `AccountSubscribeReadAction` already folds the Station's control
     /// interrupts (drop with a resume cursor, resync-required, unauthorized)
     /// into the shape [`garth::AccountRunner`] resumes from, so nothing here
     /// re-derives reconnect policy.
@@ -36,7 +36,7 @@ impl garth::AccountSubscribeTransport for InksonAccountTransport {
         &self,
         request: &arkret_models_collaboration::sync_frames::account_subscribe::AccountSubscribeParameters,
     ) -> garth::Result<
-        arkret_models_collaboration::sync_frames::account_subscribe::AccountSubscribeSnapshotResult,
+        arkret_models_collaboration::sync_frames::account_subscribe::AccountSubscribeReadAction,
     > {
         let own = self.http.own_station_result_client()?;
         let result = garth::AccountSubscribeTransport::subscribe(&self.http, request).await?;

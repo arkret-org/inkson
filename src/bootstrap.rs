@@ -589,7 +589,7 @@ async fn publish_fresh_local_mls_key_package_batch(
             .key_package_record()
             .map_err(|error| format!("create MLS KeyPackage: {error}"))?;
         let key_package_id = record.keypackage_id.clone();
-        let key_package_ref = record.keypackage_ref.as_str().to_owned();
+        let keypackage_ref = record.keypackage_ref.as_str().to_owned();
         let private_state = identity
             .export_private_state()
             .map_err(|error| format!("export MLS KeyPackage identity state: {error}"))?;
@@ -609,12 +609,12 @@ async fn publish_fresh_local_mls_key_package_batch(
         )
         .await
         .map_err(|error| format!("store MLS KeyPackage identity state: {error}"))?;
-        if key_package_ref != key_package_id {
+        if keypackage_ref != key_package_id {
             crate::mls::runtime::store_mls_key_package_identity_state_durable(
                 secure_store,
                 authority,
                 device_id,
-                &key_package_ref,
+                &keypackage_ref,
                 &private_state,
             )
             .await
@@ -687,7 +687,7 @@ fn delete_unpublished_local_mls_key_package_state(
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
     key_package_id: &str,
-    key_package_ref: &str,
+    keypackage_ref: &str,
 ) {
     let _ = crate::mls::runtime::delete_mls_key_package_identity_state(
         secure_store,
@@ -695,12 +695,12 @@ fn delete_unpublished_local_mls_key_package_state(
         device_id,
         key_package_id,
     );
-    if key_package_ref != key_package_id {
+    if keypackage_ref != key_package_id {
         let _ = crate::mls::runtime::delete_mls_key_package_identity_state(
             secure_store,
             authority,
             device_id,
-            key_package_ref,
+            keypackage_ref,
         );
     }
 }

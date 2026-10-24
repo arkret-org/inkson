@@ -147,7 +147,7 @@ impl EventSubmitter {
     pub(crate) async fn recover_pending_strand_watch(
         &self,
         request: &arkret_sdk::StrandWatchCurrentRequestBody,
-    ) -> anyhow::Result<Option<SubmitEventResult>> {
+    ) -> anyhow::Result<Option<EventSubmissionProgress>> {
         let authority = self.authority()?.clone();
         validate_watch_request(&authority, request)?;
         let epoch = crate::identity::device_directory::session_cache_epoch();

@@ -1144,8 +1144,8 @@ fn mention_policy_reads_realm_effective_bit() {
         "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19".to_owned(),
     )
     .unwrap();
-    let entries = vec![AgentParticipationEntry {
-        scope: ParticipationScope::Realm { realm_id },
+    let entries = vec![AgentParticipationView {
+        target_scope: ParticipationScope::Realm { realm_id },
         selection: ParticipationBits {
             message_creation_allowed: true,
             reaction_addition_allowed: true,
@@ -1171,8 +1171,8 @@ fn mention_policy_reads_realm_effective_bit() {
 fn mention_state_uses_realm_participation_entry() {
     let realm = "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk";
     let realm_id = arkret_sdk::RealmId::new(realm.to_owned()).unwrap();
-    let entry = AgentParticipationEntry {
-        scope: ParticipationScope::Realm { realm_id },
+    let entry = AgentParticipationView {
+        target_scope: ParticipationScope::Realm { realm_id },
         selection: ParticipationBits {
             message_creation_allowed: true,
             reaction_addition_allowed: true,

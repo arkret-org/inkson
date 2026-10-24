@@ -242,7 +242,7 @@ pub fn verify(input: Value) -> Result<Value> {
 #[serde(deny_unknown_fields)]
 struct OperationInput {
     material: Material,
-    operation_kind: ContactResultKind,
+    operation_kind: ContactOperationKind,
     body: Value,
     prepared: Option<ContactOperationResponseBody>,
 }
@@ -253,10 +253,10 @@ pub fn operation(input: Value) -> Result<Value> {
     let m = &input.material;
     let f = &m.ceremony;
     let carrier = match input.operation_kind {
-        ContactResultKind::Response => &f.response,
-        ContactResultKind::Reject => &f.reject,
-        ContactResultKind::ScopeUpdate => &f.scope_update,
-        ContactResultKind::Tombstone => &f.tombstone,
+        ContactOperationKind::Response => &f.response,
+        ContactOperationKind::Reject => &f.reject,
+        ContactOperationKind::ScopeUpdate => &f.scope_update,
+        ContactOperationKind::Tombstone => &f.tombstone,
         _ => anyhow::bail!("request uses its independent prepare/commit path"),
     };
     let original = match carrier {
@@ -285,7 +285,7 @@ pub fn operation(input: Value) -> Result<Value> {
             _ => unreachable!(),
         };
         let (peer, request, round, version, predecessor, scopes) = match input.operation_kind {
-            ContactResultKind::Response => {
+            ContactOperationKind::Response => {
                 let body: ContactAcceptPrepareRequestBody = serde_json::from_value(input.body)?;
                 operation_id = body.operation_id;
                 (
@@ -297,7 +297,7 @@ pub fn operation(input: Value) -> Result<Value> {
                     Some(body.granted_to_peer_scopes),
                 )
             }
-            ContactResultKind::Reject => {
+            ContactOperationKind::Reject => {
                 let body: ContactRejectPrepareRequestBody = serde_json::from_value(input.body)?;
                 operation_id = body.operation_id;
                 (
@@ -309,7 +309,7 @@ pub fn operation(input: Value) -> Result<Value> {
                     None,
                 )
             }
-            ContactResultKind::ScopeUpdate => {
+            ContactOperationKind::ScopeUpdate => {
                 let body: ContactScopeUpdatePrepareRequestBody =
                     serde_json::from_value(input.body)?;
                 operation_id = body.operation_id;
@@ -322,7 +322,7 @@ pub fn operation(input: Value) -> Result<Value> {
                     Some(body.granted_to_peer_scopes),
                 )
             }
-            ContactResultKind::Tombstone => {
+            ContactOperationKind::Tombstone => {
                 let body: ContactTombstonePrepareRequestBody = serde_json::from_value(input.body)?;
                 ensure!(
                     !body.block_peer,
@@ -372,25 +372,25 @@ pub fn operation(input: Value) -> Result<Value> {
             );
         }
         let outcome = match input.operation_kind {
-            ContactResultKind::Response => ContactPreparedResponseBody::Response {
+            ContactOperationKind::Response => ContactPreparedResponseBody::Response {
                 operation_id,
                 reservation_handle,
                 expires_at,
                 event_draft,
             },
-            ContactResultKind::Reject => ContactPreparedResponseBody::Reject {
+            ContactOperationKind::Reject => ContactPreparedResponseBody::Reject {
                 operation_id,
                 reservation_handle,
                 expires_at,
                 event_draft,
             },
-            ContactResultKind::ScopeUpdate => ContactPreparedResponseBody::ScopeUpdate {
+            ContactOperationKind::ScopeUpdate => ContactPreparedResponseBody::ScopeUpdate {
                 operation_id,
                 reservation_handle,
                 expires_at,
                 event_draft,
             },
-            ContactResultKind::Tombstone => ContactPreparedResponseBody::Tombstone {
+            ContactOperationKind::Tombstone => ContactPreparedResponseBody::Tombstone {
                 operation_id,
                 reservation_handle,
                 expires_at,

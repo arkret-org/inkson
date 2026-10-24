@@ -5,14 +5,14 @@ use super::*;
 #[test]
 fn participation_visibility_uses_most_specific_effective_scope() {
     use arkret_models_collaboration::governance::agent_participation::{
-        AgentParticipationEntry, ParticipationBits, ParticipationNextReplaceInput,
+        AgentParticipationView, ParticipationBits, ParticipationNextReplaceInput,
         ParticipationScope,
     };
 
     let realm = "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk";
     let circle = "ak:circle:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-";
-    let realm_entry = AgentParticipationEntry {
-        scope: ParticipationScope::Realm {
+    let realm_entry = AgentParticipationView {
+        target_scope: ParticipationScope::Realm {
             realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
         },
         selection: ParticipationBits::ALL,
@@ -21,8 +21,8 @@ fn participation_visibility_uses_most_specific_effective_scope() {
             expected_version: 1,
         }),
     };
-    let circle_entry = AgentParticipationEntry {
-        scope: ParticipationScope::Circle {
+    let circle_entry = AgentParticipationView {
+        target_scope: ParticipationScope::Circle {
             realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
             circle_id: arkret_sdk::CircleId::new(circle.to_owned()).unwrap(),
         },
@@ -50,14 +50,14 @@ fn participation_visibility_uses_most_specific_effective_scope() {
 #[test]
 fn participation_visibility_can_target_an_authoritative_discussion_strand() {
     use arkret_models_collaboration::governance::agent_participation::{
-        AgentParticipationEntry, ParticipationBits, ParticipationNextReplaceInput,
+        AgentParticipationView, ParticipationBits, ParticipationNextReplaceInput,
         ParticipationScope,
     };
 
     let realm = "ak:realm:AVFSR4O2uTcP6zGsyewp0OdaGeDZBXQAUZ9VIEKLSXYo";
     let strand = "ak:strand:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL".to_owned();
-    let entry = AgentParticipationEntry {
-        scope: ParticipationScope::Strand {
+    let entry = AgentParticipationView {
+        target_scope: ParticipationScope::Strand {
             realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
             strand_id: arkret_sdk::StrandId::new(strand.clone()).unwrap(),
         },
@@ -79,7 +79,7 @@ fn participation_visibility_can_target_an_authoritative_discussion_strand() {
 #[test]
 fn mention_only_participation_does_not_expose_agent_in_roster() {
     use arkret_models_collaboration::governance::agent_participation::{
-        AgentParticipationEntry, ParticipationBits, ParticipationNextReplaceInput,
+        AgentParticipationView, ParticipationBits, ParticipationNextReplaceInput,
         ParticipationScope,
     };
 
@@ -91,8 +91,8 @@ fn mention_only_participation_does_not_expose_agent_in_roster() {
         third_party_mention_delivery_allowed: true,
         acting_on_behalf_allowed: false,
     };
-    let entry = AgentParticipationEntry {
-        scope: ParticipationScope::Realm {
+    let entry = AgentParticipationView {
+        target_scope: ParticipationScope::Realm {
             realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
         },
         selection: mention_only,

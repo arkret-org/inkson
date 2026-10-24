@@ -97,7 +97,7 @@ fn directory_refresh_updates_status_without_dropping_loaded_details() {
             AgentRuntimeState::PendingRuntimeKey,
         ),
         grants: vec![
-            serde_json::to_value(arkret_sdk::GrantSnapshot {
+            serde_json::to_value(arkret_sdk::AgentGrantView {
                 grant_id: arkret_sdk::GrantId::new(
                     "ak:grant:AdIokNbDGo5OV8uIK_7oyEOrSIU423PwmxNVThDeiPwQ",
                 )
@@ -126,7 +126,7 @@ fn directory_refresh_updates_status_without_dropping_loaded_details() {
         crate::views::agents::model::agent_projection_runtime_state(&rows[0].agent),
         AgentRuntimeState::Ready
     );
-    let grant: arkret_sdk::GrantSnapshot =
+    let grant: arkret_sdk::AgentGrantView =
         serde_json::from_value(rows[0].grants[0].clone()).unwrap();
     assert_eq!(
         grant.grant_id.as_str(),

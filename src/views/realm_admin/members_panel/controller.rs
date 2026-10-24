@@ -9,13 +9,17 @@
 use super::*;
 
 fn invite_delivery_summary(outcome: &arkret_sdk::InviteDeliveryResponseBody) -> &'static str {
-    use arkret_sdk::{DisclosedOutcome, InviteDeliveryOutcomeStatus};
+    use arkret_sdk::{DisclosedInviteDeliveryOutcome, InviteDeliveryOutcomeStatus};
     if outcome.status == InviteDeliveryOutcomeStatus::Deferred {
         return "private delivery is deferred; retry later";
     }
     match outcome.disclosed_outcome {
-        Some(DisclosedOutcome::Blocked) => "recipient reports private delivery blocked",
-        Some(DisclosedOutcome::Delivered) => "recipient reports private delivery delivered",
+        Some(DisclosedInviteDeliveryOutcome::Blocked) => {
+            "recipient reports private delivery blocked"
+        }
+        Some(DisclosedInviteDeliveryOutcome::Delivered) => {
+            "recipient reports private delivery delivered"
+        }
         None if outcome.status == InviteDeliveryOutcomeStatus::Duplicate => {
             "private delivery was already accepted"
         }
@@ -88,7 +92,7 @@ pub(super) async fn fetch_owned_agent_rows(
         match http.agent_participation_get(&row.agent_id).await {
             Ok(outcome) => {
                 let (policy, selection) =
-                    mention_state_from_entries(&outcome.agent_participation_entries, realm);
+                    mention_state_from_entries(&outcome.participation_entries, realm);
                 row.mention_policy = policy;
                 row.selection = selection;
             }
@@ -198,7 +202,7 @@ pub(super) fn spawn_set_agent_realm_behavior(
         {
             Ok(outcome) => {
                 let (mention_policy, selection) =
-                    mention_state_from_entries(&outcome.agent_participation_entries, &realm);
+                    mention_state_from_entries(&outcome.participation_entries, &realm);
                 owned_agents.with_mut(|rows| {
                     if let Some(row) = rows.iter_mut().find(|row| row.agent_id == outcome.agent_id)
                     {
