@@ -5,6 +5,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
+from check_native_read_evidence import FIXTURE, MANIFEST, PRODUCER_TEST, digest as native_digest, operation_ids as native_ids, validate as validate_native
 
 REPO = Path(__file__).resolve().parents[1]
 ROOT = REPO.parent
@@ -26,6 +27,8 @@ def validate(document):
     source = (REPO / "tests/contract/mockOperationCoverage.ts").read_text(encoding="utf-8")
     expected = set(re.findall(r'"(ak\.[^"\n]+)"', source)) - {"ak.self.realm_join.command.prepare.v1", "ak.self.realm_join.read.preview.v1"}
     implemented = implemented_ids()
+    native = native_ids()
+    validate_native(read(FIXTURE), read(MANIFEST), native_digest(FIXTURE))
     expected |= implemented
     assert len(expected) == 140, "review scope must retain all 140 original operations"
     rows = document["operations"]
@@ -48,7 +51,7 @@ def validate(document):
         assert row["error_mapping_ref"] == f"registry/operations-error-mapping.json#/operations/{error_index}", identifier
         assert row["error_mapping_sha256"] == hashlib.sha256(json.dumps(error_row, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest(), f"stale error mapping: {identifier}"
         assert row["operation_specific_errors"] == error_row["operation_specific"], identifier
-        assert row["native_authority_contract"] == "not_run", "source or classification cannot certify native execution"
+        assert row["native_authority_contract"] == ("native_fixture_producer" if identifier in native else "not_run"), "source or classification cannot certify native execution"
         assert len(row["reason"]) >= 100 and "TODO" not in row["reason"], identifier
         assert row["source_references"], f"missing implementation reference: {identifier}"
         for reference in row["source_references"]:
@@ -56,7 +59,13 @@ def validate(document):
             assert reference["evidence_kind"] == "family_source_reference" and reference["execution"] == "not_run", reference
         for path in row["normative_documents"]:
             assert (ROOT / "arkret-spec/spec/v1" / path).is_file(), path
-        if identifier in implemented:
+        if identifier in native:
+            assert row["mock_implementation"] == "archival_fixture" and row["verification_need"] == "native_fixture_replay", identifier
+            assert row["native_fixture_test"] == {"file": "coland/crates/storage-postgres/tests/realm_actor_control.rs", "name": PRODUCER_TEST}, identifier
+            assert PRODUCER_TEST in (ROOT / row["native_fixture_test"]["file"]).read_text(encoding="utf-8")
+            assert row["mock_test"] == {"file": "tests/contract/native-read-evidence.spec.ts", "name": f"native accepted read replay preserves original contract: {identifier}"}, identifier
+            assert "native accepted read replay preserves original contract: ${id}, install ${index}" in (REPO / row["mock_test"]["file"]).read_text(encoding="utf-8")
+        elif identifier in implemented:
             assert row["mock_implementation"] == "implemented" and row["verification_need"] == "mock_behavior", identifier
             test = row["mock_test"]
             assert test["name"] == f"remaining valid request and response contract: {identifier}", identifier
@@ -64,11 +73,11 @@ def validate(document):
         else:
             assert row["mock_implementation"] == "missing" and row["mock_test"] is None, identifier
             assert row["verification_need"] in {"native_authority", "native_evidence_fixture"}, identifier
-    return {"operations": len(rows), "mock_behavior": len(implemented), "uncovered": len(rows) - len(implemented)}
+    return {"operations": len(rows), "mock_behavior": len(implemented), "native_fixture_replay": len(native), "uncovered": len(rows) - len(implemented) - len(native)}
 
 def render(document):
-    labels = {"mock_behavior": "mock behavior", "native_authority": "native authority", "native_evidence_fixture": "native evidence fixture missing"}
-    lines = ["# Remaining mock operation contract review", "", "Generated from mock-operation-review.json. Classification is not executed coverage.", "Native authority contracts are NOT RUN for every row. The mock behavior rows cover only the scenarios specified below; source references do not certify native execution.", "", "| Operation | Mock implementation | Verification need | Reason / scope |", "| --- | --- | --- | --- |"]
+    labels = {"mock_behavior": "mock behavior", "native_authority": "native authority", "native_evidence_fixture": "native evidence fixture missing", "native_fixture_replay": "native accepted fixture / archival replay"}
+    lines = ["# Remaining mock operation contract review", "", "Generated from mock-operation-review.json. Classification is not executed coverage.", "Fourteen reads have a mandatory native PostgreSQL/registered-route fixture producer and exact archival replay. The replay is not live authorization; StandardGrant introspection uses the trusted native test channel. The other 97 native contracts remain NOT RUN. Source references alone never certify execution.", "", "| Operation | Mock implementation | Verification need | Reason / scope |", "| --- | --- | --- | --- |"]
     for row in document["operations"]:
         lines.append(f"| `{row['operation_id']}` | {row['mock_implementation']} | {labels[row['verification_need']]} | {row['reason'].replace('|', '/')} |")
     return "\n".join(lines) + "\n"

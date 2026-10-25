@@ -31,7 +31,8 @@ OPENAPI_PATH = SPEC_ARTIFACTS / "openapi" / "arkret-service-api.openapi.yaml"
 OPERATION_REGISTRY_PATH = SPEC_ARTIFACTS / "registry" / "operation-registry.json"
 SCHEMA_REGISTRY_PATH = SPEC_ARTIFACTS / "registry" / "schema-registry.json"
 OUTPUT_PATH = REPO / "tests" / "e2e" / "mock-operation-inventory.json"
-MOCK_SOURCES = (REPO / "tests" / "e2e" / "mockArkretApi.ts", REPO / "tests" / "e2e" / "mockRemainingOperations.ts")
+MOCK_SOURCES = tuple(REPO / "tests" / "e2e" / name for name in (
+    "mockArkretApi.ts", "mockRemainingOperations.ts", "mockNativeReadEvidence.ts"))
 HTTP_METHODS = {"get", "post", "put", "patch", "delete", "query", "head"}
 RETIRED_MOCK_FIELDS = {"registry_mode", "supported_receipts"}
 RETIRED_NESTED_MOCK_FIELDS = {"authentication_metadata": "mode", "method_evidence": "mode"}

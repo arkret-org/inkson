@@ -8,6 +8,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { hasPendingRealmCreate } from "./pendingCreator";
 import { remainingOperationMock } from "./mockRemainingOperations";
+import { nativeReadReplay } from "./mockNativeReadEvidence";
 import {
   currentHttpDescribeCapabilities,
   DIRECTORY_DESCRIBE_BUNDLE,
@@ -100,6 +101,7 @@ class MockAccountContinuation {
 }
 
 type MockArkretApiOptions = {
+  nativeReadEvidence?: boolean;
   accountPrincipalId?: string;
   primaryHandle?: string | null;
   directoryPrimaryHandle?: string | null;
@@ -227,6 +229,7 @@ type MockOperationInventoryRow = {
   method: string;
   path_template: string;
   operation_id: string;
+  request?: { schema_ref: string | null };
   responses: Record<string, {
     schema_ref: string | null;
     schema_combination?: string | null;
@@ -1766,9 +1769,14 @@ export async function mockArkretApi(
       ...currentHttpDescribeCapabilities(["ak.operation_bundle.applet_service.describe.v1"], "https://applet.example/"),
     }),
   });
+  const archivalReads = options.nativeReadEvidence ? nativeReadReplay(
+    mockOperationForRequest, validateMockSchema, json,
+    (route, code, detail) => mockProblem(route, code, detail),
+  ) : undefined;
   await page.route("**/*", async (rawRoute) => {
     const route = guardMockRoute(rawRoute);
     const url = new URL(route.request().url());
+    if (archivalReads && url.pathname.startsWith("/_arkret/") && await archivalReads(route, url)) return;
     if (url.hostname === "applet.example" && url.pathname.startsWith("/_arkret/") && await remaining(route, url)) return;
     if (url.hostname === "directory.example") {
       const headers = route.request().headers();

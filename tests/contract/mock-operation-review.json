@@ -8,9 +8,9 @@
       "operation_id": "ak.edge.applet.actor.read.resolve.v1",
       "method": "GET",
       "path": "/_arkret/edge/applet/actors/{actor_id}",
-      "mock_implementation": "missing",
-      "verification_need": "native_evidence_fixture",
-      "reason": "Requires an actually accepted Realm Bot/Ghost, original creation/current manager, exact external tuple or target-only signed material at a qualified governor cut. Ordinary Account/Agent fixtures are not Realm actors. There is no accepted manager/installation fixture for these lookups; private namespace enumeration or fabricated proof is forbidden.",
+      "mock_implementation": "archival_fixture",
+      "verification_need": "native_fixture_replay",
+      "reason": "The native Bridge retains an actually admitted Ghost creation and verifies the current Realm governor and manager through signed material before returning the exact complete ActorId. Browser tests replay only the exact archived request/response at its recorded verification cut; this is not live authorization or a new admission. StandardGrant introspection uses the trusted native test channel.",
       "normative_notes": "Path is percent-encoded RFC8785 JCS of the complete closed ActorId, never a bare principal. For Realm actors only their authenticated current governance Station may query the already accepted manager Service. Verify authority and exact creation/current manager; no namespace discovery, enumeration, cross-Applet takeover or private external-tuple disclosure to another caller. Unknown and invisible targets return not_found. Ordinary Accounts use their own existing directory and delegation contracts and are not targets of this managed-actor lookup.",
       "spec_operation_ref": "registry/contract-registry.json#/operation_registry/operations/0",
       "spec_operation_sha256": "2c2d8c972744acdf96bb43e9688c15095cca5b2101222cec238648d9dc3f1a73",
@@ -32,14 +32,21 @@
           "execution": "not_run"
         }
       ],
-      "mock_test": null,
+      "mock_test": {
+        "file": "tests/contract/native-read-evidence.spec.ts",
+        "name": "native accepted read replay preserves original contract: ak.edge.applet.actor.read.resolve.v1"
+      },
       "error_mapping_ref": "registry/operations-error-mapping.json#/operations/0",
       "error_mapping_sha256": "4fc9441f2522012e71bff3a73ea65a7810da1c0c2feea1d41ba9b688029864d3",
       "operation_specific_errors": [
         "not_found"
       ],
-      "native_authority_contract": "not_run",
-      "coverage_note": "Runtime success is credited only from the named executed test. Source references, rejected mock requests and schema examples are not native contract coverage."
+      "native_authority_contract": "native_fixture_producer",
+      "coverage_note": "Runtime success is credited only from the named executed test. Source references, rejected mock requests and schema examples are not native contract coverage.",
+      "native_fixture_test": {
+        "file": "coland/crates/storage-postgres/tests/realm_actor_control.rs",
+        "name": "public_read_contracts_preserve_fourteen_native_authority_closures"
+      }
     },
     {
       "operation_id": "ak.edge.applet.command.transaction.v1",
@@ -305,12 +312,12 @@
       "operation_id": "ak.edge.applet.third_party_users.read.list.v1",
       "method": "GET",
       "path": "/_arkret/edge/applet/third_party/users",
-      "mock_implementation": "missing",
-      "verification_need": "native_evidence_fixture",
-      "reason": "Requires an actually accepted Realm Bot/Ghost, original creation/current manager, exact external tuple or target-only signed material at a qualified governor cut. Ordinary Account/Agent fixtures are not Realm actors. There is no accepted manager/installation fixture for these lookups; private namespace enumeration or fabricated proof is forbidden.",
-      "normative_notes": "Exact private Ghost lookup keyed by applet_id, realm_id, protocol, instance_id and external_id; query shape is schemas/applet-edge-operations.schema.json#/$defs/third_party_user_query. Source Service must be the verified current governor of that Realm, with the exact Applet installation and disclosure right. Returned Realm actor must match the same tuple and owning Realm; Applet response is not authority to create or rebind it. No wildcard, cross-Realm lookup or list enumeration.",
+      "mock_implementation": "archival_fixture",
+      "verification_need": "native_fixture_replay",
+      "reason": "The native Bridge resolves all five required Realm/Applet/external tuple coordinates against retained accepted Ghost originals, verifies current governor and manager, and rejects the previous manager after transfer. Browser tests replay only the exact archived request/response at its recorded verification cut; this is not live authorization or a new admission. StandardGrant introspection uses the trusted native test channel.",
+      "normative_notes": "Exact private Ghost lookup keyed by applet_id, realm_id, protocol, instance_id and external_id; query shape is schemas/applet-edge-operations.schema.json#/$defs/third_party_user_query. Source Service must be the verified current governor of that Realm, with the exact Applet installation and disclosure right. Returned Realm actor must match the same tuple and owning Realm; Applet response is not authority to create or rebind it. No wildcard, cross-Realm lookup or list enumeration. Authenticated sources without exact disclosure rights and obsolete managers receive uniform not_found, never exists=false. Only qualified genuine absence may return exists=false; unavailable native material remains unavailable.",
       "spec_operation_ref": "registry/contract-registry.json#/operation_registry/operations/8",
-      "spec_operation_sha256": "1ff7bdfb8a1b1100597af6cf8957660148b7fa6bde99d7d581a84e8cbf9c5ad9",
+      "spec_operation_sha256": "1576b7517cebb2416ed769729663225420ae26bf243d1150a1b0692db8efbed6",
       "normative_documents": [
         "zh/extensions/realm-actors.md",
         "zh/extensions/applet-integration.md"
@@ -329,12 +336,21 @@
           "execution": "not_run"
         }
       ],
-      "mock_test": null,
+      "mock_test": {
+        "file": "tests/contract/native-read-evidence.spec.ts",
+        "name": "native accepted read replay preserves original contract: ak.edge.applet.third_party_users.read.list.v1"
+      },
       "error_mapping_ref": "registry/operations-error-mapping.json#/operations/8",
-      "error_mapping_sha256": "e0685563305c1f78d140a503018fd01389666cbd4c24bf27f766bc7fced402ae",
-      "operation_specific_errors": [],
-      "native_authority_contract": "not_run",
-      "coverage_note": "Runtime success is credited only from the named executed test. Source references, rejected mock requests and schema examples are not native contract coverage."
+      "error_mapping_sha256": "e3453b78513920117c5adfbdd709670e2a568ad7e4407b5778414b7a69ea3a62",
+      "operation_specific_errors": [
+        "not_found"
+      ],
+      "native_authority_contract": "native_fixture_producer",
+      "coverage_note": "Runtime success is credited only from the named executed test. Source references, rejected mock requests and schema examples are not native contract coverage.",
+      "native_fixture_test": {
+        "file": "coland/crates/storage-postgres/tests/realm_actor_control.rs",
+        "name": "public_read_contracts_preserve_fourteen_native_authority_closures"
+      }
     },
     {
       "operation_id": "ak.edge.push.command.apply_registration.v1",
@@ -1135,9 +1151,9 @@
       "operation_id": "ak.open.identity.read.resolution.v1",
       "method": "GET",
       "path": "/_arkret/open/principals/{principal_id}/resolution",
-      "mock_implementation": "missing",
-      "verification_need": "native_evidence_fixture",
-      "reason": "A positive response needs its own accepted profile/resolution source, exact original Event/Commit or method-native evidence and the required projection attestation. Existing Realm membership/Contact data cannot be relabeled a PCR Profile or public principal projection; native evidence fixture construction and current authorization remain missing.",
+      "mock_implementation": "archival_fixture",
+      "verification_need": "native_fixture_replay",
+      "reason": "The native Station serves the accepted principal projection and method history. The SDK verifies the complete method history and Station attestation against its actual authenticated Service resolution. Browser tests replay only the exact archived request/response at its recorded verification cut; this is not live authorization or a new admission. StandardGrant introspection uses the trusted native test channel.",
       "normative_notes": "Reads the current public principal resolution projection from the known Station. The response carries only the account pair, the projection, bounded adapter method evidence and the Station projection attestation; it MUST NOT carry principal_control_realm_id, PCR genesis Event, genesis receipt, resolution Events or accepted RealmCommit. Account-internal audit material moved to ak.self.identity.read.resolution_audit.v1, so this surface has no history selector. This is a second-hop projection fetch, not a global resolver or authorization oracle. Sensitive consumers fetch fresh, verify the attestation proof under the current station_id method history, independently run the registered DID method adapter, and require project(did)=principal_id; durable storage of arbitrary remote-principal bindings is not required.",
       "spec_operation_ref": "registry/contract-registry.json#/operation_registry/operations/38",
       "spec_operation_sha256": "15e0b4bb5af49cd2f90aacb0d04000dcdc41fb83e2ce6b3c479a6d9cefe1c623",
@@ -1158,14 +1174,21 @@
           "execution": "not_run"
         }
       ],
-      "mock_test": null,
+      "mock_test": {
+        "file": "tests/contract/native-read-evidence.spec.ts",
+        "name": "native accepted read replay preserves original contract: ak.open.identity.read.resolution.v1"
+      },
       "error_mapping_ref": "registry/operations-error-mapping.json#/operations/38",
       "error_mapping_sha256": "d3ad86f1c66fe0e87c4a7e1052283c41441b0ba410d2f8506db5920b4f7c5fa5",
       "operation_specific_errors": [
         "not_found"
       ],
-      "native_authority_contract": "not_run",
-      "coverage_note": "Runtime success is credited only from the named executed test. Source references, rejected mock requests and schema examples are not native contract coverage."
+      "native_authority_contract": "native_fixture_producer",
+      "coverage_note": "Runtime success is credited only from the named executed test. Source references, rejected mock requests and schema examples are not native contract coverage.",
+      "native_fixture_test": {
+        "file": "coland/crates/storage-postgres/tests/realm_actor_control.rs",
+        "name": "public_read_contracts_preserve_fourteen_native_authority_closures"
+      }
     },
     {
       "operation_id": "ak.open.mimi.command.notify.v1",
@@ -2115,9 +2138,9 @@
       "operation_id": "ak.peer.mls.read.group_state_material.v1",
       "method": "POST",
       "path": "/_arkret/peer/mls/group-state-material",
-      "mock_implementation": "missing",
-      "verification_need": "native_evidence_fixture",
-      "reason": "Encrypted Realm fixtures have real Genesis bytes, but this operation also needs independently qualified current/target membership and history rights; roster reads need immutable Proposal/leaf provenance and historical attestor closures/page signatures. Genesis bytes alone cannot stand in for that native authorization/evidence fixture.",
+      "mock_implementation": "archival_fixture",
+      "verification_need": "native_fixture_replay",
+      "reason": "The member Station sends a real Service HTTP signature to the current governor for the accepted target cut and Genesis Blob references. The SDK validates the returned public bytes against the actual joined group. Browser tests replay only the exact archived request/response at its recorded verification cut; this is not live authorization or a new admission. StandardGrant introspection uses the trusted native test channel.",
       "normative_notes": "Read-only service-authenticated retrieval of the exact RFC 9420 GroupInfo and ratchet_tree extension bytes committed by one accepted ak.mls.genesis Event. A self member forwarding request also binds caller_actor_id and target Commit/epoch; governance checks that exact Actor's current and target-cut membership/history and the calling Station's replication right at the target accepted Commit cut. Without caller_actor_id this remains Station replication-only and checks the Station's replication right at the Genesis Commit position. The provider resolves the Event, verifies every selector, hashes raw bytes against content-addressed refs, and validates GroupInfo/tree consistency before an all-or-nothing response. It never returns private tree material, secrets, inferred leaf DTOs or proof-bundle leaves; consumers derive leaf_index only from occupied leaves in the verified RFC tree.",
       "spec_operation_ref": "registry/contract-registry.json#/operation_registry/operations/68",
       "spec_operation_sha256": "2ec62963a727b9f4a80d4373f7aa6a401d1a53b91ccd63224c08f74fd5a556e3",
@@ -2138,7 +2161,10 @@
           "execution": "not_run"
         }
       ],
-      "mock_test": null,
+      "mock_test": {
+        "file": "tests/contract/native-read-evidence.spec.ts",
+        "name": "native accepted read replay preserves original contract: ak.peer.mls.read.group_state_material.v1"
+      },
       "error_mapping_ref": "registry/operations-error-mapping.json#/operations/70",
       "error_mapping_sha256": "93df6a7f9852f9de50ed2141bd079e6ab1d49acc95f1170b4d64ccb5d2c5d341",
       "operation_specific_errors": [
@@ -2149,16 +2175,20 @@
         "revision_unavailable",
         "not_found"
       ],
-      "native_authority_contract": "not_run",
-      "coverage_note": "Runtime success is credited only from the named executed test. Source references, rejected mock requests and schema examples are not native contract coverage."
+      "native_authority_contract": "native_fixture_producer",
+      "coverage_note": "Runtime success is credited only from the named executed test. Source references, rejected mock requests and schema examples are not native contract coverage.",
+      "native_fixture_test": {
+        "file": "coland/crates/storage-postgres/tests/realm_actor_control.rs",
+        "name": "public_read_contracts_preserve_fourteen_native_authority_closures"
+      }
     },
     {
       "operation_id": "ak.peer.mls.read.roster_authority.v1",
       "method": "POST",
       "path": "/_arkret/peer/mls/roster-authority/query",
-      "mock_implementation": "missing",
-      "verification_need": "native_evidence_fixture",
-      "reason": "Encrypted Realm fixtures have real Genesis bytes, but this operation also needs independently qualified current/target membership and history rights; roster reads need immutable Proposal/leaf provenance and historical attestor closures/page signatures. Genesis bytes alone cannot stand in for that native authorization/evidence fixture.",
+      "mock_implementation": "archival_fixture",
+      "verification_need": "native_fixture_replay",
+      "reason": "The actual member Station reads signed roster pages through the native peer route, with verified governor Service resolution and original Add attestor closures. Changed records digests must fail SDK verification. Browser tests replay only the exact archived request/response at its recorded verification cut; this is not live authorization or a new admission. StandardGrant introspection uses the trusted native test channel.",
       "normative_notes": "Current governance Station returns one signed page of a complete historical MLS roster only to the caller Actor's authenticated Account Station, after both current-head and target-cut member/history gates. Every signed page manifest carries the two immutable public Blob refs from the exact accepted Genesis so a later-joined member can construct the separate material read without crossing its history floor. Each Add record carries the exact attestor Station's complete historical authenticated service resolution frozen with its verified receipt and attestation; the signed full-record digest binds that closure. Pages hold the longest continuous prefix of 1..8 complete records fitting the 2 MiB canonical response limit, with a cut-bound cursor naming the next record. Missing Genesis refs, Add attestation, attestor resolution or changing cut, and a single record that cannot fit, are uniformly unavailable, never a partial list. The peer service signature is mandatory and each page repeats the same signed manifest. Governance budgets both this page and its exact self_roster_read_response_body key projection within 2 MiB; the Account Station must verify inline method history itself, not blindly proxy a verified label. A retained Commit signer never authorizes first live discovery.",
       "spec_operation_ref": "registry/contract-registry.json#/operation_registry/operations/69",
       "spec_operation_sha256": "c248298932f758a0ad167f6433198b4af52bd611c578fec99a24ad52b2f786f5",
@@ -2179,7 +2209,10 @@
           "execution": "not_run"
         }
       ],
-      "mock_test": null,
+      "mock_test": {
+        "file": "tests/contract/native-read-evidence.spec.ts",
+        "name": "native accepted read replay preserves original contract: ak.peer.mls.read.roster_authority.v1"
+      },
       "error_mapping_ref": "registry/operations-error-mapping.json#/operations/71",
       "error_mapping_sha256": "efeb13fbe4448d1a1732cc77fec875681c62f699f041ed02f9d71e7079adb876",
       "operation_specific_errors": [
@@ -2187,8 +2220,12 @@
         "cursor_invalid",
         "not_found"
       ],
-      "native_authority_contract": "not_run",
-      "coverage_note": "Runtime success is credited only from the named executed test. Source references, rejected mock requests and schema examples are not native contract coverage."
+      "native_authority_contract": "native_fixture_producer",
+      "coverage_note": "Runtime success is credited only from the named executed test. Source references, rejected mock requests and schema examples are not native contract coverage.",
+      "native_fixture_test": {
+        "file": "coland/crates/storage-postgres/tests/realm_actor_control.rs",
+        "name": "public_read_contracts_preserve_fourteen_native_authority_closures"
+      }
     },
     {
       "operation_id": "ak.peer.realm_authority.command.handoff.v1",
@@ -3080,9 +3117,9 @@
       "operation_id": "ak.self.actor_profile.read.resolve.v1",
       "method": "POST",
       "path": "/_arkret/self/actor-profiles/query",
-      "mock_implementation": "missing",
-      "verification_need": "native_evidence_fixture",
-      "reason": "A positive response needs its own accepted profile/resolution source, exact original Event/Commit or method-native evidence and the required projection attestation. Existing Realm membership/Contact data cannot be relabeled a PCR Profile or public principal projection; native evidence fixture construction and current authorization remain missing.",
+      "mock_implementation": "archival_fixture",
+      "verification_need": "native_fixture_replay",
+      "reason": "The accepted Human ProfileCreate Event and covering PCR Commit are resolved through an actual joined ordinary Realm relationship and compared to the native committed original. Browser tests replay only the exact archived request/response at its recorded verification cut; this is not live authorization or a new admission. StandardGrant introspection uses the trusted native test channel.",
       "normative_notes": "Only outward carrier for the PCR-resident ak.profile.create / ak.profile.update facts. A global profile Event lives in its owner's Principal Control Realm, so a co-member cannot reach it through a Realm-scoped read and MUST NOT reach it through a cross-principal actor selector on ak.self.committed_event.read.scan.v1. Authorization is current effective joined membership of body realm_id for both the caller and each returned actor; realm_id MUST NOT be a Principal Control Realm. Each row returns the display projection, one exact signed profile Event and the exact RealmCommit that accepted it; the service and caller verify event_ref, PCR stream, authority generation and signature. The authenticated own-Station projection is not independently proven complete by that pair; a patch Event alone cannot reconstruct the full profile. It grants no authority and exposes no other PCR Event. Unknown actor, actor without an accepted profile, missing committed provenance, non-member actor and unauthorized caller all report profile_unavailable so the operation cannot probe membership or account existence.",
       "spec_operation_ref": "registry/contract-registry.json#/operation_registry/operations/102",
       "spec_operation_sha256": "9d9a4b7711ed824b020de9d3d5e1804475131cd7f264aef707e085f87b91609b",
@@ -3103,14 +3140,21 @@
           "execution": "not_run"
         }
       ],
-      "mock_test": null,
+      "mock_test": {
+        "file": "tests/contract/native-read-evidence.spec.ts",
+        "name": "native accepted read replay preserves original contract: ak.self.actor_profile.read.resolve.v1"
+      },
       "error_mapping_ref": "registry/operations-error-mapping.json#/operations/104",
       "error_mapping_sha256": "8181f84db6b5c8dc1d3cad3cc152a17a005c6e2db630a685fe0fd19735a40d2f",
       "operation_specific_errors": [
         "not_found"
       ],
-      "native_authority_contract": "not_run",
-      "coverage_note": "Runtime success is credited only from the named executed test. Source references, rejected mock requests and schema examples are not native contract coverage."
+      "native_authority_contract": "native_fixture_producer",
+      "coverage_note": "Runtime success is credited only from the named executed test. Source references, rejected mock requests and schema examples are not native contract coverage.",
+      "native_fixture_test": {
+        "file": "coland/crates/storage-postgres/tests/realm_actor_control.rs",
+        "name": "public_read_contracts_preserve_fourteen_native_authority_closures"
+      }
     },
     {
       "operation_id": "ak.self.agent.participation.resource.replace.v1",
@@ -3617,9 +3661,9 @@
       "operation_id": "ak.self.consent.read.list.v1",
       "method": "GET",
       "path": "/_arkret/self/consent/results",
-      "mock_implementation": "missing",
-      "verification_need": "native_evidence_fixture",
-      "reason": "Holder-private display is mockable after an accepted exact-peer Consent fixture exists. Current Contact scope grants are a different contract and cannot be aliased to Consent; no accepted root-controlled Consent replacement/current lineage is currently provided.",
+      "mock_implementation": "archival_fixture",
+      "verification_need": "native_fixture_replay",
+      "reason": "The holder submits its signed exact-peer ConsentReplace through the registered operation after both Accounts have admitted PCRs. The nonempty list must contain the resulting accepted revision and permission. Browser tests replay only the exact archived request/response at its recorded verification cut; this is not live authorization or a new admission. StandardGrant introspection uses the trusted native test channel.",
       "normative_notes": "Holder-private display of one current summary per exact peer, including empty and inactive-window entries. It does not supply a signing prestate.",
       "spec_operation_ref": "registry/contract-registry.json#/operation_registry/operations/136",
       "spec_operation_sha256": "279fd23b005f24d66985d3ea492bc5cb6edb8c04be74c450dd9e0a626d12ebad",
@@ -3640,20 +3684,27 @@
           "execution": "not_run"
         }
       ],
-      "mock_test": null,
+      "mock_test": {
+        "file": "tests/contract/native-read-evidence.spec.ts",
+        "name": "native accepted read replay preserves original contract: ak.self.consent.read.list.v1"
+      },
       "error_mapping_ref": "registry/operations-error-mapping.json#/operations/144",
       "error_mapping_sha256": "ed550076b8811f4755db3a87c536b99ea6529b832475ca8b7b3976ff3ba2da2f",
       "operation_specific_errors": [],
-      "native_authority_contract": "not_run",
-      "coverage_note": "Runtime success is credited only from the named executed test. Source references, rejected mock requests and schema examples are not native contract coverage."
+      "native_authority_contract": "native_fixture_producer",
+      "coverage_note": "Runtime success is credited only from the named executed test. Source references, rejected mock requests and schema examples are not native contract coverage.",
+      "native_fixture_test": {
+        "file": "coland/crates/storage-postgres/tests/realm_actor_control.rs",
+        "name": "public_read_contracts_preserve_fourteen_native_authority_closures"
+      }
     },
     {
       "operation_id": "ak.self.consent.resource.get.v1",
       "method": "GET",
       "path": "/_arkret/self/consent/result",
-      "mock_implementation": "missing",
-      "verification_need": "native_evidence_fixture",
-      "reason": "Holder-private display is mockable after an accepted exact-peer Consent fixture exists. Current Contact scope grants are a different contract and cannot be aliased to Consent; no accepted root-controlled Consent replacement/current lineage is currently provided.",
+      "mock_implementation": "archival_fixture",
+      "verification_need": "native_fixture_replay",
+      "reason": "The registered exact-peer read returns the real holder-signed ConsentReplace revision and nonempty permission. The Event and Commit are fetched from the actual native admission store. Browser tests replay only the exact archived request/response at its recorded verification cut; this is not live authorization or a new admission. StandardGrant introspection uses the trusted native test channel.",
       "normative_notes": "Read the authenticated holder exact peer current ConsentView for display; no scope filter or multiple-match branch. Missing peer uses the existing absent response and is not an authenticated never_written predicate. Full editing input comes only from consent.read.current.",
       "spec_operation_ref": "registry/contract-registry.json#/operation_registry/operations/137",
       "spec_operation_sha256": "64821072c404f268f70cbe3674fe6748a65acd0539ee95edb9fb59a4b9443d13",
@@ -3674,15 +3725,22 @@
           "execution": "not_run"
         }
       ],
-      "mock_test": null,
+      "mock_test": {
+        "file": "tests/contract/native-read-evidence.spec.ts",
+        "name": "native accepted read replay preserves original contract: ak.self.consent.resource.get.v1"
+      },
       "error_mapping_ref": "registry/operations-error-mapping.json#/operations/145",
       "error_mapping_sha256": "ee3ed412efa726cc660956f2f65cadae7906879884924e9bfd2b81ed7c1eca83",
       "operation_specific_errors": [
         "not_found",
         "failed_precondition"
       ],
-      "native_authority_contract": "not_run",
-      "coverage_note": "Runtime success is credited only from the named executed test. Source references, rejected mock requests and schema examples are not native contract coverage."
+      "native_authority_contract": "native_fixture_producer",
+      "coverage_note": "Runtime success is credited only from the named executed test. Source references, rejected mock requests and schema examples are not native contract coverage.",
+      "native_fixture_test": {
+        "file": "coland/crates/storage-postgres/tests/realm_actor_control.rs",
+        "name": "public_read_contracts_preserve_fourteen_native_authority_closures"
+      }
     },
     {
       "operation_id": "ak.self.events.read.delivery_status.v1",
@@ -3725,9 +3783,9 @@
       "operation_id": "ak.self.identity.read.resolution_audit.v1",
       "method": "POST",
       "path": "/_arkret/self/identity/resolution-audit/query",
-      "mock_implementation": "missing",
-      "verification_need": "native_evidence_fixture",
-      "reason": "A positive response needs its own accepted profile/resolution source, exact original Event/Commit or method-native evidence and the required projection attestation. Existing Realm membership/Contact data cannot be relabeled a PCR Profile or public principal projection; native evidence fixture construction and current authorization remain missing.",
+      "mock_implementation": "archival_fixture",
+      "verification_need": "native_fixture_replay",
+      "reason": "The holder reads the admitted PCR genesis, founding Device and current resolution originals through the registered private audit route; every Event and covering Commit is compared to PostgreSQL. Browser tests replay only the exact archived request/response at its recorded verification cut; this is not live authorization or a new admission. StandardGrant introspection uses the trusted native test channel.",
       "normative_notes": "Authorized account-internal resolution audit evidence: PCR realm id, genesis Event and receipt, current and bounded predecessor resolution Events, and an accepted RealmCommit covering the disclosed state. Authorization is only a current holder session bound to the exact account_id; recovery first completes the existing recovery transaction and becomes the current holder rather than introducing a second audit authorization path. Unknown account, wrong AccountId and unauthorized caller share one anti-enumeration outcome. history_depth is the closed range 0..256 with default 0 and MUST NOT be silently capped; after_resolution_event_ref stops the disclosed segment exclusively at a known ancestor in this account's lineage and requires history_depth >= 1. A truncated segment sets history_complete=false and returns next_audit_cursor; omitted history is unknown, never absent.",
       "spec_operation_ref": "registry/contract-registry.json#/operation_registry/operations/155",
       "spec_operation_sha256": "f01ff10ff6b44fee4611285a3dbc189266cf5bce41fac98321a653e124f53afd",
@@ -3748,15 +3806,22 @@
           "execution": "not_run"
         }
       ],
-      "mock_test": null,
+      "mock_test": {
+        "file": "tests/contract/native-read-evidence.spec.ts",
+        "name": "native accepted read replay preserves original contract: ak.self.identity.read.resolution_audit.v1"
+      },
       "error_mapping_ref": "registry/operations-error-mapping.json#/operations/160",
       "error_mapping_sha256": "2d950336c9a5d2cda9355da4bdeb12cb79a1fccce63ff10dff23615d9fa7c188",
       "operation_specific_errors": [
         "param_invalid",
         "not_found"
       ],
-      "native_authority_contract": "not_run",
-      "coverage_note": "Runtime success is credited only from the named executed test. Source references, rejected mock requests and schema examples are not native contract coverage."
+      "native_authority_contract": "native_fixture_producer",
+      "coverage_note": "Runtime success is credited only from the named executed test. Source references, rejected mock requests and schema examples are not native contract coverage.",
+      "native_fixture_test": {
+        "file": "coland/crates/storage-postgres/tests/realm_actor_control.rs",
+        "name": "public_read_contracts_preserve_fourteen_native_authority_closures"
+      }
     },
     {
       "operation_id": "ak.self.keys.backups.command.issue_delete_challenge.v1",
@@ -4040,9 +4105,9 @@
       "operation_id": "ak.self.media_service_binding.read.resolve.v1",
       "method": "POST",
       "path": "/_arkret/self/media-service-bindings/query",
-      "mock_implementation": "missing",
-      "verification_need": "native_evidence_fixture",
-      "reason": "No accepted realm_media_service current anchor and qualified media Service identity/profile/key evidence are present in the fixture. The caller must not supply a substitute candidate URL or infer authorization from ICE configuration. A positive case needs that accepted current source and bounded verified route.",
+      "mock_implementation": "archival_fixture",
+      "verification_need": "native_fixture_replay",
+      "reason": "An admitted RealmMediaService Event names the actual Station issuer and native focus. The joined holder reads its current route and nonempty signing keys, validated against that accepted issuer and reuse window. Browser tests replay only the exact archived request/response at its recorded verification cut; this is not live authorization or a new admission. StandardGrant introspection uses the trusted native test channel.",
       "normative_notes": "Own-Station verified route and signing keys for the media service anchored by one joined Realm current accepted realm_media_service current state. Membership visibility and the anchored current state are evaluated under one confirmed basis with exactly one head per Realm; the caller supplies no service id, DID, base URL or candidate origin. The result resolves service identity, purpose and route only: it releases no media key, no backend token and no plaintext-visibility authorization, and expires_at bounds route and key reuse to at most 300 seconds. Invisible Realm or absent anchor returns not_found; unresolved accepted state returns temporarily_unavailable. Request and complete response canonical JSON are each bounded to 64 KiB. A Station may fulfill the media credential issuer role under its actual station DID endpoint, without a new service identity or relabeling. The accepted Realm assignment, verified current method state and Describe media binding profile, selected backend sub-profile and registered token HTTP operation bundle must all agree; assertion-capable signing keys come from that same current DID Document. This role does not require media traffic to traverse the Station process.",
       "spec_operation_ref": "registry/contract-registry.json#/operation_registry/operations/177",
       "spec_operation_sha256": "caefc1963594dc1f714e963c8af0698cf7436f9b4b4012d6c740e14f38a00a0f",
@@ -4058,7 +4123,10 @@
           "execution": "not_run"
         }
       ],
-      "mock_test": null,
+      "mock_test": {
+        "file": "tests/contract/native-read-evidence.spec.ts",
+        "name": "native accepted read replay preserves original contract: ak.self.media_service_binding.read.resolve.v1"
+      },
       "error_mapping_ref": "registry/operations-error-mapping.json#/operations/185",
       "error_mapping_sha256": "9a9c87a9aa3d8f08bdc9a2cb585b36ce3c27f326359a1a25ecffc84478a7beec",
       "operation_specific_errors": [
@@ -4066,8 +4134,12 @@
         "payload_too_large",
         "limit_exceeded"
       ],
-      "native_authority_contract": "not_run",
-      "coverage_note": "Runtime success is credited only from the named executed test. Source references, rejected mock requests and schema examples are not native contract coverage."
+      "native_authority_contract": "native_fixture_producer",
+      "coverage_note": "Runtime success is credited only from the named executed test. Source references, rejected mock requests and schema examples are not native contract coverage.",
+      "native_fixture_test": {
+        "file": "coland/crates/storage-postgres/tests/realm_actor_control.rs",
+        "name": "public_read_contracts_preserve_fourteen_native_authority_closures"
+      }
     },
     {
       "operation_id": "ak.self.morph.read.list.v1",
@@ -4199,9 +4271,9 @@
       "operation_id": "ak.self.mls.read.group_state_material.v1",
       "method": "POST",
       "path": "/_arkret/self/mls/group-state-material/query",
-      "mock_implementation": "missing",
-      "verification_need": "native_evidence_fixture",
-      "reason": "Encrypted Realm fixtures have real Genesis bytes, but this operation also needs independently qualified current/target membership and history rights; roster reads need immutable Proposal/leaf provenance and historical attestor closures/page signatures. Genesis bytes alone cannot stand in for that native authorization/evidence fixture.",
+      "mock_implementation": "archival_fixture",
+      "verification_need": "native_fixture_replay",
+      "reason": "The actual remote member reads the accepted Genesis public GroupInfo and tree after an admitted Add/Welcome. The SDK checks both content addresses and installs the roster against the real joined RFC group. Browser tests replay only the exact archived request/response at its recorded verification cut; this is not live authorization or a new admission. StandardGrant introspection uses the trusted native test channel.",
       "normative_notes": "Authenticated member's Account Station binds caller_actor_id to the exact session Actor, checks current and target-cut scope/membership/history/policy, and forwards the same selectors to governance over the existing peer material read. Governance independently checks the named Actor's current and target-cut authority and the caller Station's replication right at the target accepted Commit cut; response contains only digest-verified Genesis GroupInfo and ratchet-tree public bytes, never a leaf index, private tree or secret. Unknown and unauthorized selectors are indistinguishable. Applet-managed Bot/Ghost Devices may use the registered applet_managed_device HTTP signature scenario, restricted to their exact Realm actor, Device, scope and current installation. Existing SessionGrant paths are unchanged.",
       "spec_operation_ref": "registry/contract-registry.json#/operation_registry/operations/183",
       "spec_operation_sha256": "ffc641c2168ef759c4e94fa6c7107bff5a0c712afa3a618f30cad55ca7f7acd5",
@@ -4222,23 +4294,30 @@
           "execution": "not_run"
         }
       ],
-      "mock_test": null,
+      "mock_test": {
+        "file": "tests/contract/native-read-evidence.spec.ts",
+        "name": "native accepted read replay preserves original contract: ak.self.mls.read.group_state_material.v1"
+      },
       "error_mapping_ref": "registry/operations-error-mapping.json#/operations/186",
       "error_mapping_sha256": "f8a69bc55d8ca8a83ce6d6f7f4e89c86ff4b4f6ac58d2d797944635e938dfa61",
       "operation_specific_errors": [
         "revision_unavailable",
         "not_found"
       ],
-      "native_authority_contract": "not_run",
-      "coverage_note": "Runtime success is credited only from the named executed test. Source references, rejected mock requests and schema examples are not native contract coverage."
+      "native_authority_contract": "native_fixture_producer",
+      "coverage_note": "Runtime success is credited only from the named executed test. Source references, rejected mock requests and schema examples are not native contract coverage.",
+      "native_fixture_test": {
+        "file": "coland/crates/storage-postgres/tests/realm_actor_control.rs",
+        "name": "public_read_contracts_preserve_fourteen_native_authority_closures"
+      }
     },
     {
       "operation_id": "ak.self.mls.read.roster_authority.v1",
       "method": "POST",
       "path": "/_arkret/self/mls/roster-authority/query",
-      "mock_implementation": "missing",
-      "verification_need": "native_evidence_fixture",
-      "reason": "Encrypted Realm fixtures have real Genesis bytes, but this operation also needs independently qualified current/target membership and history rights; roster reads need immutable Proposal/leaf provenance and historical attestor closures/page signatures. Genesis bytes alone cannot stand in for that native authorization/evidence fixture.",
+      "mock_implementation": "archival_fixture",
+      "verification_need": "native_fixture_replay",
+      "reason": "The real joined remote member obtains a complete signed paginated roster including actual Genesis/Add originals and the own-Station key projection. The SDK verifies signatures and reconciles every occupied leaf. Browser tests replay only the exact archived request/response at its recorded verification cut; this is not live authorization or a new admission. StandardGrant introspection uses the trusted native test channel.",
       "normative_notes": "Authenticated own Account Station binds the exact session Actor, request selectors and current/target authorization, verifies governance authority and the complete frozen method-native attestor closures and both original historical signatures, then returns the unchanged governance roster page plus purpose-bound public keys. Ordinary clients independently verify manifest, recipient double signatures, ordered digest and RFC leaf/Proposal bindings without a method-history verifier or live resolver. This self-only result is non-portable, has no verified boolean and grants no reusable authorization or current route. Both peer page and exact self projection including key material fit the 2 MiB canonical response limit; governance computes the longest continuous 1..8-record prefix fitting both. Applet-managed Bot/Ghost Devices may use the registered applet_managed_device HTTP signature scenario, restricted to their exact Realm actor, Device, scope and current installation. Existing SessionGrant paths are unchanged.",
       "spec_operation_ref": "registry/contract-registry.json#/operation_registry/operations/184",
       "spec_operation_sha256": "60d10165b3d18d25a66a710d224d11262c9139730b9903b0c5758cac5a238b90",
@@ -4259,7 +4338,10 @@
           "execution": "not_run"
         }
       ],
-      "mock_test": null,
+      "mock_test": {
+        "file": "tests/contract/native-read-evidence.spec.ts",
+        "name": "native accepted read replay preserves original contract: ak.self.mls.read.roster_authority.v1"
+      },
       "error_mapping_ref": "registry/operations-error-mapping.json#/operations/187",
       "error_mapping_sha256": "c6aa90e38c5bc959f0ca871d1e4ce00d6f683ef502cfdad77a0647646f7c0d96",
       "operation_specific_errors": [
@@ -4267,8 +4349,12 @@
         "cursor_invalid",
         "not_found"
       ],
-      "native_authority_contract": "not_run",
-      "coverage_note": "Runtime success is credited only from the named executed test. Source references, rejected mock requests and schema examples are not native contract coverage."
+      "native_authority_contract": "native_fixture_producer",
+      "coverage_note": "Runtime success is credited only from the named executed test. Source references, rejected mock requests and schema examples are not native contract coverage.",
+      "native_fixture_test": {
+        "file": "coland/crates/storage-postgres/tests/realm_actor_control.rs",
+        "name": "public_read_contracts_preserve_fourteen_native_authority_closures"
+      }
     },
     {
       "operation_id": "ak.self.realm.read.export.v1",
@@ -5182,12 +5268,12 @@
       "operation_id": "ak.self.realm_actor.read.material.v1",
       "method": "POST",
       "path": "/_arkret/self/realm-actors/material",
-      "mock_implementation": "missing",
-      "verification_need": "native_evidence_fixture",
-      "reason": "Requires an actually accepted Realm Bot/Ghost, original creation/current manager, exact external tuple or target-only signed material at a qualified governor cut. Ordinary Account/Agent fixtures are not Realm actors. There is no accepted manager/installation fixture for these lookups; private namespace enumeration or fabricated proof is forbidden.",
-      "normative_notes": "Exact target-only private Realm actor current/Event/original outcome material. Same-cut values are signed with request digest, nonce, authenticated audience and current governance tenure. See extensions/realm-actors.md section 8. No list, wildcard or business permission is granted. Managed Device authentication is allowed only for purpose=event targeting its own exact authorization Event, with a currently allowed business scope; no current/history enumeration. Controller authentication requires a current accepted method. Realm actor recovery uses current manager Service authentication and accepted standing recovery authority; begin/finish never require the lost control key or a business grant. Exact lifecycle outcomes remain separate from immutable Event acceptance. See extensions/realm-actors.md section 10. Real Accounts use their own Account Station, with exact audit authority; foreign governance is reached only through ak.peer.realm_actor.read.material.v1 and final local credential delivery validation.",
+      "mock_implementation": "archival_fixture",
+      "verification_need": "native_fixture_replay",
+      "reason": "The actual admitted Realm actor authenticates its current control key and nonce at the registered private read route. The signed nonempty control entry is checked against the original PostgreSQL creation Commit. Browser tests replay only the exact archived request/response at its recorded verification cut; this is not live authorization or a new admission. StandardGrant introspection uses the trusted native test channel.",
+      "normative_notes": "Exact target-only private Realm actor current/Event/original outcome material. Same-cut values are signed with request digest, nonce, authenticated audience and current governance tenure. See extensions/realm-actors.md section 8. No list, wildcard or business permission is granted. Managed Device authentication is allowed only for purpose=event targeting its own exact authorization Event, with a currently allowed business scope; no current/history enumeration. Controller authentication requires a current accepted method. Realm actor recovery uses current manager Service authentication and accepted standing recovery authority; begin/finish never require the lost control key or a business grant. Exact lifecycle outcomes remain separate from immutable Event acceptance. See extensions/realm-actors.md section 10. Real Accounts use their own Account Station, with exact audit authority; foreign governance is reached only through ak.peer.realm_actor.read.material.v1 and final local credential delivery validation. Unknown or invisible targets and authenticated callers without exact disclosure/audit rights return uniform not_found. Credential and signature failures retain their universal errors; missing native originals remain unavailable rather than an empty success.",
       "spec_operation_ref": "registry/contract-registry.json#/operation_registry/operations/223",
-      "spec_operation_sha256": "f46c65e65ac01ddebd407cc52fe06db68475306cb776ec8d588a35177a1342e2",
+      "spec_operation_sha256": "f023d1c1c8cde33582a7732bd99743f0eea198f29dfc14ca9ffaa3f7e73f9b75",
       "normative_documents": [
         "zh/extensions/realm-actors.md",
         "zh/extensions/applet-integration.md"
@@ -5206,25 +5292,33 @@
           "execution": "not_run"
         }
       ],
-      "mock_test": null,
+      "mock_test": {
+        "file": "tests/contract/native-read-evidence.spec.ts",
+        "name": "native accepted read replay preserves original contract: ak.self.realm_actor.read.material.v1"
+      },
       "error_mapping_ref": "registry/operations-error-mapping.json#/operations/222",
-      "error_mapping_sha256": "774b4940113ce4dcd89f7f0dec35bba4c342a0c039a0045e091c5d5e7aa442e1",
+      "error_mapping_sha256": "be4f6172fe36726c5c1c765b32382330779d4a7c1a8acb44169de2b3ba5487de",
       "operation_specific_errors": [
         "failed_precondition",
         "identity_method_evidence_invalid",
         "dependency_missing",
-        "duplicate_conflict"
+        "duplicate_conflict",
+        "not_found"
       ],
-      "native_authority_contract": "not_run",
-      "coverage_note": "Runtime success is credited only from the named executed test. Source references, rejected mock requests and schema examples are not native contract coverage."
+      "native_authority_contract": "native_fixture_producer",
+      "coverage_note": "Runtime success is credited only from the named executed test. Source references, rejected mock requests and schema examples are not native contract coverage.",
+      "native_fixture_test": {
+        "file": "coland/crates/storage-postgres/tests/realm_actor_control.rs",
+        "name": "public_read_contracts_preserve_fourteen_native_authority_closures"
+      }
     },
     {
       "operation_id": "ak.peer.realm_actor.read.material.v1",
       "method": "POST",
       "path": "/_arkret/peer/realm-actors/material",
-      "mock_implementation": "missing",
-      "verification_need": "native_evidence_fixture",
-      "reason": "Requires an actually accepted Realm Bot/Ghost, original creation/current manager, exact external tuple or target-only signed material at a qualified governor cut. Ordinary Account/Agent fixtures are not Realm actors. There is no accepted manager/installation fixture for these lookups; private namespace enumeration or fabricated proof is forbidden.",
+      "mock_implementation": "archival_fixture",
+      "verification_need": "native_fixture_replay",
+      "reason": "Two real Stations admit membership and an exact ak.realm.actor.audit grant. The peer read uses a Service signature and validates the signed material for the exact requester, nonce and governor cut; spoofed source and changed body are rejected. Browser tests replay only the exact archived request/response at its recorded verification cut; this is not live authorization or a new admission. StandardGrant introspection uses the trusted native test channel.",
       "normative_notes": "Account Station authenticates the real local Account and signs the closed requester_account_id/request wrapper. The current governor verifies source Station ownership and exact realm_actor audit authority at one cut. Response binds the inner request digest and authenticated Account audience. Source verifies governance/signature/request/result/freshness and final local session/device delivery; known newer tenure or revocation discards delivery. No forwarded credentials, enumeration, implicit manage-to-audit authority or private keys. See extensions/realm-actors.md section 8.1.",
       "spec_operation_ref": "registry/contract-registry.json#/operation_registry/operations/224",
       "spec_operation_sha256": "502192555f6e4661028b4dd460602e9aada3e6a5ea7a88d5561ad245dc0b7567",
@@ -5246,7 +5340,10 @@
           "execution": "not_run"
         }
       ],
-      "mock_test": null,
+      "mock_test": {
+        "file": "tests/contract/native-read-evidence.spec.ts",
+        "name": "native accepted read replay preserves original contract: ak.peer.realm_actor.read.material.v1"
+      },
       "error_mapping_ref": "registry/operations-error-mapping.json#/operations/223",
       "error_mapping_sha256": "bcd889b5a974ad51e79016eb3558935576fdd3388fcdc5127d6c06a3dc4316bc",
       "operation_specific_errors": [
@@ -5256,8 +5353,12 @@
         "duplicate_conflict",
         "not_found"
       ],
-      "native_authority_contract": "not_run",
-      "coverage_note": "Runtime success is credited only from the named executed test. Source references, rejected mock requests and schema examples are not native contract coverage."
+      "native_authority_contract": "native_fixture_producer",
+      "coverage_note": "Runtime success is credited only from the named executed test. Source references, rejected mock requests and schema examples are not native contract coverage.",
+      "native_fixture_test": {
+        "file": "coland/crates/storage-postgres/tests/realm_actor_control.rs",
+        "name": "public_read_contracts_preserve_fourteen_native_authority_closures"
+      }
     }
   ]
 }
