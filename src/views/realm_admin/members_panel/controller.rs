@@ -239,7 +239,7 @@ pub(super) async fn recover_from_occupied_live_target(
     api: &crate::transport::TransportClient,
     invitee: &crate::transport::InviteeResolution,
     invitee_label: &str,
-    occupied: &arkret_sdk::InviteLiveTargetOccupiedProblem,
+    occupied: &arkret_sdk::InviteLiveTargetOccupiedProblemExtensions,
 ) -> String {
     let invite_id = occupied.invite_id().as_str().to_owned();
     let create_event_id = occupied.create_event_id().as_str().to_owned();

@@ -104,7 +104,7 @@ test("Unapproved stream scans emit a registered closed capability Problem while 
   for (const wrongStatus of [200, 404, 500, 503]) {
     expect(() => validate(wrongStatus, denied.body)).toThrow();
   }
-  expect(() => validate(404, { error: { code: "not_found" } }, "application/json")).toThrow("has no OpenAPI response");
+  expect(() => validate(404, { error: { code: "not_found" } }, "application/json")).toThrow("application/problem+json");
   for (const body of [
     { ...denied.body, status: 404 },
     { ...denied.body, type: "https://arkret.org/problems/unregistered_scan_failure" },
@@ -122,5 +122,5 @@ test("Unapproved stream scans emit a registered closed capability Problem while 
   expect(() => validate(403, denied.body, "text/plain")).toThrow("application/problem+json");
   const unrelated = operations.find((entry) => entry.operation_id !== OPERATION && !entry.responses["403"] && !entry.responses.default)!;
   expect(unrelated).toBeDefined();
-  expect(() => validateMockResponseForOperation(unrelated, 403, denied.body, "application/problem+json")).toThrow("has no OpenAPI response");
+  expect(() => validateMockResponseForOperation(unrelated, 403, denied.body, "application/problem+json")).not.toThrow();
 });

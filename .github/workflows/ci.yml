@@ -95,6 +95,9 @@ jobs:
           cache: npm
           cache-dependency-path: inkson/package-lock.json
 
+      - name: Install mock inventory gate dependency
+        run: python -m pip install PyYAML==6.0.3
+
       - name: Install npm dependencies
         working-directory: inkson
         run: npm ci
@@ -241,7 +244,7 @@ jobs:
 
       - name: Native fixture and response contracts
         working-directory: inkson
-        run: npm run contract -- tests/contract/realm-streams-not-found.spec.ts tests/contract/stream-capability-denied.spec.ts tests/contract/mimi-client-boundary.spec.ts tests/contract/native-fixture-stdio.spec.ts
+        run: npm run contract
 
       - name: Browser regression preflight
         id: browser-preflight

@@ -281,11 +281,17 @@ type MockErrorDescriptor = {
 const mockErrorRegistryRoot = resolve(inksonRepoRoot, "..", "arkret-spec", "spec", "v1", "artifacts", "registry");
 const mockErrorRegistry = JSON.parse(readFileSync(resolve(mockErrorRegistryRoot, "error-code-registry.json"), "utf8")) as {
   codes: MockErrorDescriptor[];
+  reason_codes: Array<{ code: string; status: string }>;
 };
 const mockOperationErrorMapping = JSON.parse(readFileSync(resolve(mockErrorRegistryRoot, "operations-error-mapping.json"), "utf8")) as {
   rules: { universal_codes: string };
   operations: Array<{ operation_id: string; operation_specific: string[] }>;
 };
+const universalMockErrorCodes = new Set(
+  mockOperationErrorMapping.rules.universal_codes.split("any of: ")[1]?.split(". These ")[0]?.split(", ") ?? [],
+);
+if (!universalMockErrorCodes.size) throw new Error("universal error contract could not be resolved");
+
 function activeMockErrorDescriptor(code: string): MockErrorDescriptor {
   const matches = mockErrorRegistry.codes.filter((entry) => entry.code === code && entry.status === "active");
   if (matches.length !== 1) throw new Error(`${code} must resolve to one active error registry descriptor`);
@@ -323,10 +329,9 @@ const watchPreconditionDescriptor = (() => {
 function watchReadErrorDescriptor(code: string): MockErrorDescriptor {
   const descriptor = activeMockErrorDescriptor(code);
   const operations = mockOperationErrorMapping.operations.filter(operation => operation.operation_id === watchReadOperationId);
-  const universalCodes: readonly string[] = mockOperationErrorMapping.rules.universal_codes.match(/[a-z][a-z0-9_]+/g) ?? [];
   // strand-and-message §8.3 mandates these exact current-read failures in
   // addition to the protected-operation failure surface.
-  if (operations.length !== 1 || !(universalCodes.includes(code)
+  if (operations.length !== 1 || !(universalMockErrorCodes.has(code)
     || operations[0].operation_specific.includes(code)
     || code === "not_found" || code === "revision_unavailable")) {
     throw new Error(`${code} is outside the exact self watch read failure surface`);
@@ -345,8 +350,7 @@ const committedEventNotFoundDescriptor = (() => {
 const streamScanCapabilityDeniedDescriptor = (() => {
   const descriptor = activeMockErrorDescriptor("capability_denied");
   const operations = mockOperationErrorMapping.operations.filter((operation) => operation.operation_id === streamScanOperationId);
-  const universalCodes: string[] = mockOperationErrorMapping.rules.universal_codes.match(/[a-z][a-z0-9_]+/g) ?? [];
-  if (operations.length !== 1 || !universalCodes.includes(descriptor.code)) {
+  if (operations.length !== 1 || !universalMockErrorCodes.has(descriptor.code)) {
     throw new Error(`stream scan capability denial is not registered for ${streamScanOperationId}`);
   }
   return descriptor;
@@ -537,7 +541,7 @@ export function validateMockResponseForOperation(
 ) {
   // OpenAPI lists the success shapes. These exact registered failures
   // come from the global HTTP Problem contract and its operation error map.
-  // No other operation or undeclared status receives an error-response bypass.
+  // Other failures must resolve through the exact operation error mapping.
   if (snapshotReadOperations.has(operation.operation_id) && status === snapshotUnavailableDescriptor.http_status) {
     validateClosedMockProblem(snapshotUnavailableDescriptor, status, value, contentType);
     return;
@@ -563,8 +567,20 @@ export function validateMockResponseForOperation(
     validateClosedMockProblem(watchPreconditionDescriptor, status, value, contentType);
     return;
   }
-  const response =
-    operation.responses[String(status)] ?? operation.responses.default;
+  const response = operation.responses[String(status)] ?? operation.responses.default;
+  if (status >= 400) {
+    if (response && !response.schema_ref) throw new Error(`mock response violates unsupported declared error contract for ${operation.operation_id}`);
+    validateRegisteredMockProblem(status, value, contentType);
+    const problem = value as Record<string, unknown>;
+    const descriptor = mockErrorRegistry.codes.find(entry => entry.type_uri === problem.type && entry.status === "active")!;
+    const mappings = mockOperationErrorMapping.operations.filter(entry => entry.operation_id === operation.operation_id);
+    if (mappings.length !== 1 || !(universalMockErrorCodes.has(descriptor.code)
+      || mappings[0].operation_specific.includes(descriptor.code)
+      || (typeof problem.reason_code === "string" && mappings[0].operation_specific.includes(problem.reason_code)))) {
+      throw new Error(`mock response violates operation error mapping: ${descriptor.code} is outside ${operation.operation_id} registered error surface`);
+    }
+    return;
+  }
   if (!response) {
     throw new Error(
       `mock route ${operation.operation_id} has no OpenAPI response for status ${status}`,
@@ -585,6 +601,23 @@ export function validateMockResponseForOperation(
   }
   assertNoRetiredMockFields(value);
   validateMockSchema(response.schema_ref, value);
+}
+
+export function validateRegisteredMockProblem(status: number, value: unknown, contentType: string) {
+  if (contentType !== "application/problem+json") throw new Error("mock response violates Arkret Problem: failures require application/problem+json");
+  const problem = value as Record<string, unknown> | undefined;
+  if (!problem || typeof problem !== "object" || Array.isArray(problem) || ["error", "code", "message", "details", "ok"].some(key => key in problem)) {
+    throw new Error("mock response violates Arkret Problem: failures require a flat RFC 9457 Problem without legacy aliases");
+  }
+  const descriptor = mockErrorRegistry.codes.find(entry => entry.status === "active" && entry.type_uri === problem.type);
+  if (!descriptor || problem.status !== status || descriptor.http_status !== status || problem.title !== descriptor.title) {
+    throw new Error("mock response violates Arkret Problem: status/type/title must match the active error registry");
+  }
+  if (problem.reason_code !== undefined && !(typeof problem.reason_code === "string"
+    && mockErrorRegistry.reason_codes.some(entry => entry.code === problem.reason_code && entry.status === "active"))) {
+    throw new Error("mock response violates Arkret Problem: reason_code must be active in its registry");
+  }
+  validateMockSchema("schemas/http-problem-details.schema.json", value);
 }
 
 function validateClosedMockProblem(descriptor: MockErrorDescriptor, status: number, value: unknown, contentType: string) {
@@ -966,7 +999,7 @@ export async function mockArkretApi(
     const key = inksonWire<{ public_key_b64url: string }>("did-key-from-seed", {
       seed_b64url: options.currentDeviceSigningSeedB64url ?? "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
     });
-    const committed = inksonWire<{ outcome: Record<string, any>; list_row: Record<string, any> }>("contact-request-commit", {
+    const committed = inksonWire<{ outcome: Record<string, any>; contact_view: Record<string, any> }>("contact-request-commit", {
       prepared: existing.prepared,
       body,
       producer_verification_method: `${didFromCoreId(accountPrincipalCoreId)}#${currentDeviceId}`,
@@ -974,7 +1007,7 @@ export async function mockArkretApi(
     });
     existing.commitBytes = commitBytes;
     existing.terminal = committed.outcome;
-    outgoingContactRows.push(committed.list_row);
+    outgoingContactRows.push(committed.contact_view);
     if (options.contactRequestOutcome === "tampered") {
       const response = structuredClone(committed.outcome);
       response.request_acceptance_receipt.core.request_event_ref = DEMO_FRONTIER_EVENT;
@@ -1658,7 +1691,7 @@ export async function mockArkretApi(
       const realmId = decodeURIComponent(url.pathname.split("/")[4] ?? DEMO_REALM);
       return json(route, {
         realm_id: realmId,
-        total: boardSpaceContainers.length,
+        total_count: boardSpaceContainers.length,
         spaces: boardSpaceContainers,
         has_more: false,
       });
@@ -1672,7 +1705,7 @@ export async function mockArkretApi(
       const realmId = decodeURIComponent(url.pathname.split("/")[4] ?? DEMO_REALM);
       return json(route, {
         realm_id: realmId,
-        total: boardStrandProjections.length,
+        total_count: boardStrandProjections.length,
         strands: boardStrandProjections.map(
           ({ fields: _fields, ...strand }) => strand,
         ),
@@ -1830,20 +1863,16 @@ export async function mockArkretApi(
           const state =
             typeof circleId === "string" ? circleStates.get(circleId) : undefined;
           if (!state) {
-            return json(route, { error: { code: "not_found" } }, 404);
+            return mockProblem(route, "not_found", "not found");
           }
           if (event.kind === "ak.circle.archive" && state !== "active") {
-            return json(route, { error: { code: "circle_not_active" } }, 412);
+            return mockProblem(route, "failed_precondition", "circle not active");
           }
           if (event.kind === "ak.circle.restore" && state !== "archived") {
-            return json(route, { error: { code: "circle_not_archived" } }, 412);
+            return mockProblem(route, "failed_precondition", "circle not archived");
           }
           if (event.kind === "ak.circle.tombstone" && state === "tombstoned") {
-            return json(
-              route,
-              { error: { code: "circle_already_terminal" } },
-              412,
-            );
+            return mockProblem(route, "failed_precondition", "circle already terminal");
           }
           circleStates.set(
             circleId,
@@ -1869,18 +1898,7 @@ export async function mockArkretApi(
             typeof payload.device_signature !== "string" ||
             payload.device_signature.trim() === ""
           ) {
-            return json(
-              route,
-              {
-                ok: false,
-                error: {
-                  code: "schema_violation",
-                  message:
-                    "ak.device.authorize payload violates mock SDK artifact schema",
-                },
-              },
-              400,
-            );
+            return mockProblem(route, "schema_violation", "ak.device.authorize payload violates mock SDK artifact schema");
           }
           const authorizedDeviceId = payload.device_id ?? event.device_id;
           if (typeof authorizedDeviceId === "string") {
@@ -2098,18 +2116,7 @@ export async function mockArkretApi(
           typeof authorizePayload.device_signature === "string" &&
           authorizePayload.device_signature.length > 0;
         if (!rootAnchored) {
-          return json(
-            route,
-            {
-              ok: false,
-              error: {
-                code: "schema_violation",
-                message:
-                  "identity creation requires a root_anchored founding device PCR genesis unit",
-              },
-            },
-            400,
-          );
+          return mockProblem(route, "schema_violation", "identity creation requires a root_anchored founding device PCR genesis unit");
         }
       }
       if (registrationDeviceId && !accountDevices.has(registrationDeviceId)) {
@@ -2847,7 +2854,10 @@ export async function mockArkretApi(
     if (url.pathname === "/_arkret/self/signer-keys/query" && route.request().method() === "POST") {
       const request = await route.request().postDataJSON();
       const fixture = nativeFixtures.get(request.realm_id);
-      if (!fixture || !nativeReadable(fixture)) return json(route, { error: { code: "not_found" } }, 404);
+      if (!fixture || !nativeReadable(fixture)) return mockProblem(route, "not_found", "not found");
+      if (request.recipient_account_id !== undefined && canonicalJson(request.recipient_account_id) !== canonicalJson(fixture.identity.account_id)) {
+        return mockProblem(route, "capability_denied", "Signer key query is not authorized for this recipient");
+      }
       // Cache only identical source facts and query bindings. Request IDs are
       // correlation, while every historical proof still reaches the verifier.
       const { request_id, ...binding } = request;
@@ -2875,7 +2885,7 @@ export async function mockArkretApi(
       const body = await route.request().postDataJSON();
       return json(
         route,
-        identityResolveOutcome(String(body.did), serverDidDocument),
+        identityResolveResponseBody(String(body.did), serverDidDocument),
       );
     }
 
@@ -3329,17 +3339,7 @@ export async function mockArkretApi(
           strand.state === "active",
       );
       if (!contextExists) {
-        return json(
-          route,
-          {
-            ok: false,
-            error: {
-              code: "not_found",
-              message: "context_ref.strand_id not found",
-            },
-          },
-          404,
-        );
+        return mockProblem(route, "failed_precondition", "Agent Sidecar could not be ensured", "sidecar_create_denied");
       }
       return json(route, {
         ok: true,
@@ -3381,7 +3381,7 @@ export async function mockArkretApi(
                 "ak:event:ASxjW4aTY3IHG1S2ppEjlCLLjAWhegQuSyKadYw7T3oh",
               ],
               mls_group_id: mockMlsGroupId(sidecarId),
-              epoch: 1,
+              epoch: "1",
               genesis_event_ref:
                 "ak:event:ASxjW4aTY3IHG1S2ppEjlCLLjAWhegQuSyKadYw7T3oh",
               current_controller_device_ready: true,
@@ -3423,7 +3423,7 @@ export async function mockArkretApi(
             "ak:event:ASxjW4aTY3IHG1S2ppEjlCLLjAWhegQuSyKadYw7T3oh",
           ],
           mls_group_id: mockMlsGroupId(sidecarId),
-          epoch: 1,
+          epoch: "1",
           genesis_event_ref:
             "ak:event:ASxjW4aTY3IHG1S2ppEjlCLLjAWhegQuSyKadYw7T3oh",
           current_controller_device_ready: true,
@@ -3446,14 +3446,7 @@ export async function mockArkretApi(
           ? body.slug.trim()
           : "";
       if (!slug) {
-        return json(
-          route,
-          {
-            ok: false,
-            error: { code: "param_invalid", message: "slug is required" },
-          },
-          400,
-        );
+        return mockProblem(route, "param_invalid", "slug is required");
       }
       const phase = typeof body.phase === "string" ? body.phase : "";
       const agentId = didCoreId(
@@ -3486,17 +3479,7 @@ export async function mockArkretApi(
         });
       }
       if (phase !== "commit") {
-        return json(
-          route,
-          {
-            ok: false,
-            error: {
-              code: "param_invalid",
-              message: "phase must be prepare or commit",
-            },
-          },
-          400,
-        );
+        return mockProblem(route, "param_invalid", "phase must be prepare or commit");
       }
       const provisionEvent =
         typeof body.provision_event === "object" &&
@@ -3559,14 +3542,7 @@ export async function mockArkretApi(
       const agent = personalAgents.get(agentId);
       const keyState = personalAgentKeyStates.get(agentId);
       if (!agent || !keyState) {
-        return json(
-          route,
-          {
-            ok: false,
-            error: { code: "not_found", message: "agent not found" },
-          },
-          404,
-        );
+        return mockProblem(route, "not_found", "agent not found");
       }
       const body = ((await contractRequestBody(route)) ?? {}) as Record<
         string,
@@ -3595,18 +3571,7 @@ export async function mockArkretApi(
         payload?.previous_status === expectedFrom &&
         payload?.reason === expectedReason;
       if (!valid) {
-        return json(
-          route,
-          {
-            ok: false,
-            error: {
-              code: "param_invalid",
-              message:
-                "lifecycle_event does not match the delegated Agent transition",
-            },
-          },
-          400,
-        );
+        return mockProblem(route, "param_invalid", "lifecycle_event does not match the delegated Agent transition");
       }
       agent.lifecycle = expectedTo;
       agent.updated_at = "2026-07-19T08:00:00.000Z";
@@ -3621,14 +3586,7 @@ export async function mockArkretApi(
       const agent = personalAgents.get(agentId);
       const keyState = personalAgentKeyStates.get(agentId);
       if (!agent || !keyState) {
-        return json(
-          route,
-          {
-            ok: false,
-            error: { code: "not_found", message: "agent not found" },
-          },
-          404,
-        );
+        return mockProblem(route, "not_found", "agent not found");
       }
       const body = ((await contractRequestBody(route)) ?? {}) as Record<
         string,
@@ -3682,28 +3640,11 @@ export async function mockArkretApi(
       const agentId = decodeURIComponent(agentRenewPairingMatch[1]);
       const agent = personalAgents.get(agentId);
       if (!agent) {
-        return json(
-          route,
-          {
-            ok: false,
-            error: { code: "not_found", message: "agent not found" },
-          },
-          404,
-        );
+        return mockProblem(route, "not_found", "agent not found");
       }
       const renewAxes = projectAgentAxes(agentId);
       if (renewAxes.lifecycle === "deactivated") {
-        return json(
-          route,
-          {
-            ok: false,
-            error: {
-              code: "failed_precondition",
-              message: "agent is deactivated; deactivation is terminal",
-            },
-          },
-          412,
-        );
+        return mockProblem(route, "failed_precondition", "agent is deactivated; deactivation is terminal");
       }
       personalAgentCounter += 1;
       const renewedExpiresAt = "2099-07-06T00:20:00.000Z";
@@ -3762,14 +3703,7 @@ export async function mockArkretApi(
       const agentId = decodeURIComponent(agentGetMatch[1]);
       const agent = personalAgents.get(agentId);
       if (!agent) {
-        return json(
-          route,
-          {
-            ok: false,
-            error: { code: "not_found", message: "agent not found" },
-          },
-          404,
-        );
+        return mockProblem(route, "not_found", "agent not found");
       }
       const savedKeyState = personalAgentKeyStates.get(agentId);
       const storedKeyState =
@@ -3798,16 +3732,10 @@ export async function mockArkretApi(
       const event = submission?.event ?? {};
       const payload = (event.payload ?? {}) as Record<string, unknown>;
       const agentId = String(payload.agent_id ?? "");
+      if (!submission?.event || !agentId) return mockProblem(route, "schema_violation", "authorize_event requires an Agent subject");
       const agent = personalAgents.get(agentId);
       if (!agent) {
-        return json(
-          route,
-          {
-            ok: false,
-            error: { code: "not_found", message: "agent not found" },
-          },
-          404,
-        );
+        return mockProblem(route, "failed_precondition", "Agent pairing prerequisites were not met", "proof_invalid");
       }
       const authorizedEventRef = String(event.event_id ?? "");
       agent.lifecycle = "active";
@@ -3957,8 +3885,7 @@ export async function mockArkretApi(
       url.pathname === "/_arkret/self/signal/subscribe" &&
       route.request().method() === "GET"
     ) {
-      validateMockResponse(route, 403);
-      return route.fulfill({ status: 403 });
+      return mockProblem(route, "capability_denied", "No eligible encrypted Signal scope");
     }
 
     if (
@@ -4021,7 +3948,7 @@ export async function mockArkretApi(
     ) {
       return json(route, {
         report_id: "ak:report:AX-AFSYZHl0U2MQP-Ng7mU-aOm_Flhf0pVBoHYUK6Shg",
-        routed_to_ids: [CURRENT_STATION_ID],
+        status: "submitted",
       });
     }
 
@@ -4329,7 +4256,7 @@ function identityRegistryServiceDescribe() {
   };
 }
 
-function identityResolveOutcome(
+function identityResolveResponseBody(
   did: string,
   serverDidDocument: Record<string, unknown>,
 ) {
@@ -4378,7 +4305,7 @@ function staticMockResponseFixtures(
     {
       operation_id: "ak.root.identity.read.resolve.v1",
       status: 200,
-      value: identityResolveOutcome(CURRENT_STATION_DID, serverDidDocument),
+      value: identityResolveResponseBody(CURRENT_STATION_DID, serverDidDocument),
     },
     {
       operation_id: "ak.self.account.read.describe.v1",
@@ -4432,7 +4359,24 @@ function snapshotUnavailable(route: Route) {
   }, snapshotUnavailableDescriptor.http_status, "application/problem+json");
 }
 
+export function buildMockProblem(code: string, detail: string, reasonCode?: string) {
+  const descriptor = activeMockErrorDescriptor(code);
+  if (reasonCode !== undefined && !mockErrorRegistry.reason_codes.some(entry => entry.code === reasonCode && entry.status === "active")) {
+    throw new Error("mock reason_code must be active in its registry");
+  }
+  return { type: descriptor.type_uri, title: descriptor.title, status: descriptor.http_status, detail,
+    ...(reasonCode === undefined ? {} : { reason_code: reasonCode }) };
+}
+
+function mockProblem(route: Route, code: string, detail: string, reasonCode?: string) {
+  const body = buildMockProblem(code, detail, reasonCode);
+  return json(route, body, body.status, "application/problem+json");
+}
+
 function json(route: Route, body: unknown, status = 200, contentType = "application/json") {
+  if (new URL(route.request().url()).pathname.startsWith("/_arkret/") && status >= 400) {
+    validateRegisteredMockProblem(status, body, contentType);
+  }
   validateMockResponse(route, status, body, contentType);
   return route.fulfill({
     status,

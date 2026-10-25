@@ -340,7 +340,7 @@ fn contact_request_commit(input: Value) -> Result<Value> {
         &event.event_id,
         &authority.signing_key.verifying_key(),
     )?;
-    let list_row = ContactView {
+    let contact_view = ContactView {
         peer: receipt.core.peer.clone(),
         state: ContactState::PendingOutgoing,
         request_event_ref: Some(event.event_id.clone()),
@@ -356,14 +356,14 @@ fn contact_request_commit(input: Value) -> Result<Value> {
         contact_agent_projections: Vec::new(),
         peer_endpoint: None,
     };
-    list_row.validate_shape()?;
+    contact_view.validate_shape()?;
     let outcome = ContactOperationResponseBody::Accepted {
         outcome: ContactAcceptedResponseBody::Request {
             operation_id,
             request_acceptance_receipt: receipt,
         },
     };
-    Ok(json!({"outcome": outcome, "list_row": list_row}))
+    Ok(json!({"outcome": outcome, "contact_view": contact_view}))
 }
 
 #[derive(Deserialize)]

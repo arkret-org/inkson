@@ -185,7 +185,7 @@ pub fn is_identity_creation_challenge_expired_error(error: &anyhow::Error) -> bo
 /// key and the exact `head_eq` value a release Move must carry.
 pub(crate) fn invite_live_target_occupied_details(
     error: &anyhow::Error,
-) -> Option<arkret_sdk::InviteLiveTargetOccupiedProblem> {
+) -> Option<arkret_sdk::InviteLiveTargetOccupiedProblemExtensions> {
     api_error_status_and_envelope(error).and_then(|(_, envelope)| {
         envelope
             .invite_live_target_occupied_details()

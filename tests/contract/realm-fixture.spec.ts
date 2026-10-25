@@ -181,7 +181,7 @@ test("Encrypted native Realm has authenticated public MLS material and exact Gen
   expect(rows[0].revision).toEqual({ commit_id: full.commit.commit_id, stream_position: full.commit.stream_position });
   expect(rows[0].value).toMatchObject({
     genesis_event_ref: full.event.event_id, current_mls_commit_event_ref: full.event.event_id,
-    epoch: 0, public_tree_ref: payload.ratchet_tree_ref,
+    epoch: "0", public_tree_ref: payload.ratchet_tree_ref,
   });
   expect(scan(fixture).committed_events).toEqual(fixture.committed_events);
 });
@@ -281,14 +281,14 @@ test("Historical signer query resolves only the exact accepted Event and Commit"
   expect(outcome).toMatchObject({
     request_id: request.request_id, realm_id: request.realm_id,
     recipient_account_id: request.recipient_account_id,
-    results: [{ status: "resolved", selector: request.queries[0],
+    resolutions: [{ status: "resolved", selector: request.queries[0],
       key: fixture.signer_facts[1].key, accepted_at: fixture.signer_facts[1].accepted_at }],
   });
   const changed = structuredClone(request);
   changed.queries[0].committed_event_ref.commit_id = fixture.committed_events[0].commit.commit_id;
   expect(inksonWire<Record<string, any>>("mock-realm-signer-keys", {
     fixture, request: changed,
-  }).results).toEqual([{ status: "unavailable", selector: changed.queries[0] }]);
+  }).resolutions).toEqual([{ status: "unavailable", selector: changed.queries[0] }]);
 });
 
 test("Native read entry rejects changed signatures, source authorization and historical key facts", () => {
@@ -427,14 +427,14 @@ test("Watch read controls delay only the exact response and keep failures and ot
     gate.release();
   }
   expect(pending).toBeDefined();
-  expect(await pending).toEqual({ status: 200, body: current });
+  expect(await pending).toEqual({ status: 200, contentType: "application/json", body: current });
   scenario.watchReads.failNext(target, 503, "service_unavailable");
   const failure = await driveOnce(route, { url, method: "POST", postData: request });
   expect(failure?.status).toBe(503);
   expect(failure?.body).toMatchObject({ status: 503 });
   expect(failure?.body).not.toHaveProperty("value");
   expect(failure?.body).not.toHaveProperty("result");
-  expect(await driveOnce(route, { url, method: "POST", postData: request })).toEqual({ status: 200, body: current });
+  expect(await driveOnce(route, { url, method: "POST", postData: request })).toEqual({ status: 200, contentType: "application/json", body: current });
   expect(scenario.watchReads.count(target)).toBe(3);
   const foreign = structuredClone(request);
   foreign.watcher_actor_id.account_id.station_id = "ak:did_core:web:other.example";
@@ -444,7 +444,7 @@ test("Watch read controls delay only the exact response and keep failures and ot
   expect(scenario.watchReads.count(target)).toBe(3);
   expect(await driveOnce(route, {
     url: `https://local.host/_arkret/self/realm-state-snapshot/head?realm_id=${encodeURIComponent(target.realmId)}`, method: "GET",
-  })).toEqual({ status: 200, body: fixture.snapshot });
+  })).toEqual({ status: 200, contentType: "application/json", body: fixture.snapshot });
 });
 
 test("Watch CAS validation preserves other declared conflict responses without treating them as Watch failures", () => {
@@ -459,7 +459,7 @@ test("Watch CAS validation preserves other declared conflict responses without t
   };
   const operations = mockOperations();
   const submit = operations.find(operation => operation.operation_id === "ak.self.events.command.submit.v1")!;
-  const generic = operations.find(operation => operation.responses["409"]?.schema_ref === "schemas/http-problem-details.schema.json")!;
+  const generic = operations.find(operation => operation.operation_id === "ak.gate.account.command.pair_device.v1")!;
   expect(submit).toBeDefined();
   expect(generic).toBeDefined();
   const watch = problem("failed_precondition");
@@ -467,15 +467,16 @@ test("Watch CAS validation preserves other declared conflict responses without t
   expect(() => validateMockResponseForOperation(submit, 409, { ...watch, title: "Wrong Watch title" }, "application/problem+json")).toThrow();
   const duplicate = problem("duplicate_conflict");
   const original = structuredClone(duplicate);
-  expect(() => validateMockResponseForOperation(generic, 409, duplicate, "application/problem+json")).not.toThrow();
+  expect(() => validateMockResponseForOperation(generic, 409, problem("failed_precondition"), "application/problem+json")).not.toThrow();
+  expect(() => validateMockResponseForOperation(generic, 409, duplicate, "application/problem+json")).toThrow("registered error surface");
   // Exercise the generic declared-response path under the same operation id.
   // This validator input does not add a response to the embedded inventory.
   const declared = { ...submit, responses: { ...submit.responses, "409": generic.responses["409"] } };
   expect(() => validateMockResponseForOperation(declared, 409, duplicate, "application/problem+json")).not.toThrow();
   expect(duplicate).toEqual(original);
-  if (!submit.responses["409"] && !submit.responses.default) {
-    expect(() => validateMockResponseForOperation(submit, 409, duplicate, "application/problem+json")).toThrow("has no OpenAPI response");
-  }
+  // Domain failures are owned by the canonical operation error map even
+  // when OpenAPI lists only success responses for this operation.
+  expect(() => validateMockResponseForOperation(submit, 409, duplicate, "application/problem+json")).not.toThrow();
 });
 
 test("New Root bootstrap registers its native Realm before exact historical reads", async () => {
@@ -532,16 +533,19 @@ test("New Root bootstrap registers its native Realm before exact historical read
   expect(keys?.status).toBe(200);
   expect(keys?.body).toMatchObject({
     request_id: keyRequest.request_id, realm_id: realm, recipient_account_id: fixture.identity.account_id,
-    results: [{ status: "resolved", key: fixture.signer_facts[1].key, accepted_at: fixture.signer_facts[1].accepted_at }],
+    resolutions: [{ status: "resolved", key: fixture.signer_facts[1].key, accepted_at: fixture.signer_facts[1].accepted_at }],
   });
   const other = inksonWire<Fixture>("mock-realm-fixture", { salt: 11, title: "Unregistered Realm" });
-  for (const bad of [
-    { ...keyRequest, realm_id: other.snapshot.realm_id },
-    { ...keyRequest, recipient_account_id: { ...fixture.identity.account_id, station_id: "ak:did_core:web:other.example" } },
-  ]) {
-    await expect(driveOnce(route, {
+  for (const [bad, status] of [
+    [{ ...keyRequest, realm_id: other.snapshot.realm_id }, 404],
+    [{ ...keyRequest, recipient_account_id: { ...fixture.identity.account_id, station_id: "ak:did_core:web:other.example" } }, 403],
+  ] as const) {
+    const rejected = await driveOnce(route, {
       url: "https://local.host/_arkret/self/signer-keys/query", method: "POST", postData: bad,
-    })).rejects.toThrow();
+    });
+    expect(rejected?.status).toBe(status);
+    expect(rejected?.contentType).toBe("application/problem+json");
+    expect(rejected?.body).not.toHaveProperty("error");
   }
 });
 
@@ -626,7 +630,7 @@ test("Mock read routes preserve the native snapshot, original Event and exact si
     url: "https://local.host/_arkret/self/signer-keys/query", method: "POST", postData: signerRequest(fixture),
   });
   expect(queried?.status).toBe(200);
-  expect((queried?.body as any).results[0]).toMatchObject({ status: "resolved", key: fixture.signer_facts[1].key });
+  expect((queried?.body as any).resolutions[0]).toMatchObject({ status: "resolved", key: fixture.signer_facts[1].key });
   const request = { request_id: "ak:request:01904100-0000-7000-8000-000000000002", account_id: fixture.identity.account_id };
   const principal = await driveOnce(route, {
     url: "https://local.host/_arkret/self/account/current-principal", method: "POST", postData: request,

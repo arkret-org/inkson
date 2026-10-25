@@ -13,7 +13,8 @@
     "release:linux-package": "powershell -ExecutionPolicy Bypass -File scripts/linux-package-local.ps1",
     "release:web-image-evidence": "powershell -ExecutionPolicy Bypass -File scripts/web-image-evidence.ps1",
     "release:lighthouse": "powershell -ExecutionPolicy Bypass -File scripts/lighthouse-local.ps1",
-    "release:check": "powershell -ExecutionPolicy Bypass -File scripts/release-gate.ps1"
+    "release:check": "powershell -ExecutionPolicy Bypass -File scripts/release-gate.ps1",
+    "precontract": "python tools/check_mock_operation_inventory.py --check"
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0"

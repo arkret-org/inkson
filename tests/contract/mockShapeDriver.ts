@@ -81,6 +81,7 @@ export function concretePath(pathTemplate: string): string {
 
 export type FulfilledResponse = {
   status: number;
+  contentType: string;
   body: unknown;
 };
 
@@ -128,14 +129,14 @@ export async function driveOnce(
   };
   const route = {
     request: () => fakeRequest,
-    fulfill: async (response: { status?: number; body?: string }) => {
+    fulfill: async (response: { status?: number; body?: string; contentType?: string }) => {
       let body: unknown;
       try {
         body = response.body === undefined ? undefined : JSON.parse(response.body);
       } catch {
         body = response.body;
       }
-      fulfilled = { status: response.status ?? 200, body };
+      fulfilled = { status: response.status ?? 200, contentType: response.contentType ?? "", body };
     },
     continue: async () => {},
     abort: async () => {},
