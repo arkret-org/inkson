@@ -7,6 +7,9 @@ use serde_json::{Value, json};
 #[path = "inkson-wire/realm_fixture.rs"]
 mod realm_fixture;
 
+#[path = "inkson-wire/operation_fixture.rs"]
+mod operation_fixture;
+
 #[derive(Debug, Deserialize)]
 struct CanonicalInput {
     value: Value,
@@ -60,6 +63,7 @@ fn main() -> Result<()> {
         "service-document" => {
             serde_json::to_value(service_resolution(input)?.normalized_did_document)?
         }
+        "mock-operation-request" => operation_fixture::build(input)?,
         "mock-ice-config" => {
             let request: arkret_models_collaboration::objects::media::MediaIceConfigurationRequestBody =
                 serde_json::from_value(input)?;

@@ -21,7 +21,6 @@ test("settings capabilities and consent read surfaces and forms follow the activ
             title: "Internal error",
             status: 500,
             detail: "consent-read-detail / 原文",
-            code: "internal_error",
           }
         : { consents: [] }),
     });

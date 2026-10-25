@@ -1,209 +1,64 @@
-// The offline half of the e2e mock's contract check.
-//
-// `tests/e2e` proves the client behaves; this proves the mock it behaves
-// against still matches the spec. Keeping them apart matters because the e2e
-// config builds the client to WASM before it runs a single line, so a stale
-// mock field used to cost a twenty-minute build to find — and the next stale
-// field cost another one, because each rejection stops at the first.
-//
-// Run it with `npm run contract`. It launches no browser and builds nothing;
-// it only needs `inkson-wire`, which is what validates the bodies.
-
 import { expect, test } from "@playwright/test";
+import { writeFileSync } from "node:fs";
+import { mockArkretApi } from "../e2e/mockArkretApi";
+import { captureRouteHandler, driveOnce, mockOperations } from "./mockShapeDriver";
+import { ACCOUNT_AUTHORITY_OPERATIONS, CONDITIONAL_OPERATIONS, MOCK_INSTALLS, PROVIDER_FIXTURE_OPERATIONS, UNIMPLEMENTED_OPERATIONS } from "./mockOperationCoverage";
+import { operationProbe, VALID_REQUEST_OPERATIONS } from "./mockOperationProbes";
 
-import { CURRENT_ASSISTANT_CORE_ID, DEMO_REALM, mockArkretApi } from "../e2e/mockArkretApi";
-import {
-  captureRouteHandler,
-  concretePath,
-  driveOnce,
-  isShapeViolation,
-  mockOperations,
-  violationFingerprint,
-  violationSummary,
-} from "./mockShapeDriver";
-
-const BASE_URL = "https://local.host";
-const DIRECTORY_BASE_URL = "https://directory.example";
-
-// Two different synthetic request bodies per operation. A response the mock
-// hard-codes rejects identically under both, and that is a real drift from the
-// spec. A response assembled out of the request echoes the driver's filler
-// back and rejects differently, which says nothing about the spec — only that
-// the driver cannot author a valid request for that operation.
-type Probe = { query: string; body: Record<string, unknown> };
-
-const PROBES: Probe[] = [
-  {
-    query: "?realms=ak:realm:AfZipd5actne33fQKtrLCK5Q658LZby1JgRICH16UNjo&subject=ak:did_core:web:bob.example",
-    body: {
-      actor_id: "ak:did_core:web:bob.example",
-      handle: "bob:local.host",
-      locator_id: "ak:invite_locator:01964137-0000-7000-8000-0000000000b1",
-      limit: 1,
-      realm_id: "ak:realm:AfZipd5actne33fQKtrLCK5Q658LZby1JgRICH16UNjo",
-      events: [{ realm_id: "ak:realm:AfZipd5actne33fQKtrLCK5Q658LZby1JgRICH16UNjo" }],
-    },
-  },
-  {
-    query: "?realms=ak:realm:AajANEG2ah2GJghhdat8rziaz1qjK25iQAYUUR6kcIeW&subject=ak:did_core:web:carol.example",
-    body: {
-      actor_id: "ak:did_core:web:carol.example",
-      handle: "carol:local.host",
-      locator_id: "ak:invite_locator:01964137-0000-7000-8000-0000000000c1",
-      limit: 2,
-      realm_id: "ak:realm:AajANEG2ah2GJghhdat8rziaz1qjK25iQAYUUR6kcIeW",
-      events: [
-        { realm_id: "ak:realm:AajANEG2ah2GJghhdat8rziaz1qjK25iQAYUUR6kcIeW" },
-        { realm_id: "ak:realm:AajANEG2ah2GJghhdat8rziaz1qjK25iQAYUUR6kcIeW" },
-      ],
-    },
-  },
-];
-
-// Several routes only exist under an option — the seeded recovery policy, the
-// Sidecar Circle row, the low-floor Realm. Driving the default install alone
-// leaves those branches unchecked, which is how
-// `recovery_policy_status_view` stayed stale while this gate was green.
-const INSTALLS: Record<string, unknown>[] = [
-  {},
-  {
-    preseedRecoveryMaterial: true,
-    includeSidecarInCircleList: true,
-    includeLowFloorRealm: true,
-    includePrincipalControlRealm: true,
-    seedDefaultActiveAgent: true,
-  },
-];
-
-// Drifts inkson cannot close, each with the reason it is out of reach. This
-// list exists so the gate stays enforceable rather than permanently red; it is
-// not a place to park work that belongs here. Anything added needs a reason
-// that names where the fix has to happen.
-const UPSTREAM_DRIFT: Record<string, string> = {};
-
-test("every mock response the inventory names still matches its schema", async () => {
-  const violations: string[] = [];
-  const requestDependent: string[] = [];
-  const covered = new Set<string>();
-  const directoryCovered = new Set<string>();
-  const excused = new Set<string>();
-
-  for (const install of INSTALLS) {
+test("every inventoried operation has an explicit fail-closed or validated response verdict", async () => {
+  test.setTimeout(240_000);
+  const operations = mockOperations();
+  const ids = new Set(operations.map(operation => operation.operation_id));
+  const classifications = [UNIMPLEMENTED_OPERATIONS, PROVIDER_FIXTURE_OPERATIONS, ACCOUNT_AUTHORITY_OPERATIONS];
+  for (const group of classifications) for (const id of group) expect(ids.has(id), `stale classification: ${id}`).toBe(true);
+  const nonProducing = classifications.flatMap(group => [...group]);
+  expect(new Set(nonProducing).size, "operation classifications must be disjoint").toBe(nonProducing.length);
+  const validated = new Set<string>();
+  const validRequests = new Set<string>();
+  const failures: string[] = [];
+  const evidence: unknown[] = [];
+  for (const [index, install] of MOCK_INSTALLS.entries()) {
     const { page, handler } = captureRouteHandler();
-    // Installing the mock already validates the static response fixtures, so a
-    // drift in those fails here before a single request is driven.
-    await mockArkretApi(page as never, install as never);
-    const route = handler();
-    await driveInstall(route, violations, requestDependent, covered, excused, directoryCovered);
-  }
-
-  // Recorded, not asserted: these are the operations whose response the driver
-  // cannot judge, and the list is the honest statement of this gate's blind
-  // spot. They stay covered by `tests/e2e`.
-  console.log(
-    `mock shape gate: ${covered.size} operations reached, ` +
-      `${requestDependent.length} request-dependent and therefore unjudged`,
-  );
-  await test.info().attach("mock-request-dependent-operations", {
-    body: JSON.stringify([...new Set(requestDependent)].sort(), null, 2),
-    contentType: "application/json",
-  });
-  console.log(`mock shape request-dependent operations:\n${[...new Set(requestDependent)].sort().join("\n")}`);
-
-  // An operation reached under more than one install reports the same drift
-  // once per install; the reader wants the drift, not the install count.
-  const distinct = [...new Set(violations)].sort();
-  expect(distinct, distinct.join("\n")).toEqual([]);
-  // Two ways the assertion above could be vacuously true, both guarded here: a
-  // refactor that makes every branch fall through, so nothing is reached; and
-  // one that makes every response echo the request, so nothing is judgeable.
-  expect(covered.size).toBeGreaterThan(20);
-  const directoryOperations = mockOperations().filter((operation) =>
-    operation.path_template.startsWith("/_arkret/find/directory/"),
-  );
-  expect(directoryOperations.map((operation) => operation.path_template).sort()).toEqual([
-    "/_arkret/find/directory/describe",
-    "/_arkret/find/directory/resolve-realm",
-    "/_arkret/find/directory/search-realms",
-  ]);
-  expect([...directoryCovered].sort(), "all three public Directory operations must reach validated successful responses").toEqual(
-    directoryOperations.map((operation) => operation.operation_id).sort(),
-  );
-  expect(
-    new Set(requestDependent).size,
-    `too many operations are request-dependent for this gate to mean anything:\n${[...new Set(requestDependent)].sort().join("\n")}`,
-  ).toBeLessThan(40);
-  // An excused drift that stopped drifting is a stale excuse, and a stale
-  // excuse is how a gate quietly stops covering something.
-  expect(
-    Object.keys(UPSTREAM_DRIFT).filter((id) => !excused.has(id)),
-    "these operations no longer drift; drop them from UPSTREAM_DRIFT",
-  ).toEqual([]);
-});
-
-async function driveInstall(
-  route: ReturnType<ReturnType<typeof captureRouteHandler>["handler"]>,
-  violations: string[],
-  requestDependent: string[],
-  covered: Set<string>,
-  excused: Set<string>,
-  directoryCovered: Set<string>,
-) {
-  for (const operation of mockOperations()) {
-    // Agent routes probe the actual default native Agent rather than an
-    // unrelated generic driver placeholder that now names no inventory row.
-    const pathTemplate = operation.path_template.replaceAll(
-      "{agent_id}", CURRENT_ASSISTANT_CORE_ID,
-    );
-    const publicDirectory = operation.path_template.startsWith("/_arkret/find/directory/");
-    const url = `${publicDirectory ? DIRECTORY_BASE_URL : BASE_URL}${concretePath(pathTemplate)}`;
-    const probes = publicDirectory ? PROBES.map((_, index): Probe => ({
-      query: "",
-      body: pathTemplate.endsWith("/search-realms")
-        ? { query: index === 0 ? "demo" : "public", limit: index + 1 }
-        : pathTemplate.endsWith("/resolve-realm") ? { realm_id: DEMO_REALM } : {},
-    })) : PROBES;
-    const seen: ({ summary: string; fingerprint: string } | null)[] = [];
-    for (const probe of probes) {
+    await mockArkretApi(page as never, install);
+    for (const operation of operations) {
+      const id = operation.operation_id;
+      const unsupported = UNIMPLEMENTED_OPERATIONS.has(id) || (index === 0 && CONDITIONAL_OPERATIONS.has(id));
+      const expected = unsupported ? `mock operation is not implemented: ${id}`
+        : PROVIDER_FIXTURE_OPERATIONS.has(id) ? "provider-only MIMI POST requires a native authenticated provider fixture"
+        : ACCOUNT_AUTHORITY_OPERATIONS.has(id) ? "account registration requires a native authenticated Account Authority fixture"
+        : undefined;
+      let emitted = 0;
       try {
-        const response = await driveOnce(route, {
-          url: `${url}${probe.query}`,
-          method: operation.method,
-          postData: operation.method === "GET" ? undefined : probe.body,
-          // Public requests select the exact registry operation without the
-          // Account bearer used by the generic self-path probe fixture.
-          headers: publicDirectory ? { "arkret-operation": operation.operation_id } : undefined,
-        });
-        if (response) {
-          covered.add(operation.operation_id);
-          if (publicDirectory && response.status === 200) {
-            directoryCovered.add(operation.operation_id);
-          }
+        let active = handler();
+        if (["ak.self.agent.command.deactivate.v1", "ak.self.agent.command.pause.v1", "ak.self.agent.command.resume.v1"].includes(id)) {
+          const isolated = captureRouteHandler();
+          await mockArkretApi(isolated.page as never, install);
+          active = isolated.handler();
         }
-        seen.push(null);
+        const request = await operationProbe(operation, active);
+        const response = await driveOnce(active, { ...request, onFulfill: () => { emitted += 1; } });
+        if (expected) throw new Error(`stale non-producing classification emitted a response: ${id}`);
+        expect(response, `${id} must produce a validated response, not continue/abort`).not.toBeNull();
+        expect(emitted).toBe(1);
+        validated.add(id);
+        if (VALID_REQUEST_OPERATIONS.has(id)) {
+          expect(response?.status, `${id} valid request must succeed`).toBe(200);
+          validRequests.add(`${index}:${id}`);
+        }
+        evidence.push({ install: index, operation_id: id, verdict: "validated", status: response?.status, media_type: response?.contentType });
       } catch (error) {
-        // Anything that is not a schema rejection is the driver failing to
-        // satisfy a branch, not a spec drift.
-        seen.push(
-          isShapeViolation(error)
-            ? {
-                summary: violationSummary(error),
-                fingerprint: violationFingerprint(error),
-              }
-            : null,
-        );
+        const message = error instanceof Error ? error.message : String(error);
+        if (expected && message === expected && emitted === 0) evidence.push({ install: index, operation_id: id, verdict: "fails_before_response", reason: expected });
+        else failures.push(`${index}:${id}: ${message}`);
       }
-    }
-
-    const label = `${operation.method} ${operation.path_template} (${operation.operation_id})`;
-    if (seen[0] && seen[1] && seen[0].fingerprint === seen[1].fingerprint) {
-      if (operation.operation_id in UPSTREAM_DRIFT) {
-        excused.add(operation.operation_id);
-      } else {
-        violations.push(`${label}: ${seen[0].summary}`);
-      }
-    } else if (seen.some((entry) => entry)) {
-      requestDependent.push(label);
     }
   }
-}
+  if (process.env.MOCK_COVERAGE_REPORT) writeFileSync(process.env.MOCK_COVERAGE_REPORT, JSON.stringify({ evidence, failures }, null, 2));
+  await test.info().attach("mock-operation-coverage", { body: JSON.stringify({ evidence, failures }, null, 2), contentType: "application/json" });
+  expect(failures, failures.join("\n")).toEqual([]);
+  const expectedProducing = [...ids].filter(id => !nonProducing.includes(id)).sort();
+  expect([...validated].sort(), "every response-producing operation must be judged").toEqual(expectedProducing);
+  expect(validRequests.size, "all valid-request operations must succeed in both installs").toBe(VALID_REQUEST_OPERATIONS.size * MOCK_INSTALLS.length);
+  expect(evidence).toHaveLength(operations.length * MOCK_INSTALLS.length);
+  console.log(`mock contract gate: ${ids.size} operations classified; ${validated.size} response producers validated; ${nonProducing.length} fail before response; 0 unjudged`);
+});

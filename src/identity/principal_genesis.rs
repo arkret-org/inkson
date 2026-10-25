@@ -123,10 +123,6 @@ pub fn build_genesis_unit(
             principal_did: principal_did.clone(),
             genesis_salt,
             trust_domain,
-            did_inception_ref: arkret_sdk::SemanticRef::new(
-                did_inception_version_id.clone(),
-                arkret_bootstrap::DID_INCEPTION_REF_ROLE,
-            ),
             initial_resolution: arkret_sdk::ResolutionCommitment {
                 did: principal_did.clone(),
                 method_history_head: did_inception_log_head,

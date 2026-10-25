@@ -281,7 +281,7 @@ test("kanban hides list creation until a board exists", async ({ page }) => {
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({
-          realm_id: realmId, total: 0, spaces: [], has_more: false,
+          realm_id: realmId, total_count: 0, spaces: [], has_more: false,
         }),
       });
     },
@@ -296,7 +296,7 @@ test("kanban hides list creation until a board exists", async ({ page }) => {
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({
-          realm_id: realmId, total: 0, strands: [], has_more: false,
+          realm_id: realmId, total_count: 0, strands: [], has_more: false,
         }),
       });
     },

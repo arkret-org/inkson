@@ -115,6 +115,14 @@ def check_retired_mock_fields() -> None:
                 cursor += 1
 
 
+def check_response_guard() -> None:
+    source = MOCK_SOURCES[0].read_text(encoding="utf-8")
+    tokens = typescript_tokens(source)
+    boundary = r'await page\.route\("\*\*/\*", async \(rawRoute\) => \{\s*const route = guardMockRoute\(rawRoute\);'
+    if not re.search(boundary, source) or tokens.count("rawRoute") != 2:
+        raise ValueError("mock response producers must use the single guarded route; raw Route escape is forbidden")
+
+
 def json_pointer(document: Any, pointer: str) -> Any:
     value = document
     for raw_part in pointer.removeprefix("#/").split("/"):
@@ -208,6 +216,7 @@ def route_evidence() -> list[dict[str, Any]]:
 
 def generate() -> dict[str, Any]:
     check_retired_mock_fields()
+    check_response_guard()
     openapi_bytes = OPENAPI_PATH.read_bytes()
     operation_registry_bytes = OPERATION_REGISTRY_PATH.read_bytes()
     schema_registry_bytes = SCHEMA_REGISTRY_PATH.read_bytes()
@@ -233,9 +242,37 @@ def generate() -> dict[str, Any]:
             responses: dict[str, Any] = {}
             for status, response in sorted(operation.get("responses", {}).items()):
                 reference, schema_id = response_schema(openapi, response, schema_ids)
+                resolved_response = resolve_local_ref(openapi, response)
+                media_contracts = {}
+                for media_type, media in resolved_response.get("content", {}).items():
+                    schema = resolve_local_ref(openapi, media.get("schema", {}))
+                    media_ref = external_schema_reference(openapi, schema)
+                    if media_ref is None and isinstance(schema, dict):
+                        raw_ref = schema.get("$ref")
+                        if isinstance(raw_ref, str) and raw_ref.startswith("../schemas/"):
+                            media_ref = raw_ref.removeprefix("../")
+                    media_contracts[media_type] = {
+                        "schema_ref": media_ref,
+                        "binary": schema.get("type") == "string" and schema.get("format") == "binary",
+                    }
+                headers = {}
+                for name, header in resolved_response.get("headers", {}).items():
+                    header = resolve_local_ref(openapi, header)
+                    headers[name.lower()] = {
+                        "required": header.get("required", False),
+                        "schema": header.get("schema", {}),
+                    }
+                response_media = resolved_response.get("content", {}).get("application/problem+json", {})
+                response_shape = resolve_local_ref(openapi, response_media.get("schema", {}))
+                combination = next((key for key in ("anyOf", "oneOf") if key in response_shape), None)
+                alternatives = [external_schema_reference(openapi, branch) for branch in response_shape.get(combination, [])] if combination else []
                 responses[str(status)] = {
                     "schema_ref": reference,
+                    "schema_combination": combination if alternatives and all(alternatives) else None,
+                    "schema_alternatives": alternatives if alternatives and all(alternatives) else [],
                     "schema_id": schema_id,
+                    "content": media_contracts,
+                    "headers": headers,
                 }
             operations.append(
                 {

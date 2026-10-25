@@ -271,8 +271,10 @@ impl Builder {
             device_id: device_id.clone(),
             device_public_key_did: NonEmptyString::new(format!("did:key:{multibase}"))
                 .map_err(anyhow::Error::msg)?,
-            hpke_key: NonEmptyString::new(base64url_encode([17; 32]))
-                .map_err(anyhow::Error::msg)?,
+            hpke_key: NonEmptyString::new(arkret_sdk::encode_multibase_base58btc(
+                [vec![0xec, 0x01], vec![17; 32]].concat(),
+            ))
+            .map_err(anyhow::Error::msg)?,
             algorithms: ["Ed25519", "HPKE-X25519-HKDF-SHA256-AES128GCM"]
                 .into_iter()
                 .map(|s| NonEmptyString::new(s).map_err(anyhow::Error::msg))
@@ -322,10 +324,6 @@ impl Builder {
                 principal_did: did.clone(),
                 genesis_salt: GenesisSalt::new(base64url_encode([33; 32]))?,
                 trust_domain: TrustDomainId::new("ak:trust_domain:server.local")?,
-                did_inception_ref: SemanticRef::new(
-                    version.clone(),
-                    arkret_bootstrap::DID_INCEPTION_REF_ROLE,
-                ),
                 initial_resolution: ResolutionCommitment {
                     did: did.clone(),
                     method_history_head: version.clone(),
@@ -1995,10 +1993,20 @@ pub(super) fn build(input: Value) -> Result<Value> {
             InviteId::from_event_id(&create.event_id).to_string(),
         );
     }
-    serde_json::to_value(builder.finish()?).map_err(Into::into)
+    let fixture = builder.finish()?;
+    super::validate_mock_response(json!({
+        "schema_ref": "schemas/service-operation-dtos.schema.json#/$defs/CommittedEventView",
+        "value": fixture.source_create,
+    }))?;
+    serde_json::to_value(fixture).map_err(Into::into)
 }
 
 fn validate_fixture(fixture: &Fixture) -> Result<Fixture> {
+    super::validate_mock_response(json!({
+        "schema_ref": "schemas/service-operation-dtos.schema.json#/$defs/CommittedEventView",
+        "value": fixture.source_create,
+    }))?;
+
     let mut expected_blobs = BTreeSet::new();
     for full in &fixture.committed_events {
         if full.event.kind == EventKind::MlsGenesis {

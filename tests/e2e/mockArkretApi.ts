@@ -192,6 +192,7 @@ type InksonWireCommand =
   | "service-resolution"
   | "service-document"
   | "mock-ice-config"
+  | "mock-operation-request"
   | "direct-conversation-pair-key"
   | "principal-locator"
   | "validate-mock-response"
@@ -221,7 +222,13 @@ type MockOperationInventoryRow = {
   method: string;
   path_template: string;
   operation_id: string;
-  responses: Record<string, { schema_ref: string | null }>;
+  responses: Record<string, {
+    schema_ref: string | null;
+    schema_combination?: string | null;
+    schema_alternatives?: string[];
+    content?: Record<string, { schema_ref: string | null; binary: boolean }>;
+    headers?: Record<string, { required: boolean; schema: Record<string, any> }>;
+  }>;
 };
 
 type StaticMockResponseFixture = {
@@ -509,28 +516,133 @@ export function inksonWire<T>(command: InksonWireCommand, input: unknown): T {
   }
 }
 
+export function mockOperationForRequest(method: string, pathname: string) {
+  const pathMatches = mockOperationInventory.filter(operation =>
+    operation.method === method.toUpperCase() && operation.pathPattern.test(pathname));
+  const literalMatches = pathMatches.filter(operation => operation.path_template === pathname);
+  const matches = literalMatches.length ? literalMatches : pathMatches;
+  if (matches.length !== 1) throw new Error(`mock route ${method} ${pathname} resolves to ${matches.length} embedded OpenAPI operations`);
+  return matches[0];
+}
+
 function validateMockResponse(route: Route, status: number, value?: unknown, contentType = "application/json") {
   const request = route.request();
-  const method = request.method().toUpperCase();
   const pathname = new URL(request.url()).pathname;
-  if (!pathname.startsWith("/_arkret/")) {
+  if (!pathname.startsWith("/_arkret/")) return;
+  validateMockResponseForOperation(mockOperationForRequest(request.method(), pathname), status, value, contentType);
+}
+
+const guardedRoutes = new WeakMap<Route, Route>();
+const guardedSurfaces = new WeakSet<object>();
+
+function installMockResponseGate(page: Page) {
+  for (const surface of [page, page.context()]) {
+    if (guardedSurfaces.has(surface)) continue;
+    guardedSurfaces.add(surface);
+    const originalRoute = surface.route.bind(surface);
+    const handlers = new WeakMap<Function, Function>();
+    surface.route = ((pattern: any, handler: any, options?: any) => {
+      let guarded = handlers.get(handler);
+      if (!guarded) {
+        guarded = (candidate: Route, request: any) => handler(guardMockRoute(candidate), request);
+        handlers.set(handler, guarded);
+      }
+      return originalRoute(pattern, guarded, options);
+    }) as typeof surface.route;
+    if (typeof surface.unroute === "function") {
+      const originalUnroute = surface.unroute.bind(surface);
+      surface.unroute = ((pattern: any, handler?: any) => originalUnroute(pattern, handler ? handlers.get(handler) ?? handler : undefined)) as typeof surface.unroute;
+    }
+  }
+}
+
+export function guardMockRoute(route: Route): Route {
+  const existing = guardedRoutes.get(route);
+  if (existing) return existing;
+  const guarded = new Proxy(route, {
+    get(target, property) {
+      if (property === "fulfill") return async (response: Parameters<Route["fulfill"]>[0]) => {
+        const request = target.request();
+        const pathname = new URL(request.url()).pathname;
+        if (pathname.startsWith("/_arkret/")) {
+          const operation = mockOperationForRequest(request.method(), pathname);
+          validateMockTransportResponse(operation, response);
+        }
+        return target.fulfill(response);
+      };
+      const value = Reflect.get(target, property);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+  guardedRoutes.set(route, guarded);
+  guardedRoutes.set(guarded, guarded);
+  return guarded;
+}
+
+export function validateMockTransportResponse(operation: MockOperationInventoryRow, response: Parameters<Route["fulfill"]>[0]) {
+  const status = response.status ?? 200;
+  const headers = Object.fromEntries(Object.entries(response.headers ?? {}).map(([name, value]) => [name.toLowerCase(), value]));
+  const mediaType = (response.contentType ?? headers["content-type"] ?? (response.json !== undefined ? "application/json" : "")).split(";", 1)[0].trim().toLowerCase();
+  if (response.contentType && headers["content-type"] && response.contentType.toLowerCase() !== headers["content-type"].toLowerCase()) throw new Error("mock response violates conflicting Content-Type declarations");
+  if (response.path !== undefined || response.response !== undefined) throw new Error("mock response violates uninspected file/APIResponse body");
+  if (response.body !== undefined && response.json !== undefined) throw new Error("mock response violates ambiguous body/json fields");
+  const contract = operation.responses[String(status)] ?? operation.responses.default;
+  // invite-addressing section 5 requires this even though Header Objects are
+  // optional by default in OpenAPI. A bearer secret must never be cached.
+  if (status === 200 && ["ak.self.invite_locator.command.issue.v1", "ak.self.invite_locator.command.rotate.v1"].includes(operation.operation_id)
+      && headers["cache-control"] !== "private, no-store") throw new Error("mock response violates locator Cache-Control contract");
+  for (const [name, header] of Object.entries(contract?.headers ?? {})) {
+    const value = headers[name];
+    if (value === undefined) {
+      if (header.required) throw new Error(`mock response violates required header ${name}`);
+      continue;
+    }
+    const schema = header.schema;
+    const supported = new Set(["type", "$ref", "const", "enum", "pattern", "minLength", "maxLength", "description", "title", "default"]);
+    if (Object.keys(schema).some(key => !supported.has(key) && !key.startsWith("x-"))) throw new Error(`mock response violates unsupported header constraint for ${name}`);
+    if (schema.type && schema.type !== "string") throw new Error(`mock response violates unsupported header type for ${name}`);
+    if (schema.minLength !== undefined && [...value].length < schema.minLength) throw new Error(`mock response violates header ${name} minLength`);
+    if (schema.maxLength !== undefined && [...value].length > schema.maxLength) throw new Error(`mock response violates header ${name} maxLength`);
+    if (schema.const !== undefined && value !== schema.const) throw new Error(`mock response violates header ${name} const`);
+    if (schema.pattern && !new RegExp(schema.pattern).test(value)) throw new Error(`mock response violates header ${name} pattern`);
+    if (schema.enum && !schema.enum.includes(value)) throw new Error(`mock response violates header ${name} enum`);
+    if (schema.$ref) {
+      const reference = String(schema.$ref);
+      if (!reference.startsWith("../schemas/")) throw new Error(`mock response violates unsupported header schema ${reference}`);
+      validateMockSchema(reference.slice(3), value);
+    }
+  }
+  const body = response.json !== undefined ? response.json : response.body;
+  const content = contract?.content ?? {};
+  const media = content[mediaType];
+  // A downloaded Blob retains its original MIME, including application/json.
+  // Its bytes are not an endpoint JSON envelope.
+  const binary = Object.values(content).some(entry => entry.binary);
+  if (status < 400 && binary && /^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/.test(mediaType) && Buffer.isBuffer(body)) return;
+  if (status >= 400 || mediaType === "application/json") {
+    let value = body;
+    if (response.json === undefined && body !== undefined) {
+      try { value = JSON.parse(Buffer.isBuffer(body) ? new TextDecoder("utf-8", { fatal: true }).decode(body) : String(body)); }
+      catch { throw new Error("mock response violates malformed JSON body"); }
+    }
+    validateMockResponseForOperation(operation, status, value, mediaType);
     return;
   }
-  const pathMatches = mockOperationInventory.filter(
-    (operation) =>
-      operation.method === method && operation.pathPattern.test(pathname),
-  );
-  // OpenAPI literal paths take precedence over a parameterized sibling path.
-  const literalMatches = pathMatches.filter(
-    (operation) => operation.path_template === pathname,
-  );
-  const matches = literalMatches.length > 0 ? literalMatches : pathMatches;
-  if (matches.length !== 1) {
-    throw new Error(
-      `mock route ${method} ${pathname} resolves to ${matches.length} embedded OpenAPI operations`,
-    );
+  if (!contract) throw new Error(`mock response violates undeclared status ${status} for ${operation.operation_id}`);
+  if (Object.keys(content).length === 0) {
+    if (body !== undefined && body !== "") throw new Error(`mock response violates ${operation.operation_id}: forbids a body`);
+    return;
   }
-  validateMockResponseForOperation(matches[0], status, value, contentType);
+  if (mediaType === "application/x-ndjson" && media?.schema_ref) {
+    if (typeof body !== "string" || !body.endsWith("\n") || body.trim().length === 0) throw new Error("mock response violates empty or unterminated NDJSON stream");
+    for (const line of body.trimEnd().split("\n")) {
+      let frame: unknown;
+      try { frame = JSON.parse(line); } catch { throw new Error("mock response violates malformed NDJSON frame"); }
+      validateMockSchema(media.schema_ref, frame);
+    }
+    return;
+  }
+  throw new Error(`mock response violates unsupported media ${mediaType || "<missing>"} for ${operation.operation_id}`);
 }
 
 export function validateMockResponseForOperation(
@@ -569,11 +681,25 @@ export function validateMockResponseForOperation(
   }
   const response = operation.responses[String(status)] ?? operation.responses.default;
   if (status >= 400) {
-    if (response && !response.schema_ref) throw new Error(`mock response violates unsupported declared error contract for ${operation.operation_id}`);
+    if (response?.schema_ref) validateMockSchema(response.schema_ref, value);
+    if (response && !response.schema_ref) {
+      if (!response.schema_alternatives?.length) throw new Error(`mock response violates unsupported declared error contract for ${operation.operation_id}`);
+      let accepted = 0;
+      for (const reference of response.schema_alternatives) {
+        try { validateMockSchema(reference, value); accepted += 1; }
+        catch (error) {
+          if (!String(error).includes("mock response violates")) throw error;
+        }
+      }
+      if (accepted === 0 || (response.schema_combination === "oneOf" && accepted !== 1)) throw new Error(`mock response violates declared error alternatives for ${operation.operation_id}`);
+    }
     validateRegisteredMockProblem(status, value, contentType);
     const problem = value as Record<string, unknown>;
     const descriptor = mockErrorRegistry.codes.find(entry => entry.type_uri === problem.type && entry.status === "active")!;
     const mappings = mockOperationErrorMapping.operations.filter(entry => entry.operation_id === operation.operation_id);
+    if (typeof problem.reason_code === "string" && (mappings.length !== 1 || !mappings[0].operation_specific.includes(problem.reason_code))) {
+      throw new Error(`mock response violates operation reason_code mapping for ${operation.operation_id}`);
+    }
     if (mappings.length !== 1 || !(universalMockErrorCodes.has(descriptor.code)
       || mappings[0].operation_specific.includes(descriptor.code)
       || (typeof problem.reason_code === "string" && mappings[0].operation_specific.includes(problem.reason_code)))) {
@@ -599,6 +725,7 @@ export function validateMockResponseForOperation(
       `mock route ${operation.operation_id} status ${status} requires a JSON body`,
     );
   }
+  if (contentType.split(";", 1)[0].trim().toLowerCase() !== "application/json") throw new Error(`mock response violates JSON media contract for ${operation.operation_id}`);
   assertNoRetiredMockFields(value);
   validateMockSchema(response.schema_ref, value);
 }
@@ -606,9 +733,14 @@ export function validateMockResponseForOperation(
 export function validateRegisteredMockProblem(status: number, value: unknown, contentType: string) {
   if (contentType !== "application/problem+json") throw new Error("mock response violates Arkret Problem: failures require application/problem+json");
   const problem = value as Record<string, unknown> | undefined;
-  if (!problem || typeof problem !== "object" || Array.isArray(problem) || ["error", "code", "message", "details", "ok"].some(key => key in problem)) {
+  if (!problem || typeof problem !== "object" || Array.isArray(problem) || ["error", "errcode", "code", "message", "details", "ok"].some(key => key in problem)) {
     throw new Error("mock response violates Arkret Problem: failures require a flat RFC 9457 Problem without legacy aliases");
   }
+  // These mock producers emit a deliberately minimal registered Problem.
+  // Extra producer extensions need an owned contract, not the consumer's
+  // RFC tolerance for arbitrary extension members.
+  const members = new Set(["type", "title", "status", "detail", "instance", "reason_code"]);
+  if (Object.keys(problem).some(key => !members.has(key))) throw new Error("mock response violates unregistered producer extension");
   const descriptor = mockErrorRegistry.codes.find(entry => entry.status === "active" && entry.type_uri === problem.type);
   if (!descriptor || problem.status !== status || descriptor.http_status !== status || problem.title !== descriptor.title) {
     throw new Error("mock response violates Arkret Problem: status/type/title must match the active error registry");
@@ -782,6 +914,7 @@ export async function mockArkretApi(
   page: Page,
   options: MockArkretApiOptions = {},
 ) {
+  installMockResponseGate(page);
   const deviceProjectionExpiresAt = new Date(Date.now() + (options.deviceProjectionValidityMs ?? 600_000)).toISOString();
   const deviceAuthorizationExpiresAt = options.deviceAuthorizationValidityMs === undefined
     ? null : new Date(Date.now() + options.deviceAuthorizationValidityMs).toISOString();
@@ -1586,7 +1719,8 @@ export async function mockArkretApi(
           fields: { labels: ["planning"], due_at: "May 12" },
         },
       ];
-  await page.route("**/*", async (route) => {
+  await page.route("**/*", async (rawRoute) => {
+    const route = guardMockRoute(rawRoute);
     const url = new URL(route.request().url());
     if (url.hostname === "directory.example") {
       const headers = route.request().headers();
@@ -1598,7 +1732,7 @@ export async function mockArkretApi(
         "/_arkret/find/directory/search-realms",
         "/_arkret/find/directory/resolve-realm",
       ].includes(url.pathname)) {
-        return route.fulfill({ status: 404 });
+        return mockProblem(route, "not_found", "resource not found");
       }
     }
     if (url.pathname === "/health") {
@@ -1671,14 +1805,7 @@ export async function mockArkretApi(
       route.request().method() === "GET"
     ) {
       if (url.hostname === "auth.local.host") {
-        return route.fulfill({
-          status: 404,
-          contentType: "application/json",
-          body: JSON.stringify({
-            errcode: "route_not_found",
-            error: "authentication providers do not expose a public Arkret service role",
-          }),
-        });
+        return mockProblem(route, "not_found", "authentication providers do not expose a public Arkret service role");
       }
       return json(route, principalServiceDescribe(`${url.origin}/`));
     }
@@ -1766,7 +1893,7 @@ export async function mockArkretApi(
       /^\/_arkret\/self\/circles\/([^/]+)\/members$/,
     );
     if (circleMemberCollection && route.request().method() === "POST") {
-      const circleId = circleMemberCollection[1];
+      const circleId = decodeURIComponent(circleMemberCollection[1]);
       const request = route.request().postDataJSON();
       validateMockSchema("schemas/circle-operations.schema.json#/$defs/circle_member_request_body", request);
       const event = request.member_event.event;
@@ -1788,7 +1915,7 @@ export async function mockArkretApi(
       /^\/_arkret\/self\/circles\/([^/]+)\/members\/(.+)$/,
     );
     if (circleMemberResource && route.request().method() === "DELETE") {
-      const [, circleId] = circleMemberResource;
+      const circleId = decodeURIComponent(circleMemberResource[1]);
       const request = route.request().postDataJSON();
       validateMockSchema("schemas/circle-operations.schema.json#/$defs/circle_member_delete_request_body", request);
       const event = request.member_event.event;
@@ -1796,6 +1923,8 @@ export async function mockArkretApi(
       expect(event.kind).toBe("ak.circle.member.state");
       expect(event.payload.circle_id).toBe(circleId);
       expect(event.payload.membership).toBe("leave");
+      expect(decodeURIComponent(circleMemberResource[2])).toBe(canonicalJson(memberId));
+      expect(event.scope_ref).toEqual({ kind: "circle", realm_id: DEMO_REALM, circle_id: circleId });
       const members = new Map((circleMembers.get(circleId) ?? []).map(member => [canonicalJson(member), member]));
       members.delete(canonicalJson(memberId));
       circleMembers.set(circleId, [...members.values()]);
@@ -2086,149 +2215,10 @@ export async function mockArkretApi(
       throw new Error("provider-only MIMI POST requires a native authenticated provider fixture");
     }
 
-    if (
-      url.pathname === "/_arkret/gate/account/register" &&
-      route.request().method() === "POST"
-    ) {
-      const body = await route.request().postDataJSON();
-      const identityCreation = body.identity_creation as
-        Record<string, any> | undefined;
-      const genesisEvents = identityCreation?.pcr_genesis_unit?.events;
-      const createEvent = Array.isArray(genesisEvents)
-        ? genesisEvents[0]
-        : undefined;
-      const authorizeEvent = Array.isArray(genesisEvents)
-        ? genesisEvents[1]
-        : undefined;
-      const authorizePayload = authorizeEvent?.payload ?? {};
-      const descriptor =
-        createEvent?.payload?.object?.founding_device_descriptor;
-      const registrationDeviceId =
-        identityCreation?.initial_session?.device_id ?? body.device_id;
-      if (identityCreation) {
-        const rootAnchored =
-          createEvent?.kind === "ak.realm.create" &&
-          authorizeEvent?.kind === "ak.device.authorize" &&
-          authorizePayload.authorization_binding_kind === "root_anchored" &&
-          authorizePayload.authorized_by === body.principal_id &&
-          descriptor?.device_id === registrationDeviceId &&
-          descriptor?.device_id === authorizePayload.device_id &&
-          typeof authorizePayload.device_signature === "string" &&
-          authorizePayload.device_signature.length > 0;
-        if (!rootAnchored) {
-          return mockProblem(route, "schema_violation", "identity creation requires a root_anchored founding device PCR genesis unit");
-        }
-      }
-      if (registrationDeviceId && !accountDevices.has(registrationDeviceId)) {
-        accountDevices.set(registrationDeviceId, {
-          device_id: registrationDeviceId,
-          status: "active",
-          display_name: "Current device",
-          verification_state: identityCreation ? "verified" : "unresolved",
-        });
-      }
-      if (
-        typeof registrationDeviceId === "string" &&
-        typeof descriptor?.device_public_key === "string"
-      ) {
-        deviceSigningKeys.set(
-          registrationDeviceId,
-          descriptor.device_public_key,
-        );
-      }
-      const creationOutcome = (() => {
-        if (
-          !identityCreation ||
-          !createEvent ||
-          !authorizeEvent ||
-          !descriptor
-        ) {
-          return {};
-        }
-        const createdAt = "2026-08-09T00:00:00.000Z";
-        const createCommitId =
-          "ak:realm_commit:ARNRmzDi2r78zveOLmoHOb6AephFMwVuGE1fwXmCoeo4";
-        const commitSignature = {
-          context: "ak.realm_commit_signature.v1",
-          signature_algorithm: "Ed25519",
-          verification_method: `${CURRENT_STATION_ID}#realm-commit`,
-          signed_digest: `sha256:${"5".repeat(64)}`,
-          created_at: createdAt,
-          signature: "e2e-realm-commit-signature",
-        };
-        return {
-          binding_receipt: {
-            binding_state: "bound",
-            identity_creation_lease_id:
-              identityCreation.identity_creation_lease_id,
-            lease_fence: identityCreation.lease_fence,
-            operation_status: "accepted",
-            operation_digest: identityCreation.control_proof.operation_digest,
-          },
-          pcr_genesis_commits: [
-            {
-              commit_id: createCommitId,
-              realm_id: createEvent.realm_id,
-              stream_ref: { kind: "realm", realm_id: createEvent.realm_id },
-              stream_position: 0,
-              previous_commit_ref: null,
-              event_ref: createEvent.event_id,
-              governance_generation: 0,
-              authority_ref: createEvent.event_id,
-              committed_at: createdAt,
-              signature: commitSignature,
-            },
-            {
-              commit_id:
-                "ak:realm_commit:AdA0TA9zF1BPiudM7qe4WqKZLjMn0r7--gKAHqstAWDZ",
-              realm_id: createEvent.realm_id,
-              stream_ref: { kind: "realm", realm_id: createEvent.realm_id },
-              stream_position: 1,
-              previous_commit_ref: createCommitId,
-              event_ref: authorizeEvent.event_id,
-              governance_generation: 0,
-              authority_ref: createEvent.event_id,
-              committed_at: createdAt,
-              signature: commitSignature,
-            },
-          ],
-          issued_session: {
-            principal_id: body.principal_id,
-            device_id: registrationDeviceId,
-            session_grant: "e2e-standard-session-grant",
-            expires_at: "2027-08-09T00:00:00.000Z",
-            grant_id:
-              "ak:session_grant:ATLC-gY-xpE0kN3QXVYxo0Kh32EoNCTBQTSFuu_P57e6",
-            session_public_key:
-              identityCreation.initial_session.session_public_key,
-            audience: identityCreation.initial_session.audience,
-            granted_scope: [
-              "ak.self.account.read.describe.v1",
-              "ak.self.committed_event.read.scan.v1",
-            ],
-          },
-        };
-      })();
-      return json(
-        route,
-        {
-          principal_id: body.principal_id,
-          state: "active",
-          devices: accountDeviceSummaries(),
-          profile: {
-            id: "ak:actor_profile:AbhO_nhWEZ7jojF3JULUGyzIUTiHNshUWblbkJCr7NbP",
-            schema: "ak.schema.actor_profile.v1",
-            principal_id: body.principal_id,
-            actor_kind: "user",
-            display_name: body.display_name ?? "inkson",
-            profile_fields: {},
-            accountable_principal_ids: [],
-            created_at: "2026-04-28T12:00:00.000Z",
-          },
-          ...creationOutcome,
-        },
-        201,
-      );
+    if (url.pathname === "/_arkret/gate/account/register" && route.request().method() === "POST") {
+      // Registration requires an Account Authority binding receipt and accepted
+      // genesis commits. A browser client mock cannot invent that authority.
+      throw new Error("account registration requires a native authenticated Account Authority fixture");
     }
 
     if (
@@ -2546,10 +2536,10 @@ export async function mockArkretApi(
         );
       }
       if (options.invitePreview === "restricted") {
-        return route.fulfill({ status: 404 });
+        return mockProblem(route, "not_found", "resource not found");
       }
       if (options.invitePreview === "retry_once" && invitePreviewAttempts === 1) {
-        return route.fulfill({ status: 503 });
+        return mockProblem(route, "temporarily_unavailable", "preview is temporarily unavailable");
       }
       return json(route, {
         request_id: body.request_id,
@@ -2558,7 +2548,7 @@ export async function mockArkretApi(
           realm_id: invitedRealmId,
           join_rule: "invite",
           history_access: "all_history_for_current_members",
-          governance_generation: 0,
+          governance_generation: "0",
           display_name: "Preview-only Realm",
         },
       });
@@ -3300,7 +3290,7 @@ export async function mockArkretApi(
         locator_token: "e2e_invite_locator_token_00000001",
         expires_at: "2026-07-27T00:15:00.000Z",
         one_time_use: false,
-      });
+      }, 200, "application/json", { "cache-control": "private, no-store" });
     }
 
     if (url.pathname === "/_arkret/self/invite-locators/revoke" && route.request().method() === "POST") {
@@ -3552,30 +3542,28 @@ export async function mockArkretApi(
         Record<string, any> | undefined;
       const event = lifecycleSubmission?.event as
         Record<string, any> | undefined;
+      validateMockSchema(`schemas/agent-operations.schema.json#/$defs/agent_${action}_request_body`, body);
       const expectedKind = `ak.self.agent.${action}`;
       const expectedFrom = action === "pause" ? "active" : "paused";
       const expectedTo = action === "pause" ? "paused" : "active";
       const expectedReason = action === "pause" ? body.reason : undefined;
       const payload = event?.payload;
-      const valid =
+      const valid = agent.lifecycle === expectedFrom &&
         event?.kind === expectedKind &&
+        canonicalJson(event?.scope_ref) === canonicalJson({ kind: "realm", realm_id: keyState.principal_control_realm_id }) &&
         event?.realm_id === keyState.principal_control_realm_id &&
-        event?.actor_id === agentId &&
-        event?.executed_by === accountPrincipalId &&
+        canonicalJson(event?.actor_id) === canonicalJson(accountActorIdFor(agentId)) &&
+        canonicalJson(event?.executed_by) === canonicalJson(accountActorId) &&
         event?.authorization_ref === keyState.controller_authorization_ref &&
-        Array.isArray(event?.proofs) &&
-        event.proofs.length > 0 &&
-        lifecycleSubmission?.authorization_lease &&
-        lifecycleSubmission?.control_proposal_ack &&
-        payload?.transition === action &&
-        payload?.previous_status === expectedFrom &&
-        payload?.reason === expectedReason;
+        event?.producer_proof?.kind === "detached_jws" &&
+        event.producer_proof.verification_method === `${didFromCoreId(accountPrincipalCoreId)}#${currentDeviceId}` &&
+        payload?.transition === action && payload?.previous_status === expectedFrom && payload?.reason === expectedReason;
       if (!valid) {
         return mockProblem(route, "param_invalid", "lifecycle_event does not match the delegated Agent transition");
       }
       agent.lifecycle = expectedTo;
-      agent.updated_at = "2026-07-19T08:00:00.000Z";
-      return json(route, { ok: true, status: expectedTo });
+      agent.updated_at = event.created_at;
+      return json(route, { status: expectedTo });
     }
 
     const agentDeactivateMatch = url.pathname.match(
@@ -3627,7 +3615,7 @@ export async function mockArkretApi(
       expect(event?.payload?.transition).toBe("deactivate");
       expect(event?.payload?.reason).toBe(body.reason);
       agent.lifecycle = "deactivated";
-      agent.updated_at = "2026-07-19T08:00:00.000Z";
+      agent.updated_at = event.created_at;
       keyState.active_authorizations = [];
       personalAgentGrants.set(agentId, []);
       return json(route, { status: "deactivated" });
@@ -3903,7 +3891,7 @@ export async function mockArkretApi(
       url.pathname === "/_arkret/edge/push/unregister-device" &&
       route.request().method() === "POST"
     ) {
-      return json(route, { ok: true });
+      return route.fulfill({ status: 204 });
     }
 
     if (
@@ -4076,12 +4064,13 @@ export async function mockArkretApi(
       route.request().method() === "GET"
     ) {
       if (decodeURIComponent(url.pathname.split("/")[4]) === currentDirectoryServiceResolution.service_id) {
-        return route.fulfill({ status: 404 });
+        return mockProblem(route, "not_found", "resource not found");
       }
       return json(route, inksonWire("service-resolution", {}));
     }
 
-    return route.fulfill({ status: 404 });
+    const operation = mockOperationForRequest(route.request().method(), url.pathname);
+    throw new Error(`mock operation is not implemented: ${operation.operation_id}`);
   });
   return {
     demoRealm: DEMO_REALM,
@@ -4373,7 +4362,7 @@ function mockProblem(route: Route, code: string, detail: string, reasonCode?: st
   return json(route, body, body.status, "application/problem+json");
 }
 
-function json(route: Route, body: unknown, status = 200, contentType = "application/json") {
+function json(route: Route, body: unknown, status = 200, contentType = "application/json", headers?: Record<string, string>) {
   if (new URL(route.request().url()).pathname.startsWith("/_arkret/") && status >= 400) {
     validateRegisteredMockProblem(status, body, contentType);
   }
@@ -4382,5 +4371,6 @@ function json(route: Route, body: unknown, status = 200, contentType = "applicat
     status,
     contentType,
     body: JSON.stringify(body),
+    ...(headers ? { headers } : {}),
   });
 }

@@ -83,6 +83,7 @@ export type FulfilledResponse = {
   status: number;
   contentType: string;
   body: unknown;
+  headers?: Record<string, string>;
 };
 
 type RouteHandler = (route: unknown) => unknown | Promise<unknown>;
@@ -93,13 +94,13 @@ export function captureRouteHandler(): {
   handler: () => RouteHandler;
 } {
   let captured: RouteHandler | undefined;
+  const register = async (_pattern: unknown, handler: RouteHandler) => { captured = handler; };
+  const context = { route: register, addInitScript: async () => {} };
   const page = {
-    route: async (_pattern: unknown, handler: RouteHandler) => {
-      captured = handler;
-    },
+    route: register,
     addInitScript: async () => {},
     on: () => {},
-    context: () => ({ route: async () => {}, addInitScript: async () => {} }),
+    context: () => context,
   };
   return {
     page,
@@ -116,7 +117,7 @@ export function captureRouteHandler(): {
 /// `null` when it deferred to the network (`route.continue()`).
 export async function driveOnce(
   handler: RouteHandler,
-  request: { url: string; method: string; postData?: unknown; headers?: Record<string, string> },
+  request: { url: string; method: string; postData?: unknown; headers?: Record<string, string>; onFulfill?: () => void },
 ): Promise<FulfilledResponse | null> {
   let fulfilled: FulfilledResponse | null = null;
   const fakeRequest = {
@@ -129,72 +130,20 @@ export async function driveOnce(
   };
   const route = {
     request: () => fakeRequest,
-    fulfill: async (response: { status?: number; body?: string; contentType?: string }) => {
+    fulfill: async (response: { status?: number; body?: unknown; json?: unknown; contentType?: string; headers?: Record<string, string> }) => {
       let body: unknown;
       try {
-        body = response.body === undefined ? undefined : JSON.parse(response.body);
+        body = response.json !== undefined ? response.json : response.body === undefined ? undefined : Buffer.isBuffer(response.body) ? response.body : JSON.parse(String(response.body));
       } catch {
         body = response.body;
       }
-      fulfilled = { status: response.status ?? 200, contentType: response.contentType ?? "", body };
+      request.onFulfill?.();
+      fulfilled = { status: response.status ?? 200, contentType: response.contentType ?? "", body,
+        ...(response.headers ? { headers: response.headers } : {}) };
     },
     continue: async () => {},
     abort: async () => {},
   };
   await handler(route);
   return fulfilled;
-}
-
-/// The mock rejects a body the moment it does not match the spec, and every
-/// such rejection carries one of these two markers. Anything else the driver
-/// provokes — a branch that wants a request body it was not given, an
-/// assertion about a field the driver did not send — is the driver's problem,
-/// not a drift between the mock and the spec.
-export function isShapeViolation(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return (
-    message.includes("mock response violates") ||
-    message.includes("validation failed at instance") ||
-    message.includes("forbids a JSON body") ||
-    message.includes("requires a JSON body") ||
-    message.includes("retired field")
-  );
-}
-
-/// Trim a violation to the part that names what drifted. The mock echoes the
-/// whole rejected body into the message, which can run to tens of kilobytes.
-export function violationSummary(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
-  const instance = message.match(
-    /validation failed at instance '([^']*)' against '([^']*)' \(([^)]*)\)(?::\s*(.*))?/,
-  );
-  if (instance) {
-    const [, path, against, keyword, detail] = instance;
-    return `${path} against ${against} (${keyword})${detail ? `: ${detail.split("\n")[0]}` : ""}`;
-  }
-  const violates = message.match(/mock response violates ([^:]+):/);
-  if (violates) {
-    return `${violates[1]}: <body elided>`;
-  }
-  return message.split("\n")[0];
-}
-
-/// The full rejection text, which embeds the body the mock tried to serve.
-/// Comparing this across two different synthetic requests is what separates a
-/// hard-coded response (identical both times, so a real drift) from one
-/// assembled out of the request (different both times, so the driver's own
-/// filler is what got rejected).
-///
-/// Volatile values are erased first. Some responses come from `inkson-wire`,
-/// which stamps `Utc::now()` and signs it — so the same hard-coded shape comes
-/// back with different bytes on every call and would be misread as
-/// request-dependent. That is not hypothetical: it is how the service
-/// resolution and governance dependency fixtures stayed stale while this gate
-/// read green.
-export function violationFingerprint(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
-  return message
-    .replace(/\d{4}-\d{2}-\d{2}T[\d:.]+Z/g, "<timestamp>")
-    .replace(/\b[0-9a-f]{64}\b/g, "<digest>")
-    .replace(/"jws":"[^"]*"/g, '"jws":"<jws>"');
 }

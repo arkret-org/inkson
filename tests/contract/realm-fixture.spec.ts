@@ -11,6 +11,7 @@ type Fixture = {
   committed_events: Array<{ event: Record<string, any>; commit: Record<string, any> }>;
   signer_facts: Array<Record<string, any>>;
   source_authorization: { event: Record<string, any>; commit: Record<string, any> };
+  source_create: { event: Record<string, any>; commit: Record<string, any> };
   identity: { did: string; account_id: { principal_id: string; station_id: string }; principal_control_realm_id: string; inception_log_entry: Record<string, any>; resolution: Record<string, any> };
   account_entry: Record<string, any>;
   ids: Record<string, string>;
@@ -726,4 +727,14 @@ test("Account continuation rejects unknown and cross-filter handles without adva
   const frames = decodeStreamFrames(resumed?.body);
   expect(frames).toEqual([{ kind: "delta", cursor: issuedCursor }]);
   expect(() => validateMockSchema("schemas/account-subscribe-frame.schema.json", frames[0])).not.toThrow();
+});
+
+test("founding PCR sources obey the public committed Event schema without private DID refs", async () => {
+  const fixture = build();
+  validateMockSchema("schemas/service-operation-dtos.schema.json#/$defs/CommittedEventView", fixture.source_create);
+  expect(fixture.source_create.event.semantic_refs).toBeUndefined();
+  expect(fixture.source_create.event.payload.object.founding_device_descriptor.hpke_key).toMatch(/^z6LS[1-9A-HJ-NP-Za-km-z]+$/);
+  const invalid = structuredClone(fixture.source_create);
+  invalid.event.semantic_refs = [{ id: fixture.identity.inception_log_entry.versionId, role: "did_inception", critical: true }];
+  expect(() => validateMockSchema("schemas/service-operation-dtos.schema.json#/$defs/CommittedEventView", invalid)).toThrow();
 });
