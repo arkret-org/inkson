@@ -17,7 +17,7 @@ use ed25519_dalek::SigningKey;
 use serde_json::{Value, json};
 
 const STATION: &str = "did:web:station.example";
-const NONCE: &str = "AAAAAAAAAAAAAAAAAAAAAA";
+const NONCE: &str = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE";
 
 fn time(seconds: i64) -> chrono::DateTime<Utc> {
     Utc.timestamp_opt(1_800_000_000 + seconds, 0).unwrap()
@@ -476,6 +476,12 @@ pub(crate) fn verified_realm_fixture_from_genesis(
         bundle_issued_at: time(50),
         current_assertion: assertion,
     };
+    arkret_sdk::RealmAuthorityBundleRequestBody {
+        realm_id: bundle.realm_id.clone(),
+        nonce: bundle.current_assertion.nonce.clone(),
+    }
+    .validate()
+    .expect("fixture nonce must satisfy the public request contract");
     let keys = RealmAuthorityKeyMap::new().with_key(
         &station.method,
         PublicKeyMaterial::Ed25519Raw {

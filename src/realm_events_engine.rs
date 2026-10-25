@@ -2577,7 +2577,7 @@ mod tests {
                 stream_position: later_head.stream_position,
             };
             value["controller_epoch"] = json!(epoch);
-            value["authority_generation"] = json!(generation);
+            value["authority_generation"] = json!(generation.to_string());
             validate_signed_floor_rows(
                 &realm_id,
                 &bundle,
@@ -5548,7 +5548,8 @@ mod tests {
         let mut pages = Vec::new();
         let wrong_nonce = arkret_identity::RealmAuthorityFreshness::new(
             freshness.now,
-            arkret_sdk::Base64UrlString::new("BBBBBBBBBBBBBBBBBBBBBB").unwrap(),
+            arkret_sdk::Base64UrlString::new("AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI")
+                .unwrap(),
         );
         assert!(
             stage_verified_page(

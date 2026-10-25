@@ -13,6 +13,8 @@ class MockInventoryTests(unittest.TestCase):
         self.assertEqual(stream["200"]["content"]["application/x-ndjson"]["schema_ref"], "schemas/account-subscribe-frame.schema.json")
         self.assertEqual(stream["409"]["schema_combination"], "anyOf")
         self.assertEqual(len(stream["409"]["schema_alternatives"]), 2)
+        self.assertEqual(operations["ak.self.account_data.resource.replace.v1"]["request"]["schema_ref"], "schemas/account-data-operations.schema.json#/$defs/account_data_replace_request_body")
+        self.assertEqual(operations["ak.open.realm_authority.read.bundle.v1"]["request"]["schema_ref"], "schemas/authority-commit-operations.schema.json#/$defs/realm_authority_bundle_request_body")
         blob = operations["ak.self.blob.resource.get.v1"]["responses"]["200"]
         self.assertTrue(blob["content"]["application/octet-stream"]["binary"])
         locator = operations["ak.self.invite_locator.command.issue.v1"]["responses"]["200"]

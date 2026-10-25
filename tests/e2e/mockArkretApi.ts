@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { hasPendingRealmCreate } from "./pendingCreator";
+import { remainingOperationMock } from "./mockRemainingOperations";
 import {
   currentHttpDescribeCapabilities,
   DIRECTORY_DESCRIBE_BUNDLE,
@@ -206,6 +207,10 @@ type InksonWireCommand =
   | "mock-realm-fixture"
   | "mock-realm-verify"
   | "mock-realm-authority-bundle"
+  | "mock-realm-authority-bundle-for-request"
+  | "mock-runtime-candidate"
+  | "mock-operation-verify"
+  | "mock-account-data-value"
   | "mock-current-principal"
   | "mock-realm-scan"
   | "mock-realm-streams"
@@ -340,7 +345,7 @@ function watchReadErrorDescriptor(code: string): MockErrorDescriptor {
   // addition to the protected-operation failure surface.
   if (operations.length !== 1 || !(universalMockErrorCodes.has(code)
     || operations[0].operation_specific.includes(code)
-    || code === "not_found" || code === "revision_unavailable")) {
+)) {
     throw new Error(`${code} is outside the exact self watch read failure surface`);
   }
   return descriptor;
@@ -613,6 +618,15 @@ export function validateMockTransportResponse(operation: MockOperationInventoryR
     }
   }
   const body = response.json !== undefined ? response.json : response.body;
+  if (operation.method === "HEAD") {
+    if (body !== undefined && body !== "") throw new Error("mock HEAD response forbids a body");
+    if (status >= 400) {
+      const mapping = mockOperationErrorMapping.operations.find(entry => entry.operation_id === operation.operation_id);
+      if (!mapping || !mockErrorRegistry.codes.some(entry => entry.status === "active" && entry.http_status === status
+        && (universalMockErrorCodes.has(entry.code) || mapping.operation_specific.includes(entry.code)))) throw new Error("mock HEAD response violates operation error status");
+    } else if (!contract) throw new Error("mock HEAD response violates undeclared success status");
+    return;
+  }
   const content = contract?.content ?? {};
   const media = content[mediaType];
   // A downloaded Blob retains its original MIME, including application/json.
@@ -693,8 +707,15 @@ export function validateMockResponseForOperation(
       }
       if (accepted === 0 || (response.schema_combination === "oneOf" && accepted !== 1)) throw new Error(`mock response violates declared error alternatives for ${operation.operation_id}`);
     }
-    validateRegisteredMockProblem(status, value, contentType);
     const problem = value as Record<string, unknown>;
+    const accountRevision = operation.operation_id.startsWith("ak.self.account_data.resource.")
+      && ["https://arkret.org/problems/cas_conflict", "https://arkret.org/problems/not_found"].includes(String(problem?.type));
+    const revisionMembers = ["account_data_key", "current_revision", "current_entry"];
+    if (accountRevision) {
+      const extensions = Object.fromEntries(revisionMembers.filter(key => Object.hasOwn(problem, key)).map(key => [key, problem[key]]));
+      validateMockSchema("schemas/account-data-operations.schema.json#/$defs/account_data_revision_problem_extensions", extensions);
+    }
+    validateRegisteredMockProblem(status, value, contentType, accountRevision ? revisionMembers : []);
     const descriptor = mockErrorRegistry.codes.find(entry => entry.type_uri === problem.type && entry.status === "active")!;
     const mappings = mockOperationErrorMapping.operations.filter(entry => entry.operation_id === operation.operation_id);
     if (typeof problem.reason_code === "string" && (mappings.length !== 1 || !mappings[0].operation_specific.includes(problem.reason_code))) {
@@ -730,7 +751,7 @@ export function validateMockResponseForOperation(
   validateMockSchema(response.schema_ref, value);
 }
 
-export function validateRegisteredMockProblem(status: number, value: unknown, contentType: string) {
+export function validateRegisteredMockProblem(status: number, value: unknown, contentType: string, ownedMembers: string[] = []) {
   if (contentType !== "application/problem+json") throw new Error("mock response violates Arkret Problem: failures require application/problem+json");
   const problem = value as Record<string, unknown> | undefined;
   if (!problem || typeof problem !== "object" || Array.isArray(problem) || ["error", "errcode", "code", "message", "details", "ok"].some(key => key in problem)) {
@@ -739,7 +760,7 @@ export function validateRegisteredMockProblem(status: number, value: unknown, co
   // These mock producers emit a deliberately minimal registered Problem.
   // Extra producer extensions need an owned contract, not the consumer's
   // RFC tolerance for arbitrary extension members.
-  const members = new Set(["type", "title", "status", "detail", "instance", "reason_code"]);
+  const members = new Set(["type", "title", "status", "detail", "instance", "reason_code", ...ownedMembers]);
   if (Object.keys(problem).some(key => !members.has(key))) throw new Error("mock response violates unregistered producer extension");
   const descriptor = mockErrorRegistry.codes.find(entry => entry.status === "active" && entry.type_uri === problem.type);
   if (!descriptor || problem.status !== status || descriptor.http_status !== status || problem.title !== descriptor.title) {
@@ -1719,9 +1740,36 @@ export async function mockArkretApi(
           fields: { labels: ["planning"], due_at: "May 12" },
         },
       ];
+  let appletMetadataResolution: any;
+  const pairingBootstraps = new Map<string, any>();
+  const remaining = remainingOperationMock({
+    accountId, actor: accountActorId, did: accountPrincipalId, deviceId: currentDeviceId,
+    seed: options.currentDeviceSigningSeedB64url ?? Buffer.alloc(32, 1).toString("base64url"),
+    realmId: DEMO_REALM, principalRealmId: demoNative.identity.principal_control_realm_id, demo: demoNative,
+    nativeFixtures, agents: personalAgents, pairingBootstraps, agentProjection: projectAgent, agentAxes: projectAgentAxes,
+    circle: id => circleStates.has(id) && circleStates.get(id) !== "tombstoned" ? circleView(id) : undefined,
+    stationAccountData: () => inviteDeliveryContent,
+    accountDataRules: JSON.parse(readFileSync(resolve(inksonRepoRoot, "../arkret-spec/spec/v1/artifacts/registry/account-data-key-registry.json"), "utf8")).account_data_key_patterns,
+    native: (command, value) => inksonWire(command as Parameters<typeof inksonWire>[0], value),
+    validate: validateMockSchema, json,
+    problem: (route, code, detail, extensions, headers) => {
+      const problem = { ...buildMockProblem(code, detail), ...extensions };
+      return route.fulfill({ status: problem.status, contentType: "application/problem+json", json: problem, headers });
+    },
+    operation: (method, path) => mockOperationForRequest(method, path).operation_id,
+    appletResolution: () => appletMetadataResolution ??= inksonWire("service-resolution", { service_kind: "applet_service" }),
+    appletDescribe: resolution => ({ ...principalServiceDescribe("https://applet.example/"),
+      service_id: resolution.service_id, service_kind: "applet_service", supported_profiles: [], authentication_metadata: {},
+      service_resolution: { did: resolution.normalized_did_document.did,
+        method_history_head: resolution.method_history_evidence.boundary.to_method_history_head,
+        version_id: resolution.method_history_evidence.boundary.to_version_id },
+      ...currentHttpDescribeCapabilities(["ak.operation_bundle.applet_service.describe.v1"], "https://applet.example/"),
+    }),
+  });
   await page.route("**/*", async (rawRoute) => {
     const route = guardMockRoute(rawRoute);
     const url = new URL(route.request().url());
+    if (url.hostname === "applet.example" && url.pathname.startsWith("/_arkret/") && await remaining(route, url)) return;
     if (url.hostname === "directory.example") {
       const headers = route.request().headers();
       for (const name of ["authorization", "dpop", "cookie", "signature", "signature-input", "source-service-id", "destination-service-id"]) {
@@ -3658,6 +3706,15 @@ export async function mockArkretApi(
         updated_at: "2026-07-06T00:30:00.000Z",
       });
       personalAgentKeyStates.set(agentId, keyState);
+      // Issued only by this mock renewal transition; never inferred by resolve.
+      const pairingToken = Buffer.from(`fixture-pairing-token:${keyState.pairing_request_id}`).toString("base64url");
+      for (const [token, bootstrap] of pairingBootstraps) if (bootstrap.agent_id === agentId) pairingBootstraps.delete(token);
+      pairingBootstraps.set(pairingToken, {
+        arkret_base_url: "https://local.host", service_id: accountId.station_id, agent_id: agentId,
+        pairing_request_id: keyState.pairing_request_id, pairing_code: keyState.pairing_code,
+        pairing_expires_at: keyState.pairing_expires_at,
+        runtime_identity: { controller_account_id: accountId, verification_method: `${didFromCoreId(agentId)}#runtime-pairing` },
+      });
       return json(route, {
         agent_id: agentId,
         principal_control_realm_id: keyState.principal_control_realm_id,
@@ -3671,16 +3728,6 @@ export async function mockArkretApi(
         pairing_request_id: keyState.pairing_request_id,
         pairing_code: keyState.pairing_code,
         expires_at: keyState.pairing_expires_at,
-      });
-    }
-
-    const agentParticipationMatch = url.pathname.match(
-      /^\/_arkret\/self\/agents\/([^/]+)\/participation$/,
-    );
-    if (agentParticipationMatch && route.request().method() === "GET") {
-      return json(route, {
-        agent_id: decodeURIComponent(agentParticipationMatch[1]),
-        participation_entries: [],
       });
     }
 
@@ -3740,6 +3787,7 @@ export async function mockArkretApi(
           },
         ],
       };
+      for (const [token, bootstrap] of pairingBootstraps) if (bootstrap.agent_id === agentId) pairingBootstraps.delete(token);
       delete nextKeyState.pairing_request_id;
       delete nextKeyState.pairing_code;
       delete nextKeyState.pairing_expires_at;
@@ -3923,11 +3971,8 @@ export async function mockArkretApi(
       if (encoded) {
         return route.fulfill({ status: 200, contentType: "application/octet-stream", body: Buffer.from(encoded, "base64url") });
       }
-      return route.fulfill({
-        status: 200,
-        contentType: "image/png",
-        body: Buffer.from(DEMO_AVATAR_PNG_BASE64, "base64"),
-      });
+      if (reference !== DEMO_BLOB_REF) return mockProblem(route, "not_found", "Blob not found");
+      return route.fulfill({ status: 200, contentType: "image/png", body: Buffer.from(DEMO_AVATAR_PNG_BASE64, "base64") });
     }
 
     if (
@@ -3988,23 +4033,6 @@ export async function mockArkretApi(
           accepted_at: acceptedAt,
         });
       }
-    }
-
-    const accountDataMatch = url.pathname.match(
-      /^\/_arkret\/self\/account_data\/([^/]+)$/,
-    );
-    if (accountDataMatch && route.request().method() === "GET") {
-      const accountDataKey = decodeURIComponent(accountDataMatch[1]);
-      return json(route, {
-        account_data_key: accountDataKey,
-        revision: accountDataKey === "ak.account.invite_delivery" && inviteDeliveryContent ? 1 : 0,
-        content:
-          accountDataKey === "ak.account.invite_delivery"
-            ? inviteDeliveryContent
-            : null,
-        updated_at: accountDataKey === "ak.account.invite_delivery" && inviteDeliveryContent
-          ? inviteDeliveryContent.updated_at : "2026-04-28T12:00:00.000Z",
-      });
     }
 
     const keyBackupMatch = url.pathname.match(
@@ -4069,6 +4097,7 @@ export async function mockArkretApi(
       return json(route, inksonWire("service-resolution", {}));
     }
 
+    if (await remaining(route, url)) return;
     const operation = mockOperationForRequest(route.request().method(), url.pathname);
     throw new Error(`mock operation is not implemented: ${operation.operation_id}`);
   });

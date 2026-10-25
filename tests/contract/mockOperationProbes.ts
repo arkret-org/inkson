@@ -1,3 +1,4 @@
+import { additionalOperationProbe } from "./remainingOperationProbes";
 import { expect } from "@playwright/test";
 import {
   BOB_ACCOUNT_ID, CURRENT_ACCOUNT_ACTOR_ID, CURRENT_ACCOUNT_ID, CURRENT_ASSISTANT_ACCOUNT_ID, CURRENT_ASSISTANT_CORE_ID,
@@ -19,6 +20,9 @@ export const VALID_REQUEST_OPERATIONS = new Set([
 ]);
 
 export async function operationProbe(operation: MockOperation, handler: Handler): Promise<ProbeRequest> {
+  if (operation.operation_id === "ak.self.blob.resource.get.v1") return { method: "GET", url: "https://local.host/_arkret/self/blob/get?blob_ref=ak:blob:sha256:431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460" };
+  const additional = await additionalOperationProbe(operation, handler);
+  if (additional) return additional;
   const directory = operation.path_template.startsWith("/_arkret/find/directory/");
   const path = concretePath(operation.path_template.replaceAll("{agent_id}", CURRENT_ASSISTANT_CORE_ID));
   const request: ProbeRequest = {

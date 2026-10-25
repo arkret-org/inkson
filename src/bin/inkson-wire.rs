@@ -64,6 +64,9 @@ fn main() -> Result<()> {
             serde_json::to_value(service_resolution(input)?.normalized_did_document)?
         }
         "mock-operation-request" => operation_fixture::build(input)?,
+        "mock-operation-verify" => operation_fixture::verify(input)?,
+        "mock-runtime-candidate" => operation_fixture::runtime_candidate(input)?,
+        "mock-account-data-value" => operation_fixture::account_data_value(input)?,
         "mock-ice-config" => {
             let request: arkret_models_collaboration::objects::media::MediaIceConfigurationRequestBody =
                 serde_json::from_value(input)?;
@@ -99,6 +102,9 @@ fn main() -> Result<()> {
         "mock-realm-list" => realm_fixture::realm_list(input)?,
         "mock-realm-verify" => realm_fixture::verify(input)?,
         "mock-realm-authority-bundle" => realm_fixture::authority_bundle(input)?,
+        "mock-realm-authority-bundle-for-request" => {
+            realm_fixture::authority_bundle_for_request(input)?
+        }
         "mock-current-principal" => realm_fixture::current_principal(input)?,
         "mock-realm-scan" => realm_fixture::scan(input)?,
         "mock-realm-streams" => realm_fixture::streams(input)?,
@@ -504,9 +510,14 @@ fn service_resolution(input: Value) -> Result<arkret_sdk::AuthenticatedServiceRe
         .unwrap_or(arkret_wire::ServiceKind::Station);
     let resolution = match kind {
         arkret_wire::ServiceKind::Station => mock_service_authority()?.resolution,
-        arkret_wire::ServiceKind::DirectoryService => {
-            let did = arkret_wire::Did::new("did:web:directory.example".to_owned())?;
-            let key = ed25519_dalek::SigningKey::from_bytes(&[32; 32]);
+        arkret_wire::ServiceKind::DirectoryService | arkret_wire::ServiceKind::AppletService => {
+            let (host, seed) = if kind == arkret_wire::ServiceKind::DirectoryService {
+                ("directory.example", 32)
+            } else {
+                ("applet.example", 33)
+            };
+            let did = arkret_wire::Did::new(format!("did:web:{host}"))?;
+            let key = ed25519_dalek::SigningKey::from_bytes(&[seed; 32]);
             let method = format!("{did}#signing-1");
             let document: arkret_models_identity::DidDocument = serde_json::from_value(json!({
                 "@context":["https://www.w3.org/ns/did/v1"],
@@ -515,10 +526,10 @@ fn service_resolution(input: Value) -> Result<arkret_sdk::AuthenticatedServiceRe
                     "publicKeyMultibase":arkret_sdk::ed25519_pubkey_to_did_key_multibase(key.verifying_key().as_bytes())}],
                 "assertionMethod":[method],
                 "service":[{"id":format!("{did}#arkret"),"type":"ArkretService",
-                    "serviceKind":kind.as_str(),"serviceEndpoint":"https://directory.example/"}]
+                    "serviceKind":kind.as_str(),"serviceEndpoint":format!("https://{host}/")}]
             }))?;
-            // Directory reads use independently fetched current did:web state;
-            // they do not supply historical signer or Realm authority evidence.
+            // Metadata fixtures use independently fetched current did:web state;
+            // they supply no historical signer or Realm authority evidence.
             arkret_identity::build_authenticated_did_web_service_resolution(
                 arkret_wire::project_did_to_core_id(&did)?,
                 kind.as_str().to_owned(),
@@ -526,7 +537,7 @@ fn service_resolution(input: Value) -> Result<arkret_sdk::AuthenticatedServiceRe
                 chrono::Utc::now(),
             )?
         }
-        _ => bail!("service fixture supports only Station and Directory roles"),
+        _ => bail!("service fixture supports only Station, Directory and Applet metadata roles"),
     };
     Ok(resolution)
 }

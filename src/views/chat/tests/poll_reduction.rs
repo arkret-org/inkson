@@ -102,7 +102,8 @@ fn verified_page_variant(
         bundle.current_assertion.realm_stream_head = bundle.realm_stream_head.clone();
         FixtureStation::did_web().reassert_for_nonce(
             &mut bundle,
-            arkret_sdk::Base64UrlString::new("AAAAAAAAAAAAAAAAAAAAAA").unwrap(),
+            arkret_sdk::Base64UrlString::new("AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE")
+                .unwrap(),
             fixture_time(50),
         );
     }

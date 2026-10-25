@@ -1,3 +1,4 @@
+import { IMPLEMENTED_REMAINING_OPERATIONS } from "./remainingOperationProbes";
 // Operations with no response producer in this browser UI mock. Each must
 // fail before fulfill; implementing a producer requires a valid scenario.
 export const UNIMPLEMENTED_OPERATIONS = new Set<string>(
@@ -134,8 +135,10 @@ export const UNIMPLEMENTED_OPERATIONS = new Set<string>(
   "ak.self.third_party_invite.read.acceptance_attestation.v1"
 ]);
 
-// Provider-authenticated traffic is exercised by native provider fixtures.
+// Provider-authenticated traffic requires native fixtures not executed by this suite.
 // A client mock must fail before emitting an invented provider response.
+for (const operation of IMPLEMENTED_REMAINING_OPERATIONS) UNIMPLEMENTED_OPERATIONS.delete(operation);
+
 export const PROVIDER_FIXTURE_OPERATIONS = new Set<string>(
 [
   "ak.open.mimi.command.request_consent.v1",

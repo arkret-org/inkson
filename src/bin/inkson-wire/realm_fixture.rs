@@ -2092,6 +2092,43 @@ fn require_fixture_readable(fixture: &Fixture) -> Result<()> {
 }
 
 pub(super) fn authority_bundle(input: Value) -> Result<Value> {
+    authority_bundle_with_nonce(
+        input,
+        Base64UrlString::new(base64url_encode([1; 32])).map_err(anyhow::Error::msg)?,
+    )
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AuthorityBundleInput {
+    fixture: Fixture,
+    request: arkret_wire::RealmAuthorityBundleRequestBody,
+}
+
+pub(super) fn authority_bundle_for_request(input: Value) -> Result<Value> {
+    let input: AuthorityBundleInput = serde_json::from_value(input)?;
+    input.request.validate()?;
+    ensure!(
+        input.fixture.snapshot.realm_id == input.request.realm_id,
+        "authority bundle Realm mismatch"
+    );
+    ensure!(
+        input
+            .fixture
+            .committed_events
+            .first()
+            .ok_or_else(|| anyhow::anyhow!("fixture has no genesis"))?
+            .event
+            .typed_payload::<event_spec::RealmCreate>()?
+            .object
+            .purpose
+            != arkret_sdk::RealmPurpose::PrincipalControl,
+        "fixture does not prove public PCR disclosure eligibility"
+    );
+    authority_bundle_with_nonce(serde_json::to_value(input.fixture)?, input.request.nonce)
+}
+
+fn authority_bundle_with_nonce(input: Value, nonce: Base64UrlString) -> Result<Value> {
     let fixture: Fixture = serde_json::from_value(input)?;
     let fixture = validate_fixture(&fixture)?;
     let authority = mock_service_authority()?;
@@ -2112,7 +2149,7 @@ pub(super) fn authority_bundle(input: Value) -> Result<Value> {
         current_service_id: authority.service_id.clone(),
         last_handoff_ref: None,
         realm_stream_head: head.clone(),
-        nonce: Base64UrlString::new(base64url_encode([1; 16])).map_err(anyhow::Error::msg)?,
+        nonce,
         expires_at: issued_at + chrono::Duration::minutes(5),
         signature: arkret_signatures::detached_object::sign_detached_object(
             &json!({}),

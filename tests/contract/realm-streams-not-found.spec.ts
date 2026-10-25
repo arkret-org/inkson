@@ -39,6 +39,6 @@ test("Realm stream enumeration returns the same closed not_found for absent and 
     { status: 403 }, { title: "Wrong title" }, { type: "https://arkret.org/problems/unregistered" },
     { streams: [] }, { detail: "" },
   ]) expect(() => validate(404, { ...(missing!.body as object), ...change })).toThrow();
-  const unrelated = operations.find(row => row.operation_id !== operationId && !row.responses["404"] && !row.responses.default)!;
+  const unrelated = operations.find(row => row.operation_id === "ak.edge.applet.read.ping.v1")!;
   expect(() => validateMockResponseForOperation(unrelated, 404, missing!.body, "application/problem+json")).toThrow();
 });

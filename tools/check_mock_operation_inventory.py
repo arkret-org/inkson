@@ -31,7 +31,7 @@ OPENAPI_PATH = SPEC_ARTIFACTS / "openapi" / "arkret-service-api.openapi.yaml"
 OPERATION_REGISTRY_PATH = SPEC_ARTIFACTS / "registry" / "operation-registry.json"
 SCHEMA_REGISTRY_PATH = SPEC_ARTIFACTS / "registry" / "schema-registry.json"
 OUTPUT_PATH = REPO / "tests" / "e2e" / "mock-operation-inventory.json"
-MOCK_SOURCES = (REPO / "tests" / "e2e" / "mockArkretApi.ts",)
+MOCK_SOURCES = (REPO / "tests" / "e2e" / "mockArkretApi.ts", REPO / "tests" / "e2e" / "mockRemainingOperations.ts")
 HTTP_METHODS = {"get", "post", "put", "patch", "delete", "query", "head"}
 RETIRED_MOCK_FIELDS = {"registry_mode", "supported_receipts"}
 RETIRED_NESTED_MOCK_FIELDS = {"authentication_metadata": "mode", "method_evidence": "mode"}
@@ -274,11 +274,21 @@ def generate() -> dict[str, Any]:
                     "content": media_contracts,
                     "headers": headers,
                 }
+            request_body = resolve_local_ref(openapi, operation.get("requestBody", {}))
+            request_schema = request_body.get("content", {}).get("application/json", {}).get("schema")
+            request_ref = external_schema_reference(openapi, request_schema) if request_schema else None
+            request_contract = {
+                "required": request_body.get("required", False),
+                "schema_ref": request_ref,
+                "inline_schema": resolve_local_ref(openapi, request_schema) if request_schema and not request_ref else None,
+            }
             operations.append(
                 {
                     "method": method.upper(),
                     "path_template": path_template,
                     "operation_id": selector,
+                    "request": request_contract,
+                    "parameters": [resolve_local_ref(openapi, parameter) for parameter in path_item.get("parameters", []) + operation.get("parameters", [])],
                     "responses": responses,
                 }
             )
