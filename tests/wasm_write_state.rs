@@ -1,53 +1,39 @@
 //! Real browser rendering of the lifecycle badge used by Kanban cards.
 #![cfg(all(target_arch = "wasm32", feature = "web"))]
-
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use dioxus::prelude::*;
-use inkson::components::write_state::{WriteState, WriteStateBadge};
+use glory::Cage;
+use inkson::components::{WriteState, WriteStateBadgeProps, write_state_badge};
 use wasm_bindgen_test::*;
-
+#[path = "support/glory_web.rs"]
+mod glory_web;
 wasm_bindgen_test_configure!(run_in_browser);
-
-#[derive(Clone)]
-struct Control {
-    state: Rc<RefCell<Option<Signal<WriteState>>>>,
-}
-
-fn badge_page(control: Control) -> Element {
-    let state = use_signal(|| WriteState::Queued);
-    *control.state.borrow_mut() = Some(state);
-    use_context_provider(|| inkson::i18n::init_i18n_with_locale(inkson::i18n::UiLocale::Zh));
-    rsx! { WriteStateBadge { state: state() } }
-}
-
 #[wasm_bindgen_test(async)]
 async fn browser_badge_keeps_pending_unconfirmed_and_renders_acceptance_separately() {
-    let document = web_sys::window().unwrap().document().unwrap();
-    let root = document.create_element("div").unwrap();
-    document.body().unwrap().append_child(&root).unwrap();
-    let control = Control {
-        state: Rc::new(RefCell::new(None)),
-    };
-    let dom = VirtualDom::new_with_props(badge_page, control.clone());
-    let runtime = dom.runtime();
-    let (abort, registration) = futures_util::future::AbortHandle::new_pair();
-    let root_for_render = root.clone();
-    wasm_bindgen_futures::spawn_local(async move {
-        let _ = futures_util::future::Abortable::new(
-            dioxus::web::run(dom, dioxus::web::Config::new().rootelement(root_for_render)),
-            registration,
-        )
-        .await;
-    });
-    for _ in 0..100 {
-        if control.state.borrow().is_some() {
-            break;
-        }
-        gloo_timers::future::TimeoutFuture::new(10).await;
-    }
-    let mut state = control.state.borrow().expect("mounted badge");
+    let root = glory_web::root();
+    let control = Rc::new(RefCell::new(None::<Cage<WriteState>>));
+    let mounted = control.clone();
+    let app = glory::web::launch_with(root.clone(), move |scope| {
+        let context = glory_web::context(scope);
+        context
+            .locale
+            .revise(|value| *value = inkson::i18n::UiLocale::Zh);
+        let state = scope.cage(WriteState::Queued);
+        *mounted.borrow_mut() = Some(state);
+        inkson::presentation::widgets::reactive(state, move |scope, state| {
+            write_state_badge(
+                scope,
+                context.clone(),
+                WriteStateBadgeProps {
+                    state,
+                    icon_only: None,
+                },
+            )
+        })
+    })
+    .unwrap();
+    let state = control.borrow().unwrap();
     for (tag, label, success) in [
         ("queued", "排队中", false),
         ("submitting", "发送中", false),
@@ -60,32 +46,19 @@ async fn browser_badge_keeps_pending_unconfirmed_and_renders_acceptance_separate
         ("synced", "已同步", true),
     ] {
         let next = WriteState::from_local_state(tag).unwrap();
-        runtime.in_scope(ScopeId::ROOT, || state.set(next));
-        for _ in 0..100 {
-            let badge = root
-                .query_selector("[data-testid='write-state-badge']")
-                .unwrap();
-            if badge
-                .as_ref()
-                .and_then(|node| node.get_attribute("data-write-state"))
-                .as_deref()
-                == Some(next.data_state())
-            {
-                break;
-            }
-            gloo_timers::future::TimeoutFuture::new(10).await;
-        }
-        let badge = root
-            .query_selector("[data-testid='write-state-badge']")
-            .unwrap()
-            .unwrap();
-        assert_eq!(
-            badge.get_attribute("data-write-state").as_deref(),
-            Some(next.data_state()),
+        state.revise(|value| *value = next);
+        app.app().flush().unwrap();
+        glory_web::settle().await;
+        let badge = root.query_selector(".write-state-badge").unwrap().unwrap();
+        let classes = badge.get_attribute("class").unwrap();
+        assert!(
+            classes
+                .split_whitespace()
+                .any(|value| value == format!("write-state-{}", next.data_state())),
             "{tag}"
         );
         assert_eq!(
-            badge.get_attribute("class").unwrap().contains("green"),
+            classes.split_whitespace().any(|value| value == "green"),
             success,
             "{tag}"
         );
@@ -98,10 +71,11 @@ async fn browser_badge_keeps_pending_unconfirmed_and_renders_acceptance_separate
                 .as_deref(),
             Some(label)
         );
-        assert!(!badge.get_attribute("title").unwrap().contains("seal"));
-        assert!(!badge.get_attribute("title").unwrap().contains("HLC"));
+        let icon = badge.query_selector(".write-state-icon").unwrap().unwrap();
+        let accessible = icon.get_attribute("aria-label").unwrap_or_default();
+        assert!(!accessible.contains("seal"));
+        assert!(!accessible.contains("HLC"));
     }
-    abort.abort();
-    gloo_timers::future::TimeoutFuture::new(0).await;
+    drop(app);
     root.remove();
 }

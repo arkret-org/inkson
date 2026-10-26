@@ -20,9 +20,12 @@
 //! text. The caller drives these off the typed [`SecureSendBuild`] /
 //! [`SecureSendOutcome`] returned here.
 
-use dioxus::prelude::*;
+use std::cell::RefCell;
+use std::rc::Rc;
 
-use crate::state::LocalStateStore;
+use glory::{Bond, Lotus, Scope};
+
+use crate::presentation::InksonContext;
 
 pub(crate) type LocalMlsEncryptResult = crate::mls::runtime::DeviceSnapshotEncryption;
 
@@ -38,6 +41,7 @@ struct SendReadinessKey {
     persistence_healthy: bool,
     private_root_available: bool,
     creator_revision: u64,
+    ui_generation: u64,
     scope_current: Option<crate::current_projection::ScopeMlsCurrent>,
     scope_current_source: Option<(arkret_sdk::CommitStreamRef, arkret_sdk::CurrentRevision)>,
     checkpoint: Option<(
@@ -77,162 +81,177 @@ fn scope_current_evidence(
     (current, source)
 }
 
-/// Never reuse a ready result across account, scope, cut or private-state changes.
-pub(crate) fn use_scope_send_ready(
-    state_store: SyncSignal<LocalStateStore>,
-    scope: Option<arkret_sdk::ScopeRef>,
-    device: arkret_sdk::DeviceId,
-) -> bool {
-    use_scope_send_gate(state_store, scope, device).is_some()
-}
-
-/// The body mode and readiness come from the same complete durable cut.
-pub(crate) fn use_scope_send_gate(
-    state_store: SyncSignal<LocalStateStore>,
-    scope: Option<arkret_sdk::ScopeRef>,
-    device: arkret_sdk::DeviceId,
-) -> Option<crate::mls::send_gate::MlsSendGate> {
-    use_scope_send_probe(state_store, scope, device).gate
-}
-
+#[derive(Clone)]
 pub(crate) struct ScopeSendProbe {
     pub gate: Option<crate::mls::send_gate::MlsSendGate>,
     pub checking: bool,
     pub blocked_reason: Option<String>,
 }
 
-pub(crate) fn use_scope_send_probe(
-    state_store: SyncSignal<LocalStateStore>,
-    scope: Option<arkret_sdk::ScopeRef>,
-    device: arkret_sdk::DeviceId,
-) -> ScopeSendProbe {
-    // Creator Ready is committed in its own vault, independently of the
-    // account cursor and checkpoint. That commit must wake a blocked probe.
-    let mut creator_revision = use_signal(|| 0_u64);
-    use_future(move || async move {
+/// Observe the exact durable scope cut. No ready result crosses an account,
+/// device, private-root, current-source, creator-commit, or UI-generation change.
+pub(crate) fn scope_send_probe(
+    ui_scope: &Scope,
+    context: Rc<InksonContext>,
+    target: Lotus<Option<arkret_sdk::ScopeRef>>,
+    device: Lotus<arkret_sdk::DeviceId>,
+) -> Bond<ScopeSendProbe> {
+    let creator_revision = ui_scope.cage(0_u64);
+    let weak = ui_scope.downgrade();
+    if let Err(error) = ui_scope.spawn(async move {
         let mut changes = crate::outbound_store::subscribe_creator_committed_changes();
         loop {
             let revision = *changes.borrow_and_update();
-            if *creator_revision.peek() != revision {
-                creator_revision.set(revision);
+            if weak.upgrade().is_none() {
+                break;
+            }
+            if creator_revision.get_untracked() != revision {
+                let _ = creator_revision.try_revise(|value| *value = revision);
             }
             if changes.changed().await.is_err() {
                 break;
             }
         }
-    });
-    let key = use_memo(use_reactive((&scope, &device), move |(scope, device)| {
-        let state = state_store.read();
-        let authority = state.active_authority();
-        let private_root_available = authority.as_ref().is_some_and(|authority| {
-            let secure = crate::secure_key_store::default_secure_key_store("inkson");
-            crate::mls::runtime::load_device_checkpoint_secret(secure.as_ref(), authority, &device)
-                .is_ok()
-        });
-        let checkpoint = scope
-            .as_ref()
-            .and_then(|scope| state.durable_mls_checkpoint_for_scope(scope).ok().flatten())
-            .map(|snapshot| {
-                (
-                    snapshot.epoch,
-                    snapshot.group_state_event_id,
-                    snapshot.recorded_at,
+    }) {
+        ui_scope.report_error(error);
+    }
+    let key_context = context.clone();
+    let key = ui_scope.bond(move || {
+        let _ = key_context.state_revision.get();
+        let scope = target.get();
+        let device = device.get();
+        key_context.state_store.read(|state| {
+            let authority = state.active_authority();
+            let private_root_available = authority.as_ref().is_some_and(|authority| {
+                let secure = crate::secure_key_store::default_secure_key_store("inkson");
+                crate::mls::runtime::load_device_checkpoint_secret(
+                    secure.as_ref(),
+                    authority,
+                    &device,
                 )
+                .is_ok()
             });
-        let detail_invalidated = scope
-            .as_ref()
-            .and_then(arkret_sdk::ScopeRef::realm_id_opt)
-            .is_none_or(|realm_id| state.realm_detail_invalidated(realm_id.as_str()));
-        // The verified view can finish at the same account generation. Its
-        // exact scope value/source must wake an Unknown probe and fence any
-        // in-flight result from the previous MLS epoch or current revision.
-        let view = state.current_product_view();
-        let evidence = scope
-            .as_ref()
-            .map(|scope| scope_current_evidence(view.as_ref(), scope));
-        let captured = SendReadinessKey {
-            scope,
-            device,
-            authority,
-            generation: state.current_generation(),
-            reset_required: state.current_reset_required(),
-            detail_invalidated,
-            persistence_healthy: state.persist_error().is_none(),
-            private_root_available,
-            creator_revision: creator_revision(),
-            scope_current: evidence.as_ref().map(|(current, _)| current.clone()),
-            scope_current_source: evidence.and_then(|(_, source)| source),
-            checkpoint,
-        };
-        #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
-        {
-            let state = state_store.peek();
-            let view = state.current_product_view();
-            let view_matches_scope = captured
-                .scope
+            let checkpoint = scope
                 .as_ref()
-                .and_then(|scope| scope.realm_id_opt())
-                .is_some_and(|realm| {
-                    view.as_ref()
-                        .is_some_and(|view| view.realm_id == realm.as_str())
+                .and_then(|scope| state.durable_mls_checkpoint_for_scope(scope).ok().flatten())
+                .map(|snapshot| {
+                    (
+                        snapshot.epoch,
+                        snapshot.group_state_event_id,
+                        snapshot.recorded_at,
+                    )
                 });
-            let current_cut_ready =
-                view_matches_scope && view.as_ref().is_some_and(|view| view.complete_cut);
-            let required_ready =
-                view_matches_scope && view.as_ref().is_some_and(|view| view.ready());
-            let realm_genesis_present = view_matches_scope
-                && view.as_ref().is_some_and(|view| {
-                    view.entries.iter().any(|entry| {
-                        matches!(
-                            entry,
-                            arkret_sdk::CurrentState::Value {
-                                selector: arkret_sdk::CurrentSelector::RealmGenesis,
-                                ..
-                            }
-                        )
-                    })
+            let detail_invalidated = scope
+                .as_ref()
+                .and_then(arkret_sdk::ScopeRef::realm_id_opt)
+                .is_none_or(|realm_id| state.realm_detail_invalidated(realm_id.as_str()));
+            // The verified view can finish at the same account generation. Its
+            // exact scope value/source must wake an Unknown probe and fence any
+            // in-flight result from the previous MLS epoch or current revision.
+            let view = state.current_product_view();
+            let evidence = scope
+                .as_ref()
+                .map(|scope| scope_current_evidence(view.as_ref(), scope));
+            let captured = SendReadinessKey {
+                scope,
+                device,
+                authority,
+                generation: state.current_generation(),
+                reset_required: state.current_reset_required(),
+                detail_invalidated,
+                persistence_healthy: state.persist_error().is_none(),
+                private_root_available,
+                creator_revision: creator_revision.get(),
+                ui_generation: key_context.session_generation.get(),
+                scope_current: evidence.as_ref().map(|(current, _)| current.clone()),
+                scope_current_source: evidence.and_then(|(_, source)| source),
+                checkpoint,
+            };
+            #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+            {
+                let view = state.current_product_view();
+                let view_matches_scope = captured
+                    .scope
+                    .as_ref()
+                    .and_then(|scope| scope.realm_id_opt())
+                    .is_some_and(|realm| {
+                        view.as_ref()
+                            .is_some_and(|view| view.realm_id == realm.as_str())
+                    });
+                let current_cut_ready =
+                    view_matches_scope && view.as_ref().is_some_and(|view| view.complete_cut);
+                let required_ready =
+                    view_matches_scope && view.as_ref().is_some_and(|view| view.ready());
+                let realm_genesis_present = view_matches_scope
+                    && view.as_ref().is_some_and(|view| {
+                        view.entries.iter().any(|entry| {
+                            matches!(
+                                entry,
+                                arkret_sdk::CurrentState::Value {
+                                    selector: arkret_sdk::CurrentSelector::RealmGenesis,
+                                    ..
+                                }
+                            )
+                        })
+                    });
+                let scope_current_known = captured.scope.as_ref().is_some_and(|scope| {
+                    state
+                        .installed_scope_mls_current(scope)
+                        .activated()
+                        .is_some()
                 });
-            let scope_current_known = captured.scope.as_ref().is_some_and(|scope| {
-                state
-                    .installed_scope_mls_current(scope)
-                    .activated()
-                    .is_some()
-            });
-            tracing::warn!(
-                captured_generation = captured.generation,
-                scope_present = captured.scope.is_some(),
-                authority_present = captured.authority.is_some(),
-                detail_invalidated = captured.detail_invalidated,
-                reset_required = captured.reset_required,
-                persistence_healthy = captured.persistence_healthy,
-                private_root_available = captured.private_root_available,
-                checkpoint_present = captured.checkpoint.is_some(),
-                creator_revision = captured.creator_revision,
-                current_cut_ready,
-                view_matches_scope,
-                realm_genesis_present,
-                required_ready,
-                scope_current_known,
-                "MLS send readiness dependencies observed"
-            );
-        }
-        captured
-    }));
-    let mut result = use_signal(|| {
+                tracing::warn!(
+                    captured_generation = captured.generation,
+                    scope_present = captured.scope.is_some(),
+                    authority_present = captured.authority.is_some(),
+                    detail_invalidated = captured.detail_invalidated,
+                    reset_required = captured.reset_required,
+                    persistence_healthy = captured.persistence_healthy,
+                    private_root_available = captured.private_root_available,
+                    checkpoint_present = captured.checkpoint.is_some(),
+                    creator_revision = captured.creator_revision,
+                    current_cut_ready,
+                    view_matches_scope,
+                    realm_genesis_present,
+                    required_ready,
+                    scope_current_known,
+                    "MLS send readiness dependencies observed"
+                );
+            }
+            captured
+        })
+    });
+    let result = ui_scope.cage(
         None::<(
             SendReadinessKey,
             Result<crate::mls::send_gate::MlsSendGate, String>,
-        )>
-    });
-    use_effect(move || {
-        let captured = key();
-        spawn(async move {
+        )>,
+    );
+    let active = Rc::new(RefCell::new(None::<glory::core::TaskToken>));
+    let last_key = Rc::new(RefCell::new(None::<SendReadinessKey>));
+    let owner = ui_scope.downgrade();
+    ui_scope.effect(move || {
+        let captured = key.get();
+        if last_key.borrow().as_ref() == Some(&captured) {
+            return;
+        }
+        *last_key.borrow_mut() = Some(captured.clone());
+        if let Some(task) = active.borrow_mut().take() {
+            task.cancel();
+        }
+        let Some(scope) = owner.upgrade() else { return };
+        let context = context.clone();
+        let state_store = context.state_store.handle();
+        let generation = context.session_generation.get_untracked();
+        let account = context.active_account.get_untracked();
+        let failed = captured.clone();
+        match scope.spawn(async move {
             let gate = if let Some(scope) = captured.scope.as_ref().filter(|_| {
                 !captured.reset_required
                     && !captured.detail_invalidated
                     && captured.persistence_healthy
             }) {
-                let store = crate::app::runtime_adapter::state_store_handle(state_store);
+                let store = state_store.clone();
                 let input = crate::mls::send_gate::MlsSendGateInput::capture(&store, scope);
                 let outcome = crate::mls::send_gate::resolve_restorable_mls_send_gate(
                     &input,
@@ -240,7 +259,8 @@ pub(crate) fn use_scope_send_probe(
                     &captured.device,
                 )
                 .await;
-                if *key.peek() == captured
+                if context.session_matches(generation, &account)
+                    && key.try_get().is_ok_and(|key| key == captured)
                     && let Err(error) = &outcome
                     && let Some(blocked) =
                         error.downcast_ref::<crate::mls::send_gate::MlsSendGateBlocked>()
@@ -288,14 +308,14 @@ pub(crate) fn use_scope_send_probe(
             };
             #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
             {
-                let current = key.peek();
+                let current = key.get_untracked();
                 tracing::warn!(
                     captured_generation = captured.generation,
                     current_generation = current.generation,
                     current_detail_invalidated = current.detail_invalidated,
                     current_reset_required = current.reset_required,
                     current_persistence_healthy = current.persistence_healthy,
-                    key_still_current = *current == captured,
+                    key_still_current = current == captured,
                     gate_ready = gate.is_ok(),
                     encrypted =
                         matches!(&gate, Ok(crate::mls::send_gate::MlsSendGate::Encrypted(_))),
@@ -306,25 +326,36 @@ pub(crate) fn use_scope_send_probe(
                     "MLS send readiness probe completed"
                 );
             }
-            if *key.peek() == captured {
-                result.set(Some((captured, gate)));
+            if context.session_matches(generation, &account)
+                && key.try_get().is_ok_and(|key| key == captured)
+            {
+                let _ = result.try_revise(|result| *result = Some((captured, gate)));
             }
-        });
+        }) {
+            Ok(task) => *active.borrow_mut() = Some(task),
+            Err(error) => {
+                let _ =
+                    result.try_revise(|result| *result = Some((failed, Err(error.to_string()))));
+            }
+        }
     });
-    let current_key = key();
-    let result = result.read();
-    let completed = result
-        .as_ref()
-        .filter(|(captured, _)| captured == &current_key);
-    ScopeSendProbe {
-        gate: completed.and_then(|(_, gate)| gate.as_ref().ok().cloned()),
-        blocked_reason: completed.and_then(|(_, gate)| gate.as_ref().err().cloned()),
-        checking: completed.is_none()
-            && current_key.scope.is_some()
-            && !current_key.reset_required
-            && !current_key.detail_invalidated
-            && current_key.persistence_healthy,
-    }
+    ui_scope.bond(move || {
+        let current_key = key.get();
+        result.with(|result| {
+            let completed = result
+                .as_ref()
+                .filter(|(captured, _)| captured == &current_key);
+            ScopeSendProbe {
+                gate: completed.and_then(|(_, gate)| gate.as_ref().ok().cloned()),
+                blocked_reason: completed.and_then(|(_, gate)| gate.as_ref().err().cloned()),
+                checking: completed.is_none()
+                    && current_key.scope.is_some()
+                    && !current_key.reset_required
+                    && !current_key.detail_invalidated
+                    && current_key.persistence_healthy,
+            }
+        })
+    })
 }
 
 /// Encrypt `plaintext_bytes` under the Realm MLS group and return the
@@ -340,7 +371,7 @@ pub(crate) fn use_scope_send_probe(
 /// fail-closed reason instead of a generic "could not produce" message.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_local_mls_encrypt(
-    state_store: SyncSignal<LocalStateStore>,
+    state_store: &crate::runtime::input::StateStoreHandle,
     realm_id: &str,
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
@@ -380,7 +411,7 @@ pub(crate) fn run_local_mls_encrypt(
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_local_mls_encrypt_for_event(
-    mut state_store: SyncSignal<LocalStateStore>,
+    state_store: &crate::runtime::input::StateStoreHandle,
     realm_id: &str,
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
@@ -413,29 +444,35 @@ pub(crate) fn run_local_mls_encrypt_for_event(
         }
     };
     let snapshot = state_store
-        .read()
-        .mls_checkpoint_for_scope(&effective_scope)
+        .read(|store| store.mls_checkpoint_for_scope(&effective_scope))
         .ok_or(crate::mls::runtime::MlsRuntimeError::MissingWelcome)?;
     let group_state_ref = state_store
-        .read()
-        .mls_group_state_ref_for_scope(&effective_scope, &snapshot.group_id, snapshot.epoch)
+        .read(|store| {
+            store.mls_group_state_ref_for_scope(
+                &effective_scope,
+                &snapshot.group_id,
+                snapshot.epoch,
+            )
+        })
         .map_err(|_| crate::mls::runtime::MlsRuntimeError::EncryptionTransitionPending)?;
-    crate::mls::runtime::encrypt_message_with_device_snapshot(
-        &mut state_store.write(),
-        secure_store.as_ref(),
-        realm_id,
-        authority,
-        device_id,
-        content_type,
-        event_kind,
-        group_state_ref,
-        plaintext_bytes,
-        metadata_content_type,
-        metadata_plaintext_bytes,
-        expected_sender_domain,
-        circle_id,
-        sidecar_id,
-    )
+    state_store.write(|store| {
+        crate::mls::runtime::encrypt_message_with_device_snapshot(
+            store,
+            secure_store.as_ref(),
+            realm_id,
+            authority,
+            device_id,
+            content_type,
+            event_kind,
+            group_state_ref,
+            plaintext_bytes,
+            metadata_content_type,
+            metadata_plaintext_bytes,
+            expected_sender_domain,
+            circle_id,
+            sidecar_id,
+        )
+    })
 }
 
 fn circle_effective_scope(
@@ -512,7 +549,7 @@ pub(crate) struct SecureSendBuild {
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn build_secure_send(
     _api: &crate::transport::TransportClient,
-    state_store: SyncSignal<LocalStateStore>,
+    state_store: &crate::runtime::input::StateStoreHandle,
     realm_id: &str,
     authority: &arkret_sdk::AccountId,
     _actor: &str,
@@ -526,8 +563,7 @@ pub(crate) async fn build_secure_send(
     sidecar_id: Option<arkret_sdk::SidecarId>,
 ) -> Result<SecureSendBuild, String> {
     if state_store
-        .read()
-        .realm_projection_has_retired_minimal_metadata_marker(realm_id)
+        .read(|store| store.realm_projection_has_retired_minimal_metadata_marker(realm_id))
     {
         return Err("retired minimal-metadata Realm marker cannot authorize MLS send".to_owned());
     }
@@ -546,7 +582,7 @@ pub(crate) async fn build_secure_send(
         }
     };
     crate::mls::creator_bootstrap::ensure_local_mls_transition_ready(
-        &crate::app::runtime_adapter::state_store_handle(state_store),
+        &state_store.clone(),
         &effective_scope,
     )?;
     let attachment_refs = serde_json::from_slice::<arkret_sdk::ContentBlock>(plaintext_bytes)
@@ -576,12 +612,13 @@ pub(crate) async fn build_secure_send(
     }
 
     let base_group_state_ref = state_store
-        .read()
-        .mls_group_state_ref_for_scope(
-            &effective_scope,
-            encrypted_payload.group_id.as_str(),
-            encrypted_payload.epoch,
-        )?
+        .read(|store| {
+            store.mls_group_state_ref_for_scope(
+                &effective_scope,
+                encrypted_payload.group_id.as_str(),
+                encrypted_payload.epoch,
+            )
+        })?
         .to_string();
     let plan_scope = effective_scope.clone();
     // The caller's optimistic row is already keyed by `local_message_id`; the
@@ -655,7 +692,7 @@ pub(crate) async fn build_secure_send(
 /// closed.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn build_sidecar_exchange_control_send(
-    state_store: SyncSignal<LocalStateStore>,
+    state_store: &crate::runtime::input::StateStoreHandle,
     realm_id: &str,
     authority: &arkret_sdk::AccountId,
     actor: &str,
@@ -694,12 +731,13 @@ pub(crate) async fn build_sidecar_exchange_control_send(
         sidecar_id: sidecar_id.clone(),
     };
     let base_group_state_ref = state_store
-        .read()
-        .mls_group_state_ref_for_scope(
-            &effective_scope,
-            encrypted_payload.group_id.as_str(),
-            encrypted_payload.epoch,
-        )?
+        .read(|store| {
+            store.mls_group_state_ref_for_scope(
+                &effective_scope,
+                encrypted_payload.group_id.as_str(),
+                encrypted_payload.epoch,
+            )
+        })?
         .to_string();
     let source_strand_id = arkret_sdk::StrandId::new(source_strand_id.to_owned())
         .map_err(|error| format!("Sidecar close source Strand invalid: {error}"))?;
@@ -775,12 +813,24 @@ pub(crate) enum SecureSendOutcome {
 /// draft, and emit any audit receipt.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn submit_secure_send(
+    context: Rc<InksonContext>,
     api: &crate::transport::TransportClient,
-    state_store: SyncSignal<LocalStateStore>,
+    state_store: &crate::runtime::input::StateStoreHandle,
     build: SecureSendBuild,
     realm_id: &str,
     circle_id: Option<String>,
 ) -> SecureSendOutcome {
+    let Ok(generation) = context.session_generation.try_get() else {
+        return SecureSendOutcome::MessageFailed {
+            message: "This application window is closed.".into(),
+        };
+    };
+    let account = context.active_account.get_untracked();
+    if account.is_none() {
+        return SecureSendOutcome::MessageFailed {
+            message: "Sign in again before sending.".into(),
+        };
+    }
     let SecureSendBuild {
         message_plan,
         message_local_operation_id,
@@ -792,7 +842,7 @@ pub(crate) async fn submit_secure_send(
     // no commit is required. Freeze either path into the account-state writer
     // and await its IndexedDB barrier before the server can accept ciphertext
     // that a reload of this device would no longer be able to account for.
-    let durable_state = match state_store.read().begin_durable_flush() {
+    let durable_state = match state_store.read(|store| store.begin_durable_flush()) {
         Ok(barrier) => barrier,
         Err(error) => {
             return SecureSendOutcome::MessageFailed {
@@ -806,6 +856,11 @@ pub(crate) async fn submit_secure_send(
         };
     }
 
+    if !context.session_matches(generation, &account) {
+        return SecureSendOutcome::MessageFailed {
+            message: "Account or device changed. Open this conversation again.".into(),
+        };
+    }
     let control_event = match message_plan {
         SecureWritePlan::Message(authoring) => {
             let content = match (authoring.plan)(None) {
@@ -814,7 +869,7 @@ pub(crate) async fn submit_secure_send(
             };
             return match crate::views::chat::model::send_ordinary_chat_message_with_blob_refs(
                 api,
-                crate::app::runtime_adapter::state_store_handle(state_store),
+                state_store.clone(),
                 realm_id,
                 effective_scope,
                 &authoring.strand_id,
@@ -840,7 +895,7 @@ pub(crate) async fn submit_secure_send(
                         )
                     {
                         crate::mls::coverage_liveness::note_e2ee_epoch_update_required(
-                            &crate::app::runtime_adapter::state_store_handle(state_store),
+                            &state_store.clone(),
                             realm_id,
                             circle_id.as_deref(),
                             failure.detail(),
@@ -871,7 +926,7 @@ pub(crate) async fn submit_secure_send(
         Err(err)
             if !sidecar_scope
                 && crate::mls::coverage_liveness::note_e2ee_submit_refusal(
-                    &crate::app::runtime_adapter::state_store_handle(state_store),
+                    &state_store.clone(),
                     realm_id,
                     circle_id.as_deref(),
                     &err,
@@ -932,6 +987,7 @@ mod readiness_current_tests {
             persistence_healthy: true,
             private_root_available: false,
             creator_revision: 0,
+            ui_generation: 0,
             checkpoint: None,
             scope_current: Some(current),
             scope_current_source: source,

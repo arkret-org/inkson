@@ -12,25 +12,40 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-fn check_dioxus_version(manifest_dir: &Path) {
-    const DIOXUS_VERSION: &str = "=0.7.10";
-
-    let cargo_toml_path = manifest_dir.join("Cargo.toml");
-    let raw = fs::read_to_string(&cargo_toml_path)
-        .unwrap_or_else(|err| panic!("read {}: {err}", cargo_toml_path.display()));
-    for crate_name in ["dioxus", "dioxus-router"] {
-        let line = raw
-            .lines()
-            .find(|line| {
-                line.split_once('=')
-                    .is_some_and(|(name, _)| name.trim() == crate_name)
-            })
-            .unwrap_or_else(|| panic!("Cargo.toml Dioxus version drift: missing {crate_name}"));
+fn build_style_bundle(manifest_dir: &Path) {
+    let list = manifest_dir.join("web/styles.list");
+    println!("cargo:rerun-if-changed={}", list.display());
+    let sources = fs::read_to_string(&list).expect("read web/styles.list");
+    let root = manifest_dir
+        .canonicalize()
+        .expect("resolve manifest directory");
+    let mut combined = String::new();
+    for entry in sources
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+    {
+        let path = manifest_dir
+            .join(entry)
+            .canonicalize()
+            .unwrap_or_else(|error| panic!("stylesheet {entry}: {error}"));
         assert!(
-            line.contains(DIOXUS_VERSION),
-            "Cargo.toml Dioxus version drift: {crate_name} must use {DIOXUS_VERSION}"
+            path.starts_with(&root),
+            "stylesheet must remain in the Inkson source tree"
         );
+        println!("cargo:rerun-if-changed={}", path.display());
+        combined.push_str(
+            &fs::read_to_string(&path)
+                .unwrap_or_else(|error| panic!("stylesheet {entry}: {error}")),
+        );
+        combined.push('\n');
     }
+    assert!(
+        !combined.is_empty(),
+        "web/styles.list must declare the application styles"
+    );
+    let output = PathBuf::from(std::env::var_os("OUT_DIR").expect("Cargo OUT_DIR"));
+    fs::write(output.join("inkson.css"), combined).expect("write native stylesheet bundle");
 }
 
 fn git_output(manifest_dir: &Path, args: &[&str]) -> Option<String> {
@@ -48,7 +63,7 @@ fn main() {
     let manifest_dir = PathBuf::from(
         std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set by Cargo"),
     );
-    check_dioxus_version(&manifest_dir);
+    build_style_bundle(&manifest_dir);
 
     // Emitting any `rerun-if-changed` instruction disables Cargo's default
     // package-wide build-script invalidation. We also track Git metadata below,

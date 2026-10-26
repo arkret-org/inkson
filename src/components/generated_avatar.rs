@@ -1,6 +1,12 @@
 //! Deterministic, GitHub-style fallback avatars for identities without an upload.
 
-use dioxus::prelude::*;
+use std::rc::Rc;
+
+use glory::prelude::*;
+use glory::render::{GraphicPoint as Point, GraphicProps, PathCommand as Cmd};
+use glory::style::Color;
+
+use crate::presentation::{InksonContext, View};
 
 const FNV_OFFSET_BASIS: u64 = 0xcbf29ce484222325;
 const FNV_PRIME: u64 = 0x100000001b3;
@@ -35,114 +41,190 @@ fn identicon_cells(seed: &str) -> Vec<(usize, usize)> {
     cells
 }
 
-#[derive(Clone, PartialEq, Props)]
+#[derive(Clone)]
 pub struct GeneratedAvatarProps {
     pub seed: String,
     pub alt_text: String,
-    #[props(default = "avatar-img generated-avatar".to_owned())]
     pub class: String,
-    #[props(default)]
     pub test_id: Option<String>,
 }
-
-/// The single application-wide identity avatar policy. A published/uploaded
-/// blob wins; identities without one use the same deterministic GitHub-style
-/// identicon regardless of whether they are a person or an AI agent.
-#[derive(Clone, PartialEq, Props)]
+#[derive(Clone)]
 pub struct IdentityAvatarProps {
-    /// Stable protocol identity (normally a DID) so the same actor renders the
-    /// same avatar in every surface. Pre-creation forms may use their stable
-    /// draft label until an id exists.
     pub seed: String,
     pub alt_text: String,
-    #[props(default)]
     pub blob_ref: Option<String>,
-    #[props(default = "avatar-img".to_owned())]
     pub class: String,
-    #[props(default)]
     pub test_id: Option<String>,
 }
-
-#[component]
-pub fn GeneratedAvatar(props: GeneratedAvatarProps) -> Element {
-    let GeneratedAvatarProps {
-        seed,
-        alt_text,
-        class,
-        test_id,
-    } = props;
-    let hash = avatar_hash(&seed);
-    let hue = hash % 360;
-    let color = format!("hsl({hue} 58% 42%)");
-    let cells = identicon_cells(&seed);
-    let test_id = test_id.unwrap_or_default();
-
-    rsx! {
-        div {
-            class: "{class}",
-            "data-testid": "{test_id}",
-            role: "img",
-            "aria-label": "{alt_text}",
-            svg {
-                // Keep the GitHub-style breathing room inside the SVG
-                // coordinate system. CSS percentage padding is relative to
-                // the containing block, which made this avatar balloon and
-                // squeezed the cells to zero in wide menu headers.
-                view_box: "-0.75 -0.75 6.5 6.5",
-                "aria-hidden": "true",
-                "focusable": "false",
-                for (x, y) in cells {
-                    rect {
-                        x: "{x}",
-                        y: "{y}",
-                        width: "1",
-                        height: "1",
-                        fill: "{color}",
-                    }
-                }
-            }
-        }
+fn avatar_color(hue: f64) -> Color {
+    let chroma = (1.0_f64 - (2.0_f64 * 0.42 - 1.0_f64).abs()) * 0.58;
+    let x = chroma * (1.0 - ((hue / 60.0) % 2.0 - 1.0).abs());
+    let (r, g, b) = match (hue / 60.0) as u8 {
+        0 => (chroma, x, 0.0),
+        1 => (x, chroma, 0.0),
+        2 => (0.0, chroma, x),
+        3 => (0.0, x, chroma),
+        4 => (x, 0.0, chroma),
+        _ => (chroma, 0.0, x),
+    };
+    let m = 0.42 - chroma / 2.0;
+    Color(
+        ((r + m) * 255.0).round() as u8,
+        ((g + m) * 255.0).round() as u8,
+        ((b + m) * 255.0).round() as u8,
+        255,
+    )
+}
+fn avatar_drawing(seed: &str, alt_text: String) -> GraphicProps {
+    let mut commands = Vec::new();
+    for (x, y) in identicon_cells(seed) {
+        let (x, y) = (x as f64 + 0.75, y as f64 + 0.75);
+        commands.extend([
+            Cmd::Move(Point::new(x, y)),
+            Cmd::Line(Point::new(x + 1.0, y)),
+            Cmd::Line(Point::new(x + 1.0, y + 1.0)),
+            Cmd::Line(Point::new(x, y + 1.0)),
+            Cmd::Close,
+        ]);
+    }
+    GraphicProps {
+        width: 6.5,
+        height: 6.5,
+        commands,
+        fill: Some(avatar_color((avatar_hash(seed) % 360) as f64)),
+        alternative: (!alt_text.trim().is_empty()).then_some(alt_text),
+        ..Default::default()
     }
 }
-
-#[component]
-pub fn IdentityAvatar(props: IdentityAvatarProps) -> Element {
-    let IdentityAvatarProps {
-        seed,
-        alt_text,
-        blob_ref,
-        class,
-        test_id,
-    } = props;
-    let test_id = test_id.unwrap_or_default();
-    if let Some(blob_ref) = blob_ref.filter(|value| !value.trim().is_empty()) {
-        return rsx! {
-            div {
-                class: "{class}",
-                "data-testid": "{test_id}",
-                crate::content::renderer::AuthenticatedBlobImage {
-                    blob_ref: blob_ref.trim().to_owned(),
-                    alt_text,
-                }
-            }
-        };
+pub fn generated_avatar(
+    _scope: &Scope,
+    _context: Rc<InksonContext>,
+    props: GeneratedAvatarProps,
+) -> View {
+    Box::new(
+        view()
+            .class(format!(
+                "{} {}",
+                props.class,
+                props.test_id.unwrap_or_default()
+            ))
+            .name(props.alt_text.clone())
+            .fill(
+                glory::ui::graphic()
+                    .drawing(avatar_drawing(&props.seed, props.alt_text))
+                    .style(
+                        Style::new()
+                            .width(Length::Percent(100.0))
+                            .height(Length::Percent(100.0)),
+                    ),
+            ),
+    )
+}
+fn generated_avatar_inline(props: GeneratedAvatarProps) -> View {
+    let name = props.alt_text.clone();
+    let avatar = glory::ui::graphic()
+        .class(format!(
+            "{} {} generated-avatar",
+            props.class,
+            props.test_id.unwrap_or_default()
+        ))
+        .drawing(avatar_drawing(&props.seed, props.alt_text));
+    Box::new(if name.trim().is_empty() {
+        avatar
+    } else {
+        avatar.name(name)
+    })
+}
+fn avatar_inline_from_source(
+    scope: &Scope,
+    props: GeneratedAvatarProps,
+    data: Cage<Option<std::result::Result<String, String>>>,
+) -> View {
+    let ready = scope.bond(move || matches!(data.get(), Some(Ok(source)) if !source.is_empty()));
+    let source = scope.bond(move || {
+        data.get()
+            .and_then(std::result::Result::ok)
+            .unwrap_or_default()
+    });
+    let class = format!(
+        "{} {}",
+        props.class,
+        props.test_id.clone().unwrap_or_default()
+    );
+    let alt = props.alt_text.clone();
+    Box::new(
+        glory::ui::when(ready, move || {
+            let image = image().class(class.clone()).source(source);
+            Box::new(if alt.trim().is_empty() {
+                image.decorative()
+            } else {
+                image.alt(alt.clone())
+            }) as View
+        })
+        .otherwise(move || generated_avatar_inline(props.clone())),
+    )
+}
+/// Identity image for an intrinsic button; all descendants remain inline semantic nodes.
+pub fn identity_avatar_inline(
+    scope: &Scope,
+    context: Rc<InksonContext>,
+    props: IdentityAvatarProps,
+) -> View {
+    let fallback = GeneratedAvatarProps {
+        seed: props.seed,
+        alt_text: props.alt_text,
+        class: props.class,
+        test_id: props.test_id,
+    };
+    let Some(blob) = props.blob_ref.filter(|blob| !blob.trim().is_empty()) else {
+        return generated_avatar_inline(fallback);
+    };
+    let mime = crate::content::renderer::blob_ref_media_type_hint(&blob)
+        .unwrap_or_else(|| "image/png".into());
+    let source =
+        crate::content::authenticated_blob_source(scope, context, blob.trim().to_owned(), mime);
+    avatar_inline_from_source(scope, fallback, source.data)
+}
+pub fn identity_avatar(
+    scope: &Scope,
+    context: Rc<InksonContext>,
+    props: IdentityAvatarProps,
+) -> View {
+    if let Some(blob_ref) = props.blob_ref.filter(|value| !value.trim().is_empty()) {
+        return Box::new(
+            view()
+                .class(format!(
+                    "{} {}",
+                    props.class,
+                    props.test_id.clone().unwrap_or_default()
+                ))
+                .fill(crate::content::renderer::authenticated_blob_image(
+                    scope,
+                    context,
+                    blob_ref.trim().to_owned(),
+                    props.alt_text,
+                )),
+        );
     }
-    let generated_class = if class
+    let class = if props
+        .class
         .split_ascii_whitespace()
         .any(|name| name == "generated-avatar")
     {
-        class
+        props.class
     } else {
-        format!("{class} generated-avatar")
+        format!("{} generated-avatar", props.class)
     };
-    rsx! {
-        GeneratedAvatar {
-            seed,
-            alt_text,
-            class: generated_class,
-            test_id: Some(test_id),
-        }
-    }
+    generated_avatar(
+        scope,
+        context,
+        GeneratedAvatarProps {
+            seed: props.seed,
+            alt_text: props.alt_text,
+            class,
+            test_id: props.test_id,
+        },
+    )
 }
 
 #[cfg(test)]
@@ -162,5 +244,132 @@ mod tests {
     #[test]
     fn different_seeds_produce_different_patterns() {
         assert_ne!(identicon_cells("alpha"), identicon_cells("beta"));
+    }
+
+    #[test]
+    fn inline_avatar_loading_success_and_failure_keep_a_valid_button_owner() {
+        use glory::render::{NodeId, Props};
+        fn nodes(app: &App) -> Vec<NodeId> {
+            let tree = app.tree();
+            let mut pending = tree.roots().to_vec();
+            let mut nodes = Vec::new();
+            while let Some(id) = pending.pop() {
+                nodes.push(id);
+                pending.extend(tree.node(id).unwrap().children.iter().copied());
+            }
+            nodes
+        }
+        let app = App::memory();
+        let data = app
+            .scope()
+            .cage(None::<std::result::Result<String, String>>);
+        let props = GeneratedAvatarProps {
+            seed: "Alice".into(),
+            alt_text: "Alice".into(),
+            class: "sidebar-nav-icon contact-sidebar-user-avatar avatar-img".into(),
+            test_id: None,
+        };
+        app.mount(
+            sapid::button()
+                .unstyled()
+                .name("Account")
+                .fill(avatar_inline_from_source(app.scope(), props, data)),
+        )
+        .unwrap();
+        app.flush().unwrap();
+        let button = nodes(&app)
+            .into_iter()
+            .find(|id| {
+                matches!(
+                    app.tree().node(*id).unwrap().descriptor.view().props,
+                    Props::Button(_)
+                )
+            })
+            .unwrap();
+        let is_graphic = || {
+            nodes(&app).into_iter().any(|id| {
+                matches!(
+                    app.tree().node(id).unwrap().descriptor.view().props,
+                    Props::Graphic(_)
+                )
+            })
+        };
+        let is_image = || {
+            nodes(&app).into_iter().any(|id| {
+                matches!(
+                    app.tree().node(id).unwrap().descriptor.view().props,
+                    Props::Image(_)
+                )
+            })
+        };
+        assert!(is_graphic());
+        assert!(!is_image());
+        data.revise(|data| *data = Some(Ok("data:image/png;base64,aGVsbG8=".into())));
+        app.flush().unwrap();
+        assert!(is_image());
+        assert!(!is_graphic());
+        assert!(app.scope().is_active(button).unwrap());
+        data.revise(|data| *data = Some(Err("Authenticated image unavailable".into())));
+        app.flush().unwrap();
+        assert!(is_graphic());
+        assert!(!is_image());
+        assert!(app.scope().is_active(button).unwrap());
+        let tree = app.tree();
+        assert!(nodes(&app).iter().any(|id| {
+            tree.node(*id)
+                .unwrap()
+                .descriptor
+                .view()
+                .classes
+                .iter()
+                .any(|class| class == "generated-avatar")
+        }));
+    }
+
+    #[test]
+    fn empty_alt_inline_avatar_is_explicitly_decorative_in_both_branches() {
+        let app = App::memory();
+        let data = app
+            .scope()
+            .cage(None::<std::result::Result<String, String>>);
+        app.mount(sapid::button().unstyled().name("Show own agents").fill(
+            avatar_inline_from_source(
+                app.scope(),
+                GeneratedAvatarProps {
+                    seed: String::new(),
+                    alt_text: String::new(),
+                    class: "avatar-img".into(),
+                    test_id: None,
+                },
+                data,
+            ),
+        ))
+        .unwrap();
+        app.flush().unwrap();
+        let assert_decorative = || {
+            let tree = app.tree();
+            let mut pending = tree.roots().to_vec();
+            let mut found = false;
+            while let Some(id) = pending.pop() {
+                let node = tree.node(id).unwrap();
+                pending.extend(node.children.iter().copied());
+                match node.descriptor.view().props {
+                    glory::render::Props::Graphic(graphic) => {
+                        assert!(graphic.alternative.is_none());
+                        found = true;
+                    }
+                    glory::render::Props::Image(image) => {
+                        assert!(image.alternative.is_none());
+                        found = true;
+                    }
+                    _ => {}
+                }
+            }
+            assert!(found);
+        };
+        assert_decorative();
+        data.revise(|data| *data=Some(Ok("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==".into())));
+        app.flush().unwrap();
+        assert_decorative();
     }
 }

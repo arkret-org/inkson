@@ -21,7 +21,7 @@
 //!   - [`state`]: private-data load/save and recovery-material predicates;
 //!   - [`helpers`]: clipboard helper;
 //!   - [`upload`]: the RK-as-authority server backup flow;
-//!   - [`panel`]: the `RecoveryPanel` Dioxus component.
+//!   - [`panel`]: the native recovery page.
 
 const RECOVERY_STATE_KEY: &str = "recovery.state.v1";
 
@@ -35,10 +35,9 @@ mod upload;
 #[cfg(test)]
 mod tests;
 
-pub use panel::RecoveryPanel;
+pub use panel::page;
 pub(crate) use state::{
     local_recovery_key_fingerprint, local_recovery_public_key, local_recovery_public_key_result,
-    recovery_options_configured, save_generated_recovery_key_metadata,
-    save_generated_recovery_key_metadata_in_store,
+    recovery_options_configured, save_generated_recovery_key_metadata_in_store,
 };
 pub(crate) use upload::{RecoveryKeyBackupOutcome, upload_recovery_key_account_backup};

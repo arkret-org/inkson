@@ -19,7 +19,12 @@
 //!                                                         (Accepted ⇒ Synced)
 //! ```
 
-use dioxus::prelude::*;
+use std::rc::Rc;
+
+use glory::prelude::*;
+
+use crate::presentation::widgets::{line, paragraph};
+use crate::presentation::{InksonContext, View};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WriteStateIconSpec {
@@ -153,44 +158,42 @@ impl WriteState {
     }
 }
 
-/// Shared lifecycle badge for card and other write surfaces.
-#[component]
-pub fn WriteStateBadge(state: WriteState, icon_only: Option<bool>) -> Element {
-    let class_name = format!(
-        "{} write-state-badge{}",
+pub struct WriteStateBadgeProps {
+    pub state: WriteState,
+    pub icon_only: Option<bool>,
+}
+pub fn write_state_badge(
+    scope: &Scope,
+    context: Rc<InksonContext>,
+    props: WriteStateBadgeProps,
+) -> View {
+    let state = props.state;
+    let class = format!(
+        "{} write-state-badge write-state-{}{}",
         state.class_name(),
-        if icon_only.unwrap_or(false) {
+        state.data_state(),
+        if props.icon_only.unwrap_or(false) {
             " is-icon-only"
         } else {
             ""
         }
     );
-    let data_state = state.data_state();
-    let label = state.localized_label();
-    let title = state.localized_explanation();
-    rsx! {
-        span {
-            class: "{class_name}",
-            "data-testid": "write-state-badge",
-            "data-write-state": "{data_state}",
-            title: "{title}",
-            WriteStateIcon { state }
-            span { class: "write-state-label", "{label}" }
-        }
-    }
+    line(
+        class,
+        vec![
+            write_state_icon(scope, context.clone(), state),
+            paragraph(
+                "write-state-label",
+                context.translated(scope, format!("write_state.{}.label", state.data_state())),
+            ),
+        ],
+    )
 }
-
-#[component]
-pub fn WriteStateIcon(state: WriteState) -> Element {
-    let icon_class = state.icon_class();
-    let label = state.localized_explanation();
-    rsx! {
-        span {
-            class: "{icon_class}",
-            role: "img",
-            "aria-label": "{label}",
-        }
-    }
+pub fn write_state_icon(scope: &Scope, context: Rc<InksonContext>, state: WriteState) -> View {
+    Box::new(view().class(state.icon_class()).name(context.translated(
+        scope,
+        format!("write_state.{}.description", state.data_state()),
+    )))
 }
 
 #[cfg(test)]

@@ -1,23 +1,25 @@
 //! UI bridge for transient `ak.message.stream` generation previews.
 
-use dioxus::prelude::*;
+use glory::{Cage, Scope};
 
 #[derive(Clone, Copy)]
 pub struct MessageStreamHub {
-    projection: Signal<garth::MessageStreamProjection>,
-    admitted: Signal<Vec<crate::runtime::projection::AdmittedSignal>>,
+    projection: Cage<garth::MessageStreamProjection>,
+    admitted: Cage<Vec<crate::runtime::projection::AdmittedSignal>>,
 }
 
 impl MessageStreamHub {
-    pub fn new() -> Self {
+    pub fn new(scope: &Scope) -> Self {
         Self {
-            projection: Signal::new(garth::MessageStreamProjection::new()),
-            admitted: Signal::new(Vec::new()),
+            projection: scope.cage(garth::MessageStreamProjection::new()),
+            admitted: scope.cage(Vec::new()),
         }
     }
 
-    pub fn try_use() -> Option<Self> {
-        try_consume_context::<Self>()
+    pub fn reset(&self) {
+        self.projection
+            .revise(|projection| *projection = garth::MessageStreamProjection::new());
+        self.admitted.revise(Vec::clear);
     }
 
     /// Applies a frame only after the receiver has admitted the Signal
@@ -29,7 +31,7 @@ impl MessageStreamHub {
         signal: &crate::runtime::projection::AdmittedSignal,
         observed_at: chrono::DateTime<chrono::Utc>,
     ) -> garth::Result<garth::MessageStreamApplyOutcome> {
-        let outcome = self.projection.write().apply_plaintext(
+        let outcome = self.projection.revise(|projection| projection.apply_plaintext(
             &signal.domain,
             &signal.payload,
             &|domain: &garth::SignalSequenceDomain, frame: &arkret_models_collaboration::signal_message_stream::MessageStreamFrame| {
@@ -51,37 +53,43 @@ impl MessageStreamHub {
                     })
             },
             observed_at,
-        )?;
+        ))?;
         if matches!(
             outcome,
             garth::MessageStreamApplyOutcome::Activated | garth::MessageStreamApplyOutcome::Updated
         ) {
-            let mut retained = self.admitted.write();
-            retained.retain(|old| !same_preview(old, signal));
-            retained.push(signal.clone());
+            self.admitted.revise(|retained| {
+                retained.retain(|old| !same_preview(old, signal));
+                retained.push(signal.clone());
+            });
         }
         self.prune_admitted();
         Ok(outcome)
     }
 
     fn prune_admitted(&mut self) {
-        let projection = self.projection.read();
-        self.admitted.write().retain(|signal| {
-            projection
-                .previews()
-                .any(|preview| signal_matches_preview(signal, preview))
+        self.projection.with(|projection| {
+            self.admitted.revise(|admitted| {
+                admitted.retain(|signal| {
+                    projection
+                        .previews()
+                        .any(|preview| signal_matches_preview(signal, preview))
+                })
+            })
         });
     }
 
     pub fn retained(&self) -> Vec<crate::runtime::projection::AdmittedSignal> {
-        self.admitted.read().clone()
+        self.admitted.get()
     }
 
     pub fn retain_eligible(&mut self, eligible: &[crate::runtime::projection::AdmittedSignal]) {
-        self.projection.write().retain_previews(|preview| {
-            eligible
-                .iter()
-                .any(|signal| signal_matches_preview(signal, preview))
+        self.projection.revise(|projection| {
+            projection.retain_previews(|preview| {
+                eligible
+                    .iter()
+                    .any(|signal| signal_matches_preview(signal, preview))
+            })
         });
         self.prune_admitted();
     }
@@ -94,39 +102,33 @@ impl MessageStreamHub {
         verified_sender_endpoint: &arkret_sdk::SignalSequenceEndpoint,
     ) -> garth::Result<Option<garth::MessageStreamPreview>> {
         self.projection
-            .write()
-            .bind_committed_final(event, verified_sender_endpoint)
+            .revise(|projection| projection.bind_committed_final(event, verified_sender_endpoint))
     }
 
     pub fn maintain(&mut self, now: chrono::DateTime<chrono::Utc>) {
-        let mut projection = self.projection.write();
-        projection.mark_stalled(now);
-        projection.expire(now);
-        drop(projection);
+        self.projection.revise(|projection| {
+            projection.mark_stalled(now);
+            projection.expire(now);
+        });
         self.prune_admitted();
     }
 
     pub fn visible_for(&self, realm_id: &str, strand_id: &str) -> Vec<MessageStreamCard> {
-        self.projection
-            .read()
-            .previews()
-            .filter(|preview| {
-                preview.scope_ref.realm_id().as_str() == realm_id
-                    && preview.strand_id.as_str() == strand_id
-                    && matches!(
-                        preview.status,
-                        garth::MessageStreamPreviewStatus::Active
-                            | garth::MessageStreamPreviewStatus::Stalled
-                    )
-            })
-            .map(MessageStreamCard::from)
-            .collect()
-    }
-}
-
-impl Default for MessageStreamHub {
-    fn default() -> Self {
-        Self::new()
+        self.projection.with(|projection| {
+            projection
+                .previews()
+                .filter(|preview| {
+                    preview.scope_ref.realm_id().as_str() == realm_id
+                        && preview.strand_id.as_str() == strand_id
+                        && matches!(
+                            preview.status,
+                            garth::MessageStreamPreviewStatus::Active
+                                | garth::MessageStreamPreviewStatus::Stalled
+                        )
+                })
+                .map(MessageStreamCard::from)
+                .collect()
+        })
     }
 }
 
@@ -264,10 +266,9 @@ mod tests {
             )),
             expires_at: now + chrono::Duration::seconds(30),
         };
-        let mut dom = VirtualDom::new(|| rsx! {});
-        dom.rebuild_in_place();
-        dom.in_scope(ScopeId::ROOT, || {
-            let mut hub = MessageStreamHub::new();
+        let app = glory::ui::App::memory();
+        {
+            let mut hub = MessageStreamHub::new(app.scope());
             assert!(hub.apply_admitted(&admitted, now).is_err());
             assert!(hub.visible_for(realm.as_str(), strand.as_str()).is_empty());
             let mut missing = material.clone();
@@ -290,6 +291,6 @@ mod tests {
             hub.retain_eligible(&[]);
             assert!(hub.retained().is_empty());
             assert!(hub.visible_for(realm.as_str(), strand.as_str()).is_empty());
-        });
+        }
     }
 }

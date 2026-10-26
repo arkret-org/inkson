@@ -1,37 +1,15 @@
-//! A6.1 — global cross-Realm message search panel.
-//!
-//! Pressing
-//! `Cmd+F` (or `Ctrl+F` off-mac), the `topbar-search-button`, or
-//! navigating directly to `/search` opens this panel. The remote Arkret HTTP
-//! catalog still has no spec-defined global plaintext search endpoint; this
-//! panel searches only the local client index material the device can already
-//! render from decrypted message projections.
-//!
-//! UI states surfaced:
-//! - empty (no query typed yet) — `global-search-results-empty`
-//! - loading — `global-search-results-loading`
-//! - error — `global-search-results-error`
-//! - no results — `global-search-results-no-results`
-//! - hit list — `global-search-results` with per-row testids
-//!
-//! Each result row carries:
-//! - `global-search-result-item` on the wrapper
-//! - `global-search-result-realm` for the source Realm id
-//! - `global-search-result-snippet` for the body excerpt
+use std::rc::Rc;
 
-use dioxus::prelude::*;
-use dioxus_router::Link;
-use dioxus_router::hooks::use_navigator;
+use glory::{Cage, Scope};
 use serde_json::{Value, json};
 
 use crate::i18n::tr;
 use crate::models::IndexSearchView;
+use crate::presentation::{InksonContext, View};
 use crate::routes::Route;
 use crate::state::LocalStateStore;
-use crate::ui::button::{Button, ButtonVariant};
-use crate::ui::input::Input;
 use crate::views::helpers::{actor_display_label, short_protocol_id};
-
+use crate::views::settings::widgets::*;
 /// Type alias for the panel's result list to keep the component
 /// signature compact.
 type ResultRows = Vec<Value>;
@@ -99,7 +77,7 @@ pub struct SearchDestination {
 enum SearchSource<'a> {
     #[allow(dead_code)]
     Borrowed(&'a LocalStateStore),
-    Live(SyncSignal<LocalStateStore>),
+    Live(crate::presentation::SharedStateStore),
     #[cfg(not(target_arch = "wasm32"))]
     Host(
         crate::runtime::input::StateStoreHandle,
@@ -111,7 +89,7 @@ impl SearchSource<'_> {
     fn with_store<R>(&self, read: impl FnOnce(&LocalStateStore) -> R) -> R {
         match self {
             Self::Borrowed(store) => read(store),
-            Self::Live(store) => read(&store.peek()),
+            Self::Live(store) => store.read(read),
             #[cfg(not(target_arch = "wasm32"))]
             Self::Host(store, _) => store.read(read),
         }
@@ -397,443 +375,677 @@ use crate::realm_tree::string_field;
 
 #[derive(Clone, Copy)]
 struct LocalSearchState {
-    results: Signal<ResultRows>,
-    loading: Signal<bool>,
-    search_epoch: Signal<u64>,
-    last_search: Signal<Option<SearchRequest>>,
-    error_key: Signal<Option<&'static str>>,
-    has_searched: Signal<bool>,
-    recheck_at: Signal<SearchDeadline>,
+    results: Cage<ResultRows>,
+    loading: Cage<bool>,
+    search_epoch: Cage<u64>,
+    last_search: Cage<Option<SearchRequest>>,
+    error_key: Cage<Option<&'static str>>,
+    has_searched: Cage<bool>,
+    recheck_at: Cage<SearchDeadline>,
+    holder_deadline: Cage<SearchDeadline>,
+    request_task: Cage<Option<glory::core::TaskToken>>,
 }
-
-fn search_holder_ready(session: crate::app::SessionContext) -> bool {
-    session
+fn search_holder_ready(context: &InksonContext) -> bool {
+    context
         .active_account
-        .read()
+        .get()
         .as_ref()
         .is_some_and(|account| {
-            session
+            context
                 .state_store
-                .read()
-                .search_session_matches(&account.authority, &account.device_id)
+                .read(|store| store.search_session_matches(&account.authority, &account.device_id))
         })
 }
-
-fn use_local_search(initial_query: String) -> LocalSearchState {
-    // A4 — state_store from session context instead of a prop.
-    let session = crate::app::SessionContext::get();
-    let state_store = session.state_store;
-    let active_account = session.active_account;
-    let mut results = use_signal(ResultRows::new);
-    let mut loading = use_signal(|| false);
-    let mut search_epoch = use_signal(|| 0u64);
-    let mut last_search = use_signal(|| None::<SearchRequest>);
-    let mut error_key = use_signal(|| None::<&'static str>);
-    let mut has_searched = use_signal(|| false);
-    let mut clock_revision = use_signal(|| 0_u64);
-    let mut recheck_at = use_signal(|| None);
-    let security_fence = use_memo(move || {
-        let clock = *clock_revision.read();
-        // A query after not_before must both release the now-valid result and
-        // arm its expiry task, even when persisted evidence has not changed.
-        let _ = search_epoch.read();
-        let store = state_store.read();
-        let account = active_account
-            .read()
-            .as_ref()
-            .map(|account| (account.authority.clone(), account.device_id.clone()));
-        let valid_until = account.as_ref().and_then(|(account, device)| {
-            store.search_session_valid_until(account, device, chrono::Utc::now())
+fn local_search(
+    scope: &Scope,
+    context: Rc<InksonContext>,
+    initial_query: String,
+) -> LocalSearchState {
+    let initial_request = context
+        .active_account
+        .get_untracked()
+        .filter(|_| !initial_query.trim().is_empty())
+        .map(|account| {
+            (
+                initial_query.clone(),
+                account.authority,
+                account.device_id,
+                context.session_generation.get_untracked(),
+            )
         });
-        (
-            account,
-            *session.session_generation.read(),
-            store.current_generation(),
-            store.current_reset_required(),
-            store.session_grant(),
-            valid_until,
-            // Local edits do not advance the accepted account-data revision or
-            // current generation. Compare the actual private view predicate.
-            search_blocked_actors(&store),
-            clock,
-        )
-    });
-    // Resource dependencies cancel the previous timer when holder evidence is
-    // renewed or replaced. Recheck wall time after waking, including suspend.
-    let _expiry = use_resource(move || {
-        let valid_until = earliest_deadline(security_fence.read().5, *recheck_at.read());
+    let missing_account = !initial_query.trim().is_empty() && initial_request.is_none();
+    let state = LocalSearchState {
+        results: scope.cage(Vec::new()),
+        loading: scope.cage(false),
+        search_epoch: scope.cage(0),
+        last_search: scope.cage(initial_request),
+        error_key: scope.cage(missing_account.then_some("search.account_unavailable")),
+        has_searched: scope.cage(false),
+        recheck_at: scope.cage(None),
+        holder_deadline: scope.cage(None),
+        request_task: scope.cage(None),
+    };
+    let clock = scope.cage(0_u64);
+    let fence = {
+        let ctx = context.clone();
+        scope.bond(move || {
+            let tick = clock.get();
+            let _ = ctx.state_revision.get();
+            let account = ctx
+                .active_account
+                .get()
+                .map(|account| (account.authority, account.device_id));
+            let generation = ctx.session_generation.get();
+            ctx.state_store.read(|store| {
+                let until = account.as_ref().and_then(|(account, device)| {
+                    store.search_session_valid_until(account, device, chrono::Utc::now())
+                });
+                (
+                    account,
+                    generation,
+                    store.current_generation(),
+                    store.current_reset_required(),
+                    store.session_grant(),
+                    until,
+                    search_blocked_actors(store),
+                    tick,
+                )
+            })
+        })
+    };
+    let _expiry = crate::presentation::widgets::resource(scope, move || {
+        let _ = state.search_epoch.get();
+        let until = earliest_deadline(
+            earliest_deadline(fence.get().5, state.holder_deadline.get()),
+            state.recheck_at.get(),
+        );
         async move {
-            if let Some(expiry) = valid_until {
+            if let Some(until) = until {
                 loop {
-                    let remaining = expiry.signed_duration_since(chrono::Utc::now());
+                    let remaining = until.signed_duration_since(chrono::Utc::now());
                     if remaining <= chrono::TimeDelta::zero() {
-                        results.clear();
-                        loading.set(true);
-                        // Consume this deadline before invalidating the query;
-                        // its next evaluation will discover the next boundary.
-                        recheck_at.set(None);
-                        clock_revision.with_mut(|revision| *revision = revision.wrapping_add(1));
+                        #[cfg(all(target_arch = "wasm32", feature = "spec-conformance"))]
+                        tracing::warn!(
+                            phase = "expiry_elapsed",
+                            epoch = state.search_epoch.get_untracked(),
+                            "local search lifecycle"
+                        );
+                        state.results.revise(|v| v.clear());
+                        state.loading.revise(|v| *v = true);
+                        state.recheck_at.revise(|v| *v = None);
+                        state.holder_deadline.revise(|v| *v = None);
+                        clock.revise(|v| *v = v.wrapping_add(1));
                         break;
                     }
                     crate::runtime_helpers::sleep_for(
                         remaining
                             .to_std()
-                            .unwrap_or(std::time::Duration::ZERO)
+                            .unwrap_or_default()
                             .min(std::time::Duration::from_secs(60)),
                     )
                     .await;
                 }
             }
+            Ok(())
         }
     });
-    use_effect(move || {
-        let _ = security_fence.read();
-        search_epoch.with_mut(|epoch| *epoch = epoch.wrapping_add(1));
-        results.clear();
-        loading.set(false);
-        let retained_request = last_search.peek().clone();
-        if let Some((q, owner, device, epoch)) = retained_request {
-            let same_owner =
-                active_account.peek().as_ref().is_some_and(|account| {
-                    account.authority == owner && account.device_id == device
-                }) && *session.session_generation.peek() == epoch;
-            if same_owner {
-                run_search(
-                    q,
-                    state_store,
-                    owner,
-                    device,
-                    results,
-                    loading,
-                    error_key,
-                    has_searched,
-                    search_epoch,
-                    last_search,
-                    recheck_at,
-                );
-            } else {
-                last_search.set(None);
-                has_searched.set(false);
-                recheck_at.set(None);
-            }
-        }
-    });
-
-    // Auto-run the search when the panel is opened with a pre-filled
-    // query (e.g. `/search?q=…`).
-    let initial_query_for_effect = initial_query.clone();
-    use_effect(move || {
-        let q = initial_query_for_effect.clone();
-        if !q.trim().is_empty() {
-            let Some(account) = active_account.peek().clone() else {
-                error_key.set(Some("search.account_unavailable"));
-                return;
-            };
-            run_search(
-                q,
-                state_store,
-                account.authority,
-                account.device_id,
-                results,
-                loading,
-                error_key,
-                has_searched,
-                search_epoch,
-                last_search,
-                recheck_at,
+    {
+        let ctx = context.clone();
+        let owner = scope.downgrade();
+        scope.effect(move || {
+            let current = fence.get();
+            #[cfg(all(target_arch = "wasm32", feature = "spec-conformance"))]
+            tracing::warn!(
+                phase = "fence_changed",
+                epoch = state.search_epoch.get_untracked(),
+                holder_ready = current.5.is_some(),
+                "local search lifecycle"
             );
-        }
-    });
-
-    LocalSearchState {
-        results,
-        loading,
-        search_epoch,
-        last_search,
-        error_key,
-        has_searched,
-        recheck_at,
+            if let Some(task) = state.request_task.revise(Option::take) {
+                task.cancel();
+            }
+            state
+                .holder_deadline
+                .revise(|deadline| *deadline = current.5);
+            state.search_epoch.revise(|v| *v = v.wrapping_add(1));
+            state.results.revise(|v| v.clear());
+            state.recheck_at.revise(|v| *v = None);
+            state.loading.revise(|v| *v = false);
+            if let Some((query, account, device, generation)) = state.last_search.get_untracked() {
+                if ctx
+                    .active_account
+                    .get_untracked()
+                    .as_ref()
+                    .is_some_and(|active| active.authority == account && active.device_id == device)
+                    && ctx.session_generation.get_untracked() == generation
+                {
+                    run_search(ctx.clone(), owner.clone(), state, query);
+                } else {
+                    state.last_search.revise(|v| *v = None);
+                    state.has_searched.revise(|v| *v = false);
+                    state.recheck_at.revise(|v| *v = None);
+                }
+            }
+        });
     }
+    state
 }
-
-#[component]
-pub fn GlobalSearchPanel(
-    principal_id: Signal<Option<arkret_sdk::DidCoreId>>,
-    device_id: Signal<String>,
-    initial_query: String,
-) -> Element {
-    let session = crate::app::SessionContext::get();
-    let state_store = session.state_store;
-    let active_account = session.active_account;
-    let mut query = use_signal(|| initial_query.clone());
-    let navigator = use_navigator();
-    let LocalSearchState {
-        results,
-        loading,
-        search_epoch,
-        last_search,
-        mut error_key,
-        has_searched,
-        recheck_at,
-    } = use_local_search(initial_query);
-    // Rendering must use current wall time too: a new query can become valid
-    // after not_before without changing any persisted holder evidence.
-    let ready = search_holder_ready(session)
-        && recheck_at
-            .read()
-            .is_none_or(|deadline| deadline > chrono::Utc::now());
-    let blocked = search_blocked_actors(&state_store.read());
-    // Apply the current private view during rendering too, before the effect
-    // invalidates a retained result or an asynchronous query can finish.
-    let visible_results: ResultRows = results
-        .read()
-        .iter()
-        .filter(|result| {
-            if result
-                .get("realm_id")
-                .and_then(Value::as_str)
-                .is_none_or(|realm| state_store.read().account_scope_read_denied(realm))
-            {
-                return false;
-            }
-            result
-                .get("actor_id")
-                .and_then(|value| serde_json::from_value::<arkret_sdk::ActorId>(value.clone()).ok())
-                .is_some_and(|actor| {
-                    !crate::account_data::message_actor_is_blocked(&actor, &blocked)
-                })
-        })
-        .cloned()
-        .collect();
-
-    rsx! {
-        div { class: "timeline", "data-testid": "global-search-panel", role: "region", "aria-label": tr("search.title"),
-            div { class: "event",
-                div { class: "event-head",
-                    span { {tr("search.title")} }
-                    span { class: "muted", "data-testid": "global-search-index-label", {tr("search.index")} }
-                }
-                form {
-                    onsubmit: move |evt| {
-                        evt.prevent_default();
-                        let q = query();
-                        if q.trim().is_empty() { return; }
-                        let Some(account) = active_account.peek().clone() else {
-                            error_key.set(Some("search.account_unavailable"));
-                            return;
-                        };
-                        run_search(
-                            q,
-                            state_store,
-                            account.authority,
-                            account.device_id,
-                            results,
-                            loading,
-                            error_key,
-                            has_searched,
-                            search_epoch,
-                            last_search,
-                            recheck_at,
-                        );
-                    },
-                    div { class: "actions", style: "gap: 8px;",
-                        Input {
-                            "data-testid": "global-search-input",
-                            "aria-label": tr("search.title"),
-                            r#type: "search",
-                            placeholder: tr("search.placeholder"),
-                            value: "{query}",
-                            "autofocus": true,
-                            oninput: move |event: FormEvent| query.set(event.value()),
-                            style: "flex: 1; min-width: 280px;",
-                        }
-                        Button {
-                            variant: ButtonVariant::Primary,
-                            "data-testid": "global-search-submit",
-                            r#type: "submit",
-                            disabled: query().trim().is_empty() || loading(),
-                            if loading() { {tr("search.results.loading")} } else { {tr("search.title")} }
-                        }
-                    }
-                }
-            }
-
-            if let Some(key) = error_key() {
-                div { class: "event", "data-testid": "global-search-results-error",
-                    div { class: "event-head", span { {tr("search.results.error")} } }
-                    div { class: "muted", {tr(key)} }
-                }
-            } else if loading() {
-                div { class: "event", "data-testid": "global-search-results-loading",
-                    div { class: "muted", {tr("search.results.loading")} }
-                }
-            } else if !has_searched() {
-                div { class: "event", "data-testid": "global-search-results-empty",
-                    div { class: "muted", {tr("search.results.empty")} }
-                }
-            } else if !ready || visible_results.is_empty() {
-                div { class: "event", "data-testid": "global-search-results-no-results",
-                    div { class: "muted", {tr("search.no_results")} }
-                }
-            } else {
-                div { "data-testid": "global-search-results",
-                    for (idx, result) in visible_results.into_iter().enumerate() {
-                        {
-                            let snippet = render_result_snippet(&result);
-                            let destination = result_destination(&result);
-                            let realm_id_text = result
-                                .get("realm_id")
-                                .and_then(Value::as_str)
-                                .unwrap_or("-")
-                                .to_owned();
-                            let sender = result_actor_id(&result);
-                            let kind = render_result_kind(&result);
-                            let destination_label = destination.as_ref().map(|target| tr(target.label_key)).unwrap_or_default();
-                            let destination_for_button = destination.clone();
-                            let realm_id_label = short_protocol_id(&realm_id_text);
-                            let sender_label = actor_display_label(&state_store.read(), &sender);
-                            rsx! {
-                                div {
-                                    key: "{idx}",
-                                    class: "event",
-                                    "data-testid": "global-search-result-item",
-                                    "data-event-id": result.get("event_id").and_then(Value::as_str).unwrap_or_default(),
-                                    "data-commit-id": result.pointer("/covering_commit/commit_id").and_then(Value::as_str).unwrap_or_default(),
-                                    div { class: "event-head",
-                                        span { "{kind}" }
-                                        span {
-                                            class: "id mono",
-                                            "data-testid": "global-search-result-realm",
-                                            title: "{realm_id_text}",
-                                            "{realm_id_label}"
-                                        }
-                                    }
-                                    if !sender.is_empty() {
-                                        div { class: "muted", title: "{sender}", "{sender_label}" }
-                                    }
-                                    div {
-                                        "data-testid": "global-search-result-snippet",
-                                        "{snippet}"
-                                    }
-                                    if let Some(target) = destination_for_button {
-                                        div { class: "actions",
-                                            Link {
-                                                class: "secondary",
-                                                "data-testid": "global-search-result-link",
-                                                to: target.route,
-                                                if let Some(seal) = target.seal {
-                                                    span {
-                                                        "data-testid": "global-search-result-seal",
-                                                        "data-seal": "{seal}",
-                                                        "{destination_label}: {seal}"
-                                                    }
-                                                } else {
-                                                    "{destination_label}"
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Convenience back-link so the panel doesn't trap users on
-            // a dead-end route when no results show up.
-            div { class: "actions",
-                Button {
-                    variant: ButtonVariant::Secondary,
-                    "data-testid": "global-search-back",
-                    onclick: move |_| {
-                        let _ = navigator.push(Route::Dashboard);
-                    },
-                    {tr("search.back")}
-                }
-            }
-        }
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn run_search(
-    q: String,
-    state_store: SyncSignal<LocalStateStore>,
-    authority: arkret_sdk::AccountId,
-    device_id: arkret_sdk::DeviceId,
-    mut results: Signal<ResultRows>,
-    mut loading: Signal<bool>,
-    mut error_key: Signal<Option<&'static str>>,
-    mut has_searched: Signal<bool>,
-    mut search_epoch: Signal<u64>,
-    mut last_search: Signal<Option<SearchRequest>>,
-    mut recheck_at: Signal<SearchDeadline>,
+#[cfg(all(target_arch = "wasm32", feature = "spec-conformance"))]
+fn observe_search_holder(
+    context: &InksonContext,
+    account: &arkret_sdk::AccountId,
+    device: &arkret_sdk::DeviceId,
 ) {
-    let query_trimmed = q.trim().to_owned();
-    if query_trimmed.is_empty() {
+    let now = chrono::Utc::now();
+    context.state_store.read(|store| {
+        let active_matches = store.active_authority().as_ref() == Some(account);
+        let reset_required = store.current_reset_required();
+        let persist_failed = store.persist_error().is_some();
+        store.with_unoverlaid_account_fields(|state| {
+            let grant = state.session_grant.as_ref();
+            let authority = state.device_authoring_authority.as_ref();
+            tracing::warn!(
+                phase = "holder_gates",
+                active_matches,
+                reset_required,
+                persist_failed,
+                has_grant = grant.is_some(),
+                has_authority = authority.is_some(),
+                grant_owner_matches =
+                    grant.is_some_and(
+                        |grant| grant.account_id == *account && grant.device_id == *device
+                    ),
+                grant_unexpired = grant
+                    .and_then(|grant| grant.grant_expires_at)
+                    .is_some_and(|expiry| expiry > now),
+                authority_owner_matches = authority
+                    .is_some_and(|authority| authority.account_id == *account
+                        && authority.device_id == *device),
+                device_active = authority
+                    .is_some_and(|authority| authority.device_projection.device_status.is_active()),
+                attested_effective = authority
+                    .is_some_and(|authority| authority.device_projection.attested_at <= now),
+                authorization_effective = authority.is_some_and(|authority| authority
+                    .device_projection
+                    .authorization_window
+                    .not_before
+                    <= now),
+                projection_unexpired =
+                    authority.is_some_and(|authority| authority.device_projection.expires_at > now),
+                window_unexpired = authority.is_some_and(|authority| authority
+                    .device_projection
+                    .authorization_window
+                    .expires_at
+                    .is_none_or(|expiry| expiry > now)),
+                generation_matches = authority.is_some_and(|authority| {
+                    crate::identity::authoring_generation::cached_principal_authoring_generation(
+                        account,
+                        device.as_str(),
+                    )
+                    .is_none_or(|generation| generation == authority.authoring_generation)
+                }),
+                "local search lifecycle"
+            );
+        });
+    });
+}
+
+#[cfg(all(target_arch = "wasm32", feature = "spec-conformance"))]
+struct SearchReadObservation {
+    owner: glory::ui::WeakScope,
+    epoch: Cage<u64>,
+    serial: u64,
+    complete: bool,
+}
+#[cfg(all(target_arch = "wasm32", feature = "spec-conformance"))]
+impl Drop for SearchReadObservation {
+    fn drop(&mut self) {
+        if !self.complete {
+            tracing::warn!(phase="read_interrupted", owner_alive=self.owner.upgrade().is_some(), serial=self.serial,
+                current_serial=?self.epoch.try_with_untracked(|value| *value).ok(), "local search lifecycle");
+        }
+    }
+}
+
+fn run_search(
+    context: Rc<InksonContext>,
+    owner: glory::ui::WeakScope,
+    state: LocalSearchState,
+    q: String,
+) {
+    let query = q.trim().to_owned();
+    if query.is_empty() {
         return;
     }
-    loading.set(true);
-    error_key.set(None);
-    has_searched.set(true);
-    results.clear();
-    let request_epoch = search_epoch.with_mut(|epoch| {
-        *epoch = epoch.wrapping_add(1);
-        *epoch
+    let Some(scope) = owner.upgrade() else {
+        return;
+    };
+    if let Some(task) = state.request_task.revise(Option::take) {
+        task.cancel();
+    }
+    let serial = state.search_epoch.revise(|v| {
+        *v = v.wrapping_add(1);
+        *v
     });
-    let generation = state_store.peek().current_generation();
-    let blocked = search_blocked_actors(&state_store.peek());
-    let session_generation = crate::app::SessionContext::get().session_generation;
-    let session_epoch = *session_generation.peek();
-    last_search.set(Some((
-        q,
-        authority.clone(),
-        device_id.clone(),
-        session_epoch,
-    )));
-    spawn(async move {
+    let Some(account) = context.active_account.get_untracked() else {
+        state.results.revise(Vec::clear);
+        state.loading.revise(|loading| *loading = false);
+        state.holder_deadline.revise(|deadline| *deadline = None);
+        state
+            .error_key
+            .revise(|v| *v = Some("search.account_unavailable"));
+        return;
+    };
+    let authority = account.authority;
+    let device = account.device_id;
+    let session_generation = context.session_generation.get_untracked();
+    let generation = context.state_store.read(|store| store.current_generation());
+    let blocked = context.state_store.read(search_blocked_actors);
+    state.recheck_at.revise(|v| *v = None);
+    state.loading.revise(|v| *v = true);
+    state.error_key.revise(|v| *v = None);
+    state.has_searched.revise(|v| *v = true);
+    state.results.revise(|v| v.clear());
+    let holder_deadline = context
+        .state_store
+        .read(|store| store.search_session_valid_until(&authority, &device, chrono::Utc::now()));
+    state
+        .holder_deadline
+        .revise(|deadline| *deadline = holder_deadline);
+    state
+        .last_search
+        .revise(|v| *v = Some((q, authority.clone(), device.clone(), session_generation)));
+    let task = scope.owner().spawn(async move {
+        #[cfg(all(target_arch = "wasm32", feature = "spec-conformance"))]
+        let mut observation = {
+            tracing::warn!(phase="read_started", serial, holder_ready=holder_deadline.is_some(), "local search lifecycle");
+            SearchReadObservation { owner: owner.clone(), epoch: state.search_epoch, serial, complete:false }
+        };
+        #[cfg(all(test, not(target_arch = "wasm32")))]
+        eprintln!(
+            "[search-phase] request:start now={} serial={serial}",
+            chrono::Utc::now()
+        );
+        #[cfg(all(target_arch = "wasm32", feature = "spec-conformance"))]
+        observe_search_holder(&context, &authority, &device);
         let response = search_local(
-            SearchSource::Live(state_store),
+            SearchSource::Live(context.state_store.clone()),
             &authority,
-            &device_id,
-            &query_trimmed,
+            &device,
+            &query,
             &[],
             Some(&["message"]),
             50,
         )
         .await;
-        if *search_epoch.peek() != request_epoch {
+        #[cfg(all(target_arch = "wasm32", feature = "spec-conformance"))]
+        {
+            observation.complete = true;
+            tracing::warn!(phase="read_completed", serial, current_serial=state.search_epoch.get_untracked(), success=response.is_ok(), rows=?response.as_ref().ok().map(|(view,_)|view.results.len()), "local search lifecycle");
+        }
+        #[cfg(all(test, not(target_arch = "wasm32")))]
+        eprintln!(
+            "[search-phase] request:response now={} serial={serial} current_serial={} result={:?}",
+            chrono::Utc::now(),
+            state.search_epoch.get_untracked(),
+            response
+                .as_ref()
+                .map(|(view, deadline)| (view.results.len(), deadline))
+        );
+        if owner.upgrade().is_none() || state.search_epoch.get_untracked() != serial {
             return;
         }
-        let current = state_store.peek();
-        if *session_generation.peek() != session_epoch
-            || current.current_generation() != generation
-            || !current.search_session_matches(&authority, &device_id)
-            || search_blocked_actors(&current) != blocked
-        {
-            results.clear();
-            recheck_at.set(None);
+        state.request_task.revise(|task| *task = None);
+        let current = context.session_generation.get_untracked() == session_generation
+            && context.state_store.read(|store| {
+                store.current_generation() == generation
+                    && store.search_session_matches(&authority, &device)
+                    && search_blocked_actors(store) == blocked
+            });
+        if !current {
+            state.results.revise(|v| v.clear());
+            state.recheck_at.revise(|v| *v = None);
         } else {
             match response {
                 Ok((mut response, deadline)) => {
                     if deadline.is_some_and(|deadline| deadline <= chrono::Utc::now()) {
                         response.results.clear();
                     }
-                    recheck_at.set(deadline);
-                    results.set(response.results);
+                    state.recheck_at.revise(|v| *v = deadline);
+                    state.results.revise(|v| *v = response.results);
                 }
                 Err(error) => {
-                    recheck_at.set(None);
-                    tracing::warn!(%error, "local committed search failed closed");
-                    error_key.set(Some("search.account_unavailable"));
+                    tracing::warn!(%error,"local committed search failed closed");
+                    state.recheck_at.revise(|v| *v = None);
+                    state
+                        .error_key
+                        .revise(|v| *v = Some("search.account_unavailable"));
                 }
             }
         }
-        loading.set(false);
+        state.loading.revise(|v| *v = false);
     });
+    match task {
+        Ok(task) if task.is_current() => {
+            state.request_task.revise(|current| *current = Some(task));
+        }
+        Ok(_) => {}
+        Err(error) => {
+            state.loading.revise(|loading| *loading = false);
+            state
+                .error_key
+                .revise(|key| *key = Some("search.account_unavailable"));
+            scope.report_error(error);
+        }
+    }
 }
-
+pub fn page(scope: &Scope, context: Rc<InksonContext>, _route: Route) -> View {
+    global_search_panel(scope, context, String::new())
+}
+pub fn global_search_panel(
+    scope: &Scope,
+    context: Rc<InksonContext>,
+    initial_query: String,
+) -> View {
+    let query = scope.cage(initial_query.clone());
+    let state = local_search(scope, context.clone(), initial_query);
+    let ctx = context.clone();
+    let owner = scope.downgrade();
+    let enabled = scope.bond(move || !query.get().trim().is_empty() && !state.loading.get());
+    let query_reference = scope.cage(None);
+    let query_focused = scope.cage(false);
+    let focus_owner = scope.downgrade();
+    scope.effect(move || {
+        if !query_focused.get_untracked()
+            && let Some(node) = query_reference.get()
+            && let Some(scope) = focus_owner.upgrade()
+            && scope
+                .capabilities()
+                .is_ok_and(|capabilities| capabilities.focus)
+        {
+            match scope.action(glory::render::Action::Focus(node)) {
+                Ok(()) => query_focused.revise(|focused| *focused = true),
+                Err(error) => scope.report_error(error),
+            }
+        }
+    });
+    let query_context = context.clone();
+    let query_owner = owner.clone();
+    let form = line(
+        "actions global-search-form",
+        vec![
+            input_prompt(
+                scope,
+                context.translated(scope, "search.placeholder").into(),
+                query,
+                Box::new(
+                    sapid::text_field()
+                        .unstyled()
+                        .class("input global-search-input")
+                        .name(context.translated(scope, "search.title"))
+                        .purpose(glory::render::Purpose::Search)
+                        .value(query)
+                        .node_ref(query_reference)
+                        .on_value_change(move |value| query.revise(|current| *current = value))
+                        .on(glory::render::EventKind::Keyboard, move |event| {
+                            if matches!(
+                                event,
+                                glory::render::Event::Keyboard {
+                                    command: glory::render::KeyboardCommand::Submit,
+                                    ..
+                                }
+                            ) && enabled.get_untracked()
+                            {
+                                run_search(
+                                    query_context.clone(),
+                                    query_owner.clone(),
+                                    state,
+                                    query.get_untracked(),
+                                );
+                            }
+                        }),
+                ),
+            ),
+            action(
+                scope,
+                context.clone(),
+                "global-search-submit",
+                "search.title",
+                "primary",
+                enabled,
+                move || run_search(ctx.clone(), owner.clone(), state, query.get_untracked()),
+            ),
+        ],
+    );
+    let source = {
+        let ctx = context.clone();
+        scope.bond(move || {
+            let _ = ctx.state_revision.get();
+            let _ = ctx.active_account.get();
+            let _ = ctx.session_generation.get();
+            let _ = ctx.locale.get();
+            (
+                state.results.get(),
+                state.loading.get(),
+                state.error_key.get(),
+                state.has_searched.get(),
+                state.recheck_at.get(),
+            )
+        })
+    };
+    let ctx = context.clone();
+    let results = reactive(
+        source,
+        move |scope, (rows, loading, error, searched, deadline)| {
+            if let Some(key) = error {
+                return stack(
+                    "event global-search-results-error",
+                    vec![
+                        plain(ctx.translated(scope, "search.results.error")),
+                        paragraph("muted", ctx.translated(scope, key)),
+                    ],
+                );
+            }
+            if loading {
+                return stack(
+                    "event global-search-results-loading",
+                    vec![paragraph(
+                        "muted",
+                        ctx.translated(scope, "search.results.loading"),
+                    )],
+                );
+            }
+            if !searched {
+                return stack(
+                    "event global-search-results-empty",
+                    vec![paragraph(
+                        "muted",
+                        ctx.translated(scope, "search.results.empty"),
+                    )],
+                );
+            }
+            let ready = search_holder_ready(&ctx)
+                && deadline.is_none_or(|deadline| deadline > chrono::Utc::now());
+            let blocked = ctx.state_store.read(search_blocked_actors);
+            let rows = rows
+                .into_iter()
+                .filter(|row| {
+                    ctx.state_store.read(|store| {
+                        !row.get("realm_id")
+                            .and_then(Value::as_str)
+                            .is_none_or(|realm| store.account_scope_read_denied(realm))
+                            && row
+                                .get("actor_id")
+                                .and_then(|actor| {
+                                    serde_json::from_value::<arkret_sdk::ActorId>(actor.clone())
+                                        .ok()
+                                })
+                                .is_some_and(|actor| {
+                                    !crate::account_data::message_actor_is_blocked(&actor, &blocked)
+                                })
+                    })
+                })
+                .collect::<Vec<_>>();
+            if !ready || rows.is_empty() {
+                return stack(
+                    "event global-search-results-no-results",
+                    vec![paragraph(
+                        "muted",
+                        ctx.translated(scope, "search.no_results"),
+                    )],
+                );
+            }
+            stack(
+                "global-search-results",
+                rows.into_iter()
+                    .enumerate()
+                    .map(|(index, row)| {
+                        let realm = string_field(&row, &["realm_id"]).unwrap_or_else(|| "-".into());
+                        let actor = result_actor_id(&row);
+                        let mut nodes = vec![line(
+                            "event-head",
+                            vec![
+                                paragraph("global-search-result-kind", render_result_kind(&row)),
+                                paragraph(
+                                    "id mono global-search-result-realm",
+                                    short_protocol_id(&realm),
+                                ),
+                            ],
+                        )];
+                        if !actor.is_empty() {
+                            nodes.push(paragraph(
+                                "muted",
+                                ctx.state_store
+                                    .read(|store| actor_display_label(store, &actor)),
+                            ));
+                        }
+                        nodes.push(paragraph(
+                            "global-search-result-snippet",
+                            render_result_snippet(&row),
+                        ));
+                        if let Some(target) = result_destination(&row) {
+                            let route = target.route;
+                            let label = match target.seal {
+                                Some(seal) => format!("{}: {seal}", tr(target.label_key)),
+                                None => tr(target.label_key),
+                            };
+                            let ctx = ctx.clone();
+                            nodes.push(Box::new(
+                                crate::presentation::widgets::internal_link()
+                                    .class("secondary global-search-result-link global-search-result-seal")
+                                    .target(route.to_string())
+                                    .name(label.clone())
+                                    .fill(glory::ui::text().content(label))
+                                    .on(glory::render::EventKind::Activate, move |_| {
+                                        ctx.navigate(route.clone())
+                                    }),
+                            ));
+                        }
+                        // Preserve the source references previously exposed as HTML data
+                        // attributes through a supported accessible description on both hosts.
+                        let event = row
+                            .get("event_id")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default();
+                        let commit = row
+                            .pointer("/covering_commit/commit_id")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default();
+                        let relation = if !event.is_empty() || !commit.is_empty() {
+                            use sha2::Digest;
+                            let key = format!("{index}:{event}:{commit}");
+                            let id = match glory::render::SemanticId::new(format!(
+                                "search-source-{}",
+                                hex::encode(sha2::Sha256::digest(key.as_bytes()))
+                            )) {
+                                Ok(id) => id,
+                                Err(error) => {
+                                    scope.report_error(error);
+                                    return crate::presentation::widgets::empty();
+                                }
+                            };
+                            nodes.push(Box::new(
+                                glory::ui::view()
+                                    .class("sr-only global-search-result-provenance")
+                                    .semantics(Some(Box::new(glory::render::Semantics {
+                                        id: Some(id.clone()),
+                                        ..Default::default()
+                                    })))
+                                    .fill((
+                                        glory::ui::text().content(format!(
+                                            "{}: ",
+                                            ctx.tr("search.source_event")
+                                        )),
+                                        glory::ui::text()
+                                            .class("global-search-result-event-reference")
+                                            .content(event.to_owned()),
+                                        glory::ui::text().content(format!(
+                                            " · {}: ",
+                                            ctx.tr("search.source_commit")
+                                        )),
+                                        glory::ui::text()
+                                            .class("global-search-result-commit-reference")
+                                            .content(commit.to_owned()),
+                                        glory::ui::text().content(" · Realm: "),
+                                        glory::ui::text().class("global-search-result-realm-reference").content(realm.clone()),
+                                    )),
+                            ));
+                            Some(Box::new(glory::render::Semantics {
+                                described_by: Some(id),
+                                ..Default::default()
+                            }))
+                        } else {
+                            None
+                        };
+                        Box::new(
+                            glory::ui::view()
+                                .class("event global-search-result-item")
+                                .role(glory::render::Role::Group)
+                                .name(ctx.translated(scope, "search.result_source"))
+                                .semantics(relation)
+                                .fill(nodes),
+                        ) as View
+                    })
+                    .collect(),
+            )
+        },
+    );
+    let ctx = context.clone();
+    Box::new(
+        glory::ui::view()
+            .role(glory::render::Role::Section)
+            .name(context.translated(scope, "search.title"))
+            .class("timeline global-search-panel")
+            .fill(vec![
+                stack(
+                    "event",
+                    vec![
+                        line(
+                            "event-head",
+                            vec![
+                                plain(context.translated(scope, "search.title")),
+                                paragraph(
+                                    "muted global-search-index-label",
+                                    context.translated(scope, "search.index"),
+                                ),
+                            ],
+                        ),
+                        form,
+                    ],
+                ),
+                results,
+                action(
+                    scope,
+                    context.clone(),
+                    "global-search-back",
+                    "search.back",
+                    "secondary",
+                    true,
+                    move || ctx.navigate(Route::Dashboard),
+                ),
+            ]),
+    )
+}
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -965,72 +1177,16 @@ mod session_tests;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod locale_tests {
-    use std::cell::RefCell;
-    use std::rc::Rc;
-
     use super::*;
-    use crate::i18n::{I18nSignal, UiLocale};
-
-    type LocaleHandle = Rc<RefCell<Option<I18nSignal>>>;
-
-    fn retained_search_surface((handle, rows): (LocaleHandle, ResultRows)) -> Element {
-        let locale = use_context_provider(|| crate::i18n::init_i18n_with_locale(UiLocale::En));
-        *handle.borrow_mut() = Some(locale);
-        // Capture the result and feedback once. Locale updates alone must
-        // schedule rendering; no query, projection, or route changes here.
-        let rows = use_signal(move || rows);
-        let error = use_signal(|| Some("search.account_unavailable"));
-        let texts = rows
-            .read()
-            .iter()
-            .map(|row| {
-                let target = result_destination(row).unwrap();
-                format!(
-                    "{} | {} | {} | {}",
-                    render_result_kind(row),
-                    render_result_snippet(row),
-                    tr(target.label_key),
-                    target.seal.as_deref().unwrap_or_default()
-                )
-            })
-            .collect::<Vec<_>>();
-        rsx! {
-            div {
-                for (index, text) in texts.into_iter().enumerate() {
-                    p { key: "{index}", "{text}" }
-                }
-                if let Some(key) = error() {
-                    p { {tr(key)} }
-                }
-            }
-        }
-    }
-
-    fn text_edits(edits: dioxus::core::Mutations) -> Vec<String> {
-        let mut text = edits
-            .edits
-            .into_iter()
-            .filter_map(|edit| match edit {
-                dioxus::core::Mutation::CreateTextNode { value, .. }
-                | dioxus::core::Mutation::SetText { value, .. } => Some(value),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        text.sort();
-        text
-    }
-
     #[test]
     fn retained_search_results_and_feedback_rerender_without_interpreting_literals() {
         let realm_id = "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE";
-        let rows = vec![
+        let rows = [
             json!({"realm_id": realm_id}),
             json!({"realm_id": realm_id, "task_id": "task{seal}", "content": {"body": "search.no_body"}}),
             json!({"realm_id": realm_id, "event_id": "message{seal}", "summary": "", "title": "ignored"}),
             json!({"realm_id": realm_id, "kind": "search.kind.message", "title": "{query} / 原文"}),
         ];
-        let handle = Rc::new(RefCell::new(None));
-        let mut dom = VirtualDom::new_with_props(retained_search_surface, (handle.clone(), rows));
         let english = [
             "Message | <no body> | Open | ",
             "Message | search.no_body | Open task | task{seal}",
@@ -1053,11 +1209,29 @@ mod locale_tests {
             values.sort();
             values
         };
-        assert_eq!(text_edits(dom.rebuild_to_vec()), expected(&english));
-        let mut locale = handle.borrow().expect("surface provides locale");
-        for (language, copy) in [(UiLocale::Zh, &chinese), (UiLocale::En, &english)] {
-            dom.in_runtime(|| crate::i18n::set_locale(&mut locale, language));
-            assert_eq!(text_edits(dom.render_immediate_to_vec()), expected(copy));
+        for (locale, copy) in [
+            (crate::i18n::UiLocale::En, &english),
+            (crate::i18n::UiLocale::Zh, &chinese),
+            (crate::i18n::UiLocale::En, &english),
+        ] {
+            crate::i18n::with_test_locale(locale, || {
+                let mut actual = rows
+                    .iter()
+                    .map(|row| {
+                        let target = result_destination(row).unwrap();
+                        format!(
+                            "{} | {} | {} | {}",
+                            render_result_kind(row),
+                            render_result_snippet(row),
+                            tr(target.label_key),
+                            target.seal.as_deref().unwrap_or_default()
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                actual.push(tr("search.account_unavailable"));
+                actual.sort();
+                assert_eq!(actual, expected(copy));
+            });
         }
     }
 }

@@ -235,6 +235,7 @@ pub(crate) async fn resume_pending_contact(
 
 #[cfg(any(test, all(target_arch = "wasm32", feature = "spec-conformance")))]
 mod tests {
+    #[cfg(not(target_arch = "wasm32"))]
     use super::*;
 
     #[cfg(not(target_arch = "wasm32"))]

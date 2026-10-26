@@ -3,14 +3,16 @@
 //! The product exposes only `ak.moderation.decision` and
 //! `ak.moderation.decision.lift` as signed, convergent governance primitives.
 
+use std::rc::Rc;
+
 use arkret_wire::event_kind_str;
-use dioxus::prelude::*;
+use glory::prelude::*;
 use serde_json::Value;
 
-use crate::i18n::{tr, tr_args};
+use crate::i18n::tr_args;
+use crate::presentation::widgets::*;
+use crate::presentation::{InksonContext, View};
 use crate::transport::auth::with_event_submitter;
-use crate::ui::button::{Button, ButtonVariant};
-use crate::ui::input::Input;
 use crate::views::helpers::short_protocol_id;
 
 pub const DECISION_VERDICTS: &[&str] = &["hard_deny", "soft_deny", "quarantine", "require_review"];
@@ -65,161 +67,217 @@ pub fn project_moderation_decisions(raw_ops: &[Value]) -> Vec<StandingDecision> 
     decisions.into_values().collect()
 }
 
-#[component]
-pub fn ModerationWorkbench(
-    principal_id: String,
-    token: Signal<String>,
-    selected_realm_id: String,
-) -> Element {
-    let base_url = crate::app::SessionContext::base_url_string();
-    let state_store = crate::app::SessionContext::get().state_store;
-    let mut target = use_signal(String::new);
-    let mut verdict = use_signal(|| "quarantine".to_owned());
-    let mut reason = use_signal(|| "policy_violation".to_owned());
-    let mut status = use_signal(String::new);
-    let operations = state_store
-        .read()
-        .load()
-        .raw_operations
-        .iter()
-        .map(|record| record.payload.clone())
-        .collect::<Vec<_>>();
-    let standing = project_moderation_decisions(&operations);
-
-    rsx! {
-        div {
-            class: "timeline",
-            "data-testid": "moderation-workbench",
-            role: "region",
-            "aria-label": tr("moderation.workbench_aria_label"),
-            div { class: "event", "data-testid": "moderation-decide-form",
-                div { class: "event-head",
-                    span { {tr("moderation.decide_title")} }
-                    span { class: "badge", title: event_kind_str::MODERATION_DECISION, {tr("moderation.decide_badge")} }
-                }
-                div { class: "workflow-form",
-                    Input {
-                        "data-testid": "moderation-decide-target",
-                        value: "{target}",
-                        placeholder: tr("moderation.target_placeholder"),
-                        oninput: move |event: FormEvent| target.set(event.value()),
-                    }
-                    select {
-                        "data-testid": "moderation-decide-verdict",
-                        value: "{verdict}",
-                        onchange: move |event: FormEvent| verdict.set(event.value()),
-                        for value in DECISION_VERDICTS.iter() {
-                            option { value: "{value}", "{value}" }
-                        }
-                    }
-                    Input {
-                        "data-testid": "moderation-decide-reason",
-                        value: "{reason}",
-                        placeholder: "reason_code",
-                        oninput: move |event: FormEvent| reason.set(event.value()),
-                    }
-                    Button {
-                        variant: ButtonVariant::Primary,
-                        "data-testid": "moderation-decide-submit",
-                        onclick: {
-                            let base = base_url.clone();
-                            let realm = selected_realm_id.clone();
-                            let actor = principal_id.clone();
-                            move |_| {
-                                let target_ref = target().trim().to_owned();
-                                let decision = verdict();
-                                let reason_code = reason().trim().to_owned();
-                                if target_ref.is_empty() || reason_code.is_empty() {
-                                    status.set("target_ref + reason_code are required".to_owned());
-                                    return;
-                                }
-                                let (base, realm, actor) = (base.clone(), realm.clone(), actor.clone());
-                                let api_token = token();
-                                spawn(async move {
-                                    match with_event_submitter(&base, api_token, |submitter| async move {
-                                        crate::transport::realm_write::moderation_decide(
-                                            &submitter, &realm, &actor, &target_ref, &decision, &reason_code,
-                                        )
-                                        .await
-                                    })
-                                    .await
-                                    {
-                                        Ok(response) => status.set(format!("decision sealed; event_id {}", response.event_id)),
-                                        Err(error) => status.set(format!("decision failed: {}", error.display())),
-                                    }
-                                });
-                            }
-                        },
-                        {tr("moderation.decide_submit")}
-                    }
-                }
-            }
-            div { class: "event", "data-testid": "moderation-decision-queue",
-                div { class: "event-head",
-                    span { {tr("moderation.standing_title")} }
-                    span { class: "badge", "{standing.len()}" }
-                }
-                if standing.is_empty() {
-                    div { class: "muted", {tr("moderation.standing_empty")} }
-                } else {
-                    for decision in standing.iter().cloned() {
-                        {
-                            let (base, realm, actor) = (base_url.clone(), selected_realm_id.clone(), principal_id.clone());
-                            let decision_ref = decision.decision_ref.clone();
-                            let target_ref = decision.target_ref.clone();
-                            let decision_label = short_protocol_id(&decision_ref);
-                            let target_label = short_protocol_id(&target_ref);
-                            rsx! {
-                                div { class: "event", "data-testid": "moderation-decision-row",
-                                    div { class: "event-head",
-                                        span { class: "mono", title: "{decision.decision_ref}", "{decision_label}" }
-                                        span { class: "badge", "{decision.decision}" }
-                                    }
-                                    div { class: "muted", title: "{decision.target_ref}",
-                                        {tr_args(
-                                            "moderation.decision_row_summary",
-                                            &[
-                                                ("target", target_label.clone()),
-                                                ("reason", decision.reason_code.clone()),
-                                            ],
-                                        )}
-                                    }
-                                    Button {
-                                        variant: ButtonVariant::Secondary,
-                                        "data-testid": "moderation-lift-button",
-                                        onclick: move |_| {
-                                            let (base, realm, actor) = (base.clone(), realm.clone(), actor.clone());
-                                            let (decision_ref, target_ref) = (decision_ref.clone(), target_ref.clone());
-                                            let api_token = token();
-                                            spawn(async move {
-                                                match with_event_submitter(&base, api_token, |submitter| async move {
-                                                    crate::transport::realm_write::moderation_lift(
-                                                        &submitter, &realm, &actor, &target_ref, &decision_ref, "reviewer_lift",
-                                                    )
-                                                    .await
-                                                })
-                                                .await
-                                                {
-                                                    Ok(response) => status.set(format!("decision lifted; event_id {}", response.event_id)),
-                                                    Err(error) => status.set(format!("lift failed: {}", error.display())),
-                                                }
-                                            });
-                                        },
-                                        {tr("moderation.lift")}
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                if !status().is_empty() {
-                    div { class: "muted", "data-testid": "moderation-status", "{status}" }
-                }
-            }
-        }
-    }
+pub fn page(scope: &Scope, context: Rc<InksonContext>, route: crate::routes::Route) -> View {
+    let realm = route
+        .realm_id()
+        .unwrap_or(&context.selected_realm_id.get())
+        .to_owned();
+    workbench(scope, context, realm)
 }
-
+pub fn workbench(scope: &Scope, context: Rc<InksonContext>, realm: String) -> View {
+    let target = scope.cage(String::new());
+    let verdict = scope.cage("quarantine".to_owned());
+    let reason = scope.cage("policy_violation".to_owned());
+    let status = scope.cage(String::new());
+    let busy = scope.cage(false);
+    let weak = scope.downgrade();
+    let submit_context = context.clone();
+    let submit_realm = realm.clone();
+    let submit = crate::views::settings::widgets::action(
+        scope,
+        context.clone(),
+        "moderation-submit",
+        "moderation.decide_submit",
+        "primary",
+        scope.bond(move || !busy.get()),
+        move || {
+            let target = target.get().trim().to_owned();
+            let verdict = verdict.get();
+            let reason = reason.get().trim().to_owned();
+            if target.is_empty() || reason.is_empty() {
+                status.revise(|value| *value = "target_ref + reason_code are required".into());
+                return;
+            }
+            let Some(owner) = weak.upgrade() else { return };
+            let context = submit_context.clone();
+            let realm = submit_realm.clone();
+            let generation = context.session_generation.get();
+            let account = context.active_account.get();
+            busy.revise(|value| *value = true);
+            let weak = owner.downgrade();
+            let _ = owner.spawn(async move {
+                let actor = crate::app::principal_id_owned(context.principal_id.get());
+                let result = with_event_submitter(
+                    &context.base_url.get(),
+                    context.token.get(),
+                    |submitter| async move {
+                        crate::transport::realm_write::moderation_decide(
+                            &submitter, &realm, &actor, &target, &verdict, &reason,
+                        )
+                        .await
+                    },
+                )
+                .await;
+                if weak.upgrade().is_none() || !context.session_matches(generation, &account) {
+                    return;
+                }
+                status.revise(|value| {
+                    *value = match result {
+                        Ok(response) => format!("decision sealed; event_id {}", response.event_id),
+                        Err(error) => format!("decision failed: {}", error.display()),
+                    }
+                });
+                busy.revise(|value| *value = false);
+            });
+        },
+    );
+    let queue = reactive(
+        scope.bond({
+            let context = context.clone();
+            move || (context.state_revision.get(), context.locale.get())
+        }),
+        {
+            let context = context.clone();
+            move |scope, _| {
+                let operations = context.state_store.read(|store| {
+                    store
+                        .load()
+                        .raw_operations
+                        .iter()
+                        .map(|record| record.payload.clone())
+                        .collect::<Vec<_>>()
+                });
+                let standing = project_moderation_decisions(&operations);
+                let mut rows = vec![paragraph(
+                    "event-head",
+                    context.translated(scope, "moderation.standing_title"),
+                )];
+                for decision in standing {
+                    let target = decision.target_ref.clone();
+                    let reference = decision.decision_ref.clone();
+                    let realm = realm.clone();
+                    let context = context.clone();
+                    let weak = scope.downgrade();
+                    rows.push(Box::new(view().class("event").fill(vec![
+                        paragraph("event-head mono", short_protocol_id(&reference)),
+                        paragraph("badge", decision.decision),
+                        paragraph(
+                            "muted",
+                            tr_args(
+                                "moderation.decision_row_summary",
+                                &[
+                                    ("target", short_protocol_id(&target)),
+                                    ("reason", decision.reason_code),
+                                ],
+                            ),
+                        ),
+                        crate::views::settings::widgets::action(
+                            scope,
+                            context.clone(),
+                            "moderation-lift",
+                            "moderation.lift",
+                            "secondary",
+                            scope.bond(move || !busy.get()),
+                            move || {
+                                let Some(owner) = weak.upgrade() else { return };
+                                let target = target.clone();
+                                let reference = reference.clone();
+                                let realm = realm.clone();
+                                let context = context.clone();
+                                let generation = context.session_generation.get();
+                                let account = context.active_account.get();
+                                let weak = owner.downgrade();
+                                busy.revise(|value| *value = true);
+                                let _ = owner.spawn(async move {
+                                    let actor =
+                                        crate::app::principal_id_owned(context.principal_id.get());
+                                    let result = with_event_submitter(
+                                        &context.base_url.get(),
+                                        context.token.get(),
+                                        |submitter| async move {
+                                            crate::transport::realm_write::moderation_lift(
+                                                &submitter,
+                                                &realm,
+                                                &actor,
+                                                &target,
+                                                &reference,
+                                                "reviewer_lift",
+                                            )
+                                            .await
+                                        },
+                                    )
+                                    .await;
+                                    if weak.upgrade().is_none()
+                                        || !context.session_matches(generation, &account)
+                                    {
+                                        return;
+                                    }
+                                    status.revise(|value| {
+                                        *value = match result {
+                                            Ok(response) => format!(
+                                                "decision lifted; event_id {}",
+                                                response.event_id
+                                            ),
+                                            Err(error) => {
+                                                format!("lift failed: {}", error.display())
+                                            }
+                                        }
+                                    });
+                                    busy.revise(|value| *value = false);
+                                });
+                            },
+                        ),
+                    ])) as View);
+                }
+                if rows.len() == 1 {
+                    rows.push(paragraph(
+                        "muted",
+                        context.translated(scope, "moderation.standing_empty"),
+                    ));
+                }
+                rows.push(paragraph("muted", status));
+                Box::new(view().class("event").fill(rows)) as View
+            }
+        },
+    );
+    Box::new(view().class("timeline").fill(vec![
+        Box::new(view().class("event").fill(vec![
+                    paragraph(
+                        "event-head",
+                        context.translated(scope, "moderation.decide_title"),
+                    ),
+                    input_field(
+                        context.clone(),
+                        "moderation-target",
+                        context.translated(scope, "moderation.target_placeholder"),
+                        target,
+                        Purpose::Text,
+                    ),
+                    crate::views::settings::widgets::choice(
+                        scope,
+                        context.clone(),
+                        "moderation-verdict",
+                        "moderation.decide_badge",
+                        verdict,
+                        DECISION_VERDICTS
+                            .iter()
+                            .map(|value| (value.to_string(), value.to_string()))
+                            .collect(),
+                        true,
+                        move |next| verdict.revise(|value| *value = next),
+                    ),
+                    input_field(
+                        context.clone(),
+                        "moderation-reason",
+                        "reason_code",
+                        reason,
+                        Purpose::Text,
+                    ),
+                    submit,
+                ])) as View,
+        queue,
+    ]))
+}
 #[cfg(test)]
 mod tests {
     use serde_json::json;

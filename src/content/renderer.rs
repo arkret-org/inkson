@@ -1,12 +1,15 @@
-//! Message content parser + RSX renderer.
+//! Message content parser and semantic renderer.
 //!
 //! See the module-level doc on [`crate::content`] for the design intent
 //! and the boundaries set by task A3.
 
-use dioxus::prelude::*;
+use std::rc::Rc;
+
+use glory::prelude::*;
 use pulldown_cmark::{CowStr, Event, Options, Parser as MdParser, Tag, TagEnd, html as md_html};
 
-use crate::config::LocalConfigStore;
+pub use super::blob_widgets::authenticated_blob_image;
+use crate::presentation::{InksonContext, View, widgets};
 
 const LONG_TEXT_MARKER_PREFIX: &str = "\u{1e}ak.long_text.v1:";
 
@@ -51,7 +54,7 @@ const ATTACHMENT_MARKER_SUFFIX: char = ']';
 /// Structured content unit emitted by [`parse_message_body_with_format`].
 ///
 /// Every variant carries enough information for [`render_blocks`] to
-/// produce a self-contained Dioxus subtree without re-parsing.
+/// produce a self-contained Glory subtree without re-parsing.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ContentBlock {
     /// Raw plaintext — used when the body contains no markdown
@@ -350,7 +353,7 @@ fn strip_trailing_punct(s: &str) -> &str {
     s.trim_end_matches(['.', ',', ')', ']', '!', '?', ';', ':'])
 }
 
-fn blob_ref_media_type_hint(blob_ref: &str) -> Option<String> {
+pub(crate) fn blob_ref_media_type_hint(blob_ref: &str) -> Option<String> {
     let lower = blob_ref.to_ascii_lowercase();
     if let Some(hash_idx) = lower.rfind('#') {
         let hint = &lower[hash_idx + 1..];
@@ -424,7 +427,7 @@ fn looks_like_markdown(prose: &str) -> bool {
 /// Leading ASCII whitespace and control characters are stripped before
 /// the scheme is examined, matching the browser's own lenient URL
 /// parsing (a payload like `\tjava\nscript:…` must not slip through).
-fn sanitize_link_url(url: &str) -> CowStr<'static> {
+pub(super) fn sanitize_link_url(url: &str) -> CowStr<'static> {
     if is_safe_link_url(url) {
         CowStr::from(url.to_owned())
     } else {
@@ -555,413 +558,130 @@ fn add_link_target(html: String) -> String {
     out
 }
 
-async fn authenticated_blob_data_url(blob_ref: &str, media_type: &str) -> anyhow::Result<String> {
-    let bytes = authenticated_blob_bytes(blob_ref).await?;
-    let mime = if media_type.trim().is_empty() {
-        "application/octet-stream"
-    } else {
-        media_type.trim()
-    };
-    let encoded = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, bytes);
-    Ok(format!("data:{mime};base64,{encoded}"))
+/// Render the protocol-declared, sanitized content without HTML injection.
+pub fn render_blocks(scope: &Scope, context: Rc<InksonContext>, blocks: &[ContentBlock]) -> View {
+    widgets::stack(
+        "content-blocks",
+        blocks
+            .iter()
+            .cloned()
+            .map(|block| render_single_block(scope, context.clone(), block))
+            .collect(),
+    )
 }
 
-async fn authenticated_blob_bytes(blob_ref: &str) -> anyhow::Result<Vec<u8>> {
-    let config = LocalConfigStore::default().load();
-    let token = config.session_credential.trim().to_owned();
-    if token.is_empty() {
-        anyhow::bail!("no authenticated session for blob download");
-    }
-    // ②(A+②): grant + per-request DPoP for the self-path blob fetch (§3.3).
-    let server_url = config
-        .server_url()
-        .ok_or_else(|| anyhow::anyhow!("authenticated renderer has no active account route"))?;
-    let api = crate::transport::auth::authed_api(server_url.as_str(), token)?;
-    let clients = crate::transport::EndpointClients::from_http(api.sdk_http_client()?);
-    clients.blob().get_bytes(blob_ref).await
-}
-
-/// RSX renderer for a slice of [`ContentBlock`]s.
-pub fn render_blocks(blocks: &[ContentBlock]) -> Element {
-    let owned: Vec<ContentBlock> = blocks.to_vec();
-    rsx! {
-        div { class: "content-blocks", "data-testid": "content-blocks",
-            for (idx, block) in owned.into_iter().enumerate() {
-                {render_single_block(idx, block)}
-            }
-        }
-    }
-}
-
-fn render_single_block(idx: usize, block: ContentBlock) -> Element {
-    let key = format!("content-block-{idx}");
+fn render_single_block(scope: &Scope, context: Rc<InksonContext>, block: ContentBlock) -> View {
     match block {
-        ContentBlock::Text(text) => rsx! {
-            p {
-                key: "{key}",
-                class: "content-block-text",
-                "data-testid": "content-block-text",
-                "{text}"
-            }
-        },
-        ContentBlock::Markdown(html) => rsx! {
-            div {
-                key: "{key}",
-                class: "content-block-markdown",
-                "data-testid": "content-block-markdown",
-                dangerous_inner_html: "{html}",
-            }
-        },
+        ContentBlock::Text(value) => widgets::paragraph("content-block-text", value),
+        ContentBlock::Markdown(html) => Box::new(
+            view()
+                .class("content-block-markdown")
+                .fill(super::semantic::html(&html)),
+        ),
         ContentBlock::Image { blob_ref, alt } => {
-            let alt_text = alt.unwrap_or_else(|| blob_ref.clone());
-            rsx! {
-                AuthenticatedBlobImage {
-                    key: "{key}",
-                    blob_ref,
-                    alt_text,
-                }
-            }
+            let alt = alt.unwrap_or_else(|| blob_ref.clone());
+            super::authenticated_blob_image(scope, context, blob_ref, alt)
         }
         ContentBlock::Video {
             blob_ref,
             media_type,
-        } => {
-            rsx! {
-                AuthenticatedBlobVideo {
-                    key: "{key}",
-                    blob_ref,
-                    media_type,
-                }
-            }
-        }
+        } => super::blob_widgets::media(scope, context, blob_ref, media_type, true),
         ContentBlock::Audio {
             blob_ref,
             media_type,
-        } => {
-            rsx! {
-                AuthenticatedBlobAudio {
-                    key: "{key}",
-                    blob_ref,
-                    media_type,
-                }
-            }
-        }
+        } => super::blob_widgets::media(scope, context, blob_ref, media_type, false),
         ContentBlock::CodeBlock { lang, code } => {
-            let lang_class = match lang.as_deref() {
-                Some(l) if !l.is_empty() => format!("lang-{l}"),
-                _ => "lang-plain".to_owned(),
-            };
-            let copy_label = crate::i18n::tr("content.code.copy");
-            rsx! {
-                div {
-                    key: "{key}",
-                    class: "content-block-code",
-                    "data-testid": "content-block-code",
-                    pre {
-                        code { class: "{lang_class}", "{code}" }
-                    }
-                    button {
-                        r#type: "button",
-                        class: "secondary content-block-code-copy",
-                        "data-testid": "content-block-code-copy",
-                        title: "{copy_label}",
-                        "{copy_label}"
-                    }
-                }
-            }
+            let copy = code.clone();
+            widgets::stack(
+                "content-block-code",
+                vec![
+                    Box::new(
+                        text()
+                            .kind(TextKind::Code)
+                            .class(format!(
+                                "content-code lang-{}",
+                                lang.unwrap_or_else(|| "plain".into())
+                            ))
+                            .style(Style::new().white_space(WhiteSpace::PreWrap))
+                            .content(code),
+                    ),
+                    Box::new(
+                        sapid::button()
+                            .unstyled()
+                            .class("secondary content-block-code-copy")
+                            .label(context.translated(scope, "content.code.copy"))
+                            .on_press(move || {
+                                crate::components::mls_backup_prompt::copy_text_to_clipboard(&copy)
+                            }),
+                    ),
+                ],
+            )
         }
         ContentBlock::LinkPreview {
             url,
             title,
             description,
         } => {
-            let title_text = title.unwrap_or_else(|| url.clone());
-            let description_text = description.unwrap_or_default();
-            // Neutralise dangerous schemes before they reach the `href`
-            // (e.g. a `javascript:` link-preview would be stored XSS).
-            let safe_href = sanitize_link_url(&url);
-            rsx! {
-                a {
-                    key: "{key}",
-                    class: "content-block-link-preview",
-                    "data-testid": "content-block-link-preview",
-                    href: "{safe_href}",
-                    target: "_blank",
-                    rel: "noopener noreferrer",
-                    div { class: "content-block-link-preview-title", "{title_text}" }
-                    div { class: "content-block-link-preview-url muted", "{url}" }
-                    if !description_text.is_empty() {
-                        div { class: "content-block-link-preview-description",
-                            "{description_text}"
-                        }
-                    }
-                }
+            let href = sanitize_link_url(&url).to_string();
+            let title = title.unwrap_or_else(|| url.clone());
+            #[cfg(target_arch = "wasm32")]
+            let preview_link: View = Box::new(
+                sapid::anchor()
+                    .unstyled()
+                    .class("content-block-link-preview-title")
+                    .href(href)
+                    .label(title)
+                    .open_in(glory::render::LinkOpen::NewContext),
+            );
+            #[cfg(not(target_arch = "wasm32"))]
+            let preview_link: View = Box::new(
+                link()
+                    .class("sapid-anchor content-block-link-preview-title")
+                    .target(href.clone())
+                    .label(title)
+                    .semantics(Some(Box::new(glory::render::Semantics {
+                        link_open: Some(glory::render::LinkOpen::Current),
+                        link_request: true,
+                        ..Default::default()
+                    })))
+                    .on(
+                        glory::render::EventKind::Activate,
+                        super::external_link::activation(scope, href),
+                    ),
+            );
+            let mut children = vec![
+                preview_link,
+                widgets::paragraph("content-block-link-preview-url muted", url),
+            ];
+            if let Some(description) = description {
+                children.push(widgets::paragraph(
+                    "content-block-link-preview-description",
+                    description,
+                ));
             }
+            widgets::stack("content-block-link-preview", children)
         }
         ContentBlock::Attachment {
             blob_ref,
             media_type,
-        } => {
-            let mime = media_type.unwrap_or_else(|| "application/octet-stream".to_owned());
-            rsx! {
-                AuthenticatedBlobDownload {
-                    key: "{key}",
-                    blob_ref,
-                    media_type: mime,
-                }
-            }
-        }
+        } => super::blob_widgets::download(
+            scope,
+            context,
+            blob_ref,
+            media_type.unwrap_or_else(|| "application/octet-stream".into()),
+        ),
         ContentBlock::LongText {
             blob_ref,
             fallback,
             markdown,
-        } => rsx! {
-            AuthenticatedLongText {
-                key: "{key}",
-                blob_ref,
-                fallback,
-                markdown,
-            }
-        },
-        ContentBlock::Unknown(raw) => rsx! {
-            pre {
-                key: "{key}",
-                class: "content-block-unknown",
-                "data-testid": "content-block-unknown",
-                "{raw}"
-            }
-        },
-    }
-}
-
-#[component]
-fn AuthenticatedLongText(blob_ref: String, fallback: String, markdown: bool) -> Element {
-    let mut full_text = use_signal(String::new);
-    let mut status = use_signal(String::new);
-    let blob_for_effect = blob_ref.clone();
-    use_effect(move || {
-        let blob = blob_for_effect.clone();
-        spawn(async move {
-            match authenticated_blob_bytes(&blob).await.and_then(|bytes| {
-                let text = String::from_utf8(bytes)
-                    .map_err(|error| anyhow::anyhow!("long-text Blob is not UTF-8: {error}"))?;
-                arkret_sdk::normalize_long_text(&text)
-                    .map_err(|error| anyhow::anyhow!("long-text Blob is invalid: {error}"))
-            }) {
-                Ok(text) => {
-                    full_text.set(text);
-                    status.set(String::new());
-                }
-                Err(error) => status.set(crate::api_error::display_user_facing(&error)),
-            }
-        });
-    });
-    let visible = if full_text().is_empty() {
-        fallback
-    } else {
-        full_text()
-    };
-    if markdown {
-        let html = markdown_to_safe_html(&visible);
-        rsx! {
-            div {
-                class: "content-block-long-text",
-                "data-testid": "content-block-long-text",
-                div {
-                    class: "content-block-markdown",
-                    dangerous_inner_html: "{html}",
-                }
-                if !status().is_empty() {
-                    div { class: "muted", "data-testid": "content-block-blob-error", "{status}" }
-                }
-            }
-        }
-    } else {
-        rsx! {
-            div {
-                class: "content-block-long-text",
-                "data-testid": "content-block-long-text",
-                p { class: "content-block-text", "{visible}" }
-                if !status().is_empty() {
-                    div { class: "muted", "data-testid": "content-block-blob-error", "{status}" }
-                }
-            }
-        }
-    }
-}
-
-#[component]
-pub fn AuthenticatedBlobImage(blob_ref: String, alt_text: String) -> Element {
-    let mut src = use_signal(String::new);
-    let mut status = use_signal(String::new);
-    let blob_for_effect = blob_ref.clone();
-    use_effect(move || {
-        let blob = blob_for_effect.clone();
-        let media_type = blob_ref_media_type_hint(&blob).unwrap_or_else(|| "image/png".to_owned());
-        spawn(async move {
-            match authenticated_blob_data_url(&blob, &media_type).await {
-                Ok(url) => {
-                    src.set(url);
-                    status.set(String::new());
-                }
-                Err(err) => status.set(crate::api_error::display_user_facing(&err)),
-            }
-        });
-    });
-    let broken_label = crate::i18n::tr("content.image.broken");
-    rsx! {
-        div {
-            class: "content-block-image",
-            "data-testid": "content-block-image",
-            if !src().is_empty() {
-                img {
-                    loading: "lazy",
-                    src: "{src}",
-                    alt: "{alt_text}",
-                    title: "{blob_ref}",
-                }
-            } else {
-                div { class: "muted", "data-testid": "content-block-blob-loading", "{blob_ref}" }
-            }
-            if !status().is_empty() {
-                div { class: "muted", "data-testid": "content-block-blob-error", "{broken_label}: {status}" }
-            }
-        }
-    }
-}
-
-#[component]
-fn AuthenticatedBlobVideo(blob_ref: String, media_type: String) -> Element {
-    let mut src = use_signal(String::new);
-    let mut status = use_signal(String::new);
-    let blob_for_effect = blob_ref.clone();
-    let media_for_effect = media_type.clone();
-    use_effect(move || {
-        let blob = blob_for_effect.clone();
-        let mime = media_for_effect.clone();
-        spawn(async move {
-            match authenticated_blob_data_url(&blob, &mime).await {
-                Ok(url) => {
-                    src.set(url);
-                    status.set(String::new());
-                }
-                Err(err) => status.set(crate::api_error::display_user_facing(&err)),
-            }
-        });
-    });
-    let unsupported = crate::i18n::tr("content.video.unsupported");
-    rsx! {
-        div {
-            class: "content-block-video",
-            "data-testid": "content-block-video",
-            if !src().is_empty() {
-                video {
-                    controls: true,
-                    preload: "metadata",
-                    source { src: "{src}", r#type: "{media_type}" }
-                    "{unsupported}"
-                }
-            }
-            div { class: "muted", "{blob_ref}" }
-            if !status().is_empty() {
-                div { class: "muted", "data-testid": "content-block-blob-error", "{status}" }
-            }
-        }
-    }
-}
-
-#[component]
-fn AuthenticatedBlobAudio(blob_ref: String, media_type: String) -> Element {
-    let mut src = use_signal(String::new);
-    let mut status = use_signal(String::new);
-    let blob_for_effect = blob_ref.clone();
-    let media_for_effect = media_type.clone();
-    use_effect(move || {
-        let blob = blob_for_effect.clone();
-        let mime = media_for_effect.clone();
-        spawn(async move {
-            match authenticated_blob_data_url(&blob, &mime).await {
-                Ok(url) => {
-                    src.set(url);
-                    status.set(String::new());
-                }
-                Err(err) => status.set(crate::api_error::display_user_facing(&err)),
-            }
-        });
-    });
-    let unsupported = crate::i18n::tr("content.audio.unsupported");
-    rsx! {
-        div {
-            class: "content-block-audio",
-            "data-testid": "content-block-audio",
-            if !src().is_empty() {
-                audio {
-                    controls: true,
-                    preload: "metadata",
-                    source { src: "{src}", r#type: "{media_type}" }
-                    "{unsupported}"
-                }
-            }
-            div { class: "muted", "{blob_ref}" }
-            if !status().is_empty() {
-                div { class: "muted", "data-testid": "content-block-blob-error", "{status}" }
-            }
-        }
-    }
-}
-
-#[component]
-fn AuthenticatedBlobDownload(blob_ref: String, media_type: String) -> Element {
-    let mut href = use_signal(String::new);
-    let mut status = use_signal(String::new);
-    let download_label = crate::i18n::tr("content.attachment.download");
-    rsx! {
-        div {
-            class: "content-block-attachment",
-            "data-testid": "content-block-attachment",
-            span { class: "muted", "{media_type}" }
-            span { " " }
-            span { "{blob_ref}" }
-            span { " " }
-            if href().is_empty() {
-                button {
-                    r#type: "button",
-                    class: "secondary",
-                    "data-testid": "content-block-attachment-download",
-                    title: "{download_label}",
-                    onclick: {
-                        let blob = blob_ref.clone();
-                        let mime = media_type.clone();
-                        move |_| {
-                            status.set("Downloading...".to_owned());
-                            let blob = blob.clone();
-                            let mime = mime.clone();
-                            spawn(async move {
-                                match authenticated_blob_data_url(&blob, &mime).await {
-                                    Ok(url) => {
-                                        href.set(url);
-                                        status.set(String::new());
-                                    }
-                                    Err(err) => status.set(crate::api_error::display_user_facing(&err)),
-                                }
-                            });
-                        }
-                    },
-                    "{download_label}"
-                }
-            } else {
-                a {
-                    class: "secondary",
-                    "data-testid": "content-block-attachment-download-link",
-                    href: "{href}",
-                    download: "{blob_ref}",
-                    "{download_label}"
-                }
-            }
-            if !status().is_empty() {
-                div { class: "muted", "data-testid": "content-block-blob-error", "{status}" }
-            }
-        }
+        } => super::blob_widgets::long_text(scope, context, blob_ref, fallback, markdown),
+        ContentBlock::Unknown(value) => Box::new(
+            text()
+                .kind(TextKind::Code)
+                .class("content-block-unknown")
+                .style(Style::new().white_space(WhiteSpace::PreWrap))
+                .content(value),
+        ),
     }
 }
 

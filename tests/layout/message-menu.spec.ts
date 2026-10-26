@@ -1,5 +1,7 @@
 import { expect, test, type Locator } from "@playwright/test";
-import { messageMenuFixture } from "./message-menu-fixture.mjs";
+import { mountMessageMenuFixture } from "./message-menu-fixture.mjs";
+
+test.setTimeout(180_000);
 
 const rect = async (locator: Locator) => locator.evaluate((el) => {
   const { x, y, width, height, top, right, bottom, left } = el.getBoundingClientRect();
@@ -7,7 +9,7 @@ const rect = async (locator: Locator) => locator.evaluate((el) => {
 });
 
 test("short message keeps the trigger inside its header and the menu beside it", async ({ page }) => {
-  await page.setContent(messageMenuFixture());
+  await mountMessageMenuFixture(page);
   const trigger = page.getByRole("button", { name: "消息操作" });
   const button = await rect(trigger);
   const bubble = await rect(page.locator(".msg-body"));
@@ -31,7 +33,7 @@ test("short message keeps the trigger inside its header and the menu beside it",
 });
 
 test("the first and only message can open upwards near the feed bottom", async ({ page }) => {
-  await page.setContent(messageMenuFixture({ bottom: true }));
+  await mountMessageMenuFixture(page, { bottom: true });
   const trigger = page.getByRole("button", { name: "消息操作" });
   await trigger.click();
   const button = await rect(trigger);
@@ -41,7 +43,7 @@ test("the first and only message can open upwards near the feed bottom", async (
 });
 
 test("a long message still opens below its header, independent of bubble height", async ({ page }) => {
-  await page.setContent(messageMenuFixture({ long: true }));
+  await mountMessageMenuFixture(page, { long: true });
   const trigger = page.getByRole("button", { name: "消息操作" });
   await trigger.click();
   expect((await rect(page.getByRole("menu"))).top).toBe((await rect(trigger)).bottom + 6);
@@ -50,7 +52,7 @@ test("a long message still opens below its header, independent of bubble height"
 test("narrow touch layout preserves badges and usable menu rows", async ({ browser }) => {
   const context = await browser.newContext({ viewport: { width: 360, height: 640 }, isMobile: true, hasTouch: true });
   const mobile = await context.newPage();
-  await mobile.setContent(messageMenuFixture({ badges: true }));
+  await mountMessageMenuFixture(mobile, { badges: true });
   const trigger = mobile.getByRole("button", { name: "消息操作" });
   const button = await rect(trigger);
   expect(button.width).toBe(40);
@@ -66,12 +68,12 @@ test("narrow touch layout preserves badges and usable menu rows", async ({ brows
 });
 
 test("limited height scrolls the menu without covering the trigger", async ({ page }) => {
-  await page.setContent(messageMenuFixture({ compact: true }));
+  await mountMessageMenuFixture(page, { compact: true });
   const trigger = page.getByRole("button", { name: "消息操作" });
   await trigger.click();
   const menu = page.getByRole("menu");
   const bounds = await rect(menu);
-  const feed = await rect(page.getByTestId("message-list"));
+  const feed = await rect(page.locator(".message-list"));
   expect(bounds.bottom).toBeLessThanOrEqual(feed.bottom - 8);
   expect(bounds.top).toBe((await rect(trigger)).bottom + 6);
   expect(await menu.evaluate(el => el.scrollHeight > el.clientHeight)).toBe(true);
@@ -81,7 +83,7 @@ test("limited height scrolls the menu without covering the trigger", async ({ pa
 });
 
 test("keyboard navigation skips disabled items and Escape restores the trigger", async ({ page }) => {
-  await page.setContent(messageMenuFixture());
+  await mountMessageMenuFixture(page);
   const trigger = page.getByRole("button", { name: "消息操作" });
   await trigger.press("Enter");
   await expect(page.getByRole("menuitem", { name: "回复", exact: true })).toBeFocused();
@@ -98,13 +100,13 @@ test("keyboard navigation skips disabled items and Escape restores the trigger",
 });
 
 test("scroll and window resize keep the menu attached and dismiss offscreen anchors", async ({ page }) => {
-  await page.setContent(messageMenuFixture({ bottom: true }));
+  await mountMessageMenuFixture(page, { bottom: true });
   const trigger = page.getByRole("button", { name: "消息操作" });
   await trigger.click();
-  await page.getByTestId("message-list").evaluate(el => { el.scrollTop = 240; });
+  await page.locator(".message-list").evaluate(el => { el.scrollTop = 240; });
   await expect.poll(async () => Math.abs((await rect(page.getByRole("menu"))).top - (await rect(trigger)).bottom - 6)).toBeLessThan(1);
   await page.setViewportSize({ width: 480, height: 650 });
   await expect.poll(async () => (await rect(page.getByRole("menu"))).right).toBeLessThanOrEqual(448);
-  await page.getByTestId("message-list").evaluate(el => { el.scrollTop = el.scrollHeight; });
+  await page.locator(".message-list").evaluate(el => { el.scrollTop = el.scrollHeight; });
   await expect(page.getByRole("menu")).toHaveCount(0);
 });

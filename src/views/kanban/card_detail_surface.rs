@@ -1,30 +1,19 @@
-use arkret_wire::event_kind_str;
-
 use super::*;
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone)]
 pub(super) struct CardDetailContext {
-    pub base_url: String,
-    pub plaintext_service_id: String,
     pub principal_id: arkret_sdk::DidCoreId,
     pub authority: arkret_sdk::AccountId,
-    pub account_primary_handle: String,
     pub device_id: arkret_sdk::DeviceId,
     pub selected_realm_id: String,
     pub projection_realm_id: String,
-    pub token: Signal<String>,
-    pub sync_cursor: Signal<String>,
-    pub frontier_state: Signal<String>,
-    pub realm_live_epoch: Signal<u64>,
-    pub synthesis_entries: Memo<Vec<CardSynthesisTrackEntry>>,
-    pub selected_scope_security_encrypted: Option<bool>,
-    pub selected_scope_security_encrypted_or_secure: bool,
-    pub realm_content_write_ready: bool,
+    pub synthesis_entries: glory::Bond<Vec<CardSynthesisTrackEntry>>,
+    pub selected_scope_security_encrypted: glory::Bond<Option<bool>>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-struct CardTrackEditContext {
-    source_strand_id: String,
+pub(super) struct CardTrackEditContext {
+    pub(super) source_strand_id: String,
 }
 
 fn canonicalized_edit_target(
@@ -109,2731 +98,6 @@ fn card_owned_agent_rows(
     agents
 }
 
-#[component]
-fn CardMemberMentionRow(
-    member_id: String,
-    label: String,
-    #[props(default)] is_self: bool,
-    agent_slug: Option<String>,
-    #[props(default)] in_strand: bool,
-    #[props(default)] interaction_mode: Option<arkret_sdk::AgentInteractionMode>,
-    onmention: EventHandler<crate::views::chat::MentionInsertRequest>,
-) -> Element {
-    let dot_class = if in_strand {
-        "card-detail-actor-dot participant"
-    } else {
-        "card-detail-actor-dot"
-    };
-    let dot_title = if in_strand {
-        "Participated in this Strand"
-    } else {
-        "Realm member"
-    };
-    let mention_target = serde_json::from_str::<arkret_sdk::ActorId>(&member_id)
-        .ok()
-        .and_then(|actor| actor.as_account_id().cloned());
-    let mentionable = mention_target.is_some();
-    let require_agent_identity = agent_slug.is_some();
-    let agent_id = agent_slug.as_ref().and_then(|_| {
-        mention_target
-            .as_ref()
-            .map(|account| account.principal_id.to_string())
-    });
-    let row_class = format!(
-        "card-detail-actor-row{}{}",
-        if agent_slug.is_some() {
-            " participant-agent-row"
-        } else {
-            ""
-        },
-        if in_strand { " participant" } else { "" },
-    );
-    let test_id = if agent_slug.is_some() {
-        Some("card-detail-agent-row")
-    } else {
-        None
-    };
-
-    rsx! {
-        div {
-            class: "{row_class}",
-            "data-testid": test_id,
-            "data-member-id": "{member_id}",
-            "data-agent-slug": agent_slug.as_deref(),
-            "data-agent-id": agent_id,
-            "data-strand-participant": "{in_strand}",
-            button {
-                r#type: "button",
-                class: if agent_slug.is_some() { "card-detail-actor-mention-button card-detail-agent-mention-button" } else { "card-detail-actor-mention-button" },
-                "data-testid": "card-detail-member-mention-button",
-                "aria-label": crate::i18n::tr_args("kanban.ui.mention_member", &[("name", (label).to_string())]),
-                disabled: !mentionable,
-                onclick: {
-                    let mention_target = mention_target.clone();
-                    move |_| {
-                        #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
-                        tracing::warn!(
-                            exact_account_available = mention_target.is_some(),
-                            require_agent_identity,
-                            "Card member mention requested"
-                        );
-                        if let Some(account) = mention_target.as_ref() {
-                            onmention.call(crate::views::chat::MentionInsertRequest::new(
-                                account.clone(),
-                                require_agent_identity,
-                            ));
-                        }
-                    }
-                },
-                if agent_slug.is_some() {
-                    crate::components::AgentIdentity {
-                        agent_id: mention_target.as_ref().map(|account| account.principal_id.to_string()).unwrap_or_default(),
-                        label: label.clone(),
-                        interaction_mode,
-                        label_test_id: Some("card-detail-member".to_owned()),
-                    }
-                } else {
-                span { class: "{dot_class}", title: "{dot_title}", "aria-label": "{dot_title}" }
-                ActorIdentityLabel {
-                    label: label.clone(),
-                    title: Some(member_id.clone()),
-                    class: Some("card-detail-actor-id".to_owned()),
-                    test_id: Some("card-detail-member".to_owned()),
-                    self_badge_test_id: None,
-                    agent_badge_test_id: None,
-                    is_self,
-                    agent_slug: agent_slug.clone(),
-                }
-                }
-            }
-        }
-    }
-}
-
-#[component]
-pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContext) -> Element {
-    let CardDetailContext {
-        base_url,
-        plaintext_service_id,
-        principal_id,
-        authority,
-        account_primary_handle,
-        device_id,
-        selected_realm_id,
-        projection_realm_id,
-        token,
-        sync_cursor,
-        frontier_state,
-        realm_live_epoch,
-        synthesis_entries: synthesis_entries_memo,
-        selected_scope_security_encrypted,
-        selected_scope_security_encrypted_or_secure,
-        realm_content_write_ready,
-    } = context;
-    // Keep validation at the component boundary; local view helpers consume
-    // only the canonical textual representation.
-    let principal_core_id = principal_id.clone();
-    let principal_id = principal_id.as_str().to_owned();
-    let account_device_id = device_id.clone();
-    let device_id = device_id.to_string();
-    let session_context = crate::app::SessionContext::get();
-    let state_store = session_context.state_store;
-    let navigator = use_navigator();
-    let route = use_route::<Route>();
-    let mut member_mention_request =
-        use_signal(|| Option::<crate::views::chat::MentionInsertRequest>::None);
-    let owned_agent_inventory = use_resource({
-        let base = base_url.clone();
-        move || {
-            let base = base.clone();
-            let api_token = token();
-            async move {
-                if api_token.trim().is_empty() {
-                    return Err("authenticated Agent inventory is unavailable".to_owned());
-                }
-                with_authed_sdk_client(&base, api_token, |http| async move {
-                    let list = http.agent_page().await?;
-                    Ok::<_, anyhow::Error>(crate::views::agents::mentionable_owned_agent_slugs(
-                        list.agents,
-                    ))
-                })
-                .await
-                .map_err(|error| error.display())
-            }
-        }
-    });
-    let KanbanController {
-        board_space_options: _,
-        selected_board,
-        lifecycle_container_projection: _,
-        lifecycle_strand_projection: _,
-        new_board_title: _,
-        new_column_title: _,
-        new_card_title: _,
-        adding_card_to: _,
-        mut selected_card,
-        mls_sidecar_restore_key_seen: _,
-        board_popover: _,
-        archive_board_confirm_open: _,
-        list_archive_confirm: _,
-        mut editing_card_detail,
-        mut card_edit_scope,
-        mut card_detail_sidebar_visible,
-        mut card_detail_actions_open,
-        mut card_detail_tab,
-        mut card_detail_discussion_mounted_for,
-        mut card_detail_sidebar_tab,
-        mut card_detail_docked,
-        mut card_detail_dock_width,
-        mut card_detail_resizing,
-        mut card_detail_resize_start_x,
-        mut card_detail_resize_start_width,
-        member_handle_fetching: _,
-        mut card_edit_title,
-        mut card_edit_description,
-        mut card_edit_body,
-        mut card_edit_synthesis,
-        mut card_edit_synthesis_target_id,
-        mut card_detail_edit_status,
-        mut assignee_picker_open,
-        mut assignee_filter,
-        mut assignee_selected_actor_ids,
-        mut assignee_edit_status,
-        mut due_picker_open,
-        mut due_edit_value,
-        mut due_calendar_month,
-        mut due_edit_status,
-        mut card_edit_calendar,
-        mut calendar_rsvp_occurrence,
-        mut card_synthesis_history_open_id,
-        mut card_synthesis_selected_revision_id,
-        mut card_edit_labels,
-        mut card_edit_assignee,
-        mut card_edit_due,
-        dragging_card: _,
-        dragging_column: _,
-        drop_target_column: _,
-        editing_column_id: _,
-        editing_column_title: _,
-        mut board_status,
-        command_queue: _,
-    } = controller;
-    let mode_accounts = owned_agent_inventory
-        .read()
-        .as_ref()
-        .and_then(|result| result.as_ref().ok())
-        .map(|inventory| {
-            let store = state_store.read();
-            let joined = store
-                .complete_joined_member_hint_for_realm(&selected_realm_id)
-                .ok()
-                .flatten();
-            crate::operation::authoring_station_id()
-                .ok()
-                .map(|station| {
-                    card_owned_agent_rows(joined.as_ref(), inventory, &station)
-                        .into_iter()
-                        .filter_map(|(actor, _)| {
-                            serde_json::from_str::<arkret_sdk::ActorId>(&actor).ok()
-                        })
-                        .filter_map(|actor| actor.as_account_id().cloned())
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default()
-        })
-        .unwrap_or_default();
-    let interaction_modes = {
-        let store = state_store.read();
-        crate::views::chat::agent_modes::use_agent_modes(
-            crate::views::chat::agent_modes::AgentModeReadKey {
-                base: base_url.clone(),
-                authority,
-                realm: selected_realm_id.clone(),
-                credential: token(),
-                session_epoch: crate::identity::device_directory::session_cache_epoch(),
-                sync_ready: crate::app::account_sync_ready(&sync_cursor()),
-                ready: store.current_product_view_ready(&selected_realm_id),
-                complete: store
-                    .current_product_view()
-                    .is_some_and(|view| view.realm_id == selected_realm_id && view.complete_cut),
-                reset: store.current_reset_required(),
-                head: arkret_sdk::RealmId::new(selected_realm_id.clone())
-                    .ok()
-                    .and_then(|realm_id| {
-                        store
-                            .verified_commit_stream_cursor(&arkret_sdk::CommitStreamRef::Realm {
-                                realm_id,
-                            })
-                            .ok()
-                            .flatten()
-                    }),
-                accounts: mode_accounts,
-            },
-            "card_members",
-        )
-    };
-    let detail_send_scope = arkret_sdk::RealmId::new(selected_realm_id.clone())
-        .ok()
-        .map(|realm_id| arkret_sdk::ScopeRef::Realm { realm_id });
-    let detail_send_probe = crate::views::secure_send::use_scope_send_probe(
-        state_store,
-        detail_send_scope,
-        account_device_id,
-    );
-    let detail_send_ready = detail_send_probe.gate.is_some();
-    let detail_send_blocked_reason = detail_send_probe.blocked_reason.unwrap_or_else(|| {
-        if detail_send_probe.checking {
-            "Checking sync and encryption readiness...".to_owned()
-        } else {
-            "Waiting for sync and encryption readiness".to_owned()
-        }
-    });
-    let mut card_edit_context_seen = use_signal(CardTrackEditContext::default);
-    let mut suspended_shared_track_edits = use_signal(BTreeMap::<String, SuspendedTrackEdit>::new);
-    let mut card_detail_backdrop_pressed = use_signal(|| false);
-    use_effect(move || {
-        let selected_strand = selected_card()
-            .map(|card| card.primary_strand_id)
-            .unwrap_or_default();
-        let next = CardTrackEditContext {
-            source_strand_id: selected_strand,
-        };
-        let previous = card_edit_context_seen.peek().clone();
-        if previous == next {
-            return;
-        }
-        // A pending card receiving its Event-derived Strand ID is the same
-        // editing target. Keep all drafts and the active editor across that
-        // identity reconciliation; only a different card suspends the edit.
-        let aliases = event_derived_target_aliases(&state_store.read().load().raw_operations);
-        if canonicalized_edit_target(&previous.source_strand_id, &next.source_strand_id, &aliases) {
-            card_edit_context_seen.set(next);
-            return;
-        }
-        if editing_card_detail() {
-            if let Some(edit) = suspend_track_edit(
-                card_edit_scope(),
-                card_edit_synthesis(),
-                card_edit_synthesis_target_id(),
-            ) && !previous.source_strand_id.is_empty()
-            {
-                suspended_shared_track_edits
-                    .write()
-                    .insert(previous.source_strand_id, edit);
-            }
-            editing_card_detail.set(false);
-            card_detail_actions_open.set(false);
-            card_detail_edit_status.set(String::new());
-            card_edit_synthesis_target_id.set(None);
-        }
-        let suspended = suspended_shared_track_edits
-            .write()
-            .remove(&next.source_strand_id);
-        card_edit_context_seen.set(next);
-        if let Some(edit) = suspended {
-            card_edit_scope.set(edit.scope);
-            card_edit_synthesis.set(edit.synthesis);
-            card_edit_synthesis_target_id.set(edit.synthesis_target_id);
-            editing_card_detail.set(true);
-        }
-    });
-
-    rsx! {
-            if let Some(ref card) = selected_card() {
-                {
-                    let card_id_label = short_protocol_id(&card.id);
-                    let board_route_after_close =
-                        kanban_card_detail_board_route(&selected_realm_id, selected_board().as_ref());
-                    let route_is_card_detail = matches!(
-                        route,
-                        Route::KanbanTask { .. } | Route::KanbanBoardTask { .. }
-                    );
-                    let sidebar_is_visible = card_detail_sidebar_visible();
-                    let sidebar_toggle_label = if sidebar_is_visible {
-                        crate::i18n::tr("kanban.ui.hide_details")
-                    } else {
-                        crate::i18n::tr("kanban.ui.show_details")
-                    };
-                    let sidebar_toggle_icon = if sidebar_is_visible {
-                        "panel-right-close"
-                    } else {
-                        "panel-right-open"
-                    };
-                    let detail_layout_class = if sidebar_is_visible {
-                        "card-detail-layout"
-                    } else {
-                        "card-detail-layout no-sidebar"
-                    };
-                    let is_docked = card_detail_docked();
-                    let dock_width = card_detail_dock_width();
-                    let dock_toggle_label = if is_docked {
-                        crate::i18n::tr("kanban.ui.expand_to_dialog")
-                    } else {
-                        crate::i18n::tr("kanban.ui.dock_to_side")
-                    };
-                    let dock_toggle_icon = if is_docked { "maximize" } else { "minimize" };
-                    let overlay_class = if is_docked {
-                        "card-detail-overlay is-docked"
-                    } else {
-                        "card-detail-overlay"
-                    };
-                    let popup_class = if is_docked {
-                        "card-detail-popup is-docked"
-                    } else {
-                        "card-detail-popup"
-                    };
-                    let popup_style = if is_docked {
-                        format!("width: {dock_width}px;")
-                    } else {
-                        String::new()
-                    };
-                    let active_detail_tab = card_detail_tab();
-                    let card_link_path = strand_detail_deep_link_path_with_tab(
-                        &selected_realm_id,
-                        &card.id,
-                        active_detail_tab,
-                    );
-                    let description_tab_class = if active_detail_tab == CardDetailContentTab::Description {
-                        "card-detail-tab active"
-                    } else {
-                        "card-detail-tab"
-                    };
-                    let synthesis_tab_class = if active_detail_tab == CardDetailContentTab::Synthesis {
-                        "card-detail-tab active"
-                    } else {
-                        "card-detail-tab"
-                    };
-                    let discussion_tab_class = if active_detail_tab == CardDetailContentTab::Discussion {
-                        "card-detail-tab active"
-                    } else {
-                        "card-detail-tab"
-                    };
-                    let discussion_panel_class = if active_detail_tab == CardDetailContentTab::Discussion {
-                        "card-detail-discussion-panel"
-                    } else {
-                        "card-detail-discussion-panel is-hidden"
-                    };
-                    let discussion_panel_should_mount = active_detail_tab
-                        == CardDetailContentTab::Discussion
-                        || card_detail_discussion_mounted_for()
-                            .as_deref()
-                            .is_some_and(|strand_id| strand_id == card.primary_strand_id.as_str());
-                    let discussion_target_ready = card_discussion_target_ready(card);
-                    let discussion_host_key = format!(
-                        "{base_url}|{selected_realm_id}|{}|{device_id}|{}|{}",
-                        card.primary_strand_id,
-                        crate::identity::device_directory::session_cache_epoch(),
-                        session_context
-                            .active_account()
-                            .map(|account| account.authority.to_string())
-                            .unwrap_or_default(),
-                    );
-                    let action_menu_class = if editing_card_detail() {
-                        "card-detail-action-menu is-editing"
-                    } else {
-                        "card-detail-action-menu"
-                    };
-                    let summary_text = card_summary_text(&card.description);
-                    // Decrypt + replay is memoized at the component top level
-                    // (`synthesis_entries_memo`) so it runs only when its inputs
-                    // change, not on every re-render. Read the cached track here.
-                    let synthesis_entries = synthesis_entries_memo();
-                    let overlay_navigator = navigator;
-                    let overlay_board_route = board_route_after_close.clone();
-                    let close_navigator = navigator;
-                    let close_board_route = board_route_after_close.clone();
-                    rsx! {
-                        if card_detail_resizing() {
-                            div {
-                                class: "card-detail-resize-capture",
-                                "data-testid": "card-detail-resize-capture",
-                                onmousemove: move |event: dioxus::events::MouseEvent| {
-                                    let current_x = event.client_coordinates().x;
-                                    let delta = card_detail_resize_start_x() - current_x;
-                                    let next = (card_detail_resize_start_width() + delta)
-                                        .clamp(CARD_DETAIL_DOCK_WIDTH_MIN, CARD_DETAIL_DOCK_WIDTH_MAX);
-                                    card_detail_dock_width.set(next);
-                                },
-                                onmouseup: move |event: dioxus::events::MouseEvent| {
-                                    event.stop_propagation();
-                                    card_detail_resizing.set(false);
-                                    persist_card_detail_dock_width(card_detail_dock_width());
-                                },
-                                onmouseleave: move |_| {
-                                    card_detail_resizing.set(false);
-                                    persist_card_detail_dock_width(card_detail_dock_width());
-                                },
-                            }
-                        }
-                        div {
-                            class: "{overlay_class}",
-                            "data-testid": "card-detail-overlay",
-                            role: "presentation",
-                            onmousedown: move |_| card_detail_backdrop_pressed.set(true),
-                            onclick: move |_| {
-                                if !card_detail_backdrop_pressed() {
-                                    return;
-                                }
-                                card_detail_backdrop_pressed.set(false);
-                                selected_card.set(None);
-                                editing_card_detail.set(false);
-                                card_detail_edit_status.set(String::new());
-                                assignee_picker_open.set(false);
-                                assignee_filter.set(String::new());
-                                assignee_selected_actor_ids.set(BTreeSet::new());
-                                assignee_edit_status.set(String::new());
-                                due_picker_open.set(false);
-                                due_edit_value.set(String::new());
-                                due_calendar_month.set(default_due_calendar_month());
-                                due_edit_status.set(String::new());
-                                card_edit_calendar.set(CalendarCardFields::default());
-                                calendar_rsvp_occurrence.set(String::new());
-                                card_detail_actions_open.set(false);
-                                if route_is_card_detail {
-                                    let _ = overlay_navigator.push(overlay_board_route.clone());
-                                }
-                            },
-                            div {
-                                class: "{popup_class}",
-                                style: "{popup_style}",
-                                "data-testid": "card-detail-modal",
-                                role: "dialog",
-                                "aria-modal": "true",
-                                onmousedown: move |event: dioxus::events::MouseEvent| {
-                                    event.stop_propagation();
-                                    card_detail_backdrop_pressed.set(false);
-                                },
-                                onmouseup: move |event: dioxus::events::MouseEvent| {
-                                    event.stop_propagation();
-                                    card_detail_backdrop_pressed.set(false);
-                                },
-                                onclick: move |event: dioxus::events::MouseEvent| event.stop_propagation(),
-                                if is_docked {
-                                    div {
-                                        class: "card-detail-resize-handle",
-                                        "data-testid": "card-detail-resize-handle",
-                                        "aria-hidden": "true",
-                                        onmousedown: move |event: dioxus::events::MouseEvent| {
-                                            event.stop_propagation();
-                                            card_detail_resize_start_x.set(event.client_coordinates().x);
-                                            card_detail_resize_start_width.set(card_detail_dock_width());
-                                            card_detail_resizing.set(true);
-                                        },
-                                    }
-                                }
-                                div { class: "card-detail-header",
-                                    div { class: "card-detail-title-block",
-                                        div { class: "card-detail-title-row",
-                                            SecurityStateBadge {
-                                                encrypted: card.security_encrypted.unwrap_or(selected_scope_security_encrypted_or_secure),
-                                                compact: true,
-                                                test_id: Some("strand-detail-security-state".to_owned()),
-                                            }
-                                            h2 { {kanban_title_label(&card.title, &card.id, &crate::i18n::tr("kanban.title_pending"))} }
-                                            div { class: "card-detail-title-meta",
-                                                WriteStateBadge { state: card.state }
-                                                for label in &card.labels {
-                                                    span { key: "{label}", class: "badge", "{label}" }
-                                                }
-                                            }
-                                        }
-                                    }
-                                    div { class: "card-detail-header-actions",
-                                        Button {
-                                            variant: ButtonVariant::Secondary,
-                                            class: "card-detail-header-button",
-                                            "data-testid": "card-detail-share-link-button",
-                                            "aria-label": crate::i18n::tr("kanban.ui.copy_strand_link"),
-                                            title: crate::i18n::tr("kanban.ui.copy_strand_link"),
-                                            onclick: {
-                                                let link_path = card_link_path.clone();
-                                                move |_| {
-                                                    share_kanban_strand_link(&link_path);
-                                                    board_status.set("Strand link copied".to_owned());
-                                                    card_detail_actions_open.set(false);
-                                                }
-                                            },
-                                            UiIcon { name: "share" }
-                                        }
-                                        if !editing_card_detail() {
-                                            Button {
-                                                variant: ButtonVariant::Secondary,
-                                                class: "card-detail-header-button",
-                                                "data-testid": "card-detail-sidebar-toggle",
-                                                "aria-label": "{sidebar_toggle_label}",
-                                                "aria-pressed": "{sidebar_is_visible}",
-                                                title: "{sidebar_toggle_label}",
-                                                onclick: move |_| {
-                                                    card_detail_sidebar_visible.set(!card_detail_sidebar_visible());
-                                                    card_detail_actions_open.set(false);
-                                                },
-                                                UiIcon { name: sidebar_toggle_icon }
-                                            }
-                                        }
-                                        Button {
-                                            variant: ButtonVariant::Secondary,
-                                            class: "card-detail-header-button",
-                                            "data-testid": "card-detail-dock-toggle",
-                                            "aria-label": "{dock_toggle_label}",
-                                            "aria-pressed": "{is_docked}",
-                                            title: "{dock_toggle_label}",
-                                            onclick: move |_| {
-                                                let next = !card_detail_docked();
-                                                card_detail_docked.set(next);
-                                                persist_card_detail_docked(next);
-                                                card_detail_actions_open.set(false);
-                                            },
-                                            UiIcon { name: dock_toggle_icon }
-                                        }
-                                        div { class: "card-detail-action-menu-wrap",
-                                            Button {
-                                                variant: ButtonVariant::Secondary,
-                                                class: "card-detail-header-button",
-                                                "data-testid": "card-detail-actions-button",
-                                                "aria-label": crate::i18n::tr("kanban.ui.actions"),
-                                                "aria-expanded": "{card_detail_actions_open()}",
-                                                title: crate::i18n::tr("kanban.ui.actions"),
-                                                onclick: move |_| card_detail_actions_open.set(!card_detail_actions_open()),
-                                                UiIcon { name: "more-horizontal" }
-                                            }
-                                            if card_detail_actions_open() {
-                                                div { class: "{action_menu_class}", "data-testid": "card-detail-actions-menu",
-                                                    if editing_card_detail() && card_edit_scope() == CardEditScope::Summary {
-                                                        div { class: "card-detail-action-menu-field",
-                                                            Label { html_for: "card-detail-labels-input-input", {crate::i18n::tr("kanban.ui.labels")} }
-                                                            Input {
-                                                                id: "card-detail-labels-input-input",
-                                                                class: "input",
-                                                                "data-testid": "card-detail-labels-input",
-                                                                value: "{card_edit_labels}",
-                                                                placeholder: crate::i18n::tr("kanban.ui.release_ops"),
-                                                                oninput: move |event: FormEvent| card_edit_labels.set(event.value()),
-                                                            }
-                                                        }
-                                                        div { class: "card-detail-action-menu-field",
-                                                            Label { html_for: "card-detail-due-input-input", {crate::i18n::tr("kanban.ui.due_date")} }
-                                                            Input {
-                                                                id: "card-detail-due-input-input",
-                                                                class: "input",
-                                                                "data-testid": "card-detail-due-input",
-                                                                value: "{card_edit_due}",
-                                                                placeholder: "2026-05-20",
-                                                                oninput: move |event: FormEvent| card_edit_due.set(event.value()),
-                                                            }
-                                                        }
-                                                    } else {
-                                                        Button {
-                                                            variant: ButtonVariant::Secondary,
-                                                            class: "card-detail-action-menu-item",
-                                                            "data-testid": "card-detail-menu-edit-button",
-                                                            disabled: !card_detail_edit_ready(card),
-                                                            onclick: {
-                                                                let current = card.clone();
-                                                                move |_| {
-                                                                    prepare_selected_card_for_edit(selected_card);
-                                                                    let draft = card_detail_draft_from_card(&current);
-                                                                    card_edit_title.set(draft.title);
-                                                                    card_edit_description.set(draft.description);
-                                                                    card_edit_body.set(draft.description_body);
-                                                                    card_edit_synthesis.set(draft.synthesis);
-                                                                    card_edit_synthesis_target_id.set(None);
-                                                                    card_edit_labels.set(draft.labels.join(", "));
-                                                                    card_edit_assignee.set(draft.assignee);
-                                                                    card_edit_due.set(draft.due);
-                                                                    card_edit_scope.set(CardEditScope::Summary);
-                                                                    card_detail_edit_status.set(String::new());
-                                                                    editing_card_detail.set(true);
-                                                                    card_detail_actions_open.set(false);
-                                                                }
-                                                            },
-                                                            UiIcon { name: "settings" }
-                                                            span { {crate::i18n::tr("common.edit")} }
-                                                        }
-                                                        if matches!(
-                                                            card.lifecycle,
-                                                            StrandLifecycleState::Active
-                                                                | StrandLifecycleState::Archived
-                                                        ) {
-                                                            {
-                                                            let target = if card.lifecycle == StrandLifecycleState::Archived {
-                                                                StrandLifecycleState::Active
-                                                            } else {
-                                                                StrandLifecycleState::Archived
-                                                            };
-                                                            let action = if target == StrandLifecycleState::Archived {
-                                                                event_kind_str::STRAND_ARCHIVE
-                                                            } else {
-                                                                event_kind_str::STRAND_RESTORE
-                                                            };
-                                                            let label = if target == StrandLifecycleState::Archived {
-                                                                crate::i18n::tr("kanban.archive_action")
-                                                            } else {
-                                                                crate::i18n::tr("kanban.restore_action")
-                                                            };
-                                                            let testid = if target == StrandLifecycleState::Archived {
-                                                                "card-detail-archive-button"
-                                                            } else {
-                                                                "card-detail-restore-button"
-                                                            };
-                                                            let title_text = format!("{label} this card ({action})");
-                                                            let action_navigator = navigator;
-                                                            let action_board_route = board_route_after_close.clone();
-                                                            rsx! {
-                                                                Button {
-                                                                    variant: ButtonVariant::Secondary,
-                                                                    class: "card-detail-action-menu-item",
-                                                                    "data-testid": testid,
-                                                                    "data-strand-id": "{card.id}",
-                                                                    "data-cap-gate": "open",
-                                                                    title: title_text,
-                                                                    onclick: {
-                                                                        let base = base_url.clone();
-                                                                        let realm = selected_realm_id.clone();
-                                                                        let actor = principal_id.clone();
-                                                                        let strand_id = card.id.clone();
-                                                                        move |_| {
-                                                                            dispatch_strand_lifecycle(
-                                                                                base.clone(),
-                                                                                token,
-                                                                                realm.clone(),
-                                                                                actor.clone(),
-                                                                                strand_id.clone(),
-                                                                                target,
-                                                                                state_store,
-                                                                                board_status,
-                                                                            );
-                                                                            selected_card.set(None);
-                                                                            editing_card_detail.set(false);
-                                                                            card_detail_edit_status.set(String::new());
-                                                                            card_edit_calendar.set(CalendarCardFields::default());
-                                                                            calendar_rsvp_occurrence.set(String::new());
-                                                                            card_detail_actions_open.set(false);
-                                                                            if route_is_card_detail {
-                                                                                let _ = action_navigator.push(action_board_route.clone());
-                                                                            }
-                                                                        }
-                                                                    },
-                                                                    UiIcon { name: if target == StrandLifecycleState::Archived { "archive" } else { "refresh" } }
-                                                                    span { "{label}" }
-                                                                }
-                                                            }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        Button {
-                                            variant: ButtonVariant::Secondary,
-                                            class: "card-detail-header-button card-detail-close",
-                                            "data-testid": "card-detail-close-button",
-                                            "aria-label": crate::i18n::tr("kanban.ui.close_card_detail"),
-                                            title: crate::i18n::tr("common.close"),
-                                            onclick: move |_| {
-                                                selected_card.set(None);
-                                                editing_card_detail.set(false);
-                                                card_detail_edit_status.set(String::new());
-                                                assignee_picker_open.set(false);
-                                                assignee_filter.set(String::new());
-                                                assignee_selected_actor_ids.set(BTreeSet::new());
-                                                assignee_edit_status.set(String::new());
-                                                due_picker_open.set(false);
-                                                due_edit_value.set(String::new());
-                                                due_calendar_month.set(default_due_calendar_month());
-                                                due_edit_status.set(String::new());
-                                                card_edit_calendar.set(CalendarCardFields::default());
-                                                calendar_rsvp_occurrence.set(String::new());
-                                                card_detail_actions_open.set(false);
-                                                if route_is_card_detail {
-                                                    let _ = close_navigator.push(close_board_route.clone());
-                                                }
-                                            },
-                                            UiIcon { name: "x" }
-                                        }
-                                    }
-                                }
-
-                                div { class: "{detail_layout_class}",
-                                        main { class: "card-detail-main",
-                                            section { class: "card-detail-section",
-                                                div { class: "card-detail-section-head",
-                                                    div { class: "card-detail-section-title",
-                                                        UiIcon { name: "file" }
-                                                        span { "Summary" }
-                                                    }
-                                                    if !editing_card_detail() {
-                                                        Button {
-                                                            variant: ButtonVariant::Secondary,
-                                                            class: "card-detail-mini-action card-detail-edit-action",
-                                                            "data-testid": "card-detail-edit-button",
-                                                            disabled: !card_detail_edit_ready(card),
-                                                            onclick: {
-                                                                let current = card.clone();
-                                                                move |_| {
-                                                                    prepare_selected_card_for_edit(selected_card);
-                                                                    let draft = card_detail_draft_from_card(&current);
-                                                                    card_edit_title.set(draft.title);
-                                                                    card_edit_description.set(draft.description);
-                                                                    card_edit_body.set(draft.description_body);
-                                                                    card_edit_synthesis.set(draft.synthesis);
-                                                                    card_edit_synthesis_target_id.set(None);
-                                                                    card_edit_labels.set(draft.labels.join(", "));
-                                                                    card_edit_assignee.set(draft.assignee);
-                                                                    card_edit_due.set(draft.due);
-                                                                    card_edit_scope.set(CardEditScope::Summary);
-                                                                    card_detail_edit_status.set(String::new());
-                                                                    editing_card_detail.set(true);
-                                                                }
-                                                            },
-                                                            UiIcon { name: "settings" }
-                                                            span { {crate::i18n::tr("common.edit")} }
-                                                        }
-                                                    }
-                                                }
-                                                if editing_card_detail() && card_edit_scope() == CardEditScope::Summary {
-                                                    div { class: "workflow-form card-detail-edit-form", "data-testid": "card-detail-edit-form",
-                                                        div { class: "field",
-                                                            Label { html_for: "card-detail-title-input-input", "Title" }
-                                                            Input {
-                                                                id: "card-detail-title-input-input",
-                                                                class: "input",
-                                                                "data-testid": "card-detail-title-input",
-                                                                value: "{card_edit_title}",
-                                                                maxlength: "512",
-                                                                oninput: move |event: FormEvent| card_edit_title.set(event.value()),
-                                                            }
-                                                        }
-                                                        div { class: "field",
-                                                            Label { html_for: "card-detail-summary-input", "Summary" }
-                                                            CardMarkdownEditor {
-                                                                key: "card-markdown-summary",
-                                                                value: card_edit_description(),
-                                                                token: token(),
-                                                                realm_id: selected_realm_id.clone(),
-                                                                allow_image_upload: true,
-                                                                on_change: move |value| card_edit_description.set(value),
-                                                                slot: "summary".to_owned(),
-                                                            }
-                                                        }
-                                                        CardDetailEditActions {
-                                                            save_disabled: !detail_send_ready || !card_detail_write_ready(card) || !realm_content_write_ready,
-                                                            blocked_reason: if !card_detail_write_ready(card) {
-                                                                "Waiting for the accepted card revision".to_owned()
-                                                            } else if !detail_send_ready {
-                                                                detail_send_blocked_reason.clone()
-                                                            } else {
-                                                                "Waiting for Realm content write readiness".to_owned()
-                                                            },
-                                                            status: card_detail_edit_status(),
-                                                            on_save: {
-                                                                let base = base_url.clone();
-                                                                let realm = selected_realm_id.clone();
-                                                                let actor = principal_id.clone();
-                                                                let device = device_id.clone();
-                                                                let current = card.clone();
-                                                                let entries = synthesis_entries.clone();
-
-                                                                move |_| {
-                                                                    spawn(save_card_detail_edit(
-                                                                        base.clone(),
-                                                                        token,
-                                                                        realm.clone(),
-                                                                        actor.clone(),
-                                                                        device.clone(),
-                                                                        current.clone(),
-                                                                        entries.clone(),
-                                                                        selected_scope_security_encrypted,
-                                                                        None,
-                                                                        card_edit_scope,
-                                                                        card_edit_title,
-                                                                        card_edit_description,
-                                                                        card_edit_body,
-                                                                        card_edit_synthesis,
-                                                                        card_edit_synthesis_target_id,
-                                                                        card_edit_labels,
-                                                                        card_edit_assignee,
-                                                                        card_edit_due,
-                                                                        editing_card_detail,
-                                                                        card_detail_actions_open,
-                                                                        card_detail_edit_status,
-                                                                        selected_card,
-                                                                        state_store,
-                                                                        board_status,
-                                                                    ));
-                                                                }
-                                                            },
-                                                            on_cancel: {
-                                                                let current = card.clone();
-                                                                move |_| {
-                                                                    reset_card_detail_edit(
-                                                                        &current,
-                                                                        card_edit_title,
-                                                                        card_edit_description,
-                                                                        card_edit_body,
-                                                                        card_edit_synthesis,
-                                                                        card_edit_synthesis_target_id,
-                                                                        card_edit_labels,
-                                                                        card_edit_assignee,
-                                                                        card_edit_due,
-                                                                        editing_card_detail,
-                                                                        card_detail_actions_open,
-                                                                        card_synthesis_history_open_id,
-                                                                        card_synthesis_selected_revision_id,
-                                                                        card_detail_edit_status,
-                                                                    );
-                                                                }
-                                                            },
-                                                        }
-                                                    }
-                                                } else if summary_text.is_empty() {
-                                                    div { class: "card-detail-empty", {crate::i18n::tr("kanban.ui.no_summary")} }
-                                                } else {
-                                                    div {
-                                                        class: "card-detail-summary",
-                                                        "data-testid": "card-summary",
-                                                        "{summary_text}"
-                                                    }
-                                                }
-                                            }
-
-                                            section { class: "card-detail-section card-detail-tabs-section",
-                                                div {
-                                                    class: "card-detail-tabs",
-                                                    "data-testid": "card-detail-tabs",
-                                                    role: "tablist",
-                                                    "aria-label": crate::i18n::tr("kanban.ui.strand_content_sections"),
-                                                    button {
-                                                        r#type: "button",
-                                                        class: "{description_tab_class}",
-                                                        "data-testid": "card-detail-tab-description",
-                                                        role: "tab",
-                                                        "aria-selected": "{active_detail_tab == CardDetailContentTab::Description}",
-                                                        onclick: {
-                                                            let realm_id = selected_realm_id.clone();
-                                                            let strand_id = card.primary_strand_id.clone();
-                                                            move |_| {
-                                                                crate::views::chat::capture_chat_feed_scroll_position(
-                                                                    &realm_id,
-                                                                    &strand_id,
-                                                                );
-                                                                if let Some(scope) = content_edit_scope_for_tab(
-                                                                    editing_card_detail(),
-                                                                    card_edit_scope(),
-                                                                    CardDetailContentTab::Description,
-                                                                ) {
-                                                                    card_edit_scope.set(scope);
-                                                                }
-                                                                card_detail_tab.set(CardDetailContentTab::Description);
-                                                                replace_card_detail_tab_query(CardDetailContentTab::Description);
-                                                            }
-                                                        },
-                                                        {crate::i18n::tr("kanban.ui.description")}
-                                                    }
-                                                    button {
-                                                        r#type: "button",
-                                                        class: "{synthesis_tab_class}",
-                                                        "data-testid": "card-detail-tab-synthesis",
-                                                        role: "tab",
-                                                        "aria-selected": "{active_detail_tab == CardDetailContentTab::Synthesis}",
-                                                        onclick: {
-                                                            let realm_id = selected_realm_id.clone();
-                                                            let strand_id = card.primary_strand_id.clone();
-                                                            move |_| {
-                                                                crate::views::chat::capture_chat_feed_scroll_position(
-                                                                    &realm_id,
-                                                                    &strand_id,
-                                                                );
-                                                                if let Some(scope) = content_edit_scope_for_tab(
-                                                                    editing_card_detail(),
-                                                                    card_edit_scope(),
-                                                                    CardDetailContentTab::Synthesis,
-                                                                ) {
-                                                                    card_edit_scope.set(scope);
-                                                                }
-                                                                card_detail_tab.set(CardDetailContentTab::Synthesis);
-                                                                replace_card_detail_tab_query(CardDetailContentTab::Synthesis);
-                                                            }
-                                                        },
-                                                        {crate::i18n::tr("kanban.ui.synthesis")}
-                                                    }
-                                                    button {
-                                                        r#type: "button",
-                                                        class: "{discussion_tab_class}",
-                                                        "data-testid": "card-detail-tab-discussion",
-                                                        role: "tab",
-                                                        "aria-selected": "{active_detail_tab == CardDetailContentTab::Discussion}",
-                                                        onclick: {
-                                                            let strand_id = card.primary_strand_id.clone();
-                                                            let realm_id = selected_realm_id.clone();
-                                                            move |_| {
-                                                                card_detail_discussion_mounted_for.set(Some(strand_id.clone()));
-                                                                card_detail_tab.set(CardDetailContentTab::Discussion);
-                                                                replace_card_detail_tab_query(CardDetailContentTab::Discussion);
-                                                                crate::views::chat::restore_chat_feed_scroll_position(
-                                                                    &realm_id,
-                                                                    &strand_id,
-                                                                );
-                                                            }
-                                                        },
-                                                        {crate::i18n::tr("kanban.ui.discussion")}
-                                                    }
-                                                }
-                                                if active_detail_tab == CardDetailContentTab::Description {
-                                                    div {
-                                                        class: "card-detail-description-panel",
-                                                        "data-testid": "card-description-panel",
-                                                        role: "tabpanel",
-                                                        if editing_card_detail()
-                                                            && card_edit_scope() == CardEditScope::Description
-                                                        {
-                                                            div { class: "workflow-form card-detail-edit-form card-detail-inline-edit-form", "data-testid": "card-detail-edit-form",
-                                                                div { class: "field",
-                                                                    CardMarkdownEditor {
-                                                                        key: "card-markdown-description",
-                                                                        aria_label: "Description".to_owned(),
-                                                                        value: card_edit_body(),
-                                                                        token: token(),
-                                                                        realm_id: selected_realm_id.clone(),
-                                                                        allow_image_upload: true,
-                                                                        on_change: move |value| card_edit_body.set(value),
-                                                                        slot: "description".to_owned(),
-                                                                    }
-                                                                }
-                                                                CardDetailEditActions {
-                                                                    save_disabled: !detail_send_ready || !card_detail_write_ready(card) || !realm_content_write_ready,
-                                                                    blocked_reason: if !card_detail_write_ready(card) {
-                                                                        "Waiting for the accepted card revision".to_owned()
-                                                                    } else if !detail_send_ready {
-                                                                        detail_send_blocked_reason.clone()
-                                                                    } else {
-                                                                        "Waiting for Realm content write readiness".to_owned()
-                                                                    },
-                                                                    status: card_detail_edit_status(),
-                                                                    on_save: {
-                                                                        let base = base_url.clone();
-                                                                        let realm = selected_realm_id.clone();
-                                                                        let actor = principal_id.clone();
-                                                                        let device = device_id.clone();
-                                                                        let current = card.clone();
-                                                                        let entries = synthesis_entries.clone();
-                                                                        move |_| {
-                                                                            spawn(save_card_detail_edit(
-                                                                                base.clone(),
-                                                                                token,
-                                                                                realm.clone(),
-                                                                                actor.clone(),
-                                                                                device.clone(),
-                                                                                current.clone(),
-                                                                                entries.clone(),
-                                                                                selected_scope_security_encrypted,
-                                                                                None,
-                                                                                card_edit_scope,
-                                                                                card_edit_title,
-                                                                                card_edit_description,
-                                                                                card_edit_body,
-                                                                                card_edit_synthesis,
-                                                                                card_edit_synthesis_target_id,
-                                                                                card_edit_labels,
-                                                                                card_edit_assignee,
-                                                                                card_edit_due,
-                                                                                editing_card_detail,
-                                                                                card_detail_actions_open,
-                                                                                card_detail_edit_status,
-                                                                                selected_card,
-                                                                                state_store,
-                                                                                board_status,
-                                                                            ));
-                                                                        }
-                                                                    },
-                                                                    on_cancel: {
-                                                                        let current = card.clone();
-                                                                        move |_| {
-                                                                            reset_card_detail_edit(
-                                                                                &current,
-                                                                                card_edit_title,
-                                                                                card_edit_description,
-                                                                                card_edit_body,
-                                                                                card_edit_synthesis,
-                                                                                card_edit_synthesis_target_id,
-                                                                                card_edit_labels,
-                                                                                card_edit_assignee,
-                                                                                card_edit_due,
-                                                                                editing_card_detail,
-                                                                                card_detail_actions_open,
-                                                                                card_synthesis_history_open_id,
-                                                                                card_synthesis_selected_revision_id,
-                                                                                card_detail_edit_status,
-                                                                            );
-                                                                        }
-                                                                    },
-                                                                }
-                                                            }
-                                                        } else {
-                                                            if card.description_locked {
-                                                                div {
-                                                                    class: "card-detail-empty",
-                                                                    "data-testid": "card-detail-description-locked",
-                                                                    "{MLS_LOCKED_FIELD_PLACEHOLDER}"
-                                                                }
-                                                            } else if card.description_body.trim().is_empty() {
-                                                                div { class: "card-detail-empty", {crate::i18n::tr("kanban.ui.no_description")} }
-                                                            } else {
-                                                                div { class: "card-detail-description", "data-testid": "card-description-body",
-                                                                    {crate::content::render_blocks(
-                                                                        &crate::content::parse_local_preview_body(&card.description_body),
-                                                                    )}
-                                                                }
-                                                            }
-                                                            if !card.description_locked {
-                                                                div { class: "card-synthesis-footer-action",
-                                                                    Button {
-                                                                        variant: ButtonVariant::Secondary,
-                                                                        class: "card-detail-mini-action",
-                                                                        "data-testid": "card-detail-edit-description-button",
-                                                                        disabled: !card_detail_edit_ready(card),
-                                                                        onclick: {
-                                                                            let current = card.clone();
-                                                                            move |_| {
-                                                                                prepare_selected_card_for_edit(selected_card);
-                                                                                let draft = card_detail_draft_from_card(&current);
-                                                                                card_edit_title.set(draft.title);
-                                                                                card_edit_description.set(draft.description);
-                                                                                card_edit_body.set(draft.description_body);
-                                                                                card_edit_synthesis.set(draft.synthesis);
-                                                                                card_edit_synthesis_target_id.set(None);
-                                                                                card_edit_labels.set(draft.labels.join(", "));
-                                                                                card_edit_assignee.set(draft.assignee);
-                                                                                card_edit_due.set(draft.due);
-                                                                                card_edit_scope.set(CardEditScope::Description);
-                                                                                card_detail_edit_status.set(String::new());
-                                                                                editing_card_detail.set(true);
-                                                                                card_detail_actions_open.set(false);
-                                                                            }
-                                                                        },
-                                                                        UiIcon { name: "settings" }
-                                                                        span { {crate::i18n::tr("common.edit")} }
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                } else if active_detail_tab == CardDetailContentTab::Synthesis {
-                                                    div {
-                                                        class: "card-detail-synthesis-panel",
-                                                        "data-testid": "card-synthesis-panel",
-                                                        role: "tabpanel",
-                                                        if synthesis_entries.is_empty()
-                                                            && card.synthesis_locked
-                                                        {
-                                                            div {
-                                                                class: "card-detail-empty",
-                                                                "data-testid": "card-detail-synthesis-locked",
-                                                                div { "{MLS_LOCKED_FIELD_PLACEHOLDER}" }
-                                                            }
-                                                        } else if synthesis_entries.is_empty() {
-                                                            div { class: "card-detail-empty",
-                                                                div { {crate::i18n::tr("kanban.ui.no_synthesis_yet")} }
-                                                            }
-                                                        } else {
-                                                            div { class: "card-synthesis-track", "data-testid": "card-synthesis-track",
-                                                                for entry in synthesis_entries.iter() {
-                                                                    {
-                                                                        let latest_revision = entry.revisions.last().cloned().unwrap_or_else(|| {
-                                                                            CardSynthesisRevision {
-                                                                                id: entry.id.clone(),
-                                                                                body: entry.body.clone(),
-                                                                                actor_id: entry.actor_id.clone(),
-                                                                                author_label: entry.author_label.clone(),
-                                                                                timestamp_label: entry.timestamp_label.clone(),
-                                                                                sort_key: entry.sort_key.clone(),
-                                                                            }
-                                                                        });
-                                                                        let selected_revision_id = card_synthesis_selected_revision_id();
-                                                                        let selected_revision = selected_revision_id
-                                                                            .as_deref()
-                                                                            .and_then(|id| entry.revisions.iter().find(|revision| revision.id == id))
-                                                                            .cloned();
-                                                                        let display_revision = selected_revision.unwrap_or_else(|| latest_revision.clone());
-                                                                        let display_revision_index = entry
-                                                                            .revisions
-                                                                            .iter()
-                                                                            .position(|revision| revision.id == display_revision.id)
-                                                                            .unwrap_or_else(|| entry.revisions.len().saturating_sub(1));
-                                                                        let version_label = format!("v{}", display_revision_index + 1);
-                                                                        let selected_synthesis_is_latest = display_revision.id == latest_revision.id;
-                                                                        let version_state = if selected_synthesis_is_latest {
-                                                                            "latest"
-                                                                        } else {
-                                                                            "history"
-                                                                        };
-                                                                        let synthesis_is_own =
-                                                                            actor_is_current_account(&display_revision.actor_id, &principal_id);
-                                                                        let entry_class = if selected_synthesis_is_latest {
-                                                                            if synthesis_is_own {
-                                                                                "card-synthesis-entry is-latest is-own"
-                                                                            } else {
-                                                                                "card-synthesis-entry is-latest"
-                                                                            }
-                                                                        } else {
-                                                                            if synthesis_is_own {
-                                                                                "card-synthesis-entry is-history is-own"
-                                                                            } else {
-                                                                                "card-synthesis-entry is-history"
-                                                                            }
-                                                                        };
-                                                                        let history_open = card_synthesis_history_open_id()
-                                                                            .as_deref()
-                                                                            == Some(entry.id.as_str());
-                                                                        let actor_title = if display_revision.actor_id.trim().is_empty() {
-                                                                            crate::i18n::tr("kanban.ui.unknown_author").to_owned()
-                                                                        } else {
-                                                                            display_revision.actor_id.clone()
-                                                                        };
-                                                                        rsx! {
-                                                                            article {
-                                                                                key: "{entry.id}",
-                                                                                class: "{entry_class}",
-                                                                                "data-testid": "card-synthesis-entry",
-                                                                                "data-synthesis-version-state": "{version_state}",
-                                                                                header { class: "card-synthesis-entry-head",
-                                                                                    ActorIdentityLabel {
-                                                                                        label: display_revision.author_label.clone(),
-                                                                                        title: Some(actor_title),
-                                                                                        class: Some("card-synthesis-author".to_owned()),
-                                                                                        test_id: Some("card-synthesis-author".to_owned()),
-                                                                                        self_badge_test_id: Some("card-synthesis-self-badge".to_owned()),
-                                                                                        agent_badge_test_id: None,
-                                                                                        is_self: synthesis_is_own,
-                                                                                        agent_slug: None,
-                                                                                        agent_selector: None,
-                                                                                    }
-                                                                                    time { class: "card-synthesis-time", "{display_revision.timestamp_label}" }
-                                                                                    span { class: "badge", "{version_label}" }
-                                                                                    if selected_synthesis_is_latest {
-                                                                                        span { class: "badge badge-success", "latest" }
-                                                                                    } else {
-                                                                                        span { class: "badge badge-warning", {crate::i18n::tr("kanban.ui.historical_version")} }
-                                                                                        Button {
-                                                                                            variant: ButtonVariant::Secondary,
-                                                                                            r#type: "button",
-                                                                                            class: "badge card-synthesis-latest-button",
-                                                                                            "data-testid": "card-synthesis-latest-button",
-                                                                                            onclick: move |_| {
-                                                                                                card_synthesis_selected_revision_id.set(None);
-                                                                                                card_synthesis_history_open_id.set(None);
-                                                                                            },
-                                                                                            {crate::i18n::tr("kanban.ui.latest")}
-                                                                                        }
-                                                                                    }
-                                                                                    if entry.revisions.len() > 1 {
-                                                                                        div { class: "card-synthesis-history-wrap",
-                                                                                            Button {
-                                                                                                variant: ButtonVariant::Secondary,
-                                                                                                r#type: "button",
-                                                                                                class: "badge card-synthesis-history-trigger",
-                                                                                                "data-testid": "card-synthesis-history-trigger",
-                                                                                                "aria-expanded": "{history_open}",
-                                                                                                onclick: {
-                                                                                                    let entry_id = entry.id.clone();
-                                                                                                    move |_| {
-                                                                                                        if card_synthesis_history_open_id().as_deref() == Some(entry_id.as_str()) {
-                                                                                                            card_synthesis_history_open_id.set(None);
-                                                                                                        } else {
-                                                                                                            card_synthesis_history_open_id.set(Some(entry_id.clone()));
-                                                                                                        }
-                                                                                                    }
-                                                                                                },
-                                                                                                "edited"
-                                                                                            }
-                                                                                            if history_open {
-                                                                                                div { class: "card-synthesis-history-menu", "data-testid": "card-synthesis-history-menu",
-                                                                                                    div { class: "card-synthesis-history-title", {crate::i18n::tr("kanban.ui.history")} }
-                                                                                                    for (history_index, history_entry) in entry.revisions.iter().enumerate().rev() {
-                                                                                                        {
-                                                                                                            let history_entry_id = history_entry.id.clone();
-                                                                                                            let history_version_label = format!("v{}", history_index + 1);
-                                                                                                            let history_is_latest = history_entry.id == latest_revision.id;
-                                                                                                            let history_item_class = if history_entry.id == display_revision.id {
-                                                                                                                "card-synthesis-history-item active"
-                                                                                                            } else {
-                                                                                                                "card-synthesis-history-item"
-                                                                                                            };
-                                                                                                            let history_author_title = if history_entry.actor_id.trim().is_empty() {
-                                                                                                                crate::i18n::tr("kanban.ui.unknown_author").to_owned()
-                                                                                                            } else {
-                                                                                                                history_entry.actor_id.clone()
-                                                                                                            };
-                                                                                                            let preview = card_summary_text(&history_entry.body);
-                                                                                                            let preview = if preview.chars().count() > 72 {
-                                                                                                                let shortened = preview.chars().take(72).collect::<String>();
-                                                                                                                format!("{shortened}...")
-                                                                                                            } else {
-                                                                                                                preview
-                                                                                                            };
-                                                                                                            let history_is_own =
-                                                                                                                actor_is_current_account(&history_entry.actor_id, &principal_id);
-                                                                                                            rsx! {
-                                                                                                                Button {
-                                                                                                                    variant: ButtonVariant::Secondary,
-                                                                                                                    key: "{history_entry.id}",
-                                                                                                                    r#type: "button",
-                                                                                                                    class: "{history_item_class}",
-                                                                                                                    "data-testid": "card-synthesis-history-item",
-                                                                                                                    onclick: move |_| {
-                                                                                                                        if history_is_latest {
-                                                                                                                            card_synthesis_selected_revision_id.set(None);
-                                                                                                                        } else {
-                                                                                                                            card_synthesis_selected_revision_id.set(Some(history_entry_id.clone()));
-                                                                                                                        }
-                                                                                                                        card_synthesis_history_open_id.set(None);
-                                                                                                                    },
-                                                                                                                    span { class: "card-synthesis-history-meta",
-                                                                                                                        span { class: "badge", "{history_version_label}" }
-                                                                                                                        if history_is_latest {
-                                                                                                                            span { class: "badge badge-success", "latest" }
-                                                                                                                        }
-                                                                                                                        ActorIdentityLabel {
-                                                                                                                            label: history_entry.author_label.clone(),
-                                                                                                                            title: Some(history_author_title),
-                                                                                                                            class: Some("card-synthesis-history-author".to_owned()),
-                                                                                                                            test_id: Some("card-synthesis-history-author".to_owned()),
-                                                                                                                            self_badge_test_id: Some("card-synthesis-history-self-badge".to_owned()),
-                                                                                                                            agent_badge_test_id: None,
-                                                                                                                            is_self: history_is_own,
-                                                                                                                            agent_slug: None,
-                                                                                                                            agent_selector: None,
-                                                                                                                        }
-                                                                                                                        time { "{history_entry.timestamp_label}" }
-                                                                                                                    }
-                                                                                                                    span { class: "card-synthesis-history-preview", "{preview}" }
-                                                                                                                }
-                                                                                                            }
-                                                                                                        }
-                                                                                                    }
-                                                                                                }
-                                                                                            }
-                                                                                        }
-                                                                                    }
-                                                                                    if !editing_card_detail() {
-                                                                                        Button {
-                                                                                            variant: ButtonVariant::Secondary,
-                                                                                            r#type: "button",
-                                                                                            class: "card-detail-mini-action card-synthesis-entry-edit",
-                                                                                            "data-testid": "card-detail-edit-synthesis-button",
-                                                                                            disabled: !card_detail_edit_ready(card),
-                                                                                            onclick: {
-                                                                                                let current = card.clone();
-                                                                                                let entry_id = entry.id.clone();
-                                                                                                let entry_body = entry.body.clone();
-                                                                                                move |_| {
-                                                                                                    prepare_selected_card_for_edit(selected_card);
-                                                                                                    let draft = card_detail_draft_from_card(&current);
-                                                                                                    card_edit_title.set(draft.title);
-                                                                                                    card_edit_description.set(draft.description);
-                                                                                                    card_edit_body.set(draft.description_body);
-                                                                                                    card_edit_synthesis.set(entry_body.clone());
-                                                                                                    card_edit_synthesis_target_id.set(Some(entry_id.clone()));
-                                                                                                    card_edit_labels.set(draft.labels.join(", "));
-                                                                                                    card_edit_assignee.set(draft.assignee);
-                                                                                                    card_edit_due.set(draft.due);
-                                                                                                    card_edit_scope.set(CardEditScope::Synthesis);
-                                                                                                    card_detail_edit_status.set(String::new());
-                                                                                                    editing_card_detail.set(true);
-                                                                                                    card_synthesis_history_open_id.set(None);
-                                                                                                    card_synthesis_selected_revision_id.set(None);
-                                                                                                }
-                                                                                            },
-                                                                                            UiIcon { name: "settings" }
-                                                                                            span { {crate::i18n::tr("common.edit")} }
-                                                                                        }
-                                                                                    }
-                                                                                }
-                                                                                if editing_card_detail()
-                                                                                    && card_edit_scope() == CardEditScope::Synthesis
-                                                                                    && card_edit_synthesis_target_id().as_deref() == Some(entry.id.as_str()) {
-                                                                                    div { class: "workflow-form card-detail-edit-form card-detail-inline-edit-form", "data-testid": "card-detail-edit-form",
-                                                                                        div { class: "field",
-                                                                                            CardMarkdownEditor {
-                                                                                                key: "card-markdown-synthesis-{entry.id}",
-                                                                                                aria_label: "Synthesis".to_owned(),
-                                                                                                value: card_edit_synthesis(),
-                                                                                                token: token(),
-                                                                                                realm_id: selected_realm_id.clone(),
-                                                                                                allow_image_upload: true,
-                                                                                                on_change: move |value| card_edit_synthesis.set(value),
-                                                                                                slot: "synthesis".to_owned(),
-                                                                                            }
-                                                                                        }
-                                                                                        CardDetailEditActions {
-                                                                                            save_disabled: !detail_send_ready || !card_detail_write_ready(card) || !realm_content_write_ready,
-                                                                                            blocked_reason: if !card_detail_write_ready(card) {
-                                                                                                "Waiting for the accepted card revision".to_owned()
-                                                                                            } else if !detail_send_ready {
-                                                                                                detail_send_blocked_reason.clone()
-                                                                                            } else {
-                                                                                                "Waiting for Realm content write readiness".to_owned()
-                                                                                            },
-                                                                                            status: card_detail_edit_status(),
-                                                                                            on_save: {
-                                                                                                let base = base_url.clone();
-                                                                                                let realm = selected_realm_id.clone();
-                                                                                                let actor = principal_id.clone();
-                                                                                                let device = device_id.clone();
-                                                                                                let current = card.clone();
-                                                                                                let entries = synthesis_entries.clone();
-
-                                                                                                move |_| {
-                                                                                                    spawn(save_card_detail_edit(
-                                                                                                        base.clone(),
-                                                                                                        token,
-                                                                                                        realm.clone(),
-                                                                                                        actor.clone(),
-                                                                                                        device.clone(),
-                                                                                                        current.clone(),
-                                                                                                        entries.clone(),
-                                                                                                        selected_scope_security_encrypted,
-                                                                                                        None,
-                                                                                                        card_edit_scope,
-                                                                                                        card_edit_title,
-                                                                                                        card_edit_description,
-                                                                                                        card_edit_body,
-                                                                                                        card_edit_synthesis,
-                                                                                                        card_edit_synthesis_target_id,
-                                                                                                        card_edit_labels,
-                                                                                                        card_edit_assignee,
-                                                                                                        card_edit_due,
-                                                                                                        editing_card_detail,
-                                                                                                        card_detail_actions_open,
-                                                                                                        card_detail_edit_status,
-                                                                                                        selected_card,
-                                                                                                        state_store,
-                                                                                                        board_status,
-                                                                                                    ));
-                                                                                                }
-                                                                                            },
-                                                                                            on_cancel: {
-                                                                                                let current = card.clone();
-                                                                                                move |_| {
-                                                                                                    reset_card_detail_edit(
-                                                                                                        &current,
-                                                                                                        card_edit_title,
-                                                                                                        card_edit_description,
-                                                                                                        card_edit_body,
-                                                                                                        card_edit_synthesis,
-                                                                                                        card_edit_synthesis_target_id,
-                                                                                                        card_edit_labels,
-                                                                                                        card_edit_assignee,
-                                                                                                        card_edit_due,
-                                                                                                        editing_card_detail,
-                                                                                                        card_detail_actions_open,
-                                                                                                        card_synthesis_history_open_id,
-                                                                                                        card_synthesis_selected_revision_id,
-                                                                                                        card_detail_edit_status,
-                                                                                                    );
-                                                                                                }
-                                                                                            },
-                                                                                        }
-                                                                                    }
-                                                                                } else {
-                                                                                    div { class: "card-detail-description card-synthesis-body",
-                                                                                        {crate::content::render_blocks(
-                                                                                            &crate::content::parse_local_preview_body(&display_revision.body),
-                                                                                        )}
-                                                                                    }
-                                                                                }
-                                                                            }
-                                                                        }
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                        if editing_card_detail()
-                                                            && card_edit_scope() == CardEditScope::Synthesis
-                                                            && card_edit_synthesis_target_id().is_none() {
-                                                            div { class: "workflow-form card-detail-edit-form card-detail-inline-edit-form", "data-testid": "card-detail-edit-form",
-                                                                div { class: "field",
-                                                                    CardMarkdownEditor {
-                                                                        key: "card-markdown-synthesis-new",
-                                                                        aria_label: "Synthesis".to_owned(),
-                                                                        value: card_edit_synthesis(),
-                                                                        token: token(),
-                                                                        realm_id: selected_realm_id.clone(),
-                                                                        allow_image_upload: true,
-                                                                        on_change: move |value| card_edit_synthesis.set(value),
-                                                                        slot: "synthesis".to_owned(),
-                                                                    }
-                                                                }
-                                                                CardDetailEditActions {
-                                                                    save_disabled: !detail_send_ready || !card_detail_write_ready(card) || !realm_content_write_ready,
-                                                                    blocked_reason: if !card_detail_write_ready(card) {
-                                                                        "Waiting for the accepted card revision".to_owned()
-                                                                    } else if !detail_send_ready {
-                                                                        detail_send_blocked_reason.clone()
-                                                                    } else {
-                                                                        "Waiting for Realm content write readiness".to_owned()
-                                                                    },
-                                                                    status: card_detail_edit_status(),
-                                                                    on_save: {
-                                                                        let base = base_url.clone();
-                                                                        let realm = selected_realm_id.clone();
-                                                                        let actor = principal_id.clone();
-                                                                        let device = device_id.clone();
-                                                                        let current = card.clone();
-                                                                        let entries = synthesis_entries.clone();
-
-                                                                        move |_| {
-                                                                            spawn(save_card_detail_edit(
-                                                                                base.clone(),
-                                                                                token,
-                                                                                realm.clone(),
-                                                                                actor.clone(),
-                                                                                device.clone(),
-                                                                                current.clone(),
-                                                                                entries.clone(),
-                                                                                selected_scope_security_encrypted,
-                                                                                None,
-                                                                                card_edit_scope,
-                                                                                card_edit_title,
-                                                                                card_edit_description,
-                                                                                card_edit_body,
-                                                                                card_edit_synthesis,
-                                                                                card_edit_synthesis_target_id,
-                                                                                card_edit_labels,
-                                                                                card_edit_assignee,
-                                                                                card_edit_due,
-                                                                                editing_card_detail,
-                                                                                card_detail_actions_open,
-                                                                                card_detail_edit_status,
-                                                                                selected_card,
-                                                                                state_store,
-                                                                                board_status,
-                                                                            ));
-                                                                        }
-                                                                    },
-                                                                    on_cancel: {
-                                                                        let current = card.clone();
-                                                                        move |_| {
-                                                                            reset_card_detail_edit(
-                                                                                &current,
-                                                                                card_edit_title,
-                                                                                card_edit_description,
-                                                                                card_edit_body,
-                                                                                card_edit_synthesis,
-                                                                                card_edit_synthesis_target_id,
-                                                                                card_edit_labels,
-                                                                                card_edit_assignee,
-                                                                                card_edit_due,
-                                                                                editing_card_detail,
-                                                                                card_detail_actions_open,
-                                                                                card_synthesis_history_open_id,
-                                                                                card_synthesis_selected_revision_id,
-                                                                                card_detail_edit_status,
-                                                                            );
-                                                                        }
-                                                                    },
-                                                                }
-                                                            }
-                                                        }
-                                                        if !editing_card_detail() {
-                                                            div { class: "card-synthesis-footer-action",
-                                                                Button {
-                                                                    variant: ButtonVariant::Secondary,
-                                                                    class: "card-detail-mini-action",
-                                                                    "data-testid": "card-detail-new-synthesis-button",
-                                                                    disabled: !card_detail_edit_ready(card),
-                                                                    onclick: {
-                                                                        let current = card.clone();
-                                                                        move |_| {
-                                                                            prepare_selected_card_for_edit(selected_card);
-                                                                            let draft = card_detail_draft_from_card(&current);
-                                                                            card_edit_title.set(draft.title);
-                                                                            card_edit_description.set(draft.description);
-                                                                            card_edit_body.set(draft.description_body);
-                                                                            card_edit_synthesis.set(String::new());
-                                                                            card_edit_synthesis_target_id.set(None);
-                                                                            card_edit_labels.set(draft.labels.join(", "));
-                                                                            card_edit_assignee.set(draft.assignee);
-                                                                            card_edit_due.set(draft.due);
-                                                                            card_edit_scope.set(CardEditScope::Synthesis);
-                                                                            card_detail_edit_status.set(String::new());
-                                                                            editing_card_detail.set(true);
-                                                                            card_synthesis_history_open_id.set(None);
-                                                                            card_synthesis_selected_revision_id.set(None);
-                                                                        }
-                                                                    },
-                                                                    UiIcon { name: "plus" }
-                                                                    span { {crate::i18n::tr("kanban.ui.new")} }
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                                if discussion_panel_should_mount {
-                                                    div {
-                                                        class: "{discussion_panel_class}",
-                                                        "data-testid": "card-discussion-panel",
-                                                        role: "tabpanel",
-                                                        "aria-hidden": "{active_detail_tab != CardDetailContentTab::Discussion}",
-                                                        for host_key in [discussion_host_key] {
-                                                            crate::views::chat::RetainedDiscussionHost {
-                                                                key: "{host_key}",
-                                                                ready: discussion_target_ready,
-                                                                crate::views::chat::ChatPanel {
-                                                                    plaintext_service_id: plaintext_service_id.clone(),
-                                                                    principal_id: principal_core_id.clone(),
-                                                                    account_primary_handle: account_primary_handle.clone(),
-                                                                    device_id: device_id.clone(),
-                                                                    token,
-                                                                    selected_realm_id: selected_realm_id.clone(),
-                                                                    sync_cursor,
-                                                                    realm_live_epoch,
-                                                                    frontier_state,
-                                                                    initial_strand_id: card.primary_strand_id.clone(),
-                                                                    embedded: true,
-                                                                    source_suspended: !discussion_target_ready,
-                                                                    direct_mode: false,
-                                                                    mention_insert_request: Some(member_mention_request),
-                                                                }
-                                                            }
-                                                        }
-                                                        if !discussion_target_ready {
-                                                            div {
-                                                                class: "card-detail-empty discussion-pending-target",
-                                                                "data-testid": "card-discussion-pending-target",
-                                                                role: "status",
-                                                                "aria-live": "polite",
-                                                                {crate::i18n::tr("kanban.ui.discussion_will_be_available_when_this_card_finishes_syncing")}
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-
-                                        if sidebar_is_visible {
-                                        aside { class: "card-detail-sidebar",
-                                            {
-                                                let store = state_store.read().load();
-                                                let projection = store.realm_tree_projections.get(&selected_realm_id);
-                                                let realm_context = member_roster_realm_context(
-                                                    &selected_realm_id,
-                                                    &projection_realm_id,
-                                                    projection,
-                                                );
-                                                let realm_member_rows = realm_member_roster(
-                                                    projection,
-                                                );
-                                                let joined_members = state_store.read()
-                                                    .complete_joined_member_hint_for_realm(&selected_realm_id)
-                                                    .ok().flatten();
-                                                let realm_member_count = realm_member_rows.len();
-                                                let participant_set: BTreeSet<String> = strand_participant_ids(
-                                                    &store.raw_operations,
-                                                    &card.primary_strand_id,
-                                                )
-                                                .into_iter()
-                                                .collect();
-                                                let owned_agent_inventory_snapshot =
-                                                    owned_agent_inventory.read().clone();
-                                                let active_sidebar_tab = card_detail_sidebar_tab();
-                                                let on_member_mention = EventHandler::new({
-                                                    let strand_id = card.primary_strand_id.clone();
-                                                    move |request| {
-                                                        member_mention_request.set(Some(request));
-                                                        card_detail_discussion_mounted_for
-                                                            .set(Some(strand_id.clone()));
-                                                        card_detail_tab
-                                                            .set(CardDetailContentTab::Discussion);
-                                                        replace_card_detail_tab_query(
-                                                            CardDetailContentTab::Discussion,
-                                                        );
-                                                    }
-                                                });
-                                                let details_tab_class = if active_sidebar_tab == CardDetailSidebarTab::Details {
-                                                    "card-detail-tab active"
-                                                } else {
-                                                    "card-detail-tab"
-                                                };
-                                                let members_tab_class = if active_sidebar_tab == CardDetailSidebarTab::Members {
-                                                    "card-detail-tab active"
-                                                } else {
-                                                    "card-detail-tab"
-                                                };
-                                                rsx! {
-                                                    div {
-                                                        class: "card-detail-tabs card-detail-sidebar-tabs",
-                                                        "data-testid": "card-detail-sidebar-tabs",
-                                                        role: "tablist",
-                                                        "aria-label": crate::i18n::tr("kanban.ui.sidebar_views"),
-                                                        button {
-                                                            r#type: "button",
-                                                            class: "{details_tab_class}",
-                                                            "data-testid": "card-detail-sidebar-tab-details",
-                                                            role: "tab",
-                                                            "aria-selected": "{active_sidebar_tab == CardDetailSidebarTab::Details}",
-                                                            onclick: move |_| card_detail_sidebar_tab.set(CardDetailSidebarTab::Details),
-                                                            {crate::i18n::tr("kanban.ui.details")}
-                                                        }
-                                                        button {
-                                                            r#type: "button",
-                                                            class: "{members_tab_class}",
-                                                            "data-testid": "card-detail-sidebar-tab-members",
-                                                            role: "tab",
-                                                            "aria-selected": "{active_sidebar_tab == CardDetailSidebarTab::Members}",
-                                                            onclick: move |_| card_detail_sidebar_tab.set(CardDetailSidebarTab::Members),
-                                                            {crate::i18n::tr_args("kanban.ui.member_count", &[("count", (realm_member_count).to_string())])}
-                                                        }
-                                                    }
-                                                    if active_sidebar_tab == CardDetailSidebarTab::Details {
-                                                        {
-                                                            let assigned_actor_ids = card_assigned_actor_ids(card);
-                                                            let assigned_people = {
-                                                                let store = state_store.read();
-                                                                assigned_actor_ids
-                                                                    .iter()
-                                                                    .map(|actor_id| {
-                                                                        let label = assignee_label_for_actor(
-                                                                            &store,
-                                                                            &realm_context,
-                                                                            &realm_member_rows,
-                                                                            actor_id,
-                                                                        );
-                                                                        (actor_id.clone(), label)
-                                                                    })
-                                                                    .collect::<Vec<_>>()
-                                                            };
-                                                            let assignee_title = if assigned_actor_ids.is_empty() {
-                                                                "unassigned".to_owned()
-                                                            } else {
-                                                                assigned_actor_ids.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")
-                                                            };
-                                                            let picker_rows = assignment_picker_roster(&realm_member_rows, card);
-                                                            let picker_filter = assignee_filter();
-                                                            let selected_actor_ids = assignee_selected_actor_ids();
-                                                            let picker_people = {
-                                                                let store = state_store.read();
-                                                                picker_rows
-                                                                    .iter()
-                                                                    .filter_map(|row| {
-                                                                        let label = assignee_label_for_actor(
-                                                                            &store,
-                                                                            &realm_context,
-                                                                            &realm_member_rows,
-                                                                            &row.actor_id,
-                                                                        );
-                                                                        assignee_filter_matches(&picker_filter, &label, &row.actor_id.to_string()).then(|| {
-                                                                            (
-                                                                                row.actor_id.clone(),
-                                                                                label.clone(),
-                                                                                short_protocol_id(row.actor_id.signing_principal_id().as_str()),
-                                                                            )
-                                                                        })
-                                                                    })
-                                                                    .collect::<Vec<_>>()
-                                                            };
-                                                            let picker_open = assignee_picker_open();
-                                                            let edit_status = assignee_edit_status();
-                                                            rsx! {
-                                                        div { class: "card-detail-side-fields", "data-testid": "card-fields",
-                                                            dl { class: "card-detail-field-list",
-                                                                div {
-                                                                    dt { {crate::i18n::tr("kanban.ui.strand_id")} }
-                                                                    dd { class: "card-detail-field-code", title: "{card.id}", "{card_id_label}" }
-                                                                }
-                                                                div {
-                                                                    dt { {crate::i18n::tr("kanban.ui.assignees")} }
-                                                                    dd {
-                                                                        div {
-                                                                            class: "assignee-editor",
-                                                                            "data-testid": "card-detail-assignees",
-                                                                            div { class: "assignee-chip-row", title: "{assignee_title}",
-                                                                                if assigned_people.is_empty() {
-                                                                                    Button {
-                                                                                        variant: ButtonVariant::Secondary,
-                                                                                        r#type: "button",
-                                                                                        class: "assignee-add assignee-add-empty",
-                                                                                        "aria-haspopup": "listbox",
-                                                                                        "aria-expanded": "{picker_open}",
-                                                                                        title: crate::i18n::tr("kanban.ui.add_assignees"),
-                                                                                        onclick: {
-                                                                                            let current_selection = assigned_actor_ids
-                                                                                                .iter()
-                                                                                                .cloned()
-                                                                                                .collect::<BTreeSet<_>>();
-                                                                                            move |_| {
-                                                                                                assignee_selected_actor_ids.set(current_selection.clone());
-                                                                                                assignee_filter.set(String::new());
-                                                                                                assignee_edit_status.set(String::new());
-                                                                                                assignee_picker_open.set(!assignee_picker_open());
-                                                                                            }
-                                                                                        },
-                                                                                        UiIcon { name: "plus" }
-                                                                                        span { {crate::i18n::tr("kanban.ui.add_assignees")} }
-                                                                                    }
-                                                                                } else {
-                                                                                    span { class: "assignee-chip-list",
-                                                                                        for (actor_id, label) in assigned_people.iter() {
-                                                                                            span {
-                                                                                                key: "{actor_id}",
-                                                                                                class: "assignee-chip",
-                                                                                                title: "{actor_id}",
-                                                                                                crate::components::IdentityAvatar {
-                                                                                                    seed: actor_id.clone(),
-                                                                                                    alt_text: label.clone(),
-                                                                                                    class: "avatar-img assignee-avatar".to_owned(),
-                                                                                                }
-                                                                                                span { class: "assignee-chip-label", "{label}" }
-                                                                                            }
-                                                                                        }
-                                                                                    }
-                                                                                    Button {
-                                                                                        variant: ButtonVariant::Secondary,
-                                                                                        r#type: "button",
-                                                                                        class: "assignee-add",
-                                                                                        "aria-label": crate::i18n::tr("kanban.ui.add_or_remove_assignees"),
-                                                                                        "aria-haspopup": "listbox",
-                                                                                        "aria-expanded": "{picker_open}",
-                                                                                        title: crate::i18n::tr("kanban.ui.add_or_remove_assignees"),
-                                                                                        onclick: {
-                                                                                            let current_selection = assigned_actor_ids
-                                                                                                .iter()
-                                                                                                .cloned()
-                                                                                                .collect::<BTreeSet<_>>();
-                                                                                            move |_| {
-                                                                                                assignee_selected_actor_ids.set(current_selection.clone());
-                                                                                                assignee_filter.set(String::new());
-                                                                                                assignee_edit_status.set(String::new());
-                                                                                                assignee_picker_open.set(!assignee_picker_open());
-                                                                                            }
-                                                                                        },
-                                                                                        UiIcon { name: "plus" }
-                                                                                    }
-                                                                                    Button {
-                                                                                        variant: ButtonVariant::Secondary,
-                                                                                        r#type: "button",
-                                                                                        class: "assignee-add assignee-clear",
-                                                                                        "aria-label": crate::i18n::tr("kanban.ui.clear_assignees"),
-                                                                                        title: crate::i18n::tr("kanban.ui.clear_assignees"),
-                                                                                        onclick: {
-                                                                                            let base = base_url.clone();
-                                                                                            let realm = selected_realm_id.clone();
-                                                                                            let actor = principal_id.clone();
-                                                                                            let current_card = card.clone();
-                                                                                            move |_| {
-                                                                                                assignee_selected_actor_ids.set(BTreeSet::new());
-                                                                                                if dispatch_card_assignees_update(
-                                                                                                    base.clone(),
-                                                                                                    token,
-                                                                                                    realm.clone(),
-                                                                                                    actor.clone(),
-                                                                                                    current_card.clone(),
-                                                                                                    BTreeSet::new(),
-                                                                                                    selected_card,
-                                                                                                    state_store,
-                                                                                                    board_status,
-                                                                                                    assignee_edit_status,
-                                                                                                ) {
-                                                                                                    assignee_picker_open.set(false);
-                                                                                                    assignee_filter.set(String::new());
-                                                                                                }
-                                                                                            }
-                                                                                        },
-                                                                                        UiIcon { name: "x" }
-                                                                                    }
-                                                                                }
-                                                                            }
-                                                                            if picker_open {
-                                                                                div {
-                                                                                    class: "assignee-popover",
-                                                                                    "data-testid": "card-detail-assignees-picker",
-                                                                                    div { class: "assignee-search",
-                                                                                        UiIcon { name: "search" }
-                                                                                        Input {
-                                                                                            class: "input",
-                                                                                            "data-testid": "card-detail-assignees-search",
-                                                                                            value: "{picker_filter}",
-                                                                                            placeholder: crate::i18n::tr("kanban.ui.filter_members"),
-                                                                                            oninput: move |event: FormEvent| assignee_filter.set(event.value()),
-                                                                                        }
-                                                                                    }
-                                                                                    div {
-                                                                                        class: "assignee-options",
-                                                                                        role: "listbox",
-                                                                                        "aria-label": crate::i18n::tr("kanban.ui.assignees"),
-                                                                                        if picker_people.is_empty() {
-                                                                                            div { class: "assignee-option-empty", {crate::i18n::tr("kanban.ui.no_members_match")} }
-                                                                                        } else {
-                                                                                            for (actor_id, label, compact_id) in picker_people.iter() {
-                                                                                                {
-                                                                                                    let selected = selected_actor_ids.contains(actor_id);
-                                                                                                    let option_class = if selected {
-                                                                                                        "assignee-option selected"
-                                                                                                    } else {
-                                                                                                        "assignee-option"
-                                                                                                    };
-                                                                                                    let target_actor_id = actor_id.clone();
-                                                                                                    rsx! {
-                                                                                                        Button {
-                                                                                                            variant: ButtonVariant::Secondary,
-                                                                                                            key: "{actor_id}",
-                                                                                                            r#type: "button",
-                                                                                                            class: "{option_class}",
-                                                                                                            role: "option",
-                                                                                                            "aria-selected": "{selected}",
-                                                                                                            onclick: move |_| {
-                                                                                                                let mut next = assignee_selected_actor_ids();
-                                                                                                                if next.contains(&target_actor_id) {
-                                                                                                                    next.remove(&target_actor_id);
-                                                                                                                } else {
-                                                                                                                    next.insert(target_actor_id.clone());
-                                                                                                                }
-                                                                                                                assignee_selected_actor_ids.set(next);
-                                                                                                            },
-                                                                                                            span { class: "assignee-option-check",
-                                                                                                                if selected {
-                                                                                                                    UiIcon { name: "check" }
-                                                                                                                }
-                                                                                                            }
-                                                                                                            crate::components::IdentityAvatar {
-                                                                                                                seed: actor_id.clone(),
-                                                                                                                alt_text: label.clone(),
-                                                                                                                class: "avatar-img assignee-avatar".to_owned(),
-                                                                                                            }
-                                                                                                            span { class: "assignee-option-main",
-                                                                                                                span { class: "assignee-option-label", "{label}" }
-                                                                                                                span { class: "assignee-option-meta", "{compact_id}" }
-                                                                                                            }
-                                                                                                        }
-                                                                                                    }
-                                                                                                }
-                                                                                            }
-                                                                                        }
-                                                                                    }
-                                                                                    if !edit_status.trim().is_empty() {
-                                                                                        div {
-                                                                                            class: "assignee-edit-status",
-                                                                                            role: "status",
-                                                                                            "aria-live": "polite",
-                                                                                            "{edit_status}"
-                                                                                        }
-                                                                                    }
-                                                                                    div { class: "assignee-popover-actions",
-                                                                                        Button {
-                                                                                            variant: ButtonVariant::Secondary,
-                                                                                            r#type: "button",
-                                                                                            onclick: move |_| assignee_selected_actor_ids.set(BTreeSet::new()),
-                                                                                            {crate::i18n::tr("kanban.ui.clear")}
-                                                                                        }
-                                                                                        Button {
-                                                                                            variant: ButtonVariant::Secondary,
-                                                                                            r#type: "button",
-                                                                                            onclick: move |_| {
-                                                                                                assignee_picker_open.set(false);
-                                                                                                assignee_filter.set(String::new());
-                                                                                                assignee_edit_status.set(String::new());
-                                                                                            },
-                                                                                            {crate::i18n::tr("common.cancel")}
-                                                                                        }
-                                                                                        Button {
-                                                                                            variant: ButtonVariant::Primary,
-                                                                                            r#type: "button",
-                                                                                            onclick: {
-                                                                                                let base = base_url.clone();
-                                                                                                let realm = selected_realm_id.clone();
-                                                                                                let actor = principal_id.clone();
-                                                                                                let current_card = card.clone();
-                                                                                                move |_| {
-                                                                                                    if dispatch_card_assignees_update(
-                                                                                                        base.clone(),
-                                                                                                        token,
-                                                                                                        realm.clone(),
-                                                                                                        actor.clone(),
-                                                                                                        current_card.clone(),
-                                                                                                        assignee_selected_actor_ids(),
-                                                                                                        selected_card,
-                                                                                                        state_store,
-                                                                                                        board_status,
-                                                                                                        assignee_edit_status,
-                                                                                                    ) {
-                                                                                                        assignee_picker_open.set(false);
-                                                                                                        assignee_filter.set(String::new());
-                                                                                                    }
-                                                                                                }
-                                                                                            },
-                                                                                            {crate::i18n::tr("common.save")}
-                                                                                        }
-                                                                                    }
-                                                                                }
-                                                                            }
-                                                                        }
-                                                                    }
-                                                                }
-                                                                div {
-                                                                    dt { {crate::i18n::tr("kanban.ui.due")} }
-                                                                    dd {
-                                                                        {
-                                                                            let due_editor_value = editor_value_for_optional_card_field(&card.due);
-                                                                            let due_has_value = !due_editor_value.is_empty();
-                                                                            let due_open = due_picker_open();
-                                                                            let due_status = due_edit_status();
-                                                                            let selected_date = parse_due_calendar_date(&due_edit_value());
-                                                                            let today_date = due_calendar_today();
-                                                                            let month = due_calendar_month();
-                                                                            let month_label = due_calendar_month_label(month);
-                                                                            let calendar_cells = due_calendar_cells(month);
-                                                                            rsx! {
-                                                                                div {
-                                                                                    class: "due-editor",
-                                                                                    "data-testid": "card-detail-due",
-                                                                                    if due_has_value {
-                                                                                        span {
-                                                                                            class: "due-pill",
-                                                                                            title: "{due_editor_value}",
-                                                                                            "{due_editor_value}"
-                                                                                        }
-                                                                                        Button {
-                                                                                            variant: ButtonVariant::Secondary,
-                                                                                            r#type: "button",
-                                                                                            class: "due-edit-button",
-                                                                                            "aria-label": crate::i18n::tr("kanban.ui.edit_due_date"),
-                                                                                            "aria-haspopup": "dialog",
-                                                                                            "aria-expanded": "{due_open}",
-                                                                                            title: crate::i18n::tr("kanban.ui.edit_due_date"),
-                                                                                            onclick: {
-                                                                                                let current_due = due_editor_value.clone();
-                                                                                                move |_| {
-                                                                                                    due_edit_value.set(current_due.clone());
-                                                                                                    due_calendar_month.set(due_calendar_month_for_value(&current_due));
-                                                                                                    due_edit_status.set(String::new());
-                                                                                                    assignee_picker_open.set(false);
-                                                                                                    due_picker_open.set(!due_picker_open());
-                                                                                                }
-                                                                                            },
-                                                                                            UiIcon { name: "calendar" }
-                                                                                        }
-                                                                                        Button {
-                                                                                            variant: ButtonVariant::Secondary,
-                                                                                            r#type: "button",
-                                                                                            class: "due-edit-button due-clear-button",
-                                                                                            "aria-label": crate::i18n::tr("kanban.ui.clear_due_date"),
-                                                                                            title: crate::i18n::tr("kanban.ui.clear_due_date"),
-                                                                                            onclick: {
-                                                                                                let base = base_url.clone();
-                                                                                                let realm = selected_realm_id.clone();
-                                                                                                let actor = principal_id.clone();
-                                                                                                let device = device_id.clone();
-                                                                                                let current_card = card.clone();
-                                                                                                move |_| {
-                                                                                                    due_edit_value.set(String::new());
-                                                                                                    due_calendar_month.set(default_due_calendar_month());
-                                                                                                    due_picker_open.set(true);
-                                                                                                    let base = base.clone();
-                                                                                                    let realm = realm.clone();
-                                                                                                    let actor = actor.clone();
-                                                                                                    let device = device.clone();
-                                                                                                    let current_card = current_card.clone();
-                                                                                                    spawn(async move { let _ = save_card_due_edit(
-                                                                                                        base,
-                                                                                                        token,
-                                                                                                        realm,
-                                                                                                        actor,
-                                                                                                        device,
-                                                                                                        current_card,
-                                                                                                        String::new(),
-                                                                                                        selected_scope_security_encrypted,
-                                                                                                        due_picker_open,
-                                                                                                        due_edit_status,
-                                                                                                        selected_card,
-                                                                                                        state_store,
-                                                                                                        board_status,
-                                                                                                    ).await; });
-                                                                                                }
-                                                                                            },
-                                                                                            UiIcon { name: "x" }
-                                                                                        }
-                                                                                    } else {
-                                                                                        Button {
-                                                                                            variant: ButtonVariant::Secondary,
-                                                                                            r#type: "button",
-                                                                                            class: "due-add-button",
-                                                                                            "aria-haspopup": "dialog",
-                                                                                            "aria-expanded": "{due_open}",
-                                                                                            title: crate::i18n::tr("kanban.ui.add_due_date"),
-                                                                                            onclick: move |_| {
-                                                                                                due_edit_value.set(String::new());
-                                                                                                due_calendar_month.set(default_due_calendar_month());
-                                                                                                due_edit_status.set(String::new());
-                                                                                                assignee_picker_open.set(false);
-                                                                                                due_picker_open.set(!due_picker_open());
-                                                                                            },
-                                                                                            UiIcon { name: "plus" }
-                                                                                            span { {crate::i18n::tr("kanban.ui.add_due_date")} }
-                                                                                        }
-                                                                                    }
-                                                                                    if due_open {
-                                                                                        crate::components::DismissiblePopup {
-                                                                                            overlay_class: "due-date-modal-backdrop",
-                                                                                            surface_class: "due-date-modal",
-                                                                                            overlay_test_id: Some("card-detail-due-picker-backdrop".to_owned()),
-                                                                                            surface_test_id: Some("card-detail-due-picker".to_owned()),
-                                                                                            aria_label: "Set due date",
-                                                                                            on_dismiss: {
-                                                                                                let cancel_due = due_editor_value.clone();
-                                                                                                move |_| {
-                                                                                                    due_picker_open.set(false);
-                                                                                                    due_edit_value.set(cancel_due.clone());
-                                                                                                    due_calendar_month.set(due_calendar_month_for_value(&cancel_due));
-                                                                                                    due_edit_status.set(String::new());
-                                                                                                }
-                                                                                            },
-                                                                                            div { class: "due-date-modal-head",
-                                                                                                div { class: "due-date-modal-title",
-                                                                                                    h3 { {crate::i18n::tr("kanban.ui.set_due_date")} }
-                                                                                                    p { {crate::i18n::tr("kanban.ui.choose_a_date_for_this_card")} }
-                                                                                                }
-                                                                                                Button {
-                                                                                                    variant: ButtonVariant::Secondary,
-                                                                                                    r#type: "button",
-                                                                                                    class: "due-date-modal-close",
-                                                                                                    "aria-label": crate::i18n::tr("kanban.ui.close_due_date_dialog"),
-                                                                                                    title: crate::i18n::tr("common.close"),
-                                                                                                    onclick: {
-                                                                                                        let cancel_due = due_editor_value.clone();
-                                                                                                        move |_| {
-                                                                                                            due_picker_open.set(false);
-                                                                                                            due_edit_value.set(cancel_due.clone());
-                                                                                                            due_calendar_month.set(due_calendar_month_for_value(&cancel_due));
-                                                                                                            due_edit_status.set(String::new());
-                                                                                                        }
-                                                                                                    },
-                                                                                                    UiIcon { name: "x" }
-                                                                                                }
-                                                                                            }
-                                                                                            div { class: "due-date-modal-body",
-                                                                                            div { class: "due-date-modal-field",
-                                                                                                Label { html_for: "card-detail-due-inline-input-input", {crate::i18n::tr("kanban.ui.due_date")} }
-                                                                                                Input {
-                                                                                                    id: "card-detail-due-inline-input-input",
-                                                                                                    class: "input",
-                                                                                                    "data-testid": "card-detail-due-inline-input",
-                                                                                                    value: "{due_edit_value}",
-                                                                                                    placeholder: crate::i18n::tr("kanban.ui.yyyy_mm_dd"),
-                                                                                                    oninput: move |event: FormEvent| {
-                                                                                                        let next = event.value();
-                                                                                                        if let Some(date) = parse_due_calendar_date(&next) {
-                                                                                                            due_calendar_month.set(start_of_due_calendar_month(date));
-                                                                                                        }
-                                                                                                        due_edit_value.set(next);
-                                                                                                    },
-                                                                                                }
-                                                                                            }
-                                                                                            div { class: "due-calendar",
-                                                                                                div { class: "due-calendar-header",
-                                                                                                    Button {
-                                                                                                        variant: ButtonVariant::Secondary,
-                                                                                                        r#type: "button",
-                                                                                                        class: "due-calendar-nav",
-                                                                                                        "aria-label": crate::i18n::tr("kanban.ui.previous_month"),
-                                                                                                        title: crate::i18n::tr("kanban.ui.previous_month"),
-                                                                                                        onclick: move |_| {
-                                                                                                            due_calendar_month.set(add_due_calendar_months(due_calendar_month(), -1));
-                                                                                                        },
-                                                                                                        UiIcon { name: "chevron-left" }
-                                                                                                    }
-                                                                                                    strong { class: "due-calendar-title", "{month_label}" }
-                                                                                                    Button {
-                                                                                                        variant: ButtonVariant::Secondary,
-                                                                                                        r#type: "button",
-                                                                                                        class: "due-calendar-nav",
-                                                                                                        "aria-label": crate::i18n::tr("kanban.ui.next_month"),
-                                                                                                        title: crate::i18n::tr("kanban.ui.next_month"),
-                                                                                                        onclick: move |_| {
-                                                                                                            due_calendar_month.set(add_due_calendar_months(due_calendar_month(), 1));
-                                                                                                        },
-                                                                                                        UiIcon { name: "chevron-right" }
-                                                                                                    }
-                                                                                                }
-                                                                                                div {
-                                                                                                    class: "due-calendar-weekdays",
-                                                                                                    span { {crate::i18n::tr("kanban.ui.sun")} }
-                                                                                                    span { {crate::i18n::tr("kanban.ui.mon")} }
-                                                                                                    span { {crate::i18n::tr("kanban.ui.tue")} }
-                                                                                                    span { {crate::i18n::tr("kanban.ui.wed")} }
-                                                                                                    span { {crate::i18n::tr("kanban.ui.thu")} }
-                                                                                                    span { {crate::i18n::tr("kanban.ui.fri")} }
-                                                                                                    span { {crate::i18n::tr("kanban.ui.sat")} }
-                                                                                                }
-                                                                                                div {
-                                                                                                    class: "due-calendar-grid",
-                                                                                                    role: "grid",
-                                                                                                    "aria-label": crate::i18n::tr("kanban.ui.due_date_calendar"),
-                                                                                                    for cell in calendar_cells.iter() {
-                                                                                                        {
-                                                                                                            let selected = selected_date.is_some_and(|date| date == cell.date);
-                                                                                                            let is_today = today_date == cell.date;
-                                                                                                            let mut day_class = String::from("due-calendar-day");
-                                                                                                            if !cell.in_current_month {
-                                                                                                                day_class.push_str(" outside");
-                                                                                                            }
-                                                                                                            if is_today {
-                                                                                                                day_class.push_str(" today");
-                                                                                                            }
-                                                                                                            if selected {
-                                                                                                                day_class.push_str(" selected");
-                                                                                                            }
-                                                                                                            let iso_date = cell.iso_date.clone();
-                                                                                                            let cell_label = format!("Select {iso_date}");
-                                                                                                            rsx! {
-                                                                                                                Button {
-                                                                                                                    variant: ButtonVariant::Secondary,
-                                                                                                                    key: "{cell.iso_date}",
-                                                                                                                    r#type: "button",
-                                                                                                                    class: "{day_class}",
-                                                                                                                    role: "gridcell",
-                                                                                                                    "aria-label": "{cell_label}",
-                                                                                                                    "aria-pressed": "{selected}",
-                                                                                                                    onclick: move |_| {
-                                                                                                                        due_edit_value.set(iso_date.clone());
-                                                                                                                        due_calendar_month.set(due_calendar_month_for_value(&iso_date));
-                                                                                                                    },
-                                                                                                                    "{cell.day}"
-                                                                                                                }
-                                                                                                            }
-                                                                                                        }
-                                                                                                    }
-                                                                                                }
-                                                                                            }
-                                                                                            if !due_status.trim().is_empty() {
-                                                                                                div {
-                                                                                                    class: "due-edit-status",
-                                                                                                    role: "status",
-                                                                                                    "aria-live": "polite",
-                                                                                                    "{due_status}"
-                                                                                                }
-                                                                                            }
-                                                                                            }
-                                                                                            div { class: "due-date-modal-actions",
-                                                                                                Button {
-                                                                                                    variant: ButtonVariant::Secondary,
-                                                                                                    r#type: "button",
-                                                                                                    class: "due-date-clear-action",
-                                                                                                    onclick: move |_| {
-                                                                                                        due_edit_value.set(String::new());
-                                                                                                        due_calendar_month.set(default_due_calendar_month());
-                                                                                                    },
-                                                                                                    {crate::i18n::tr("kanban.ui.clear")}
-                                                                                                }
-                                                                                                Button {
-                                                                                                    variant: ButtonVariant::Secondary,
-                                                                                                    r#type: "button",
-                                                                                                    onclick: {
-                                                                                                        let cancel_due = due_editor_value.clone();
-                                                                                                        move |_| {
-                                                                                                            due_picker_open.set(false);
-                                                                                                            due_edit_value.set(cancel_due.clone());
-                                                                                                            due_calendar_month.set(due_calendar_month_for_value(&cancel_due));
-                                                                                                            due_edit_status.set(String::new());
-                                                                                                        }
-                                                                                                    },
-                                                                                                    {crate::i18n::tr("common.cancel")}
-                                                                                                }
-                                                                                                Button {
-                                                                                                    variant: ButtonVariant::Primary,
-                                                                                                    r#type: "button",
-                                                                                                    onclick: {
-                                                                                                        let base = base_url.clone();
-                                                                                                        let realm = selected_realm_id.clone();
-                                                                                                        let actor = principal_id.clone();
-                                                                                                        let device = device_id.clone();
-                                                                                                        let current_card = card.clone();
-                                                                                                        move |_| {
-                                                                                                            let base = base.clone();
-                                                                                                            let realm = realm.clone();
-                                                                                                            let actor = actor.clone();
-                                                                                                            let device = device.clone();
-                                                                                                            let current_card = current_card.clone();
-                                                                                                            spawn(async move { let _ = save_card_due_edit(
-                                                                                                                base,
-                                                                                                                token,
-                                                                                                                realm,
-                                                                                                                actor,
-                                                                                                                device,
-                                                                                                                current_card,
-                                                                                                                due_edit_value(),
-                                                                                                                selected_scope_security_encrypted,
-                                                                                                                due_picker_open,
-                                                                                                                due_edit_status,
-                                                                                                                selected_card,
-                                                                                                                state_store,
-                                                                                                                board_status,
-                                                                                                            ).await; });
-                                                                                                        }
-                                                                                                    },
-                                                                                                    {crate::i18n::tr("common.save")}
-                                                                                                }
-                                                                                            }
-                                                                                        }
-                                                                                        }
-                                                                                    }
-                                                                                }
-                                                                        }
-                                                                    }
-                                                                }
-                                                                div {
-                                                                    dt { {crate::i18n::tr("kanban.ui.calendar")} }
-                                                                    dd {
-                                                                        {
-                                                                            let schedule = card.calendar.clone();
-                                                                            let has_schedule = schedule.has_schedule();
-                                                                            let recurrence_label = schedule.recurrence_label();
-                                                                            let occurrence_hint = calendar_occurrence_hint(&schedule);
-                                                                            let rsvp_display = card.calendar_rsvp.clone();
-                                                                            let agenda = calendar_agenda(
-                                                                                &schedule,
-                                                                                &card.calendar_schedule_basis_refs,
-                                                                                chrono::Utc::now(),
-                                                                            );
-                                                                            let location_label = if schedule.location_locked {
-                                                                                MLS_LOCKED_FIELD_PLACEHOLDER.to_owned()
-                                                                            } else {
-                                                                                schedule.location.clone()
-                                                                            };
-                                                                            rsx! {
-                                                                                div {
-                                                                                    class: "calendar-editor",
-                                                                                    "data-testid": "card-detail-calendar",
-                                                                                    if editing_card_detail() && card_edit_scope() == CardEditScope::Calendar {
-                                                                                        crate::components::DismissiblePopup {
-                                                                                            overlay_class: "due-date-modal-backdrop calendar-schedule-modal-backdrop",
-                                                                                            surface_class: "due-date-modal calendar-schedule-modal",
-                                                                                            overlay_test_id: Some("card-detail-calendar-editor-backdrop".to_owned()),
-                                                                                            surface_test_id: Some("card-detail-calendar-editor-dialog".to_owned()),
-                                                                                            aria_label: if has_schedule { "Edit calendar schedule" } else { "Add calendar schedule" },
-                                                                                            on_dismiss: {
-                                                                                                let current_calendar = card.calendar.clone();
-                                                                                                move |_| {
-                                                                                                    card_edit_calendar.set(current_calendar.clone());
-                                                                                                    calendar_rsvp_occurrence.set(calendar_occurrence_hint(&current_calendar));
-                                                                                                    editing_card_detail.set(false);
-                                                                                                    card_detail_actions_open.set(false);
-                                                                                                    card_detail_edit_status.set(String::new());
-                                                                                                }
-                                                                                            },
-                                                                                            div { class: "due-date-modal-head",
-                                                                                                div { class: "due-date-modal-title",
-                                                                                                    h3 { if has_schedule { {crate::i18n::tr("kanban.ui.edit_schedule")} } else { {crate::i18n::tr("kanban.ui.add_schedule")} } }
-                                                                                                    p { {crate::i18n::tr("kanban.ui.set_the_event_time_recurrence_and_calendar_details")} }
-                                                                                                }
-                                                                                                Button {
-                                                                                                    variant: ButtonVariant::Secondary,
-                                                                                                    r#type: "button",
-                                                                                                    class: "due-date-modal-close",
-                                                                                                    "aria-label": crate::i18n::tr("kanban.ui.close_calendar_schedule_dialog"),
-                                                                                                    title: crate::i18n::tr("common.close"),
-                                                                                                    onclick: {
-                                                                                                        let current_calendar = card.calendar.clone();
-                                                                                                        move |_| {
-                                                                                                            card_edit_calendar.set(current_calendar.clone());
-                                                                                                            calendar_rsvp_occurrence.set(calendar_occurrence_hint(&current_calendar));
-                                                                                                            editing_card_detail.set(false);
-                                                                                                            card_detail_actions_open.set(false);
-                                                                                                            card_detail_edit_status.set(String::new());
-                                                                                                        }
-                                                                                                    },
-                                                                                                    UiIcon { name: "x" }
-                                                                                                }
-                                                                                            }
-                                                                                            CalendarScheduleEditForm {
-                                                                                                calendar: card_edit_calendar,
-                                                                                                status: card_detail_edit_status(),
-                                                                                                on_save: {
-                                                                                                    let base = base_url.clone();
-                                                                                                    let realm = selected_realm_id.clone();
-                                                                                                    let actor = principal_id.clone();
-                                                                                                    let device = device_id.clone();
-                                                                                                    let current_card = card.clone();
-                                                                                                    move |_| {
-                                                                                                        let base = base.clone();
-                                                                                                        let realm = realm.clone();
-                                                                                                        let actor = actor.clone();
-                                                                                                        let device = device.clone();
-                                                                                                        let current_card = current_card.clone();
-                                                                                                        spawn(async move { let _ = save_card_calendar_edit(
-                                                                                                            base,
-                                                                                                            token,
-                                                                                                            realm,
-                                                                                                            actor,
-                                                                                                            device,
-                                                                                                            current_card,
-                                                                                                            card_edit_calendar(),
-                                                                                                            selected_scope_security_encrypted,
-                                                                                                            editing_card_detail,
-                                                                                                            card_detail_actions_open,
-                                                                                                            card_detail_edit_status,
-                                                                                                            selected_card,
-                                                                                                            state_store,
-                                                                                                            board_status,
-                                                                                                        ).await; });
-                                                                                                    }
-                                                                                                },
-                                                                                                on_cancel: {
-                                                                                                    let current_calendar = card.calendar.clone();
-                                                                                                    move |_| {
-                                                                                                        card_edit_calendar.set(current_calendar.clone());
-                                                                                                        calendar_rsvp_occurrence.set(calendar_occurrence_hint(&current_calendar));
-                                                                                                        editing_card_detail.set(false);
-                                                                                                        card_detail_actions_open.set(false);
-                                                                                                        card_detail_edit_status.set(String::new());
-                                                                                                    }
-                                                                                                },
-                                                                                            }
-                                                                                        }
-                                                                                    } else {
-                                                                                        if has_schedule {
-                                                                                            div { class: "calendar-summary",
-                                                                                                if !schedule.start.trim().is_empty() {
-                                                                                                    div {
-                                                                                                        span { {crate::i18n::tr("kanban.ui.start")} }
-                                                                                                        strong { "{schedule.start}" }
-                                                                                                    }
-                                                                                                }
-                                                                                                if !schedule.end.trim().is_empty() {
-                                                                                                    div {
-                                                                                                        span { {crate::i18n::tr("kanban.ui.end")} }
-                                                                                                        strong { "{schedule.end}" }
-                                                                                                    }
-                                                                                                }
-                                                                                                if !schedule.timezone.trim().is_empty() {
-                                                                                                    div {
-                                                                                                        span { {crate::i18n::tr("kanban.ui.timezone")} }
-                                                                                                        strong { "{schedule.timezone}" }
-                                                                                                    }
-                                                                                                }
-                                                                                                if schedule.all_day {
-                                                                                                    div {
-                                                                                                        span { {crate::i18n::tr("kanban.ui.mode")} }
-                                                                                                        strong { {crate::i18n::tr("kanban.ui.all_day")} }
-                                                                                                    }
-                                                                                                }
-                                                                                                div {
-                                                                                                    span { {crate::i18n::tr("kanban.ui.status")} }
-                                                                                                    strong { "{schedule.status}" }
-                                                                                                }
-                                                                                                if !recurrence_label.trim().is_empty() {
-                                                                                                    div {
-                                                                                                        span { {crate::i18n::tr("kanban.ui.recurrence")} }
-                                                                                                        strong { "{recurrence_label}" }
-                                                                                                    }
-                                                                                                }
-                                                                                                if !location_label.trim().is_empty() {
-                                                                                                    div {
-                                                                                                        span { {crate::i18n::tr("kanban.ui.location")} }
-                                                                                                        strong { "{location_label}" }
-                                                                                                    }
-                                                                                                }
-                                                                                            }
-                                                                                            match agenda {
-                                                                                                Ok(items) if !items.is_empty() => rsx! {
-                                                                                                    div {
-                                                                                                        class: "calendar-agenda",
-                                                                                                        "data-testid": "card-detail-calendar-agenda",
-                                                                                                        span { {crate::i18n::tr("kanban.ui.upcoming")} }
-                                                                                                        ul {
-                                                                                                            for item in items {
-                                                                                                                li {
-                                                                                                                    key: "{item.occurrence}",
-                                                                                                                    strong { "{item.local_start}" }
-                                                                                                                    span { " – {item.local_end}" }
-                                                                                                                }
-                                                                                                            }
-                                                                                                        }
-                                                                                                    }
-                                                                                                },
-                                                                                                Ok(_) => rsx! {
-                                                                                                    div {
-                                                                                                        class: "card-detail-empty",
-                                                                                                        "data-testid": "card-detail-calendar-agenda-empty",
-                                                                                                        {crate::i18n::tr("kanban.ui.no_occurrences_in_the_next_90_days")}
-                                                                                                    }
-                                                                                                },
-                                                                                                Err(error) => rsx! {
-                                                                                                    div {
-                                                                                                        class: "card-detail-empty",
-                                                                                                        "data-testid": "card-detail-calendar-agenda-unresolved",
-                                                                                                        {crate::i18n::tr_args("kanban.ui.agenda_unavailable", &[("error", (error).to_string())])}
-                                                                                                    }
-                                                                                                },
-                                                                                            }
-                                                                                        } else {
-                                                                                            div { class: "card-detail-empty", {crate::i18n::tr("kanban.ui.no_schedule")} }
-                                                                                        }
-                                                                                        Button {
-                                                                                            variant: ButtonVariant::Secondary,
-                                                                                            r#type: "button",
-                                                                                            class: "card-detail-mini-action",
-                                                                                            "data-testid": "card-detail-edit-calendar-button",
-                                                                                            disabled: !card_detail_edit_ready(card),
-                                                                                            "aria-haspopup": "dialog",
-                                                                                            "aria-expanded": "false",
-                                                                                            onclick: {
-                                                                                                let current = card.clone();
-                                                                                                move |_| {
-                                                                                                    prepare_selected_card_for_edit(selected_card);
-                                                                                                    let draft = card_detail_draft_from_card(&current);
-                                                                                                    let calendar = draft.calendar.clone();
-                                                                                                    card_edit_calendar.set(calendar.clone());
-                                                                                                    calendar_rsvp_occurrence.set(calendar_occurrence_hint(&calendar));
-                                                                                                    card_edit_scope.set(CardEditScope::Calendar);
-                                                                                                    card_detail_edit_status.set(String::new());
-                                                                                                    editing_card_detail.set(true);
-                                                                                                    card_detail_actions_open.set(false);
-                                                                                                    assignee_picker_open.set(false);
-                                                                                                    due_picker_open.set(false);
-                                                                                                }
-                                                                                            },
-                                                                                            UiIcon { name: if has_schedule { "settings" } else { "plus" } }
-                                                                                            span { if has_schedule { "Edit schedule" } else { "Add schedule" } }
-                                                                                        }
-                                                                                        if has_schedule {
-                                                                                            div {
-                                                                                                class: "calendar-rsvp",
-                                                                                                "data-testid": "card-detail-calendar-rsvp",
-                                                                                                // Answer state before the buttons: a card that only
-                                                                                                // offered "send once" could never show whether the
-                                                                                                // response landed, who else answered, or that the
-                                                                                                // responder needs to reconfirm after a schedule change.
-                                                                                                if rsvp_display.has_any() {
-                                                                                                    div {
-                                                                                                        class: "calendar-rsvp-status",
-                                                                                                        "data-testid": "card-detail-rsvp-status",
-                                                                                                        if let Some(status) = rsvp_display.own_status.clone() {
-                                                                                                            span {
-                                                                                                                class: "calendar-rsvp-own",
-                                                                                                                "data-testid": "card-detail-rsvp-own",
-                                                                                                                "You: {status}"
-                                                                                                            }
-                                                                                                        }
-                                                                                                        if rsvp_display.own_needs_reconfirmation {
-                                                                                                            span {
-                                                                                                                class: "calendar-rsvp-reconfirm",
-                                                                                                                "data-testid": "card-detail-rsvp-reconfirm",
-                                                                                                                "Schedule changed — please reconfirm"
-                                                                                                            }
-                                                                                                        }
-                                                                                                        span {
-                                                                                                            class: "calendar-rsvp-counts",
-                                                                                                            "data-testid": "card-detail-rsvp-counts",
-                                                                                                            "{rsvp_display.accepted} yes · {rsvp_display.tentative} maybe · {rsvp_display.declined} no"
-                                                                                                        }
-                                                                                                        if rsvp_display.excluded > 0 {
-                                                                                                            span {
-                                                                                                                class: "calendar-rsvp-excluded",
-                                                                                                                "data-testid": "card-detail-rsvp-excluded",
-                                                                                                                "{rsvp_display.excluded} response(s) no longer count"
-                                                                                                            }
-                                                                                                        }
-                                                                                                    }
-                                                                                                }
-                                                                                                Label { html_for: "card-detail-calendar-rsvp-occurrence", "Occurrence" }
-                                                                                                Input {
-                                                                                                    id: "card-detail-calendar-rsvp-occurrence",
-                                                                                                    class: "input",
-                                                                                                    "data-testid": "card-detail-calendar-rsvp-occurrence",
-                                                                                                    value: "{calendar_rsvp_occurrence}",
-                                                                                                    placeholder: "{occurrence_hint}",
-                                                                                                    oninput: move |event: FormEvent| calendar_rsvp_occurrence.set(event.value()),
-                                                                                                }
-                                                                                                div { class: "calendar-rsvp-actions",
-                                                                                                    Button {
-                                                                                                        variant: ButtonVariant::Secondary,
-                                                                                                        r#type: "button",
-                                                                                                        onclick: move |_| calendar_rsvp_occurrence.set(String::new()),
-                                                                                                        "Series"
-                                                                                                    }
-                                                                                                    Button {
-                                                                                                        variant: ButtonVariant::Secondary,
-                                                                                                        r#type: "button",
-                                                                                                        "data-testid": "card-detail-rsvp-accepted",
-                                                                                                        onclick: {
-                                                                                                            let base = base_url.clone();
-                                                                                                            let realm = selected_realm_id.clone();
-                                                                                                            let actor = principal_id.clone();
-                                                                                                            let current_card = card.clone();
-                                                                                                            move |_| {
-                                                                                                                dispatch_calendar_rsvp(
-                                                                                                                    base.clone(),
-                                                                                                                    token,
-                                                                                                                    realm.clone(),
-                                                                                                                    actor.clone(),
-                                                                                                                    current_card.clone(),
-                                                                                                                    "accepted",
-                                                                                                                    calendar_rsvp_occurrence(),
-                                                                                                                    state_store,
-                                                                                                                    board_status,
-                                                                                                                );
-                                                                                                            }
-                                                                                                        },
-                                                                                                        "Accept"
-                                                                                                    }
-                                                                                                    Button {
-                                                                                                        variant: ButtonVariant::Secondary,
-                                                                                                        r#type: "button",
-                                                                                                        "data-testid": "card-detail-rsvp-tentative",
-                                                                                                        onclick: {
-                                                                                                            let base = base_url.clone();
-                                                                                                            let realm = selected_realm_id.clone();
-                                                                                                            let actor = principal_id.clone();
-                                                                                                            let current_card = card.clone();
-                                                                                                            move |_| {
-                                                                                                                dispatch_calendar_rsvp(
-                                                                                                                    base.clone(),
-                                                                                                                    token,
-                                                                                                                    realm.clone(),
-                                                                                                                    actor.clone(),
-                                                                                                                    current_card.clone(),
-                                                                                                                    "tentative",
-                                                                                                                    calendar_rsvp_occurrence(),
-                                                                                                                    state_store,
-                                                                                                                    board_status,
-                                                                                                                );
-                                                                                                            }
-                                                                                                        },
-                                                                                                        "Maybe"
-                                                                                                    }
-                                                                                                    Button {
-                                                                                                        variant: ButtonVariant::Secondary,
-                                                                                                        r#type: "button",
-                                                                                                        "data-testid": "card-detail-rsvp-declined",
-                                                                                                        onclick: {
-                                                                                                            let base = base_url.clone();
-                                                                                                            let realm = selected_realm_id.clone();
-                                                                                                            let actor = principal_id.clone();
-                                                                                                            let current_card = card.clone();
-                                                                                                            move |_| {
-                                                                                                                dispatch_calendar_rsvp(
-                                                                                                                    base.clone(),
-                                                                                                                    token,
-                                                                                                                    realm.clone(),
-                                                                                                                    actor.clone(),
-                                                                                                                    current_card.clone(),
-                                                                                                                    "declined",
-                                                                                                                    calendar_rsvp_occurrence(),
-                                                                                                                    state_store,
-                                                                                                                    board_status,
-                                                                                                                );
-                                                                                                            }
-                                                                                                        },
-                                                                                                        "Decline"
-                                                                                                    }
-                                                                                                }
-                                                                                            }
-                                                                                        }
-                                                                                    }
-                                                                                }
-                                                                            }
-                                                                        }
-                                                                    }
-                                                                }
-                                                                div {
-                                                                    dt { "Discussion scope" }
-                                                                    dd { "{card.external_visibility}" }
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                                    }
-                                                    if active_sidebar_tab == CardDetailSidebarTab::Members {
-                                                        if realm_member_rows.is_empty() && joined_members.as_ref().is_some_and(BTreeSet::is_empty) {
-                                                            div { class: "card-detail-empty", "data-testid": "card-detail-realm-members",
-                                                                div { "No members yet for this Realm." }
-                                                            }
-                                                        }
-                                                            match owned_agent_inventory_snapshot.as_ref() {
-                                                                None => rsx! {
-                                                                    div { class: "card-detail-empty", "data-testid": "card-detail-member-identities-pending",
-                                                                        {crate::i18n::tr("kanban.ui.members_loading")}
-                                                                    }
-                                                                },
-                                                                Some(Err(_)) => rsx! {
-                                                                    div { class: "card-detail-empty", "data-testid": "card-detail-member-identities-error",
-                                                                        {crate::i18n::tr("kanban.ui.members_unavailable")}
-                                                                    }
-                                                                },
-                                                                Some(Ok(owned_agent_slugs)) => rsx! {
-                                                                    {
-                                                                        let mut members = realm_member_rows.iter()
-                                                                            .filter(|row| owned_agent_slug(row, owned_agent_slugs).is_none())
-                                                                            .collect::<Vec<_>>();
-                                                                        members.sort_by_key(|row| !card_member_is_current_account(row, &principal_id));
-                                                                        let agents = crate::operation::authoring_station_id().ok()
-                                                                            .map(|station| card_owned_agent_rows(joined_members.as_ref(), owned_agent_slugs, &station))
-                                                                            .unwrap_or_default();
-                                                                        #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
-                                                                        tracing::warn!(
-                                                                            display_roster_count = realm_member_rows.len(),
-                                                                            joined_current_count = joined_members.as_ref().map(BTreeSet::len),
-                                                                            owned_inventory_count = owned_agent_slugs.len(),
-                                                                            owned_joined_agent_count = agents.len(),
-                                                                            "joint card member current eligibility"
-                                                                        );
-                                                                        rsx! { div {
-                                                                            class: "card-detail-actor-list",
-                                                                            "data-testid": "card-detail-realm-members",
-                                                                            for row in members {
-                                                                                {
-                                                                                    let member_id = row.actor_id.to_string();
-                                                                                    let is_self = card_member_is_current_account(row, &principal_id);
-                                                                                    let label = crate::views::member_display::resolve_member_display(
-                                                                                        &state_store.read(), &realm_context, row,
-                                                                                    ).label;
-                                                                                    rsx! {
-                                                                                        CardMemberMentionRow {
-                                                                                            key: "{member_id}",
-                                                                                            in_strand: participant_set.contains(&member_id),
-                                                                                            member_id,
-                                                                                            label,
-                                                                                            is_self,
-                                                                                            agent_slug: None,
-                                                                                            onmention: on_member_mention,
-                                                                                        }
-                                                                            if is_self && !agents.is_empty() {
-                                                                                for (actor, slug) in agents.iter() {
-                                                                                    CardMemberMentionRow {
-                                                                                        key: "{actor}",
-                                                                                        member_id: actor.clone(),
-                                                                                        label: slug.clone(),
-                                                                                        agent_slug: Some(slug.clone()),
-                                                                                        interaction_mode: serde_json::from_str::<arkret_sdk::ActorId>(actor).ok()
-                                                                                            .and_then(|actor| actor.as_account_id().cloned())
-                                                                                            .and_then(|account| interaction_modes.get(&account).copied()),
-                                                                                        in_strand: participant_set.contains(actor),
-                                                                                        onmention: on_member_mention,
-                                                                                    }
-                                                                                }
-                                                                            }
-                                                                                    }
-                                                                                }
-                                                                            }
-
-                                                                    } }
-                                                                    }
-                                                                },
-                                                            }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        }
-                                    }
-                            }
-                        }
-                    }
-                }
-            }
-    }
-}
-
 #[cfg(test)]
 mod edit_identity_tests {
     use super::*;
@@ -2902,5 +166,3197 @@ mod edit_identity_tests {
             "accepted-strand",
             &aliases
         ));
+    }
+}
+
+#[derive(Clone)]
+struct Detail {
+    app: Rc<InksonContext>,
+    context: CardDetailContext,
+    c: KanbanController,
+    card: Cage<Option<KanbanCard>>,
+    mentions: Cage<Option<crate::views::chat::MentionInsertRequest>>,
+    agents: crate::presentation::widgets::Resource<BTreeMap<String, String>>,
+    modes: glory::Bond<crate::views::chat::agent_modes::Modes>,
+    probe: glory::Bond<crate::views::secure_send::ScopeSendProbe>,
+}
+impl Detail {
+    fn close(&self) {
+        let c = self.c;
+        c.selected_card.revise(|value| *value = None);
+        c.editing_card_detail.revise(|value| *value = false);
+        c.card_detail_actions_open.revise(|value| *value = false);
+        self.app.replace_route(kanban_card_detail_board_route(
+            &self.context.selected_realm_id,
+            c.selected_board.get_untracked().as_ref(),
+        ));
+    }
+    fn tab(&self, tab: CardDetailContentTab) {
+        let c = self.c;
+        if let Some(scope) = content_edit_scope_for_tab(
+            c.editing_card_detail.get_untracked(),
+            c.card_edit_scope.get_untracked(),
+            tab,
+        ) {
+            c.card_edit_scope.revise(|value| *value = scope);
+        }
+        c.card_detail_tab.revise(|value| *value = tab);
+        if tab == CardDetailContentTab::Discussion
+            && let Some(card) = c.selected_card.get_untracked()
+        {
+            c.card_detail_discussion_mounted_for
+                .revise(|value| *value = Some(card.primary_strand_id));
+        }
+        replace_card_detail_tab_query(self.app.clone(), tab);
+    }
+    fn begin(&self, scope: CardEditScope, entry: Option<CardSynthesisTrackEntry>) {
+        let c = self.c;
+        let Some(current) = c.selected_card.get_untracked() else {
+            return;
+        };
+        if !card_detail_edit_ready(&current) {
+            return;
+        }
+        prepare_selected_card_for_edit(c.selected_card);
+        let draft = card_detail_draft_from_card(&current);
+        c.card_edit_title.revise(|v| *v = draft.title);
+        c.card_edit_description.revise(|v| *v = draft.description);
+        c.card_edit_body.revise(|v| *v = draft.description_body);
+        c.card_edit_labels.revise(|v| *v = draft.labels.join(", "));
+        c.card_edit_assignee.revise(|v| *v = draft.assignee);
+        c.card_edit_due.revise(|v| *v = draft.due);
+        c.card_edit_calendar.revise(|v| *v = draft.calendar);
+        if scope == CardEditScope::Synthesis {
+            c.card_edit_synthesis.revise(|v| {
+                *v = entry
+                    .as_ref()
+                    .map(|entry| entry.body.clone())
+                    .unwrap_or_default()
+            });
+            c.card_edit_synthesis_target_id
+                .revise(|v| *v = entry.map(|entry| entry.id));
+        } else {
+            c.card_edit_synthesis.revise(|v| *v = draft.synthesis);
+            c.card_edit_synthesis_target_id.revise(|v| *v = None);
+        }
+        c.card_edit_scope.revise(|v| *v = scope);
+        c.card_detail_edit_status.revise(|v| v.clear());
+        c.editing_card_detail.revise(|v| *v = true);
+        c.card_detail_actions_open.revise(|v| *v = false);
+    }
+    fn cancel(&self) {
+        let c = self.c;
+        let Some(current) = c.selected_card.get_untracked() else {
+            return;
+        };
+        reset_card_detail_edit(
+            &current,
+            c.card_edit_title,
+            c.card_edit_description,
+            c.card_edit_body,
+            c.card_edit_synthesis,
+            c.card_edit_synthesis_target_id,
+            c.card_edit_labels,
+            c.card_edit_assignee,
+            c.card_edit_due,
+            c.editing_card_detail,
+            c.card_detail_actions_open,
+            c.card_synthesis_history_open_id,
+            c.card_synthesis_selected_revision_id,
+            c.card_detail_edit_status,
+        );
+    }
+    fn save(&self) {
+        let c = self.c;
+        let Some(current) = c.selected_card.get_untracked() else {
+            return;
+        };
+        let app = self.app.clone();
+        let context = self.context.clone();
+        let entries = context.synthesis_entries.get_untracked();
+        let secure = context.selected_scope_security_encrypted.get_untracked();
+        let window = app.clone();
+        spawn_write(window, async move {
+            save_card_detail_edit(
+                app.clone(),
+                app.base_url.get_untracked(),
+                app.token,
+                context.selected_realm_id,
+                context.principal_id.to_string(),
+                context.device_id.to_string(),
+                current,
+                entries,
+                secure,
+                None,
+                c.card_edit_scope,
+                c.card_edit_title,
+                c.card_edit_description,
+                c.card_edit_body,
+                c.card_edit_synthesis,
+                c.card_edit_synthesis_target_id,
+                c.card_edit_labels,
+                c.card_edit_assignee,
+                c.card_edit_due,
+                c.editing_card_detail,
+                c.card_detail_actions_open,
+                c.card_detail_edit_status,
+                c.selected_card,
+                app.state_store.clone(),
+                c.board_status,
+            )
+            .await;
+        });
+    }
+    fn due(&self, value: String) {
+        let c = self.c;
+        let Some(current) = c.selected_card.get_untracked() else {
+            return;
+        };
+        let app = self.app.clone();
+        let context = self.context.clone();
+        let window = app.clone();
+        spawn_write(window, async move {
+            let _ = save_card_due_edit(
+                app.clone(),
+                app.base_url.get_untracked(),
+                app.token,
+                context.selected_realm_id,
+                context.principal_id.to_string(),
+                context.device_id.to_string(),
+                current,
+                value,
+                context.selected_scope_security_encrypted.get_untracked(),
+                c.due_picker_open,
+                c.due_edit_status,
+                c.selected_card,
+                app.state_store.clone(),
+                c.board_status,
+            )
+            .await;
+        });
+    }
+    fn calendar(&self) {
+        let c = self.c;
+        let Some(current) = c.selected_card.get_untracked() else {
+            return;
+        };
+        let calendar = c.card_edit_calendar.get_untracked();
+        let app = self.app.clone();
+        let context = self.context.clone();
+        let window = app.clone();
+        spawn_write(window, async move {
+            let _ = save_card_calendar_edit(
+                app.clone(),
+                app.base_url.get_untracked(),
+                app.token,
+                context.selected_realm_id,
+                context.principal_id.to_string(),
+                context.device_id.to_string(),
+                current,
+                calendar,
+                context.selected_scope_security_encrypted.get_untracked(),
+                c.editing_card_detail,
+                c.card_detail_actions_open,
+                c.card_detail_edit_status,
+                c.selected_card,
+                app.state_store.clone(),
+                c.board_status,
+            )
+            .await;
+        });
+    }
+    fn assignees(&self) {
+        let c = self.c;
+        let Some(current) = c.selected_card.get_untracked() else {
+            return;
+        };
+        if dispatch_card_assignees_update(
+            self.app.clone(),
+            self.app.base_url.get_untracked(),
+            self.app.token,
+            self.context.selected_realm_id.clone(),
+            self.context.principal_id.to_string(),
+            current,
+            c.assignee_selected_actor_ids.get_untracked(),
+            c.selected_card,
+            self.app.state_store.clone(),
+            c.board_status,
+            c.assignee_edit_status,
+        ) {
+            c.assignee_picker_open.revise(|v| *v = false);
+            c.assignee_filter.revise(String::clear);
+        }
+    }
+    fn lifecycle(&self, target: StrandLifecycleState) {
+        let Some(card) = self.c.selected_card.get_untracked() else {
+            return;
+        };
+        if !card_detail_edit_ready(&card)
+            || !matches!(
+                (card.lifecycle, target),
+                (StrandLifecycleState::Active, StrandLifecycleState::Archived)
+                    | (StrandLifecycleState::Archived, StrandLifecycleState::Active)
+            )
+        {
+            return;
+        }
+        dispatch_strand_lifecycle(
+            self.app.clone(),
+            self.app.base_url.get_untracked(),
+            self.app.token,
+            self.context.selected_realm_id.clone(),
+            self.context.principal_id.to_string(),
+            card.id,
+            target,
+            self.app.state_store.clone(),
+            self.c.board_status,
+        );
+        self.close();
+    }
+    fn mention(&self, actor: arkret_sdk::AccountId, agent: bool) {
+        self.tab(CardDetailContentTab::Discussion);
+        self.mentions
+            .revise(|v| *v = Some(crate::views::chat::MentionInsertRequest::new(actor, agent)));
+    }
+}
+pub(super) fn card_detail(
+    scope: &Scope,
+    app: Rc<InksonContext>,
+    c: KanbanController,
+    context: CardDetailContext,
+) -> View {
+    let agents = {
+        let app = app.clone();
+        crate::presentation::widgets::resource(scope, move || {
+            let base = app.base_url.get();
+            let credential = app.token.get();
+            let _ = app.owned_agents_rev.get();
+            async move {
+                if credential.trim().is_empty() {
+                    return Err("authenticated Agent inventory is unavailable".into());
+                }
+                with_authed_sdk_client(&base, credential, |http| async move {
+                    let response = http.agent_page().await?;
+                    Ok(crate::views::agents::mentionable_owned_agent_slugs(
+                        response.agents,
+                    ))
+                })
+                .await
+                .map_err(|error| error.display())
+            }
+        })
+    };
+    let key = {
+        let app = app.clone();
+        let context = context.clone();
+        let agents = agents.clone();
+        scope.bond(move || {
+            let inventory = agents
+                .data
+                .get()
+                .and_then(|result| result.ok())
+                .unwrap_or_default();
+            let credential = app.token.get();
+            let _ = app.state_revision.get();
+            let sync_ready = crate::app::account_sync_ready(&app.sync_cursor.get());
+            app.state_store.read(|store| {
+                let joined = store
+                    .complete_joined_member_hint_for_realm(&context.selected_realm_id)
+                    .ok()
+                    .flatten();
+                let accounts = crate::operation::authoring_station_id()
+                    .ok()
+                    .map(|station| {
+                        card_owned_agent_rows(joined.as_ref(), &inventory, &station)
+                            .into_iter()
+                            .filter_map(|(actor, _)| {
+                                serde_json::from_str::<arkret_sdk::ActorId>(&actor).ok()
+                            })
+                            .filter_map(|actor| actor.as_account_id().cloned())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                crate::views::chat::agent_modes::AgentModeReadKey {
+                    base: app.base_url.get_untracked(),
+                    authority: context.authority.clone(),
+                    realm: context.selected_realm_id.clone(),
+                    credential: credential.clone(),
+                    session_epoch: crate::identity::device_directory::session_cache_epoch(),
+                    sync_ready,
+                    ready: store.current_product_view_ready(&context.selected_realm_id),
+                    complete: store.current_product_view().is_some_and(|view| {
+                        view.realm_id == context.selected_realm_id && view.complete_cut
+                    }),
+                    reset: store.current_reset_required(),
+                    head: arkret_sdk::RealmId::new(context.selected_realm_id.clone())
+                        .ok()
+                        .and_then(|realm_id| {
+                            store
+                                .verified_commit_stream_cursor(
+                                    &arkret_sdk::CommitStreamRef::Realm { realm_id },
+                                )
+                                .ok()
+                                .flatten()
+                        }),
+                    accounts,
+                }
+            })
+        })
+    };
+    let modes = crate::views::chat::agent_modes::agent_modes(
+        scope,
+        app.clone(),
+        key.into(),
+        "card_members",
+    );
+    let probe = crate::views::secure_send::scope_send_probe(
+        scope,
+        app.clone(),
+        glory::Lotus::from(
+            arkret_sdk::RealmId::new(context.selected_realm_id.clone())
+                .ok()
+                .map(|realm_id| arkret_sdk::ScopeRef::Realm { realm_id }),
+        ),
+        glory::Lotus::from(context.device_id.clone()),
+    );
+    let retained = retained_card(scope, app.clone(), c.selected_card, &context);
+    let detail = Detail {
+        card: retained,
+        app: app.clone(),
+        context,
+        c,
+        mentions: scope.cage(None),
+        agents,
+        modes,
+        probe,
+    };
+    {
+        let app = app.clone();
+        scope.effect(move || {
+            let next = CardTrackEditContext {
+                source_strand_id: retained
+                    .get()
+                    .map(|card| card.primary_strand_id)
+                    .unwrap_or_default(),
+            };
+            let previous = c.card_edit_context_seen.get_untracked();
+            if previous == next {
+                return;
+            }
+            let aliases = app
+                .state_store
+                .read(|store| event_derived_target_aliases(&store.load().raw_operations));
+            if canonicalized_edit_target(
+                &previous.source_strand_id,
+                &next.source_strand_id,
+                &aliases,
+            ) {
+                c.card_edit_context_seen.revise(|v| *v = next);
+                return;
+            }
+            if c.editing_card_detail.get_untracked() {
+                if let Some(edit) = suspend_track_edit(
+                    c.card_edit_scope.get_untracked(),
+                    c.card_edit_synthesis.get_untracked(),
+                    c.card_edit_synthesis_target_id.get_untracked(),
+                ) && !previous.source_strand_id.is_empty()
+                {
+                    c.suspended_shared_track_edits
+                        .revise(|edits| edits.insert(previous.source_strand_id, edit));
+                }
+                c.editing_card_detail.revise(|v| *v = false);
+                c.card_detail_actions_open.revise(|v| *v = false);
+                c.card_detail_edit_status.revise(|v| v.clear());
+                c.card_edit_synthesis_target_id.revise(|v| *v = None);
+            }
+            let suspended = c
+                .suspended_shared_track_edits
+                .revise(|edits| edits.remove(&next.source_strand_id));
+            c.card_edit_context_seen.revise(|v| *v = next);
+            if let Some(edit) = suspended {
+                c.card_edit_scope.revise(|v| *v = edit.scope);
+                c.card_edit_synthesis.revise(|v| *v = edit.synthesis);
+                c.card_edit_synthesis_target_id
+                    .revise(|v| *v = edit.synthesis_target_id);
+                c.editing_card_detail.revise(|v| *v = true);
+            }
+        });
+    }
+    let target = card_detail_target(scope, retained);
+    let authority = detail.context.authority.clone();
+    let device = detail.context.device_id.clone();
+    let realm = detail.context.selected_realm_id.clone();
+    let target = scope.bond(move || {
+        target
+            .get()
+            .map(|(id, strand)| (authority.clone(), device.clone(), realm.clone(), id, strand))
+    });
+    crate::presentation::widgets::reactive_distinct(target, move |scope, target| {
+        let Some((_, _, _, id, strand)) = target else {
+            return empty();
+        };
+        match retained
+            .get_untracked()
+            .filter(|card| card.id == id && card.primary_strand_id == strand)
+        {
+            Some(card) => detail_surface(scope, detail.clone(), card),
+            None => empty(),
+        }
+    })
+}
+
+fn retained_card(
+    scope: &Scope,
+    app: Rc<InksonContext>,
+    selected: Cage<Option<KanbanCard>>,
+    context: &CardDetailContext,
+) -> Cage<Option<KanbanCard>> {
+    let retained = scope.cage(None::<KanbanCard>);
+    let authority = context.authority.clone();
+    let device = context.device_id.clone();
+    let realm = context.selected_realm_id.clone();
+    scope.effect(move || {
+        let active = app.active_account.get();
+        let route = app.route.get();
+        let _ = app.state_revision.get();
+        let current = selected.get();
+        let route_realm = match &route {
+            Route::KanbanTask { realm_id, .. } | Route::KanbanBoardTask { realm_id, .. } => {
+                Some(realm_id.as_str())
+            }
+            _ => None,
+        };
+        let target = route_card_strand_id(&route);
+        let same_account = active
+            .as_ref()
+            .is_some_and(|active| active.authority == authority && active.device_id == device);
+        let denied = app
+            .state_store
+            .read(|store| store.account_scope_read_denied(&realm));
+        let next = if same_account && route_realm == Some(realm.as_str()) && !denied {
+            target.and_then(|target| {
+                let aliases = app
+                    .state_store
+                    .read(|store| event_derived_target_aliases(&store.load().raw_operations));
+                let target = resolve_event_derived_target_alias(&aliases, &target);
+                let matches = |card: &KanbanCard| {
+                    resolve_event_derived_target_alias(&aliases, &card.id) == target
+                        || resolve_event_derived_target_alias(&aliases, &card.primary_strand_id)
+                            == target
+                };
+                current
+                    .filter(|card| matches(card))
+                    .or_else(|| retained.get_untracked().filter(|card| matches(card)))
+            })
+        } else {
+            None
+        };
+        if retained.get_untracked() != next {
+            retained.revise(|value| *value = next);
+        }
+    });
+    retained
+}
+
+fn card_detail_target(
+    scope: &Scope,
+    selected: Cage<Option<KanbanCard>>,
+) -> glory::Bond<Option<(String, String)>> {
+    scope.bond(move || selected.get().map(|card| (card.id, card.primary_strand_id)))
+}
+fn discussion_suspended(
+    scope: &Scope,
+    selected: Cage<Option<KanbanCard>>,
+    strand: String,
+) -> glory::Bond<bool> {
+    scope.bond(move || {
+        selected.get().is_none_or(|card| {
+            card.primary_strand_id != strand || !card_discussion_target_ready(&card)
+        })
+    })
+}
+
+fn icon(
+    scope: &Scope,
+    detail: &Detail,
+    key: &str,
+    label: &str,
+    name: &str,
+    handler: impl FnMut() + 'static,
+) -> View {
+    Box::new(
+        sapid::button()
+            .unstyled()
+            .class(format!(
+                "card-detail-header-button card-detail-icon-button {key}"
+            ))
+            .name(detail.app.translated(scope, label))
+            .fill(crate::components::ui_icon(name))
+            .on_press(handler),
+    )
+}
+fn detail_surface(scope: &Scope, detail: Detail, card: KanbanCard) -> View {
+    let c = detail.c;
+    let close = detail.clone();
+    let content = detail.clone();
+    let current = card.clone();
+    let style = scope.bond(move || {
+        if c.card_detail_docked.get() {
+            glory::style::Style::new()
+                .width(glory::style::Length::Px(c.card_detail_dock_width.get()))
+        } else {
+            glory::style::Style::new()
+        }
+    });
+    let popup = sapid::dialog("kanban-card-detail-dialog")
+        .unstyled()
+        .class(scope.bond(move || {
+            format!(
+                "card-detail-popup card-detail-modal{}",
+                if c.card_detail_docked.get() {
+                    " is-docked"
+                } else {
+                    ""
+                }
+            )
+        }))
+        .name({
+            let initial = card.title.clone();
+            let displayed = detail.card;
+            scope.bond(move || {
+                displayed
+                    .get()
+                    .map(|card| card.title)
+                    .unwrap_or_else(|| initial.clone())
+            })
+        })
+        .open(true)
+        .show_trigger(false)
+        .show_close(false)
+        .style(style)
+        .on_dismiss(move |_| close.close())
+        .content(move || {
+            let detail = content.clone();
+            let card = current.clone();
+            glory::prelude::widget(move |scope| {
+                detail_contents(scope, detail.clone(), card.clone()).build(scope)
+            })
+        });
+    Box::new(
+        glory::prelude::view()
+            .class(scope.bond(move || {
+                format!(
+                    "card-detail-overlay{}",
+                    if c.card_detail_docked.get() {
+                        " is-docked"
+                    } else {
+                        ""
+                    }
+                )
+            }))
+            .fill(popup),
+    )
+}
+fn detail_contents(scope: &Scope, detail: Detail, card: KanbanCard) -> View {
+    let c = detail.c;
+    let displayed = detail.card;
+    let app = detail.app.clone();
+    let close = detail.clone();
+    let share = detail.clone();
+    let card_id = card.id.clone();
+    let share_button = icon(
+        scope,
+        &detail,
+        "card-detail-share-link-button",
+        "kanban.ui.copy_strand_link",
+        "share",
+        move || {
+            share_kanban_strand_link(
+                share.app.clone(),
+                &strand_detail_deep_link_path_with_tab(
+                    &share.context.selected_realm_id,
+                    &card_id,
+                    c.card_detail_tab.get_untracked(),
+                ),
+            )
+        },
+    );
+    let sidebar = icon(
+        scope,
+        &detail,
+        "card-detail-sidebar-toggle",
+        "kanban.ui.show_details",
+        "panel-right-open",
+        move || {
+            c.card_detail_sidebar_visible
+                .revise(|value| *value = !*value)
+        },
+    );
+    let dock = icon(
+        scope,
+        &detail,
+        "card-detail-dock-toggle",
+        "kanban.ui.dock_to_side",
+        "minimize",
+        move || {
+            let next = c.card_detail_docked.revise(|value| {
+                *value = !*value;
+                *value
+            });
+            persist_card_detail_docked(next);
+        },
+    );
+    let more = icon(
+        scope,
+        &detail,
+        "card-detail-actions-button",
+        "kanban.ui.actions",
+        "more-horizontal",
+        move || c.card_detail_actions_open.revise(|value| *value = !*value),
+    );
+    let close_button = icon(
+        scope,
+        &detail,
+        "card-detail-close-button",
+        "kanban.ui.close_card_detail",
+        "x",
+        move || close.close(),
+    );
+    let resize = Box::new(
+        glory::prelude::view()
+            .class("card-detail-resize-handle")
+            .style(scope.bond(move || {
+                glory::style::Style::new().display(if c.card_detail_docked.get() {
+                    glory::style::Display::Block
+                } else {
+                    glory::style::Display::None
+                })
+            }))
+            .name("Resize task details")
+            .semantics(Some(Box::new(glory::render::Semantics {
+                drag_capture: Some(glory::render::DragCapture::Press),
+                ..Default::default()
+            })))
+            .on(glory::render::EventKind::Drag, move |event| {
+                let glory::render::Event::Drag { phase, x, .. } = event else {
+                    return;
+                };
+                use glory::render::DragPhase;
+                match phase {
+                    DragPhase::Start => {
+                        c.card_detail_resizing.revise(|v| *v = true);
+                        c.card_detail_resize_start_x.revise(|v| *v = x);
+                        c.card_detail_resize_start_width
+                            .revise(|v| *v = c.card_detail_dock_width.get_untracked());
+                    }
+                    DragPhase::Move => {
+                        if c.card_detail_resizing.get_untracked() {
+                            let next = (c.card_detail_resize_start_width.get_untracked()
+                                + c.card_detail_resize_start_x.get_untracked()
+                                - x)
+                                .clamp(CARD_DETAIL_DOCK_WIDTH_MIN, CARD_DETAIL_DOCK_WIDTH_MAX);
+                            c.card_detail_dock_width.revise(|v| *v = next);
+                        }
+                    }
+                    DragPhase::Drop => {
+                        c.card_detail_resizing.revise(|v| *v = false);
+                        persist_card_detail_dock_width(c.card_detail_dock_width.get_untracked());
+                    }
+                    DragPhase::Cancel => {
+                        c.card_detail_resizing.revise(|v| *v = false);
+                    }
+                }
+            })
+            .style(scope.bond(move || {
+                glory::style::Style::new().display(if c.card_detail_docked.get() {
+                    glory::style::Display::Block
+                } else {
+                    glory::style::Display::None
+                })
+            })),
+    ) as View;
+    let menu = {
+        let detail = detail.clone();
+        reactive(
+            scope.bond(move || {
+                (
+                    c.card_detail_actions_open.get(),
+                    c.editing_card_detail.get()
+                        && c.card_edit_scope.get() == CardEditScope::Summary,
+                )
+            }),
+            move |scope, (open, editing)| {
+                if !open {
+                    return empty();
+                }
+                if editing {
+                    return stack(
+                        "card-detail-actions-menu card-detail-action-menu is-editing",
+                        vec![
+                            stack(
+                                "card-detail-action-menu-field",
+                                vec![input(
+                                    scope,
+                                    detail.app.clone(),
+                                    "card-detail-labels-input",
+                                    "kanban.ui.labels",
+                                    c.card_edit_labels,
+                                    true,
+                                )],
+                            ),
+                            stack(
+                                "card-detail-action-menu-field",
+                                vec![input(
+                                    scope,
+                                    detail.app.clone(),
+                                    "card-detail-due-input",
+                                    "kanban.ui.due",
+                                    c.card_edit_due,
+                                    true,
+                                )],
+                            ),
+                        ],
+                    );
+                }
+                let edit = detail.clone();
+                let ready = scope.bond(move || {
+                    c.selected_card
+                        .get()
+                        .is_some_and(|card| card_detail_edit_ready(&card))
+                });
+                let mut actions = vec![action(
+                    scope,
+                    detail.app.clone(),
+                    "card-detail-menu-edit-button",
+                    "common.edit",
+                    "secondary card-detail-action-menu-item",
+                    ready,
+                    move || edit.begin(CardEditScope::Summary, None),
+                )];
+                if let Some(card) = c.selected_card.get_untracked()
+                    && matches!(
+                        card.lifecycle,
+                        StrandLifecycleState::Active | StrandLifecycleState::Archived
+                    )
+                {
+                    let restore = card.lifecycle == StrandLifecycleState::Archived;
+                    let target = if restore {
+                        StrandLifecycleState::Active
+                    } else {
+                        StrandLifecycleState::Archived
+                    };
+                    let lifecycle = detail.clone();
+                    actions.push(action(
+                        scope,
+                        detail.app.clone(),
+                        if restore {
+                            "card-detail-restore-button"
+                        } else {
+                            "card-detail-archive-button"
+                        },
+                        if restore {
+                            "kanban.restore_action"
+                        } else {
+                            "kanban.archive_action"
+                        },
+                        "secondary card-detail-action-menu-item",
+                        ready,
+                        move || lifecycle.lifecycle(target),
+                    ));
+                }
+                stack("card-detail-actions-menu card-detail-action-menu", actions)
+            },
+        )
+    };
+    let summary = {
+        let detail = detail.clone();
+        let card = card.clone();
+        reactive(
+            scope.bond(move || {
+                let editing = c.editing_card_detail.get();
+                let kind = c.card_edit_scope.get();
+                let card = if editing && kind == CardEditScope::Summary {
+                    None
+                } else {
+                    displayed.get()
+                };
+                (editing, kind, card)
+            }),
+            move |scope, (editing, kind, current)| {
+                let card = current.unwrap_or_else(|| card.clone());
+                if editing && kind == CardEditScope::Summary {
+                    let save = detail.clone();
+                    let cancel = detail.clone();
+                    stack(
+                        "workflow-form card-detail-section card-detail-edit-form",
+                        vec![
+                            line(
+                                "card-detail-section-head",
+                                vec![line(
+                                    "card-detail-section-title",
+                                    vec![crate::components::ui_icon("file"), plain("Summary")],
+                                )],
+                            ),
+                            input(
+                                scope,
+                                detail.app.clone(),
+                                "card-detail-title-input",
+                                "kanban.ui.card_title",
+                                c.card_edit_title,
+                                true,
+                            ),
+                            field(
+                                scope,
+                                detail.app.clone(),
+                                "card-detail-summary-input",
+                                "Summary",
+                                c.card_edit_description,
+                                true,
+                                true,
+                                move |next| c.card_edit_description.revise(|v| *v = next),
+                            ),
+                            input(
+                                scope,
+                                detail.app.clone(),
+                                "card-detail-edit-labels",
+                                "kanban.ui.labels",
+                                c.card_edit_labels,
+                                true,
+                            ),
+                            edit_actions(
+                                scope,
+                                detail.app.clone(),
+                                c.card_detail_edit_status,
+                                {
+                                    let probe = detail.probe;
+                                    scope.bond(move || probe.get().gate.is_some())
+                                },
+                                move || save.save(),
+                                move || cancel.cancel(),
+                            ),
+                        ],
+                    )
+                } else {
+                    let edit = detail.clone();
+                    stack(
+                        "card-detail-section card-detail-summary-section",
+                        vec![
+                            line(
+                                "card-detail-section-head",
+                                vec![
+                                    line(
+                                        "card-detail-section-title",
+                                        vec![crate::components::ui_icon("file"), plain("Summary")],
+                                    ),
+                                    action(
+                                        scope,
+                                        detail.app.clone(),
+                                        "card-detail-edit-button",
+                                        "common.edit",
+                                        "secondary card-detail-mini-action card-detail-edit-action",
+                                        card_detail_edit_ready(&card),
+                                        move || edit.begin(CardEditScope::Summary, None),
+                                    ),
+                                ],
+                            ),
+                            if card_summary_text(&card.description).is_empty() {
+                                paragraph(
+                                    "card-detail-empty",
+                                    detail.app.translated(scope, "kanban.ui.no_summary"),
+                                )
+                            } else {
+                                paragraph(
+                                    "card-detail-summary card-summary",
+                                    card_summary_text(&card.description),
+                                )
+                            },
+                        ],
+                    )
+                }
+            },
+        )
+    };
+    let mut tabs = vec![];
+    for (tab, key, label) in [
+        (
+            CardDetailContentTab::Description,
+            "card-detail-tab-description",
+            "kanban.ui.description",
+        ),
+        (
+            CardDetailContentTab::Synthesis,
+            "card-detail-tab-synthesis",
+            "kanban.ui.synthesis",
+        ),
+        (
+            CardDetailContentTab::Discussion,
+            "card-detail-tab-discussion",
+            "kanban.ui.discussion",
+        ),
+    ] {
+        let detail = detail.clone();
+        tabs.push(Box::new(
+            glory::ui::button()
+                .class(scope.bond(move || {
+                    format!(
+                        "card-detail-tab {key}{}",
+                        if c.card_detail_tab.get() == tab {
+                            " active"
+                        } else {
+                            ""
+                        }
+                    )
+                }))
+                .label(app.translated(scope, label))
+                .semantics(scope.bond(move || {
+                    Some(Box::new(glory::render::Semantics {
+                        tab: true,
+                        selected: Some(c.card_detail_tab.get() == tab),
+                        ..Default::default()
+                    }))
+                }))
+                .on(glory::render::EventKind::Activate, move |_| detail.tab(tab)),
+        ) as View);
+    }
+    let narrative = narrative(scope, detail.clone(), card.clone());
+    let discussion = {
+        let detail = detail.clone();
+        let initial_strand_id = card.primary_strand_id.clone();
+        let suspended = discussion_suspended(scope, c.selected_card, initial_strand_id.clone());
+        let started = scope.cage(false);
+        let target = initial_strand_id.clone();
+        scope.effect(move || {
+            if c.card_detail_discussion_mounted_for.get().as_deref() == Some(target.as_str())
+                && !suspended.get()
+                && !started.get_untracked()
+            {
+                started.revise(|value| *value = true);
+            }
+        });
+        let target = initial_strand_id.clone();
+        let visible = scope.bond(move || {
+            if started.get() {
+                (true, false)
+            } else {
+                (
+                    false,
+                    c.card_detail_discussion_mounted_for.get().as_deref() == Some(target.as_str()),
+                )
+            }
+        });
+        crate::presentation::widgets::reactive_distinct(
+            visible,
+            move |scope, (started, requested)| {
+                if !started {
+                    return if requested {
+                        paragraph("card-detail-empty card-discussion-pending-target",detail.app.translated(scope,"kanban.ui.discussion_will_be_available_when_this_card_finishes_syncing"))
+                    } else {
+                        empty()
+                    };
+                }
+                let initial_strand_id = initial_strand_id.clone();
+                let chat = crate::views::chat::chat_panel(
+                    scope,
+                    detail.app.clone(),
+                    crate::views::chat::ChatPanelProps {
+                        selected_realm_id: detail.context.selected_realm_id.clone(),
+                        initial_strand_id,
+                        embedded: true,
+                        source_suspended: suspended.into(),
+                        direct_mode: false,
+                        direct_peer_id: String::new(),
+                        sidecar_session: None,
+                        focus_message_id: String::new(),
+                        mention_insert_request: Some(detail.mentions),
+                    },
+                );
+                Box::new(
+                    glory::prelude::view()
+                        .class(scope.bond(move || {
+                            format!(
+                                "card-detail-discussion-panel card-discussion-panel{}",
+                                if c.card_detail_tab.get() == CardDetailContentTab::Discussion {
+                                    ""
+                                } else {
+                                    " is-hidden"
+                                }
+                            )
+                        }))
+                        .style(scope.bond(move || {
+                            glory::style::Style::new().display(
+                                if c.card_detail_tab.get() == CardDetailContentTab::Discussion {
+                                    glory::style::Display::Block
+                                } else {
+                                    glory::style::Display::None
+                                },
+                            )
+                        }))
+                        .fill(chat),
+                )
+            },
+        )
+    };
+    let right = sidebar_view(scope, detail.clone(), card.clone());
+    let title = {
+        let detail = detail.clone();
+        let initial = card.clone();
+        let security = detail.context.selected_scope_security_encrypted;
+        reactive(
+            scope.bond(move || (displayed.get(), security.get())),
+            move |scope, (current, inherited)| {
+                let card = current.unwrap_or_else(|| initial.clone());
+                let encrypted = card.security_encrypted.or(inherited);
+                let mut badges = vec![crate::components::write_state_badge(
+                    scope,
+                    detail.app.clone(),
+                    crate::components::WriteStateBadgeProps {
+                        state: card.state.write_state(),
+                        icon_only: None,
+                    },
+                )];
+                badges.extend(
+                    card.labels
+                        .iter()
+                        .map(|label| paragraph("badge", label.clone())),
+                );
+                stack(
+                    "card-detail-title-block",
+                    vec![line(
+                        "card-detail-title-row",
+                        vec![
+                            crate::components::security_state_badge(
+                                scope,
+                                detail.app.clone(),
+                                crate::components::SecurityStateBadgeProps {
+                                    encrypted: encrypted.unwrap_or(true),
+                                    compact: true,
+                                    test_id: Some("strand-detail-security-state".into()),
+                                    unknown: encrypted.is_none(),
+                                },
+                            ),
+                            heading(
+                                2,
+                                "",
+                                kanban_title_label(
+                                    &card.title,
+                                    &card.id,
+                                    &crate::i18n::tr("kanban.title_pending"),
+                                ),
+                            ),
+                            line("card-detail-title-meta", badges),
+                        ],
+                    )],
+                )
+            },
+        )
+    };
+    Box::new(glory::prelude::group().fill(vec![
+            resize,
+            line(
+                "card-detail-header",
+                vec![
+                    title,
+                    line(
+                        "card-detail-header-actions",
+                        vec![
+                            share_button,
+                            sidebar,
+                            dock,
+                            stack("card-detail-action-menu-wrap", vec![more, menu]),
+                            close_button,
+                        ],
+                    ),
+                ],
+            ),
+            Box::new(
+                glory::prelude::view()
+                    .class(scope.bond(move || {
+                        if c.card_detail_sidebar_visible.get() {
+                            "card-detail-layout"
+                        } else {
+                            "card-detail-layout no-sidebar"
+                        }
+                        .to_owned()
+                    }))
+                    .fill(vec![
+                        stack(
+                            "card-detail-main",
+                            vec![
+                                summary,
+                                stack(
+                                    "card-detail-section card-detail-tabs-section",
+                                    vec![
+                                        Box::new(
+                                            glory::ui::view()
+                                                .role(glory::render::Role::TabList)
+                                                .class("card-detail-tabs")
+                                                .fill(tabs),
+                                        ),
+                                        narrative,
+                                        discussion,
+                                    ],
+                                ),
+                            ],
+                        ),
+                        right,
+                    ]),
+            ),
+        ]))
+}
+
+fn render_body(scope: &Scope, app: Rc<InksonContext>, body: &str) -> View {
+    let blocks = crate::content::renderer::parse_message_body(body);
+    crate::content::render_blocks(scope, app, &blocks)
+}
+fn track_editor(scope: &Scope, detail: Detail, synthesis: bool) -> View {
+    let c = detail.c;
+    let save = detail.clone();
+    let cancel = detail.clone();
+    let value = if synthesis {
+        c.card_edit_synthesis
+    } else {
+        c.card_edit_body
+    };
+    let allow_image = detail
+        .context
+        .selected_scope_security_encrypted
+        .get_untracked()
+        == Some(false);
+    let ready = {
+        let probe = detail.probe;
+        scope.bond(move || probe.get().gate.is_some())
+    };
+    stack(
+        "workflow-form card-detail-edit-form",
+        vec![
+            card_markdown_editor(
+                scope,
+                detail.app.clone(),
+                if synthesis {
+                    "card-detail-synthesis-input"
+                } else {
+                    "card-detail-description-input"
+                },
+                &crate::i18n::tr(if synthesis {
+                    "kanban.ui.synthesis"
+                } else {
+                    "kanban.ui.description"
+                }),
+                value,
+                detail.context.selected_realm_id.clone(),
+                allow_image,
+            ),
+            paragraph("muted", {
+                let probe = detail.probe;
+                scope.bond(move || {
+                    let probe = probe.get();
+                    probe.blocked_reason.unwrap_or_else(|| {
+                        if probe.checking {
+                            "Checking sync and encryption readiness...".into()
+                        } else {
+                            String::new()
+                        }
+                    })
+                })
+            }),
+            edit_actions(
+                scope,
+                detail.app.clone(),
+                c.card_detail_edit_status,
+                ready,
+                move || save.save(),
+                move || cancel.cancel(),
+            ),
+        ],
+    )
+}
+fn synthesis_revision(
+    entry: &CardSynthesisTrackEntry,
+    selected: Option<&str>,
+) -> (CardSynthesisRevision, bool, usize) {
+    let latest = entry
+        .revisions
+        .last()
+        .cloned()
+        .unwrap_or_else(|| CardSynthesisRevision {
+            id: entry.id.clone(),
+            body: entry.body.clone(),
+            actor_id: entry.actor_id.clone(),
+            author_label: entry.author_label.clone(),
+            timestamp_label: entry.timestamp_label.clone(),
+            sort_key: entry.sort_key.clone(),
+        });
+    let revision = selected
+        .and_then(|id| entry.revisions.iter().find(|revision| revision.id == id))
+        .cloned()
+        .unwrap_or_else(|| latest.clone());
+    let version = entry
+        .revisions
+        .iter()
+        .position(|candidate| candidate.id == revision.id)
+        .unwrap_or(entry.revisions.len().saturating_sub(1))
+        + 1;
+    let is_latest = revision.id == latest.id;
+    (revision, is_latest, version)
+}
+
+fn synthesis_entry(
+    scope: &Scope,
+    detail: Detail,
+    entry: CardSynthesisTrackEntry,
+    editing: bool,
+    can_edit: bool,
+) -> View {
+    let c = detail.c;
+    let show_history = c.card_synthesis_history_open_id;
+    let show_edit = !c.editing_card_detail.get_untracked();
+    let selected_history = c.card_synthesis_selected_revision_id;
+    let selected_entry = entry.clone();
+    let displayed =
+        scope.bond(move || synthesis_revision(&selected_entry, selected_history.get().as_deref()));
+    let principal = detail.context.principal_id.to_string();
+    let class = scope.bond(move || {
+        let (revision, latest, _) = displayed.get();
+        format!(
+            "card-synthesis-entry {}{}",
+            if latest { "is-latest" } else { "is-history" },
+            if actor_is_current_account(&revision.actor_id, &principal) {
+                " is-own"
+            } else {
+                ""
+            }
+        )
+    });
+    let header_detail = detail.clone();
+    let header_entry = entry.clone();
+    let header = crate::presentation::widgets::reactive_distinct(
+        displayed,
+        move |scope, (revision, latest, version)| {
+            let own = actor_is_current_account(
+                &revision.actor_id,
+                header_detail.context.principal_id.as_str(),
+            );
+            let author = crate::components::actor_identity_label(
+                scope,
+                header_detail.app.clone(),
+                crate::components::ActorIdentityLabelProps {
+                    label: revision.author_label,
+                    title: Some(if revision.actor_id.trim().is_empty() {
+                        crate::i18n::tr("kanban.ui.unknown_author")
+                    } else {
+                        revision.actor_id
+                    }),
+                    class: Some("card-synthesis-author".into()),
+                    test_id: Some("card-synthesis-author".into()),
+                    self_badge_test_id: Some("card-synthesis-self-badge".into()),
+                    is_self: own,
+                    ..Default::default()
+                },
+            );
+            let mut head = vec![
+                author,
+                Box::new(
+                    glory::ui::text()
+                        .content(revision.timestamp_label)
+                        .class("card-synthesis-time"),
+                ) as View,
+                Box::new(
+                    glory::ui::text()
+                        .content(format!("v{version}"))
+                        .class("badge"),
+                ),
+            ];
+            head.push(Box::new(
+                glory::ui::text()
+                    .content(if latest {
+                        "latest".into()
+                    } else {
+                        crate::i18n::tr("kanban.ui.historical_version")
+                    })
+                    .class(if latest {
+                        "badge badge-success"
+                    } else {
+                        "badge badge-warning"
+                    }),
+            ));
+            if !latest {
+                head.push(action(
+                    scope,
+                    header_detail.app.clone(),
+                    "card-synthesis-latest-button",
+                    "kanban.ui.latest",
+                    "secondary badge card-synthesis-latest-button",
+                    true,
+                    move || {
+                        selected_history.revise(|value| *value = None);
+                        show_history.revise(|value| *value = None);
+                    },
+                ));
+            }
+            if header_entry.revisions.len() > 1 {
+                let entry_id = header_entry.id.clone();
+                let trigger = Box::new(
+                    sapid::button()
+                        .unstyled()
+                        .class("secondary badge card-synthesis-history-trigger")
+                        .label("edited")
+                        .on_press(move || {
+                            show_history.revise(|open| {
+                                *open = if open.as_deref() == Some(entry_id.as_str()) {
+                                    None
+                                } else {
+                                    Some(entry_id.clone())
+                                }
+                            })
+                        }),
+                ) as View;
+                let revisions = header_entry.clone();
+                let history_app = header_detail.app.clone();
+                let principal = header_detail.context.principal_id.to_string();
+                let menu = reactive(show_history, move |scope, open| {
+                    if open.as_deref() != Some(revisions.id.as_str()) {
+                        return empty();
+                    }
+                    let selected =
+                        synthesis_revision(&revisions, selected_history.get_untracked().as_deref())
+                            .0
+                            .id;
+                    let latest = revisions
+                        .revisions
+                        .last()
+                        .map(|revision| revision.id.as_str());
+                    let mut items = vec![paragraph(
+                        "card-synthesis-history-title",
+                        crate::i18n::tr("kanban.ui.history"),
+                    )];
+                    for (index, revision) in revisions.revisions.iter().enumerate().rev() {
+                        let id = revision.id.clone();
+                        let is_latest = Some(id.as_str()) == latest;
+                        let summary = card_summary_text(&revision.body);
+                        let preview = if summary.chars().count() > 72 {
+                            format!("{}...", summary.chars().take(72).collect::<String>())
+                        } else {
+                            summary
+                        };
+                        let mut content = vec![inline_label("badge", format!("v{}", index + 1))];
+                        if is_latest {
+                            content.push(inline_label(
+                                "badge badge-success card-synthesis-history-latest",
+                                "latest",
+                            ));
+                        }
+                        content.push(inline_label(
+                            "card-synthesis-history-author",
+                            revision.author_label.clone(),
+                        ));
+                        if actor_is_current_account(&revision.actor_id, &principal) {
+                            content.push(crate::components::self_attribution_badge_inline(
+                                scope,
+                                history_app.clone(),
+                                crate::components::SelfAttributionBadgeProps {
+                                    class: Some("card-synthesis-history-self-badge".into()),
+                                    test_id: Some("card-synthesis-history-self-badge".into()),
+                                },
+                            ));
+                        }
+                        content.push(inline_label(
+                            "card-synthesis-history-time",
+                            revision.timestamp_label.clone(),
+                        ));
+                        content.push(inline_label("card-synthesis-history-preview", preview));
+                        items.push(Box::new(
+                            sapid::button()
+                                .unstyled()
+                                .class(if id == selected {
+                                    "secondary card-synthesis-history-item active"
+                                } else {
+                                    "secondary card-synthesis-history-item"
+                                })
+                                .name(format!(
+                                    "v{} {} {}",
+                                    index + 1,
+                                    revision.author_label,
+                                    revision.timestamp_label
+                                ))
+                                .fill(content)
+                                .on_press(move || {
+                                    selected_history
+                                        .revise(|value| *value = (!is_latest).then(|| id.clone()));
+                                    show_history.revise(|value| *value = None);
+                                }),
+                        ));
+                    }
+                    stack("card-synthesis-history-menu", items)
+                });
+                head.push(stack("card-synthesis-history-wrap", vec![trigger, menu]));
+            }
+            if show_edit {
+                let edit = header_detail.clone();
+                let target = header_entry.clone();
+                head.push(action(
+                    scope,
+                    header_detail.app.clone(),
+                    "card-detail-edit-synthesis-button",
+                    "common.edit",
+                    "secondary card-detail-mini-action card-synthesis-entry-edit",
+                    can_edit,
+                    move || edit.begin(CardEditScope::Synthesis, Some(target.clone())),
+                ));
+            }
+            line("card-synthesis-entry-head", head)
+        },
+    );
+    let body = if editing {
+        track_editor(scope, detail, true)
+    } else {
+        let app = detail.app;
+        crate::presentation::widgets::reactive_distinct(displayed, move |scope, (revision, ..)| {
+            render_body(scope, app.clone(), &revision.body)
+        })
+    };
+    Box::new(glory::ui::view().class(class).fill(vec![header, body]))
+}
+
+fn narrative(scope: &Scope, detail: Detail, card: KanbanCard) -> View {
+    let c = detail.c;
+    let displayed = detail.card;
+    let source = scope.bond(move || {
+        (
+            c.card_detail_tab.get(),
+            c.editing_card_detail.get(),
+            c.card_edit_scope.get(),
+            if c.editing_card_detail.get()
+                && matches!(
+                    c.card_edit_scope.get(),
+                    CardEditScope::Description | CardEditScope::Synthesis
+                )
+            {
+                None
+            } else {
+                displayed.get()
+            },
+        )
+    });
+    crate::presentation::widgets::reactive_distinct(
+        source,
+        move |scope, (tab, editing, kind, current)| {
+            let card = current.unwrap_or_else(|| card.clone());
+            match tab {
+                CardDetailContentTab::Discussion => empty(),
+                CardDetailContentTab::Description => {
+                    if editing && kind == CardEditScope::Description {
+                        return track_editor(scope, detail.clone(), false);
+                    }
+                    let mut children = vec![];
+                    if card.description_locked {
+                        children.push(paragraph(
+                            "card-detail-empty card-detail-description-locked",
+                            MLS_LOCKED_FIELD_PLACEHOLDER,
+                        ));
+                    } else {
+                        children.push(if card.description_body.trim().is_empty() {
+                            paragraph(
+                                "card-detail-empty",
+                                detail.app.translated(scope, "kanban.ui.no_description"),
+                            )
+                        } else {
+                            stack(
+                                "card-detail-description card-description-body",
+                                vec![render_body(
+                                    scope,
+                                    detail.app.clone(),
+                                    &card.description_body,
+                                )],
+                            )
+                        });
+                        let edit = detail.clone();
+                        children.push(line(
+                            "card-synthesis-footer-action",
+                            vec![action(
+                                scope,
+                                detail.app.clone(),
+                                "card-detail-edit-description-button",
+                                "common.edit",
+                                "secondary card-detail-mini-action",
+                                card_detail_edit_ready(&card),
+                                move || edit.begin(CardEditScope::Description, None),
+                            )],
+                        ));
+                    }
+                    stack(
+                        "card-detail-tab-panel card-detail-synthesis-panel card-description-panel",
+                        children,
+                    )
+                }
+                CardDetailContentTab::Synthesis => {
+                    if card.synthesis_locked {
+                        return paragraph(
+                            "card-detail-empty card-detail-synthesis-locked",
+                            MLS_LOCKED_FIELD_PLACEHOLDER,
+                        );
+                    }
+                    let detail = detail.clone();
+                    let can_edit = card_detail_edit_ready(&card);
+                    crate::presentation::widgets::reactive_distinct(
+                        detail.context.synthesis_entries,
+                        move |scope, entries| {
+                            let mut children = vec![];
+                            if entries.is_empty() {
+                                children.push(paragraph(
+                                    "card-detail-empty",
+                                    detail.app.translated(scope, "kanban.ui.no_synthesis_yet"),
+                                ));
+                            }
+                            for entry in entries {
+                                let editing_this = editing
+                                    && kind == CardEditScope::Synthesis
+                                    && c.card_edit_synthesis_target_id.get_untracked().as_deref()
+                                        == Some(entry.id.as_str());
+                                children.push(synthesis_entry(
+                                    scope,
+                                    detail.clone(),
+                                    entry,
+                                    editing_this,
+                                    can_edit,
+                                ));
+                            }
+                            if editing
+                                && kind == CardEditScope::Synthesis
+                                && c.card_edit_synthesis_target_id.get_untracked().is_none()
+                            {
+                                children.push(track_editor(scope, detail.clone(), true));
+                            } else {
+                                let new = detail.clone();
+                                children.push(line(
+                                    "card-synthesis-footer-action",
+                                    vec![action(
+                                        scope,
+                                        detail.app.clone(),
+                                        "card-detail-new-synthesis-button",
+                                        "kanban.ui.new",
+                                        "secondary card-detail-mini-action",
+                                        can_edit,
+                                        move || new.begin(CardEditScope::Synthesis, None),
+                                    )],
+                                ));
+                            }
+                            stack(
+                                "card-detail-tab-panel card-synthesis-panel",
+                                vec![stack("card-synthesis-track", children)],
+                            )
+                        },
+                    )
+                }
+            }
+        },
+    )
+}
+
+fn sidebar_view(scope: &Scope, detail: Detail, card: KanbanCard) -> View {
+    let c = detail.c;
+    let displayed = detail.card;
+    let app = detail.app.clone();
+    let panel_detail = detail.clone();
+    let content = reactive(
+        scope.bond(move || {
+            (
+                c.card_detail_sidebar_tab.get(),
+                app.state_revision.get(),
+                app.realm_live_epoch.get(),
+                displayed.get(),
+            )
+        }),
+        move |scope, (tab, _, _, current)| {
+            let card = current.unwrap_or_else(|| card.clone());
+            let (realm, rows) = panel_detail.app.state_store.read(|store| {
+                let loaded = store.load();
+                let projection = loaded
+                    .realm_tree_projections
+                    .get(&panel_detail.context.selected_realm_id);
+                (
+                    member_roster_realm_context(
+                        &panel_detail.context.selected_realm_id,
+                        &panel_detail.context.projection_realm_id,
+                        projection,
+                    ),
+                    realm_member_roster(projection),
+                )
+            });
+            let mut tabs = vec![];
+            for (kind, key, label) in [
+                (
+                    CardDetailSidebarTab::Details,
+                    "card-detail-sidebar-tab-details",
+                    crate::i18n::tr("kanban.ui.details"),
+                ),
+                (
+                    CardDetailSidebarTab::Members,
+                    "card-detail-sidebar-tab-members",
+                    crate::i18n::tr_args(
+                        "kanban.ui.member_count",
+                        &[("count", rows.len().to_string())],
+                    ),
+                ),
+            ] {
+                tabs.push(Box::new(
+                    glory::ui::button()
+                        .class(format!(
+                            "card-detail-tab {key}{}",
+                            if kind == tab { " active" } else { "" }
+                        ))
+                        .label(label)
+                        .semantics(Some(Box::new(glory::render::Semantics {
+                            tab: true,
+                            selected: Some(kind == tab),
+                            ..Default::default()
+                        })))
+                        .on(glory::render::EventKind::Activate, move |_| {
+                            c.card_detail_sidebar_tab.revise(|value| *value = kind)
+                        }),
+                ) as View);
+            }
+            let body = match tab {
+                CardDetailSidebarTab::Details => {
+                    details_fields(scope, panel_detail.clone(), card.clone(), realm, rows)
+                }
+                CardDetailSidebarTab::Members => {
+                    member_list(scope, panel_detail.clone(), card.clone(), realm, rows)
+                }
+            };
+            stack(
+                "card-detail-sidebar-content",
+                vec![
+                    Box::new(
+                        glory::ui::view()
+                            .role(glory::render::Role::TabList)
+                            .class("card-detail-tabs card-detail-sidebar-tabs")
+                            .fill(tabs),
+                    ),
+                    body,
+                ],
+            )
+        },
+    );
+    Box::new(
+        glory::prelude::view()
+            .class("card-detail-sidebar")
+            .style(scope.bond(move || {
+                if c.card_detail_sidebar_visible.get() {
+                    glory::style::Style::new()
+                } else {
+                    glory::style::Style::new().display(glory::style::Display::None)
+                }
+            }))
+            .fill(content),
+    )
+}
+fn side_field(label: &str, body: View) -> View {
+    Box::new(glory::ui::group().fill(vec![
+        Box::new(glory::ui::view().document_part(glory::render::DocumentPart::Term)
+            .class("card-detail-field-label").fill(plain(crate::i18n::tr(label)))) as View,
+        Box::new(glory::ui::view().document_part(glory::render::DocumentPart::Definition)
+            .class("card-detail-field-value").fill(body)) as View,
+    ]))
+}
+
+fn assignee_avatar(
+    scope: &Scope,
+    app: Rc<InksonContext>,
+    actor: &arkret_sdk::ActorId,
+    label: &str,
+) -> View {
+    crate::components::generated_avatar::identity_avatar_inline(
+        scope,
+        app,
+        crate::components::IdentityAvatarProps {
+            seed: actor.to_string(),
+            alt_text: label.to_owned(),
+            blob_ref: None,
+            class: "avatar-img assignee-avatar".into(),
+            test_id: None,
+        },
+    )
+}
+
+pub(super) fn inline_label(class: &str, value: impl Into<glory::Lotus<String>>) -> View {
+    Box::new(glory::ui::text().class(class.to_owned()).content(value))
+}
+
+fn strand_identity(scope: &Scope, strand: &str) -> View {
+    let identity =
+        match glory::render::SemanticId::new(format!("card-strand-{}", scope.id().slot())) {
+            Ok(id) => id,
+            Err(error) => {
+                scope.report_error(error);
+                return empty();
+            }
+        };
+    Box::new(
+        glory::ui::view()
+            .role(glory::render::Role::Group)
+            .class("card-detail-strand-identity")
+            .semantics(Some(Box::new(glory::render::Semantics {
+                described_by: Some(identity.clone()),
+                ..Default::default()
+            })))
+            .fill((
+                glory::ui::text()
+                    .kind(glory::render::TextKind::Paragraph)
+                    .class("card-detail-field-code")
+                    .content(short_protocol_id(strand)),
+                glory::ui::text()
+                    .class("sr-only")
+                    .content(strand.to_owned())
+                    .semantics(Some(Box::new(glory::render::Semantics {
+                        id: Some(identity),
+                        ..Default::default()
+                    }))),
+            )),
+    )
+}
+
+fn details_fields(
+    scope: &Scope,
+    detail: Detail,
+    card: KanbanCard,
+    realm: String,
+    rows: Vec<crate::views::member_display::RealmMemberRow>,
+) -> View {
+    let c = detail.c;
+    let assigned = card_assigned_actor_ids(&card);
+    let names = detail.app.state_store.read(|store| {
+        assigned
+            .iter()
+            .map(|actor| {
+                (
+                    actor.clone(),
+                    assignee_label_for_actor(store, &realm, &rows, actor),
+                )
+            })
+            .collect::<Vec<_>>()
+    });
+    let pick = detail.clone();
+    let chosen = assigned.iter().cloned().collect::<BTreeSet<_>>();
+    let mut row = vec![line(
+        "assignee-chip-list",
+        names
+            .into_iter()
+            .map(|(actor, label)| {
+                line(
+                    "assignee-chip",
+                    vec![
+                        assignee_avatar(scope, detail.app.clone(), &actor, &label),
+                        inline_label("assignee-chip-label", label),
+                    ],
+                )
+            })
+            .collect(),
+    )];
+    let mut add_children = vec![crate::components::ui_icon("plus")];
+    if assigned.is_empty() {
+        add_children.push(plain(
+            detail.app.translated(scope, "kanban.ui.add_assignees"),
+        ));
+    }
+    row.push(Box::new(
+        sapid::button()
+            .unstyled()
+            .class(if assigned.is_empty() {
+                "assignee-add assignee-add-empty card-detail-assignee-add"
+            } else {
+                "assignee-add card-detail-assignee-add"
+            })
+            .name(detail.app.translated(scope, "kanban.ui.add_assignees"))
+            .enabled(card_detail_edit_ready(&card))
+            .fill(add_children)
+            .on_press(move || {
+                c.assignee_selected_actor_ids
+                    .revise(|value| *value = chosen.clone());
+                c.assignee_filter.revise(String::clear);
+                c.assignee_edit_status.revise(String::clear);
+                c.assignee_picker_open.revise(|value| *value = !*value);
+            }),
+    ));
+    if !assigned.is_empty() {
+        let clear = detail.clone();
+        row.push(Box::new(
+            sapid::button()
+                .unstyled()
+                .class("assignee-add assignee-clear")
+                .name(detail.app.translated(scope, "kanban.ui.clear_assignees"))
+                .enabled(card_detail_edit_ready(&card))
+                .fill(crate::components::ui_icon("x"))
+                .on_press(move || {
+                    c.assignee_selected_actor_ids.revise(BTreeSet::clear);
+                    clear.assignees();
+                }),
+        ));
+    }
+    let assignees = stack(
+        "assignee-editor card-detail-assignees",
+        vec![
+            line("assignee-chip-row", row),
+            assignee_picker(scope, pick, card.clone(), realm, rows),
+        ],
+    );
+    let due = card.due.clone();
+    let due_editor = due_picker(scope, detail.clone());
+    let has_due = !due.trim().is_empty();
+    let mut due_children = Vec::new();
+    if has_due {
+        due_children.push(inline_label("due-pill due-date-value", due.clone()));
+    }
+    let mut trigger_content = vec![crate::components::ui_icon("calendar")];
+    if !has_due {
+        trigger_content.push(plain(
+            detail.app.translated(scope, "kanban.ui.add_due_date"),
+        ));
+    }
+    due_children.push(Box::new(
+        sapid::button()
+            .unstyled()
+            .class(if has_due {
+                "due-edit-button card-detail-due-trigger"
+            } else {
+                "due-add-button card-detail-due-trigger"
+            })
+            .name(detail.app.translated(
+                scope,
+                if has_due {
+                    "kanban.ui.edit_due_date"
+                } else {
+                    "kanban.ui.add_due_date"
+                },
+            ))
+            .enabled(card_detail_edit_ready(&card))
+            .fill(trigger_content)
+            .on_press(move || {
+                c.due_edit_value.revise(|v| *v = due.clone());
+                c.due_calendar_month
+                    .revise(|v| *v = due_calendar_month_for_value(&due));
+                c.due_edit_status.revise(String::clear);
+                c.due_picker_open.revise(|v| *v = true);
+            }),
+    ));
+    if has_due {
+        let clear = detail.clone();
+        due_children.push(Box::new(
+            sapid::button()
+                .unstyled()
+                .class("due-edit-button due-clear-button")
+                .name(detail.app.translated(scope, "kanban.ui.clear_due_date"))
+                .enabled(card_detail_edit_ready(&card))
+                .fill(crate::components::ui_icon("x"))
+                .on_press(move || clear.due(String::new())),
+        ));
+    }
+    due_children.push(due_editor);
+    let due_view = line("due-editor card-detail-due", due_children);
+    let mut fields = vec![
+        side_field("kanban.ui.strand_id", strand_identity(scope, &card.id)),
+        side_field("kanban.ui.assignees", assignees),
+        side_field("kanban.ui.due", due_view),
+    ];
+    fields.push(side_field(
+        "kanban.ui.labels",
+        line(
+            "card-labels",
+            card.labels
+                .iter()
+                .map(|label| paragraph("card-label", label.clone()))
+                .collect(),
+        ),
+    ));
+    fields.push(side_field(
+        "kanban.ui.calendar",
+        calendar_view(scope, detail.clone(), card.clone()),
+    ));
+    fields.push(side_field(
+        "Security",
+        crate::components::security_state_badge(
+            scope,
+            detail.app.clone(),
+            crate::components::SecurityStateBadgeProps {
+                encrypted: card.security_encrypted.unwrap_or(true),
+                compact: false,
+                test_id: Some("card-detail-security-badge".into()),
+                unknown: card.security_encrypted.is_none(),
+            },
+        ),
+    ));
+    fields.push(side_field(
+        "Discussion scope",
+        paragraph("", card.external_visibility),
+    ));
+    stack(
+        "card-detail-side-fields card-fields",
+        vec![Box::new(
+            glory::ui::view()
+                .document_part(glory::render::DocumentPart::DescriptionList)
+                .class("card-detail-field-list semantic-card-fields")
+                .fill(fields),
+        )],
+    )
+}
+fn assignee_picker(
+    _scope: &Scope,
+    detail: Detail,
+    card: KanbanCard,
+    realm: String,
+    rows: Vec<crate::views::member_display::RealmMemberRow>,
+) -> View {
+    let c = detail.c;
+    reactive(c.assignee_picker_open, move |scope, open| {
+        if !open {
+            return empty();
+        }
+        let options = assignment_picker_roster(&rows, &card);
+        let detail_rows = detail.clone();
+        let realm = realm.clone();
+        let rows = rows.clone();
+        let body = reactive(c.assignee_filter, move |scope, filter| {
+            let labels = detail_rows.app.state_store.read(|store| {
+                options
+                    .iter()
+                    .filter_map(|row| {
+                        let label = assignee_label_for_actor(store, &realm, &rows, &row.actor_id);
+                        assignee_filter_matches(&filter, &label, &row.actor_id.to_string())
+                            .then(|| (row.actor_id.clone(), label))
+                    })
+                    .collect::<Vec<_>>()
+            });
+            if labels.is_empty() {
+                return paragraph(
+                    "assignee-option-empty",
+                    crate::i18n::tr("kanban.ui.no_members_match"),
+                );
+            }
+            stack(
+                "assignee-options assignee-picker-list",
+                labels
+                    .into_iter()
+                    .map(|(actor, label)| {
+                        let selected_actor = actor.clone();
+                        let selected = scope.bond(move || {
+                            c.assignee_selected_actor_ids
+                                .get()
+                                .contains(&selected_actor)
+                        });
+                        let short_id = short_protocol_id(actor.to_string());
+                        let avatar =
+                            assignee_avatar(scope, detail_rows.app.clone(), &actor, &label);
+                        let semantics = scope.bond(move || {
+                            Some(Box::new(glory::render::Semantics {
+                                pressed: Some(selected.get()),
+                                ..Default::default()
+                            }))
+                        });
+                        Box::new(
+                            glory::ui::button()
+                                .class(scope.bond(move || {
+                                    format!(
+                                        "secondary assignee-option assignee-picker-option{}",
+                                        if selected.get() { " selected" } else { "" }
+                                    )
+                                }))
+                                .name(label.clone())
+                                .semantics(semantics)
+                                .fill(vec![
+                                    inline_label(
+                                        "assignee-option-check",
+                                        scope.bond(move || {
+                                            if selected.get() {
+                                                "✓".into()
+                                            } else {
+                                                String::new()
+                                            }
+                                        }),
+                                    ),
+                                    avatar,
+                                    inline_label("assignee-option-label", label),
+                                    inline_label("assignee-option-meta", short_id),
+                                ])
+                                .on(glory::render::EventKind::Activate, move |_| {
+                                    c.assignee_selected_actor_ids.revise(|values| {
+                                        if !values.insert(actor.clone()) {
+                                            values.remove(&actor);
+                                        }
+                                    })
+                                }),
+                        ) as View
+                    })
+                    .collect(),
+            )
+        });
+        let save = detail.clone();
+        stack(
+            "assignee-popover assignee-picker",
+            vec![
+                line(
+                    "assignee-search",
+                    vec![
+                        crate::components::ui_icon("search"),
+                        crate::views::settings::widgets::input_prompt(
+                            scope,
+                            detail
+                                .app
+                                .translated(scope, "kanban.ui.filter_members")
+                                .into(),
+                            c.assignee_filter,
+                            Box::new(
+                                sapid::text_field()
+                                    .unstyled()
+                                    .class("input card-detail-assignee-filter")
+                                    .name(detail.app.translated(scope, "kanban.ui.filter_members"))
+                                    .value(c.assignee_filter)
+                                    .on_value_change(move |value| {
+                                        c.assignee_filter.revise(|current| *current = value)
+                                    }),
+                            ),
+                        ),
+                    ],
+                ),
+                body,
+                reactive(c.assignee_edit_status, |_scope, status| {
+                    if status.trim().is_empty() {
+                        empty()
+                    } else {
+                        paragraph("assignee-edit-status", status)
+                    }
+                }),
+                line(
+                    "assignee-popover-actions assignee-picker-actions",
+                    vec![
+                        action(
+                            scope,
+                            detail.app.clone(),
+                            "card-detail-assignee-clear-draft",
+                            "kanban.ui.clear",
+                            "secondary",
+                            true,
+                            move || c.assignee_selected_actor_ids.revise(BTreeSet::clear),
+                        ),
+                        action(
+                            scope,
+                            detail.app.clone(),
+                            "card-detail-assignee-cancel",
+                            "common.cancel",
+                            "secondary",
+                            true,
+                            move || {
+                                c.assignee_picker_open.revise(|v| *v = false);
+                                c.assignee_filter.revise(String::clear);
+                                c.assignee_edit_status.revise(String::clear);
+                            },
+                        ),
+                        action(
+                            scope,
+                            detail.app.clone(),
+                            "card-detail-assignee-save",
+                            "common.save",
+                            "primary",
+                            true,
+                            move || save.assignees(),
+                        ),
+                    ],
+                ),
+            ],
+        )
+    })
+}
+fn due_picker(_scope: &Scope, detail: Detail) -> View {
+    let c = detail.c;
+    reactive(c.due_picker_open, move |scope, open| {
+        if !open {
+            return empty();
+        }
+        let body = detail.clone();
+        crate::components::dismissible_popup(
+            scope,
+            detail.app.clone(),
+            crate::components::DismissiblePopupProps {
+                overlay_class: "due-date-modal-backdrop".into(),
+                surface_class: "due-date-modal".into(),
+                aria_label: crate::i18n::tr("kanban.ui.due_date_calendar"),
+                on_dismiss: Rc::new(move |()| c.due_picker_open.revise(|value| *value = false)),
+                children: Rc::new(move |scope| due_picker_contents(scope, body.clone())),
+                overlay_test_id: Some("card-detail-due-editor-backdrop".into()),
+                surface_test_id: Some("card-detail-due-editor-dialog".into()),
+                overlay_style: None,
+                surface_style: None,
+            },
+        )
+    })
+}
+fn due_picker_contents(scope: &Scope, detail: Detail) -> View {
+    let c = detail.c;
+    let calendar = reactive(c.due_calendar_month, move |scope, month| {
+        let prev = Box::new(
+            sapid::button()
+                .unstyled()
+                .class("secondary due-calendar-nav due-date-month-prev")
+                .name(crate::i18n::tr("kanban.ui.previous_month"))
+                .label("‹")
+                .on_press(move || {
+                    c.due_calendar_month
+                        .revise(|value| *value = add_due_calendar_months(*value, -1))
+                }),
+        ) as View;
+        let next = Box::new(
+            sapid::button()
+                .unstyled()
+                .class("secondary due-calendar-nav due-date-month-next")
+                .name(crate::i18n::tr("kanban.ui.next_month"))
+                .label("›")
+                .on_press(move || {
+                    c.due_calendar_month
+                        .revise(|value| *value = add_due_calendar_months(*value, 1))
+                }),
+        ) as View;
+        let weekdays = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"]
+            .into_iter()
+            .map(|day| plain(crate::i18n::tr(&format!("kanban.ui.{day}"))))
+            .collect::<Vec<_>>();
+        let mut days = Vec::<View>::new();
+        for cell in due_calendar_cells(month) {
+            let iso = cell.iso_date.clone();
+            let selected = iso.clone();
+            let is_today = cell.date == due_calendar_today();
+            let class = scope.bond(move || {
+                format!(
+                    "secondary due-calendar-day{}{}{}",
+                    if cell.in_current_month {
+                        ""
+                    } else {
+                        " outside"
+                    },
+                    if c.due_edit_value.get() == selected {
+                        " selected"
+                    } else {
+                        ""
+                    },
+                    if is_today { " today" } else { "" }
+                )
+            });
+            let selected = iso.clone();
+            let pressed = scope.bond(move || {
+                Some(Box::new(glory::render::Semantics {
+                    pressed: Some(c.due_edit_value.get() == selected),
+                    ..Default::default()
+                }))
+            });
+            days.push(Box::new(
+                glory::ui::button()
+                    .class(class)
+                    .name(iso.clone())
+                    .label(cell.day.to_string())
+                    .semantics(pressed)
+                    .on(glory::render::EventKind::Activate, move |_| {
+                        c.due_edit_value.revise(|value| *value = iso.clone());
+                        c.due_calendar_month
+                            .revise(|value| *value = due_calendar_month_for_value(&iso));
+                    }),
+            ));
+        }
+        stack(
+            "due-calendar",
+            vec![
+                line(
+                    "due-calendar-header",
+                    vec![
+                        prev,
+                        paragraph("due-calendar-title", due_calendar_month_label(month)),
+                        next,
+                    ],
+                ),
+                line("due-calendar-weekdays", weekdays),
+                stack("due-calendar-grid", days),
+            ],
+        )
+    });
+    let save = detail.clone();
+    let heading = stack(
+        "due-date-modal-title",
+        vec![
+            heading(
+                3,
+                "",
+                detail.app.translated(scope, "kanban.ui.set_due_date"),
+            ),
+            paragraph(
+                "muted",
+                detail
+                    .app
+                    .translated(scope, "kanban.ui.choose_a_date_for_this_card"),
+            ),
+        ],
+    );
+    let close = Box::new(
+        sapid::button()
+            .unstyled()
+            .class("secondary due-date-modal-close")
+            .name(detail.app.translated(scope, "common.close"))
+            .fill(crate::components::ui_icon("x"))
+            .on_press(move || c.due_picker_open.revise(|open| *open = false)),
+    ) as View;
+    let status = reactive(c.due_edit_status, |_, status| {
+        if status.trim().is_empty() {
+            empty()
+        } else {
+            paragraph("due-edit-status", status)
+        }
+    });
+    Box::new(glory::prelude::group().fill(vec![
+        line("due-date-modal-head", vec![heading, close]),
+        stack(
+            "due-date-modal-body card-detail-due-picker",
+            vec![
+                stack(
+                    "due-date-modal-field",
+                    vec![input(
+                        scope,
+                        detail.app.clone(),
+                        "card-detail-due-value",
+                        "kanban.ui.due",
+                        c.due_edit_value,
+                        true,
+                    )],
+                ),
+                calendar,
+                status,
+            ],
+        ),
+        line(
+            "due-date-modal-actions",
+            vec![
+                action(
+                    scope,
+                    detail.app.clone(),
+                    "card-detail-due-today",
+                    "Today",
+                    "secondary",
+                    true,
+                    move || {
+                        let today = due_calendar_today().format("%Y-%m-%d").to_string();
+                        c.due_edit_value.revise(|value| *value = today);
+                        c.due_calendar_month
+                            .revise(|value| *value = default_due_calendar_month());
+                    },
+                ),
+                action(
+                    scope,
+                    detail.app.clone(),
+                    "card-detail-due-clear",
+                    "kanban.ui.clear",
+                    "secondary due-date-clear-action",
+                    true,
+                    move || {
+                        c.due_edit_value.revise(String::clear);
+                        c.due_calendar_month
+                            .revise(|value| *value = default_due_calendar_month());
+                    },
+                ),
+                action(
+                    scope,
+                    detail.app.clone(),
+                    "card-detail-due-cancel",
+                    "common.cancel",
+                    "secondary",
+                    true,
+                    move || c.due_picker_open.revise(|open| *open = false),
+                ),
+                action(
+                    scope,
+                    detail.app.clone(),
+                    "card-detail-due-save",
+                    "common.save",
+                    "primary",
+                    {
+                        let probe = detail.probe;
+                        scope.bond(move || probe.get().gate.is_some())
+                    },
+                    move || save.due(c.due_edit_value.get_untracked()),
+                ),
+            ],
+        ),
+    ]))
+}
+
+fn calendar_view(scope: &Scope, detail: Detail, card: KanbanCard) -> View {
+    let c = detail.c;
+    reactive(
+        scope.bond(move || (c.editing_card_detail.get(), c.card_edit_scope.get())),
+        move |scope, (editing, kind)| {
+            if editing && kind == CardEditScope::Calendar {
+                let _save = detail.clone();
+                let _cancel = detail.clone();
+                let body = detail.clone();
+                let cancel_popup = detail.clone();
+                let original = card.calendar.clone();
+                return crate::components::dismissible_popup(
+                    scope,
+                    detail.app.clone(),
+                    crate::components::DismissiblePopupProps {
+                        overlay_class: "due-date-modal-backdrop calendar-schedule-modal-backdrop"
+                            .into(),
+                        surface_class: "due-date-modal calendar-schedule-modal".into(),
+                        aria_label: crate::i18n::tr("kanban.ui.calendar"),
+                        on_dismiss: Rc::new(move |()| {
+                            c.card_edit_calendar
+                                .revise(|value| *value = original.clone());
+                            cancel_popup.cancel();
+                        }),
+                        children: Rc::new(move |scope| {
+                            let save = body.clone();
+                            let cancel = body.clone();
+                            let probe = body.probe;
+                            stack("calendar-schedule-modal-content",vec![heading(3,"",body.app.translated(scope,"kanban.ui.edit_schedule")),paragraph("muted",body.app.translated(scope,"kanban.ui.set_the_event_time_recurrence_and_calendar_details")),calendar_schedule_edit_form(scope,body.app.clone(),c.card_edit_calendar,c.card_detail_edit_status,scope.bond(move||probe.get().gate.is_some()).into(),move||save.calendar(),move||cancel.cancel())])
+                        }),
+                        overlay_test_id: Some("card-detail-calendar-editor-backdrop".into()),
+                        surface_test_id: Some("card-detail-calendar-editor-dialog".into()),
+                        overlay_style: None,
+                        surface_style: None,
+                    },
+                );
+            }
+            let schedule = &card.calendar;
+            let mut children = vec![];
+            if schedule.has_schedule() {
+                let mut fields = vec![];
+                for (label, value) in [
+                    ("kanban.ui.start", schedule.start.clone()),
+                    ("kanban.ui.end", schedule.end.clone()),
+                    ("kanban.ui.timezone", schedule.timezone.clone()),
+                    ("kanban.ui.status", schedule.status.clone()),
+                    ("kanban.ui.recurrence", schedule.recurrence_label()),
+                    (
+                        "kanban.ui.location",
+                        if schedule.location_locked {
+                            MLS_LOCKED_FIELD_PLACEHOLDER.into()
+                        } else {
+                            schedule.location.clone()
+                        },
+                    ),
+                ] {
+                    if !value.is_empty() {
+                        fields.push(line(
+                            "calendar-summary-row",
+                            vec![
+                                paragraph("calendar-summary-label", crate::i18n::tr(label)),
+                                paragraph("calendar-summary-value", value),
+                            ],
+                        ));
+                    }
+                }
+                if schedule.all_day {
+                    fields.push(paragraph(
+                        "calendar-summary-mode",
+                        crate::i18n::tr("kanban.ui.all_day"),
+                    ));
+                }
+                children.push(stack("calendar-summary", fields));
+                children.push(
+                    match calendar_agenda(
+                        schedule,
+                        &card.calendar_schedule_basis_refs,
+                        chrono::Utc::now(),
+                    ) {
+                        Ok(items) if !items.is_empty() => stack(
+                            "calendar-agenda card-detail-calendar-agenda",
+                            items
+                                .into_iter()
+                                .map(|item| {
+                                    line(
+                                        "calendar-agenda-item",
+                                        vec![
+                                            paragraph("calendar-agenda-start", item.local_start),
+                                            paragraph("calendar-agenda-end", item.local_end),
+                                        ],
+                                    )
+                                })
+                                .collect(),
+                        ),
+                        Ok(_) => paragraph(
+                            "card-detail-calendar-agenda-empty",
+                            crate::i18n::tr("kanban.ui.no_occurrences_in_the_next_90_days"),
+                        ),
+                        Err(error) => paragraph("card-detail-calendar-agenda-unresolved", error),
+                    },
+                );
+                children.push(rsvp_view(scope, detail.clone(), card.clone()));
+            } else {
+                children.push(paragraph(
+                    "calendar-empty",
+                    crate::i18n::tr("kanban.ui.no_schedule"),
+                ));
+            }
+            let edit = detail.clone();
+            let enabled = card_detail_edit_ready(&card);
+            children.push(action(
+                scope,
+                detail.app.clone(),
+                "card-detail-calendar-edit",
+                "common.edit",
+                "secondary",
+                enabled,
+                move || {
+                    edit.begin(CardEditScope::Calendar, None);
+                    c.calendar_rsvp_occurrence.revise(|v| {
+                        *v = calendar_occurrence_hint(&c.card_edit_calendar.get_untracked())
+                    });
+                },
+            ));
+            stack("calendar-editor card-detail-calendar", children)
+        },
+    )
+}
+fn rsvp_view(scope: &Scope, detail: Detail, card: KanbanCard) -> View {
+    let c = detail.c;
+    let status = card.calendar_rsvp.clone();
+    let mut children = vec![];
+    if status.has_any() {
+        if let Some(own) = status.own_status {
+            children.push(paragraph("calendar-rsvp-own card-detail-rsvp-own", own));
+        }
+        if status.own_needs_reconfirmation {
+            children.push(paragraph(
+                "calendar-rsvp-reconfirm card-detail-rsvp-reconfirm",
+                "Schedule changed. Please confirm your response again.",
+            ));
+        }
+        children.push(paragraph(
+            "calendar-rsvp-counts card-detail-rsvp-counts",
+            format!(
+                "{} yes · {} maybe · {} no",
+                status.accepted, status.tentative, status.declined
+            ),
+        ));
+        if status.excluded > 0 {
+            children.push(paragraph(
+                "calendar-rsvp-excluded card-detail-rsvp-excluded",
+                format!("{} response(s) no longer count", status.excluded),
+            ));
+        }
+    }
+    children.push(input(
+        scope,
+        detail.app.clone(),
+        "card-detail-calendar-rsvp-occurrence",
+        "Occurrence",
+        c.calendar_rsvp_occurrence,
+        true,
+    ));
+    let mut buttons = vec![action(
+        scope,
+        detail.app.clone(),
+        "card-detail-rsvp-series",
+        "Entire series",
+        "secondary",
+        true,
+        move || c.calendar_rsvp_occurrence.revise(String::clear),
+    )];
+    for (status, label) in [
+        ("accepted", "Yes"),
+        ("tentative", "Maybe"),
+        ("declined", "No"),
+    ] {
+        let detail = detail.clone();
+        let card = card.clone();
+        buttons.push(Box::new(
+            sapid::button()
+                .unstyled()
+                .class(format!("btn secondary card-detail-rsvp-{status}"))
+                .label(label)
+                .enabled(card.state == CardState::Synced)
+                .on_press(move || {
+                    dispatch_calendar_rsvp(
+                        detail.app.clone(),
+                        detail.app.base_url.get_untracked(),
+                        detail.app.token,
+                        detail.context.selected_realm_id.clone(),
+                        detail.context.principal_id.to_string(),
+                        card.clone(),
+                        status,
+                        c.calendar_rsvp_occurrence.get_untracked(),
+                        detail.app.state_store.clone(),
+                        c.board_status,
+                    )
+                }),
+        ) as View);
+    }
+    children.push(line("calendar-rsvp-actions", buttons));
+    stack("calendar-rsvp card-detail-calendar-rsvp", children)
+}
+fn member_list(
+    scope: &Scope,
+    detail: Detail,
+    card: KanbanCard,
+    realm: String,
+    rows: Vec<crate::views::member_display::RealmMemberRow>,
+) -> View {
+    let agents = detail.agents.clone();
+    let modes = detail.modes;
+    reactive(
+        scope.bond(move || (agents.data.get(), modes.get())),
+        move |scope, (inventory, modes)| {
+            let Some(inventory) = inventory else {
+                return paragraph(
+                    "card-detail-empty card-detail-member-identities-pending",
+                    crate::i18n::tr("kanban.ui.members_loading"),
+                );
+            };
+            let Ok(inventory) = inventory else {
+                return paragraph(
+                    "card-detail-empty card-detail-member-identities-error",
+                    crate::i18n::tr("kanban.ui.members_unavailable"),
+                );
+            };
+            let (joined, participants) = detail.app.state_store.read(|store| {
+                (
+                    store
+                        .complete_joined_member_hint_for_realm(&detail.context.selected_realm_id)
+                        .ok()
+                        .flatten(),
+                    strand_participant_ids(&store.load().raw_operations, &card.primary_strand_id)
+                        .into_iter()
+                        .collect::<BTreeSet<_>>(),
+                )
+            });
+            let mut humans = rows
+                .iter()
+                .filter(|row| {
+                    crate::views::member_display::owned_agent_slug(row, &inventory).is_none()
+                })
+                .collect::<Vec<_>>();
+            humans.sort_by_key(|row| {
+                !card_member_is_current_account(row, detail.context.principal_id.as_str())
+            });
+            let owned = crate::operation::authoring_station_id()
+                .ok()
+                .map(|station| card_owned_agent_rows(joined.as_ref(), &inventory, &station))
+                .unwrap_or_default();
+            let mut children = vec![];
+            for row in humans {
+                let is_self =
+                    card_member_is_current_account(row, detail.context.principal_id.as_str());
+                let label = detail.app.state_store.read(|store| {
+                    crate::views::member_display::resolve_member_display(store, &realm, row).label
+                });
+                children.push(member_row(
+                    scope,
+                    detail.clone(),
+                    row.actor_id.clone(),
+                    label,
+                    is_self,
+                    None,
+                    None,
+                    participants.contains(&row.actor_id.to_string()),
+                ));
+                if is_self {
+                    for (actor, slug) in &owned {
+                        if let Ok(actor) = serde_json::from_str::<arkret_sdk::ActorId>(actor) {
+                            let mode = actor
+                                .as_account_id()
+                                .and_then(|account| modes.get(account))
+                                .copied();
+                            let in_strand = participants.contains(&actor.to_string());
+                            children.push(member_row(
+                                scope,
+                                detail.clone(),
+                                actor,
+                                slug.clone(),
+                                false,
+                                Some(slug.clone()),
+                                mode,
+                                in_strand,
+                            ));
+                        }
+                    }
+                }
+            }
+            if children.is_empty() {
+                children.push(paragraph(
+                    "card-detail-empty",
+                    "No members yet for this Realm.",
+                ));
+            }
+            stack("card-detail-actor-list card-detail-realm-members", children)
+        },
+    )
+}
+fn member_row(
+    scope: &Scope,
+    detail: Detail,
+    actor: arkret_sdk::ActorId,
+    label: String,
+    is_self: bool,
+    agent: Option<String>,
+    mode: Option<arkret_sdk::AgentInteractionMode>,
+    in_strand: bool,
+) -> View {
+    let account = actor.as_account_id().cloned();
+    let is_agent = agent.is_some();
+    let identity = account
+        .as_ref()
+        .map(|account| {
+            let account_identity = format!(
+                "Principal: {} · Station: {}",
+                account.principal_id, account.station_id
+            );
+            if is_agent {
+                format!("Agent: {} · {account_identity}", account.principal_id)
+            } else {
+                account_identity
+            }
+        })
+        .unwrap_or_else(|| actor.to_string());
+    use sha2::Digest;
+    let identity_id = match glory::render::SemanticId::new(format!(
+        "card-member-{}",
+        hex::encode(sha2::Sha256::digest(actor.to_string().as_bytes()))
+    )) {
+        Ok(id) => id,
+        Err(error) => {
+            scope.report_error(error);
+            return empty();
+        }
+    };
+    let description_id = identity_id.clone();
+    let mention_name = detail
+        .app
+        .translated_args(scope, "kanban.ui.mention_member", {
+            let label = label.clone();
+            move || vec![("name", label.clone())]
+        });
+    let mut children: Vec<View> = vec![];
+    if let Some(slug) = agent.as_ref() {
+        children.push(crate::components::generated_avatar::identity_avatar_inline(
+            scope,
+            detail.app.clone(),
+            crate::components::IdentityAvatarProps {
+                seed: actor.signing_principal_id().to_string(),
+                alt_text: slug.clone(),
+                blob_ref: None,
+                class: "sidebar-nav-icon contact-sidebar-agent-avatar avatar-img".into(),
+                test_id: None,
+            },
+        ));
+        children.push(Box::new(
+            glory::ui::text()
+                .class("grow truncate card-detail-member")
+                .content(slug.clone()),
+        ));
+        let (badge_class, badge_key) = match mode {
+            Some(arkret_sdk::AgentInteractionMode::Public) => (
+                "pill xs agent-mode-badge is-public",
+                "app.sidebar.public_agent_badge",
+            ),
+            Some(arkret_sdk::AgentInteractionMode::Private) => (
+                "pill xs agent-mode-badge is-private",
+                "app.sidebar.private_agent_badge",
+            ),
+            None => ("pill muted xs", "app.sidebar.agent_badge"),
+        };
+        children.push(Box::new(
+            glory::ui::text()
+                .class(badge_class)
+                .content(detail.app.translated(scope, badge_key)),
+        ));
+    } else {
+        children.push(Box::new(
+            glory::ui::text()
+                .class(if in_strand {
+                    "card-detail-actor-dot participant"
+                } else {
+                    "card-detail-actor-dot"
+                })
+                .content(""),
+        ));
+        children.push(Box::new(
+            glory::ui::text()
+                .class("card-detail-actor-id card-detail-member")
+                .content(label),
+        ));
+        if is_self {
+            children.push(crate::components::self_attribution_badge_inline(
+                scope,
+                detail.app.clone(),
+                crate::components::SelfAttributionBadgeProps::default(),
+            ));
+        }
+    }
+    children.push(Box::new(
+        glory::ui::text()
+            .class("sr-only card-detail-member-identity")
+            .content(identity)
+            .semantics(Some(Box::new(glory::render::Semantics {
+                id: Some(identity_id),
+                ..Default::default()
+            }))),
+    ));
+    let mention = Box::new(glory::ui::button()
+        .class(if is_agent { "card-detail-actor-mention-button card-detail-agent-mention-button card-detail-member-mention-button" } else { "card-detail-actor-mention-button card-detail-member-mention-button" })
+        .name(mention_name)
+        .semantics(Some(Box::new(glory::render::Semantics { described_by: Some(description_id), ..Default::default() })))
+        .enabled(account.is_some()).fill(children)
+        .on(glory::render::EventKind::Activate, move |_| {
+            if let Some(account) = account.clone() { detail.mention(account, is_agent); }
+        })) as View;
+    stack(
+        format!(
+            "card-detail-actor-row card-member-row{}{}",
+            if is_agent {
+                " participant-agent-row card-detail-agent-row"
+            } else {
+                ""
+            },
+            if in_strand { " participant" } else { "" }
+        ),
+        vec![mention],
+    )
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod production_retention_tests {
+    use glory::render::{Event, NodeId, Props};
+
+    use super::*;
+    fn nodes(app: &glory::ui::App) -> Vec<NodeId> {
+        let tree = app.tree();
+        let mut pending = tree.roots().to_vec();
+        let mut out = Vec::new();
+        while let Some(id) = pending.pop() {
+            out.push(id);
+            pending.extend(tree.node(id).unwrap().children.iter().copied());
+        }
+        out
+    }
+    fn input(app: &glory::ui::App) -> NodeId {
+        nodes(app)
+            .into_iter()
+            .find(|id| {
+                let tree = app.tree();
+                let view = tree.node(*id).unwrap().descriptor.view();
+                view.classes.iter().any(|class| class == "chat-input")
+                    && matches!(view.props, Props::Input(_))
+            })
+            .expect("production embedded composer exists")
+    }
+    fn value(app: &glory::ui::App, id: NodeId) -> String {
+        let tree = app.tree();
+        match tree.node(id).unwrap().descriptor.view().props {
+            Props::Input(input) => input.value.clone(),
+            _ => panic!("message input"),
+        }
+    }
+    fn class_node(app: &glory::ui::App, class: &str) -> NodeId {
+        nodes(app)
+            .into_iter()
+            .find(|id| {
+                app.tree()
+                    .node(*id)
+                    .unwrap()
+                    .descriptor
+                    .view()
+                    .classes
+                    .iter()
+                    .any(|value| value == class)
+            })
+            .unwrap_or_else(|| panic!("missing production class {class}"))
+    }
+    fn text_content(app: &glory::ui::App, class: &str) -> String {
+        let mut pending = vec![class_node(app, class)];
+        let mut content = String::new();
+        while let Some(id) = pending.pop() {
+            let tree = app.tree();
+            let node = tree.node(id).unwrap();
+            if node
+                .descriptor
+                .view()
+                .semantics
+                .as_ref()
+                .is_some_and(|value| value.hidden)
+            {
+                continue;
+            }
+            match node.descriptor.view().props {
+                Props::Text(text) => content.push_str(&text.content),
+                Props::Button(button) => content.push_str(&button.label),
+                _ => {}
+            }
+            pending.extend(node.children.iter().rev().copied());
+        }
+        content
+    }
+    fn settle(app: &glory::ui::App, executor: &glory::core::executor::Executor) {
+        for _ in 0..64 {
+            executor.poll_one();
+            app.flush().unwrap();
+        }
+    }
+    #[tokio::test(flavor = "current_thread")]
+    async fn production_card_detail_keeps_chat_draft_owner_across_current_updates_and_gaps() {
+        let directory = tempfile::Builder::new()
+            .prefix("card-detail-owner-")
+            .tempdir_in("D:/BuildCache/inkson-glory/tmp")
+            .unwrap();
+        let executor = Rc::new(glory::core::executor::Executor::new(256));
+        let app = glory::ui::App::with_host(executor.clone(), glory::render::memory::Memory::new);
+        let authority = crate::test_support::authority("ak:did_core:web:alice.example");
+        let realm = super::super::tests::TEST_REALM_ID.to_string();
+        let device =
+            arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000001").unwrap();
+        let account:crate::config::ActiveAccountContext=serde_json::from_value(serde_json::json!({"profile_id":"card-owner","authority":authority,"principal_control_realm_id":realm,"resolution":{"did":"did:web:alice.example","method_history_head":"head-1","version_id":"1","resolution_event_ref":"accepted-resolution","updated_at":"2026-10-20T00:00:00.000Z"},"device_id":device,"server_url":"https://browser.example/"})).unwrap();
+        let config = crate::config::ClientConfig {
+            active_account: Some(account),
+            ..Default::default()
+        };
+        let make_card = |byte| {
+            let id = arkret_sdk::StrandId::from_event_id(&arkret_sdk::EventId::from_digest(
+                arkret_sdk::DigestSuite::Sha256,
+                [byte; 32],
+            ))
+            .to_string();
+            let mut card = super::super::tests::test_card(&id, "U");
+            card.primary_strand_id = id;
+            card.authoring_basis = Some(arkret_wire::CurrentRevision {
+                commit_id: arkret_wire::RealmCommitId::from_digest([byte; 32]),
+                stream_position: 1,
+            });
+            card
+        };
+        let mut first = make_card(0x37);
+        let assigned_actor = arkret_sdk::ActorId::account(authority.clone());
+        first.assigned_to_relations.push(CardAssignedToRelation {
+            relation_id: "fixture-assigned-relation".into(),
+            actor_id: assigned_actor.clone(),
+        });
+        first.due = "2026-10-15".into();
+        let second = make_card(0x38);
+        let route = Route::KanbanTask {
+            realm_id: realm.clone(),
+            task_id: first.id.clone(),
+            tab: "discussion".into(),
+        };
+        let context = InksonContext::new(
+            app.scope(),
+            crate::presentation::BootState {
+                config_store: crate::config::LocalConfigStore::with_path(
+                    directory.path().join("config.json"),
+                ),
+                config,
+                state_store: SharedStateStore::new(LocalStateStore::with_path(
+                    directory.path().join("state.json"),
+                )),
+                initial_credential: String::new(),
+                realm_tree_nodes: vec![],
+            },
+            route.clone(),
+            |_| {
+                Box::pin(async {
+                    crate::runtime::session::CurrentSessionRefresh::retry_later("fixture")
+                })
+            },
+        );
+        let scope = app.scope();
+        let c = new_kanban_controller(scope, &route, vec![], None);
+        c.selected_card.revise(|value| *value = Some(first.clone()));
+        c.card_detail_tab
+            .revise(|value| *value = CardDetailContentTab::Discussion);
+        c.card_detail_discussion_mounted_for
+            .revise(|value| *value = Some(first.primary_strand_id.clone()));
+        let suspended =
+            discussion_suspended(scope, c.selected_card, first.primary_strand_id.clone());
+        let revisions = vec![
+            CardSynthesisRevision {
+                id: "history-v1".into(),
+                body: "Original synthesis".into(),
+                actor_id: "did:web:bob.example".into(),
+                author_label: "Bob".into(),
+                timestamp_label: "Earlier".into(),
+                sort_key: "1".into(),
+            },
+            CardSynthesisRevision {
+                id: "history-v2".into(),
+                body: "Updated synthesis".into(),
+                actor_id: authority.principal_id.to_string(),
+                author_label: "Alice".into(),
+                timestamp_label: "Now".into(),
+                sort_key: "2".into(),
+            },
+        ];
+        let latest = revisions.last().unwrap().clone();
+        let entries = vec![CardSynthesisTrackEntry {
+            id: "synthesis-entry".into(),
+            body: latest.body,
+            actor_id: latest.actor_id,
+            author_label: latest.author_label,
+            timestamp_label: latest.timestamp_label,
+            sort_key: latest.sort_key,
+            edited: true,
+            revisions,
+        }];
+        app.mount(card_detail(
+            scope,
+            context.clone(),
+            c,
+            CardDetailContext {
+                principal_id: authority.principal_id.clone(),
+                authority: authority.clone(),
+                device_id: device.clone(),
+                selected_realm_id: realm.clone(),
+                projection_realm_id: realm.clone(),
+                synthesis_entries: scope.bond(move || entries.clone()),
+                selected_scope_security_encrypted: scope.bond(|| Some(false)),
+            },
+        ))
+        .unwrap();
+        settle(&app, &executor);
+        // Exercise the actual production controls before checking the retained
+        // discussion owner. The assigned actor remains visible without a roster.
+        class_node(&app, "card-detail-header");
+        class_node(&app, "card-detail-title-meta");
+        class_node(&app, "card-detail-tabs-section");
+        c.card_detail_sidebar_visible
+            .revise(|visible| *visible = true);
+        settle(&app, &executor);
+        app.dispatch(
+            class_node(&app, "card-detail-assignee-add"),
+            Event::Activate,
+        )
+        .unwrap();
+        settle(&app, &executor);
+        class_node(&app, "assignee-popover");
+        let option = class_node(&app, "assignee-option");
+        assert!(
+            c.assignee_selected_actor_ids
+                .get_untracked()
+                .contains(&assigned_actor)
+        );
+        app.dispatch(option, Event::Activate).unwrap();
+        settle(&app, &executor);
+        assert_eq!(
+            class_node(&app, "assignee-option"),
+            option,
+            "selecting preserves the option node and focus"
+        );
+        assert!(
+            !c.assignee_selected_actor_ids
+                .get_untracked()
+                .contains(&assigned_actor)
+        );
+        let filter = class_node(&app, "card-detail-assignee-filter");
+        let revision = match app.tree().node(filter).unwrap().descriptor.view().props {
+            Props::Input(input) => input.revision,
+            _ => panic!("real assignee input"),
+        };
+        app.dispatch(
+            filter,
+            Event::ValueChanged {
+                value: "no such member".into(),
+                composing: false,
+                revision,
+            },
+        )
+        .unwrap();
+        settle(&app, &executor);
+        class_node(&app, "assignee-option-empty");
+        app.dispatch(
+            class_node(&app, "card-detail-assignee-cancel"),
+            Event::Activate,
+        )
+        .unwrap();
+        settle(&app, &executor);
+        assert!(!c.assignee_picker_open.get_untracked());
+        assert!(c.assignee_filter.get_untracked().is_empty());
+        assert_eq!(
+            card_assigned_actor_ids(&c.selected_card.get_untracked().unwrap()),
+            vec![assigned_actor]
+        );
+        app.dispatch(class_node(&app, "card-detail-due-trigger"), Event::Activate)
+            .unwrap();
+        settle(&app, &executor);
+        class_node(&app, "due-date-modal-head");
+        class_node(&app, "due-date-modal-body");
+        class_node(&app, "due-date-modal-actions");
+        assert_eq!(
+            nodes(&app)
+                .into_iter()
+                .filter(|id| app
+                    .tree()
+                    .node(*id)
+                    .unwrap()
+                    .descriptor
+                    .view()
+                    .classes
+                    .iter()
+                    .any(|class| class == "due-calendar-day"))
+                .count(),
+            42
+        );
+        let day = nodes(&app)
+            .into_iter()
+            .find(|id| {
+                app.tree()
+                    .node(*id)
+                    .unwrap()
+                    .descriptor
+                    .view()
+                    .name
+                    .as_deref()
+                    == Some("2026-10-20")
+            })
+            .unwrap();
+        app.dispatch(day, Event::Activate).unwrap();
+        settle(&app, &executor);
+        assert_eq!(c.due_edit_value.get_untracked(), "2026-10-20");
+        app.dispatch(class_node(&app, "card-detail-due-cancel"), Event::Activate)
+            .unwrap();
+        settle(&app, &executor);
+        assert!(!c.due_picker_open.get_untracked());
+        assert_eq!(
+            c.selected_card.get_untracked().unwrap().due,
+            "2026-10-15",
+            "cancel never writes the selected card"
+        );
+        let editor = input(&app);
+        assert!(!suspended.get());
+        let revision = {
+            let tree = app.tree();
+            match tree.node(editor).unwrap().descriptor.view().props {
+                Props::Input(input) => input.revision,
+                _ => unreachable!(),
+            }
+        };
+        app.dispatch(
+            editor,
+            Event::ValueChanged {
+                value: "unsent card discussion".into(),
+                composing: false,
+                revision,
+            },
+        )
+        .unwrap();
+        assert_eq!(value(&app, editor), "unsent card discussion");
+        // Select a real historical revision through the production popup while
+        // the discussion input and its unsent draft remain mounted.
+        app.dispatch(
+            class_node(&app, "card-detail-tab-synthesis"),
+            Event::Activate,
+        )
+        .unwrap();
+        settle(&app, &executor);
+        class_node(&app, "is-own");
+        class_node(&app, "is-latest");
+        assert_eq!(text_content(&app, "card-synthesis-author"), "AliceME");
+        assert_eq!(text_content(&app, "card-synthesis-time"), "Now");
+        app.dispatch(
+            class_node(&app, "card-synthesis-history-trigger"),
+            Event::Activate,
+        )
+        .unwrap();
+        settle(&app, &executor);
+        assert_eq!(
+            text_content(&app, "card-synthesis-history-latest"),
+            "latest"
+        );
+        assert_eq!(
+            text_content(&app, "card-synthesis-history-self-badge"),
+            "ME"
+        );
+        let old_version = nodes(&app)
+            .into_iter()
+            .find(|id| {
+                app.tree()
+                    .node(*id)
+                    .unwrap()
+                    .descriptor
+                    .view()
+                    .name
+                    .as_deref()
+                    == Some("v1 Bob Earlier")
+            })
+            .unwrap();
+        app.dispatch(old_version, Event::Activate).unwrap();
+        settle(&app, &executor);
+        class_node(&app, "is-history");
+        assert_eq!(text_content(&app, "card-synthesis-author"), "Bob");
+        assert_eq!(text_content(&app, "card-synthesis-time"), "Earlier");
+        assert!(!nodes(&app).iter().any(|id| {
+            app.tree()
+                .node(*id)
+                .unwrap()
+                .descriptor
+                .view()
+                .classes
+                .iter()
+                .any(|class| class == "card-synthesis-history-menu" || class == "is-own")
+        }));
+        assert!(nodes(&app).iter().any(|id| matches!(app.tree().node(*id).unwrap().descriptor.view().props, Props::Text(text) if text.content == "Original synthesis")));
+        app.dispatch(
+            class_node(&app, "card-synthesis-latest-button"),
+            Event::Activate,
+        )
+        .unwrap();
+        settle(&app, &executor);
+        class_node(&app, "is-own");
+        class_node(&app, "is-latest");
+        assert_eq!(text_content(&app, "card-synthesis-time"), "Now");
+        app.dispatch(
+            class_node(&app, "card-detail-tab-discussion"),
+            Event::Activate,
+        )
+        .unwrap();
+        settle(&app, &executor);
+        assert_eq!(input(&app), editor);
+        assert_eq!(value(&app, editor), "unsent card discussion");
+        let mut updated = first.clone();
+        updated.title = "Updated title".into();
+        c.selected_card
+            .revise(|value| *value = Some(updated.clone()));
+        settle(&app, &executor);
+        assert_eq!(input(&app), editor);
+        assert_eq!(value(&app, editor), "unsent card discussion");
+        assert!(nodes(&app).iter().any(|id|matches!(app.tree().node(*id).unwrap().descriptor.view().props,Props::Text(text)if text.content=="Updated title")));
+        let mut gap = updated.clone();
+        gap.authoring_basis = None;
+        gap.state = CardState::Quarantined;
+        c.selected_card.revise(|value| *value = Some(gap));
+        settle(&app, &executor);
+        assert!(suspended.get());
+        assert_eq!(input(&app), editor);
+        c.selected_card.revise(|value| *value = None);
+        settle(&app, &executor);
+        assert!(suspended.get());
+        assert_eq!(input(&app), editor);
+        assert_eq!(value(&app, editor), "unsent card discussion");
+        c.selected_card.revise(|value| *value = Some(updated));
+        settle(&app, &executor);
+        assert!(!suspended.get());
+        assert_eq!(input(&app), editor);
+        assert_eq!(value(&app, editor), "unsent card discussion");
+        context.route.revise(|value| {
+            *value = Route::KanbanTask {
+                realm_id: realm.clone(),
+                task_id: second.id.clone(),
+                tab: "discussion".into(),
+            }
+        });
+        c.selected_card
+            .revise(|value| *value = Some(second.clone()));
+        c.card_detail_discussion_mounted_for
+            .revise(|value| *value = Some(second.primary_strand_id.clone()));
+        settle(&app, &executor);
+        let replacement = input(&app);
+        assert_ne!(replacement, editor);
+        assert_eq!(value(&app, replacement), "");
+        assert!(app.tree().node(editor).is_err());
+        context.route.revise(|value| {
+            *value = Route::KanbanRealm {
+                realm_id: realm.clone(),
+            }
+        });
+        settle(&app, &executor);
+        assert!(app.tree().node(replacement).is_err());
     }
 }

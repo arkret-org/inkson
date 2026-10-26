@@ -1,13 +1,6 @@
-//! Applet Service installation, registry and accountability views.
-//!
-//! Installation submits the administrator-authored registration and grants after
-//! a Station plan preview. Independent Bots are created by the installed Service;
-//! this account client cannot impersonate its RFC9421 transport identity.
-//! Registry rows retain actual Applet identifiers and registration epochs.
-
 mod configuration;
-
 use std::collections::BTreeSet;
+use std::rc::Rc;
 
 use arkret_models_integration::{
     AppletActorPolicy, AppletApprovalRequest, AppletGhostActorMode,
@@ -16,17 +9,14 @@ use arkret_models_integration::{
     AppletPackage, AppletRegistrationEpochEvidence, AppletRevokeRequestBody,
 };
 use arkret_wire::{AppletRevokeMode, DidCoreId, ScopeRef, event_kind_str};
-use dioxus::prelude::*;
-use dioxus_primitives::checkbox::CheckboxState;
+use glory::{Cage, Scope};
 use serde_json::Value;
 
 use crate::i18n::tr;
+use crate::presentation::{InksonContext, View};
 use crate::transport::auth::{with_authed_sdk_client, with_event_submitter};
-use crate::ui::button::{Button, ButtonVariant};
-use crate::ui::checkbox::Checkbox;
-use crate::ui::dialog::Dialog;
-use crate::ui::textarea::Textarea;
 use crate::views::helpers::short_protocol_id;
+use crate::views::settings::widgets::*;
 
 /// Parse the standard preview request and obtain epoch evidence exclusively
 /// from its formal registration Event manifest.
@@ -450,355 +440,115 @@ impl AppletInstallFeedback {
     }
 }
 
-fn applet_install_feedback(status: Option<&AppletInstallFeedback>) -> Element {
-    let text = status
-        .map(AppletInstallFeedback::render)
-        .unwrap_or_default();
-    rsx! {
-        if !text.is_empty() {
-            div { class: "muted", "data-testid": "applet-install-status", "{text}" }
+fn applet_install_feedback(status: Option<&AppletInstallFeedback>) -> View {
+    match status {
+        Some(status) if !status.render().is_empty() => {
+            paragraph("muted applet-install-status", status.render())
         }
+        Some(_) => empty(),
+        None => empty(),
     }
 }
 
-#[component]
-pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element {
-    // A4 — base_url / state_store from session context instead of props.
-    let session = crate::app::SessionContext::get();
-    let base_url = crate::app::SessionContext::base_url_string();
-    let state_store = session.state_store;
-    let active_account = session.active_account;
-    // ─────────────────────────────────────────────────────────────
-    // G3.Y4 — install / uninstall / accountability state
-    // ─────────────────────────────────────────────────────────────
-    let mut install_open = use_signal(|| false);
-    let mut install_manifest = use_signal(String::new);
-    let mut install_status = use_signal(|| Option::<AppletInstallFeedback>::None);
-    // The exact typed preview snapshot is the sole confirm-state authority.
-    // Any input change discards it atomically.
-    let mut install_preview = use_signal(|| Option::<AppletInstallPreviewSnapshot>::None);
-    let mut install_approve_actions = use_signal(String::new);
-    let mut install_ghost_actors_allowed = use_signal(|| false);
-    // Optional Circle scope for the install. Blank = Realm-wide; a `ak:circle:…`
-    // id scopes the install to that Circle only (spec §4b effective_scope).
-    let mut install_circle_id = use_signal(String::new);
-    let mut trace_open_for = use_signal(|| Option::<(String, String)>::None);
-    let mut revoke_circle_id = use_signal(String::new);
-
-    // Retain observed local history separately from the verified current index.
-    // Neither collection is an inventory of active installation scopes.
-    let raw_ops = state_store.read().load().raw_operations;
-    let registrations: Vec<_> = raw_ops
-        .iter()
-        .filter(|r| {
-            r.realm_id.as_deref()
-                == Some(crate::operation::trim_realm_id(&selected_realm_id).as_str())
-        })
-        .filter_map(|r| {
-            let is_registration = observed_applet_event(&r.payload)
-                .get("kind")
-                .and_then(Value::as_str)
-                .map(|k| k == event_kind_str::APPLET_REGISTRATION)
-                .unwrap_or(false);
-            if !is_registration {
-                return None;
-            }
-            let service_id = observed_applet_body(&r.payload)
-                .and_then(|body| body.get("service_id"))
-                .and_then(Value::as_str)
-                .and_then(|value| DidCoreId::new(value.to_owned()).ok())?;
-            Some((r.clone(), service_id.into_string()))
-        })
-        .collect();
-    let bridge_errors: Vec<_> = raw_ops
-        .iter()
-        .filter(|r| {
-            r.realm_id.as_deref()
-                == Some(crate::operation::trim_realm_id(&selected_realm_id).as_str())
-        })
-        .filter(|r| {
-            observed_applet_event(&r.payload)
-                .get("kind")
-                .and_then(Value::as_str)
-                .map(|k| k == event_kind_str::APPLET_BRIDGE_ERROR)
-                .unwrap_or(false)
-        })
-        .cloned()
-        .collect();
-
-    // Observed registrations identify Services, not active installation scopes.
-    // Revisions remain visible in the history panel; each Service has one action row.
-    let mut applet_rows: BTreeSet<_> = registrations
-        .iter()
-        .filter_map(|(r, service_id)| {
-            let body = observed_applet_body(&r.payload)?;
-            let applet_id = arkret_sdk::AppletId::new(body.get("applet_id")?.as_str()?).ok()?;
-            let scope: ScopeRef =
-                serde_json::from_value(observed_applet_event(&r.payload).get("scope_ref")?.clone())
-                    .ok()?;
-            if !matches!(scope, ScopeRef::Realm { .. })
-                || scope.realm_id_opt()?.as_str()
-                    != crate::operation::trim_realm_id(&selected_realm_id)
-            {
-                return None;
-            }
-            Some((applet_id.to_string(), service_id.clone()))
-        })
-        .collect();
-
-    if let Some(entries) = state_store
-        .read()
-        .realm_current_view_entries(&crate::operation::trim_realm_id(&selected_realm_id))
-    {
-        for entry in entries {
-            let arkret_wire::CurrentState::Value {
-                selector, value, ..
-            } = entry;
-            if let arkret_wire::CurrentSelector::AppletRegistration {
-                applet_id,
-                service_id,
-            } = selector
-                && let Ok(registration) =
-                    serde_json::from_value::<arkret_sdk::AppletRegistrationPayload>(value)
-                && registration.applet_id == applet_id
-                && registration.service_id == service_id
-            {
-                applet_rows.insert((applet_id.to_string(), service_id.to_string()));
-            }
-        }
-    }
-
-    let trace_target_id = trace_open_for();
-    let trace_events: Vec<_> = match &trace_target_id {
-        Some((applet, target)) => raw_ops
-            .iter()
-            .filter(|r| {
-                let kind_is_applet = observed_applet_event(&r.payload)
-                    .get("kind")
-                    .and_then(Value::as_str)
-                    .map(|k| k.starts_with("ak.applet."))
-                    .unwrap_or(false);
-                let matches_did = observed_applet_body(&r.payload)
-                    .and_then(|b| b.get("service_id"))
-                    .and_then(Value::as_str)
-                    .map(|d| d == target.as_str())
-                    .unwrap_or(false);
-                let matches_applet = observed_applet_body(&r.payload)
-                    .and_then(|b| b.get("applet_id"))
-                    .and_then(Value::as_str)
-                    == Some(applet.as_str());
-                let matches_realm = observed_applet_event(&r.payload)
-                    .get("scope_ref")
-                    .and_then(|value| serde_json::from_value::<ScopeRef>(value.clone()).ok())
-                    .and_then(|scope| scope.realm_id_opt().map(ToString::to_string))
-                    .is_some_and(|realm| {
-                        realm == crate::operation::trim_realm_id(&selected_realm_id)
+#[derive(Clone)]
+struct AppletPage {
+    context: Rc<InksonContext>,
+    realm: String,
+    install_open: Cage<bool>,
+    install_manifest: Cage<String>,
+    install_status: Cage<Option<AppletInstallFeedback>>,
+    install_preview: Cage<Option<AppletInstallPreviewSnapshot>>,
+    install_approve_actions: Cage<String>,
+    install_ghost_actors_allowed: Cage<bool>,
+    install_circle_id: Cage<String>,
+    trace_open_for: Cage<Option<(String, String)>>,
+    revoke_circle_id: Cage<String>,
+}
+impl AppletPage {
+    fn preview(self) {
+        let context = self.context.clone();
+        let token = context.token;
+        let active_account = context.active_account;
+        let state_store = context.state_store.clone();
+        let base_url = context.base_url.get_untracked();
+        let selected_realm_id = self.realm.clone();
+        let _install_open = self.install_open;
+        let install_manifest = self.install_manifest;
+        let install_status = self.install_status;
+        let install_preview = self.install_preview;
+        let install_approve_actions = self.install_approve_actions;
+        let install_ghost_actors_allowed = self.install_ghost_actors_allowed;
+        let install_circle_id = self.install_circle_id;
+        let _trace_open_for = self.trace_open_for;
+        let _revoke_circle_id = self.revoke_circle_id;
+        let handler = {
+            let base = base_url.clone();
+            let realm = selected_realm_id.clone();
+            move |_| {
+                let raw = install_manifest.get();
+                let kind = classify_manifest_input(&raw);
+                let Some((package, registration_epoch_evidence)) =
+                    applet_install_material_from_manifest(&kind)
+                else {
+                    install_preview.revise(|value| {
+                        *value = None;
                     });
-                kind_is_applet && matches_did && matches_applet && matches_realm
-            })
-            .cloned()
-            .collect(),
-        None => Vec::new(),
-    };
-
-    rsx! {
-           div { class: "timeline", "data-testid": "applets-panel", role: "region", "aria-label": tr("applets.region"),
-               div { class: "event",
-                   div { class: "event-head",
-                       span { {tr("applets.registry")} }
-                       span { class: "badge", {applet_registered_count(registrations.len())} }
-                   }
-                   div { class: "muted",
-                       {tr("applets.registry_help")}
-                   }
-                   if registrations.is_empty() {
-                       div { class: "muted", "data-testid": "applet-registry-empty",
-                           {tr("applets.registry_empty")}
-                       }
-                   } else {
-                       for (r, service_id) in registrations {
-                           {
-                               let namespace = registration_namespace_label(observed_applet_body(&r.payload));
-                               let op_id = r.operation_id.clone();
-                               let service_id_label = short_protocol_id(&service_id);
-                               let op_id_label = short_protocol_id(&op_id);
-                               rsx! {
-                                   div { class: "event", "data-testid": "applet-registration-row",
-                                       div { class: "event-head",
-                                           span { class: "mono", title: "{service_id}", "{service_id_label}" }
-                                           span { class: "badge", "{namespace}" }
-                                       }
-                                       div { class: "muted", title: "{op_id}", {applet_value_label("applets.operation_id", &op_id_label)} }
-                                   }
-                               }
-                           }
-                       }
-                   }
-               }
-               div { class: "event", "data-testid": "applet-bridge-errors",
-                   div { class: "event-head",
-                       span { {tr("applets.bridge_errors")} }
-                       span { class: "badge red", "{bridge_errors.len()}" }
-                   }
-                   if bridge_errors.is_empty() {
-                       div { class: "muted", {tr("applets.bridge_errors_empty")} }
-                   } else {
-                       for e in bridge_errors {
-                           {
-                               let error_code = observed_applet_body(&e.payload)
-                                   .and_then(|b| b.get("error_code"))
-                                   .and_then(Value::as_str)
-                                   .unwrap_or("?")
-                                   .to_owned();
-                               let failed_transaction_ref = observed_applet_body(&e.payload)
-                                   .and_then(|b| b.get("failed_transaction_ref"))
-                                   .and_then(Value::as_str)
-                                   .unwrap_or("?")
-                                   .to_owned();
-                               let msg_opt = observed_applet_body(&e.payload)
-                                   .and_then(|b| b.get("message"))
-                                   .and_then(Value::as_str)
-                                   .map(ToOwned::to_owned);
-                               let failed_transaction_ref_label = short_protocol_id(&failed_transaction_ref);
-                               rsx! {
-                                   div { class: "event", "data-testid": "applet-bridge-error-row",
-                                       div { class: "event-head",
-                                           span { class: "mono", "{error_code}" }
-                                           span { class: "mono", title: "{failed_transaction_ref}", "{failed_transaction_ref_label}" }
-                                       }
-                                       if let Some(msg) = msg_opt {
-                                           div { class: "muted", "{msg}" }
-                                       }
-                                   }
-                               }
-                           }
-                       }
-                   }
-               }
-
-               // ─────────────────────────────────────────────────────
-               // G3.Y4 — install / list panel + accountability trace
-               // ─────────────────────────────────────────────────────
-               div { class: "event", "data-testid": "applet-list-panel",
-                   div { class: "event-head",
-                       span { {tr("applets.installed")} }
-                       span { class: "badge", "{applet_rows.len()}" }
-                       Button {
-                           variant: ButtonVariant::Primary,
-                           "data-testid": "applet-install-button",
-                           onclick: move |_| install_open.set(!install_open()),
-                           if install_open() { {tr("applets.close_install")} } else { {tr("applets.open_install")} }
-                       }
-                   }
-                   if install_open() {
-                       div { class: "workflow-form",
-                           Textarea {
-                               "data-testid": "applet-install-manifest-input",
-                               placeholder: tr("applets.manifest_placeholder"),
-                               value: "{install_manifest}",
-                               oninput: move |event: FormEvent| {
-                                   install_manifest.set(event.value());
-                                   install_preview.set(None);
-                               },
-                               style: "width: 100%; min-height: 60px;",
-                           }
-                           // Optional Circle scope. Blank installs Realm-wide; a
-                           // `ak:circle:…` id scopes the applet to that Circle only.
-                           // Changing it invalidates the previewed plan (the digest
-                           // is computed over effective_scope), so re-preview.
-                           Textarea {
-                               "data-testid": "applet-install-circle-input",
-                               placeholder: tr("applets.circle_placeholder"),
-                               value: "{install_circle_id}",
-                               oninput: move |event: FormEvent| {
-                                   install_circle_id.set(event.value());
-                                   install_preview.set(None);
-                               },
-                               style: "width: 100%; min-height: 32px;",
-                           }
-                           Textarea {
-                               "data-testid": "applet-install-approve-actions-input",
-                               placeholder: tr("applets.actions_placeholder"),
-                               value: "{install_approve_actions}",
-                               oninput: move |event: FormEvent| {
-                                   install_approve_actions.set(event.value());
-                                   install_preview.set(None);
-                               },
-                               style: "width: 100%; min-height: 48px;",
-                           }
-                           label { class: "metric", "data-testid": "applet-install-ghost-row",
-                               Checkbox {
-                                   "data-testid": "applet-install-allow-ghost",
-                                   checked: if install_ghost_actors_allowed() { CheckboxState::Checked } else { CheckboxState::Unchecked },
-                                   on_checked_change: move |state: CheckboxState| {
-                                       install_ghost_actors_allowed.set(bool::from(state));
-                                       install_preview.set(None);
-                                   },
-                               }
-                               span { {tr("applets.allow_ghost")} }
-                           }
-                           // Step 1 — author the administrator Events once, then ask
-                           // the Station to sign the closed authoring request.
-                           div { class: "actions",
-                               Button {
-                                   variant: ButtonVariant::Secondary,
-                                   "data-testid": "applet-install-verify-button",
-                                   onclick: {
-                                       let base = base_url.clone();
-                                       let realm = selected_realm_id.clone();
-                                       move |_| {
-                                           let raw = install_manifest();
-                                           let kind = classify_manifest_input(&raw);
-                                           let Some((package, registration_epoch_evidence)) =
-                                               applet_install_material_from_manifest(&kind)
-                                           else {
-                                               install_preview.set(None);
-                                               install_status.set(Some(AppletInstallFeedback::InvalidManifest));
-                                               return;
-                                           };
-                                           let base = base.clone();
-                                           let realm = realm.clone();
-                                           let api_token = token();
-                                           let Some(account) = active_account.peek().clone() else {
-                                               install_status.set(Some(AppletInstallFeedback::PreviewAccountUnavailable));
-                                               return;
-                                           };
-                                           let actor_id = account.principal_id().clone();
-                                           let install_actor_id = arkret_sdk::ActorId::account(account.authority.clone());
-                                           let target_station_id = account.authority.station_id.clone();
-                                           let realm_typed = match arkret_sdk::RealmId::new(realm.clone()) {
-                                               Ok(realm_id) => realm_id,
-                                               Err(error) => {
-                                                   install_status.set(Some(AppletInstallFeedback::InvalidRealm(error.to_string())));
-                                                   return;
-                                               }
-                                           };
-                                           let issuer_authority_basis = applet_capability_issuer_basis(
-                                               state_store.read().realm_authority_basis(realm_typed.as_str()),
-                                               &realm_typed,
-                                           );
-                                           let Some(issuer_authority_basis) = issuer_authority_basis else {
-                                               install_status.set(Some(AppletInstallFeedback::AuthorityUnavailable));
-                                               return;
-                                           };
-                                           let circle = install_circle_id();
-                                           let approve_actions = parse_applet_approval_actions(
-                                               &install_approve_actions(),
-                                           );
-                                           let ghost_actor_mode = if install_ghost_actors_allowed() {
-                                               AppletGhostActorMode::PolicyDeclared
-                                           } else {
-                                               AppletGhostActorMode::Disallowed
-                                           };
-                                           install_status.set(Some(AppletInstallFeedback::Previewing));
-                                           spawn(async move {
+                    install_status.revise(|value| {
+                        *value = Some(AppletInstallFeedback::InvalidManifest);
+                    });
+                    return;
+                };
+                let base = base.clone();
+                let realm = realm.clone();
+                let api_token = token.get();
+                let Some(account) = active_account.get_untracked().clone() else {
+                    install_status.revise(|value| {
+                        *value = Some(AppletInstallFeedback::PreviewAccountUnavailable);
+                    });
+                    return;
+                };
+                let actor_id = account.principal_id().clone();
+                let install_actor_id = arkret_sdk::ActorId::account(account.authority.clone());
+                let target_station_id = account.authority.station_id.clone();
+                let realm_typed = match arkret_sdk::RealmId::new(realm.clone()) {
+                    Ok(realm_id) => realm_id,
+                    Err(error) => {
+                        install_status.revise(|value| {
+                            *value = Some(AppletInstallFeedback::InvalidRealm(error.to_string()));
+                        });
+                        return;
+                    }
+                };
+                let issuer_authority_basis = applet_capability_issuer_basis(
+                    state_store.read(|store| store.realm_authority_basis(realm_typed.as_str())),
+                    &realm_typed,
+                );
+                let Some(issuer_authority_basis) = issuer_authority_basis else {
+                    install_status.revise(|value| {
+                        *value = Some(AppletInstallFeedback::AuthorityUnavailable);
+                    });
+                    return;
+                };
+                let circle = install_circle_id.get();
+                let approve_actions = parse_applet_approval_actions(&install_approve_actions.get());
+                let ghost_actor_mode = if install_ghost_actors_allowed.get() {
+                    AppletGhostActorMode::PolicyDeclared
+                } else {
+                    AppletGhostActorMode::Disallowed
+                };
+                install_status.revise(|value| {
+                    *value = Some(AppletInstallFeedback::Previewing);
+                });
+                {
+                    let task_owner = context.clone();
+                    let _ = task_owner.spawn(async move {
                                                let effective_scope = match applet_effective_scope(
                                                    &realm,
                                                    Some(circle.as_str()),
                                                ) {
                                                    Ok(scope) => scope,
                                                    Err(err) => {
-                                                       install_status.set(Some(AppletInstallFeedback::InvalidScope(err)));
+                                                       install_status.revise(|value|{*value=Some(AppletInstallFeedback::InvalidScope(err));});
                                                        return;
                                                    }
                                                };
@@ -813,7 +563,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                                let package_digest = match package.package_digest.clone() {
                                                    Some(value) => value,
                                                    None => {
-                                                       install_status.set(Some(AppletInstallFeedback::MissingPackageDigest));
+                                                       install_status.revise(|value|{*value=Some(AppletInstallFeedback::MissingPackageDigest);});
                                                        return;
                                                    }
                                                };
@@ -900,52 +650,70 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                                        {
                                                            let scope_count = preview.plan.approved_scopes.len();
                                                            let digest = preview.plan.plan_digest.to_string();
-                                                           install_preview.set(Some(AppletInstallPreviewSnapshot {
+                                                           install_preview.revise(|value|{*value=Some(AppletInstallPreviewSnapshot {
                                                                package,
                                                                basis: requested_basis,
                                                                preview,
-                                                           }));
-                                                           install_status.set(Some(AppletInstallFeedback::PlanReady {
+                                                           });});
+                                                           install_status.revise(|value|{*value=Some(AppletInstallFeedback::PlanReady {
                                                                scopes: scope_count,
                                                                actions: actions.len(),
                                                                digest: short_protocol_id(&digest),
-                                                           }));
+                                                           });});
                                                        }
                                                        Ok(_) => {
-                                                           install_preview.set(None);
-                                                           install_status.set(Some(AppletInstallFeedback::ScopeMismatch));
+                                                           install_preview.revise(|value|{*value=None;});
+                                                           install_status.revise(|value|{*value=Some(AppletInstallFeedback::ScopeMismatch);});
                                                        }
                                                        Err(err) => {
-                                                           install_preview.set(None);
-                                                           install_status.set(Some(AppletInstallFeedback::InvalidPreview(err.to_string())));
+                                                           install_preview.revise(|value|{*value=None;});
+                                                           install_status.revise(|value|{*value=Some(AppletInstallFeedback::InvalidPreview(err.to_string()));});
                                                        }
                                                    },
                                                    Err(err) => {
-                                                       install_preview.set(None);
-                                                       install_status.set(Some(AppletInstallFeedback::PreviewFailed(std::sync::Arc::new(err))));
+                                                       install_preview.revise(|value|{*value=None;});
+                                                       install_status.revise(|value|{*value=Some(AppletInstallFeedback::PreviewFailed(std::sync::Arc::new(err)));});
                                                    }
                                                }
                                            });
-                                       }
-                                   },
-                                   {tr("applets.preview_plan")}
-                               }
-                               // Commit only the administrator-signed Service installation.
-                               Button {
-                                   variant: if install_preview().is_some() { ButtonVariant::Primary } else { ButtonVariant::Secondary },
-                                   disabled: install_preview().is_none(),
-                                   "data-testid": "applet-install-confirm-button",
-                                   onclick: {
-                                       let base = base_url.clone();
-                                       move |_| {
-                                           let Some(snapshot) = install_preview() else {
-                                               install_status.set(Some(AppletInstallFeedback::PreviewRequired));
-                                               return;
-                                           };
-                                           let base = base.clone();
-                                           let api_token = token();
-                                           install_status.set(Some(AppletInstallFeedback::Installing));
-                                           spawn(async move {
+                };
+            }
+        };
+        handler(());
+    }
+    fn install(self) {
+        let context = self.context.clone();
+        let token = context.token;
+        let _active_account = context.active_account;
+        let _state_store = context.state_store.clone();
+        let base_url = context.base_url.get_untracked();
+        let _selected_realm_id = self.realm.clone();
+        let install_open = self.install_open;
+        let install_manifest = self.install_manifest;
+        let install_status = self.install_status;
+        let install_preview = self.install_preview;
+        let install_approve_actions = self.install_approve_actions;
+        let install_ghost_actors_allowed = self.install_ghost_actors_allowed;
+        let install_circle_id = self.install_circle_id;
+        let _trace_open_for = self.trace_open_for;
+        let _revoke_circle_id = self.revoke_circle_id;
+        let handler = {
+            let base = base_url.clone();
+            move |_| {
+                let Some(snapshot) = install_preview.get() else {
+                    install_status.revise(|value| {
+                        *value = Some(AppletInstallFeedback::PreviewRequired);
+                    });
+                    return;
+                };
+                let base = base.clone();
+                let api_token = token.get();
+                install_status.revise(|value| {
+                    *value = Some(AppletInstallFeedback::Installing);
+                });
+                {
+                    let task_owner = context.clone();
+                    let _ = task_owner.spawn(async move {
                                                let idem = snapshot.preview.plan.plan_digest.to_string();
                                                let result = with_authed_sdk_client(&base, api_token, |http| async move {
                                                    let body = AppletInstallRequestBody {
@@ -972,103 +740,76 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                                            },
                                                        };
                                                        let installed = matches!(outcome.effective_status, Status::Installed);
-                                                       install_status.set(Some(feedback));
+                                                       install_status.revise(|value|{*value=Some(feedback);});
                                                        // Keep the form open on a partial outcome so the
                                                        // admin can adjust and retry denied scopes.
                                                        if installed {
-                                                           install_open.set(false);
-                                                           install_manifest.set(String::new());
-                                                           install_circle_id.set(String::new());
-                                                           install_approve_actions.set(String::new());
-                                                           install_ghost_actors_allowed.set(false);
-                                                           install_preview.set(None);
+                                                           install_open.revise(|value|{*value=false;});
+                                                           install_manifest.revise(|value|{*value=String::new();});
+                                                           install_circle_id.revise(|value|{*value=String::new();});
+                                                           install_approve_actions.revise(|value|{*value=String::new();});
+                                                           install_ghost_actors_allowed.revise(|value|{*value=false;});
+                                                           install_preview.revise(|value|{*value=None;});
                                                        }
                                                    }
-                                                   Err(err) => install_status.set(Some(AppletInstallFeedback::InstallFailed(std::sync::Arc::new(err)))),
+                                                   Err(err) => install_status.revise(|value|{*value=Some(AppletInstallFeedback::InstallFailed(std::sync::Arc::new(err)));}),
                                                }
                                            });
-                                       }
-                                   },
-                                   {tr("applets.install")}
-                               }
-                           }
-                           {applet_install_feedback(install_status.read().as_ref())}
-                       }
-                   }
-
-                   div { class: "workflow-form",
-                       label { r#for: "applet-revoke-circle", {tr("applets.revoke_scope")} }
-                       Textarea {
-                           id: "applet-revoke-circle",
-                           "data-testid": "applet-revoke-circle-input",
-                           placeholder: tr("applets.circle_placeholder"),
-                           value: "{revoke_circle_id}",
-                           oninput: move |event: FormEvent| revoke_circle_id.set(event.value()),
-                       }
-                       p { class: "muted", {tr("applets.revoke_scope_help")} }
-                   }
-                   if applet_rows.is_empty() {
-                       div { class: "muted", "data-testid": "applet-empty",
-                           {tr("applets.installed_empty")}
-                       }
-                   } else {
-                       for (applet_id, service_id) in applet_rows.iter().cloned() {
-                           {
-                               let service_id_label = short_protocol_id(&service_id);
-                               rsx! {
-                                   div {
-                                       class: "event",
-                                       "data-testid": "applet-row",
-                                       "data-applet-id": "{applet_id}",
-                                       "data-service-id": "{service_id}",
-                                       div { class: "event-head",
-                                           span { class: "mono", title: "{service_id}", "{service_id_label}" }
-                                           span { class: "mono muted", title: "{applet_id}", {short_protocol_id(&applet_id)} }
-                                       }
-                                       configuration::ConfigurationPanel {
-                                           key: "{applet_id}/{service_id}/{selected_realm_id}",
-                                           token, realm_id: selected_realm_id.clone(),
-                                           applet_id: applet_id.clone(), service_id: service_id.clone(),
-                                       }
-                                       div { class: "actions",
-                                           Button {
-                                               variant: ButtonVariant::Secondary,
-                                               "data-testid": "applet-accountability-trace-button",
-                                               onclick: {
-                                                   let aid = applet_id.clone();
-                                                   let sid = service_id.clone();
-                                                   move |_| trace_open_for.set(Some((aid.clone(), sid.clone())))
-                                               },
-                                               {tr("applets.trace_events")}
-                                           }
-                                           Button {
-                                               variant: ButtonVariant::Destructive,
-                                               "data-testid": "applet-uninstall-button",
-                                               onclick: {
-                                                   let base = base_url.clone();
-                                                   let realm = selected_realm_id.clone();
-                                                   let service_id = service_id.clone();
-                                                   let aid = applet_id.clone();
-                                                   move |_| {
-                                                       let base = base.clone();
-                                                       let realm = crate::operation::trim_realm_id(&realm);
-                                                       let effective_scope = match applet_effective_scope(&realm, Some(&revoke_circle_id())) {
-                                                           Ok(scope) => scope,
-                                                           Err(error) => {
-                                                               install_status.set(Some(AppletInstallFeedback::InvalidScope(error)));
-                                                               return;
-                                                           }
-                                                       };
-                                                       let service_id = service_id.clone();
-                                                       let aid = aid.clone();
-                                                       let api_token = token();
-                                                       let Some(account) = active_account.peek().clone() else {
-                                                           install_status.set(Some(AppletInstallFeedback::RevokeAccountUnavailable));
-                                                           return;
-                                                       };
-                                                       let principal_id = account.authority.principal_id;
-                                                       install_status.set(Some(AppletInstallFeedback::Revoking));
-                                                       spawn(async move {
+                };
+            }
+        };
+        handler(());
+    }
+    fn revoke(self, applet_id: String, service_id: String) {
+        let context = self.context.clone();
+        let token = context.token;
+        let active_account = context.active_account;
+        let _state_store = context.state_store.clone();
+        let base_url = context.base_url.get_untracked();
+        let selected_realm_id = self.realm.clone();
+        let _install_open = self.install_open;
+        let _install_manifest = self.install_manifest;
+        let install_status = self.install_status;
+        let _install_preview = self.install_preview;
+        let _install_approve_actions = self.install_approve_actions;
+        let _install_ghost_actors_allowed = self.install_ghost_actors_allowed;
+        let _install_circle_id = self.install_circle_id;
+        let _trace_open_for = self.trace_open_for;
+        let revoke_circle_id = self.revoke_circle_id;
+        let handler = {
+            let base = base_url.clone();
+            let realm = selected_realm_id.clone();
+            let service_id = service_id.clone();
+            let aid = applet_id.clone();
+            move |_| {
+                let base = base.clone();
+                let realm = crate::operation::trim_realm_id(&realm);
+                let effective_scope =
+                    match applet_effective_scope(&realm, Some(&revoke_circle_id.get())) {
+                        Ok(scope) => scope,
+                        Err(error) => {
+                            install_status.revise(|value| {
+                                *value = Some(AppletInstallFeedback::InvalidScope(error));
+                            });
+                            return;
+                        }
+                    };
+                let service_id = service_id.clone();
+                let aid = aid.clone();
+                let api_token = token.get();
+                let Some(account) = active_account.get_untracked().clone() else {
+                    install_status.revise(|value| {
+                        *value = Some(AppletInstallFeedback::RevokeAccountUnavailable);
+                    });
+                    return;
+                };
+                let principal_id = account.authority.principal_id;
+                install_status.revise(|value| {
+                    *value = Some(AppletInstallFeedback::Revoking);
+                });
+                {
+                    let task_owner = context.clone();
+                    let _ = task_owner.spawn(async move {
                                                            let reason_code = arkret_sdk::ReasonCode::PolicyRevoked;
                                                            let revoke_mode = AppletRevokeMode::RevokeRuntimeOnly;
                                                            let result = with_event_submitter(&base, api_token, |submitter| async move {
@@ -1135,180 +876,577 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                                            })
                                                            .await;
                                                            match result {
-                                                               Ok(outcome) => install_status.set(Some(AppletInstallFeedback::Revoked(outcome.revoked_refs.len()))),
-                                                               Err(err) => install_status.set(Some(AppletInstallFeedback::RevokeFailed(std::sync::Arc::new(err)))),
+                                                               Ok(outcome) => install_status.revise(|value|{*value=Some(AppletInstallFeedback::Revoked(outcome.revoked_refs.len()));}),
+                                                               Err(err) => install_status.revise(|value|{*value=Some(AppletInstallFeedback::RevokeFailed(std::sync::Arc::new(err)));}),
                                                            }
                                                        });
-                                                   }
-                                               },
-                                               {tr("applets.uninstall")}
-                                           }
-                                       }
-                                   }
-                               }
-                           }
-                       }
-                   }
-               }
+                };
+            }
+        };
+        handler(());
+    }
+}
+fn applet_inventory_surface(
+    scope: &Scope,
+    st: AppletPage,
+    selected_realm_id: String,
+    services: bool,
+    installed_count: Cage<usize>,
+) -> View {
+    let _self_ref = st.clone();
+    let state_store = st.context.state_store.clone();
+    let trace_open_for = st.trace_open_for;
+    let raw_ops = state_store.read(|store| store.load()).raw_operations;
+    let registrations: Vec<_> = raw_ops
+        .iter()
+        .filter(|r| {
+            r.realm_id.as_deref()
+                == Some(crate::operation::trim_realm_id(&selected_realm_id).as_str())
+        })
+        .filter_map(|r| {
+            let is_registration = observed_applet_event(&r.payload)
+                .get("kind")
+                .and_then(Value::as_str)
+                .map(|k| k == event_kind_str::APPLET_REGISTRATION)
+                .unwrap_or(false);
+            if !is_registration {
+                return None;
+            }
+            let service_id = observed_applet_body(&r.payload)
+                .and_then(|body| body.get("service_id"))
+                .and_then(Value::as_str)
+                .and_then(|value| DidCoreId::new(value.to_owned()).ok())?;
+            Some((r.clone(), service_id.into_string()))
+        })
+        .collect();
+    let bridge_errors: Vec<_> = raw_ops
+        .iter()
+        .filter(|r| {
+            r.realm_id.as_deref()
+                == Some(crate::operation::trim_realm_id(&selected_realm_id).as_str())
+        })
+        .filter(|r| {
+            observed_applet_event(&r.payload)
+                .get("kind")
+                .and_then(Value::as_str)
+                .map(|k| k == event_kind_str::APPLET_BRIDGE_ERROR)
+                .unwrap_or(false)
+        })
+        .cloned()
+        .collect();
 
-               // Accountability trace modal — renders only when the
-               // operator clicked the trace button on a row.
-               if let Some(target) = trace_open_for() {
-                   {
-                       let target = format!("{} / {}", target.0, target.1);
-                       let target_label = target.clone();
-                       rsx! {
-                           Dialog {
-                               open: true,
-                               on_open_change: move |open: bool| {
-                                   if !open {
-                                       trace_open_for.set(None);
-                                   }
-                               },
-                               "data-testid": "applet-accountability-modal",
-                               div {
-                                   class: "publish-to-source-modal",
-                                   header {
-                                       class: "publish-to-source-modal-header",
-                                       h2 { title: "{target}", {applet_value_label("applets.trace_title", &target_label)} }
-                                   }
-                                   section {
-                                       class: "publish-to-source-modal-body",
-                                       if trace_events.is_empty() {
-                                           p { class: "muted", {tr("applets.trace_empty")} }
-                                       } else {
-                                           for ev in trace_events.iter() {
-                                               {
-                                                   let event_id = ev.operation_id.clone();
-                                                   let kind = ev
-                                                       .payload
-                                                       .get("kind")
-                                                       .and_then(Value::as_str)
-                                                       .unwrap_or("?")
-                                                       .to_owned();
-                                                   let emitted_at = ev
-                                                       .payload
-                                                       .get("timestamp")
-                                                       .and_then(Value::as_str)
-                                                       .unwrap_or("-")
-                                                       .to_owned();
-                                                   let event_id_label = short_protocol_id(&event_id);
-                                                   rsx! {
-                                                       div {
-                                                           class: "event",
-                                                           "data-testid": "applet-accountability-event",
-                                                           "data-event-id": "{event_id}",
-                                                           "data-emitted-at": "{emitted_at}",
-                                                           div { class: "event-head",
-                                                               span { class: "mono", "{kind}" }
-                                                               span { class: "muted", "{emitted_at}" }
-                                                           }
-                                                           div { class: "muted", title: "{event_id}", {applet_value_label("applets.event_id", &event_id_label)} }
-                                                       }
-                                                   }
-                                               }
-                                           }
-                                       }
-                                   }
-                                   footer {
-                                       class: "publish-to-source-modal-footer",
-                                       Button {
-                                           variant: ButtonVariant::Secondary,
-                                           onclick: move |_| trace_open_for.set(None),
-                                           {tr("common.close")}
-                                       }
-                                   }
-                               }
-                           }
-                       }
-                   }
-               }
-           }
-       }
+    // Observed registrations identify Services, not active installation scopes.
+    // Revisions remain visible in the history panel; each Service has one action row.
+    let mut applet_rows: BTreeSet<_> = registrations
+        .iter()
+        .filter_map(|(r, service_id)| {
+            let body = observed_applet_body(&r.payload)?;
+            let applet_id = arkret_sdk::AppletId::new(body.get("applet_id")?.as_str()?).ok()?;
+            let scope: ScopeRef =
+                serde_json::from_value(observed_applet_event(&r.payload).get("scope_ref")?.clone())
+                    .ok()?;
+            if !matches!(scope, ScopeRef::Realm { .. })
+                || scope.realm_id_opt()?.as_str()
+                    != crate::operation::trim_realm_id(&selected_realm_id)
+            {
+                return None;
+            }
+            Some((applet_id.to_string(), service_id.clone()))
+        })
+        .collect();
+
+    if let Some(entries) = state_store.read(|store| {
+        store.realm_current_view_entries(&crate::operation::trim_realm_id(&selected_realm_id))
+    }) {
+        for entry in entries {
+            let arkret_wire::CurrentState::Value {
+                selector, value, ..
+            } = entry;
+            if let arkret_wire::CurrentSelector::AppletRegistration {
+                applet_id,
+                service_id,
+            } = selector
+                && let Ok(registration) =
+                    serde_json::from_value::<arkret_sdk::AppletRegistrationPayload>(value)
+                && registration.applet_id == applet_id
+                && registration.service_id == service_id
+            {
+                applet_rows.insert((applet_id.to_string(), service_id.to_string()));
+            }
+        }
+    }
+
+    let trace_target_id = trace_open_for.get();
+    let _trace_events: Vec<_> = match &trace_target_id {
+        Some((applet, target)) => raw_ops
+            .iter()
+            .filter(|r| {
+                let kind_is_applet = observed_applet_event(&r.payload)
+                    .get("kind")
+                    .and_then(Value::as_str)
+                    .map(|k| k.starts_with("ak.applet."))
+                    .unwrap_or(false);
+                let matches_did = observed_applet_body(&r.payload)
+                    .and_then(|b| b.get("service_id"))
+                    .and_then(Value::as_str)
+                    .map(|d| d == target.as_str())
+                    .unwrap_or(false);
+                let matches_applet = observed_applet_body(&r.payload)
+                    .and_then(|b| b.get("applet_id"))
+                    .and_then(Value::as_str)
+                    == Some(applet.as_str());
+                let matches_realm = observed_applet_event(&r.payload)
+                    .get("scope_ref")
+                    .and_then(|value| serde_json::from_value::<ScopeRef>(value.clone()).ok())
+                    .and_then(|scope| scope.realm_id_opt().map(ToString::to_string))
+                    .is_some_and(|realm| {
+                        realm == crate::operation::trim_realm_id(&selected_realm_id)
+                    });
+                kind_is_applet && matches_did && matches_applet && matches_realm
+            })
+            .cloned()
+            .collect(),
+        None => Vec::new(),
+    };
+
+    if !services {
+        let registry = stack(
+            "event",
+            vec![
+                line(
+                    "event-head",
+                    vec![
+                        plain(tr("applets.registry")),
+                        paragraph("badge", applet_registered_count(registrations.len())),
+                    ],
+                ),
+                paragraph("muted", tr("applets.registry_help")),
+                if registrations.is_empty() {
+                    paragraph("muted applet-registry-empty", tr("applets.registry_empty"))
+                } else {
+                    stack(
+                        "applet-registration-list",
+                        registrations
+                            .into_iter()
+                            .map(|(record, service)| {
+                                let namespace = registration_namespace_label(observed_applet_body(
+                                    &record.payload,
+                                ));
+                                stack(
+                                    "event applet-registration-row",
+                                    vec![
+                                        line(
+                                            "event-head",
+                                            vec![
+                                                paragraph("mono", short_protocol_id(&service)),
+                                                paragraph("badge", namespace),
+                                            ],
+                                        ),
+                                        paragraph(
+                                            "muted",
+                                            applet_value_label(
+                                                "applets.operation_id",
+                                                &short_protocol_id(&record.operation_id),
+                                            ),
+                                        ),
+                                    ],
+                                )
+                            })
+                            .collect(),
+                    )
+                },
+            ],
+        );
+        let errors = stack(
+            "event applet-bridge-errors",
+            vec![
+                line(
+                    "event-head",
+                    vec![
+                        plain(tr("applets.bridge_errors")),
+                        paragraph("badge red", bridge_errors.len().to_string()),
+                    ],
+                ),
+                if bridge_errors.is_empty() {
+                    paragraph("muted", tr("applets.bridge_errors_empty"))
+                } else {
+                    stack(
+                        "applet-error-list",
+                        bridge_errors
+                            .into_iter()
+                            .map(|record| {
+                                let body = observed_applet_body(&record.payload);
+                                stack(
+                                    "event applet-bridge-error-row",
+                                    vec![
+                                        line(
+                                            "event-head",
+                                            vec![
+                                                paragraph(
+                                                    "mono",
+                                                    body.and_then(|b| b.get("error_code"))
+                                                        .and_then(Value::as_str)
+                                                        .unwrap_or("?")
+                                                        .to_owned(),
+                                                ),
+                                                paragraph(
+                                                    "mono",
+                                                    short_protocol_id(
+                                                        body.and_then(|b| {
+                                                            b.get("failed_transaction_ref")
+                                                        })
+                                                        .and_then(Value::as_str)
+                                                        .unwrap_or("?"),
+                                                    ),
+                                                ),
+                                            ],
+                                        ),
+                                        paragraph(
+                                            "muted",
+                                            body.and_then(|b| b.get("message"))
+                                                .and_then(Value::as_str)
+                                                .unwrap_or_default()
+                                                .to_owned(),
+                                        ),
+                                    ],
+                                )
+                            })
+                            .collect(),
+                    )
+                },
+            ],
+        );
+        return Box::new(glory::ui::group().fill(vec![registry, errors]));
+    }
+    let count = applet_rows.len();
+    if installed_count.get_untracked() != count {
+        installed_count.revise(|value| *value = count);
+    }
+    if applet_rows.is_empty() {
+        paragraph("muted applet-empty", tr("applets.installed_empty"))
+    } else {
+        stack(
+            "applet-service-list",
+            applet_rows
+                .into_iter()
+                .map(|(applet, service)| {
+                    let trace = st.trace_open_for;
+                    let aid = applet.clone();
+                    let sid = service.clone();
+                    let revoke = st.clone();
+                    let a = applet.clone();
+                    let s = service.clone();
+                    stack(
+                        "event applet-row",
+                        vec![
+                            line(
+                                "event-head",
+                                vec![
+                                    paragraph("mono", short_protocol_id(&service)),
+                                    paragraph("mono muted", short_protocol_id(&applet)),
+                                ],
+                            ),
+                            configuration::page(
+                                scope,
+                                st.context.clone(),
+                                selected_realm_id.clone(),
+                                applet,
+                                service,
+                            ),
+                            line(
+                                "actions",
+                                vec![
+                                    action(
+                                        scope,
+                                        st.context.clone(),
+                                        "applet-accountability-trace-button",
+                                        "applets.trace_events",
+                                        "secondary",
+                                        true,
+                                        move || {
+                                            trace.revise(|v| *v = Some((aid.clone(), sid.clone())))
+                                        },
+                                    ),
+                                    action(
+                                        scope,
+                                        st.context.clone(),
+                                        "applet-uninstall-button",
+                                        "applets.uninstall",
+                                        "destructive",
+                                        true,
+                                        move || revoke.clone().revoke(a.clone(), s.clone()),
+                                    ),
+                                ],
+                            ),
+                        ],
+                    )
+                })
+                .collect(),
+        )
+    }
 }
 
+pub fn page(scope: &Scope, context: Rc<InksonContext>, _route: crate::routes::Route) -> View {
+    let state = AppletPage {
+        context: context.clone(),
+        realm: context.selected_realm_id.get_untracked(),
+        install_open: scope.cage(false),
+        install_manifest: scope.cage(String::new()),
+        install_status: scope.cage(None),
+        install_preview: scope.cage(None),
+        install_approve_actions: scope.cage(String::new()),
+        install_ghost_actors_allowed: scope.cage(false),
+        install_circle_id: scope.cage(String::new()),
+        trace_open_for: scope.cage(None),
+        revoke_circle_id: scope.cage(String::new()),
+    };
+    let open = state.install_open;
+    let preview = state.install_preview;
+    let form = {
+        let state = state.clone();
+        reactive(open, move |scope, open| {
+            if !open {
+                return empty();
+            }
+            let mut fields = vec![];
+            for (key, label, value) in [
+                (
+                    "applet-install-manifest-input",
+                    "applets.manifest_placeholder",
+                    state.install_manifest,
+                ),
+                (
+                    "applet-install-circle-input",
+                    "applets.circle_placeholder",
+                    state.install_circle_id,
+                ),
+                (
+                    "applet-install-approve-actions-input",
+                    "applets.actions_placeholder",
+                    state.install_approve_actions,
+                ),
+            ] {
+                let control: View = Box::new(
+                    sapid::field(key)
+                        .unstyled()
+                        .class(format!("applet-install-field {key}"))
+                        .label(state.context.translated(scope, label))
+                        .control(move |field| {
+                            sapid::text_field()
+                                .unstyled()
+                                .class("input")
+                                .field(field)
+                                .value(value)
+                                .multiline(true)
+                                .on_value_change(move |next| {
+                                    value.revise(|v| *v = next);
+                                    preview.revise(|v| *v = None);
+                                })
+                        }),
+                );
+                fields.push(stack(
+                    format!("applet-install-prompt {key}-prompt"),
+                    vec![input_prompt(
+                        scope,
+                        state.context.translated(scope, label).into(),
+                        value,
+                        control,
+                    )],
+                ));
+            }
+            let ghost = state.install_ghost_actors_allowed;
+            fields.push(stack(
+                "metric applet-install-ghost-row",
+                vec![toggle(
+                    scope,
+                    state.context.clone(),
+                    "applet-install-allow-ghost",
+                    "applets.allow_ghost",
+                    ghost,
+                    true,
+                    move |next| {
+                        ghost.revise(|v| *v = next);
+                        preview.revise(|v| *v = None);
+                    },
+                )],
+            ));
+            let st = state.clone();
+            fields.push(action(
+                scope,
+                state.context.clone(),
+                "applet-install-verify-button",
+                "applets.preview_plan",
+                "secondary",
+                true,
+                move || st.clone().preview(),
+            ));
+            let st = state.clone();
+            fields.push(action(
+                scope,
+                state.context.clone(),
+                "applet-install-confirm-button",
+                "applets.install",
+                "primary",
+                scope.bond(move || preview.get().is_some()),
+                move || st.clone().install(),
+            ));
+            fields.push(reactive(state.install_status, move |_, feedback| {
+                applet_install_feedback(feedback.as_ref())
+            }));
+            stack("workflow-form", fields)
+        })
+    };
+    let source = {
+        let ctx = context.clone();
+        scope.bond(move || {
+            let _ = ctx.state_revision.get();
+            let _ = ctx.locale.get();
+            ctx.selected_realm_id.get()
+        })
+    };
+    let installed_count = scope.cage(0usize);
+    let inventory = reactive(source, {
+        let state = state.clone();
+        move |scope, selected_realm_id| {
+            applet_inventory_surface(
+                scope,
+                state.clone(),
+                selected_realm_id,
+                false,
+                installed_count,
+            )
+        }
+    });
+    let services = reactive(source, {
+        let state = state.clone();
+        move |scope, selected_realm_id| {
+            applet_inventory_surface(
+                scope,
+                state.clone(),
+                selected_realm_id,
+                true,
+                installed_count,
+            )
+        }
+    });
+    let trace = {
+        let state = state.clone();
+        reactive(state.trace_open_for, move |scope, target| {
+            let Some((applet, service)) = target else {
+                return empty();
+            };
+            let ctx = state.context.clone();
+            let events = ctx
+                .snapshot()
+                .raw_operations
+                .into_iter()
+                .filter(|record| {
+                    let event = observed_applet_event(&record.payload);
+                    let body = observed_applet_body(&record.payload);
+                    event
+                        .get("kind")
+                        .and_then(Value::as_str)
+                        .is_some_and(|kind| kind.starts_with("ak.applet."))
+                        && body
+                            .and_then(|b| b.get("applet_id"))
+                            .and_then(Value::as_str)
+                            == Some(applet.as_str())
+                        && body
+                            .and_then(|b| b.get("service_id"))
+                            .and_then(Value::as_str)
+                            == Some(service.as_str())
+                        && event
+                            .get("scope_ref")
+                            .and_then(|scope| {
+                                serde_json::from_value::<ScopeRef>(scope.clone()).ok()
+                            })
+                            .and_then(|scope| scope.realm_id_opt().map(ToString::to_string))
+                            .as_deref()
+                            == Some(state.realm.as_str())
+                })
+                .map(|record| {
+                    stack(
+                        "event applet-accountability-event",
+                        vec![
+                            paragraph("mono", record.operation_id),
+                            paragraph(
+                                "muted",
+                                observed_applet_event(&record.payload)
+                                    .get("kind")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or_default()
+                                    .to_owned(),
+                            ),
+                        ],
+                    )
+                })
+                .collect();
+            confirmation(
+                scope,
+                ctx.clone(),
+                "applet-accountability-modal",
+                ctx.translated(scope, "applets.trace_events"),
+                stack("applet-trace-events", events),
+                move || state.trace_open_for.revise(|v| *v = None),
+            )
+        })
+    };
+    Box::new(
+        glory::ui::view()
+            .role(glory::render::Role::Section)
+            .name(context.translated(scope, "applets.region"))
+            .class("timeline applets-panel")
+            .fill(vec![
+                inventory,
+                stack(
+                    "event applet-list-panel",
+                    vec![
+                        line(
+                            "event-head",
+                            vec![
+                                plain(context.translated(scope, "applets.installed")),
+                                paragraph(
+                                    "badge",
+                                    scope.bond(move || installed_count.get().to_string()),
+                                ),
+                                Box::new(
+                                    sapid::button()
+                                        .unstyled()
+                                        .class("primary applet-install-button")
+                                        .label({
+                                            let context = context.clone();
+                                            scope.bond(move || {
+                                                context.tr(if open.get() {
+                                                    "applets.close_install"
+                                                } else {
+                                                    "applets.open_install"
+                                                })
+                                            })
+                                        })
+                                        .on_press(move || open.revise(|v| *v = !*v)),
+                                ),
+                            ],
+                        ),
+                        form,
+                        services,
+                        input(
+                            scope,
+                            context.clone(),
+                            "applet-revoke-circle-input",
+                            "applets.circle_placeholder",
+                            state.revoke_circle_id,
+                            true,
+                        ),
+                    ],
+                ),
+                trace,
+            ]),
+    )
+}
 #[cfg(test)]
 mod tests {
 
-    use std::cell::RefCell;
-    use std::rc::Rc;
-
-    use dioxus::prelude::*;
-
-    use crate::i18n::{I18nSignal, UiLocale};
-
-    type LocaleHandle = Rc<RefCell<Option<I18nSignal>>>;
-
-    type FeedbackHandle =
-        Rc<RefCell<Option<(I18nSignal, Signal<Option<super::AppletInstallFeedback>>)>>>;
-
-    fn retained_applet_feedback(handle: FeedbackHandle) -> Element {
-        let locale = use_context_provider(|| crate::i18n::init_i18n_with_locale(UiLocale::En));
-        let status = use_signal(|| Option::<super::AppletInstallFeedback>::None);
-        *handle.borrow_mut() = Some((locale, status));
-        // The production feedback surface retains values and typed API errors;
-        // this test does not execute installation or the session-dependent panel.
-        let status = status.read();
-        super::applet_install_feedback(status.as_ref())
-    }
-
-    fn feedback_div_count(dom: &VirtualDom, node: &dioxus::core::VNode) -> usize {
-        fn template_count(
-            dom: &VirtualDom,
-            node: &dioxus::core::VNode,
-            template: &dioxus::core::TemplateNode,
-        ) -> usize {
-            use dioxus::core::{DynamicNode, TemplateAttribute, TemplateNode};
-            match template {
-                TemplateNode::Element {
-                    tag,
-                    attrs,
-                    children,
-                    ..
-                } => {
-                    let is_status = *tag == "div"
-                        && attrs.iter().any(|attribute| {
-                            matches!(
-                                attribute,
-                                TemplateAttribute::Static {
-                                    name: "data-testid",
-                                    value: "applet-install-status",
-                                    ..
-                                }
-                            )
-                        });
-                    usize::from(is_status)
-                        + children
-                            .iter()
-                            .map(|child| template_count(dom, node, child))
-                            .sum::<usize>()
-                }
-                TemplateNode::Dynamic { id } => match &node.dynamic_nodes[*id] {
-                    DynamicNode::Fragment(nodes) => nodes
-                        .iter()
-                        .map(|child| feedback_div_count(dom, child))
-                        .sum(),
-                    // Dioxus wraps the app in mounted Suspense/Error components.
-                    // Follow the actual child scope rather than guessing a ScopeId.
-                    DynamicNode::Component(component) => {
-                        let scope = component
-                            .mounted_scope(*id, node, dom)
-                            .expect("rendered feedback component is mounted");
-                        feedback_div_count(dom, scope.root_node())
-                    }
-                    _ => 0,
-                },
-                TemplateNode::Text { .. } => 0,
-            }
-        }
-
-        node.template
-            .roots
-            .iter()
-            .map(|root| template_count(dom, node, root))
-            .sum()
-    }
-
+    use crate::i18n::UiLocale;
     #[test]
     fn retained_applet_feedback_rerenders_original_parameters_and_safe_api_errors() {
         use std::sync::Arc;
@@ -1316,19 +1454,6 @@ mod tests {
         use super::AppletInstallFeedback as Feedback;
         use crate::transport::auth::ApiCallError;
 
-        let handle = Rc::new(RefCell::new(None));
-        let mut dom = VirtualDom::new_with_props(retained_applet_feedback, handle.clone());
-        assert!(text_edits(dom.rebuild_to_vec()).is_empty());
-        assert_eq!(feedback_div_count(&dom, dom.base_scope().root_node()), 0);
-        let (mut locale, mut status) = handle.borrow().expect("surface provides signals");
-        dom.in_runtime(|| status.set(Some(Feedback::InvalidScope(String::new()))));
-        assert!(text_edits(dom.render_immediate_to_vec()).is_empty());
-        assert_eq!(feedback_div_count(&dom, dom.base_scope().root_node()), 0);
-        for language in [UiLocale::Zh, UiLocale::En] {
-            dom.in_runtime(|| crate::i18n::set_locale(&mut locale, language));
-            assert!(text_edits(dom.render_immediate_to_vec()).is_empty());
-            assert_eq!(feedback_div_count(&dom, dom.base_scope().root_node()), 0);
-        }
         let original = "applets.registry {value} {scopes} {actions} {digest} {rejected} 原文";
         let server_detail = "applets.registry {error} private server detail";
         let diagnostic = "private diagnostic {error}";
@@ -1404,71 +1529,21 @@ mod tests {
             ),
         ];
         for (feedback, english, chinese) in cases {
-            dom.in_runtime(|| status.set(Some(feedback.clone())));
-            assert_eq!(
-                text_edits(dom.render_immediate_to_vec()),
-                vec![english.clone()]
-            );
-            assert_eq!(feedback_div_count(&dom, dom.base_scope().root_node()), 1);
-            for (language, text) in [(UiLocale::Zh, chinese), (UiLocale::En, english)] {
-                dom.in_runtime(|| crate::i18n::set_locale(&mut locale, language));
-                let edits = text_edits(dom.render_immediate_to_vec());
-                // An unchanged literal diagnostic has no text mutation.
-                if matches!(feedback, Feedback::InvalidScope(_)) {
-                    assert!(edits.is_empty());
-                } else {
-                    assert_eq!(edits, vec![text]);
-                }
+            for (locale, expected) in [(UiLocale::En, english), (UiLocale::Zh, chinese)] {
+                crate::i18n::with_test_locale(locale, || assert_eq!(feedback.render(), expected));
             }
-            if let Feedback::InstallFailed(error) | Feedback::RevokeFailed(error) =
-                status.read().as_ref().expect("feedback is retained")
-            {
+            if let Feedback::InstallFailed(error) | Feedback::RevokeFailed(error) = &feedback {
                 assert!(Arc::ptr_eq(error, &server_error));
                 let (_, envelope) = crate::api_error::api_error_status_and_envelope(error.inner())
                     .expect("original server envelope is retained");
                 assert_eq!(envelope.detail, server_detail);
                 assert_eq!(envelope.extensions["reason_detail"], diagnostic);
             }
-            dom.in_runtime(|| status.set(None));
-            assert!(text_edits(dom.render_immediate_to_vec()).is_empty());
-            assert_eq!(feedback_div_count(&dom, dom.base_scope().root_node()), 0);
         }
+        assert_eq!(Feedback::InvalidScope(String::new()).render(), "");
     }
-
-    fn retained_applet_labels(handle: LocaleHandle) -> Element {
-        let locale = use_context_provider(|| crate::i18n::init_i18n_with_locale(UiLocale::En));
-        *handle.borrow_mut() = Some(locale);
-        // This surface exercises production presentation helpers, not the
-        // session-dependent AppletsPanel lifecycle or registration authoring.
-        let observed = use_signal(|| (7usize, "applets.registry {value} {count} 原文".to_owned()));
-        let (count, original) = &*observed.read();
-        let text = format!(
-            "{} | {} | {} | {} | {}",
-            super::applet_registered_count(*count),
-            super::applet_value_label("applets.operation_id", original),
-            super::applet_value_label("applets.trace_title", original),
-            super::applet_value_label("applets.event_id", ""),
-            original,
-        );
-        rsx! { p { "{text}" } }
-    }
-
-    fn text_edits(edits: dioxus::core::Mutations) -> Vec<String> {
-        edits
-            .edits
-            .into_iter()
-            .filter_map(|edit| match edit {
-                dioxus::core::Mutation::CreateTextNode { value, .. }
-                | dioxus::core::Mutation::SetText { value, .. } => Some(value),
-                _ => None,
-            })
-            .collect()
-    }
-
     #[test]
     fn retained_applet_labels_rerender_without_interpreting_identifiers_or_empty_values() {
-        let handle = Rc::new(RefCell::new(None));
-        let mut dom = VirtualDom::new_with_props(retained_applet_labels, handle.clone());
         let original = "applets.registry {value} {count} 原文";
         let english = format!(
             "7 registered | operation_id {original} | Accountability trace — {original} | event_id  | {original}"
@@ -1476,14 +1551,22 @@ mod tests {
         let chinese = format!(
             "已注册 7 个 | 操作标识 {original} | 问责事件追踪 — {original} | 事件标识  | {original}"
         );
-        assert_eq!(text_edits(dom.rebuild_to_vec()), vec![english.clone()]);
-        let mut locale = handle.borrow().expect("surface provides locale");
-        for (language, text) in [(UiLocale::Zh, chinese), (UiLocale::En, english)] {
-            dom.in_runtime(|| crate::i18n::set_locale(&mut locale, language));
-            assert_eq!(text_edits(dom.render_immediate_to_vec()), vec![text]);
+        for (locale, expected) in [(UiLocale::En, english), (UiLocale::Zh, chinese)] {
+            crate::i18n::with_test_locale(locale, || {
+                assert_eq!(
+                    format!(
+                        "{} | {} | {} | {} | {}",
+                        super::applet_registered_count(7),
+                        super::applet_value_label("applets.operation_id", original),
+                        super::applet_value_label("applets.trace_title", original),
+                        super::applet_value_label("applets.event_id", ""),
+                        original
+                    ),
+                    expected
+                )
+            });
         }
     }
-
     // ── G3.Y4 — install helpers ─────────────────────────────────
 
     use super::{ManifestInputKind, classify_manifest_input};

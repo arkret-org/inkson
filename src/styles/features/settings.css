@@ -263,14 +263,14 @@
   border-right: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
 }
 
-.settings-avatar-card [data-testid="settings-avatar-preview"] {
+.settings-avatar-card [class~="settings-avatar-preview"] {
   width: 128px;
   height: 128px;
   font-size: 42px;
 }
 
-.settings-avatar-card [data-testid="settings-avatar-preview"] .content-block-image,
-.settings-avatar-card [data-testid="settings-avatar-preview"] .content-block-image img {
+.settings-avatar-card [class~="settings-avatar-preview"] .content-block-image,
+.settings-avatar-card [class~="settings-avatar-preview"] .content-block-image img {
   display: block;
   width: 100%;
   height: 100%;
@@ -286,7 +286,7 @@
   min-width: 0;
 }
 
-.settings [data-testid="settings-avatar-upload-label"],
+.settings [class~="settings-avatar-upload-label"],
 .settings label.avatar-upload-button,
 label.avatar-upload-button {
   display: inline-flex;
@@ -311,7 +311,7 @@ label.avatar-upload-button {
   transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
 }
 
-.settings [data-testid="settings-avatar-upload-label"]:hover,
+.settings [class~="settings-avatar-upload-label"]:hover,
 .settings label.avatar-upload-button:hover,
 label.avatar-upload-button:hover {
   border-color: color-mix(in srgb, var(--accent) 58%, var(--border));
@@ -319,7 +319,7 @@ label.avatar-upload-button:hover {
   color: var(--secondary-color-1);
 }
 
-.settings [data-testid="settings-avatar-upload-label"] .ui-icon,
+.settings [class~="settings-avatar-upload-label"] .ui-icon,
 .settings label.avatar-upload-button .ui-icon,
 label.avatar-upload-button .ui-icon {
   width: 15px;

@@ -3,31 +3,27 @@
 # (the pagefile is too small), which surfaces as a *test* failure. One job
 # removes it. Raise this on a machine with headroom.
 gate_jobs := env_var_or_default("INKSON_GATE_JOBS", "1")
-gate_dir := env_var_or_default("INKSON_GATE_DIR", "target/gate")
+gate_dir := env_var_or_default("INKSON_GATE_DIR", "D:/BuildCache/inkson-glory/gate")
 
 # Show available local tasks.
 default:
     @just --list
 
-# Start the Dioxus web dev server.
+# Start the Glory/Sapid web dev server.
 web:
-    python scripts/dev_dioxus.py --platform web --port 8080
+    python scripts/dev_glory.py --platform web --port 8080
 
-# Start the Dioxus desktop dev server.
+# Start the Glory/Sapid desktop dev server.
 desktop:
-    python scripts/dev_dioxus.py --platform desktop
+    python scripts/dev_glory.py --platform desktop
 
-# Start the Dioxus mobile dev server.
-mobile:
-    python scripts/dev_dioxus.py --platform mobile
-
-# Build the Dioxus web artifact.
+# Build the Glory/Sapid web artifact.
 web-build:
     python scripts/build_web.py --release
 
 # Build the native desktop binary for the current host.
 desktop-build:
-    cargo build --release
+    python scripts/build_desktop.py --release
 
 # Best-effort cross-target desktop checks. Install the listed Rust target first.
 check-linux:
@@ -66,7 +62,7 @@ signing-dry-run: desktop-build
 
 # Run Rust tests.
 test:
-    cargo test
+    cargo test --locked --features app
 
 # Run the local test gate with bounded parallelism and saved artifacts.
 #
@@ -83,7 +79,7 @@ gate *args:
     INKSON_GATE_JOBS={{ gate_jobs }} INKSON_GATE_DIR={{ gate_dir }} sh scripts/gate.sh {{ args }}
 
 # Run the browser-only wasm-bindgen integration tests. Requires
-# wasm-bindgen-test-runner 0.2.123 and a WebDriver-compatible Chrome install.
+# the wasm-bindgen-test-runner matching Cargo.lock and a WebDriver-compatible Chrome install.
 [env("CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER", "wasm-bindgen-test-runner")]
 test-wasm:
     cargo test --locked --target wasm32-unknown-unknown --test mls_data_plane_wasm --test wasm_indexed_db_capacity

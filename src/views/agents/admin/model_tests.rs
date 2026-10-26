@@ -1,12 +1,6 @@
 use super::*;
-
 #[test]
 fn newly_created_agent_selection_survives_directory_refresh_and_follows_filter_changes() {
-    use std::cell::RefCell;
-    use std::rc::Rc;
-
-    type SelectionControl =
-        Rc<RefCell<Option<(Signal<Vec<AgentView>>, Signal<String>, Signal<String>)>>>;
     fn agent(slug: &str, lifecycle: AgentLifecycleState) -> AgentView {
         let mut projection = test_agent_projection(lifecycle, AgentRuntimeState::PendingRuntimeKey);
         projection.agent_id =
@@ -19,65 +13,63 @@ fn newly_created_agent_selection_survives_directory_refresh_and_follows_filter_c
             key_state: None,
         }
     }
-    fn harness(control: SelectionControl) -> Element {
-        let agents = use_signal(|| vec![agent("old", AgentLifecycleState::Active)]);
-        let selected = use_signal(|| agent_id(&agent("old", AgentLifecycleState::Active)));
-        let filter = use_signal(|| "all".to_owned());
-        *control.borrow_mut() = Some((agents, selected, filter));
-        use_agent_selection(agents, selected, filter());
-        let visible_selection = selected();
-        rsx! { span { "{visible_selection}" } }
-    }
-    fn settle(dom: &mut VirtualDom) {
-        // Drive the real effect/task queue as well as component renders.
-        for _ in 0..4 {
-            dom.render_immediate_to_vec();
-            dom.process_events();
-        }
-    }
-    let control = Rc::new(RefCell::new(None));
-    let mut dom = VirtualDom::new_with_props(harness, control.clone());
-    dom.rebuild_in_place();
-    settle(&mut dom);
-    let (mut agents, mut selected, mut filter) = *control.borrow().as_ref().unwrap();
+    let app = glory::ui::App::memory();
+    let scope = app.scope();
+    let agents = scope.cage(vec![agent("old", AgentLifecycleState::Active)]);
+    let selected = scope.cage(agent_id(&agent("old", AgentLifecycleState::Active)));
+    let filter = scope.cage("all".to_owned());
+    mount_agent_selection(scope, agents, selected, filter);
+    app.flush().unwrap();
     let new = agent("new", AgentLifecycleState::Active);
     let new_id = agent_id(&new);
-    dom.in_runtime(|| selected.set(new_id.clone()));
-    settle(&mut dom);
+    selected.revise(|value| {
+        *value = new_id.clone();
+    });
+    app.flush().unwrap();
     assert_eq!(
-        *selected.peek(),
+        selected.get_untracked(),
         new_id,
         "creation selects the new Agent before its directory row arrives"
     );
-    dom.in_runtime(|| agents.set(vec![agent("old", AgentLifecycleState::Active), new.clone()]));
-    settle(&mut dom);
+    agents.revise(|value| {
+        *value = vec![agent("old", AgentLifecycleState::Active), new.clone()];
+    });
+    app.flush().unwrap();
     assert_eq!(
-        *selected.peek(),
+        selected.get_untracked(),
         new_id,
         "a fresh directory retains the newly selected Agent"
     );
     let paused = agent("paused", AgentLifecycleState::Paused);
     let paused_id = agent_id(&paused);
-    dom.in_runtime(|| agents.set(vec![paused, new.clone()]));
-    settle(&mut dom);
-    assert_eq!(*selected.peek(), new_id);
-    dom.in_runtime(|| filter.set("paused".to_owned()));
-    settle(&mut dom);
+    agents.revise(|value| {
+        *value = vec![paused, new.clone()];
+    });
+    app.flush().unwrap();
+    assert_eq!(selected.get_untracked(), new_id);
+    filter.revise(|value| {
+        *value = "paused".to_owned();
+    });
+    app.flush().unwrap();
     assert_eq!(
-        *selected.peek(),
+        selected.get_untracked(),
         paused_id,
         "route filter changes still reconcile the visible selection"
     );
-    dom.in_runtime(|| agents.set(vec![new]));
-    settle(&mut dom);
+    agents.revise(|value| {
+        *value = vec![new];
+    });
+    app.flush().unwrap();
     assert!(
-        selected.peek().is_empty(),
+        selected.get_untracked().is_empty(),
         "directory removal clears a selection outside the current filter"
     );
-    dom.in_runtime(|| filter.set("all".to_owned()));
-    settle(&mut dom);
+    filter.revise(|value| {
+        *value = "all".to_owned();
+    });
+    app.flush().unwrap();
     assert_eq!(
-        *selected.peek(),
+        selected.get_untracked(),
         new_id,
         "returning to all selects the remaining Agent"
     );

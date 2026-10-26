@@ -1135,7 +1135,6 @@ async fn sidecar_track_patch_encrypts_with_only_the_native_sidecar_snapshot() {
         &secure,
         Some(&context),
     )
-    .await
     .unwrap();
 
     let patch = seal_against_accepted_epoch(patch, &events);

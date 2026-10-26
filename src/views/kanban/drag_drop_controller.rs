@@ -261,30 +261,40 @@ fn queued_strand_position_body(
 }
 
 pub(super) fn submit_kanban_operation_event(
+    app: Rc<InksonContext>,
     base_url: String,
-    token: Signal<String>,
+    token: Cage<String>,
     realm_id: String,
     operation: crate::operation::LocalOperation,
     // R4: three-state security signal (see `kanban_plaintext_block_reason`).
     scope_security_encrypted: Option<bool>,
-    mut state_store: SyncSignal<LocalStateStore>,
-    mut board_status: Signal<String>,
+    state_store: SharedStateStore,
+    board_status: Cage<String>,
 ) {
-    if !state_store.read().realm_allows_spaces(&realm_id) {
-        board_status.set(crate::i18n::tr("kanban.direct_conversation_unavailable"));
+    if !state_store.read(|store| store.realm_allows_spaces(&realm_id)) {
+        board_status.revise(|value| {
+            let next = crate::i18n::tr("kanban.direct_conversation_unavailable");
+            *value = next;
+        });
         return;
     }
     if let Some(reason) = kanban_plaintext_block_reason(scope_security_encrypted, &operation) {
-        board_status.set(reason);
+        board_status.revise(|value| {
+            let next = reason;
+            *value = next;
+        });
         return;
     }
-    let Some(authority) = crate::app::SessionContext::get()
+    let Some(authority) = app
         .active_account
-        .read()
+        .get()
         .as_ref()
         .map(|account| account.authority.clone())
     else {
-        board_status.set("active account authority is unavailable".to_owned());
+        board_status.revise(|value| {
+            let next = "active account authority is unavailable".to_owned();
+            *value = next;
+        });
         return;
     };
     let operation_id = operation.local_operation_id().to_string();
@@ -294,12 +304,14 @@ pub(super) fn submit_kanban_operation_event(
     let body = match queued_space_operation_body(&operation) {
         Ok(body) => body,
         Err(err) => {
-            board_status.set(format!("cannot queue {kind} operation: {err:#}"));
+            board_status.revise(|value| {
+                let next = format!("cannot queue {kind} operation: {err:#}");
+                *value = next;
+            });
             return;
         }
     };
     {
-        let mut store = state_store.write();
         let record = match serde_json::to_value(QueuedSpaceOperationRecord {
             kind: operation.kind().clone(),
             operation_id: &operation_id,
@@ -313,112 +325,107 @@ pub(super) fn submit_kanban_operation_event(
         }) {
             Ok(record) => record,
             Err(err) => {
-                board_status.set(format!("cannot queue {kind} operation: {err}"));
+                board_status.revise(|value| {
+                    let next = format!("cannot queue {kind} operation: {err}");
+                    *value = next;
+                });
                 return;
             }
         };
         // The holder-local operation id is the durable retry key. Upsert it
         // instead of appending a second optimistic row so a failed create can
         // return to `queued` and be driven again without duplicating a Board.
-        store.upsert_raw_operation(operation_id.clone(), Some(realm_id), record);
+        state_store.write(|store| {
+            store.upsert_raw_operation(operation_id.clone(), Some(realm_id), record)
+        });
     }
-    board_status.set(format!(
-        "submitting {kind} operation {}",
-        short_protocol_id(&operation_id)
-    ));
-    let api_token = token();
+    board_status.revise(|value| {
+        let next = format!(
+            "submitting {kind} operation {}",
+            short_protocol_id(&operation_id)
+        );
+        *value = next;
+    });
+    let api_token = token.get();
     let operation_id_for_status = operation_id.clone();
     let operation_id_for_reconcile = operation_id.clone();
-    // `spawn_forever` executes at the Dioxus root and therefore has no current
-    // component scope for the app's session adapter to consume SessionContext.
-    // Carry the governance store explicitly across
-    // that lifetime boundary; otherwise a perfectly pinned checkpoint is
-    // reported as absent before the Event ever reaches the durable queue.
-    let submit_state_store = crate::app::runtime_adapter::state_store_handle(state_store);
-    // X13: use `spawn_forever`, NOT `spawn`. The "New board" handler calls
-    // `navigator.replace(...)` to route to the new board IMMEDIATELY after
-    // calling this — a `spawn`-ed task is tied to the current component scope
-    // and gets dropped/cancelled when that route change unmounts the panel,
-    // so the `ak.space.create` POST never left the client (board stuck
-    // `write_state:"queued"`, never reaching the server → other devices saw a
-    // nameless `ak:space:...` board). `spawn_forever` (ScopeId::ROOT) detaches
-    // the task so the submit completes regardless of navigation/unmount.
-    // ("Add List" never navigated, which is why lists were `accepted` while
-    // boards stayed `queued`.)
-    //
-    // X13.6 — but a DETACHED task may outlive the scope that owns the
-    // `Signal`s it captured (component unmount, or a `dx serve` hot-reload
-    // tearing scopes down mid-flight). Do not touch component-owned Signals
-    // after the await from this root task. `state_store` is the app-owned
-    // SessionContext signal and deliberately survives route unmounts, so it is
-    // the one safe reconciliation target here.
-    //
-    // NOTE: `spawn_forever` is NOT in the dioxus prelude (only `spawn` is);
-    // reach it via the re-exported core crate.
-    dioxus::core::spawn_forever(async move {
-        let result = with_authed_api(&base_url, api_token.clone(), |api| async move {
-            api.event_submitter()?
-                .with_state_store(submit_state_store)
-                .with_authority(authority)
-                .submit_sdk_event(&operation)
-                .await
-        })
-        .await;
-        reconcile_kanban_operation_submission(
-            &mut state_store.write(),
-            &operation_id_for_reconcile,
-            &result,
-        );
-        match result {
-            Ok(resp) => {
-                // `build_sdk_event` names an event-derived create from its
-                // draft Event id. Final authoring attaches producer proof
-                // fields and refreshes that content-bound id, so preserve the
-                // accepted id on the optimistic row. The projection uses it to
-                // migrate the temporary object id, and backfill can then merge
-                // the canonical Event into this row instead of appending a
-                // duplicate List/Board.
-                tracing::debug!(
-                    operation_id = %short_protocol_id(&operation_id_for_status),
-                    event_id = %short_protocol_id(&resp.event_id),
-                    kind = %kind,
-                    status = ?resp.status,
-                    "detached kanban operation result reconciled"
-                );
+    // Carry the governance handle into the application-owned write task.
+    // Board creation can navigate immediately; the write owner and typed
+    // reconciliation store survive that page while account retirement cancels
+    // the task. No component-owned draft is read after the await.
+    let submit_state_store = state_store.handle();
+    {
+        let task_context = app.clone();
+        spawn_write(task_context, async move {
+            let result = with_authed_api(&base_url, api_token.clone(), |api| async move {
+                api.event_submitter()?
+                    .with_state_store(submit_state_store)
+                    .with_authority(authority)
+                    .submit_sdk_event(&operation)
+                    .await
+            })
+            .await;
+            state_store.write(|store| {
+                reconcile_kanban_operation_submission(store, &operation_id_for_reconcile, &result)
+            });
+            match result {
+                Ok(resp) => {
+                    // `build_sdk_event` names an event-derived create from its
+                    // draft Event id. Final authoring attaches producer proof
+                    // fields and refreshes that content-bound id, so preserve the
+                    // accepted id on the optimistic row. The projection uses it to
+                    // migrate the temporary object id, and backfill can then merge
+                    // the canonical Event into this row instead of appending a
+                    // duplicate List/Board.
+                    tracing::debug!(
+                        operation_id = %short_protocol_id(&operation_id_for_status),
+                        event_id = %short_protocol_id(&resp.event_id),
+                        kind = %kind,
+                        status = ?resp.status,
+                        "detached kanban operation result reconciled"
+                    );
+                }
+                Err(err) if crate::event_submit::is_durably_queued_error(err.inner()) => {
+                    tracing::debug!(operation_id = %operation_id_for_reconcile, "kanban operation remains durably queued");
+                }
+                Err(err) => {
+                    let error = err.display().to_string();
+                    tracing::warn!(
+                        operation_id = %short_protocol_id(&operation_id_for_status),
+                        kind = %kind,
+                        error,
+                        "detached kanban operation failed"
+                    );
+                }
             }
-            Err(err) if crate::event_submit::is_durably_queued_error(err.inner()) => {
-                tracing::debug!(operation_id = %operation_id_for_reconcile, "kanban operation remains durably queued");
-            }
-            Err(err) => {
-                let error = err.display().to_string();
-                tracing::warn!(
-                    operation_id = %short_protocol_id(&operation_id_for_status),
-                    kind = %kind,
-                    error,
-                    "detached kanban operation failed"
-                );
-            }
-        }
-    });
+        });
+    };
 }
 
 pub(super) fn submit_column_order_updates(
+    app: Rc<InksonContext>,
     base_url: String,
-    token: Signal<String>,
+    token: Cage<String>,
     realm_id: String,
     actor_id: String,
     ordered_columns: Vec<KanbanColumn>,
     // R4: three-state security signal (see `kanban_plaintext_block_reason`).
     scope_security_encrypted: Option<bool>,
-    state_store: SyncSignal<LocalStateStore>,
-    mut board_status: Signal<String>,
+    state_store: SharedStateStore,
+    board_status: Cage<String>,
 ) {
     if actor_id.trim().is_empty() {
-        board_status.set("sign in before reordering lists".to_owned());
+        board_status.revise(|value| {
+            let next = "sign in before reordering lists".to_owned();
+            *value = next;
+        });
         return;
     }
     if realm_id.trim().is_empty() {
-        board_status.set("select a Realm before reordering lists".to_owned());
+        board_status.revise(|value| {
+            let next = "select a Realm before reordering lists".to_owned();
+            *value = next;
+        });
         return;
     }
     let updates = ordered_columns
@@ -434,13 +441,17 @@ pub(super) fn submit_column_order_updates(
         .iter()
         .any(|(column_id, _)| arkret_sdk::SpaceId::new(column_id.clone()).is_err())
     {
-        board_status.set("Wait for all lists to finish creating before reordering.".to_owned());
+        board_status.revise(|value| {
+            let next = "Wait for all lists to finish creating before reordering.".to_owned();
+            *value = next;
+        });
         return;
     }
     let update_count = updates.len();
-    board_status.set(format!(
-        "Column order sending... ({update_count} rank updates)"
-    ));
+    board_status.revise(|value| {
+        let next = format!("Column order sending... ({update_count} rank updates)");
+        *value = next;
+    });
     for (column_id, rank) in updates {
         let op = match crate::operation::ak_ops::space_update_patch(
             &realm_id,
@@ -451,22 +462,29 @@ pub(super) fn submit_column_order_updates(
             Ok(builder) => match builder.build_sdk_event("inkson") {
                 Ok(event) => event,
                 Err(err) => {
-                    board_status.set(format!("Column order failed: {err}"));
+                    board_status.revise(|value| {
+                        let next = format!("Column order failed: {err}");
+                        *value = next;
+                    });
                     return;
                 }
             },
             Err(err) => {
-                board_status.set(format!("Column order failed: {err:#}"));
+                board_status.revise(|value| {
+                    let next = format!("Column order failed: {err:#}");
+                    *value = next;
+                });
                 return;
             }
         };
         submit_kanban_operation_event(
+            app.clone(),
             base_url.clone(),
             token,
             realm_id.clone(),
             op,
             scope_security_encrypted,
-            state_store,
+            state_store.clone(),
             board_status,
         );
     }
@@ -477,27 +495,34 @@ pub(super) fn submit_column_order_updates(
 /// new title renders immediately while the envelope is in flight
 /// (design/kanban-baseline.md M1).
 pub(super) fn submit_column_rename(
+    app: Rc<InksonContext>,
     base_url: String,
-    token: Signal<String>,
+    token: Cage<String>,
     realm_id: String,
     actor_id: String,
     column_id: String,
     title: String,
     // R4: three-state security signal (see `kanban_plaintext_block_reason`).
     scope_security_encrypted: Option<bool>,
-    state_store: SyncSignal<LocalStateStore>,
-    mut board_status: Signal<String>,
+    state_store: SharedStateStore,
+    board_status: Cage<String>,
 ) {
     let title = title.trim().to_owned();
     if title.is_empty() {
         return;
     }
     if actor_id.trim().is_empty() {
-        board_status.set("sign in before renaming lists".to_owned());
+        board_status.revise(|value| {
+            let next = "sign in before renaming lists".to_owned();
+            *value = next;
+        });
         return;
     }
     if realm_id.trim().is_empty() {
-        board_status.set("select a Realm before renaming lists".to_owned());
+        board_status.revise(|value| {
+            let next = "select a Realm before renaming lists".to_owned();
+            *value = next;
+        });
         return;
     }
     let op = match crate::operation::ak_ops::space_update_patch(
@@ -509,22 +534,29 @@ pub(super) fn submit_column_rename(
         Ok(builder) => match builder.build_sdk_event("inkson") {
             Ok(event) => event,
             Err(err) => {
-                board_status.set(format!("List rename failed: {err}"));
+                board_status.revise(|value| {
+                    let next = format!("List rename failed: {err}");
+                    *value = next;
+                });
                 return;
             }
         },
         Err(err) => {
-            board_status.set(format!("List rename failed: {err:#}"));
+            board_status.revise(|value| {
+                let next = format!("List rename failed: {err:#}");
+                *value = next;
+            });
             return;
         }
     };
     submit_kanban_operation_event(
+        app.clone(),
         base_url,
         token,
         realm_id,
         op,
         scope_security_encrypted,
-        state_store,
+        state_store.clone(),
         board_status,
     );
 }
@@ -542,19 +574,23 @@ pub(super) struct KanbanCardCreateCommand {
 
 /// Build and submit a card-create event.
 pub(super) fn submit_kanban_card_create(
+    app: Rc<InksonContext>,
     base_url: String,
-    token: Signal<String>,
+    token: Cage<String>,
     realm_id: String,
     actor_id: String,
     command: KanbanCardCreateCommand,
     // R4: three-state security signal (see `kanban_plaintext_block_reason`).
     scope_security_encrypted: Option<bool>,
-    mut state_store: SyncSignal<LocalStateStore>,
-    mut board_status: Signal<String>,
+    state_store: SharedStateStore,
+    board_status: Cage<String>,
 ) {
     let kind = event_kind_str::STRAND_CREATE;
     if actor_id.trim().is_empty() {
-        board_status.set("sign in before updating cards".to_owned());
+        board_status.revise(|value| {
+            let next = "sign in before updating cards".to_owned();
+            *value = next;
+        });
         return;
     }
     // realm-and-space.md §3.6 types the placement's List reference as
@@ -567,9 +603,11 @@ pub(super) fn submit_kanban_card_create(
     if arkret_sdk::SpaceId::new(command.board_space_id.as_str()).is_err()
         || arkret_sdk::SpaceId::new(command.list_space_id.as_str()).is_err()
     {
-        board_status.set(
-            "This list is still being created; add cards after server confirmation.".to_owned(),
-        );
+        board_status.revise(|value| {
+            let next =
+                "This list is still being created; add cards after server confirmation.".to_owned();
+            *value = next;
+        });
         return;
     }
     if command.rank.is_empty()
@@ -579,7 +617,10 @@ pub(super) fn submit_kanban_card_create(
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric())
     {
-        board_status.set("cannot submit card: invalid position rank".to_owned());
+        board_status.revise(|value| {
+            let next = "cannot submit card: invalid position rank".to_owned();
+            *value = next;
+        });
         return;
     }
     let envelope =
@@ -587,19 +628,28 @@ pub(super) fn submit_kanban_card_create(
     let envelope = match envelope {
         Ok(builder) => builder.build_sdk_event("inkson"),
         Err(err) => {
-            board_status.set(format!("cannot submit card update: {err:#}"));
+            board_status.revise(|value| {
+                let next = format!("cannot submit card update: {err:#}");
+                *value = next;
+            });
             return;
         }
     };
     let event = match envelope {
         Ok(event) => event,
         Err(err) => {
-            board_status.set(format!("cannot submit card update: {err}"));
+            board_status.revise(|value| {
+                let next = format!("cannot submit card update: {err}");
+                *value = next;
+            });
             return;
         }
     };
     if let Some(reason) = kanban_plaintext_block_reason(scope_security_encrypted, &event) {
-        board_status.set(reason);
+        board_status.revise(|value| {
+            let next = reason;
+            *value = next;
+        });
         return;
     }
     let wire_kind = event.kind().as_str().to_owned();
@@ -625,7 +675,10 @@ pub(super) fn submit_kanban_card_create(
     let body = match event.typed_payload::<arkret_wire::event_spec::StrandCreate>() {
         Ok(body) => body,
         Err(err) => {
-            board_status.set(format!("cannot queue card create: {err:#}"));
+            board_status.revise(|value| {
+                let next = format!("cannot queue card create: {err:#}");
+                *value = next;
+            });
             return;
         }
     };
@@ -646,7 +699,10 @@ pub(super) fn submit_kanban_card_create(
     }) {
         Ok(record) => record,
         Err(err) => {
-            board_status.set(format!("cannot queue card create: {err}"));
+            board_status.revise(|value| {
+                let next = format!("cannot queue card create: {err}");
+                *value = next;
+            });
             return;
         }
     };
@@ -657,13 +713,12 @@ pub(super) fn submit_kanban_card_create(
     // task below, so neither projection nor receipt handling depends on the
     // lifetime of this event-handler scope.
     state_store
-        .write()
-        .upsert_raw_operation(op_id.clone(), Some(realm_id.clone()), record);
-    board_status.set(format!(
-        "submitting {wire_kind} event {}",
-        short_protocol_id(&op_id)
-    ));
-    let api_token = token();
+        .write(|store| store.upsert_raw_operation(op_id.clone(), Some(realm_id.clone()), record));
+    board_status.revise(|value| {
+        let next = format!("submitting {wire_kind} event {}", short_protocol_id(&op_id));
+        *value = next;
+    });
+    let api_token = token.get();
     let realm_for_record = realm_id.clone();
     let (board_space_id, list_space_id) = match (
         arkret_sdk::SpaceId::new(command.board_space_id),
@@ -671,7 +726,10 @@ pub(super) fn submit_kanban_card_create(
     ) {
         (Ok(board), Ok(list)) => (board, list),
         (Err(error), _) | (_, Err(error)) => {
-            board_status.set(error.to_string());
+            board_status.revise(|value| {
+                let next = error.to_string();
+                *value = next;
+            });
             return;
         }
     };
@@ -683,7 +741,10 @@ pub(super) fn submit_kanban_card_create(
     ) {
         Ok(placement) => placement,
         Err(error) => {
-            board_status.set(error.to_string());
+            board_status.revise(|value| {
+                let next = error.to_string();
+                *value = next;
+            });
             return;
         }
     };
@@ -698,69 +759,78 @@ pub(super) fn submit_kanban_card_create(
     // request at the root and capture only the app-owned state store across the
     // await; component-owned Signals such as `board_status` must not cross this
     // lifetime boundary.
-    let submit_state_store = crate::app::runtime_adapter::state_store_handle(state_store);
-    dioxus::core::spawn_forever(async move {
-        let result = with_authed_api(&base_url, api_token.clone(), |api| async move {
-            api.event_submitter()?
-                .with_state_store(submit_state_store)
-                .submit_card_create(&submit_event, placement)
-                .await
-        })
-        .await;
-        match result {
-            Ok(resp) => {
-                let state = MoveSubmissionState::from_send_queue_status(resp.status);
-                state_store.write().update_raw_operation_write_state(
-                    &op_for_track,
-                    state.slug(),
-                    Some(resp.event_id.clone()),
-                    resp.rejection_reason_code.clone(),
-                );
-                state_store.write().record_move_submission_with_event_id(
-                    op_for_track.clone(),
-                    Some(resp.event_id.clone()),
-                    realm_for_record.clone(),
-                    kind_for_record.clone(),
-                    state,
-                    resp.rejection_reason_code.clone(),
-                    None,
-                );
-                if state != MoveSubmissionState::Effective {
+    let submit_state_store = state_store.handle();
+    {
+        let task_context = app.clone();
+        spawn_write(task_context, async move {
+            let result = with_authed_api(&base_url, api_token.clone(), |api| async move {
+                api.event_submitter()?
+                    .with_state_store(submit_state_store)
+                    .submit_card_create(&submit_event, placement)
+                    .await
+            })
+            .await;
+            match result {
+                Ok(resp) => {
+                    let state = MoveSubmissionState::from_send_queue_status(resp.status);
+                    state_store.write(|store| {
+                        store.update_raw_operation_write_state(
+                            &op_for_track,
+                            state.slug(),
+                            Some(resp.event_id.clone()),
+                            resp.rejection_reason_code.clone(),
+                        )
+                    });
+                    state_store.write(|store| {
+                        store.record_move_submission_with_event_id(
+                            op_for_track.clone(),
+                            Some(resp.event_id.clone()),
+                            realm_for_record.clone(),
+                            kind_for_record.clone(),
+                            state,
+                            resp.rejection_reason_code.clone(),
+                            None,
+                        )
+                    });
+                    if state != MoveSubmissionState::Effective {
+                        tracing::debug!(
+                            operation_id = %short_protocol_id(&op_for_track),
+                            event_id = %short_protocol_id(&resp.event_id),
+                            status = state.slug(),
+                            "detached kanban card create has no committed outcome yet"
+                        );
+                        return;
+                    }
                     tracing::debug!(
                         operation_id = %short_protocol_id(&op_for_track),
                         event_id = %short_protocol_id(&resp.event_id),
-                        status = state.slug(),
-                        "detached kanban card create has no committed outcome yet"
+                        kind = %kind_for_record,
+                        "detached kanban card create accepted"
                     );
-                    return;
                 }
-                tracing::debug!(
-                    operation_id = %short_protocol_id(&op_for_track),
-                    event_id = %short_protocol_id(&resp.event_id),
-                    kind = %kind_for_record,
-                    "detached kanban card create accepted"
-                );
+                Err(err) if crate::event_submit::is_durably_queued_error(err.inner()) => {
+                    tracing::debug!(operation_id = %op_for_track, "card create remains durably queued");
+                }
+                Err(err) => {
+                    let error = err.display().to_string();
+                    tracing::warn!(
+                        operation_id = %short_protocol_id(&op_for_track),
+                        kind = %kind_for_record,
+                        error,
+                        "kanban submit failed; card quarantined",
+                    );
+                    state_store.write(|store| {
+                        store.update_raw_operation_write_state(
+                            &op_for_track,
+                            "quarantined",
+                            None,
+                            Some(error),
+                        )
+                    });
+                }
             }
-            Err(err) if crate::event_submit::is_durably_queued_error(err.inner()) => {
-                tracing::debug!(operation_id = %op_for_track, "card create remains durably queued");
-            }
-            Err(err) => {
-                let error = err.display().to_string();
-                tracing::warn!(
-                    operation_id = %short_protocol_id(&op_for_track),
-                    kind = %kind_for_record,
-                    error,
-                    "kanban submit failed; card quarantined",
-                );
-                state_store.write().update_raw_operation_write_state(
-                    &op_for_track,
-                    "quarantined",
-                    None,
-                    Some(error),
-                );
-            }
-        }
-    });
+        });
+    };
 }
 
 /// `(prev_rank, next_rank)` for a drop landing. `None` on either side
@@ -783,16 +853,17 @@ pub(super) struct ColumnNeighbours {
 /// - Both address the same holder-local Board/Strand queue key. causal-register cell; the
 ///   difference is whether `effect.list_space_id` equals `expected.list_space_id`.
 pub(super) fn dispatch_strand_position_move(
+    app: Rc<InksonContext>,
     base_url: String,
-    token: Signal<String>,
+    token: Cage<String>,
     realm_id: String,
     board_space_id: String,
     actor_id: String,
     dragged: DraggedCard,
     target_column_id: String,
     neighbours: ColumnNeighbours,
-    state_store: SyncSignal<LocalStateStore>,
-    mut board_status: Signal<String>,
+    state_store: SharedStateStore,
+    board_status: Cage<String>,
 ) {
     // Don't emit a Move when the drag and drop land on the same exact
     // position: same column, dragged card already sits between
@@ -812,14 +883,15 @@ pub(super) fn dispatch_strand_position_move(
     ) {
         Ok(r) => r,
         Err(RankError::Exhausted) => {
-            board_status.set(
-                "rank exhausted between neighbours — reorder a neighbouring card first, then retry"
-                    .to_owned(),
-            );
+            board_status.revise(|value|{let next="rank exhausted between neighbours — reorder a neighbouring card first, then retry"
+                    .to_owned();*value=next;});
             return;
         }
         Err(other) => {
-            board_status.set(format!("rank generation failed: {other}"));
+            board_status.revise(|value| {
+                let next = format!("rank generation failed: {other}");
+                *value = next;
+            });
             return;
         }
     };
@@ -848,6 +920,7 @@ pub(super) fn dispatch_strand_position_move(
         event_kind_str::STRAND_MOVE
     };
     submit_strand_position_move(
+        app.clone(),
         base_url,
         token,
         realm_id,
@@ -857,7 +930,7 @@ pub(super) fn dispatch_strand_position_move(
         kind,
         expected,
         effect,
-        state_store,
+        state_store.clone(),
         board_status,
     );
 }
@@ -893,14 +966,15 @@ pub(super) fn strand_lifecycle_from_projection(
 /// submit + local pending projection. If the submit fails the local
 /// state is rolled back to the prior value.
 pub(super) fn dispatch_space_container_lifecycle(
+    app: Rc<InksonContext>,
     base_url: String,
-    token: Signal<String>,
+    token: Cage<String>,
     realm_id: String,
     actor_id: String,
     space_container_id: String,
     target: SpaceContainerLifecycleState,
-    mut state_store: SyncSignal<LocalStateStore>,
-    mut board_status: Signal<String>,
+    state_store: SharedStateStore,
+    board_status: Cage<String>,
 ) {
     // Only Active <-> Archived are dispatchable; Tombstone is server-only.
     let builder = match target {
@@ -911,27 +985,39 @@ pub(super) fn dispatch_space_container_lifecycle(
             crate::operation::ak_ops::space_restore(&realm_id, &actor_id, &space_container_id)
         }
         SpaceContainerLifecycleState::Tombstoned => {
-            board_status.set("lifecycle update failed: tombstone is not dispatchable".to_owned());
+            board_status.revise(|value| {
+                let next = "lifecycle update failed: tombstone is not dispatchable".to_owned();
+                *value = next;
+            });
             return;
         }
         SpaceContainerLifecycleState::Unavailable
         | SpaceContainerLifecycleState::PositionUnavailable => {
-            board_status
-                .set("lifecycle update failed: canonical Space state is unresolved".to_owned());
+            board_status.revise(|value| {
+                let next =
+                    "lifecycle update failed: canonical Space state is unresolved".to_owned();
+                *value = next;
+            });
             return;
         }
     };
     let builder = match builder {
         Ok(builder) => builder,
         Err(err) => {
-            board_status.set(format!("lifecycle update failed: {err}"));
+            board_status.revise(|value| {
+                let next = format!("lifecycle update failed: {err}");
+                *value = next;
+            });
             return;
         }
     };
     let event = match builder.build_sdk_event("inkson") {
         Ok(event) => event,
         Err(err) => {
-            board_status.set(format!("lifecycle update failed: {err}"));
+            board_status.revise(|value| {
+                let next = format!("lifecycle update failed: {err}");
+                *value = next;
+            });
             return;
         }
     };
@@ -944,52 +1030,65 @@ pub(super) fn dispatch_space_container_lifecycle(
     let record = match queued_lifecycle_record(&event, &actor_id) {
         Ok(record) => record,
         Err(err) => {
-            board_status.set(format!("lifecycle update failed: {err:#}"));
+            board_status.revise(|value| {
+                let next = format!("lifecycle update failed: {err:#}");
+                *value = next;
+            });
             return;
         }
     };
-    state_store.write().enqueue_local_projection_command(
-        operation_id.clone(),
-        Some(realm_id.clone()),
-        record,
-    );
-    let base = base_url.clone();
-    let api_token = token();
-    let operation_id_for_track = operation_id.clone();
-    spawn(async move {
-        let result = with_authed_api(&base, api_token, |api| async move {
-            api.event_submitter()?.submit_sdk_event(&event).await
-        })
-        .await;
-        match result {
-            Ok(resp) => {
-                if let Ok(mut store) = state_store.try_write() {
-                    store.update_raw_operation_write_state(
-                        &operation_id_for_track,
-                        "accepted",
-                        Some(resp.event_id.clone()),
-                        None,
-                    );
-                }
-                board_status.set(format!("{kind} accepted; list state = {target:?}"));
-            }
-            Err(err) if crate::event_submit::is_durably_queued_error(err.inner()) => {
-                board_status.set(WriteState::Queued.localized_explanation());
-            }
-            Err(err) => {
-                // Revert the optimistic flip by dropping the op from the log.
-                if let Ok(mut store) = state_store.try_write() {
-                    store.update_raw_operation_write_state(
-                        &operation_id_for_track,
-                        "dropped",
-                        None,
-                        Some(err.display().to_string()),
-                    );
-                }
-                board_status.set(format!("{kind} failed: {}", err.display()));
-            }
-        }
+    state_store.write(|store| {
+        store.enqueue_local_projection_command(operation_id.clone(), Some(realm_id.clone()), record)
     });
+    let base = base_url.clone();
+    let api_token = token.get();
+    let operation_id_for_track = operation_id.clone();
+    {
+        let task_context = app.clone();
+        spawn_write(task_context, async move {
+            let result = with_authed_api(&base, api_token, |api| async move {
+                api.event_submitter()?.submit_sdk_event(&event).await
+            })
+            .await;
+            match result {
+                Ok(resp) => {
+                    state_store.write(|store| {
+                        store.update_raw_operation_write_state(
+                            &operation_id_for_track,
+                            "accepted",
+                            Some(resp.event_id.clone()),
+                            None,
+                        );
+                    });
+                    board_status.revise(|value| {
+                        let next = format!("{kind} accepted; list state = {target:?}");
+                        *value = next;
+                    });
+                }
+                Err(err) if crate::event_submit::is_durably_queued_error(err.inner()) => {
+                    board_status.revise(|value| {
+                        let next = WriteState::Queued.localized_explanation();
+                        *value = next;
+                    });
+                }
+                Err(err) => {
+                    // Revert the optimistic flip by dropping the op from the log.
+                    state_store.write(|store| {
+                        store.update_raw_operation_write_state(
+                            &operation_id_for_track,
+                            "dropped",
+                            None,
+                            Some(err.display().to_string()),
+                        );
+                    });
+                    board_status.revise(|value| {
+                        let next = format!("{kind} failed: {}", err.display());
+                        *value = next;
+                    });
+                }
+            }
+        });
+    };
 }
 
 /// Dispatch `ak.strand.archive` or `ak.strand.restore` for a card and
@@ -1000,14 +1099,15 @@ pub(super) fn dispatch_space_container_lifecycle(
 /// `state == active` for archive (`strand_not_active` — once SDK round
 /// 10 lands; today only restore is reducer-enforced).
 pub(super) fn dispatch_strand_lifecycle(
+    app: Rc<InksonContext>,
     base_url: String,
-    token: Signal<String>,
+    token: Cage<String>,
     realm_id: String,
     actor_id: String,
     strand_id: String,
     target: StrandLifecycleState,
-    mut state_store: SyncSignal<LocalStateStore>,
-    mut board_status: Signal<String>,
+    state_store: SharedStateStore,
+    board_status: Cage<String>,
 ) {
     // Only Active <-> Archived are dispatchable; Redaction is server-only.
     let builder = match target {
@@ -1018,15 +1118,20 @@ pub(super) fn dispatch_strand_lifecycle(
             crate::operation::ak_ops::strand_restore(&realm_id, &actor_id, &strand_id)
         }
         StrandLifecycleState::Redacted | StrandLifecycleState::Unavailable => {
-            board_status
-                .set("lifecycle update failed: target state is not dispatchable".to_owned());
+            board_status.revise(|value| {
+                let next = "lifecycle update failed: target state is not dispatchable".to_owned();
+                *value = next;
+            });
             return;
         }
     };
     let event = match builder.and_then(|builder| builder.build_sdk_event("inkson")) {
         Ok(event) => event,
         Err(err) => {
-            board_status.set(format!("lifecycle update failed: {err:#}"));
+            board_status.revise(|value| {
+                let next = format!("lifecycle update failed: {err:#}");
+                *value = next;
+            });
             return;
         }
     };
@@ -1038,51 +1143,64 @@ pub(super) fn dispatch_strand_lifecycle(
     let record = match queued_lifecycle_record(&event, &actor_id) {
         Ok(record) => record,
         Err(err) => {
-            board_status.set(format!("lifecycle update failed: {err:#}"));
+            board_status.revise(|value| {
+                let next = format!("lifecycle update failed: {err:#}");
+                *value = next;
+            });
             return;
         }
     };
-    state_store.write().enqueue_local_projection_command(
-        operation_id.clone(),
-        Some(realm_id.clone()),
-        record,
-    );
-    let base = base_url.clone();
-    let api_token = token();
-    let operation_id_for_track = operation_id.clone();
-    spawn(async move {
-        let result = with_authed_api(&base, api_token, |api| async move {
-            api.event_submitter()?.submit_sdk_event(&event).await
-        })
-        .await;
-        match result {
-            Ok(resp) => {
-                if let Ok(mut store) = state_store.try_write() {
-                    store.update_raw_operation_write_state(
-                        &operation_id_for_track,
-                        "accepted",
-                        Some(resp.event_id.clone()),
-                        None,
-                    );
-                }
-                board_status.set(format!("{kind} accepted; card lifecycle = {target:?}"));
-            }
-            Err(err) if crate::event_submit::is_durably_queued_error(err.inner()) => {
-                board_status.set(WriteState::Queued.localized_explanation());
-            }
-            Err(err) => {
-                if let Ok(mut store) = state_store.try_write() {
-                    store.update_raw_operation_write_state(
-                        &operation_id_for_track,
-                        "dropped",
-                        None,
-                        Some(err.display().to_string()),
-                    );
-                }
-                board_status.set(format!("{kind} failed: {}", err.display()));
-            }
-        }
+    state_store.write(|store| {
+        store.enqueue_local_projection_command(operation_id.clone(), Some(realm_id.clone()), record)
     });
+    let base = base_url.clone();
+    let api_token = token.get();
+    let operation_id_for_track = operation_id.clone();
+    {
+        let task_context = app.clone();
+        spawn_write(task_context, async move {
+            let result = with_authed_api(&base, api_token, |api| async move {
+                api.event_submitter()?.submit_sdk_event(&event).await
+            })
+            .await;
+            match result {
+                Ok(resp) => {
+                    state_store.write(|store| {
+                        store.update_raw_operation_write_state(
+                            &operation_id_for_track,
+                            "accepted",
+                            Some(resp.event_id.clone()),
+                            None,
+                        );
+                    });
+                    board_status.revise(|value| {
+                        let next = format!("{kind} accepted; card lifecycle = {target:?}");
+                        *value = next;
+                    });
+                }
+                Err(err) if crate::event_submit::is_durably_queued_error(err.inner()) => {
+                    board_status.revise(|value| {
+                        let next = WriteState::Queued.localized_explanation();
+                        *value = next;
+                    });
+                }
+                Err(err) => {
+                    state_store.write(|store| {
+                        store.update_raw_operation_write_state(
+                            &operation_id_for_track,
+                            "dropped",
+                            None,
+                            Some(err.display().to_string()),
+                        );
+                    });
+                    board_status.revise(|value| {
+                        let next = format!("{kind} failed: {}", err.display());
+                        *value = next;
+                    });
+                }
+            }
+        });
+    };
 }
 
 /// Archive an entire board at end-of-week: cascade-archive every active
@@ -1095,17 +1213,21 @@ pub(super) fn dispatch_strand_lifecycle(
 /// not left archived while cards remain active.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn dispatch_board_archive_cascade(
+    app: Rc<InksonContext>,
     base_url: String,
-    token: Signal<String>,
+    token: Cage<String>,
     realm_id: String,
     actor_id: String,
     board_space_id: String,
     projected_columns: Vec<KanbanColumn>,
-    mut state_store: SyncSignal<LocalStateStore>,
-    mut board_status: Signal<String>,
+    state_store: SharedStateStore,
+    board_status: Cage<String>,
 ) {
     if board_space_id.trim().is_empty() {
-        board_status.set("select a Board Space before archiving the board".to_owned());
+        board_status.revise(|value| {
+            let next = "select a Board Space before archiving the board".to_owned();
+            *value = next;
+        });
         return;
     }
 
@@ -1134,7 +1256,10 @@ pub(super) fn dispatch_board_archive_cascade(
         {
             Ok(event) => events.push(event),
             Err(err) => {
-                board_status.set(format!("cannot archive board: {err}"));
+                board_status.revise(|value| {
+                    let next = format!("cannot archive board: {err}");
+                    *value = next;
+                });
                 return;
             }
         }
@@ -1148,7 +1273,10 @@ pub(super) fn dispatch_board_archive_cascade(
         {
             Ok(event) => events.push(event),
             Err(err) => {
-                board_status.set(format!("cannot archive board: {err}"));
+                board_status.revise(|value| {
+                    let next = format!("cannot archive board: {err}");
+                    *value = next;
+                });
                 return;
             }
         }
@@ -1163,80 +1291,101 @@ pub(super) fn dispatch_board_archive_cascade(
         match queued_lifecycle_record(event, &actor_id) {
             Ok(record) => records.push(record),
             Err(err) => {
-                board_status.set(format!("cannot archive board: {err:#}"));
+                board_status.revise(|value| {
+                    let next = format!("cannot archive board: {err:#}");
+                    *value = next;
+                });
                 return;
             }
         }
     }
     let operation_ids: Vec<String> = {
-        let mut store = state_store.write();
-        events
-            .iter()
-            .zip(records)
-            .map(|(event, record)| {
-                let operation_id = event.local_operation_id().to_string();
-                store.enqueue_local_projection_command(
-                    operation_id.clone(),
-                    Some(realm_id.clone()),
-                    record,
-                );
-                operation_id
-            })
-            .collect()
+        state_store.write(|store| {
+            events
+                .iter()
+                .zip(records)
+                .map(|(event, record)| {
+                    let operation_id = event.local_operation_id().to_string();
+                    store.enqueue_local_projection_command(
+                        operation_id.clone(),
+                        Some(realm_id.clone()),
+                        record,
+                    );
+                    operation_id
+                })
+                .collect()
+        })
     };
 
-    board_status.set(crate::i18n::tr("kanban.archive_board_pending"));
+    board_status.revise(|value| {
+        let next = crate::i18n::tr("kanban.archive_board_pending");
+        *value = next;
+    });
 
     let base = base_url.clone();
-    let api_token = token();
-    spawn(async move {
-        let outcome = with_authed_api(&base, api_token, |api| async move {
-            let mut has_queued = false;
-            for event in &events {
-                let operation_id = event.local_operation_id().to_string();
-                match api.event_submitter()?.submit_sdk_event(event).await {
-                    Ok(response) => {
-                        state_store.write().update_raw_operation_write_state(
-                            &operation_id,
-                            "accepted",
-                            Some(response.event_id),
-                            None,
+    let api_token = token.get();
+    {
+        let task_context = app.clone();
+        spawn_write(task_context, async move {
+            let submission_store = state_store.clone();
+            let outcome = with_authed_api(&base, api_token, |api| async move {
+                let mut has_queued = false;
+                for event in &events {
+                    let operation_id = event.local_operation_id().to_string();
+                    match api.event_submitter()?.submit_sdk_event(event).await {
+                        Ok(response) => {
+                            submission_store.write(|store| {
+                                store.update_raw_operation_write_state(
+                                    &operation_id,
+                                    "accepted",
+                                    Some(response.event_id),
+                                    None,
+                                )
+                            });
+                        }
+                        Err(error) if crate::event_submit::is_durably_queued_error(&error) => {
+                            has_queued = true;
+                        }
+                        Err(error) => return Err(error),
+                    }
+                }
+                Ok(has_queued)
+            })
+            .await;
+            match outcome {
+                Ok(true) => board_status.revise(|value| {
+                    let next = WriteState::Queued.localized_explanation();
+                    *value = next;
+                }),
+                Ok(false) => board_status.revise(|value| {
+                    let next = crate::i18n::tr("kanban.archive_board_done");
+                    *value = next;
+                }),
+                Err(error) => {
+                    state_store.write(|store| {
+                        drop_unsubmitted_archive_operations(store, &operation_ids, &error.display())
+                    });
+                    board_status.revise(|value| {
+                        let next = format!(
+                            "{} {}",
+                            crate::i18n::tr("kanban.archive_board_action"),
+                            error.display()
                         );
-                    }
-                    Err(error) if crate::event_submit::is_durably_queued_error(&error) => {
-                        has_queued = true;
-                    }
-                    Err(error) => return Err(error),
+                        *value = next;
+                    });
                 }
             }
-            Ok(has_queued)
-        })
-        .await;
-        match outcome {
-            Ok(true) => board_status.set(WriteState::Queued.localized_explanation()),
-            Ok(false) => board_status.set(crate::i18n::tr("kanban.archive_board_done")),
-            Err(error) => {
-                drop_unsubmitted_archive_operations(
-                    &mut state_store.write(),
-                    &operation_ids,
-                    &error.display(),
-                );
-                board_status.set(format!(
-                    "{} {}",
-                    crate::i18n::tr("kanban.archive_board_action"),
-                    error.display()
-                ));
-            }
-        }
-    });
+        });
+    };
 }
 
 /// Build, sign, and submit an ordinary causal `ak.strand.move` or
 /// `ak.strand.reorder` Event.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn submit_strand_position_move(
+    app: Rc<InksonContext>,
     base_url: String,
-    token: Signal<String>,
+    token: Cage<String>,
     realm_id: String,
     board_space_id: String,
     actor_id: String,
@@ -1244,11 +1393,14 @@ pub(super) fn submit_strand_position_move(
     kind: &'static str,
     expected: StrandPositionExpectation,
     effect: StrandPositionEffect,
-    mut state_store: SyncSignal<LocalStateStore>,
-    mut board_status: Signal<String>,
+    state_store: SharedStateStore,
+    board_status: Cage<String>,
 ) {
     if actor_id.trim().is_empty() {
-        board_status.set("sign in before moving cards".to_owned());
+        board_status.revise(|value| {
+            let next = "sign in before moving cards".to_owned();
+            *value = next;
+        });
         return;
     }
     let expected_json = match &expected {
@@ -1280,14 +1432,20 @@ pub(super) fn submit_strand_position_move(
     ) {
         Ok(builder) => builder.build_sdk_event("inkson"),
         Err(err) => {
-            board_status.set(format!("cannot submit {kind}: {err:#}"));
+            board_status.revise(|value| {
+                let next = format!("cannot submit {kind}: {err:#}");
+                *value = next;
+            });
             return;
         }
     };
     let event = match envelope {
         Ok(event) => event,
         Err(err) => {
-            board_status.set(format!("cannot submit {kind}: {err}"));
+            board_status.revise(|value| {
+                let next = format!("cannot submit {kind}: {err}");
+                *value = next;
+            });
             return;
         }
     };
@@ -1296,7 +1454,10 @@ pub(super) fn submit_strand_position_move(
     let body = match queued_strand_position_body(&event, kind) {
         Ok(body) => body,
         Err(err) => {
-            board_status.set(format!("cannot submit {kind}: {err:#}"));
+            board_status.revise(|value| {
+                let next = format!("cannot submit {kind}: {err:#}");
+                *value = next;
+            });
             return;
         }
     };
@@ -1328,84 +1489,103 @@ pub(super) fn submit_strand_position_move(
     }) {
         Ok(record) => record,
         Err(err) => {
-            board_status.set(format!("cannot submit {kind}: {err}"));
+            board_status.revise(|value| {
+                let next = format!("cannot submit {kind}: {err}");
+                *value = next;
+            });
             return;
         }
     };
-    state_store.write().enqueue_local_projection_command(
-        move_id.clone(),
-        Some(realm_id.clone()),
-        record,
-    );
-    board_status.set(format!(
-        "submitting {kind} event {}",
-        short_protocol_id(&move_id)
-    ));
-    let api_token = token();
+    state_store.write(|store| {
+        store.enqueue_local_projection_command(move_id.clone(), Some(realm_id.clone()), record)
+    });
+    board_status.revise(|value| {
+        let next = format!("submitting {kind} event {}", short_protocol_id(&move_id));
+        *value = next;
+    });
+    let api_token = token.get();
     let move_for_track = move_id.clone();
     let kind_for_record = kind.to_owned();
     let realm_for_record = realm_id.clone();
     let submit_event = event;
-    spawn(async move {
-        let submit_result = with_authed_api(&base_url, api_token, |api| async move {
-            api.event_submitter()?.submit_sdk_event(&submit_event).await
-        })
-        .await;
-        match submit_result {
-            Ok(resp) => {
-                let submission_state = MoveSubmissionState::from_send_queue_status(resp.status);
-                // Only a committed Station outcome makes the ordinary Event
-                // durable. The canonical current result then decides whether
-                // it is the sole position winner or loses deterministically
-                // to another write.
-                state_store.write().update_raw_operation_write_state(
-                    &move_for_track,
-                    submission_state.slug(),
-                    Some(resp.event_id.clone()),
-                    resp.rejection_reason_code.clone(),
-                );
-                state_store.write().record_move_submission_with_event_id(
-                    move_for_track.clone(),
-                    Some(resp.event_id.clone()),
-                    realm_for_record,
-                    kind_for_record.clone(),
-                    submission_state,
-                    resp.rejection_reason_code,
-                    None,
-                );
-                if submission_state == MoveSubmissionState::Effective {
-                    board_status.set(format!(
+    {
+        let task_context = app.clone();
+        spawn_write(task_context, async move {
+            let submit_result = with_authed_api(&base_url, api_token, |api| async move {
+                api.event_submitter()?.submit_sdk_event(&submit_event).await
+            })
+            .await;
+            match submit_result {
+                Ok(resp) => {
+                    let submission_state = MoveSubmissionState::from_send_queue_status(resp.status);
+                    // Only a committed Station outcome makes the ordinary Event
+                    // durable. The canonical current result then decides whether
+                    // it is the sole position winner or loses deterministically
+                    // to another write.
+                    state_store.write(|store| {
+                        store.update_raw_operation_write_state(
+                            &move_for_track,
+                            submission_state.slug(),
+                            Some(resp.event_id.clone()),
+                            resp.rejection_reason_code.clone(),
+                        )
+                    });
+                    state_store.write(|store| {
+                        store.record_move_submission_with_event_id(
+                            move_for_track.clone(),
+                            Some(resp.event_id.clone()),
+                            realm_for_record,
+                            kind_for_record.clone(),
+                            submission_state,
+                            resp.rejection_reason_code,
+                            None,
+                        )
+                    });
+                    if submission_state == MoveSubmissionState::Effective {
+                        board_status.revise(|value|{let next=format!(
                         "{kind_for_record} event {} committed; awaiting current projection (event_id={})",
                         short_protocol_id(&move_for_track),
                         short_protocol_id(&resp.event_id)
-                    ));
-                } else {
-                    board_status.set(format!(
-                        "{kind_for_record} event {} is {}",
-                        short_protocol_id(&move_for_track),
-                        submission_state.slug()
-                    ));
+                    );*value=next;});
+                    } else {
+                        board_status.revise(|value| {
+                            let next = format!(
+                                "{kind_for_record} event {} is {}",
+                                short_protocol_id(&move_for_track),
+                                submission_state.slug()
+                            );
+                            *value = next;
+                        });
+                    }
+                }
+                Err(err) if crate::event_submit::is_durably_queued_error(err.inner()) => {
+                    board_status.revise(|value| {
+                        let next = WriteState::Queued.localized_explanation();
+                        *value = next;
+                    });
+                }
+                Err(err) => {
+                    let err_text = err.display();
+                    let cas_conflict = err_text.contains("cas_conflict");
+                    let card_state = if cas_conflict {
+                        CardState::Conflict
+                    } else {
+                        CardState::SoftFailed
+                    };
+                    state_store.write(|store| {
+                        store.update_raw_operation_write_state(
+                            &move_for_track,
+                            card_state.data_state(),
+                            None,
+                            Some(err_text.to_string()),
+                        )
+                    });
+                    board_status.revise(|value| {
+                        let next = format!("{kind_for_record} event {err_text}");
+                        *value = next;
+                    });
                 }
             }
-            Err(err) if crate::event_submit::is_durably_queued_error(err.inner()) => {
-                board_status.set(WriteState::Queued.localized_explanation());
-            }
-            Err(err) => {
-                let err_text = err.display();
-                let cas_conflict = err_text.contains("cas_conflict");
-                let card_state = if cas_conflict {
-                    CardState::Conflict
-                } else {
-                    CardState::SoftFailed
-                };
-                state_store.write().update_raw_operation_write_state(
-                    &move_for_track,
-                    card_state.data_state(),
-                    None,
-                    Some(err_text.to_string()),
-                );
-                board_status.set(format!("{kind_for_record} event {err_text}"));
-            }
-        }
-    });
+        });
+    };
 }

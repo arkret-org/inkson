@@ -8,6 +8,9 @@ use super::{TranslationDict, UiLocale};
 /// Build the default English translation dictionary.
 pub fn english_translations() -> TranslationDict {
     let mut dict = TranslationDict::new(UiLocale::En);
+    dict.set("search.result_source", "Search result source");
+    dict.set("search.source_event", "Event");
+    dict.set("search.source_commit", "Covering commit");
     dict.set("consent.resume_original", "Resume original pending sends");
     dict.set(
         "consent.replace_success",
@@ -205,6 +208,12 @@ pub fn english_translations() -> TranslationDict {
     );
     dict.set("kanban.ui.card_pages", "Card pages");
     dict.set("kanban.ui.card_title", "Card title");
+    dict.set("kanban.editor.choose_markdown", "Edit Markdown");
+    dict.set("kanban.editor.choose_rich", "Rich text");
+    dict.set(
+        "kanban.editor.native_rich_unavailable",
+        "Rich text editing is unavailable in this desktop version. Choose Markdown to edit.",
+    );
     dict.set(
         "kanban.ui.choose_a_date_for_this_card",
         "Choose a date for this card.",
@@ -302,6 +311,8 @@ pub fn english_translations() -> TranslationDict {
     dict.set("kanban.ui.sat", "Sat");
     dict.set("kanban.ui.save_card", "Save card");
     dict.set("kanban.ui.select_board", "Select board");
+    dict.set("kanban.ui.loading_realm", "Loading Realm…");
+    dict.set("kanban.ui.invalid_realm", "Invalid Realm identifier.");
     dict.set("kanban.ui.set_due_date", "Set due date");
     dict.set(
         "kanban.ui.set_the_event_time_recurrence_and_calendar_details",
@@ -2173,6 +2184,7 @@ pub fn english_translations() -> TranslationDict {
     );
     // A4b — avatar upload UI keys.
     dict.set("settings.avatar.upload", "Upload new avatar");
+    dict.set("settings.avatar.replace_image", "Choose another image");
     dict.set("settings.avatar.clear", "Remove avatar");
     dict.set("settings.avatar.uploading", "Uploading avatar…");
     dict.set("settings.avatar.processing", "Preparing avatar…");
@@ -2990,6 +3002,7 @@ fn add_feedback_keys(dict: &mut TranslationDict) {
     dict.set("feedback.toast_overflow", "+{count} more");
     dict.set("feedback.copy_detail", "Copy details");
     dict.set("feedback.dismiss", "Dismiss");
+    dict.set("feedback.external_link_failed", "Could not open the link");
 
     // Wave 1 — operation-feedback toasts (former global status writes).
     dict.set(

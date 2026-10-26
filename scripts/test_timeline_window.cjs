@@ -4,7 +4,8 @@ const vm = require('node:vm');
 const fs = require('node:fs');
 const path = require('node:path');
 const sandbox = { module: { exports: {} } };
-vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../src/views/chat/timeline_window.js'), 'utf8'), sandbox);
+const source = fs.readFileSync(path.join(__dirname, '../src/views/chat/timeline_window.js'), 'utf8').replaceAll('export ', '') + '\nmodule.exports = {TimelineLayout, mountVirtualTimeline};';
+vm.runInNewContext(source, sandbox);
 const { TimelineLayout } = sandbox.module.exports;
 
 test('ten thousand variable-height rows have exact logarithmic offsets and bounded windows', () => {
@@ -58,9 +59,8 @@ test('measured heights survive append and reorder by identity', () => {
 });
 
 test('bridge settles after scrolling ten thousand rows, tracks follow intent, and releases observers', async () => {
-  let receiver, nodes = [], sent = [], frames = new Map(), nextFrame = 0, observers = [], prefix = 20;
-  const queue = [];
-  const deliver = value => receiver ? (receiver(value), receiver = null) : queue.push(value);
+  let bridge, nodes = [], sent = [], frames = new Map(), nextFrame = 0, observers = [], prefix = 20;
+  const deliver = value => value.dispose ? bridge.dispose() : bridge.update(value);
   const list = { style: {height: '0px'}, querySelectorAll: () => nodes,
     getBoundingClientRect: () => ({top: prefix - feed.scrollTop}) };
   const feed = {isConnected: true, clientHeight: 800, scrollTop: 0, listeners: new Map(),
@@ -78,22 +78,20 @@ test('bridge settles after scrolling ten thousand rows, tracks follow intent, an
     ResizeObserver: Observer, MutationObserver: Observer,
     requestAnimationFrame(fn) { const id = ++nextFrame; frames.set(id, fn); return id; },
     cancelAnimationFrame(id) { frames.delete(id); },
-    dioxus: {
-      recv: () => queue.length ? Promise.resolve(queue.shift()) : new Promise(resolve => receiver = resolve),
-      send(value) {
+  };
+  vm.runInNewContext(source, context);
+  const savedPositions = [];
+  bridge = context.module.exports.mountVirtualTimeline({feed_id:'test', follows_latest:true}, value => {
         sent.push(value);
         assert.ok(value.end - value.start <= 120);
         nodes = Array.from({length: value.end - value.start}, (_, i) => ({
-          dataset: {virtualIndex: `${value.start+i}`, messageId: `row-${value.start+i}`},
+          id: `chat-message-row-${value.start+i}`,
           getBoundingClientRect: () => ({height: 120}),
         }));
         deliver({ack: true});
         observers[1].callback();
-      },
-    },
-  };
-  deliver({feed_id: 'test', follows_latest: true});
-  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../src/views/chat/timeline_window.js'), 'utf8'), context);
+
+  }, (top, followed) => savedPositions.push({top, followed}));
   const settle = async () => {
     for (let i = 0; i < 30; i++) {
       await new Promise(resolve => setImmediate(resolve));
@@ -112,6 +110,8 @@ test('bridge settles after scrolling ten thousand rows, tracks follow intent, an
   assert.equal(feed.scrollTop, feed.scrollHeight);
   feed.scrollTop = 660000 + prefix;
   feed.listeners.get('scroll')();
+  assert.equal(savedPositions.at(-1).top, feed.scrollTop);
+  assert.equal(savedPositions.at(-1).followed, false);
   await settle();
   assert.ok(sent.at(-1).start <= 5000 && sent.at(-1).end > 5000);
   const readerTop = feed.scrollTop;
@@ -130,6 +130,7 @@ test('bridge settles after scrolling ten thousand rows, tracks follow intent, an
   assert.equal(sent.length, unchanged);
   assert.ok(observers[0].targets.size <= 121);
   deliver({dispose: true});
+  assert.equal(savedPositions.at(-1).top, feed.scrollTop);
   await settle();
   assert.ok(observers.every(observer => observer.disconnected && observer.targets.size === 0));
   assert.equal(feed.listeners.size, 0);

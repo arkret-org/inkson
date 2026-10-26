@@ -885,6 +885,7 @@ pub(super) struct RealmRosterView {
     pub(super) visible_pending_invites: Vec<MemberProfile>,
     /// Actor keys of every active member, for "is this agent already in the
     /// Realm" checks in the agent list.
+    #[cfg(test)]
     pub(super) member_set: BTreeSet<String>,
     /// The caller's own agents that already joined this Realm.
     pub(super) self_realm_agent_rows: Vec<MemberAgentRow>,
@@ -897,8 +898,10 @@ pub(super) struct RealmRosterView {
     pub(super) total_pending_invites: usize,
     pub(super) pending_invite_match_count: usize,
     /// Groups matching the section and the query, before the paging cap.
+    #[cfg(test)]
     pub(super) filtered_count: usize,
     /// Groups actually mounted: `filtered_count` capped by the paging window.
+    #[cfg(test)]
     pub(super) visible: usize,
     pub(super) has_more: bool,
     pub(super) show_search: bool,
@@ -1023,6 +1026,7 @@ pub(super) fn build_realm_roster(input: RealmRosterInput<'_>) -> RealmRosterView
     RealmRosterView {
         visible_groups,
         visible_pending_invites,
+        #[cfg(test)]
         member_set,
         self_realm_agent_rows,
         available_self_agent_rows,
@@ -1032,7 +1036,9 @@ pub(super) fn build_realm_roster(input: RealmRosterInput<'_>) -> RealmRosterView
         total_regular_members,
         total_pending_invites,
         pending_invite_match_count,
+        #[cfg(test)]
         filtered_count,
+        #[cfg(test)]
         visible,
         has_more,
         show_search,

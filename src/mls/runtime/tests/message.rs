@@ -85,7 +85,10 @@ fn coverage_commit_pins_durable_revision_when_product_view_lags() {
         operation.payload()["governance_binding"],
         serde_json::to_value(&binding).unwrap()
     );
-    assert_eq!(operation.payload()["covers_key_access_revision"], json!(7));
+    assert_eq!(
+        operation.payload()["covers_key_access_revision"],
+        json!("7")
+    );
     assert_eq!(state.mls_checkpoint_for_scope(&scope), Some(before));
 }
 

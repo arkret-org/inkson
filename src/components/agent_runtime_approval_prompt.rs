@@ -1,13 +1,16 @@
+use std::cell::RefCell;
 use std::collections::HashSet;
+use std::rc::Rc;
 use std::time::Duration;
 
 use anyhow::Context;
 use arkret_sdk::{DidCoreId, DidUrl, Hash, KeyState, NotificationId, OpaqueLocalId};
-use dioxus::prelude::*;
+use glory::prelude::*;
 
+use super::mls_backup_prompt::try_set_state;
+use crate::presentation::widgets::{heading, line, paragraph, reactive, stack};
+use crate::presentation::{InksonContext, View};
 use crate::transport::auth::{with_authed_api, with_authed_sdk_client};
-use crate::ui::button::{Button, ButtonVariant};
-use crate::ui::dialog::Dialog;
 use crate::views::agents::{
     build_agent_key_authorization_for_pairing, build_requested_scope_disclosure_for_pairing,
     into_agent_key_pair_request, parse_runtime_key_approval_request,
@@ -100,400 +103,139 @@ struct PendingAgentRuntimeApproval {
     replacement: bool,
 }
 
-#[component]
-pub fn AgentRuntimeApprovalPrompt(
-    token: Signal<String>,
-    principal_id: Signal<Option<arkret_sdk::DidCoreId>>,
-    server_description: Signal<Option<arkret_sdk::ServiceDescribe>>,
-) -> Element {
-    let mut pending = use_signal(|| None::<PendingAgentRuntimeApproval>);
-    let mut handled = use_signal(HashSet::<OpaqueLocalId>::new);
-    let mut status = use_signal(String::new);
-    let mut diagnostic = use_signal(String::new);
-    let mut prepared = use_signal(|| None::<(OpaqueLocalId, arkret_sdk::AgentKeyPairRequestBody)>);
-    let mut approving = use_signal(|| false);
-    let state_store = crate::app::SessionContext::get().state_store;
-    let active_account = crate::app::SessionContext::get().active_account;
-    let mut owned_agents_rev = crate::app::SessionContext::get().owned_agents_rev;
-
-    {
-        let token = token;
-        use_effect(move || {
-            let projection = state_store.read().notification_projection();
-            let open = projection
-                .iter()
-                .filter_map(agent_runtime_approval_notification)
-                .collect::<Vec<_>>();
-            let prompt_notification_closed = pending.read().as_ref().is_some_and(|request| {
-                request
-                    .notification_id
-                    .as_ref()
-                    .is_some_and(|notification_id| {
-                        !open
-                            .iter()
-                            .any(|notification| &notification.notification_id == notification_id)
-                    })
+#[derive(Clone)]
+struct ApprovalController {
+    context: Rc<InksonContext>,
+    owner: glory::ui::WeakScope,
+    pending: Cage<Option<PendingAgentRuntimeApproval>>,
+    handled: Cage<HashSet<OpaqueLocalId>>,
+    status: Cage<String>,
+    diagnostic: Cage<String>,
+    prepared: Cage<Option<(OpaqueLocalId, arkret_sdk::AgentKeyPairRequestBody)>>,
+    approving: Cage<bool>,
+    task: Rc<RefCell<Option<glory::core::TaskToken>>>,
+}
+impl ApprovalController {
+    fn dismiss(&self) {
+        if let Some(task) = self.task.borrow_mut().take() {
+            task.cancel();
+        }
+        if let Some(request) = self.pending.get() {
+            self.handled.revise(|handled| {
+                handled.insert(request.request_key);
             });
-            if prompt_notification_closed {
-                pending.set(None);
-                approving.set(false);
+        }
+        try_set_state(self.pending, None);
+        try_set_state(self.prepared, None);
+        try_set_state(self.status, String::new());
+        try_set_state(self.diagnostic, String::new());
+        try_set_state(self.approving, false);
+    }
+    fn discover(&self, request: PendingAgentRuntimeApproval) {
+        try_set_state(self.status, String::new());
+        try_set_state(self.diagnostic, String::new());
+        try_set_state(self.prepared, None);
+        try_set_state(self.pending, Some(request));
+    }
+    fn reject(&self) {
+        if self.approving.get() {
+            return;
+        }
+        let Some(scope) = self.owner.upgrade() else {
+            return;
+        };
+        let Some(request) = self.pending.get() else {
+            return;
+        };
+        let Some(account) = self.context.active_account.get() else {
+            try_set_state(self.status, self.context.tr("agent_runtime.err_no_account"));
+            return;
+        };
+        let base = account.server_url.to_string();
+        let token = self.context.token.get();
+        let agent = request.agent_id.clone();
+        let state = self.clone();
+        let generation = self.context.session_generation.get();
+        let active = self.context.active_account.get();
+        try_set_state(self.approving, true);
+        try_set_state(self.status, self.context.tr("agent_runtime.rejecting"));
+        let task=scope.owner().spawn(async move {
+            let result=with_authed_sdk_client(&base,token,move |http|async move{
+                http.agent_renew_pairing(agent.as_str(),&arkret_models_collaboration::agent_operations::AgentRenewPairingRequestBody::default()).await.map_err(anyhow::Error::from)
+            }).await;
+            if state.owner.upgrade().is_none()||!state.context.session_matches(generation,&active){return}
+            try_set_state(state.approving,false);
+            match result {
+                Ok(_)=>{state.handled.revise(|handled|{handled.insert(request.request_key);});try_set_state(state.pending,None);try_set_state(state.prepared,None);try_set_state(state.status,state.context.tr("agent_runtime.rejected"));},
+                Err(error)=>try_set_state(state.status,crate::i18n::substitute_args(state.context.tr("agent_runtime.err_rotate_failed"),&[("error",error.display())])),
             }
-            if pending.read().is_some() {
-                return;
-            }
-            let Some(notification) = open
-                .into_iter()
-                .find(|notification| !handled.read().contains(&notification.approval_request_id))
-            else {
-                return;
-            };
-            let Some(account) = active_account() else {
-                return;
-            };
-            let server_url = account.server_url.to_string();
-            let api_token = token();
-            if api_token.trim().is_empty() {
-                return;
-            }
-            spawn(async move {
-                match fetch_agent_runtime_approval(&server_url, api_token, notification).await {
-                    Ok(Some(request)) => {
-                        tracing::info!(agent_id = %request.agent_id, "agent runtime approval discovered through account notification");
-                        status.set(String::new());
-                        diagnostic.set(String::new());
-                        pending.set(Some(request));
-                    }
-                    Ok(None) => {}
-                    Err(error) => tracing::warn!(
-                        error = %error.display_diagnostic(),
-                        "agent runtime approval notification refresh failed"
+        });
+        if let Ok(task) = task {
+            *self.task.borrow_mut() = Some(task);
+        }
+    }
+    fn approve(&self) {
+        if self.approving.get() {
+            return;
+        }
+        let Some(scope) = self.owner.upgrade() else {
+            return;
+        };
+        let Some(request) = self.pending.get() else {
+            return;
+        };
+        if approval_has_expired(&request) {
+            self.dismiss();
+            return;
+        }
+        let Some(account) = self.context.active_account.get() else {
+            try_set_state(self.status, self.context.tr("agent_runtime.err_no_account"));
+            return;
+        };
+        if self.context.principal_id.get().is_none() {
+            try_set_state(self.status, self.context.tr("agent_runtime.err_no_account"));
+            return;
+        }
+        let body = match parse_runtime_key_approval_request(&request.request_json) {
+            Ok(body) => body,
+            Err(error) => {
+                try_set_state(
+                    self.status,
+                    crate::i18n::substitute_args(
+                        self.context.tr("agent_runtime.err_invalid_request"),
+                        &[("error", runtime_key_pairing_error_message(error))],
                     ),
-                }
-            });
-        });
-    }
-
-    {
-        let token = token;
-        use_future(move || async move {
-            loop {
-                let has_prompt = pending.read().is_some();
-                if has_prompt {
-                    let prompt_expired = pending.read().as_ref().is_some_and(approval_has_expired);
-                    if prompt_expired {
-                        pending.set(None);
-                        approving.set(false);
-                        status.set(String::new());
-                        diagnostic.set(String::new());
-                    }
-                    crate::runtime_helpers::sleep_for(APPROVAL_FALLBACK_POLL_INTERVAL).await;
-                    continue;
-                }
-
-                if !fallback_poll_environment_ready()
-                    || !approval_fallback_allowed(server_description.read().as_ref())
-                {
-                    crate::runtime_helpers::sleep_for(APPROVAL_FALLBACK_POLL_INTERVAL).await;
-                    continue;
-                }
-
-                let api_token = token();
-                if api_token.trim().is_empty() {
-                    crate::runtime_helpers::sleep_for(APPROVAL_FALLBACK_POLL_INTERVAL).await;
-                    continue;
-                }
-
-                let Some(account) = active_account() else {
-                    crate::runtime_helpers::sleep_for(APPROVAL_FALLBACK_POLL_INTERVAL).await;
-                    continue;
-                };
-                let server_url = account.server_url.to_string();
-                let handled_keys = handled.read().clone();
-                let failed = match fetch_pending_agent_runtime_approval(
-                    &server_url,
-                    api_token,
-                    handled_keys,
-                )
-                .await
-                {
-                    Ok(Some(request)) => {
-                        tracing::info!(agent_id = %request.agent_id, "agent runtime approval discovered through unsupported-notification fallback");
-                        status.set(String::new());
-                        diagnostic.set(String::new());
-                        pending.set(Some(request));
-                        false
-                    }
-                    Ok(None) => {
-                        status.set(String::new());
-                        diagnostic.set(String::new());
-                        false
-                    }
-                    Err(err) => {
-                        tracing::warn!(
-                            error = %err.display_diagnostic(),
-                            "agent runtime approval polling failed"
-                        );
-                        true
-                    }
-                };
-
-                crate::runtime_helpers::sleep_for(approval_fallback_delay(failed)).await;
+                );
+                return;
             }
-        });
-    }
-
-    if active_account().is_none() || token().trim().is_empty() {
-        return rsx! {};
-    }
-
-    let Some(request) = pending() else {
-        return rsx! {};
-    };
-
-    let agent_label = if request.display_name.trim().is_empty() {
-        request.agent_slug.clone()
-    } else {
-        request.display_name.clone()
-    };
-    let agent_id_label = request.agent_id.to_string();
-    let verification_label = request.verification_method.to_string();
-    let fingerprint_label = request.public_key_fingerprint.to_string();
-    let station_label = request
-        .key_state
-        .controller_account_id
-        .station_id
-        .to_string();
-    let scope_label =
-        serde_json::to_string_pretty(&request.key_state.requested_scope).unwrap_or_default();
-    let permissions = approval_scope_summary(&request.key_state.requested_scope);
-    let expiry_label = chrono::DateTime::parse_from_rfc3339(&request.pairing_expires_at)
-        .map(|time| {
-            time.with_timezone(&chrono::Local)
-                .format("%H:%M")
-                .to_string()
-        })
-        .unwrap_or_else(|_| request.pairing_expires_at.clone());
-    let code_label = format!(
-        "{} {}",
-        &request.pairing_code[..4],
-        &request.pairing_code[4..]
-    );
-    let supersedes_label = request
-        .key_state
-        .active_authorizations
-        .iter()
-        .map(|authorization| {
-            format!(
-                "{} / {}",
-                authorization.key_id, authorization.authorized_event_ref
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(
-            "
-",
-        );
-    let status_value = status();
-    let diagnostic_value = diagnostic();
-    let busy = approving();
-
-    let dismiss_key = request.request_key.clone();
-    let dismiss_button_key = request.request_key.clone();
-    let approve_request = request.clone();
-
-    rsx! {
-        Dialog {
-            open: true,
-            on_open_change: move |open: bool| {
-                if !open {
-                    handled.write().insert(dismiss_key.clone());
-                    pending.set(None);
-                    status.set(String::new());
-                    diagnostic.set(String::new());
-                    approving.set(false);
-                }
-            },
-            "data-testid": "agent-runtime-approval-modal",
-            "aria-labelledby": "agent-runtime-approval-title",
-            "aria-label": crate::i18n::tr("agent_runtime.aria_label"),
-            div { class: "modal event agent-runtime-approval-dialog",
-                div { class: "modal-head event-head",
-                    h3 { id: "agent-runtime-approval-title", {crate::i18n::tr("agent_runtime.title")} }
-                    span { class: "muted", {crate::i18n::tr("agent_runtime.subtitle")} }
-                }
-                div { class: "modal-body",
-                    p { class: "muted",
-                        {crate::i18n::tr("agent_runtime.body")}
-                    }
-                    if request.replacement {
-                        p { class: "warning", {crate::i18n::tr("agent_runtime.replacement_warning")} }
-                    }
-                    div {
-                        class: "device-pair-approval-device",
-                        "data-testid": "agent-runtime-approval-agent",
-                        "data-agent-id": "{request.agent_id}",
-                        strong { "{agent_label}" }
-                        if !request.agent_slug.trim().is_empty() && request.agent_slug != agent_label {
-                            span { class: "muted",
-                                {crate::i18n::tr_args("agent_runtime.slug", &[("slug", request.agent_slug.clone())])}
-                            }
-                        }
-                    }
-                    div { class: "device-pair-approval-code-block",
-                        span { class: "muted", {crate::i18n::tr("agent_runtime.compare_code")} }
-                        strong {
-                            class: "device-pair-approval-code mono",
-                            "data-testid": "agent-runtime-approval-code",
-                            "{code_label}"
-                        }
-                        span { class: "muted",
-                            {crate::i18n::tr_args("agent_runtime.pairing_expires", &[("time", expiry_label)])}
-                        }
-                    }
-                    section { class: "agent-approval-permissions",
-                        strong { {crate::i18n::tr("agent_runtime.permissions")} }
-                        ul {
-                            for permission in permissions {
-                                li { "{permission}" }
-                            }
-                        }
-                        p { class: "muted", {crate::i18n::tr("agent_runtime.scope_ceiling")} }
-                        p { class: "muted", {crate::i18n::tr("agent_runtime.until_revoked")} }
-                    }
-                    details { class: "agent-approval-details",
-                        summary { {crate::i18n::tr("agent_runtime.technical_details")} }
-                        dl {
-                            dt { {crate::i18n::tr("agent_runtime.agent_id")} }
-                            dd { class: "mono", "{agent_id_label}" }
-                            dt { {crate::i18n::tr("agent_runtime.station")} }
-                            dd { class: "mono", "{station_label}" }
-                            dt { {crate::i18n::tr("agent_runtime.runtime_key")} }
-                            dd { class: "mono", "data-testid": "agent-runtime-approval-runtime-key", "{fingerprint_label}" }
-                            dt { {crate::i18n::tr("agent_runtime.verification_method")} }
-                            dd { class: "mono", "{verification_label}" }
-                            dt { {crate::i18n::tr("agent_runtime.requested_scope")} }
-                        }
-                        pre { "{scope_label}" }
-                        if !supersedes_label.is_empty() {
-                            p { {crate::i18n::tr("agent_runtime.replaced_authorizations")} }
-                            pre { "{supersedes_label}" }
-                        }
-                    }
-                    if !status_value.is_empty() {
-                        div { class: "muted", "data-testid": "agent-runtime-approval-status", "{status_value}" }
-                    }
-                    if !diagnostic_value.is_empty() {
-                        details { class: "agent-approval-details",
-                            summary { {crate::i18n::tr("agent_runtime.error_details")} }
-                            pre { "{diagnostic_value}" }
-                        }
-                    }
-                }
-                div { class: "modal-foot actions",
-                    Button {
-                        variant: ButtonVariant::Secondary,
-                        "data-testid": "agent-runtime-approval-reject-rotate",
-                        disabled: busy,
-                        onclick: {
-                            let reject_agent_id = request.agent_id.clone();
-                            move |_| {
-                                let Some(account) = active_account() else {
-                                    status.set(crate::i18n::tr("agent_runtime.err_no_account"));
-                                    return;
-                                };
-                                let server_url = account.server_url.to_string();
-                                let api_token = token();
-                                let agent_id = reject_agent_id.clone();
-                                approving.set(true);
-                                status.set(crate::i18n::tr("agent_runtime.rejecting"));
-                                spawn(async move {
-                                    let result = with_authed_sdk_client(&server_url, api_token, move |http| {
-                                        let agent_id = agent_id.clone();
-                                        async move {
-                                            http.agent_renew_pairing(
-                                                agent_id.as_str(),
-                                                &arkret_models_collaboration::agent_operations::AgentRenewPairingRequestBody::default(),
-                                            )
-                                            .await
-                                            .map_err(anyhow::Error::from)
-                                        }
-                                    })
-                                    .await;
-                                    approving.set(false);
-                                    match result {
-                                        Ok(_) => {
-                                            pending.set(None);
-                                            status.set(crate::i18n::tr("agent_runtime.rejected"));
-                                        }
-                                        Err(error) => status.set(crate::i18n::tr_args(
-                                            "agent_runtime.err_rotate_failed",
-                                            &[("error", error.display())],
-                                        )),
-                                    }
-                                });
-                            }
-                        },
-                        {crate::i18n::tr("agent_runtime.reject_rotate")}
-                    }
-                    Button {
-                        variant: ButtonVariant::Secondary,
-                        "data-testid": "agent-runtime-approval-dismiss",
-                        disabled: busy,
-                        onclick: move |_| {
-                            handled.write().insert(dismiss_button_key.clone());
-                            pending.set(None);
-                            status.set(String::new());
-                            diagnostic.set(String::new());
-                            approving.set(false);
-                        },
-                        {crate::i18n::tr("agent_runtime.dismiss")}
-                    }
-                    Button {
-                        variant: ButtonVariant::Primary,
-                        "data-testid": "agent-runtime-approval-approve",
-                        disabled: busy,
-                        onclick: move |_| {
-                            if approving() {
-                                return;
-                            }
-                            let controller = principal_id();
-                            if controller.is_none() {
-                                status.set(crate::i18n::tr("agent_runtime.err_no_account"));
-                                return;
-                            };
-                            let Some(account) = active_account() else {
-                                status.set(crate::i18n::tr("agent_runtime.err_no_account"));
-                                return;
-                            };
-                            let server_url = account.server_url.to_string();
-                            let controller_did = account.did().to_string();
-                            let body = match parse_runtime_key_approval_request(
-                                &approve_request.request_json,
-                            ) {
-                                Ok(body) => body,
-                                Err(err) => {
-                                    status.set(crate::i18n::tr_args(
-                                        "agent_runtime.err_invalid_request",
-                                        &[("error", runtime_key_pairing_error_message(err))],
-                                    ));
-                                    return;
-                                }
-                            };
-                            if body.agent_id != approve_request.agent_id {
-                                status.set(runtime_key_pairing_error_message(
-                                    "runtime key request targets a different agent",
-                                ));
-                                return;
-                            }
-                            let api_token = token();
-                            diagnostic.set(String::new());
-                            let request_key = approve_request.request_key.clone();
-                            let prepared_key = request_key.clone();
-                            let key_state = approve_request.key_state.clone();
-                            let approval_agent_id = approve_request.agent_id.clone();
-                            status.set(crate::i18n::tr("agent_runtime.approving"));
-                            approving.set(true);
-                            spawn(async move {
+        };
+        if body.agent_id != request.agent_id {
+            try_set_state(
+                self.status,
+                runtime_key_pairing_error_message("runtime key request targets a different agent"),
+            );
+            return;
+        }
+        let server_url = account.server_url.to_string();
+        let controller_did = account.did().to_string();
+        let api_token = self.context.token.get();
+        let request_key = request.request_key;
+        let prepared_key = request_key.clone();
+        let key_state = request.key_state;
+        let approval_agent_id = request.agent_id;
+        let prepared = self.prepared;
+        let state = self.clone();
+        let generation = self.context.session_generation.get();
+        let active = self.context.active_account.get();
+        let fence_context = self.context.clone();
+        let owner = self.owner.clone();
+        let active_for_work = active.clone();
+        try_set_state(self.diagnostic, String::new());
+        try_set_state(self.status, self.context.tr("agent_runtime.approving"));
+        try_set_state(self.approving, true);
+        let task=scope.owner().spawn(async move {
+            let active_for_request=active_for_work;
+            let active=active_for_request.clone();
                                 let result = with_authed_api(&server_url, api_token, move |api| {
                                     let body = body.clone();
                                     let key_state = key_state.clone();
@@ -501,7 +243,7 @@ pub fn AgentRuntimeApprovalPrompt(
                                     let prepared_key = prepared_key.clone();
                                     async move {
                                         let submitter = api.event_submitter()?;
-                                        let cached = prepared.read().clone().filter(|(key, _)| key == &prepared_key);
+                                        let cached = prepared.get().filter(|(key, _)| key == &prepared_key);
                                         let pair_request = if let Some((_, request)) = cached {
                                             request
                                         } else {
@@ -544,11 +286,13 @@ pub fn AgentRuntimeApprovalPrompt(
                                                 requested_scope_disclosure,
                                                 authorize_submission,
                                             );
-                                            prepared.set(Some((prepared_key, pair_request.clone())));
+                                            if owner.upgrade().is_none()||!fence_context.session_matches(generation,&active){anyhow::bail!("approval owner retired")}
+                                            prepared.revise(|value|*value=Some((prepared_key, pair_request.clone())));
                                             pair_request
                                         };
                                         let mut outcome = submitter.agent_key_pair(&pair_request).await.context("submit Agent runtime approval")?;
                                         for _ in 0..30 {
+                                            if owner.upgrade().is_none()||!fence_context.session_matches(generation,&active){anyhow::bail!("approval owner retired")}
                                             if matches!(outcome.activation_state, arkret_sdk::AgentKeyPairActivationState::Active) {
                                                 break;
                                             }
@@ -585,51 +329,340 @@ pub fn AgentRuntimeApprovalPrompt(
                                     }
                                 })
                                 .await;
-                                approving.set(false);
-                                match result {
-                                    Ok(outcome) => {
-                                        handled.write().insert(request_key);
-                                        pending.set(None);
-                                        let next = owned_agents_rev.peek().saturating_add(1);
-                                        owned_agents_rev.set(next);
-                                        status.set(crate::i18n::tr_args(
-                                            "agent_runtime.approved_current",
-                                            &[(
-                                                "id",
-                                                short_protocol_id(
-                                                    outcome.authorize_event_ref.as_str(),
-                                                ),
-                                            )],
-                                        ));
-                                    }
-                                    Err(err) => {
-                                        diagnostic.set(err.display_diagnostic());
-                                        tracing::warn!(
-                                            error = %err.display_diagnostic(),
-                                            agent_id = %approval_agent_id,
-                                            "agent runtime approval failed"
-                                        );
-                                        status.set(crate::i18n::tr_args(
-                                            "agent_runtime.err_approval_failed",
-                                            &[(
-                                                "error",
-                                                runtime_key_pairing_error_message(err.display_diagnostic()),
-                                            )],
-                                        ));
-                                    }
-                                }
-                            });
-                        },
-                        if busy {
-                            {crate::i18n::tr("agent_runtime.approving_button")}
-                        } else {
-                            {crate::i18n::tr("agent_runtime.approve")}
+
+            if state.owner.upgrade().is_none()||!state.context.session_matches(generation,&active_for_request){return}
+            try_set_state(state.approving,false);
+            match result {
+                Ok(outcome)=>{
+                    state.handled.revise(|handled|{handled.insert(request_key);});try_set_state(state.pending,None);try_set_state(state.prepared,None);
+                    state.context.owned_agents_rev.revise(|value|*value=value.saturating_add(1));
+                    try_set_state(state.status,crate::i18n::substitute_args(state.context.tr("agent_runtime.approved_current"),&[("id",short_protocol_id(outcome.authorize_event_ref.as_str()))]));
+                },
+                Err(error)=>{
+                    let diagnostic=error.display_diagnostic();tracing::warn!(error=%diagnostic,agent_id=%approval_agent_id,"agent runtime approval failed");
+                    try_set_state(state.diagnostic,diagnostic.clone());
+                    try_set_state(state.status,crate::i18n::substitute_args(state.context.tr("agent_runtime.err_approval_failed"),&[("error",runtime_key_pairing_error_message(diagnostic))]));
+                },
+            }
+        });
+        if let Ok(task) = task {
+            *self.task.borrow_mut() = Some(task);
+        }
+    }
+}
+fn approval_details(scope: &Scope, key: &str, label: Lotus<String>, content: View) -> View {
+    let mut content = Some(content);
+    Box::new(
+        sapid::collapsible(format!("{}-{key}", scope.id().slot()))
+            .unstyled()
+            .class("agent-approval-details")
+            .label(label)
+            .content_policy(sapid::ContentPolicy::KeepMounted)
+            .content(move || {
+                content
+                    .take()
+                    .unwrap_or_else(|| Box::new(widget(|_| Ok(()))))
+            }),
+    )
+}
+pub fn agent_runtime_approval_prompt(scope: &Scope, context: Rc<InksonContext>) -> View {
+    let state = ApprovalController {
+        context: context.clone(),
+        owner: scope.downgrade(),
+        pending: scope.cage(None),
+        handled: scope.cage(HashSet::new()),
+        status: scope.cage(String::new()),
+        diagnostic: scope.cage(String::new()),
+        prepared: scope.cage(None),
+        approving: scope.cage(false),
+        task: Rc::new(RefCell::new(None)),
+    };
+    let poll = state.clone();
+    let owner = scope.downgrade();
+    let _=scope.owner().spawn(async move {
+        let mut last_generation=poll.context.session_generation.get();let mut next_fallback=0_u64;
+        let mut last_revision=None;let mut retry_notifications=0_u64;
+        loop {
+            if owner.upgrade().is_none(){return}
+            let generation=poll.context.session_generation.get();
+            if generation!=last_generation {
+                poll.dismiss();try_set_state(poll.handled,HashSet::new());last_generation=generation;
+                last_revision=None;next_fallback=0;retry_notifications=0;
+            }
+            let notifications=poll.context.state_store.read(|store|store.notification_projection().iter().filter_map(agent_runtime_approval_notification).collect::<Vec<_>>());
+            if let Some(request)=poll.pending.get(){
+                let closed=request.notification_id.as_ref().is_some_and(|id|!notifications.iter().any(|notice|&notice.notification_id==id));
+                if closed||approval_has_expired(&request){poll.dismiss();}
+            }
+            if poll.pending.get().is_none() {
+                let now=crate::clock::now_unix_ms();let revision=poll.context.state_revision.get();
+                let active=poll.context.active_account.get();let token=poll.context.token.get();
+                if let Some(account)=active.as_ref().filter(|_|!token.trim().is_empty()) {
+                    let base=account.server_url.to_string();
+                    if last_revision!=Some(revision)||now>=retry_notifications {
+                        last_revision=Some(revision);retry_notifications=now.saturating_add(5000);
+                        if let Some(notice)=notifications.into_iter().find(|notice|!poll.handled.with(|handled|handled.contains(&notice.approval_request_id))) {
+                            let result=fetch_agent_runtime_approval(&base,token.clone(),notice).await;
+                            if owner.upgrade().is_none(){return}
+                            if !poll.context.session_matches(generation,&active){continue}
+                            match result {
+                                Ok(Some(request))=>poll.discover(request),Ok(None)=>{},
+                                Err(error)=>tracing::warn!(error=%error.display_diagnostic(),"Agent approval notification refresh failed"),
+                            }
                         }
+                    }
+                    if poll.pending.get().is_none()&&now>=next_fallback&&fallback_poll_environment_ready()&&approval_fallback_allowed(poll.context.server_description.get().as_ref()) {
+                        let result=fetch_pending_agent_runtime_approval(&base,token,poll.handled.get()).await;
+                        if owner.upgrade().is_none(){return}
+                        if !poll.context.session_matches(generation,&active){continue}
+                        let failed=result.is_err();
+                        match result {
+                            Ok(Some(request))=>poll.discover(request),Ok(None)=>{},
+                            Err(error)=>tracing::warn!(error=%error.display_diagnostic(),"Agent approval polling failed"),
+                        }
+                        next_fallback=now.saturating_add(approval_fallback_delay(failed).as_millis() as u64);
                     }
                 }
             }
+            crate::runtime_helpers::sleep_for(Duration::from_millis(100)).await;
         }
-    }
+    });
+    let source = scope.bond({
+        let state = state.clone();
+        let context = context.clone();
+        move || (state.pending.get(), context.locale.get())
+    });
+    reactive(source, move |scope, (request, _)| {
+        let Some(request) = request else {
+            return Box::new(widget(|_| Ok(())));
+        };
+        if context.active_account.get().is_none() || context.token.get().trim().is_empty() {
+            return Box::new(widget(|_| Ok(())));
+        }
+        let label = if request.display_name.trim().is_empty() {
+            request.agent_slug.clone()
+        } else {
+            request.display_name.clone()
+        };
+        let code = format!(
+            "{} {}",
+            &request.pairing_code[..4],
+            &request.pairing_code[4..]
+        );
+        let expiry = chrono::DateTime::parse_from_rfc3339(&request.pairing_expires_at)
+            .map(|time| {
+                time.with_timezone(&chrono::Local)
+                    .format("%H:%M")
+                    .to_string()
+            })
+            .unwrap_or(request.pairing_expires_at.clone());
+        let mut body = vec![paragraph(
+            "muted",
+            context.translated(scope, "agent_runtime.body"),
+        )];
+        if request.replacement {
+            body.push(paragraph(
+                "warning",
+                context.translated(scope, "agent_runtime.replacement_warning"),
+            ));
+        }
+        let mut identity = vec![paragraph("agent-runtime-agent-label", label.clone())];
+        if !request.agent_slug.trim().is_empty() && request.agent_slug != label {
+            identity.push(paragraph(
+                "muted",
+                crate::i18n::substitute_args(
+                    context.tr("agent_runtime.slug"),
+                    &[("slug", request.agent_slug.clone())],
+                ),
+            ));
+        }
+        body.push(stack("device-pair-approval-device", identity));
+        body.push(stack(
+            "device-pair-approval-code-block",
+            vec![
+                paragraph(
+                    "muted",
+                    context.translated(scope, "agent_runtime.compare_code"),
+                ),
+                paragraph("device-pair-approval-code mono", code),
+                paragraph(
+                    "muted",
+                    crate::i18n::substitute_args(
+                        context.tr("agent_runtime.pairing_expires"),
+                        &[("time", expiry)],
+                    ),
+                ),
+            ],
+        ));
+        let mut permissions = vec![paragraph(
+            "",
+            context.translated(scope, "agent_runtime.permissions"),
+        )];
+        permissions.extend(
+            approval_scope_summary(&request.key_state.requested_scope)
+                .into_iter()
+                .map(|permission| paragraph("agent-permission", permission)),
+        );
+        permissions.push(paragraph(
+            "muted",
+            context.translated(scope, "agent_runtime.scope_ceiling"),
+        ));
+        permissions.push(paragraph(
+            "muted",
+            context.translated(scope, "agent_runtime.until_revoked"),
+        ));
+        body.push(stack("agent-approval-permissions", permissions));
+        let fields = [
+            ("agent_runtime.agent_id", request.agent_id.to_string()),
+            (
+                "agent_runtime.station",
+                request
+                    .key_state
+                    .controller_account_id
+                    .station_id
+                    .to_string(),
+            ),
+            (
+                "agent_runtime.runtime_key",
+                request.public_key_fingerprint.to_string(),
+            ),
+            (
+                "agent_runtime.verification_method",
+                request.verification_method.to_string(),
+            ),
+            (
+                "agent_runtime.requested_scope",
+                serde_json::to_string_pretty(&request.key_state.requested_scope)
+                    .unwrap_or_default(),
+            ),
+        ];
+        let mut details = fields
+            .into_iter()
+            .map(|(key, value)| {
+                stack(
+                    "agent-approval-detail",
+                    vec![
+                        paragraph("", context.translated(scope, key)),
+                        paragraph("mono", value),
+                    ],
+                )
+            })
+            .collect::<Vec<_>>();
+        let supersedes = request
+            .key_state
+            .active_authorizations
+            .iter()
+            .map(|authorization| {
+                format!(
+                    "{} / {}",
+                    authorization.key_id, authorization.authorized_event_ref
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(
+                "
+",
+            );
+        if !supersedes.is_empty() {
+            details.push(paragraph(
+                "",
+                context.translated(scope, "agent_runtime.replaced_authorizations"),
+            ));
+            details.push(paragraph("mono", supersedes));
+        }
+        body.push(approval_details(
+            scope,
+            "agent-approval-technical",
+            context
+                .translated(scope, "agent_runtime.technical_details")
+                .into(),
+            stack("agent-approval-detail-list", details),
+        ));
+        body.push(paragraph("muted", state.status));
+        let diagnostic = state.diagnostic;
+        let ctx = context.clone();
+        body.push(reactive(diagnostic, move |scope, value| {
+            if value.is_empty() {
+                Box::new(widget(|_| Ok(())))
+            } else {
+                approval_details(
+                    scope,
+                    "agent-approval-error",
+                    ctx.translated(scope, "agent_runtime.error_details").into(),
+                    paragraph("mono", value),
+                )
+            }
+        }));
+        let busy = state.approving;
+        let enabled = scope.bond(move || !busy.get());
+        let reject = state.clone();
+        let dismiss = state.clone();
+        let approve = state.clone();
+        let ctx = context.clone();
+        let approve_label = scope.bond(move || {
+            ctx.tr(if busy.get() {
+                "agent_runtime.approving_button"
+            } else {
+                "agent_runtime.approve"
+            })
+        });
+        let actions = vec![
+            Box::new(
+                sapid::button()
+                    .unstyled()
+                    .class("secondary")
+                    .label(context.translated(scope, "agent_runtime.reject_rotate"))
+                    .enabled(enabled)
+                    .on_press(move || reject.reject()),
+            ) as View,
+            Box::new(
+                sapid::button()
+                    .unstyled()
+                    .class("secondary")
+                    .label(context.translated(scope, "agent_runtime.dismiss"))
+                    .enabled(enabled)
+                    .on_press(move || dismiss.dismiss()),
+            ) as View,
+            Box::new(
+                sapid::button()
+                    .unstyled()
+                    .class("primary")
+                    .label(approve_label)
+                    .enabled(enabled)
+                    .on_press(move || approve.approve()),
+            ) as View,
+        ];
+        let content = stack(
+            "modal event agent-runtime-approval-dialog",
+            vec![
+                stack(
+                    "modal-head event-head",
+                    vec![
+                        heading(3, "", context.translated(scope, "agent_runtime.title")),
+                        paragraph("muted", context.translated(scope, "agent_runtime.subtitle")),
+                    ],
+                ),
+                stack("modal-body", body),
+                line("modal-foot actions", actions),
+            ],
+        );
+        let dismiss = state.clone();
+        let mut content = Some(content);
+        Box::new(
+            sapid::dialog("agent-runtime-approval")
+                .unstyled()
+                .name(context.translated(scope, "agent_runtime.aria_label"))
+                .open(true)
+                .show_trigger(false)
+                .show_close(false)
+                .on_dismiss(move |_| dismiss.dismiss())
+                .content(move || {
+                    content
+                        .take()
+                        .unwrap_or_else(|| Box::new(widget(|_| Ok(()))))
+                }),
+        )
+    })
 }
 
 #[derive(Clone, Debug)]
@@ -659,7 +692,8 @@ async fn fetch_agent_runtime_approval(
     base_url: &str,
     token: String,
     notification: AgentRuntimeApprovalNotification,
-) -> Result<Option<PendingAgentRuntimeApproval>, crate::transport::auth::ApiCallError> {
+) -> std::result::Result<Option<PendingAgentRuntimeApproval>, crate::transport::auth::ApiCallError>
+{
     with_authed_sdk_client(base_url, token, move |http| async move {
         let view = http.agent_get(notification.agent_id.as_str()).await?;
         let Some(mut request) = pending_runtime_approval_from_view(&view) else {
@@ -678,7 +712,8 @@ async fn fetch_pending_agent_runtime_approval(
     base_url: &str,
     token: String,
     handled: HashSet<OpaqueLocalId>,
-) -> Result<Option<PendingAgentRuntimeApproval>, crate::transport::auth::ApiCallError> {
+) -> std::result::Result<Option<PendingAgentRuntimeApproval>, crate::transport::auth::ApiCallError>
+{
     with_authed_sdk_client(base_url, token, move |http| async move {
         let list = http.agent_page().await?;
         for row in list.agents {

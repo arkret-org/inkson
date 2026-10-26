@@ -16,15 +16,12 @@
 //! space member rows) is owned by the respective view modules — this
 //! file only owns the settings surface.
 
-use dioxus::prelude::*;
-use dioxus_primitives::checkbox::CheckboxState;
+use std::rc::Rc;
 
-use crate::components::{EmptyState, EmptyStateKind};
-use crate::ui::button::{Button, ButtonVariant};
-use crate::ui::checkbox::Checkbox;
-use crate::ui::input::Input;
-use crate::ui::label::Label;
-use crate::ui::select::{Select, SelectOption};
+use glory::prelude::*;
+
+use super::widgets::{input, *};
+use crate::presentation::{InksonContext, View};
 use crate::views::helpers::{actor_display_label, short_protocol_id};
 
 /// `reason_code` options offered for a personal block. Mirrors the report
@@ -102,370 +99,318 @@ fn is_valid_identity_id(kind: crate::account_data::BlocklistUiTargetKind, input:
     }
 }
 
-#[component]
-pub fn BlocklistSettingsCard(principal_id: Signal<String>, token: Signal<String>) -> Element {
-    // A4 — base_url / state_store from session context instead of props.
-    let active_account = crate::app::SessionContext::get().active_account;
-    let base_url = use_signal(move || {
-        active_account()
-            .map(|account| account.server_url.to_string())
-            .unwrap_or_default()
-    });
-    let mut state_store = crate::app::SessionContext::get().state_store;
-
-    let initial = state_store.read().client_blocklist();
-    let mut entries = use_signal(|| initial);
-    let mut target_kind = use_signal(|| crate::account_data::BlocklistUiTargetKind::Actor);
-    let kind_selected = use_memo(move || Some(target_kind().ui_value().to_owned()));
-    let mut add_input = use_signal(String::new);
-    let mut reason_code = use_signal(String::new);
-    let reason_selected = use_memo(move || Some(reason_code()));
-    let mut expiry_choice = use_signal(|| "never".to_owned());
-    let expiry_selected = use_memo(move || Some(expiry_choice()));
-    let mut applies_to = use_signal(|| crate::account_data::DEFAULT_BLOCKLIST_APPLIES_TO.to_vec());
-    let mut status = use_signal(String::new);
-
-    // Actor targets require an explicit full ActorId. Do not infer a Station for
-    // a bare principal or expand an organization/service affiliation into senders.
-    let kind_now = target_kind();
-    let raw_input = add_input();
-    let input_trimmed = raw_input.trim();
-    let input_empty = input_trimmed.is_empty();
-    let input_valid = !input_empty
-        && if kind_now == crate::account_data::BlocklistUiTargetKind::Actor {
-            is_valid_identity_id(kind_now, input_trimmed)
-        } else {
-            crate::views::settings::is_likely_valid_domain(input_trimmed)
-        };
-    let applies_empty = applies_to.read().is_empty();
-    let has_session = !token().trim().is_empty();
-    let can_block = input_valid && !applies_empty && has_session;
-    let input_class = if input_empty {
-        "blocklist-id"
-    } else if input_valid {
-        "blocklist-id blocklist-id-valid"
-    } else {
-        "blocklist-id blocklist-id-invalid"
+pub(super) fn page(scope: &Scope, context: Rc<InksonContext>) -> View {
+    use crate::account_data::BlocklistUiTargetKind as Kind;
+    let entries = scope.cage(context.state_store.read(|store| store.client_blocklist()));
+    let target_kind = scope.cage(Kind::Actor);
+    let target_type = scope.cage(Kind::Actor.ui_value().to_owned());
+    let target = scope.cage(String::new());
+    let reason = scope.cage(String::new());
+    let expiry = scope.cage("never".to_owned());
+    let applies_to = scope.cage(crate::account_data::DEFAULT_BLOCKLIST_APPLIES_TO.to_vec());
+    let feedback = scope.cage(String::new());
+    let has_session = {
+        let context = context.clone();
+        scope.bond(move || !context.token.get().trim().is_empty())
     };
-    let invalid_hint_key = if kind_now == crate::account_data::BlocklistUiTargetKind::Actor {
-        "settings.privacy.blocklist.invalid.actor"
-    } else {
-        "settings.privacy.blocklist.invalid.domain"
+    let can_block = {
+        let context = context.clone();
+        scope.bond(move || {
+            let value = target.get();
+            let kind = target_kind.get();
+            let valid = if kind == Kind::Actor {
+                is_valid_identity_id(kind, value.trim())
+            } else {
+                super::is_likely_valid_domain(value.trim())
+            };
+            valid && !applies_to.get().is_empty() && !context.token.get().trim().is_empty()
+        })
     };
-    let target_input_label_key = if kind_now == crate::account_data::BlocklistUiTargetKind::Actor {
-        "settings.privacy.blocklist.target.actor"
-    } else {
-        "settings.privacy.blocklist.target.domain"
-    };
-    rsx! {
-        div { class: "event", "data-testid": "blocked-users-panel",
-            div { class: "event-head",
-                span { {crate::i18n::tr("settings.privacy.blocklist.title")} }
-            }
-            div { class: "muted",
-                {crate::i18n::tr("settings.privacy.blocklist.description")}
-            }
-
-            div { class: "settings-list", "data-testid": "blocked-users-list",
-                if entries.read().is_empty() {
-                    EmptyState {
-                        title: crate::i18n::tr("settings.privacy.blocklist.empty_title"),
-                        kind: EmptyStateKind::Empty,
-                        message: Some(crate::i18n::tr("settings.privacy.blocklist.empty_body")),
-                        test_id: None,
-                    }
+    let list_context = context.clone();
+    let list = reactive(entries, move |scope, list_entries| {
+        let context = list_context.clone();
+        if list_entries.is_empty() {
+            return paragraph(
+                "empty-state",
+                context.translated(scope, "settings.privacy.blocklist.empty_title"),
+            );
+        }
+        let mut children = Vec::new();
+        for entry in list_entries {
+            let raw = crate::account_data::blocklist_target_value(&entry.target);
+            let label = context.state_store.read(|store| {
+                if crate::account_data::target_is_actor(&entry.target) {
+                    actor_display_label(store, &raw)
                 } else {
-                    for entry in entries.read().iter().cloned() {
-                        {
-                            let blocked_at = entry.created_at;
-                            let kind = crate::account_data::blocklist_target_kind_label(&entry.target);
-                            let kind_label = if kind == "domain" {
-                                crate::i18n::tr(target_kind_label_key(crate::account_data::BlocklistUiTargetKind::Domain))
-                            } else {
-                                crate::i18n::tr(target_kind_label_key(crate::account_data::BlocklistUiTargetKind::Actor))
-                            };
-                            let entry_value = crate::account_data::blocklist_target_value(&entry.target);
-                            let entry_label = if crate::account_data::target_is_actor(&entry.target) {
-                                actor_display_label(&state_store.read(), &entry_value)
-                            } else {
-                                short_protocol_id(&entry_value)
-                            };
-                            let applies_summary = entry.applies_to.iter()
-                                .map(|surface| crate::i18n::tr(surface_label_key(*surface)))
-                                .collect::<Vec<_>>()
-                                .join(", ");
-                            let expires_at = entry.expires_at;
-                            rsx! {
-                                div {
-                                    class: "event",
-                                    "data-testid": "blocked-user-row",
-                                    "data-actor-id": "{entry_value}",
-                                    "data-target-kind": "{kind}",
-                                    "data-blocked-at": "{blocked_at}",
-                                    div { class: "event-head",
-                                        span { class: "badge", "{kind_label}" }
-                                        span { title: "{entry_value}", "{entry_label}" }
-                                        span { class: "muted", "{blocked_at}" }
-                                    }
-                                    div { class: "muted", {crate::i18n::tr_args(
-                                        "settings.privacy.blocklist.applies_summary",
-                                        &[("surfaces", applies_summary)],
-                                    )} }
-                                    if let Some(expires) = &expires_at {
-                                        div { class: "muted", {crate::i18n::tr_args(
-                                            "settings.privacy.blocklist.expires_summary",
-                                            &[("expires", expires.to_string())],
-                                        )} }
-                                    }
-                                    if let Some(reason) = &entry.reason_code {
-                                        div { class: "muted", {crate::i18n::tr_args(
-                                            "settings.privacy.blocklist.reason_summary",
-                                            &[("reason", crate::i18n::tr(&format!("moderation.report.reason.{reason}")))],
-                                        )} }
-                                    }
-                                    div { class: "actions",
-                                        Button {
-                                            variant: ButtonVariant::Secondary,
-                                            "data-testid": "unblock-button",
-                                            "data-actor-id": "{entry_value}",
-                                            disabled: !has_session,
-                                            onclick: {
-                                                let target = entry.target.clone();
-                                                let target_value = entry_value.to_owned();
-                                                let base = base_url;
-                                                move |_| {
-                                                    let changed = state_store
-                                                        .write()
-                                                        .unblock_target(&target);
-                                                    let next = state_store.read().client_blocklist();
-                                                    entries.set(next.clone());
-                                                    if changed {
-                                                        let target_label = if crate::account_data::target_is_actor(&target) {
-                                                            actor_display_label(
-                                                                &state_store.read(),
-                                                                &target_value,
-                                                            )
-                                                        } else {
-                                                            short_protocol_id(&target_value)
-                                                        };
-                                                        status.set(crate::i18n::substitute_args(
-                                                            crate::i18n::tr("settings.privacy.blocklist.status.unblocked"),
-                                                            &[("target", target_label)],
-                                                        ));
-                                                        crate::views::settings::push_blocklist_account_data(
-                                                            base(),
-                                                            token(),
-                                                            principal_id(),
-                                                            state_store,
-                                                            next,
-                                                        );
-                                                    }
-                                                }
-                                            },
-                                            {crate::i18n::tr("settings.privacy.blocklist.unblock")}
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    short_protocol_id(&raw)
                 }
-            }
-
-            div { class: "event",
-                div { class: "field",
-                    Label { html_for: "block-target-kind", {crate::i18n::tr("settings.privacy.blocklist.target_type")} }
-                    Select::<String> {
-                        "data-testid": "block-target-kind",
-                        value: Some(kind_selected.into()),
-                        on_value_change: move |v: Option<String>| {
-                            if let Some(kind) = v.as_deref().and_then(
-                                crate::account_data::BlocklistUiTargetKind::from_ui_value,
-                            ) {
-                                target_kind.set(kind);
-                            }
-                        },
-                        for (index, kind) in crate::account_data::BlocklistUiTargetKind::ALL.iter().copied().enumerate() {
-                            SelectOption::<String> {
-                                index,
-                                value: kind.ui_value().to_owned(),
-                                text_value: crate::i18n::tr(target_kind_label_key(kind)),
-                                {crate::i18n::tr(target_kind_label_key(kind))}
-                            }
-                        }
-                    }
-                }
-
-                div { class: "field",
-                    Label { html_for: "block-target-input-input", {crate::i18n::tr(target_input_label_key)} }
-                    Input {
-                        id: "block-target-input-input",
-                        class: "{input_class}",
-                        "data-testid": "block-target-input",
-                        value: "{add_input}",
-        placeholder: target_kind_placeholder(kind_now),
-                        "aria-invalid": if !input_empty && !input_valid { "true" } else { "false" },
-                        oninput: move |event: FormEvent| add_input.set(event.value()),
-                    }
-                    if !input_empty && !input_valid {
-                        div {
-                            class: "settings-inline-hint settings-inline-hint-invalid",
-                            "data-testid": "block-target-invalid",
-                            {crate::i18n::tr(invalid_hint_key)}
-                        }
-                    }
-                }
-
-                div { class: "field",
-                    Label { html_for: "block-applies-to", {crate::i18n::tr("settings.privacy.blocklist.applies_to")} }
-                    div { class: "blocklist-applies-grid", "data-testid": "block-applies-to",
-                        for surface in crate::account_data::DEFAULT_BLOCKLIST_APPLIES_TO.iter().copied() {
-                            div { class: "metric",
-                                Checkbox {
-                                    "data-testid": "block-applies-{crate::account_data::blocklist_surface_label(surface)}",
-                                    checked: if applies_to.read().contains(&surface) {
-                                        CheckboxState::Checked
-                                    } else {
-                                        CheckboxState::Unchecked
-                                    },
-                                    on_checked_change: move |state: CheckboxState| {
-                                        let mut next = applies_to();
-                                        if bool::from(state) {
-                                            if !next.contains(&surface) {
-                                                next.push(surface);
-                                            }
-                                        } else {
-                                            next.retain(|candidate| *candidate != surface);
-                                        }
-                                        applies_to.set(next);
-                                    },
-                                }
-                                span { {crate::i18n::tr(surface_label_key(surface))} }
-                            }
-                        }
-                    }
-                    if applies_empty {
-                        div {
-                            class: "settings-inline-hint settings-inline-hint-invalid",
-                            "data-testid": "block-applies-empty",
-                            {crate::i18n::tr("settings.privacy.blocklist.applies_required")}
-                        }
-                    }
-                }
-
-                div { class: "field",
-                    Label { html_for: "block-reason", {crate::i18n::tr("settings.privacy.blocklist.reason_optional")} }
-                    Select::<String> {
-                        "data-testid": "block-reason",
-                        value: Some(reason_selected.into()),
-                        on_value_change: move |v: Option<String>| {
-                            reason_code.set(v.unwrap_or_default());
-                        },
-                        SelectOption::<String> {
-                            index: 0usize,
-                            value: String::new(),
-                            text_value: crate::i18n::tr("settings.privacy.blocklist.no_reason"),
-                            {crate::i18n::tr("settings.privacy.blocklist.no_reason")}
-                        }
-                        for (idx , code) in BLOCK_REASON_CODES.iter().copied().enumerate() {
-                            SelectOption::<String> {
-                                index: idx + 1,
-                                value: code.to_string(),
-                                text_value: crate::i18n::tr(&format!("moderation.report.reason.{code}")),
-                                {crate::i18n::tr(&format!("moderation.report.reason.{code}"))}
-                            }
-                        }
-                    }
-                }
-
-                div { class: "field",
-                    Label { html_for: "block-expiry", {crate::i18n::tr("settings.privacy.blocklist.expires")} }
-                    Select::<String> {
-                        "data-testid": "block-expiry",
-                        value: Some(expiry_selected.into()),
-                        on_value_change: move |v: Option<String>| {
-                            if let Some(v) = v {
-                                expiry_choice.set(v);
-                            }
-                        },
-                        SelectOption::<String> { index: 0usize, value: "never".to_string(), text_value: crate::i18n::tr("settings.privacy.blocklist.expiry.never"), {crate::i18n::tr("settings.privacy.blocklist.expiry.never")} }
-                        SelectOption::<String> { index: 1usize, value: "1d".to_string(), text_value: crate::i18n::tr("settings.privacy.blocklist.expiry.1d"), {crate::i18n::tr("settings.privacy.blocklist.expiry.1d")} }
-                        SelectOption::<String> { index: 2usize, value: "7d".to_string(), text_value: crate::i18n::tr("settings.privacy.blocklist.expiry.7d"), {crate::i18n::tr("settings.privacy.blocklist.expiry.7d")} }
-                        SelectOption::<String> { index: 3usize, value: "30d".to_string(), text_value: crate::i18n::tr("settings.privacy.blocklist.expiry.30d"), {crate::i18n::tr("settings.privacy.blocklist.expiry.30d")} }
-                    }
-                }
-
-                div { class: "actions",
-                    Button {
-                        variant: ButtonVariant::Primary,
-                        "data-testid": "block-user-button",
-                        disabled: !can_block,
-                        onclick: {
-                            let base = base_url;
-                            move |_| {
-                                let kind = target_kind();
-                                let target = add_input().trim().to_owned();
-                                if target.is_empty() || applies_to.read().is_empty() {
-                                    return;
-                                }
-                                let reason = {
-                                    let code = reason_code();
-                                    let code = code.trim().to_owned();
-                                    if code.is_empty() { None } else { Some(code) }
-                                };
-                                let applies = applies_to();
-                                let expires = expiry_choice_to_rfc3339(&expiry_choice());
-                                let changed = state_store
-                                    .write()
-                                    .block_target(kind, &target, reason, applies, expires);
-                                let next = state_store.read().client_blocklist();
-                                entries.set(next.clone());
-                                if changed {
-                                    let target_label = if kind == crate::account_data::BlocklistUiTargetKind::Actor {
-                                        actor_display_label(&state_store.read(), &target)
-                                    } else {
-                                        short_protocol_id(&target)
-                                    };
-                                    status.set(crate::i18n::substitute_args(
-                                        crate::i18n::tr("settings.privacy.blocklist.status.added"),
-                                        &[("target", target_label)],
-                                    ));
-                                    add_input.set(String::new());
-                                    crate::views::settings::push_blocklist_account_data(
-                                        base(),
-                                        token(),
-                                        principal_id(),
-                                        state_store,
+            });
+            let target = entry.target.clone();
+            let remove_context = context.clone();
+            let surfaces = entry
+                .applies_to
+                .iter()
+                .map(|surface| context.tr(surface_label_key(*surface)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            children.push(stack(
+                "event blocked-user-row",
+                vec![
+                    line(
+                        "event-head",
+                        vec![plain(label), plain(entry.created_at.to_string())],
+                    ),
+                    paragraph(
+                        "muted",
+                        crate::i18n::tr_args(
+                            "settings.privacy.blocklist.applies_summary",
+                            &[("surfaces", surfaces)],
+                        ),
+                    ),
+                    paragraph(
+                        "muted",
+                        entry
+                            .expires_at
+                            .map(|value| value.to_string())
+                            .unwrap_or_default(),
+                    ),
+                    paragraph(
+                        "muted",
+                        entry
+                            .reason_code
+                            .map(|reason| reason.to_string())
+                            .unwrap_or_default(),
+                    ),
+                    action(
+                        scope,
+                        context.clone(),
+                        "unblock-button",
+                        "settings.privacy.blocklist.unblock",
+                        "secondary",
+                        has_session,
+                        move || {
+                            let changed = remove_context
+                                .state_store
+                                .write(|store| store.unblock_target(&target));
+                            let next = remove_context
+                                .state_store
+                                .read(|store| store.client_blocklist());
+                            entries.revise(|value| {
+                                *value = next.clone();
+                            });
+                            if changed {
+                                feedback.revise(|value| {
+                                    *value = remove_context
+                                        .tr("settings.privacy.blocklist.status.unblocked")
+                                });
+                                if let Some(account) = remove_context.active_account.get() {
+                                    super::push_blocklist_account_data(
+                                        remove_context.clone(),
+                                        account.server_url.to_string(),
+                                        remove_context.token.get(),
+                                        account.principal_id().to_string(),
+                                        remove_context.state_store.clone(),
                                         next,
                                     );
-                                } else {
-                                    let target_label = if kind == crate::account_data::BlocklistUiTargetKind::Actor {
-                                        actor_display_label(&state_store.read(), &target)
-                                    } else {
-                                        short_protocol_id(&target)
-                                    };
-                                    status.set(crate::i18n::substitute_args(
-                                        crate::i18n::tr("settings.privacy.blocklist.status.duplicate"),
-                                        &[("target", target_label)],
-                                    ));
                                 }
                             }
                         },
-                        {crate::i18n::tr("settings.privacy.blocklist.block")}
-                    }
-                }
-                if !status.read().is_empty() {
-                    div {
-                        class: "muted",
-                        "data-testid": "write-status",
-                        "{status}"
-                    }
-                }
-            }
+                    ),
+                ],
+            ));
         }
+        stack("settings-list blocked-users-list", children)
+    });
+    let mut surfaces = Vec::new();
+    for surface in crate::account_data::DEFAULT_BLOCKLIST_APPLIES_TO
+        .iter()
+        .copied()
+    {
+        surfaces.push(toggle(
+            scope,
+            context.clone(),
+            &format!(
+                "block-surface-{}",
+                surface_label_key(surface)
+                    .rsplit('.')
+                    .next()
+                    .unwrap_or("surface")
+            ),
+            surface_label_key(surface),
+            scope.bond(move || applies_to.get().contains(&surface)),
+            true,
+            move |checked| {
+                applies_to.revise(|values| {
+                    values.retain(|value| value != &surface);
+                    if checked {
+                        values.push(surface);
+                    }
+                })
+            },
+        ));
     }
+    let mut reasons = vec![(
+        String::new(),
+        context.tr("settings.privacy.blocklist.no_reason"),
+    )];
+    reasons.extend(BLOCK_REASON_CODES.iter().map(|code| {
+        (
+            code.to_string(),
+            context.tr(&format!("moderation.report.reason.{code}")),
+        )
+    }));
+    let add_context = context.clone();
+    card(
+        scope,
+        context.clone(),
+        "settings.privacy.blocklist.title",
+        vec![
+            list,
+            card(
+                scope,
+                context.clone(),
+                "settings.privacy.blocklist.target_type",
+                vec![
+                    choice(
+                        scope,
+                        context.clone(),
+                        "block-target-kind",
+                        "settings.privacy.blocklist.target_type",
+                        target_type,
+                        Kind::ALL
+                            .iter()
+                            .copied()
+                            .map(|kind| {
+                                (
+                                    kind.ui_value().to_owned(),
+                                    context.tr(target_kind_label_key(kind)),
+                                )
+                            })
+                            .collect(),
+                        true,
+                        move |next| {
+                            if let Some(kind) = Kind::from_ui_value(&next) {
+                                target_kind.revise(|value| {
+                                    *value = kind;
+                                });
+                                target_type.revise(|value| {
+                                    *value = next;
+                                });
+                            }
+                        },
+                    ),
+                    input(
+                        scope,
+                        context.clone(),
+                        "block-target-input",
+                        "settings.privacy.blocklist.target.actor",
+                        target,
+                        true,
+                    ),
+                    paragraph(
+                        "muted block-target-hint",
+                        scope.bond(move || target_kind_placeholder(target_kind.get()).to_owned()),
+                    ),
+                    stack("settings-grid compact", surfaces),
+                    choice(
+                        scope,
+                        context.clone(),
+                        "block-reason",
+                        "settings.privacy.blocklist.reason_optional",
+                        reason,
+                        reasons,
+                        true,
+                        move |next| {
+                            reason.revise(|value| {
+                                *value = next;
+                            })
+                        },
+                    ),
+                    choice(
+                        scope,
+                        context.clone(),
+                        "block-expiry",
+                        "settings.privacy.blocklist.expires",
+                        expiry,
+                        ["never", "1d", "7d", "30d"]
+                            .into_iter()
+                            .map(|value| {
+                                (
+                                    value.to_owned(),
+                                    context
+                                        .tr(&format!("settings.privacy.blocklist.expiry.{value}")),
+                                )
+                            })
+                            .collect(),
+                        true,
+                        move |next| {
+                            expiry.revise(|value| {
+                                *value = next;
+                            })
+                        },
+                    ),
+                    action(
+                        scope,
+                        context.clone(),
+                        "block-user-button",
+                        "settings.privacy.blocklist.block",
+                        "primary",
+                        can_block,
+                        move || {
+                            let kind = target_kind.get();
+                            let raw = target.get().trim().to_owned();
+                            let valid = if kind == Kind::Actor {
+                                is_valid_identity_id(kind, &raw)
+                            } else {
+                                super::is_likely_valid_domain(&raw)
+                            };
+                            if !valid || applies_to.get().is_empty() {
+                                return;
+                            }
+                            let code = reason.get().trim().to_owned();
+                            let changed = add_context.state_store.write(|store| {
+                                store.block_target(
+                                    kind,
+                                    &raw,
+                                    (!code.is_empty()).then_some(code),
+                                    applies_to.get(),
+                                    expiry_choice_to_rfc3339(&expiry.get()),
+                                )
+                            });
+                            let next = add_context
+                                .state_store
+                                .read(|store| store.client_blocklist());
+                            entries.revise(|value| {
+                                *value = next.clone();
+                            });
+                            feedback.revise(|value| {
+                                *value = add_context.tr(if changed {
+                                    "settings.privacy.blocklist.status.added"
+                                } else {
+                                    "settings.privacy.blocklist.status.duplicate"
+                                })
+                            });
+                            if changed {
+                                target.revise(|value| value.clear());
+                                if let Some(account) = add_context.active_account.get() {
+                                    super::push_blocklist_account_data(
+                                        add_context.clone(),
+                                        account.server_url.to_string(),
+                                        add_context.token.get(),
+                                        account.principal_id().to_string(),
+                                        add_context.state_store.clone(),
+                                        next,
+                                    );
+                                }
+                            }
+                        },
+                    ),
+                    status(feedback),
+                ],
+            ),
+        ],
+    )
 }
-
 #[cfg(test)]
 mod tests {
     use super::is_valid_identity_id;

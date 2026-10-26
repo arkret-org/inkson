@@ -1,3 +1,5 @@
+import { inputByClass } from "./uiControl";
+import { byClass } from "./strandsHarness";
 import { expect, test } from "@playwright/test";
 import { CURRENT_PRINCIPAL_CORE_ID, DEMO_REALM } from "./mockArkretApi";
 import {
@@ -26,38 +28,38 @@ test("Circle presentation and local creation boundaries follow the active langua
 
   for (const language of ["en", "zh", "en"] as const) {
     await openSettings(page);
-    await page.getByTestId("settings-nav-item-theme").click();
-    await page.getByTestId(`language-${language}`).click();
-    await expect(page.getByTestId("client-shell")).toHaveAttribute("data-locale", language);
+    await byClass(page, "settings-nav-item-theme").click();
+    await byClass(page, "settings-language-choice").filter({ hasText: language === "zh" ? "中文" : "English" }).click();
+    await expect(page.locator("html")).toHaveAttribute("lang", language);
     // Normal public navigation remounts the panel. Native coverage separately
     // verifies retained presentation helpers across a locale change.
     await gotoAndDismissRecovery(page, `/realms/${DEMO_REALM}/circles`);
     const zh = language === "zh";
-    const panel = page.getByTestId("circles-panel");
+    const panel = byClass(page, "circle-realm");
     await expect(panel).toBeVisible();
     await expect(panel.getByRole("navigation")).toHaveAttribute("aria-label", zh ? "普通 Circles" : "Ordinary Circles");
     await expect(panel.getByRole("button", { name: zh ? "刷新" : "Refresh", exact: true })).toBeVisible();
-    await expect(panel.getByTestId("circle-list-item")).toHaveCount(1);
-    const item = panel.getByTestId("circle-list-item");
+    await expect(byClass(panel, "circle-list-item")).toHaveCount(1);
+    const item = byClass(panel, "circle-list-item");
     await expect(item).toContainText("Demo Circle");
     await expect(item).toContainText(zh ? "活跃" : "Active");
     // The ordinary Realm fixture is plaintext, while this existing Circle
     // independently has an accepted MLS binding. Neither boundary is changed.
     await expect(item).toContainText(zh ? "独立 MLS 群组 · 已启用端到端加密" : "Independent MLS group · E2EE active");
-    await expect(panel.getByTestId("circle-detail")).toContainText(zh ? "选择一个 Circle" : "Select a Circle");
-    const open = panel.getByTestId("circle-create-open");
+    await expect(byClass(panel, "circle-detail")).toContainText(zh ? "选择一个 Circle" : "Select a Circle");
+    const open = byClass(panel, "circles-new");
     await expect(open).toHaveText(zh ? "新建 Circle" : "New Circle");
     await open.click();
-    const modal = panel.getByTestId("circle-create-modal");
-    await expect(modal.getByRole("heading")).toHaveText(zh ? "创建 Circle" : "Create Circle");
-    const title = modal.getByTestId("circle-create-title");
-    const shortName = modal.getByTestId("circle-create-short-name");
+    const modal = byClass(panel, "circle-create-modal");
+    await expect(modal.getByRole("heading", {level:2})).toHaveText(zh ? "创建 Circle" : "Create Circle");
+    const title = inputByClass(modal, "circle-create-title");
+    const shortName = inputByClass(modal, "circle-create-short");
     const summary = modal.locator("textarea");
-    const submit = modal.getByTestId("circle-create-submit");
+    const submit = byClass(modal, "circle-create");
     await expect(submit).toHaveText(zh ? "创建 Circle" : "Create Circle");
     await expect(submit).toBeDisabled();
     await expect(shortName).toHaveAttribute("aria-label", zh ? "Circle 简称" : "Circle short name");
-    const labels = modal.locator(".workflow-form > label");
+    const labels = modal.locator(".workflow-form .sapid-field-label, .workflow-form .settings-toggle");
     await expect(labels).toContainText([
       zh ? "标题" : "Title",
       zh ? "简称（ASCII 字符，在此 Realm 内唯一）" : "Short name (ASCII, unique in this Realm)",
@@ -70,27 +72,36 @@ test("Circle presentation and local creation boundaries follow the active langua
     const visibility = modal.getByLabel(zh ? "Circle 目录可见性" : "Circle directory visibility", { exact: true });
     const join = modal.getByLabel(zh ? "Circle 加入规则" : "Circle join rule", { exact: true });
     const history = modal.getByLabel(zh ? "Circle 历史记录" : "Circle history", { exact: true });
-    await expect(visibility).toHaveValue("members");
-    await expect(join).toHaveValue("public");
-    await expect(history).toHaveValue("since_join");
-    await expect(visibility.locator("option")).toHaveText(zh ? ["仅 Circle 成员", "允许 Realm 成员预览"] : ["Circle members only", "Preview for Realm members"]);
-    await expect(join.locator("option")).toHaveText(zh ? ["任何有效的 Realm 成员", "申请批准", "由 Circle 管理者添加"] : ["Any active Realm member", "Request approval", "Added by a Circle manager"]);
-    await expect(history.locator("option")).toHaveText(zh ? ["加入之后", "当前成员可查看全部历史"] : ["Since joining", "All history for current members"]);
+    await expect(visibility).toHaveText(zh ? "仅 Circle 成员" : "Circle members only");
+    await expect(join).toHaveText(zh ? "任何有效的 Realm 成员" : "Any active Realm member");
+    await expect(history).toHaveText(zh ? "加入之后" : "Since joining");
+    await visibility.click();
+    await expect(page.getByRole("option")).toHaveText(zh ? ["仅 Circle 成员", "允许 Realm 成员预览"] : ["Circle members only", "Preview for Realm members"]);
+    await page.keyboard.press("Escape");
+    await join.click();
+    await expect(page.getByRole("option")).toHaveText(zh ? ["任何有效的 Realm 成员", "申请批准", "由 Circle 管理者添加"] : ["Any active Realm member", "Request approval", "Added by a Circle manager"]);
+    await page.keyboard.press("Escape");
+    await history.click();
+    await expect(page.getByRole("option")).toHaveText(zh ? ["加入之后", "当前成员可查看全部历史"] : ["Since joining", "All history for current members"]);
+    await page.keyboard.press("Escape");
     await title.fill(literalTitle);
     await summary.fill(literalSummary);
     await expect(submit).toBeEnabled();
     await shortName.fill("circles.page.short_name 原文");
     await expect(submit).toBeDisabled();
     await shortName.fill(literalShortName);
-    await visibility.selectOption("realm_members");
-    await join.selectOption("knock");
-    await history.selectOption("all_history_for_current_members");
-    const encrypted = modal.getByTestId("circle-create-encrypted");
+    await visibility.click();
+    await page.getByRole("option", {name: zh ? "允许 Realm 成员预览" : "Preview for Realm members", exact:true}).click();
+    await join.click();
+    await page.getByRole("option", {name: zh ? "申请批准" : "Request approval", exact:true}).click();
+    await history.click();
+    await page.getByRole("option", {name: zh ? "当前成员可查看全部历史" : "All history for current members", exact:true}).click();
+    const encrypted = byClass(modal, "circle-encrypted").getByRole("checkbox");
     await expect(encrypted).not.toBeChecked();
     await encrypted.check();
     await expect(encrypted).toBeChecked();
     const preview = modal.locator(".circle-boundary-preview");
-    await expect(preview.locator("strong")).toHaveText(zh ? "边界预览" : "Boundary preview");
+    await expect(preview.getByRole("heading", { level: 3 })).toHaveText(zh ? "边界预览" : "Boundary preview");
     await expect(preview.locator("p").nth(0)).toHaveText(`${zh ? "初始成员：" : "Initial member: "}${CURRENT_PRINCIPAL_CORE_ID}`);
     await expect(preview.locator("p").nth(1)).toHaveText(zh ? "目录：RealmMembers" : "Directory: RealmMembers");
     await expect(preview.locator("p").nth(2)).toHaveText(zh ? "加入规则：Knock" : "Join rule: Knock");
@@ -108,12 +119,13 @@ test("Circle presentation and local creation boundaries follow the active langua
     await expect(title).toHaveValue(literalTitle);
     await expect(summary).toHaveValue(literalSummary);
     await expect(shortName).toHaveValue(literalShortName);
-    await expect(visibility).toHaveValue("realm_members");
-    await expect(join).toHaveValue("knock");
-    await expect(history).toHaveValue("all_history_for_current_members");
+    await expect(visibility).toHaveText(zh ? "允许 Realm 成员预览" : "Preview for Realm members");
+    await expect(join).toHaveText(zh ? "申请批准" : "Request approval");
+    await expect(history).toHaveText(zh ? "当前成员可查看全部历史" : "All history for current members");
     await expect(encrypted).toBeChecked();
-    await join.selectOption("invite");
-    await expect(join).toHaveValue("invite");
+    await join.click();
+    await page.getByRole("option", {name: zh ? "由 Circle 管理者添加" : "Added by a Circle manager", exact:true}).click();
+    await expect(join).toHaveText(zh ? "由 Circle 管理者添加" : "Added by a Circle manager");
     await expect(preview.locator("p").nth(2)).toHaveText(zh ? "加入规则：Invite" : "Join rule: Invite");
     await expect(submit).toBeEnabled();
     // Do not submit. These are real public local controls, with unchanged

@@ -39,7 +39,6 @@ try {
 
     New-Item -ItemType Directory -Force -Path $DistDir | Out-Null
     $cargoBundle = Get-Command cargo-bundle -ErrorAction SilentlyContinue
-    $dxBundle = Get-Command dx -ErrorAction SilentlyContinue
 
     $evidence = [ordered]@{
         generated_at = (Get-Date).ToUniversalTime().ToString("o")
@@ -61,23 +60,19 @@ try {
             $evidence.bundle_path = $candidate.FullName
         }
     }
-    elseif ($dxBundle) {
-        Write-Host "Using dx bundle ($($dxBundle.Source))"
-        & dx bundle --release --platform macos --features desktop --out-dir $DistDir 2>&1 | Tee-Object -Variable bundleOutput
-        $evidence.bundler = "dx"
-        $candidate = Get-ChildItem -Path $DistDir -Recurse -Filter "*.app" -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($candidate) {
-            $evidence.bundle_path = $candidate.FullName
-        }
-    }
     else {
-        Write-Host "Neither cargo-bundle nor dx found — falling back to hand-rolled .app layout."
+        Write-Host "cargo-bundle is unavailable; creating the native .app layout."
         $appRoot = Join-Path $DistDir "inkson.app"
         $contents = Join-Path $appRoot "Contents"
         $macos = Join-Path $contents "MacOS"
         New-Item -ItemType Directory -Force -Path $macos | Out-Null
         Copy-Item -Force -LiteralPath $BinaryPath -Destination (Join-Path $macos "inkson")
         chmod 0755 (Join-Path $macos "inkson")
+        $resources = Join-Path $contents "Resources"
+        New-Item -ItemType Directory -Force -Path $resources | Out-Null
+        $assetOutput = Join-Path $resources "assets"
+        New-Item -ItemType Directory -Force -Path $assetOutput | Out-Null
+        Get-ChildItem -LiteralPath (Join-Path $repoRoot "assets") -Force | Copy-Item -Destination $assetOutput -Recurse -Force
 
         $infoPlist = @"
 <?xml version="1.0" encoding="UTF-8"?>
@@ -91,6 +86,8 @@ try {
   <key>CFBundleShortVersionString</key><string>$Version</string>
   <key>LSMinimumSystemVersion</key><string>11.0</string>
   <key>NSHighResolutionCapable</key><true/>
+  <key>NSCameraUsageDescription</key><string>Inkson uses the camera for video calls.</string>
+  <key>NSMicrophoneUsageDescription</key><string>Inkson uses the microphone for calls.</string>
 </dict>
 </plist>
 "@
@@ -98,6 +95,20 @@ try {
         $evidence.bundler = "hand-rolled"
         $evidence.bundle_path = $appRoot
     }
+
+    if (-not $evidence.bundle_path) { throw "The native bundler produced no application bundle" }
+    $finalContents = Join-Path $evidence.bundle_path "Contents"
+    $finalPlist = Join-Path $finalContents "Info.plist"
+    foreach ($permission in @(
+        @{ Key = "NSCameraUsageDescription"; Text = "Inkson uses the camera for video calls." },
+        @{ Key = "NSMicrophoneUsageDescription"; Text = "Inkson uses the microphone for calls." }
+    )) {
+        & /usr/bin/plutil -replace $permission.Key -string $permission.Text $finalPlist
+        if ($LASTEXITCODE -ne 0) { throw "Could not set media permission metadata" }
+    }
+    $finalAssets = Join-Path $finalContents "Resources/assets"
+    New-Item -ItemType Directory -Force -Path $finalAssets | Out-Null
+    Get-ChildItem -LiteralPath (Join-Path $repoRoot "assets") -Force | Copy-Item -Destination $finalAssets -Recurse -Force
 
     $evidencePath = Join-Path $DistDir "macos-bundle.json"
     $evidence | ConvertTo-Json -Depth 5 | Set-Content -Path $evidencePath

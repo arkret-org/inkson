@@ -1,3 +1,4 @@
+import { byClass } from "./strandsHarness";
 import { expect, test } from "@playwright/test";
 import { BOB_ACCOUNT_ID } from "./mockArkretApi";
 import {
@@ -40,45 +41,39 @@ test("Direct structure local controls preserve action values and refuse writes w
     "归档话题", "恢复话题", "删除空话题",
   ];
   const literalTitle = "chat.direct_structure.new_chat {count} 原文";
-  const bobActorKey = JSON.stringify({
-    account_id: {
-      principal_id: BOB_ACCOUNT_ID.principal_id,
-      station_id: BOB_ACCOUNT_ID.station_id,
-    },
-    kind: "account",
-  });
+  const bobIdentity = `Principal: ${BOB_ACCOUNT_ID.principal_id} · Station: ${BOB_ACCOUNT_ID.station_id}`;
 
   for (const language of ["en", "zh", "en"] as const) {
     await openSettings(page);
-    await page.getByTestId("settings-nav-item-theme").click();
-    await page.getByTestId(`language-${language}`).click();
-    await expect(page.getByTestId("client-shell")).toHaveAttribute("data-locale", language);
+    await byClass(page, "settings-nav-item-theme").click();
+    await byClass(page, "settings-language-choice").filter({ hasText: language === "zh" ? "中文" : "English" }).click();
+    await expect(page.locator("html")).toHaveAttribute("lang", language);
     // Navigate through the public contact sidebar. Found supplies coordinates;
     // this fixture has no complete typed Current or restorable MLS state.
     await gotoAndDismissRecovery(page, "/contacts/manage");
-    const shell = page.getByTestId("client-shell");
-    await shell.getByTestId("realm-sidebar-tab-direct").click();
-    const bobRow = shell.locator(
-      `[data-testid="direct-conversation-row"][data-peer='${bobActorKey}']`,
-    );
-    expect(JSON.parse((await bobRow.getAttribute("data-peer"))!)).toEqual({
-      kind: "account", account_id: BOB_ACCOUNT_ID,
-    });
+    const shell = page.locator(".shell.app");
+    await shell.getByRole("button", {name: language === "zh" ? "联系人" : "Contacts", exact:true}).click();
+    const bobRow = byClass(shell, "direct-conversation-row").filter({ hasText: bobIdentity });
+    await expect(bobRow).toHaveAccessibleDescription(bobIdentity);
     await bobRow.click();
     await expect(page).toHaveURL(/\/direct\/ak:realm:AUEAoXMJeJWBETvkqm7gk4imduk7g-l8bim19OPFQDaO\/ak:strand:Ae9PN2rTd0Dojs9yS8iLnfheJtjSEZ3mgDDyONpztHUd$/);
-    const panel = page.getByTestId("direct-structure");
+    const panel = byClass(page, "direct-structure");
     await expect(panel).toBeVisible();
     const zh = language === "zh";
     const manage = panel.getByRole("button", { name: zh ? "管理聊天和话题" : "Manage chats and topics", exact: true });
     await manage.click();
     const action = panel.getByLabel(zh ? "操作" : "Action", { exact: true });
     await expect(action).toHaveValue("new_chat");
-    await expect(action.locator("option")).toHaveText(zh ? chinese : english);
-    expect(await action.locator("option").evaluateAll((options) => options.map((option) => (option as HTMLOptionElement).value))).toEqual(actions);
+    // The host keeps one hidden, disabled placeholder outside the real choices.
+    await expect(action.locator('option[hidden][disabled][value=""]')).toHaveCount(1);
+    await expect(action.locator("option[hidden]")).toHaveText("");
+    await expect(action.locator("option:not([hidden])")).toHaveText(zh ? chinese : english);
+    expect(await action.locator("option:not([hidden])").evaluateAll((options) => options.map((option) => (option as HTMLOptionElement).value))).toEqual(actions);
     const title = panel.getByLabel(zh ? "标题" : "Title", { exact: true });
     const save = panel.getByRole("button", { name: zh ? "保存" : "Save", exact: true });
     await expect(title).toHaveValue("");
-    await expect(title).toHaveAttribute("placeholder", zh ? "标题" : "Title");
+    await expect(panel.locator(".direct-title-field > .sapid-field-label")).toHaveText(zh ? "标题" : "Title");
+    await expect(title).toHaveAccessibleName(zh ? "标题" : "Title");
     await expect(save).toBeDisabled();
     await title.fill(literalTitle);
     await expect(save).toBeDisabled();
@@ -88,7 +83,7 @@ test("Direct structure local controls preserve action values and refuse writes w
       const metadata = ["new_chat", "new_topic", "rename_chat", "rename_topic_target"].includes(value);
       if (metadata) {
         await expect(title).toHaveValue(literalTitle);
-        await expect(title).toHaveAttribute("placeholder", zh ? "标题" : "Title");
+        await expect(title).toHaveAccessibleName(zh ? "标题" : "Title");
       } else {
         await expect(title).toHaveCount(0);
       }
@@ -96,7 +91,7 @@ test("Direct structure local controls preserve action values and refuse writes w
       const topic = panel.getByLabel(zh ? "话题" : "Topic", { exact: true });
       if (requiresTopic) {
         await expect(topic).toHaveValue("");
-        await expect(topic.locator('option[value=""]')).toHaveText(zh ? "选择话题" : "Select Topic");
+        await expect(topic.locator('option[value=""]:not([hidden])')).toHaveText(zh ? "选择话题" : "Select Topic");
       } else {
         await expect(topic).toHaveCount(0);
       }
@@ -111,7 +106,7 @@ test("Direct structure local controls preserve action values and refuse writes w
     await expect(action).toHaveValue("rename_chat");
     await expect(title).toHaveValue(literalTitle);
     await expect(save).toBeDisabled();
-    await expect(panel.getByTestId("direct-structure-status")).toHaveText("");
+    await expect(byClass(panel, "direct-structure-status")).toHaveText("");
     expect(writes).toEqual([]);
   }
   expect(writes).toEqual([]);

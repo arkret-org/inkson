@@ -1,123 +1,14 @@
-use arkret_wire::{AccountDataKey, CapabilityActionId};
+use std::cell::RefCell;
+use std::collections::BTreeMap;
 
+use super::native::{block, button, field};
 use super::*;
+use crate::presentation::widgets::{empty, line, paragraph, plain, reactive_distinct};
 
-// The key must belong to the loop's immediate VNode, not a node produced by
-// a nested Rust expression. Otherwise a sliding window matches rows by slot
-// and disposes the attachment components of still-visible messages.
-fn keyed_timeline_rows(rows: Vec<(String, Element)>) -> Element {
-    rsx! {
-        for (key, row) in rows {
-            Fragment {key: "{key}", {row}}
-        }
-    }
-}
-
-#[cfg(test)]
-mod row_lifetime_tests {
-    use std::cell::RefCell;
-    use std::collections::BTreeMap;
-    use std::rc::Rc;
-
-    use super::*;
-
-    #[derive(Clone)]
-    struct Control {
-        window: Rc<RefCell<Option<Signal<usize>>>>,
-        mounts: Rc<RefCell<BTreeMap<String, usize>>>,
-    }
-
-    #[component]
-    fn RowProbe(id: String, mounts: Rc<RefCell<BTreeMap<String, usize>>>) -> Element {
-        let instance = use_hook(|| {
-            let mut counts = mounts.borrow_mut();
-            let count = counts.entry(id.clone()).or_default();
-            *count += 1;
-            *count
-        });
-        rsx! {div {"{id}:{instance}"}}
-    }
-
-    fn window_harness(control: Control) -> Element {
-        let start = use_signal(|| 0_usize);
-        *control.window.borrow_mut() = Some(start);
-        let rows = ["a", "b", "c", "d", "e"]
-            .into_iter()
-            .skip(start())
-            .take(3)
-            .map(|id| {
-                (
-                    id.to_owned(),
-                    rsx! {RowProbe {id, mounts: control.mounts.clone()}},
-                )
-            })
-            .collect();
-        keyed_timeline_rows(rows)
-    }
-
-    #[test]
-    fn overlapping_virtual_rows_keep_their_component_instances_when_window_slides() {
-        let control = Control {
-            window: Rc::new(RefCell::new(None)),
-            mounts: Rc::new(RefCell::new(BTreeMap::new())),
-        };
-        let mut dom = VirtualDom::new_with_props(window_harness, control.clone());
-        dom.rebuild_in_place();
-        let mut previous_start = 0;
-        for start in [1, 2, 1] {
-            let before = control.mounts.borrow().clone();
-            dom.in_runtime(|| control.window.borrow().unwrap().set(start));
-            for _ in 0..4 {
-                dom.render_immediate_to_vec();
-            }
-            let after = control.mounts.borrow();
-            // b/c/d remain mounted across these overlapping windows. A row
-            // that actually leaves the window is allowed to release its URL.
-            let keys = ["a", "b", "c", "d", "e"];
-            for &id in &keys[start.max(previous_start)..(start + 3).min(previous_start + 3)] {
-                if let Some(count) = before.get(id) {
-                    assert_eq!(after.get(id), Some(count), "overlapping row {id} remounted");
-                }
-            }
-            previous_start = start;
-        }
-    }
-}
-
-thread_local! {
-    static CHAT_FEED_SCROLL_OFFSETS: std::cell::RefCell<
-        std::collections::BTreeMap<String, ChatFeedScrollPosition>,
-    > = const { std::cell::RefCell::new(std::collections::BTreeMap::new()) };
-}
-
-#[derive(Clone, Copy)]
-struct ChatFeedScrollPosition {
-    top: f64,
-    follows_latest: bool,
-}
-
-impl Default for ChatFeedScrollPosition {
-    fn default() -> Self {
-        Self {
-            top: 0.0,
-            follows_latest: true,
-        }
-    }
-}
-
-fn chat_feed_scroll_position(key: &str) -> ChatFeedScrollPosition {
-    CHAT_FEED_SCROLL_OFFSETS
-        .with(|positions| positions.borrow().get(key).copied().unwrap_or_default())
-}
-
-pub(super) fn chat_feed_scroll_offset(key: &str) -> f64 {
-    chat_feed_scroll_position(key).top
-}
-
-#[derive(Clone, PartialEq)]
+#[derive(Clone)]
 pub(super) struct ChatTimelineContext {
     pub embedded: bool,
-    pub visible_messages: Memo<Vec<ChatMessage>>,
+    pub visible_messages: Bond<Vec<ChatMessage>>,
     pub strand_scope_lookup: std::collections::BTreeMap<String, StrandScopeCircle>,
     pub private_sidecar_event_ids: std::collections::BTreeSet<String>,
     pub authority: arkret_sdk::AccountId,
@@ -136,1288 +27,581 @@ pub(super) struct ChatTimelineContext {
     pub visible_channels_empty: bool,
     pub visible_message_count: usize,
     pub loading: bool,
-    pub token: Signal<String>,
-    pub sync_cursor: Signal<String>,
-    pub frontier_state: Signal<String>,
+    pub token: Cage<String>,
+    pub frontier_state: Cage<String>,
 }
 
-#[component]
-pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineContext) -> Element {
-    let ChatTimelineContext {
-        embedded,
-        visible_messages,
-        strand_scope_lookup,
-        private_sidecar_event_ids,
-        authority,
-        principal_id,
-        account_display_label,
-        participants: participants_for_messages,
-        selected_realm_id,
-        selected_channel_id: selected_channel_value,
-        sidecar_active,
-        direct_mode,
-        device_id,
-        base_url,
-        focus_message_id,
-        blocked_actor_ids: blocked_actor_id_set,
-        selected_channel_security_encrypted,
-        visible_channels_empty,
-        visible_message_count,
-        loading: discussion_feed_loading,
-        token,
-        sync_cursor,
-        frontier_state,
-    } = context;
-    let scroll_offset_key = format!("{selected_realm_id}\u{1f}{selected_channel_value}");
-    let scroll_offset_key_for_event = scroll_offset_key.clone();
-    let mut scroll_restored = use_signal(|| false);
-    let state_store = crate::app::SessionContext::get().state_store;
-    let queued_local_ids = (controller.queued_outbound_local_operation_ids)();
-    let queued_message_identities = if queued_local_ids.is_empty() {
-        std::collections::BTreeSet::new()
-    } else {
-        crate::event_submit::pending_chat_message_identities(
-            &queued_local_ids,
-            &state_store.peek().load(),
+#[derive(Clone, Copy)]
+struct ScrollPosition {
+    top: f64,
+    follows_latest: bool,
+}
+impl Default for ScrollPosition {
+    fn default() -> Self {
+        Self {
+            top: 0.0,
+            follows_latest: true,
+        }
+    }
+}
+thread_local! {
+ static POSITIONS:RefCell<BTreeMap<String,ScrollPosition>>=const{RefCell::new(BTreeMap::new())};
+}
+fn position(key: &str) -> ScrollPosition {
+    POSITIONS.with(|values| values.borrow().get(key).copied().unwrap_or_default())
+}
+fn store_position(key: &str, top: f64, follows_latest: bool) {
+    if top.is_finite() {
+        POSITIONS.with(|values| {
+            values.borrow_mut().insert(
+                key.to_owned(),
+                ScrollPosition {
+                    top: top.max(0.0),
+                    follows_latest,
+                },
+            )
+        });
+    }
+}
+pub(super) fn chat_timeline(
+    scope: &Scope,
+    app: Rc<crate::presentation::InksonContext>,
+    controller: ChatController,
+    context: Bond<ChatTimelineContext>,
+) -> View {
+    let target = scope.bond(move || {
+        let value = context.get();
+        (
+            value.authority,
+            value.device_id,
+            value.selected_realm_id,
+            value.selected_channel_id,
         )
-    };
-    let command_context = ChatCommandContext {
-        base_url: base_url.clone(),
-        authority,
-        principal_id: principal_id.clone(),
-        device_id: device_id.clone(),
-        selected_realm_id: selected_realm_id.clone(),
-        selected_channel_id: selected_channel_value.clone(),
-        selected_channel_security_encrypted,
-        token,
-        sync_cursor,
-        frontier_state,
-        known_agent_accounts: participants_for_messages
-            .iter()
-            .filter(|p| p.is_agent)
-            .filter_map(participant_mention_account)
-            .collect(),
-        private_agent_scope: direct_mode,
-    };
-    // The parent folds durable lifecycle controls onto optimistic controller
-    // rows before filtering this snapshot. Reading controller.messages here
-    // would discard remote reactions/revisions that arrived before the
-    // sender's canonical create was persisted locally.
-    let all_messages_snapshot = visible_messages.read();
-    let messages_for_reply_lookup = &all_messages_snapshot;
-    let message_stream_cards = crate::views::message_streams::MessageStreamHub::try_use()
-        .map(|hub| hub.visible_for(&selected_realm_id, &selected_channel_value))
-        .unwrap_or_default();
-    let position = chat_feed_scroll_position(&scroll_offset_key);
-    let (feed_id, virtual_window, virtual_mount) = timeline_window::use_virtual_timeline(
-        visible_messages,
-        focus_message_id.clone(),
-        position.follows_latest,
-        position.top,
-    );
-    let rows = visible_messages.read();
-    let start = virtual_window.start.min(rows.len());
-    let end = virtual_window.end.max(start).min(rows.len());
-    let mounted_rows = rows[start..end]
-        .iter()
-        .cloned()
-        .enumerate()
-        .map(|(index, row)| (start + index, row))
-        .collect::<Vec<_>>();
-    drop(rows);
-    let pinned_target_set: std::collections::HashSet<String> = (controller.shared_pins)()
-        .iter()
-        .map(|pin| pin.target_ref.clone())
-        .collect();
-    let private_saved_target_set = (controller.private_saved_targets)();
-    let ChatController {
-        messages: _,
-        shared_pins,
-        private_saved_targets,
-        private_saved_account_data: _,
-        message_context_menu,
-        moderation_report_draft,
-        moderation_report_pending,
-        status_msg: _,
-        editing_message,
-        edit_draft,
-        redact_confirm,
-        reaction_picker,
-        poll_cards,
-        promote_discussion_draft: _,
-        promoted_targets,
-        blocked_show_anyway,
-        ..
-    } = controller;
-
-    rsx! {
-                div { id: feed_id, class: "discussion-chat-feed", "data-testid": "message-list",
-                    onscroll: move |event: ScrollEvent| {
-                        // Ignore mounting events until the saved position has
-                        // been restored, but retain a real user scroll to zero.
-                        if *scroll_restored.peek() {
-                            let data = event.data();
-                            let top = data.scroll_top();
-                            let follows_latest = f64::from(data.scroll_height() - data.client_height()) - top <= 32.0;
-                            CHAT_FEED_SCROLL_OFFSETS.with(|positions| {
-                                positions.borrow_mut().insert(scroll_offset_key_for_event.clone(), ChatFeedScrollPosition { top, follows_latest });
-                            });
-                        }
-                    },
-                    onmounted: move |event: MountedEvent| {
-                        virtual_mount.call(event.clone());
-                        let scroll_offset_key = scroll_offset_key.clone();
-                        async move {
-                            let position = chat_feed_scroll_position(&scroll_offset_key);
-                            if !position.follows_latest {
-                                let _ = event
-                                    .scroll(
-                                        dioxus::html::geometry::PixelsVector2D::new(0.0, position.top),
-                                        ScrollBehavior::Instant,
-                                    )
-                                    .await;
-                            }
-                            scroll_restored.set(true);
-                        }
-                    },
-                    for preview in message_stream_cards {
-                        div {
-                            key: "{preview.message_id}",
-                            class: if preview.stalled {
-                                "chat-message message-stream-preview is-stalled"
-                            } else {
-                                "chat-message message-stream-preview"
-                            },
-                            "data-testid": "message-stream-preview",
-                            "data-message-id": "{preview.message_id}",
-                            "data-stream-state": if preview.stalled { "stalled" } else { "active" },
-                            div { class: "message-meta",
-                                span { class: "message-sender", "{preview.sender_actor_id}" }
-                                span { class: "message-stream-badge", "Generating…" }
-                            }
-                            div { class: "msg-body",
-                                if preview.text.is_empty() {
-                                    span { class: "message-stream-waiting", "…" }
+    });
+    reactive_distinct(target, move |scope, (account, device, realm, strand)| {
+        let key = format!("{account:?}\u{1f}{device}\u{1f}{realm}\u{1f}{strand}");
+        let saved = position(&key);
+        let rows = context.get_untracked().visible_messages;
+        let node = scope.cage(None);
+        let boundary = MessageMenuBoundary {
+            node,
+            revision: scope.cage(0),
+        };
+        #[cfg(target_arch = "wasm32")]
+        let saved_key = key.clone();
+        #[cfg(target_arch = "wasm32")]
+        let saved_context = Rc::downgrade(&app);
+        #[cfg(target_arch = "wasm32")]
+        let saved_generation = app.session_generation.get_untracked();
+        #[cfg(target_arch = "wasm32")]
+        let saved_account = app.active_account.get_untracked();
+        #[cfg(target_arch = "wasm32")]
+        let (feed_id, window) = timeline_window::virtual_timeline(
+            scope,
+            rows,
+            context.get_untracked().focus_message_id,
+            saved.follows_latest,
+            saved.top,
+            Rc::new(move |top, follows| {
+                if let Some(context) = saved_context.upgrade()
+                    && context.session_generation.try_get().ok() == Some(saved_generation)
+                    && context.active_account.try_get().is_ok()
+                    && context.session_matches(saved_generation, &saved_account)
+                {
+                    store_position(&saved_key, top, follows);
+                }
+            }),
+        );
+        #[cfg(not(target_arch = "wasm32"))]
+        let feed_id = format!("chat-feed-{}", uuid_v7());
+        #[cfg(not(target_arch = "wasm32"))]
+        let logical = scope.cage(saved.top);
+        let stream_app = app.clone();
+        let stream = reactive_distinct(
+            scope.bond(move || {
+                let current = context.get();
+                stream_app
+                    .message_stream_hub
+                    .visible_for(&current.selected_realm_id, &current.selected_channel_id)
+            }),
+            move |_, cards| {
+                if cards.is_empty() {
+                    return empty();
+                };
+                block(
+                    "message-stream-previews",
+                    cards
+                        .into_iter()
+                        .map(|card| {
+                            let mut body = vec![paragraph(
+                                "msg-body",
+                                if card.text.is_empty() {
+                                    "…".into()
                                 } else {
-                                    "{preview.text}"
-                                }
-                                if preview.truncated {
-                                    span {
-                                        class: "message-stream-truncated",
-                                        " Preview truncated; waiting for final message."
-                                    }
-                                }
-                                if preview.stalled {
-                                    span {
-                                        class: "message-stream-stalled",
-                                        " Generation paused; waiting for an update."
-                                    }
-                                }
+                                    card.text
+                                },
+                            )];
+                            if card.truncated {
+                                body.push(paragraph(
+                                    "message-stream-truncated",
+                                    " Preview truncated; waiting for final message.",
+                                ));
                             }
-                        }
-                    }
-                    div { class: "chat-virtual-rows", "data-testid": "virtual-timeline",
-                        style: "height: {virtual_window.total}px",
-                        div { class: "chat-virtual-slice",
-                            style: "transform: translateY({virtual_window.top}px)",
-                    {keyed_timeline_rows(mounted_rows.into_iter().map(|(virtual_index, msg)| {
-                            let row_key = msg.id.clone();
-                            let message_is_private_sidecar =
-                                private_sidecar_event_ids.contains(&msg.id);
-                            let message_is_read_only_private = message_is_private_sidecar;
-                            let mut command_context = command_context.clone();
-                            command_context.private_agent_scope = direct_mode || message_is_private_sidecar;
-                            let scope_circle = (!message_is_private_sidecar)
-                                .then(|| strand_scope_lookup.get(&msg.strand_id).cloned())
-                                .flatten();
-                            let scope_class = if scope_circle.is_some() {
-                                " has-circle-accent-rail"
-                            } else {
-                                ""
-                            };
-                            let scope_attr = scope_circle
-                                .as_ref()
-                                .map(|c| c.circle_id.clone())
-                                .unwrap_or_default();
-                            let message_target_ref = msg.pin_saved_target_ref().to_owned();
-                            // O(1) lookup into the prebuilt set, semantically
-                            // equivalent to the original `.iter().any(...)`: a pin
-                            // matches when target_ref equals the message target_ref or message id.
-                            let message_is_pinned = pinned_target_set.contains(&message_target_ref)
-                                || pinned_target_set.contains(&msg.id);
-                            let message_is_saved_private =
-                                private_saved_target_set.contains(&message_target_ref);
-                            // The queue answers with holder-local ids, which the
-                            // optimistic row carries as its own id until an
-                            // accepted Event renames it.
-                            let message_is_queued_offline = queued_message_identities
-                                .iter()
-                                .any(|local_id| msg.matches_id_or_protocol(local_id));
-                            let sender_is_own =
-                                is_own_message_sender(&msg.sender, principal_id.as_str());
-                            // Deep-link focus target (design/route-view-ia.md §3.2).
-                            let is_focus_message =
-                                !focus_message_id.is_empty() && msg.id == focus_message_id;
-                            // Shared per-message dispatchers keep the overflow-button
-                            // and context-click paths on the same action set.
-                            // Signals are `Copy`, so each closure re-shadows the ones
-                            // it mutates as a local `mut` copy to stay a plain `Fn`.
-                            let reply_action: std::rc::Rc<dyn Fn()> = std::rc::Rc::new({
-                                let reply_target =
-                                    msg.reply_target_ref().map(ToOwned::to_owned);
-                                move || {
-                                    if let Some(target) = reply_target.clone() {
-                                        controller.begin_reply(target);
-                                    }
-                                }
-                            });
-                            let react_action: std::rc::Rc<dyn Fn()> = std::rc::Rc::new({
-                                let msg_id = msg.id.clone();
-                                move || controller.toggle_reaction_picker(msg_id.clone())
-                            });
-                            let edit_action: std::rc::Rc<dyn Fn()> = std::rc::Rc::new({
-                                let msg_id = msg.id.clone();
-                                let body = msg.body.clone();
-                                move || {
-                                    controller.begin_edit(msg_id.clone(), body.clone());
-                                }
-                            });
-                            let redact_action: std::rc::Rc<dyn Fn()> = std::rc::Rc::new({
-                                let msg_id = msg.id.clone();
-                                move || controller.confirm_redaction(msg_id.clone())
-                            });
-                            // Holder-private save is shared by every way the
-                            // message action menu can be opened.
-                            let private_save_action: std::rc::Rc<dyn Fn()> = std::rc::Rc::new({
-                                let context = command_context.clone();
-                                let target_ref = message_target_ref.clone();
-                                move || controller.save_message_private(context.clone(), target_ref.clone())
-                            });
-                            let report_scope = arkret_sdk::RealmId::new(msg.realm_id.clone())
-                                .ok()
-                                .and_then(|realm_id| match scope_circle.as_ref() {
-                                    Some(circle) => arkret_sdk::CircleId::new(circle.circle_id.clone())
-                                        .ok()
-                                        .map(|circle_id| arkret_sdk::ScopeRef::Circle {
-                                            realm_id,
-                                            circle_id,
-                                        }),
-                                    None => Some(arkret_sdk::ScopeRef::Realm { realm_id }),
-                                });
-                            let message_menu_is_open =
-                                message_context_menu().as_deref() == Some(msg.id.as_str());
-                            let message_menu_id = format!("message-actions-{}", msg.id);
-                            (row_key, rsx! {
-                        div {
-                            key: "{msg.id}",
-                            id: "chat-msg-{msg.id}",
-                            class: {
-                                let mut base = if sender_is_own {
-                                    if msg.failed { "discussion-message is-own is-failed".to_owned() } else { "discussion-message is-own".to_owned() }
-                                } else if msg.failed {
-                                    "discussion-message is-failed".to_owned()
+                            if card.stalled {
+                                body.push(paragraph(
+                                    "message-stream-stalled",
+                                    " Generation paused; waiting for an update.",
+                                ));
+                            }
+                            block(
+                                if card.stalled {
+                                    "chat-message message-stream-preview is-stalled"
                                 } else {
-                                    "discussion-message".to_owned()
-                                };
-                                // T7.4: grey out and italicise messages
-                                // that are still waiting on key material.
-                                if msg.crypto_state.is_pending() {
-                                    base.push_str(" is-crypto-pending");
-                                }
-                                if message_is_pinned {
-                                    base.push_str(" is-pinned");
-                                }
-                                if is_focus_message {
-                                    base.push_str(" is-highlighted");
-                                }
-                                if message_is_private_sidecar {
-                                    base.push_str(" is-private-sidecar");
-                                }
-                                base.push_str(scope_class);
-                                base
-                            },
-                            // Deep-linked message swaps its testid so the e2e
-                            // harness can assert the scroll/highlight landed.
-                            "data-testid": if is_focus_message { "chat-highlighted-message" } else { "chat-message" },
-                            "data-virtual-index": "{virtual_index}",
-                            "data-message-id": "{msg.id}",
-                            "data-circle-scope-id": "{scope_attr}",
-                            "data-sidecar-provenance": if message_is_private_sidecar {
-                                "private"
-                            } else {
-                                "shared"
-                            },
-                            "data-crypto-state": match msg.crypto_state {
-                                MessageCryptoState::Plaintext => "plaintext",
-                                MessageCryptoState::Decrypting => "decrypting",
-                                MessageCryptoState::KeyMissing => "key_missing",
-                                MessageCryptoState::NeedsVerification => "needs_verification",
-                            },
-                            // Right-click toggles a context menu with separate
-                            // shared pin and holder-private saved actions.
-                            // prevent_default suppresses the browser's
-                            // native context menu so ours surfaces alone.
-                            oncontextmenu: {
-                                let msg_id = msg.id.clone();
-                                move |evt| {
-                                    evt.prevent_default();
-                                    controller.toggle_message_menu(msg_id.clone());
-                                }
-                            },
-                            // P3B.2.4 — Circle scope accent
-                            // rail. Renders a left-edge coloured ribbon
-                            // with the Circle title as a tooltip when
-                            // the message's enclosing Strand has a
-                            // `scope_circle_id`. The CSS class
-                            // `has-circle-accent-rail` on the outer
-                            // message div positions the ribbon at the
-                            // left margin.
-                            if let Some(circle) = scope_circle.as_ref() {
-                                div {
-                                    class: "circle-accent-rail",
-                                    "data-testid": "circle-accent-rail",
-                                    "data-circle-id": "{circle.circle_id}",
-                                    title: "Circle scope · {circle.title}",
-                                    "aria-label": "This message is part of the Circle named {circle.title}",
-                                }
+                                    "chat-message message-stream-preview"
+                                },
+                                vec![
+                                    line(
+                                        "message-meta",
+                                        vec![
+                                            paragraph("message-sender", card.sender_actor_id),
+                                            paragraph("message-stream-badge", "Generating…"),
+                                        ],
+                                    ),
+                                    block("msg-body", body),
+                                ],
+                            )
+                        })
+                        .collect(),
+                )
+            },
+        );
+        #[cfg(target_arch = "wasm32")]
+        let messages: View = {
+            let selected = scope.bond(move || {
+                let rows = rows.get();
+                let window = window.get();
+                rows[window.start.min(rows.len())
+                    ..window.end.min(rows.len()).max(window.start.min(rows.len()))]
+                    .to_vec()
+            });
+            let row_app = app.clone();
+            let items = each(
+                selected,
+                |row| row.id.clone(),
+                move |row, _| {
+                    let app = row_app.clone();
+                    widget(move |scope| {
+                        message_row::message_row(
+                            scope,
+                            app.clone(),
+                            controller,
+                            row,
+                            context,
+                            boundary,
+                        )
+                        .build(scope)
+                    })
+                },
+            );
+            Box::new(
+                view()
+                    .class("chat-virtual-rows virtual-timeline")
+                    .style(scope.bond(move || {
+                        glory::style::Style::new()
+                            .height(glory::style::Length::Px(window.get().total))
+                    }))
+                    .fill(
+                        view()
+                            .class("chat-virtual-slice")
+                            .style(scope.bond(move || {
+                                glory::style::Style::new()
+                                    .position(glory::style::Position::Absolute)
+                                    .top(glory::style::Length::Px(window.get().top))
+                            }))
+                            .fill(items),
+                    ),
+            )
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        let messages: View = {
+            let count = scope.bond(move || rows.get().len());
+            let row_app = app.clone();
+            let saved_key = key.clone();
+            let inspect_key = key.clone();
+            let following = scope.cage(saved.follows_latest);
+            let total = scope.cage(0.0);
+            let viewport_height = scope.cage(600.0);
+            let native = glory::ui::list(
+                count,
+                move |index| rows.get_untracked()[index].id.clone(),
+                move |index, id| {
+                    let app = row_app.clone();
+                    widget(move |scope| {
+                        let row = scope.cage(rows.get_untracked()[index.get_untracked()].clone());
+                        let expected = id.clone();
+                        scope.effect(move || {
+                            let all = rows.get();
+                            let index = index.get();
+                            if let Some(next) = all.get(index).filter(|row| row.id == expected) {
+                                row.revise(|row| *row = next.clone());
                             }
-                            // Shared pins and holder-private saved items remain
-                            // distinct operations inside the same compact menu.
-                            if message_menu_is_open {
-                                div {
-                                    class: "message-context-menu-scrim",
-                                    "popover": "manual",
-                                    "aria-hidden": "true",
-                                    onclick: move |_| controller.close_message_menu(),
-                                }
-                                div {
-                                    id: "{message_menu_id}",
-                                    class: "message-context-menu",
-                                    "popover": "manual",
-                                    "data-testid": "message-context-menu",
-                                    role: "menu",
-                                    "aria-label": crate::i18n::tr("message.actions"),
-                                    onmounted: {
-                                        let menu_id = message_menu_id.clone();
-                                        move |_| {
-                                            if let Ok(menu_id) = serde_json::to_string(&menu_id) {
-                                                let script = format!(
-                                                    "({})({menu_id});",
-                                                    include_str!("message_menu.js"),
-                                                );
-                                                let _ = document::eval(&script);
-                                            }
-                                        }
-                                    },
-                                    onkeydown: move |event: KeyboardEvent| {
-                                        if event.key().to_string() == "Escape" {
-                                            controller.close_message_menu();
-                                        }
-                                    },
-                                    {
-                                        let target_ref = msg.pin_saved_target_ref().to_owned();
-                                        let is_pinned = shared_pins()
-                                            .iter()
-                                            .any(|pin| pin.target_ref == target_ref || pin.target_ref == msg.id);
-                                        let is_saved_private =
-                                            private_saved_targets().contains(&target_ref);
-                                        let realm_for_pin = msg.realm_id.clone();
-                                        let strand_for_pin = msg.strand_id.clone();
-                                        let target_for_pin = target_ref.clone();
-                                        rsx! {
-                                            if !msg.redacted && !message_is_read_only_private {
-                                                Button {
-                                                    variant: ButtonVariant::Secondary,
-                                                    r#type: "button",
-                                                    class: "message-context-menu-item",
-                                                    role: "menuitem",
-                                                    "data-testid": "message-context-reply-button",
-                                                    disabled: msg.reply_target_ref().is_none(),
-                                                    onclick: {
-                                                        let reply_action = reply_action.clone();
-                                                        move |_| {
-                                                            (*reply_action)();
-                                                            controller.close_message_menu();
-                                                        }
-                                                    },
-                                                    {crate::i18n::tr("chat.button.reply")}
-                                                }
-                                                Button {
-                                                    variant: ButtonVariant::Secondary,
-                                                    r#type: "button",
-                                                    class: "message-context-menu-item",
-                                                    role: "menuitem",
-                                                    "data-testid": "message-context-react-button",
-                                                    onclick: {
-                                                        let react_action = react_action.clone();
-                                                        move |_| {
-                                                            (*react_action)();
-                                                            controller.close_message_menu();
-                                                        }
-                                                    },
-                                                    {crate::i18n::tr("chat.button.react")}
-                                                }
-                                                Button {
-                                                    variant: ButtonVariant::Secondary,
-                                                    r#type: "button",
-                                                    class: "message-context-menu-item",
-                                                    role: "menuitem",
-                                                    "data-testid": "message-context-edit-button",
-                                                    onclick: {
-                                                        let edit_action = edit_action.clone();
-                                                        move |_| {
-                                                            (*edit_action)();
-                                                            controller.close_message_menu();
-                                                        }
-                                                    },
-                                                    {crate::i18n::tr("common.edit")}
-                                                }
-                                            }
-                                            if !message_is_read_only_private {
-                                            Button {
-                                                variant: ButtonVariant::Secondary,
-                                                r#type: "button",
-                                                class: "message-context-menu-item",
-                                                role: "menuitem",
-                                                "data-testid": "message-shared-pin-button",
-                                                "data-source": "shared-event",
-                                                "data-permission": if is_pinned {
-                                                    CapabilityActionId::PIN_REMOVE
-                                                } else {
-                                                    CapabilityActionId::PIN_ADD
-                                                },
-                                                onclick: {
-                                                    let context = command_context.clone();
-                                                    let realm_id = realm_for_pin.clone();
-                                                    let strand_id = strand_for_pin.clone();
-                                                    let target_ref = target_for_pin.clone();
-                                                    move |_| controller.toggle_shared_pin(
-                                                        context.clone(),
-                                                        realm_id.clone(),
-                                                        strand_id.clone(),
-                                                        target_ref.clone(),
-                                                    )
-                                                },
-                                                if is_pinned {
-                                                    {crate::i18n::tr("message.shared_unpin")}
-                                                } else {
-                                                    {crate::i18n::tr("message.shared_pin")}
-                                                }
-                                            }
-                                            }
-                                            Button {
-                                                variant: ButtonVariant::Secondary,
-                                                r#type: "button",
-                                                class: "message-context-menu-item",
-                                                role: "menuitem",
-                                                disabled: is_saved_private,
-                                                "data-testid": "message-private-save-button",
-                                                "data-source": "private-account-data",
-                                                "data-account-data-prefix": AccountDataKey::SAVED_V1,
-                                                onclick: {
-                                                    let private_save_action = private_save_action.clone();
-                                                    move |_| (*private_save_action)()
-                                                },
-                                                if is_saved_private {
-                                                    {crate::i18n::tr("message.private_saved")}
-                                                } else {
-                                                    {crate::i18n::tr("message.private_save")}
-                                                }
-                                            }
-                                            if !msg.redacted && !message_is_private_sidecar {
-                                                Button {
-                                                    variant: ButtonVariant::Destructive,
-                                                    r#type: "button",
-                                                    class: "message-context-menu-item danger",
-                                                    role: "menuitem",
-                                                    "data-testid": "message-context-report-button",
-                                                    disabled: report_scope.is_none(),
-                                                    onclick: {
-                                                        let realm_id = msg.realm_id.clone();
-                                                        let target_ref = message_target_ref.clone();
-                                                        let effective_scope = report_scope.clone();
-                                                        move |_| {
-                                                            if let Some(effective_scope) = effective_scope.clone() {
-                                                                controller.begin_moderation_report(
-                                                                    realm_id.clone(),
-                                                                    effective_scope,
-                                                                    target_ref.clone(),
-                                                                );
-                                                            }
-                                                        }
-                                                    },
-                                                    {crate::i18n::tr("moderation.report.action")}
-                                                }
-                                            }
-                                            if !msg.redacted && !message_is_read_only_private {
-                                                Button {
-                                                    variant: ButtonVariant::Destructive,
-                                                    r#type: "button",
-                                                    class: "message-context-menu-item danger",
-                                                    role: "menuitem",
-                                                    "data-testid": "message-context-redact-button",
-                                                    onclick: {
-                                                        let redact_action = redact_action.clone();
-                                                        move |_| {
-                                                            (*redact_action)();
-                                                            controller.close_message_menu();
-                                                        }
-                                                    },
-                                                    {crate::i18n::tr("chat.button.redact")}
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            div { class: "msg-body",
-                                if message_is_pinned {
-                                    Button {
-                                        variant: ButtonVariant::Secondary,
-                                        r#type: "button",
-                                        class: "message-pin-indicator",
-                                        "data-testid": "message-pinned-button",
-                                        "data-source": "shared-event",
-                                        "data-target-ref": "{message_target_ref}",
-                                        "aria-label": crate::i18n::tr("message.shared_pin"),
-                                        title: crate::i18n::tr("message.shared_pin"),
-                                        onclick: {
-                                            let msg_id = msg.id.clone();
-                                            move |_| {
-                                                controller.toggle_message_menu(msg_id.clone());
-                                            }
-                                        },
-                                        UiIcon { name: "pin" }
-                                    }
-                                }
-                                if message_is_saved_private {
-                                    span {
-                                        class: "message-private-saved-indicator",
-                                        "data-testid": "message-private-saved-indicator",
-                                        "data-source": "private-account-data",
-                                        "data-account-data-prefix": AccountDataKey::SAVED_V1,
-                                        "data-target-ref": "{message_target_ref}",
-                                        title: crate::i18n::tr("message.private_saved"),
-                                        UiIcon { name: "check" }
-                                    }
-                                }
-                                div { class: "msg-head",
-                                    span { class: "name", "{sender_display_label(&msg.sender, principal_id.as_str(), &account_display_label, &participants_for_messages)}" }
-                                    if sender_is_own {
-                                        SelfAttributionBadge {
-                                            class: Some("message-self-badge".to_owned()),
-                                            test_id: Some("message-self-badge".to_owned()),
-                                        }
-                                    }
-                                    {
-                                        let sender_participant = participants_for_messages
-                                            .iter()
-                                            .find(|p| p.principal_id.as_str() == msg.sender);
-                                        let sender_is_agent = sender_participant
-                                            .map(|participant| participant.is_agent)
-                                            .unwrap_or(false)
-                                            || msg.actor_id.as_ref().is_some_and(|actor| {
-                                                arkret_sdk::EventId::new(msg.id.clone()).is_ok_and(|event_id| {
-                                                    crate::identity::agent_signer_evidence::verified_historical_agent_author(
-                                                        &event_id,
-                                                        &msg.realm_id,
-                                                        actor,
-                                                        &state_store.read(),
-                                                    )
-                                                })
-                                            });
-                                        let sender_agent_owner = sender_participant
-                                            .and_then(|participant| {
-                                                agent_controller_label(
-                                                    participant,
-                                                    &participants_for_messages,
-                                                )
-                                            });
-                                        // §4.10 — act-on-behalf: the
-                                        // controller (actor_id = msg.sender) is
-                                        // the primary name, the agent executor
-                                        // (executed_by) renders as "via {agent}".
-                                        let act_on_behalf_agent = act_on_behalf_agent_label(
-                                            &msg.sender,
-                                            msg.executed_by.as_deref(),
-                                            &participants_for_messages,
-                                        );
-                                        rsx! {
-                                            if sender_is_agent {
-                                                span {
-                                                    class: "badge member-badge member-badge-agent",
-                                                    "data-testid": "member-badge-agent",
-                                                    title: "Automated member (bot)",
-                                                    "\u{1f916} "
-                                                    {crate::i18n::tr("member.badge.agent")}
-                                                }
-                                            }
-                                            if let Some(owner_label) = sender_agent_owner {
-                                                span {
-                                                    class: "agent-owner-label",
-                                                    "data-testid": "message-agent-owner",
-                                                    "agent of {owner_label}"
-                                                }
-                                            }
-                                            if let Some(agent_label) = act_on_behalf_agent {
-                                                span {
-                                                    class: "agent-via-label",
-                                                    "data-testid": "message-act-on-behalf-via",
-                                                    "data-executed-by": msg.executed_by.clone().unwrap_or_default(),
-                                                    "via {agent_label}"
-                                                }
-                                            }
-                                            if message_is_private_sidecar {
-                                                span {
-                                                    class: "message-privacy-badge message-privacy-badge--sidecar",
-                                                    "data-testid": "message-private-sidecar-badge",
-                                                    "data-visibility": "private-sidecar",
-                                                    role: "img",
-                                                    title: crate::i18n::tr("chat.message.private_sidecar.tooltip"),
-                                                    "aria-label": crate::i18n::tr("chat.message.private_sidecar.tooltip"),
-                                                    UiIcon { name: "lock" }
-                                                    span { {crate::i18n::tr("chat.message.private_sidecar.label")} }
-                                                }
-                                            } else if sidecar_active {
-                                                span {
-                                                    class: "message-provenance-badge message-provenance-badge--shared",
-                                                    "data-testid": "message-original-strand-badge",
-                                                    "data-provenance": "shared",
-                                                    title: "Original Strand message",
-                                                    "aria-label": "Original Strand message",
-                                                    span { "Original Strand" }
-                                                }
-                                            }
-                                        }
-                                    }
-                                    time { "{msg.timestamp}" }
-                                    if sender_is_own && msg.failed {
-                                        span {
-                                            class: "message-status-icon is-failed",
-                                            "data-testid": "message-send-status",
-                                            title: "Message send failed",
-                                            "!"
-                                        }
-                                    } else if sender_is_own
-                                        && msg.pending
-                                        && message_is_queued_offline
-                                    {
-                                        // Parked in the offline outbox: distinct
-                                        // from the in-flight "Sending" spinner so
-                                        // the user (and E2E) can tell a message is
-                                        // waiting for connectivity, not the server.
-                                        span {
-                                            class: "message-status-icon is-queued-offline",
-                                            "data-testid": "message-send-status",
-                                            "data-send-state": "queued_offline",
-                                            title: crate::i18n::tr("chat.outbox.queued_offline"),
-                                            "\u{23f8}"
-                                        }
-                                    } else if sender_is_own && msg.pending {
-                                        span {
-                                            class: "message-status-icon is-pending",
-                                            "data-testid": "message-send-status",
-                                            "data-send-state": "sending",
-                                            title: "Sending"
-                                        }
-                                    }
-                                    if msg.edited {
-                                        span {
-                                            class: "badge",
-                                            "data-testid": "message-write-status",
-                                            "data-revision-count": "{msg.revisions.len()}",
-                                            title: crate::i18n::tr("chat.message.write_status"),
-                                            {
-                                                format!(
-                                                    "{} ({})",
-                                                    crate::i18n::tr("chat.message.revised"),
-                                                    msg.revisions.len(),
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                                // T7.4: per-message crypto status row.
-                                // Sits directly under the head so the
-                                // icon + label appear before the body
-                                // when it's awaiting decrypt.
-                                {
-                                    match msg.crypto_state {
-                                        MessageCryptoState::Plaintext => rsx! { },
-                                        MessageCryptoState::Decrypting => rsx! {
-                                            div {
-                                                class: "crypto-status-row crypto-status-decrypting",
-                                                "data-testid": "crypto-status-decrypting",
-                                                span { class: "crypto-status-icon", "\u{23f3}" }
-                                                span { {crate::i18n::tr("chat.crypto.decrypting")} }
-                                            }
-                                        },
-                                        MessageCryptoState::KeyMissing => rsx! {
-                                            div {
-                                                class: "crypto-status-row crypto-status-key-missing",
-                                                "data-testid": "crypto-status-key-missing",
-                                                span { class: "crypto-status-icon", "\u{1f511}" }
-                                                span { {crate::i18n::tr("chat.crypto.key_missing")} }
-                                                span { class: "muted", {crate::i18n::tr("chat.crypto.key_missing_hint")} }
-                                            }
-                                        },
-                                        MessageCryptoState::NeedsVerification => rsx! {
-                                            div {
-                                                class: "crypto-status-row crypto-status-needs-verification",
-                                                "data-testid": "crypto-status-needs-verification",
-                                                span { class: "crypto-status-icon", "\u{26a0}" }
-                                                span { {crate::i18n::tr("chat.crypto.needs_verification")} }
-                                            }
-                                        },
-                                    }
-                                }
-                                if let Some(reply_id) = msg.reply_to.as_ref() {
-                                    if let Some((quoted_name, quoted_body)) = chat_reply_quote_preview(
-                                        messages_for_reply_lookup,
-                                        reply_id,
-                                        principal_id.as_str(),
-                                        &account_display_label,
-                                        &participants_for_messages,
-                                    ) {
-                                        div { class: "chat-reply-quote", "data-testid": "chat-reply-indicator",
-                                            span { class: "chat-reply-quote-name", "{quoted_name}" }
-                                            div { class: "chat-reply-quote-body", "{quoted_body}" }
-                                        }
-                                    } else {
-                                        div { class: "chat-reply-quote chat-reply-quote-missing", "data-testid": "chat-reply-indicator",
-                                            "Replying to a message"
-                                        }
-                                    }
-                                }
-                                {
-                                    let sender_blocked = msg.actor_id.as_ref().is_some_and(|actor| crate::account_data::message_actor_is_blocked(actor, &blocked_actor_id_set))
-                                        && !blocked_show_anyway.read().contains(&msg.id);
-                                    let content_kind = if msg.redacted {
-                                        "msg-content redacted"
-                                    } else if sender_blocked {
-                                        "msg-content muted"
-                                    } else {
-                                        "msg-content"
-                                    };
-                                    let content_test_id = if msg.redacted {
-                                        "chat-redacted-tombstone"
-                                    } else if sender_blocked {
-                                        "message-blocked-row"
-                                    } else {
-                                        "event-body"
-                                    };
-                                    rsx! {
-                                        // Keep one stable content node across lifecycle folds.
-                                        // Replacing the entire conditional node could leave the
-                                        // live body mounted when a remote redaction arrived.
-                                        div {
-                                            class: "{content_kind}",
-                                            "data-testid": "{content_test_id}",
-                                            if msg.redacted {
-                                                "[Message redacted]"
-                                            } else if sender_blocked {
-                                                {crate::i18n::tr("message.blocked_user")}
-                                            } else {
-                                                if let Some(source) = &msg.protocol_content {
-                                                    {super::attachment_renderer::render_protocol_content(source, &msg.mentions, &base_url)}
-                                                } else {
-                                                    {render_message_body(&msg.body, msg.content_format, &msg.mentions, &base_url)}
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                if !msg.redacted
-                                    && msg.actor_id.as_ref().is_some_and(|actor| crate::account_data::message_actor_is_blocked(actor, &blocked_actor_id_set))
-                                    && !blocked_show_anyway.read().contains(&msg.id)
-                                {
-                                    Button {
-                                        variant: ButtonVariant::Secondary,
-                                        "data-testid": "message-blocked-show-anyway",
-                                        onclick: {
-                                            let eid = msg.id.clone();
-                                            move |_| controller.show_blocked_message(eid.clone())
-                                        },
-                                        {crate::i18n::tr("message.show_anyway")}
-                                    }
-                                }
-                                // Keep a stable keyed-row child for reaction-only
-                                // async updates. Dioxus can otherwise retain the
-                                // already-mounted message body while skipping
-                                // insertion of this formerly-absent conditional
-                                // node when a remote reaction arrives.
-                                div {
-                                    class: "actions chat-chip-row",
-                                    "data-testid": "chat-reactions",
-                                    hidden: msg.reactions.is_empty(),
-                                    for (emoji, senders) in &msg.reactions {
-                                        span { class: "badge", "{emoji} {senders.len()}" }
-                                    }
-                                }
-                                if msg.failed && !message_is_read_only_private {
-                                    div { class: "message-error-row", "data-testid": "chat-message-error",
-                                        span { class: "message-error-mark", "!" }
-                                        if let Some(error) = &msg.error {
-                                            span {
-                                                class: "message-error-text",
-                                                // The row can be clipped inside
-                                                // narrow embedded panels; keep
-                                                // the full error on the tooltip.
-                                                title: "{error}",
-                                                "{error}"
-                                            }
-                                        } else {
-                                            span { "Message send failed" }
-                                        }
-                                        Button {
-                                            variant: ButtonVariant::Secondary,
-                                            class: "message-retry-button",
-                                            "data-testid": "chat-retry-button",
-                                            onclick: {
-                                                let context = command_context.clone();
-                                                let message = msg.clone();
-                                                move |_| controller.retry_message(
-                                                    context.clone(),
-                                                    message.clone(),
-                                                )
-                                            },
-                                            {crate::i18n::tr("common.retry")}
-                                        }
-                                    }
-                                }
-                                div {
-                                    class: if message_menu_is_open {
-                                        "chat-message-actions is-open"
-                                    } else {
-                                        "chat-message-actions"
-                                    },
-                                    Button {
-                                        variant: ButtonVariant::Secondary,
-                                        r#type: "button",
-                                        class: "chat-message-menu-button",
-                                        "data-testid": "chat-message-menu-button",
-                                        title: crate::i18n::tr("message.actions"),
-                                        "aria-label": crate::i18n::tr("message.actions"),
-                                        "aria-haspopup": "menu",
-                                        "aria-controls": "{message_menu_id}",
-                                        "aria-expanded": if message_menu_is_open { "true" } else { "false" },
-                                        onclick: {
-                                            let msg_id = msg.id.clone();
-                                            move |_| controller.toggle_message_menu(msg_id.clone())
-                                        },
-                                        onkeydown: move |event: KeyboardEvent| {
-                                            if event.key().to_string() == "Escape" {
-                                                controller.close_message_menu();
-                                            }
-                                        },
-                                        UiIcon { name: "more-horizontal" }
-                                    }
-                                }
-                                // Per-message read-receipt indicator: the actors
-                                // whose latest `ak.receipt.read` Signal lands on
-                                // this message (`read-receipts.md` §2.4 — the
-                                // shared hint, not this actor's own private
-                                // `ak.read_cursor.advance`). The projection is
-                                // memory-only and fed by the encrypted Signal
-                                // receive path, so a reader appears only after
-                                // their device proof and the MLS AEAD verified.
-                                {
-                                    let (should_display, receipt_policy) = {
-                                        let store = state_store.read();
-                                        let display = chat_visible_read_receipt_should_display(
-                                            &store, &selected_channel_value, &selected_realm_id,
-                                        );
-                                        let policy = msg.protocol_content.as_ref().and_then(|target| {
-                                            store.current_read_receipt_policy(&target.scope).ok()
-                                        });
-                                        (display, policy)
-                                    };
-                                    rsx! {
-                                        crate::views::read_receipts::ReadReceiptIndicator {
-                                            realm_id: selected_realm_id.clone(),
-                                            strand_id: selected_channel_value.clone(),
-                                            message_id: msg.protocol_message_id.clone(),
-                                            target_author: msg.actor_id.clone(),
-                                            viewer: arkret_sdk::ActorId::account(command_context.authority.clone()),
-                                            display: should_display,
-                                            policy: receipt_policy,
-                                        }
-                                    }
-                                }
-                                // G3.Y2 — poll card. If this message
-                                // carries a poll payload (currently
-                                // matched by a poll_card entry whose
-                                // message_id == msg.id), render the
-                                // poll surface inline. The poll
-                                // composer in the attachment menu
-                                // pushes a new PollCard here on send.
-                                {
-                                    let poll_content_visible = !msg.redacted
-                                        && (!msg.actor_id.as_ref().is_some_and(|actor| {
-                                            crate::account_data::message_actor_is_blocked(actor, &blocked_actor_id_set)
-                                        }) || blocked_show_anyway.read().contains(&msg.id));
-                                    let card_lookup = poll_cards()
-                                        .iter()
-                                        .find(|card| {
-                                            poll_content_visible
-                                                && poll_card_matches_render_ids(
-                                                    card,
-                                                    &msg.id,
-                                                    msg.protocol_message_id.as_deref(),
-                                                )
-                                        })
-                                        .cloned();
-                                    match card_lookup {
-                                        Some(card) => {
-                                            let poll_id = card.poll_ref.as_ref().map_or_else(|| card.message_id.clone(), ToString::to_string);
-                                            let total = card.total_votes();
-                                            let voted = card.actor_has_voted(&arkret_sdk::ActorId::account(command_context.authority.clone()));
-                                            let poll_state_label = if card.provisional {
-                                                crate::i18n::tr("poll_provisional")
-                                            } else if card.closed {
-                                                "closed".to_owned()
-                                            } else {
-                                                "open".to_owned()
-                                            };
-                                            rsx! {
-                                                div {
-                                                    class: "poll-card message-event-poll",
-                                                    "data-testid": "poll-card",
-                                                    "data-poll-id": "{poll_id}",
-                                                    div {
-                                                        class: "poll-question",
-                                                        "data-testid": "poll-question-text",
-                                                        "{card.question}"
-                                                    }
-                                                    div {
-                                                        class: "poll-state",
-                                                        "data-testid": "poll-state",
-                                                        "{poll_state_label}"
-                                                    }
-                                                    for (idx, option) in card.options.iter().enumerate() {
-                                                        {
-                                                            let votes_for = card.votes_for(idx);
-                                                            let option_index_attr = idx as i64;
-                                                            let option_label = option.label.clone();
-                                                            let option_id = option.id.clone();
-                                                            let card_poll_ref = card.poll_ref.clone();
-                                                            let card_message_id = card.message_id.clone();
-                                                            let card_closed = card.closed;
-                                                            let card_provisional = card.provisional;
-                                                            rsx! {
-                                                                div {
-                                                                    class: "poll-result-row",
-                                                                    "data-testid": "poll-result-row",
-                                                                    "data-option-index": "{option_index_attr}",
-                                                                    "data-option-text": "{option_label}",
-                                                                    if !card_closed && !message_is_read_only_private {
-                                                                        Button {
-                                                                            variant: ButtonVariant::Secondary,
-                                                                            class: "poll-option poll-vote-button",
-                                                                            "data-testid": "poll-option",
-                                                                            disabled: card_closed || card_provisional || card_poll_ref.is_none(),
-                                                                            onclick: {
-                                                                                let context = command_context.clone();
-                                                                                let message_id = card_message_id.clone();
-                                                                                let poll_ref = card_poll_ref.clone();
-                                                                                let option_id = option_id.clone();
-                                                                                move |_| {
-                                                                                    if let Some(poll_ref) = &poll_ref {
-                                                                                        controller.vote_poll(context.clone(), message_id.clone(), poll_ref.clone(), option_id.clone());
-                                                                                    } else {
-                                                                                        let mut status = controller.status_msg;
-                                                                                        status.set("Poll vote refused: accepted poll identity is unavailable".to_owned());
-                                                                                    }
-                                                                                }
-                                                                            },
-                                                                            "{option_label}"
-                                                                        }
-                                                                    } else {
-                                                                        span {
-                                                                            class: "poll-option-label",
-                                                                            "{option_label}"
-                                                                        }
-                                                                    }
-                                                                    span {
-                                                                        class: "poll-vote-count",
-                                                                        "data-testid": "poll-vote-count",
-                                                                        "{votes_for}"
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                    if !card.closed && !message_is_read_only_private {
-                                                        Button {
-                                                            variant: ButtonVariant::Secondary,
-                                                            r#type: "button",
-                                                            class: "poll-close-button",
-                                                            "data-testid": "poll-close-button",
-                                                            onclick: {
-                                                                let card_message_id = card.message_id.clone();
-                                                                move |_| controller.close_poll(card_message_id.clone())
-                                                            },
-                                                            "Close poll"
-                                                        }
-                                                    }
-                                                    div {
-                                                        class: "poll-total",
-                                                        "data-testid": "poll-total-votes",
-                                                        "{total} votes"
-                                                    }
-                                                    if voted {
-                                                        div {
-                                                            class: "poll-results-summary",
-                                                            "data-testid": "poll-results-summary",
-                                                            "Thanks for voting."
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        None => rsx! {},
-                                    }
-                                }
-                                // G3.Y2 — discussion-promoted indicator.
-                                // Lights up after a successful promote
-                                // round-trip; the target is the private
-                                // Circle-scoped discussion Strand.
-                                {
-                                    // After a successful promote, the
-                                    // resulting private discussion Strand id lives in
-                                    // `promoted_targets` keyed by the
-                                    // source message id; we render an
-                                    // seal row so the parent discussion
-                                    // shows the divergence point.
-                                    let promoted_to = promoted_targets()
-                                        .get(&msg.id)
-                                        .cloned();
-                                    match promoted_to {
-                                        Some(discussion_strand_id) => {
-                                            let discussion_strand_id_label = short_protocol_id(&discussion_strand_id);
-                                            let discussion_strand_href = format!(
-                                                "/chat/{}",
-                                                selected_realm_id
-                                            );
-                                            rsx! {
-                                                div {
-                                                    class: "discussion-promoted-indicator",
-                                                    "data-testid": "discussion-promoted-indicator",
-                                                    "data-discussion-strand-id": "{discussion_strand_id}",
-                                                    span { "Discussion moved to private Strand " }
-                                                    a {
-                                                        href: "{discussion_strand_href}",
-                                                        title: "{discussion_strand_id}",
-                                                        "{discussion_strand_id_label}"
-                                                    }
-                                                }
-                                            }
-                                        },
-                                        None => rsx! {},
-                                    }
-                                }
-                                if !message_is_read_only_private
-                                    && reaction_picker() == Some(msg.id.clone())
-                                {
-                                    div { class: "actions chat-chip-row", "data-testid": "chat-reaction-picker",
-                                        for emoji in CHAT_EMOJI_GRID {
-                                            Button {
-                                                variant: ButtonVariant::Secondary,
-                                                class: "emoji-button",
-                                                onclick: {
-                                                    let context = command_context.clone();
-                                                    let message_id = msg.id.clone();
-                                                    let target_ref = msg.mutation_target_ref().to_owned();
-                                                    let emoji = emoji.to_string();
-                                                    move |_| controller.add_reaction(
-                                                        context.clone(),
-                                                        message_id.clone(),
-                                                        target_ref.clone(),
-                                                        emoji.clone(),
-                                                    )
-                                                },
-                                                "{emoji}"
-                                            }
-                                        }
-                                    }
-                                }
-                                if !message_is_read_only_private
-                                    && editing_message() == Some(msg.id.clone())
-                                {
-                                    div { class: "composer compact-composer", "data-testid": "chat-edit-composer",
-                                        Textarea {
-                                            value: "{edit_draft}",
-                                            oninput: move |event: FormEvent| controller.update_edit_draft(event.value()),
-                                        }
-                                        div { class: "actions",
-                                            Button {
-                                                variant: ButtonVariant::Primary,
-                                                "data-testid": "chat-save-edit-button",
-                                                onclick: {
-                                                    let context = command_context.clone();
-                                                    let message_id = msg.id.clone();
-                                                    let target_ref = msg.mutation_target_ref().to_owned();
-                                                    move |_| controller.revise_message(
-                                                        context.clone(),
-                                                        message_id.clone(),
-                                                        target_ref.clone(),
-                                                        edit_draft(),
-                                                    )
-                                                },
-                                                "Save"
-                                            }
-                                            Button {
-                                                variant: ButtonVariant::Secondary,
-                                                onclick: move |_| controller.cancel_edit(),
-                                                "Cancel"
-                                            }
-                                        }
-                                    }
-                                }
-                                if !message_is_read_only_private
-                                    && redact_confirm() == Some(msg.id.clone())
-                                {
-                                    div { class: "chat-redact-confirm", "data-testid": "chat-redact-confirm",
-                                        div { class: "discussion-subhead", span { "Remove message" } }
-                                        div { class: "actions",
-                                            Button {
-                                                variant: ButtonVariant::Primary,
-                                                "data-testid": "chat-confirm-redact-button",
-                                                onclick: {
-                                                    let context = command_context.clone();
-                                                    let message = msg.clone();
-                                                    move |_| controller.redact_message(
-                                                        context.clone(),
-                                                        message.clone(),
-                                                    )
-                                                },
-                                                "Confirm"
-                                            }
-                                            Button {
-                                                variant: ButtonVariant::Secondary,
-                                                onclick: move |_| controller.cancel_redaction(),
-                                                "Cancel"
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                            })
-                        }).collect())}
+                        });
+                        message_row::message_row(
+                            scope,
+                            app.clone(),
+                            controller,
+                            row,
+                            context,
+                            boundary,
+                        )
+                        .build(scope)
+                    })
+                },
+            )
+            .measure(132.0)
+            .overscan(12)
+            .row_limit(120)
+            .position(logical)
+            .locate(move |id| rows.get_untracked().iter().position(|row| &row.id == id))
+            .on_scroll(move |top| {
+                if logical.get_untracked() != top {
+                    logical.revise(|value| *value = top);
+                    boundary
+                        .revision
+                        .revise(|value| *value = value.wrapping_add(1));
+                }
+                store_position(&saved_key, top, following.get_untracked());
+            })
+            .inspect(move |stats| {
+                if total.get_untracked() != stats.total {
+                    total.revise(|value| *value = stats.total);
+                }
+                if stats.viewport.height > 0.0
+                    && viewport_height.get_untracked() != stats.viewport.height
+                {
+                    viewport_height.revise(|value| *value = stats.viewport.height);
+                }
+                if stats.user_moved {
+                    let follow = stats.total - stats.viewport.height - stats.logical <= 32.0;
+                    if following.get_untracked() != follow {
+                        following.revise(|value| *value = follow);
                     }
-                    }
-                    if let Some(report) = moderation_report_draft() {
-                        div {
-                            class: "discussion-modal-backdrop",
-                            "data-testid": "moderation-report-modal",
-                            div {
-                                class: "discussion-modal",
-                                role: "dialog",
-                                "aria-modal": "true",
-                                "aria-labelledby": "moderation-report-title",
-                                div { class: "discussion-modal-head",
-                                    h2 {
-                                        id: "moderation-report-title",
-                                        {crate::i18n::tr("moderation.report.title")}
-                                    }
-                                    Button {
-                                        variant: ButtonVariant::Secondary,
-                                        r#type: "button",
-                                        disabled: moderation_report_pending(),
-                                        onclick: move |_| controller.cancel_moderation_report(),
-                                        {crate::i18n::tr("common.cancel")}
-                                    }
-                                }
-                                div { class: "discussion-modal-body workflow-form",
-                                    p { {crate::i18n::tr("moderation.report.help")} }
-                                    label { class: "form-row",
-                                        span { {crate::i18n::tr("moderation.report.reason")} }
-                                        select {
-                                            "data-testid": "moderation-report-reason",
-                                            value: "{report.reason}",
-                                            disabled: moderation_report_pending(),
-                                            onchange: move |event: FormEvent| {
-                                                controller.update_moderation_report_reason(event.value());
-                                            },
-                                            for reason in [
-                                                "spam",
-                                                "harassment",
-                                                "hate_speech",
-                                                "nsfw",
-                                                "illegal",
-                                                "misinformation",
-                                                "other",
-                                            ] {
-                                                option {
-                                                    value: "{reason}",
-                                                    {crate::i18n::tr(&format!("moderation.report.reason.{reason}"))}
-                                                }
-                                            }
-                                        }
-                                    }
-                                    label { class: "form-row",
-                                        span { {crate::i18n::tr("moderation.report.description")} }
-                                        Textarea {
-                                            "data-testid": "moderation-report-description",
-                                            value: "{report.description}",
-                                            disabled: moderation_report_pending(),
-                                            oninput: move |event: FormEvent| {
-                                                controller.update_moderation_report_description(event.value());
-                                            },
-                                        }
-                                    }
-                                }
-                                div { class: "discussion-modal-actions",
-                                    Button {
-                                        variant: ButtonVariant::Primary,
-                                        r#type: "button",
-                                        "data-testid": "moderation-report-submit",
-                                        disabled: moderation_report_pending()
-                                            || (report.reason == "other"
-                                                && report.description.trim().is_empty()),
-                                        onclick: {
-                                            let context = command_context.clone();
-                                            move |_| controller.submit_moderation_report(context.clone())
-                                        },
-                                        if moderation_report_pending() {
-                                            {crate::i18n::tr("moderation.report.submitting")}
-                                        } else {
-                                            {crate::i18n::tr("moderation.report.submit")}
-                                        }
-                                    }
-                                }
-                            }
+                    store_position(&inspect_key, stats.logical, follow);
+                }
+            });
+            let focus = context.get_untracked().focus_message_id;
+            scope.effect(move || {
+                let current = rows.get();
+                if !focus.is_empty() {
+                    if let Some(index) = current.iter().position(|row| row.id == focus) {
+                        let target = index as f64 * 132.0;
+                        if logical.get_untracked() != target {
+                            logical.revise(|value| *value = target);
                         }
                     }
-                    if visible_channels_empty {
-                        div { class: "empty-state discussion-empty-main", "data-testid": "discussion-main-empty",
-                            div { class: "ico", UiIcon { name: "plus" } }
-                            div { class: "t", {crate::i18n::tr("chat.empty.title")} }
-                            div { class: "s", {crate::i18n::tr("chat.empty.description")} }
-                            if !embedded {
-                                div { class: "actions",
-                                    Button {
-                                        variant: ButtonVariant::Primary,
-                                        "data-testid": "discussion-empty-create-button",
-                                        onclick: move |_| controller.open_create_dialog(),
-                                        {crate::i18n::tr("chat.empty.create_button")}
-                                    }
-                                }
-                            }
-                        }
-                    } else if visible_message_count == 0 {
-                        if discussion_feed_loading {
-                            div {
-                                class: "discussion-empty discussion-loading",
-                                "data-testid": "discussion-loading",
-                                span { class: "discussion-loading-spinner", "aria-hidden": "true" }
-                                span { {crate::i18n::tr("chat.loading_messages")} }
-                            }
-                        } else {
-                            div { class: "discussion-empty", {crate::i18n::tr("chat.empty_messages")} }
-                        }
+                } else if following.get_untracked() {
+                    let target = (total.get() - viewport_height.get()).max(0.0);
+                    if logical.get_untracked() != target {
+                        logical.revise(|value| *value = target);
                     }
                 }
+            });
+            Box::new(native)
+        };
+        let empty_app = app.clone();
+        let empty_state = reactive_distinct(
+            scope.bond(move || {
+                let value = context.get();
+                (
+                    value.visible_channels_empty,
+                    value.visible_message_count == 0,
+                    value.loading,
+                    value.embedded,
+                )
+            }),
+            move |scope, (no_channels, no_messages, loading, embedded)| {
+                if no_channels {
+                    let mut parts = vec![
+                        crate::components::ui_icon("plus"),
+                        paragraph("t", empty_app.translated(scope, "chat.empty.title")),
+                        paragraph("s", empty_app.translated(scope, "chat.empty.description")),
+                    ];
+                    if !embedded {
+                        parts.push(button(
+                            empty_app.translated(scope, "chat.empty.create_button"),
+                            "primary discussion-empty-create-button",
+                            true,
+                            move || controller.open_create_dialog(),
+                        ));
+                    }
+                    block(
+                        "empty-state discussion-empty-main discussion-main-empty",
+                        parts,
+                    )
+                } else if no_messages {
+                    if loading {
+                        block(
+                            "discussion-empty discussion-loading",
+                            vec![
+                                Box::new(text().class("discussion-loading-spinner").content("")),
+                                Box::new(
+                                    text().content(
+                                        empty_app.translated(scope, "chat.loading_messages"),
+                                    ),
+                                ),
+                            ],
+                        )
+                    } else {
+                        paragraph(
+                            "discussion-empty",
+                            empty_app.translated(scope, "chat.empty_messages"),
+                        )
+                    }
+                } else {
+                    empty()
+                }
+            },
+        );
+        let report = report_dialog(scope, app.clone(), controller, context);
+        let Ok(identity) = glory::render::SemanticId::new(feed_id) else {
+            return paragraph(
+                "message-error",
+                "The timeline presentation identity is unavailable.",
+            );
+        };
+        Box::new(
+            view()
+                .class("discussion-chat-feed message-list")
+                .node_ref(node)
+                .on(glory::render::EventKind::Scroll, move |_| {
+                    boundary
+                        .revision
+                        .revise(|value| *value = value.wrapping_add(1));
+                })
+                .on(glory::render::EventKind::Resize, move |_| {
+                    boundary
+                        .revision
+                        .revise(|value| *value = value.wrapping_add(1));
+                })
+                .semantics(Some(Box::new(glory::render::Semantics {
+                    id: Some(identity),
+                    ..Default::default()
+                })))
+                .fill(vec![stream, messages, report, empty_state]),
+        )
+    })
+}
+
+fn report_dialog(
+    scope: &Scope,
+    app: Rc<crate::presentation::InksonContext>,
+    controller: ChatController,
+    context: Bond<ChatTimelineContext>,
+) -> View {
+    let open = scope.bond(move || controller.moderation_report_draft.get().is_some());
+    reactive_distinct(open, move |scope, open| {
+        if !open {
+            return empty();
+        };
+        let app = app.clone();
+        crate::components::dismissible_popup(
+            scope,
+            app.clone(),
+            crate::components::DismissiblePopupProps {
+                overlay_class: "discussion-modal-backdrop moderation-report-modal".into(),
+                surface_class: "discussion-modal".into(),
+                aria_label: app.tr("moderation.report.title"),
+                on_dismiss: Rc::new(move |()| controller.cancel_moderation_report()),
+                overlay_test_id: None,
+                surface_test_id: None,
+                overlay_style: None,
+                surface_style: None,
+                children: Rc::new(move |scope| {
+                    let label_app = app.clone();
+                    let options = [
+                        "spam",
+                        "harassment",
+                        "hate_speech",
+                        "nsfw",
+                        "illegal",
+                        "misinformation",
+                        "other",
+                    ]
+                    .into_iter()
+                    .map(|reason| {
+                        #[cfg(target_arch = "wasm32")]
+                        {
+                            sapid::select_option(
+                                reason,
+                                label_app.tr(&format!("moderation.report.reason.{reason}")),
+                            )
+                        }
+                        #[cfg(not(target_arch = "wasm32"))]
+                        {
+                            crate::presentation::native_choice::NativeChoiceOption::new(
+                                reason,
+                                label_app.tr(&format!("moderation.report.reason.{reason}")),
+                            )
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                    let reason = scope.bond(move || {
+                        controller
+                            .moderation_report_draft
+                            .get()
+                            .map(|draft| draft.reason)
+                    });
+                    let description = scope.bond(move || {
+                        controller
+                            .moderation_report_draft
+                            .get()
+                            .map(|draft| draft.description)
+                            .unwrap_or_default()
+                    });
+                    let enabled = scope.bond(move || !controller.moderation_report_pending.get());
+                    let submit = scope.bond(move || {
+                        !controller.moderation_report_pending.get()
+                            && controller
+                                .moderation_report_draft
+                                .get()
+                                .is_some_and(|draft| {
+                                    draft.reason != "other" || !draft.description.trim().is_empty()
+                                })
+                    });
+                    let change_reason = move |value: Option<String>| {
+                        if let Some(value) = value {
+                            controller.update_moderation_report_reason(value);
+                        }
+                    };
+                    #[cfg(target_arch = "wasm32")]
+                    let reason_control: View = Box::new(
+                        sapid::native_select("moderation-report-reason")
+                            .unstyled()
+                            .class("moderation-report-reason")
+                            .name(app.translated(scope, "moderation.report.reason"))
+                            .enabled(enabled)
+                            .value(reason)
+                            .options(options)
+                            .on_value_change(change_reason),
+                    );
+                    #[cfg(not(target_arch = "wasm32"))]
+                    let reason_control = crate::presentation::native_choice::native_choice(
+                        scope,
+                        crate::presentation::native_choice::NativeChoiceProps::new(
+                            "moderation-report-reason",
+                            app.translated(scope, "moderation.report.reason"),
+                            reason,
+                            options,
+                            change_reason,
+                        )
+                        .enabled(enabled)
+                        .class("moderation-report-reason")
+                        .close_label(app.translated(scope, "common.close")),
+                    );
+                    block(
+                        "discussion-modal-content",
+                        vec![
+                            crate::presentation::widgets::heading(
+                                2,
+                                "discussion-modal-head",
+                                app.translated(scope, "moderation.report.title"),
+                            ),
+                            block(
+                                "discussion-modal-body workflow-form",
+                                vec![
+                                    plain(app.translated(scope, "moderation.report.help")),
+                                    line(
+                                        "form-row",
+                                        vec![
+                                            plain(
+                                                app.translated(scope, "moderation.report.reason"),
+                                            ),
+                                            reason_control,
+                                        ],
+                                    ),
+                                    field(
+                                        app.translated(scope, "moderation.report.description"),
+                                        "moderation-report-description",
+                                        description,
+                                        true,
+                                        move |value| {
+                                            controller.update_moderation_report_description(value)
+                                        },
+                                    ),
+                                ],
+                            ),
+                            line(
+                                "discussion-modal-actions",
+                                vec![
+                                    button(
+                                        app.translated(scope, "common.cancel"),
+                                        "secondary",
+                                        enabled,
+                                        move || controller.cancel_moderation_report(),
+                                    ),
+                                    button(
+                                        app.translated(scope, "moderation.report.submit"),
+                                        "primary moderation-report-submit",
+                                        submit,
+                                        move || {
+                                            controller.submit_moderation_report(
+                                                message_row::command_context(
+                                                    &context.get_untracked(),
+                                                    false,
+                                                ),
+                                            )
+                                        },
+                                    ),
+                                ],
+                            ),
+                        ],
+                    )
+                }),
+            },
+        )
+    })
+}
+
+#[cfg(test)]
+mod row_lifetime_tests {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use super::*;
+    #[test]
+    fn overlapping_virtual_rows_keep_their_component_instances_when_window_slides() {
+        let app = glory::ui::App::memory();
+        let scope = app.scope();
+        let start = scope.cage(0usize);
+        let mounts = Rc::new(RefCell::new(BTreeMap::<String, usize>::new()));
+        let observed = mounts.clone();
+        let rows = scope.bond(move || {
+            ["a", "b", "c", "d", "e"]
+                .into_iter()
+                .skip(start.get())
+                .take(3)
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        });
+        app.mount(each(rows, Clone::clone, move |row, _| {
+            let observed = observed.clone();
+            widget(move |scope| {
+                let id = row.get_untracked();
+                *observed.borrow_mut().entry(id.clone()).or_default() += 1;
+                text().content(id).build(scope)
+            })
+        }))
+        .unwrap();
+        app.flush().unwrap();
+        let mut previous = 0;
+        for next in [1, 2, 1] {
+            let before = mounts.borrow().clone();
+            start.revise(|value| *value = next);
+            app.flush().unwrap();
+            for id in &["a", "b", "c", "d", "e"][next.max(previous)..(next + 3).min(previous + 3)] {
+                assert_eq!(mounts.borrow().get(*id), before.get(*id));
+            }
+            previous = next;
+        }
     }
 }

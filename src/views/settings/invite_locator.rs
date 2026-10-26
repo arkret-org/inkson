@@ -128,71 +128,109 @@ mod tests {
     }
 }
 
-use dioxus::prelude::*;
-
-use crate::components::{QrSharePanel, UiIcon};
-use crate::ui::button::{Button, ButtonSize, ButtonVariant};
-
-/// The production invite controls; URL/QR exist only while shareable evidence is held.
-#[component]
-pub fn InviteLocatorCard(
-    has_session: bool,
-    url: String,
-    status: String,
-    busy: bool,
-    has_locator: bool,
-    onrefresh: EventHandler<()>,
-    onrevoke: EventHandler<()>,
-) -> Element {
-    let qr = render_invite_locator_qr_svg(&url);
-    rsx! {
-        div { class: "event settings-card-span-2 invite-locator-card", "data-testid": "settings-invite-locator-card",
-            div { class: "event-head invite-locator-head",
-                span { {crate::i18n::tr("settings.invite_locator.title")} }
-                if has_session {
-                    div { class: "invite-locator-head-actions",
-                        span { class: "invite-locator-expiry", {crate::i18n::tr("settings.invite_locator.expiry")} }
-                        Button {
-                            variant: ButtonVariant::Secondary, size: ButtonSize::Sm,
-                            class: "btn invite-locator-action",
-                            "data-testid": "settings-invite-locator-refresh",
-                            disabled: busy,
-                            onclick: move |_| onrefresh.call(()),
-                            UiIcon { name: "refresh" }
-                            span { {crate::i18n::tr(if has_locator { "common.refresh" } else { "settings.invite_locator.generate" })} }
-                        }
-                        Button {
-                            variant: ButtonVariant::Secondary, size: ButtonSize::Sm,
-                            "data-testid": "settings-invite-locator-revoke",
-                            disabled: busy || !has_locator,
-                            onclick: move |_| onrevoke.call(()),
-                            {crate::i18n::tr("settings.invite_locator.revoke")}
-                        }
-                    }
-                }
-            }
-            if has_session {
-                div { class: "muted", {crate::i18n::tr("settings.invite_locator.scope")} }
-                if !status.is_empty() {
-                    div { class: "muted", "data-testid": "settings-invite-locator-status", "{status}" }
-                }
-                if !url.is_empty() {
-                    div { "data-testid": "settings-invite-locator-url-pane",
-                        QrSharePanel {
-                            qr_svg: qr, url,
-                            qr_aria_label: crate::i18n::tr("settings.invite_locator.qr_aria"),
-                            url_aria_label: crate::i18n::tr("settings.invite_locator.url_aria"),
-                            qr_test_id: "settings-invite-locator-qr".to_owned(),
-                            url_test_id: "settings-invite-locator-url".to_owned(),
-                            copy_test_id: "settings-invite-locator-copy".to_owned(), url_rows: 4,
-                        }
-                    }
-                }
+#[derive(Clone)]
+pub struct InviteLocatorCardProps {
+    pub has_session: bool,
+    pub url: String,
+    pub status: String,
+    pub busy: bool,
+    pub has_locator: bool,
+    pub onrefresh: std::rc::Rc<dyn Fn(())>,
+    pub onrevoke: std::rc::Rc<dyn Fn(())>,
+}
+pub fn invite_locator_card(
+    scope: &glory::Scope,
+    context: std::rc::Rc<crate::presentation::InksonContext>,
+    props: InviteLocatorCardProps,
+) -> crate::presentation::View {
+    use super::widgets::*;
+    let refresh = props.onrefresh;
+    let revoke = props.onrevoke;
+    let mut head = vec![plain(
+        context.translated(scope, "settings.invite_locator.title"),
+    )];
+    if props.has_session {
+        let refresh_label = context.translated(
+            scope,
+            if props.has_locator {
+                "common.refresh"
             } else {
-                div { class: "muted", "data-testid": "settings-invite-locator-signed-out",
-                    {crate::i18n::tr("settings.invite_locator.sign_in")}
-                }
-            }
-        }
+                "settings.invite_locator.generate"
+            },
+        );
+        head.push(line(
+            "invite-locator-head-actions",
+            vec![
+                paragraph(
+                    "invite-locator-expiry",
+                    context.translated(scope, "settings.invite_locator.expiry"),
+                ),
+                Box::new(
+                    sapid::button()
+                        .unstyled()
+                        .class(
+                            "btn secondary invite-locator-action settings-invite-locator-refresh",
+                        )
+                        .name(refresh_label)
+                        .enabled(!props.busy)
+                        .fill(glory::ui::group().fill((
+                            crate::components::ui_icon("refresh"),
+                            glory::ui::text().content(refresh_label),
+                        )))
+                        .on_press(move || refresh(())),
+                ),
+                action(
+                    scope,
+                    context.clone(),
+                    "settings-invite-locator-revoke",
+                    "settings.invite_locator.revoke",
+                    "secondary",
+                    !props.busy && props.has_locator,
+                    move || revoke(()),
+                ),
+            ],
+        ));
     }
+    let mut children = vec![line("event-head invite-locator-head", head)];
+    if props.has_session {
+        children.push(paragraph(
+            "muted",
+            context.translated(scope, "settings.invite_locator.scope"),
+        ));
+        if !props.status.is_empty() {
+            children.push(paragraph(
+                "muted settings-invite-locator-status",
+                props.status,
+            ));
+        }
+        if !props.url.trim().is_empty() {
+            let svg = render_invite_locator_qr_svg(&props.url);
+            children.push(stack(
+                "settings-invite-locator-url-pane",
+                vec![crate::components::qr_share_panel(
+                    scope,
+                    context.clone(),
+                    crate::components::QrSharePanelProps {
+                        qr_svg: svg,
+                        url: props.url,
+                        qr_aria_label: context.tr("settings.invite_locator.qr_aria"),
+                        url_aria_label: context.tr("settings.invite_locator.url_aria"),
+                        qr_test_id: "settings-invite-locator-qr".into(),
+                        url_test_id: "settings-invite-locator-url".into(),
+                        copy_test_id: "settings-invite-locator-copy".into(),
+                        url_rows: 4,
+                    },
+                )],
+            ));
+        }
+    } else {
+        children.push(paragraph(
+            "muted settings-invite-locator-signed-out",
+            context.translated(scope, "settings.invite_locator.sign_in"),
+        ));
+    }
+    stack(
+        "event settings-card-span-2 invite-locator-card settings-invite-locator-card",
+        children,
+    )
 }

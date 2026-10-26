@@ -1,7 +1,5 @@
 //! Small profile settings helpers.
 
-pub(super) use yoface::utils::dom::copy_text_to_clipboard;
-
 pub(super) use crate::components::avatar_uploader::avatar_preview_data_url;
 
 #[derive(Clone, Debug, PartialEq)]

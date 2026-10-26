@@ -2122,9 +2122,9 @@ mod tests {
                     "third_party_mention_delivery_allowed": false,
                     "acting_on_behalf_allowed": false
                 },
-                "version": 1,
+                "version": "1",
                 "next_replace_input": {
-                    "expected_version": 1
+                    "expected_version": "1"
                 }
             }]
         }))

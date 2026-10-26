@@ -26,4 +26,4 @@ pub(crate) use model::{
     notification_title, notification_title_is_key, notification_value_read_by_cursor,
     notification_wire_state,
 };
-pub use panel::NotificationsPanel;
+pub use panel::page;

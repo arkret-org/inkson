@@ -379,6 +379,7 @@ pub(crate) struct BoardHeader {
     /// The pending create the surface stands in for while no confirmed Board
     /// is selected. `None` once a confirmed Board is selected, even if creates
     /// are still in flight.
+    #[cfg(test)]
     pub(crate) active_pending_board: Option<PendingBoardCreate>,
     pub(crate) title: String,
 }
@@ -403,11 +404,13 @@ pub(crate) fn board_header(
             .map(|pending| format!("{} ({})", pending.title, pending.status_hint()))
             .unwrap_or_else(|| "Select board".to_owned());
         return BoardHeader {
+            #[cfg(test)]
             active_pending_board,
             title,
         };
     };
     BoardHeader {
+        #[cfg(test)]
         active_pending_board: None,
         title: board_space_options
             .iter()

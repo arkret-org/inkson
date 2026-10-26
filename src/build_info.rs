@@ -1,14 +1,9 @@
 //! Build identity surfaced at runtime for stale-bundle diagnostics.
 
-// `scripts/dev_dioxus.py` rewrites this fixed-content file when a sibling Cargo
-// path dependency changes. Keeping it in rustc dep-info makes Dioxus 0.7 classify
-// that local event as a full-rebuild input instead of skipping the external file.
-const _DEV_DEPENDENCY_REBUILD_STAMP: &str = include_str!("dev_dependency_rebuild.stamp");
-
 /// Per-build identifier stamped by `build.rs`:
 /// `<local build time> <git short hash>[+dirty]`.
 ///
-/// Printed once at startup ([`crate::App`] entry) so the browser console shows
+/// Printed once at startup ([`crate::app::root`] entry) so the browser console shows
 /// exactly which wasm bundle is loaded. A freshly built bundle carries a newer
 /// timestamp than a cached one, so a build id older than your last rebuild means
 /// the browser is serving STALE cached wasm (hard-reload or a fresh profile).

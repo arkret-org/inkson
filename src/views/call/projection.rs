@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use dioxus::prelude::*;
+use glory::prelude::*;
 use serde_json::Value;
 
 use super::types::CallParticipantView;
@@ -251,7 +251,7 @@ pub(super) fn build_roster(
 }
 
 pub(super) fn set_local_state(
-    participants: &mut Signal<Vec<CallParticipantView>>,
+    participants: &mut Cage<Vec<CallParticipantView>>,
     actor: &str,
     muted: bool,
     sharing: bool,
@@ -262,14 +262,17 @@ pub(super) fn set_local_state(
     else {
         return;
     };
-    let mut roster = participants();
+    let mut roster = participants.get();
     for p in &mut roster {
         if p.actor_id == actor.to_string() {
             p.muted = muted;
             p.screen_sharing = sharing;
         }
     }
-    participants.set(roster);
+    {
+        let next_value = roster;
+        participants.revise(|value| *value = next_value);
+    };
 }
 
 #[cfg(test)]

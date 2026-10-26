@@ -4,7 +4,6 @@ use serde::Serialize;
 
 use super::model::*;
 use crate::components::WriteState;
-use crate::state::LocalStateStore;
 use crate::transport::auth::with_authed_api;
 use crate::views::helpers::short_protocol_id;
 
@@ -248,35 +247,54 @@ pub(super) fn assignment_relations_after_mutations(
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn dispatch_card_assignees_update(
+    app: Rc<InksonContext>,
     base_url: String,
-    token: Signal<String>,
+    token: Cage<String>,
     realm_id: String,
     actor_id: String,
     current: KanbanCard,
     selected_actor_ids: BTreeSet<arkret_sdk::ActorId>,
-    mut selected_card: Signal<Option<KanbanCard>>,
-    mut state_store: SyncSignal<LocalStateStore>,
-    mut board_status: Signal<String>,
-    mut assignee_edit_status: Signal<String>,
+    selected_card: Cage<Option<KanbanCard>>,
+    state_store: SharedStateStore,
+    board_status: Cage<String>,
+    assignee_edit_status: Cage<String>,
 ) -> bool {
     let selected_actor_ids = match normalize_assignee_selection(selected_actor_ids) {
         Ok(selected) => selected,
         Err(msg) => {
-            assignee_edit_status.set(msg.clone());
-            board_status.set(msg);
+            assignee_edit_status.revise(|value| {
+                let next = msg.clone();
+                *value = next;
+            });
+            board_status.revise(|value| {
+                let next = msg;
+                *value = next;
+            });
             return false;
         }
     };
     if actor_id.trim().is_empty() {
         let msg = "sign in before editing assignees".to_owned();
-        assignee_edit_status.set(msg.clone());
-        board_status.set(msg);
+        assignee_edit_status.revise(|value| {
+            let next = msg.clone();
+            *value = next;
+        });
+        board_status.revise(|value| {
+            let next = msg;
+            *value = next;
+        });
         return false;
     }
     if realm_id.trim().is_empty() {
         let msg = "select a Realm before editing assignees".to_owned();
-        assignee_edit_status.set(msg.clone());
-        board_status.set(msg);
+        assignee_edit_status.revise(|value| {
+            let next = msg.clone();
+            *value = next;
+        });
+        board_status.revise(|value| {
+            let next = msg;
+            *value = next;
+        });
         return false;
     }
 
@@ -284,161 +302,230 @@ pub(super) fn dispatch_card_assignees_update(
         .into_iter()
         .collect::<BTreeSet<_>>();
     if current_actor_ids == selected_actor_ids {
-        board_status.set("No assignee changes to save".to_owned());
-        assignee_edit_status.set(String::new());
+        board_status.revise(|value| {
+            let next = "No assignee changes to save".to_owned();
+            *value = next;
+        });
+        assignee_edit_status.revise(|value| {
+            let next = String::new();
+            *value = next;
+        });
         return true;
     }
-    assignee_edit_status.set("Saving...".to_owned());
-    board_status.set("Reading exact assignee state...".to_owned());
-    let api_token = token();
+    assignee_edit_status.revise(|value| {
+        let next = "Saving...".to_owned();
+        *value = next;
+    });
+    board_status.revise(|value| {
+        let next = "Reading exact assignee state...".to_owned();
+        *value = next;
+    });
+    let api_token = token.get();
     let strand_id = current.id.clone();
-    spawn(async move {
-        let read_realm_id = realm_id.clone();
-        let read_actor_id = actor_id.clone();
-        let read_current = current.clone();
-        let read_selected = selected_actor_ids.clone();
-        let mutations = match with_authed_api(&base_url, api_token.clone(), |api| async move {
-            let submitter = api.event_submitter()?;
-            read_card_assignment_mutations(
-                &submitter,
-                &read_realm_id,
-                &read_actor_id,
-                &read_current,
-                &read_selected,
-            )
-            .await
-        })
-        .await
-        {
-            Ok(mutations) => mutations,
-            Err(err) => {
-                let msg = format!("cannot verify exact assignee state: {}", err.display());
-                assignee_edit_status.set(msg.clone());
-                board_status.set(msg);
-                return;
-            }
-        };
-
-        let optimistic_relations =
-            assignment_relations_after_mutations(&current, &selected_actor_ids, &mutations);
-        let mut updated_card = current.clone();
-        apply_card_assignment_projection(
-            &mut updated_card,
-            &selected_actor_ids,
-            optimistic_relations,
-            CardState::Queued,
-        );
-        selected_card.set(Some(updated_card));
-
-        for mutation in &mutations {
-            let operation = mutation.operation();
-            let operation_id = operation.local_operation_id().to_string();
-            let body = match queued_assignment_body(mutation) {
-                Ok(body) => body,
-                Err(err) => {
-                    let msg = format!("cannot queue assignee operation: {err:#}");
-                    assignee_edit_status.set(msg.clone());
-                    board_status.set(msg);
-                    return;
-                }
-            };
-            let record = match serde_json::to_value(QueuedAssignmentRecord {
-                kind: operation.kind().clone(),
-                operation_id: &operation_id,
-                actor_id: operation.actor_id().clone(),
-                created_at: arkret_sdk::canonical::format_timestamp_canonical(
-                    operation.created_at(),
-                ),
-                write_state: "queued",
-                body,
-                assignment_strand_id: &current.id,
-                assignment_actor_id: mutation.actor_id(),
-                assignment_relation_id: mutation
-                    .relation_id()
-                    .map(ToOwned::to_owned)
-                    .unwrap_or_else(|| operation.local_operation_id().to_string()),
-            }) {
-                Ok(record) => record,
-                Err(err) => {
-                    let msg = format!("cannot queue assignee operation: {err}");
-                    assignee_edit_status.set(msg.clone());
-                    board_status.set(msg);
-                    return;
-                }
-            };
-            state_store.write().enqueue_local_projection_command(
-                operation_id,
-                Some(realm_id.clone()),
-                record,
-            );
-        }
-
-        let operation_count = mutations.len();
-        board_status.set(format!(
-            "submitting {operation_count} assignee relation operation{}",
-            if operation_count == 1 { "" } else { "s" }
-        ));
-        let mut has_queued = false;
-        for mutation in mutations {
-            let operation = mutation.operation().clone();
-            let operation_id = operation.local_operation_id().to_string();
-            let kind = operation.kind().as_str().to_owned();
-            match with_authed_api(&base_url, api_token.clone(), |api| async move {
-                api.event_submitter()?.submit_sdk_event(&operation).await
+    {
+        let task_context = app.clone();
+        spawn_write(task_context, async move {
+            let read_realm_id = realm_id.clone();
+            let read_actor_id = actor_id.clone();
+            let read_current = current.clone();
+            let read_selected = selected_actor_ids.clone();
+            let mutations = match with_authed_api(&base_url, api_token.clone(), |api| async move {
+                let submitter = api.event_submitter()?;
+                read_card_assignment_mutations(
+                    &submitter,
+                    &read_realm_id,
+                    &read_actor_id,
+                    &read_current,
+                    &read_selected,
+                )
+                .await
             })
             .await
             {
-                Ok(resp) => {
-                    state_store.write().update_raw_operation_write_state(
-                        &operation_id,
-                        "accepted",
-                        Some(resp.event_id.clone()),
-                        None,
-                    );
-                }
-                Err(err) if crate::event_submit::is_durably_queued_error(err.inner()) => {
-                    has_queued = true;
-                }
+                Ok(mutations) => mutations,
                 Err(err) => {
-                    let err_text = err.display().to_string();
-                    state_store.write().update_raw_operation_write_state(
-                        &operation_id,
-                        "failed",
-                        None,
-                        Some(err_text.clone()),
-                    );
-                    let selected = selected_card.read().clone();
-                    if let Some(mut card) = selected
-                        && card.id == strand_id
-                    {
-                        card.state = CardState::SoftFailed;
-                        selected_card.set(Some(card));
-                    }
-                    assignee_edit_status.set(format!("{kind} failed"));
-                    board_status.set(format!("{kind} operation failed: {err_text}"));
+                    let msg = format!("cannot verify exact assignee state: {}", err.display());
+                    assignee_edit_status.revise(|value| {
+                        let next = msg.clone();
+                        *value = next;
+                    });
+                    board_status.revise(|value| {
+                        let next = msg;
+                        *value = next;
+                    });
                     return;
                 }
-            }
-        }
-        let selected = selected_card.read().clone();
-        if let Some(mut card) = selected
-            && card.id == strand_id
-        {
-            card.state = if has_queued {
-                CardState::Queued
-            } else {
-                CardState::Accepted
             };
-            selected_card.set(Some(card));
-        }
-        if has_queued {
-            let status = WriteState::Queued.localized_explanation();
-            assignee_edit_status.set(status.clone());
-            board_status.set(status);
-        } else {
-            assignee_edit_status.set(String::new());
-            board_status.set("Assignees updated".to_owned());
-        }
-    });
+
+            let optimistic_relations =
+                assignment_relations_after_mutations(&current, &selected_actor_ids, &mutations);
+            let mut updated_card = current.clone();
+            apply_card_assignment_projection(
+                &mut updated_card,
+                &selected_actor_ids,
+                optimistic_relations,
+                CardState::Queued,
+            );
+            selected_card.revise(|value| {
+                let next = Some(updated_card);
+                *value = next;
+            });
+
+            for mutation in &mutations {
+                let operation = mutation.operation();
+                let operation_id = operation.local_operation_id().to_string();
+                let body = match queued_assignment_body(mutation) {
+                    Ok(body) => body,
+                    Err(err) => {
+                        let msg = format!("cannot queue assignee operation: {err:#}");
+                        assignee_edit_status.revise(|value| {
+                            let next = msg.clone();
+                            *value = next;
+                        });
+                        board_status.revise(|value| {
+                            let next = msg;
+                            *value = next;
+                        });
+                        return;
+                    }
+                };
+                let record = match serde_json::to_value(QueuedAssignmentRecord {
+                    kind: operation.kind().clone(),
+                    operation_id: &operation_id,
+                    actor_id: operation.actor_id().clone(),
+                    created_at: arkret_sdk::canonical::format_timestamp_canonical(
+                        operation.created_at(),
+                    ),
+                    write_state: "queued",
+                    body,
+                    assignment_strand_id: &current.id,
+                    assignment_actor_id: mutation.actor_id(),
+                    assignment_relation_id: mutation
+                        .relation_id()
+                        .map(ToOwned::to_owned)
+                        .unwrap_or_else(|| operation.local_operation_id().to_string()),
+                }) {
+                    Ok(record) => record,
+                    Err(err) => {
+                        let msg = format!("cannot queue assignee operation: {err}");
+                        assignee_edit_status.revise(|value| {
+                            let next = msg.clone();
+                            *value = next;
+                        });
+                        board_status.revise(|value| {
+                            let next = msg;
+                            *value = next;
+                        });
+                        return;
+                    }
+                };
+                state_store.write(|store| {
+                    store.enqueue_local_projection_command(
+                        operation_id,
+                        Some(realm_id.clone()),
+                        record,
+                    )
+                });
+            }
+
+            let operation_count = mutations.len();
+            board_status.revise(|value| {
+                let next = format!(
+                    "submitting {operation_count} assignee relation operation{}",
+                    if operation_count == 1 { "" } else { "s" }
+                );
+                *value = next;
+            });
+            let mut has_queued = false;
+            for mutation in mutations {
+                let operation = mutation.operation().clone();
+                let operation_id = operation.local_operation_id().to_string();
+                let kind = operation.kind().as_str().to_owned();
+                match with_authed_api(&base_url, api_token.clone(), |api| async move {
+                    api.event_submitter()?.submit_sdk_event(&operation).await
+                })
+                .await
+                {
+                    Ok(resp) => {
+                        state_store.write(|store| {
+                            store.update_raw_operation_write_state(
+                                &operation_id,
+                                "accepted",
+                                Some(resp.event_id.clone()),
+                                None,
+                            )
+                        });
+                    }
+                    Err(err) if crate::event_submit::is_durably_queued_error(err.inner()) => {
+                        has_queued = true;
+                    }
+                    Err(err) => {
+                        let err_text = err.display().to_string();
+                        state_store.write(|store| {
+                            store.update_raw_operation_write_state(
+                                &operation_id,
+                                "failed",
+                                None,
+                                Some(err_text.clone()),
+                            )
+                        });
+                        let selected = selected_card.get().clone();
+                        if let Some(mut card) = selected
+                            && card.id == strand_id
+                        {
+                            card.state = CardState::SoftFailed;
+                            selected_card.revise(|value| {
+                                let next = Some(card);
+                                *value = next;
+                            });
+                        }
+                        assignee_edit_status.revise(|value| {
+                            let next = format!("{kind} failed");
+                            *value = next;
+                        });
+                        board_status.revise(|value| {
+                            let next = format!("{kind} operation failed: {err_text}");
+                            *value = next;
+                        });
+                        return;
+                    }
+                }
+            }
+            let selected = selected_card.get().clone();
+            if let Some(mut card) = selected
+                && card.id == strand_id
+            {
+                card.state = if has_queued {
+                    CardState::Queued
+                } else {
+                    CardState::Accepted
+                };
+                selected_card.revise(|value| {
+                    let next = Some(card);
+                    *value = next;
+                });
+            }
+            if has_queued {
+                let status = WriteState::Queued.localized_explanation();
+                assignee_edit_status.revise(|value| {
+                    let next = status.clone();
+                    *value = next;
+                });
+                board_status.revise(|value| {
+                    let next = status;
+                    *value = next;
+                });
+            } else {
+                assignee_edit_status.revise(|value| {
+                    let next = String::new();
+                    *value = next;
+                });
+                board_status.revise(|value| {
+                    let next = "Assignees updated".to_owned();
+                    *value = next;
+                });
+            }
+        });
+    };
     true
 }

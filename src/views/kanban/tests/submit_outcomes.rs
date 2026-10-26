@@ -41,12 +41,7 @@ fn queued_answer() -> Result<crate::models::EventSubmissionProgress, ApiCallErro
 }
 
 fn assert_badge_state(state: CardState) {
-    let mut dom =
-        VirtualDom::new_with_props(|state: CardState| rsx! { WriteStateBadge { state } }, state);
-    assert!(dom.rebuild_to_vec().edits.iter().any(|edit| matches!(edit,
-        dioxus::core::Mutation::SetAttribute { name:"data-write-state", value:dioxus::core::AttributeValue::Text(value), .. }
-        if value.as_str() == state.write_state().data_state()
-    )));
+    assert_native_badge(state, state);
 }
 
 #[test]

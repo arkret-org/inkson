@@ -124,7 +124,7 @@ pub(super) async fn encrypt_private_card_detail_patch_values_for_effective_scope
     strand_id: &str,
     actor_id: &str,
     device_id: &str,
-    mut state_store: SyncSignal<LocalStateStore>,
+    state_store: SharedStateStore,
     sidecar: Option<&SidecarTrackWriteContext>,
 ) -> Result<(EncryptedPatchPlan, EncryptedWriteMlsEvents), String> {
     let account_scope = crate::secure_key_store::active_device_seed_scope()
@@ -151,7 +151,7 @@ pub(super) async fn encrypt_private_card_detail_patch_values_for_effective_scope
         // Do not hold the account state lock while reading the committed current
         // and restoring this device's private group. A concurrent accepted cut may
         // invalidate the UI probe before the click; authoring rechecks it here.
-        let store_handle = crate::app::runtime_adapter::state_store_handle(state_store);
+        let store_handle = state_store.handle();
         let gate_input =
             crate::mls::send_gate::MlsSendGateInput::capture(&store_handle, &effective_scope);
         let gate = crate::mls::send_gate::resolve_restorable_mls_send_gate(
@@ -168,18 +168,18 @@ pub(super) async fn encrypt_private_card_detail_patch_values_for_effective_scope
         }
     }
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-    let mut store = state_store.write();
-    encrypt_private_card_detail_patch_values_with_store_for_effective_scope(
-        patch,
-        realm_id,
-        strand_id,
-        actor_id,
-        device_id,
-        &mut store,
-        secure_store.as_ref(),
-        sidecar,
-    )
-    .await
+    state_store.write(|store| {
+        encrypt_private_card_detail_patch_values_with_store_for_effective_scope(
+            patch,
+            realm_id,
+            strand_id,
+            actor_id,
+            device_id,
+            store,
+            secure_store.as_ref(),
+            sidecar,
+        )
+    })
 }
 
 #[cfg(test)]
@@ -202,11 +202,10 @@ pub(super) async fn encrypt_private_card_detail_patch_values_with_store(
         secure_store,
         None,
     )
-    .await
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) async fn encrypt_private_card_detail_patch_values_with_store_for_effective_scope(
+pub(super) fn encrypt_private_card_detail_patch_values_with_store_for_effective_scope(
     patch: Value,
     realm_id: &str,
     strand_id: &str,
@@ -322,8 +321,9 @@ pub(super) async fn encrypt_private_card_detail_patch_values_with_store_for_effe
 
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn dispatch_card_detail_update(
+    app: Rc<InksonContext>,
     base_url: String,
-    token: Signal<String>,
+    token: Cage<String>,
     realm_id: String,
     actor_id: String,
     device_id: String,
@@ -334,42 +334,53 @@ pub(super) async fn dispatch_card_detail_update(
     sidecar_track_write: Option<SidecarTrackWriteContext>,
     synthesis_entry_id: Option<String>,
     synthesis_revision_body: Option<String>,
-    _selected_card: Signal<Option<KanbanCard>>,
-    mut state_store: SyncSignal<LocalStateStore>,
-    mut board_status: Signal<String>,
+    _selected_card: Cage<Option<KanbanCard>>,
+    state_store: SharedStateStore,
+    board_status: Cage<String>,
 ) -> bool {
     let mut current = current;
     if arkret_sdk::StrandId::new(current.id.clone()).is_err() {
         let canonical_id = {
-            let snapshot = state_store.read().load();
+            let snapshot = state_store.read(|store| store.load());
             event_derived_target_aliases(&snapshot.raw_operations)
                 .get(&current.id)
                 .cloned()
         };
         let Some(canonical_id) = canonical_id else {
-            board_status
-                .set("card creation is still awaiting its canonical Strand identity".to_owned());
+            board_status.revise(|value| {
+                let next =
+                    "card creation is still awaiting its canonical Strand identity".to_owned();
+                *value = next;
+            });
             return false;
         };
         current.id = canonical_id;
     }
     if current.state != CardState::Synced {
-        board_status.set(
-            "card has a pending local write; wait for acceptance before editing again".to_owned(),
-        );
+        board_status.revise(|value| {
+            let next = "card has a pending local write; wait for acceptance before editing again"
+                .to_owned();
+            *value = next;
+        });
         return false;
     }
     let patch = match card_detail_update_patch(&current, &draft) {
         Ok(patch) => patch,
         Err(msg) => {
-            board_status.set(msg);
+            board_status.revise(|value| {
+                let next = msg;
+                *value = next;
+            });
             return false;
         }
     };
-    let api_token = token();
+    let api_token = token.get();
     let Some(_current_revision) = current.authoring_basis.clone() else {
-        board_status
-            .set("The complete current card value is not available for editing yet.".to_owned());
+        board_status.revise(|value| {
+            let next =
+                "The complete current card value is not available for editing yet.".to_owned();
+            *value = next;
+        });
         return false;
     };
     let sidecar_effective_scope = match sidecar_track_write
@@ -380,7 +391,10 @@ pub(super) async fn dispatch_card_detail_update(
             let realm_id = match arkret_sdk::RealmId::new(realm_id.clone()) {
                 Ok(realm_id) => realm_id,
                 Err(error) => {
-                    board_status.set(format!("invalid Sidecar Realm id: {error}"));
+                    board_status.revise(|value| {
+                        let next = format!("invalid Sidecar Realm id: {error}");
+                        *value = next;
+                    });
                     return false;
                 }
             };
@@ -396,7 +410,10 @@ pub(super) async fn dispatch_card_detail_update(
         None => match arkret_sdk::RealmId::new(realm_id.clone()) {
             Ok(realm_id) => arkret_sdk::ScopeRef::Realm { realm_id },
             Err(error) => {
-                board_status.set(format!("invalid card Realm id: {error}"));
+                board_status.revise(|value| {
+                    let next = format!("invalid card Realm id: {error}");
+                    *value = next;
+                });
                 return false;
             }
         },
@@ -412,7 +429,10 @@ pub(super) async fn dispatch_card_detail_update(
         let private_values = match collect_encryptable_private_patch_values(&patch) {
             Ok(values) => values,
             Err(error) => {
-                board_status.set(error);
+                board_status.revise(|value| {
+                    let next = error;
+                    *value = next;
+                });
                 return false;
             }
         };
@@ -425,11 +445,14 @@ pub(super) async fn dispatch_card_detail_update(
             let device = match arkret_sdk::DeviceId::new(device_id.clone()) {
                 Ok(device) => device,
                 Err(error) => {
-                    board_status.set(format!("invalid card device: {error}"));
+                    board_status.revise(|value| {
+                        let next = format!("invalid card device: {error}");
+                        *value = next;
+                    });
                     return false;
                 }
             };
-            let store = crate::app::runtime_adapter::state_store_handle(state_store);
+            let store = state_store.handle();
             let input = crate::mls::send_gate::MlsSendGateInput::capture(&store, &source_scope);
             if let Err(error) = crate::mls::send_gate::resolve_restorable_mls_send_gate(
                 &input,
@@ -442,10 +465,13 @@ pub(super) async fn dispatch_card_detail_update(
                     error.downcast_ref::<crate::mls::send_gate::MlsSendGateBlocked>(),
                     Some(crate::mls::send_gate::MlsSendGateBlocked::DetailBaselinePending)
                 );
-                board_status.set(if pending_baseline {
-                    format!("encryption_transition_pending: {error}")
-                } else {
-                    format!("encrypted card write is not ready: {error}")
+                board_status.revise(|value| {
+                    let next = if pending_baseline {
+                        format!("encryption_transition_pending: {error}")
+                    } else {
+                        format!("encrypted card write is not ready: {error}")
+                    };
+                    *value = next;
                 });
                 return false;
             }
@@ -456,14 +482,17 @@ pub(super) async fn dispatch_card_detail_update(
             &current.id,
             &actor_id,
             &device_id,
-            state_store,
+            state_store.clone(),
             sidecar_track_write.as_ref(),
         )
         .await
         {
             Ok(result) => result,
             Err(msg) => {
-                board_status.set(msg);
+                board_status.revise(|value| {
+                    let next = msg;
+                    *value = next;
+                });
                 return false;
             }
         }
@@ -486,7 +515,10 @@ pub(super) async fn dispatch_card_detail_update(
     let sealed_patch = match patch_plan.seal(None, None) {
         Ok(patch) => patch,
         Err(error) => {
-            board_status.set(format!("cannot seal card update: {error}"));
+            board_status.revise(|value| {
+                let next = format!("cannot seal card update: {error}");
+                *value = next;
+            });
             return false;
         }
     };
@@ -507,37 +539,42 @@ pub(super) async fn dispatch_card_detail_update(
         .clone()
         .filter(|_| !effective_security_encrypted);
     let kind = event_kind_str::STRAND_UPDATE.to_owned();
-    state_store.write().enqueue_local_projection_command(
-        operation_id.clone(),
-        Some(realm_id.clone()),
-        json!({
-            "kind": kind,
-            "operation_id": operation_id.clone(),
-            "actor_id": actor_id.clone(),
-            "created_at": arkret_sdk::canonical::format_timestamp_canonical(
-                crate::clock::now_utc_millis(),
-            ),
-            "write_state": "queued",
-            "synthesis_entry_id": synthesis_entry_id,
-            "synthesis_revision_body": local_synthesis_revision_body,
-            "encrypted_payload_local": effective_security_encrypted,
-            "body": {
-                "strand_id": current.id,
-                "patch": sealed_patch,
-            },
-        }),
-    );
-    state_store.write().project_pending_local_commands();
-    board_status.set(format!(
-        "submitting {kind} operation {}",
-        short_protocol_id(&operation_id)
-    ));
+    state_store.write(|store| {
+        store.enqueue_local_projection_command(
+            operation_id.clone(),
+            Some(realm_id.clone()),
+            json!({
+                "kind": kind,
+                "operation_id": operation_id.clone(),
+                "actor_id": actor_id.clone(),
+                "created_at": arkret_sdk::canonical::format_timestamp_canonical(
+                    crate::clock::now_utc_millis(),
+                ),
+                "write_state": "queued",
+                "synthesis_entry_id": synthesis_entry_id,
+                "synthesis_revision_body": local_synthesis_revision_body,
+                "encrypted_payload_local": effective_security_encrypted,
+                "body": {
+                    "strand_id": current.id,
+                    "patch": sealed_patch,
+                },
+            }),
+        )
+    });
+    state_store.write(|store| store.project_pending_local_commands());
+    board_status.revise(|value| {
+        let next = format!(
+            "submitting {kind} operation {}",
+            short_protocol_id(&operation_id)
+        );
+        *value = next;
+    });
     // X11.2 — first-write trigger. Read the context-provided
     // `needs_mls_backup` signal HERE (inside the Dioxus scope), so the
     // encrypted-write success arm can flip the backup prompt on directly,
     // bypassing the fragile boot detection effect. Best-effort: `None` when
     // no provider is mounted (unit tests / non-app callers).
-    let backup_trigger_signal = crate::components::try_needs_mls_backup_signal();
+    let backup_trigger_signal = crate::components::try_needs_mls_backup_state();
     let base_for_backup_trigger = base_url.clone();
     let actor_for_backup_trigger = actor_id.clone();
     let backup_account_scope = if effective_security_encrypted {
@@ -546,11 +583,17 @@ pub(super) async fn dispatch_card_detail_update(
                 Some(scope)
             }
             Some(_) => {
-                board_status.set("active account authority does not match card author".to_owned());
+                board_status.revise(|value| {
+                    let next = "active account authority does not match card author".to_owned();
+                    *value = next;
+                });
                 return false;
             }
             None => {
-                board_status.set("active account authority is unavailable".to_owned());
+                board_status.revise(|value| {
+                    let next = "active account authority is unavailable".to_owned();
+                    *value = next;
+                });
                 return false;
             }
         }
@@ -561,15 +604,18 @@ pub(super) async fn dispatch_card_detail_update(
     let update_realm_id = realm_id.clone();
     let update_actor_id = actor_id.clone();
     let update_strand_id = current.id.clone();
-    let submit_authority = match crate::app::SessionContext::get()
+    let submit_authority = match app
         .active_account
-        .read()
+        .get()
         .as_ref()
         .map(|account| account.authority.clone())
     {
         Some(authority) => authority,
         None => {
-            board_status.set("active account authority is unavailable".to_owned());
+            board_status.revise(|value| {
+                let next = "active account authority is unavailable".to_owned();
+                *value = next;
+            });
             return false;
         }
     };
@@ -578,159 +624,165 @@ pub(super) async fn dispatch_card_detail_update(
     // permanently queued and never sending its Event. Run the protocol
     // sequence at the root and retain only the app-owned state store across
     // awaits; component UI signals are deliberately not captured.
-    let submit_state_store = crate::app::runtime_adapter::state_store_handle(state_store);
-    dioxus::core::spawn_forever(async move {
-        let submit_event = match build_card_detail_update_operation(
-            &update_realm_id,
-            &update_actor_id,
-            &update_strand_id,
-            sealed_patch,
-        ) {
-            Ok(op) => {
-                let op = op.with_local_operation_id(local_operation_id);
-                match sidecar_effective_scope.as_ref() {
-                    Some(effective_scope) if effective_scope == &source_scope => {
-                        op.with_effective_scope(effective_scope.clone())
+    let submit_state_store = state_store.handle();
+    {
+        let task_context = app.clone();
+        spawn_write(task_context, async move {
+            let submit_event = match build_card_detail_update_operation(
+                &update_realm_id,
+                &update_actor_id,
+                &update_strand_id,
+                sealed_patch,
+            ) {
+                Ok(op) => {
+                    let op = op.with_local_operation_id(local_operation_id);
+                    match sidecar_effective_scope.as_ref() {
+                        Some(effective_scope) if effective_scope == &source_scope => {
+                            op.with_effective_scope(effective_scope.clone())
+                        }
+                        Some(_) => Err(anyhow::anyhow!(
+                            "the draft source belongs to a different effective scope"
+                        )),
+                        None => op.with_effective_scope(source_scope.clone()),
                     }
-                    Some(_) => Err(anyhow::anyhow!(
-                        "the draft source belongs to a different effective scope"
-                    )),
-                    None => op.with_effective_scope(source_scope.clone()),
                 }
-            }
-            Err(error) => Err(error),
-        };
-        let submit_event = match submit_event {
-            Ok(op) => op,
-            Err(error) => {
-                let error = format!("cannot update card: {error:#}");
+                Err(error) => Err(error),
+            };
+            let submit_event = match submit_event {
+                Ok(op) => op,
+                Err(error) => {
+                    let error = format!("cannot update card: {error:#}");
+                    submit_state_store.write(|store| {
+                        store.update_raw_operation_write_state(
+                            &operation_id,
+                            "failed",
+                            None,
+                            Some(error.clone()),
+                        );
+                    });
+                    tracing::warn!(%error, "cannot author encrypted card update");
+                    return;
+                }
+            };
+            if let Some(reason) = kanban_plaintext_block_reason(guard_security_state, &submit_event)
+            {
                 submit_state_store.write(|store| {
                     store.update_raw_operation_write_state(
                         &operation_id,
                         "failed",
                         None,
-                        Some(error.clone()),
+                        Some(reason.clone()),
                     );
                 });
-                tracing::warn!(%error, "cannot author encrypted card update");
+                tracing::warn!(%reason, "encrypted card update blocked");
                 return;
             }
-        };
-        if let Some(reason) = kanban_plaintext_block_reason(guard_security_state, &submit_event) {
+            // The optimistic row was enqueued before the patch could be sealed, so
+            // the body lands here, once it exists.
             submit_state_store.write(|store| {
-                store.update_raw_operation_write_state(
-                    &operation_id,
-                    "failed",
-                    None,
-                    Some(reason.clone()),
-                );
+                store.update_raw_operation_body(&operation_id, submit_event.payload_value());
             });
-            tracing::warn!(%reason, "encrypted card update blocked");
-            return;
-        }
-        // The optimistic row was enqueued before the patch could be sealed, so
-        // the body lands here, once it exists.
-        submit_state_store.write(|store| {
-            store.update_raw_operation_body(&operation_id, submit_event.payload_value());
-        });
-        let update_state_store = submit_state_store.clone();
-        let update_authority = submit_authority.clone();
-        match with_authed_api(&base_url, api_token.clone(), |api| async move {
-            api.event_submitter()?
-                .with_state_store(update_state_store)
-                .with_authority(update_authority)
-                .submit_sdk_event(&submit_event)
-                .await
-        })
-        .await
-        {
-            Ok(resp) => {
-                submit_state_store.write(|store| {
-                    store.update_raw_operation_write_state(
-                        &operation_id,
-                        if resp.is_committed() {
-                            "accepted"
-                        } else {
-                            "queued"
-                        },
-                        Some(resp.event_id.clone()),
-                        None,
-                    );
-                });
-                tracing::debug!(
-                    kind = %kind,
-                    event_id = %short_protocol_id(&resp.event_id),
-                    "detached card update accepted by server"
-                );
-                if effective_security_encrypted {
-                    let Some(backup_account_scope) = backup_account_scope else {
-                        tracing::warn!(
-                            "active account authority is unavailable after encrypted write"
+            let update_state_store = submit_state_store.clone();
+            let update_authority = submit_authority.clone();
+            match with_authed_api(&base_url, api_token.clone(), |api| async move {
+                api.event_submitter()?
+                    .with_state_store(update_state_store)
+                    .with_authority(update_authority)
+                    .submit_sdk_event(&submit_event)
+                    .await
+            })
+            .await
+            {
+                Ok(resp) => {
+                    submit_state_store.write(|store| {
+                        store.update_raw_operation_write_state(
+                            &operation_id,
+                            if resp.is_committed() {
+                                "accepted"
+                            } else {
+                                "queued"
+                            },
+                            Some(resp.event_id.clone()),
+                            None,
                         );
-                        return;
-                    };
-                    crate::components::schedule_mls_recovery_backups_after_encrypted_write(
-                        base_for_backup_trigger.clone(),
-                        api_token.clone(),
-                        backup_account_scope.authority.clone(),
-                        actor_for_backup_trigger.clone(),
-                        backup_account_scope.device_id.to_string(),
-                        state_store,
+                    });
+                    tracing::debug!(
+                        kind = %kind,
+                        event_id = %short_protocol_id(&resp.event_id),
+                        "detached card update accepted by server"
                     );
-                    // X11.2 — first-write trigger. After this encrypted write
-                    // landed, auto-back up the account secret when possible.
-                    // The helper dedupes its server probe per account/session, so
-                    // ordinary writes do not list backups repeatedly.
-                    if let Some(signal) = backup_trigger_signal {
-                        crate::components::maybe_auto_backup_mls_after_encrypted_write(
+                    if effective_security_encrypted {
+                        let Some(backup_account_scope) = backup_account_scope else {
+                            tracing::warn!(
+                                "active account authority is unavailable after encrypted write"
+                            );
+                            return;
+                        };
+                        crate::components::schedule_mls_recovery_backups_after_encrypted_write(
+                            app.clone(),
                             base_for_backup_trigger.clone(),
                             api_token.clone(),
                             backup_account_scope.authority.clone(),
                             actor_for_backup_trigger.clone(),
                             backup_account_scope.device_id.to_string(),
-                            crate::app::runtime_adapter::state_store_handle(state_store),
-                            signal,
+                            state_store.handle(),
+                        );
+                        // X11.2 — first-write trigger. After this encrypted write
+                        // landed, auto-back up the account secret when possible.
+                        // The helper dedupes its server probe per account/session, so
+                        // ordinary writes do not list backups repeatedly.
+                        if let Some(signal) = backup_trigger_signal {
+                            crate::components::maybe_auto_backup_mls_after_encrypted_write(
+                                app.clone(),
+                                base_for_backup_trigger.clone(),
+                                api_token.clone(),
+                                backup_account_scope.authority.clone(),
+                                actor_for_backup_trigger.clone(),
+                                backup_account_scope.device_id.to_string(),
+                                state_store.handle(),
+                                signal,
+                            )
+                            .await;
+                        }
+                    }
+                }
+                Err(err) if crate::event_submit::is_durably_queued_error(err.inner()) => {
+                    tracing::debug!(%operation_id, "encrypted card update remains durably queued");
+                }
+                Err(err) => {
+                    let error = err.display().to_string();
+                    submit_state_store.write(|store| {
+                        store.update_raw_operation_write_state(
+                            &operation_id,
+                            "failed",
+                            None,
+                            Some(error.clone()),
+                        );
+                    });
+                    // §2.4.1 `epoch_update_required`: arm the coverage repair so the
+                    // per-Realm MLS effect advances the epoch. Without this the
+                    // refusal is just another failed write and the scope never
+                    // recovers.
+                    let paused = submit_state_store.write(|store| {
+                        crate::mls::coverage_liveness::note_e2ee_submit_refusal_in_store(
+                            store,
+                            &realm_id,
+                            None,
+                            err.inner(),
                         )
-                        .await;
+                    });
+                    if paused {
+                        tracing::warn!(
+                            kind = %kind,
+                            "card update paused while MLS epoch advances to cover governance Seal"
+                        );
+                    } else {
+                        tracing::warn!(kind = %kind, %error, "detached card update failed");
                     }
                 }
             }
-            Err(err) if crate::event_submit::is_durably_queued_error(err.inner()) => {
-                tracing::debug!(%operation_id, "encrypted card update remains durably queued");
-            }
-            Err(err) => {
-                let error = err.display().to_string();
-                submit_state_store.write(|store| {
-                    store.update_raw_operation_write_state(
-                        &operation_id,
-                        "failed",
-                        None,
-                        Some(error.clone()),
-                    );
-                });
-                // §2.4.1 `epoch_update_required`: arm the coverage repair so the
-                // per-Realm MLS effect advances the epoch. Without this the
-                // refusal is just another failed write and the scope never
-                // recovers.
-                let paused = submit_state_store.write(|store| {
-                    crate::mls::coverage_liveness::note_e2ee_submit_refusal_in_store(
-                        store,
-                        &realm_id,
-                        None,
-                        err.inner(),
-                    )
-                });
-                if paused {
-                    tracing::warn!(
-                        kind = %kind,
-                        "card update paused while MLS epoch advances to cover governance Seal"
-                    );
-                } else {
-                    tracing::warn!(kind = %kind, %error, "detached card update failed");
-                }
-            }
-        }
-    });
+        });
+    };
     true
 }
 

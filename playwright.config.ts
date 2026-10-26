@@ -8,9 +8,10 @@ const serverURL = new URL(baseURL);
 const serverPort =
   serverURL.port || (serverURL.protocol === "https:" ? "443" : "80");
 const e2eCargoTargetDir =
-  process.env.INKSON_E2E_CARGO_TARGET_DIR ?? "target/playwright-e2e";
+  process.env.INKSON_E2E_CARGO_TARGET_DIR ??
+  (process.platform === "win32" ? "D:/BuildCache/inkson-glory/playwright-e2e" :
+    process.env.WSL_DISTRO_NAME ? "/mnt/d/BuildCache/inkson-glory/playwright-e2e" : "target/playwright-e2e");
 const e2eBuildProfile = process.env.INKSON_E2E_BUILD_PROFILE ?? "joint-e2e";
-const e2eBundleDirectory = e2eBuildProfile === "release" ? "release" : "debug";
 const browserProjects = (process.env.INKSON_E2E_BROWSERS ?? "chromium")
   .split(",")
   .map((name) => name.trim())
@@ -50,17 +51,16 @@ export default defineConfig({
   projects: browserProjects,
   webServer: shouldStartServer
     ? {
-        command: `dx build --platform web --profile ${e2eBuildProfile} --features web,wasm-localstorage-secrets-test,experimental-applets && node tests/e2e/staticServer.mjs ${e2eCargoTargetDir}/dx/inkson/${e2eBundleDirectory}/web/public ${serverPort}`,
-        // Build completion precedes socket binding, so tests can never observe
-        // Dioxus' intermediate rebuild shell or a stale WASM/CSS pair.
-        url: `${baseURL}/wasm/inkson.js`,
+        command: "node scripts/serve_e2e.mjs",
+        // Build the complete bundle before binding the socket.
+        url: `${baseURL}/assets/pkg/inkson.js`,
         reuseExistingServer: !process.env.CI,
         timeout: 900_000,
-        // Never let the E2E dx process overwrite the live development server's
-        // wasm/CSS-module bundle in target/dx. CSS-module class hashes and
-        // stylesheets must be emitted by the same build invocation.
+        // Keep E2E output separate from the active development bundle.
         env: {
-          CARGO_TARGET_DIR: e2eCargoTargetDir,
+          INKSON_E2E_CARGO_TARGET_DIR: e2eCargoTargetDir,
+          INKSON_E2E_BUILD_PROFILE: e2eBuildProfile,
+          INKSON_E2E_PORT: serverPort,
         },
       }
     : undefined,

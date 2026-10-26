@@ -223,7 +223,7 @@ pub fn persist_native_registration_pin(
         matches!(root.canonicalize()?.components().next(),
             Some(std::path::Component::Prefix(prefix))
                 if matches!(prefix.kind(), std::path::Prefix::Disk(drive)
-                    | std::path::Prefix::VerbatimDisk(drive) if drive.to_ascii_uppercase() == b'D')),
+                    | std::path::Prefix::VerbatimDisk(drive) if drive.eq_ignore_ascii_case(&b'D'))),
         "native registration test configuration must stay on D"
     );
     let mut account = host.active_account_context();

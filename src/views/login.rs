@@ -1,18 +1,16 @@
+use std::rc::Rc;
+
 use arkret_sdk::http_client::{Auth, ClientBuilder};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::Utc;
-use dioxus::prelude::*;
-use dioxus_router::Link;
-#[cfg(not(target_arch = "wasm32"))]
-use dioxus_router::hooks::use_navigator;
 use garth::{
     AccountHandoffDisposition, BoundSessionRoute, LocalEvidenceHydration,
     LocalEvidenceUnavailableReason, OidcAccountHandoffInput, ReturningDeviceCandidate,
     SessionEngine, SessionGrantState,
 };
+use glory::{Cage, Scope};
 
-use crate::components::UiIcon;
 use crate::config::{
     LocalConfigStore, normalize_device_id, normalize_server_url, same_server_url,
     station_options_for,
@@ -25,16 +23,15 @@ use crate::identity::account_auth::{
     extract_state_from_callback, fetch_oidc_discovery, open_oidc_authorize_url,
     persist_oidc_scaffold, restore_oidc_scaffold,
 };
-#[cfg(not(target_arch = "wasm32"))]
+use crate::presentation::widgets::*;
+use crate::presentation::{InksonContext, View};
 use crate::routes::Route;
 use crate::state::{LocalStateStore, PersistedSessionGrant};
 use crate::transport::TransportClient;
-use crate::ui::button::{Button, ButtonVariant};
-use crate::ui::card::Card;
-use crate::ui::input::Input;
-use crate::ui::label::Label;
 use crate::views::helpers::{actor_display_label, short_protocol_id};
 
+#[cfg(test)]
+mod connection_review_tests;
 mod controller;
 mod model;
 mod session;
@@ -45,670 +42,839 @@ use controller::*;
 pub(crate) use model::*;
 pub(crate) use session::*;
 
-#[component]
-pub fn LoginPanel(
-    principal_id: Signal<Option<arkret_sdk::DidCoreId>>,
-    device_id: Signal<String>,
-    mut token: Signal<String>,
-    mut config_store: Signal<LocalConfigStore>,
-    mut locale: Signal<crate::i18n::UiLocale>,
-    auto_capture_callback: bool,
-    #[props(default)] session_error: Option<String>,
-    on_login: EventHandler<()>,
-) -> Element {
-    // A4 — base_url / state_store from session context instead of props.
-    let session_context = crate::app::SessionContext::get();
-    let mut base_url = session_context.base_url;
-    let mut station_draft = use_signal(&*base_url);
-    use_effect(move || station_draft.set(base_url()));
-    let mut active_account = session_context.active_account;
-    let state_store = session_context.state_store;
-    let session_generation = session_context.session_generation;
-    let i18n = use_context::<crate::i18n::I18nSignal>();
-    let session = use_context::<crate::runtime::services::RuntimeServices>()
-        .session
-        .clone();
-    #[cfg(not(target_arch = "wasm32"))]
-    let navigator = use_navigator();
-    let pending_device_id = use_signal(|| {
-        active_account
-            .peek()
-            .as_ref()
-            .map(|account| account.device_id.to_string())
-            .unwrap_or_else(crate::config::new_device_id)
-    });
-    let mut auth_status = use_signal(|| {
-        if auto_capture_callback {
-            "Completing sign in...".to_owned()
-        } else {
-            String::new()
+#[derive(Clone, Copy)]
+struct LoginState {
+    station: Cage<String>,
+    pending_device: Cage<String>,
+    status: Cage<String>,
+    busy: Cage<bool>,
+    callback_started: Cage<bool>,
+    callback_retry_url: Cage<Option<String>>,
+    connection_change: Cage<Option<crate::station_connection::ConnectionTrustChange>>,
+    presets_open: Cage<bool>,
+}
+
+async fn complete_callback(context: Rc<InksonContext>, state: LoginState) {
+    let auth_status = state.status;
+    let is_busy = state.busy;
+    let pending_device_id = state.pending_device;
+    let callback_started = state.callback_started;
+    let callback_retry_url = state.callback_retry_url;
+    let session_generation = context.session_generation;
+    let config_store = context.config_store;
+    let state_store_write = context.state_store.clone();
+    let active_account = context.active_account;
+    let base_url = context.base_url;
+    let principal_id = context.principal_id;
+    let device_id = context.device_id;
+    let token = context.token;
+    let locale = context.locale;
+    let callback_url = match capture_current_browser_callback_url() {
+        Ok(url) => url,
+        Err(error) => {
+            auth_status
+                .revise(|current| *current = format!("Could not read callback URL: {error}"));
+            is_busy.revise(|current| *current = false);
+            return;
         }
-    });
-    let mut is_busy = use_signal(|| auto_capture_callback);
-    let controller = LoginController {
-        is_busy,
-        auth_status,
     };
-    let mut callback_started = use_signal(|| false);
-    let mut callback_retry_url = use_signal(|| Option::<String>::None);
-    let mut connection_change =
-        use_signal(|| Option::<crate::station_connection::ConnectionTrustChange>::None);
-    let mut state_store_write = state_store;
-    // Whether the styled Station preset list is expanded. Inkson is a
-    // neutral client: the field is a free-text URL input that the user can edit
-    // to point at ANY server, with this custom-styled dropdown offering the
-    // configured presets (and the current value) as one-click choices.
-    let mut server_menu_open = use_signal(|| false);
-    // Station presets come from local config, with the current value
-    // and the local development default merged in.
-    let station_options = station_options_for(&base_url(), &config_store.read().load().stations);
+    let returned_state = match extract_state_from_callback(&callback_url) {
+        Ok(Some(state)) => state,
+        Ok(None) => {
+            auth_status.revise(|current| *current = "Callback did not include state.".to_owned());
+            is_busy.revise(|current| *current = false);
+            return;
+        }
+        Err(error) => {
+            auth_status
+                .revise(|current| *current = format!("Could not read callback state: {error}"));
+            is_busy.revise(|current| *current = false);
+            return;
+        }
+    };
+    // Cross-instance claim: the same authorization transaction is exchanged
+    // once, while a later transaction in a BFCache-restored wasm instance is
+    // allowed to complete under its distinct state.
+    if !claim_oidc_callback_completion(&returned_state) {
+        return;
+    }
+    callback_started.revise(|current| *current = true);
+    is_busy.revise(|current| *current = true);
 
-    let callback_session = use_signal(|| session.clone());
-    use_future(move || async move {
-        if !auto_capture_callback || callback_started() {
-            return;
-        }
-        let callback_url = match capture_current_browser_callback_url() {
-            Ok(url) => url,
-            Err(error) => {
-                auth_status.set(format!("Could not read callback URL: {error}"));
-                is_busy.set(false);
+    let callback_generation = session_generation.get_untracked();
+    let callback_device = pending_device_id.get_untracked();
+    let resume_url = returning_callback_resume_url(&callback_url, &returned_state).ok();
+    let result =
+        finish_oidc_callback(callback_url, callback_device, state_store_write.clone()).await;
+    if session_generation.get_untracked() != callback_generation {
+        return;
+    }
+    match result {
+        Ok(OidcCallbackOutcome::Login(completed)) => {
+            callback_retry_url.revise(|current| *current = resume_url.clone());
+            let _commit = crate::identity::session_refresh::session_credential_mutation_lock()
+                .lock()
+                .await;
+            if session_generation.get_untracked() != callback_generation {
                 return;
             }
-        };
-        let returned_state = match extract_state_from_callback(&callback_url) {
-            Ok(Some(state)) => state,
-            Ok(None) => {
-                auth_status.set("Callback did not include state.".to_owned());
-                is_busy.set(false);
-                return;
-            }
-            Err(error) => {
-                auth_status.set(format!("Could not read callback state: {error}"));
-                is_busy.set(false);
-                return;
-            }
-        };
-        // Cross-instance claim: the same authorization transaction is exchanged
-        // once, while a later transaction in a BFCache-restored wasm instance is
-        // allowed to complete under its distinct state.
-        if !claim_oidc_callback_completion(&returned_state) {
-            return;
-        }
-        callback_started.set(true);
-        is_busy.set(true);
-
-        let callback_generation = *session_generation.peek();
-        let callback_device = pending_device_id();
-        let resume_url = returning_callback_resume_url(&callback_url, &returned_state).ok();
-        let result = finish_oidc_callback(callback_url, callback_device, state_store_write).await;
-        if *session_generation.peek() != callback_generation {
-            return;
-        }
-        match result {
-            Ok(OidcCallbackOutcome::Login(completed)) => {
-                callback_retry_url.set(resume_url.clone());
-                let _commit = crate::identity::session_refresh::session_credential_mutation_lock()
-                    .lock()
-                    .await;
-                if *session_generation.peek() != callback_generation {
+            let mut account = completed.account.clone();
+            let mut profiles = config_store.with(|store| store.load_profiles());
+            let mut profile = crate::config::AccountProfile::new(
+                account.clone(),
+                completed.session_credential.clone(),
+            );
+            profile.label = completed.personal_handle.clone().unwrap_or_default();
+            let profile_id = match profiles.upsert_and_activate(profile) {
+                Ok(profile_id) => profile_id,
+                Err(error) => {
+                    auth_status.revise(|current| {
+                        *current =
+                            format!("Could not prepare the accepted account profile: {error}")
+                    });
+                    is_busy.revise(|current| *current = false);
                     return;
                 }
-                let mut account = completed.account.clone();
-                let mut profiles = config_store.read().load_profiles();
-                let mut profile = crate::config::AccountProfile::new(
+            };
+            account.profile_id = profile_id;
+            let station_url = normalize_server_url(account.server_url.as_str());
+            let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+            let prepared_keys = match prepare_completed_login_dpop_key(
+                secure_store.as_ref(),
+                &account,
+                completed.pending_device_id.as_str(),
+                &completed.dpop_device_key,
+            )
+            .await
+            {
+                Ok(prepared) => prepared,
+                Err(error) => {
+                    auth_status.revise(|current| {
+                        *current =
+                            format!("Could not prepare the returning-device session key: {error}")
+                    });
+                    is_busy.revise(|current| *current = false);
+                    return;
+                }
+            };
+            let account_store = match crate::secure_key_store::UserLocalStore::new(
+                account.authority.clone(),
+                account.device_id.clone(),
+            ) {
+                Ok(store) => store,
+                Err(error) => {
+                    auth_status.revise(|current| {
+                        *current =
+                            format!("Could not open the accepted account secure scope: {error}")
+                    });
+                    is_busy.revise(|current| *current = false);
+                    return;
+                }
+            };
+            if let Err(error) = crate::state::store_session_grant_in_user_secure_store_durable(
+                &account_store,
+                secure_store.as_ref(),
+                &completed.session_grant,
+            )
+            .await
+            {
+                auth_status.revise(|current| {
+                    *current =
+                        format!("Could not durably store the accepted account session: {error}")
+                });
+                is_busy.revise(|current| *current = false);
+                return;
+            }
+            let persisted = config_store.revise(|store| -> Result<(), String> {
+                store.save(crate::config::ClientConfig::authenticated(
                     account.clone(),
                     completed.session_credential.clone(),
-                );
-                profile.label = completed.personal_handle.clone().unwrap_or_default();
-                let profile_id = match profiles.upsert_and_activate(profile) {
-                    Ok(profile_id) => profile_id,
-                    Err(error) => {
-                        auth_status.set(format!(
-                            "Could not prepare the accepted account profile: {error}"
-                        ));
-                        is_busy.set(false);
-                        return;
-                    }
-                };
-                account.profile_id = profile_id;
-                let station_url = normalize_server_url(account.server_url.as_str());
-                let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-                let prepared_keys = match prepare_completed_login_dpop_key(
-                    secure_store.as_ref(),
-                    &account,
-                    completed.pending_device_id.as_str(),
-                    &completed.dpop_device_key,
-                )
-                .await
-                {
-                    Ok(prepared) => prepared,
-                    Err(error) => {
-                        auth_status.set(format!(
-                            "Could not prepare the returning-device session key: {error}"
-                        ));
-                        is_busy.set(false);
-                        return;
-                    }
-                };
-                let account_store = match crate::secure_key_store::UserLocalStore::new(
-                    account.authority.clone(),
-                    account.device_id.clone(),
-                ) {
-                    Ok(store) => store,
-                    Err(error) => {
-                        auth_status.set(format!(
-                            "Could not open the accepted account secure scope: {error}"
-                        ));
-                        is_busy.set(false);
-                        return;
-                    }
-                };
-                if let Err(error) = crate::state::store_session_grant_in_user_secure_store_durable(
-                    &account_store,
-                    secure_store.as_ref(),
-                    &completed.session_grant,
-                )
-                .await
-                {
-                    auth_status.set(format!(
-                        "Could not durably store the accepted account session: {error}"
+                ));
+                if let Some(error) = store.persist_error() {
+                    return Err(format!(
+                        "Could not persist the accepted account configuration: {error}"
                     ));
-                    is_busy.set(false);
-                    return;
                 }
-                {
-                    let mut store = config_store.write();
-                    store.save(crate::config::ClientConfig::authenticated(
-                        account.clone(),
-                        completed.session_credential.clone(),
+                if let Err(error) = store.save_profiles(&profiles) {
+                    return Err(format!(
+                        "Could not persist the accepted account profile: {error}"
                     ));
-                    if let Some(error) = store.persist_error() {
-                        auth_status.set(format!(
-                            "Could not persist the accepted account configuration: {error}"
-                        ));
-                        is_busy.set(false);
-                        return;
-                    }
-                    if let Err(error) = store.save_profiles(&profiles) {
-                        auth_status.set(format!(
-                            "Could not persist the accepted account profile: {error}"
-                        ));
-                        is_busy.set(false);
-                        return;
-                    }
                 }
-                if let Err(error) = promote_completed_login_state(
-                    &mut state_store_write.write(),
+                Ok(())
+            });
+            if let Err(error) = persisted {
+                auth_status.revise(|current| *current = error);
+                is_busy.revise(|current| *current = false);
+                return;
+            }
+            if let Err(error) = state_store_write.write(|store| {
+                promote_completed_login_state(
+                    store,
                     secure_store.as_ref(),
                     &account,
                     &completed.dpop_device_key,
                     prepared_keys,
                     completed.personal_handle.as_deref(),
                     completed.session_grant.clone(),
-                ) {
-                    auth_status.set(format!("Could not commit the accepted account: {error}"));
-                    is_busy.set(false);
-                    return;
-                }
-                let account_barrier = state_store_write.write().begin_durable_flush();
-                let committed = match account_barrier {
-                    Ok(barrier) => barrier.wait().await,
-                    Err(error) => Err(error),
-                };
-                if let Err(error) = committed {
-                    auth_status.set(format!(
-                        "Could not durably commit the accepted account: {error}"
-                    ));
-                    is_busy.set(false);
-                    return;
-                }
-                if let Err(error) = consume_completed_login_pending_store(
-                    secure_store.as_ref(),
-                    &crate::secure_key_store::PendingLocalStore::new(
-                        completed.pending_device_id.clone(),
-                    ),
-                ) {
-                    auth_status.set(format!(
-                        "Could not finish the accepted account commit: {error}"
-                    ));
-                    is_busy.set(false);
-                    return;
-                }
-                if let Err(error) = crate::identity::account_auth::clear_account_handoff_grant(
-                    &completed.consumed_handoff,
-                ) {
-                    tracing::warn!(
-                        %error,
-                        "clear consumed account handoff after accepted account commit failed"
-                    );
-                }
-                if let Err(error) =
-                    crate::identity::account_auth::clear_prepared_returning_session_request(
-                        &completed.consumed_handoff,
-                    )
-                {
-                    tracing::warn!(
-                        %error,
-                        "clear returning-session replay checkpoint after accepted account commit failed"
-                    );
-                }
-                if *session_generation.peek() != callback_generation {
-                    return;
-                }
-                if let Err(error) = clear_persisted_oidc_scaffold(&returned_state) {
-                    tracing::warn!(%error, "clear committed callback scaffold failed");
-                }
-                active_account.set(Some(account.clone()));
-                base_url.set(station_url.clone());
-                principal_id.set(Some(account.principal_id().clone()));
-                device_id.set(account.device_id.to_string());
-                crate::app::accept_authenticated_session(
-                    &callback_session.peek(),
-                    session_generation,
-                    token,
-                    completed.session_credential.clone(),
-                );
-                auth_status.set("Signed in on this authorized device.".to_owned());
-                on_login.call(());
-            }
-            Ok(OidcCallbackOutcome::Onboarding { preferred_locale }) => {
-                // The pending handoff owns onboarding routing. Do not rewrite
-                // last-known account/device configuration before a successful
-                // authenticated commit; cancellation and reload must still be
-                // able to recover the previous account-scoped secure store.
-                token.set(String::new());
-                apply_authenticated_account_locale(
-                    preferred_locale,
-                    state_store_write,
-                    &mut locale,
-                );
-                auth_status.set(
-                    "Account authenticated. Continue identity custody and binding.".to_owned(),
-                );
-                #[cfg(target_arch = "wasm32")]
-                if let Some(window) = web_sys::window() {
-                    if let Err(error) = window.location().replace("/onboarding") {
-                        tracing::warn!(?error, "OIDC onboarding browser navigation failed");
-                    }
-                } else {
-                    tracing::warn!("OIDC onboarding browser window unavailable");
-                }
-                #[cfg(not(target_arch = "wasm32"))]
-                if let Some(failure) = navigator.replace(Route::Onboarding) {
-                    tracing::warn!(?failure, "OIDC onboarding navigation failed");
-                }
-            }
-            Ok(OidcCallbackOutcome::RetryableSessionExchange { message }) => {
-                callback_retry_url.set(resume_url);
-                auth_status.set(format!(
-                    "{message} The signed request was preserved. Use Retry verification below to resume it."
-                ));
-            }
-            Ok(OidcCallbackOutcome::ReturningDeviceBlocked { reason, message }) => {
-                tracing::warn!(?reason, %message, "returning device session exchange was blocked");
-                auth_status.set(returning_device_block_message(reason).to_owned());
-            }
-            Ok(OidcCallbackOutcome::LocalEvidenceDiagnostics { reason }) => {
-                auth_status.set(local_evidence_diagnostics_message(&reason));
-            }
-            Err(error) => auth_status.set(discard_failed_oidc_callback(error)),
-        }
-        is_busy.set(false);
-    });
-
-    // Coauth remains authoritative for which account the user authenticates.
-    // Every fresh OIDC callback first creates an account handoff. Local account
-    // and device evidence is only a returning candidate checked after the
-    // handoff reports the authenticated account as Bound.
-    let mut launch_sign_in = move || {
-        let principal = match config_store
-            .write()
-            .save_neutral_station_choice(&station_draft())
-        {
-            Ok(selected) => selected,
-            Err(error) => {
-                auth_status.set(format!("Could not retain sign-in Station: {error}"));
+                )
+            }) {
+                auth_status.revise(|current| {
+                    *current = format!("Could not commit the accepted account: {error}")
+                });
+                is_busy.revise(|current| *current = false);
                 return;
             }
-        };
-        base_url.set(principal.clone());
-        station_draft.set(principal.clone());
-        let ui_locale = i18n.read().0.code().to_owned();
-        let loaded_config = config_store.read().load();
-        // The returning-principal assertion is a resolvable DID, so it comes
-        // from the account's accepted resolution. `principal_id()` is the
-        // projected `ak:did_core:` core id, which is deliberately not
-        // repairable into resolution material and would fail closed here.
-        let live_actor = active_account()
-            .map(|account| account.did().to_string())
-            .unwrap_or_default();
-        let persisted_actor = if live_actor.trim().is_empty() {
-            loaded_config
-                .active_account
-                .as_ref()
-                .map(|account| account.did().to_string())
-                .unwrap_or_default()
-        } else {
-            live_actor
-        };
-        let persisted_account = loaded_config.active_account.clone();
-        let returning_principal = {
-            match returning_sign_in_principal(&persisted_actor) {
-                Ok(principal) => principal,
-                Err(error) => {
-                    auth_status.set(error);
-                    return;
-                }
+            let account_barrier = state_store_write.write(|store| store.begin_durable_flush());
+            let committed = match account_barrier {
+                Ok(barrier) => barrier.wait().await,
+                Err(error) => Err(error),
+            };
+            if let Err(error) = committed {
+                auth_status.revise(|current| {
+                    *current = format!("Could not durably commit the accepted account: {error}")
+                });
+                is_busy.revise(|current| *current = false);
+                return;
             }
-        };
-        let reset_state_store = state_store;
-        is_busy.set(true);
-        auth_status.set("Opening server sign-in...".to_owned());
-        controller.launch_sign_in(
-            principal,
-            ui_locale,
-            returning_principal,
-            persisted_account,
-            reset_state_store,
-        );
-    };
-
-    rsx! {
-        Card { class: "auth-panel", "data-testid": "login-panel", role: "region", "aria-label": crate::i18n::tr("login.title"),
-            if let Some(error) = session_error {
-                div { class: "auth-error", role: "alert", "data-testid": "login-session-error",
-                    div { class: "auth-error-mark", "aria-hidden": "true", "!" }
-                    div { class: "auth-error-content",
-                        p { "{error}" }
-                    }
-                }
+            if let Err(error) = consume_completed_login_pending_store(
+                secure_store.as_ref(),
+                &crate::secure_key_store::PendingLocalStore::new(
+                    completed.pending_device_id.clone(),
+                ),
+            ) {
+                auth_status.revise(|current| {
+                    *current = format!("Could not finish the accepted account commit: {error}")
+                });
+                is_busy.revise(|current| *current = false);
+                return;
             }
-            div { class: "auth-brand",
-                div { class: "auth-logo", "C" }
-                div {
-                    h1 {
-                        if auto_capture_callback {
-                            {crate::i18n::tr("login.completing")}
-                        } else {
-                            {crate::i18n::tr("login.title")}
-                        }
-                    }
-                    p { "Arkret" }
-                }
+            if let Err(error) = crate::identity::account_auth::clear_account_handoff_grant(
+                &completed.consumed_handoff,
+            ) {
+                tracing::warn!(
+                    %error,
+                    "clear consumed account handoff after accepted account commit failed"
+                );
             }
-
-            div { class: "auth-form",
-                Label { html_for: "login-server-url-input", {crate::i18n::tr("login.station")} }
-                // Inkson is a neutral client: this is a free-text Station URL the user can edit to point at ANY server. The
-                // custom-styled dropdown below offers the configured presets
-                // (and the current value) as one-click choices — a styled
-                // replacement for the native `<datalist>` (whose popup is
-                // unstyleable). Selecting a preset only fills the text field;
-                // the user is free to keep typing a custom address.
-                div { class: "auth-combobox", "data-testid": "login-server-combobox",
-                    Input {
-                        id: "login-server-url-input",
-                        "data-testid": "login-server-url",
-                        "aria-label": crate::i18n::tr("login.station_url"),
-                        autocomplete: "off",
-                        value: "{station_draft}",
-                        disabled: is_busy(),
-                        oninput: move |event: FormEvent| {
-                            station_draft.set(event.value());
-                            token.set(String::new());
-                        },
-                        onblur: move |_| {
-                            match config_store.write().save_neutral_station_choice(&station_draft()) {
-                                Ok(selected) => {
-                                    base_url.set(selected.clone());
-                                    station_draft.set(selected);
-                                }
-                                Err(error) => auth_status.set(format!("Could not retain sign-in Station: {error}")),
-                            }
-                        },
-                    }
-                    button {
-                        r#type: "button",
-                        class: "auth-combobox-toggle",
-                        "data-testid": "login-server-options-toggle",
-                        "aria-label": crate::i18n::tr("login.show_preset_servers"),
-                        "aria-expanded": if server_menu_open() { "true" } else { "false" },
-                        disabled: is_busy(),
-                        onclick: move |_| server_menu_open.toggle(),
-                        if server_menu_open() {
-                            UiIcon { name: "chevron-up" }
-                        } else {
-                            UiIcon { name: "chevron-down" }
-                        }
-                    }
-                    if server_menu_open() {
-                        div {
-                            class: "auth-combobox-menu",
-                            "data-testid": "login-server-options",
-                            role: "listbox",
-                            "aria-label": crate::i18n::tr("login.preset_servers"),
-                            for option_url in station_options.iter() {
-                                button {
-                                    key: "{option_url}",
-                                    r#type: "button",
-                                    class: if same_server_url(option_url, &base_url()) {
-                                        "auth-combobox-option active"
-                                    } else {
-                                        "auth-combobox-option"
-                                    },
-                                    "data-testid": "login-server-option",
-                                    role: "option",
-                                    "aria-selected": if same_server_url(option_url, &base_url()) { "true" } else { "false" },
-                                    onclick: {
-                                        let option_url = option_url.clone();
-                                        move |_| {
-                                            match config_store.write().save_neutral_station_choice(&option_url) {
-                                                Ok(selected) => {
-                                                    base_url.set(selected.clone());
-                                                    station_draft.set(selected);
-                                                    token.set(String::new());
-                                                }
-                                                Err(error) => auth_status.set(format!("Could not retain sign-in Station: {error}")),
-                                            }
-                                            server_menu_open.set(false);
-                                        }
-                                    },
-                                    span { class: "auth-combobox-option-url mono", "{option_url}" }
-                                    if same_server_url(option_url, &base_url()) {
-                                        span { class: "auth-combobox-option-check", "✓" }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // A single sign-in action. Account selection is delegated to the
-                // Account Authority's OIDC screen. A browser that still owns an
-                // authorized device also binds the callback to that local principal;
-                // otherwise the server returns an account handoff for onboarding.
-                Button {
-                    variant: ButtonVariant::Primary,
-                    class: "auth-primary",
-                    "data-testid": "start-server-login-button",
-                    disabled: is_busy(),
-                    onclick: move |_| launch_sign_in(),
-                    if is_busy() {
-                        {crate::i18n::tr("login.working")}
-                    } else {
-                        {crate::i18n::tr("login.server_sign_in")}
-                    }
-                }
-
-                if !auto_capture_callback {
-                    crate::app::account_switch::ReturnToPreviousAccount { disabled: is_busy() }
-                    div { class: "auth-footer",
-                        Link {
-                            to: crate::routes::Route::Register,
-                            {crate::i18n::tr("login.create_identity")}
-                        }
-                    }
-                }
-
-                if !auth_status().is_empty()
-                    && (connection_change().is_none() || !auth_status().contains("Station identity or authentication changed")) {
-                    div { class: "auth-status", "data-testid": "auth-status", role: "status", "{auth_status}" }
-                }
-                if !auto_capture_callback && connection_change().is_none()
-                    && auth_status().contains("Station identity or authentication changed") {
-                    Button {
-                        variant: ButtonVariant::Ghost,
-                        disabled: is_busy(),
-                        onclick: move |_| {
-                            is_busy.set(true);
-                            let selected = base_url();
-                            spawn(async move {
-                                match crate::station_connection::discover(&selected).await {
-                                    Err(error) => {
-                                        if let Some(change) = error.downcast_ref::<crate::station_connection::ConnectionTrustChange>() {
-                                            connection_change.set(Some(change.clone()));
-                                        } else { auth_status.set(error.to_string()); }
-                                    }
-                                    Ok(_) => auth_status.set("The server connection still matches the saved identity.".into()),
-                                }
-                                is_busy.set(false);
-                            });
-                        },
-                        {crate::i18n::tr("login.connection.review")}
-                    }
-                }
-                if let Some(change) = connection_change() {
-                    div { class: "auth-status auth-connection-review", role: "alert",
-                        "data-testid": "station-connection-review",
-                        {connection_review_details(&change)}
-                        div { class: "auth-connection-actions",
-                        Button {
-                            variant: ButtonVariant::Ghost,
-                            disabled: is_busy(),
-                            onclick: move |_| connection_change.set(None),
-                            {crate::i18n::tr("login.connection.keep")}
-                        }
-                        Button {
-                            variant: ButtonVariant::Primary,
-                            disabled: is_busy() || !same_server_url(&base_url(), &change.candidate.base_url),
-                            onclick: {
-                                let session = session.clone();
-                                move |_| {
-                                    let change = change.clone();
-                                    let session = session.clone();
-                                    is_busy.set(true);
-                                    spawn(async move {
-                                        if let Err(error) = crate::station_connection::clear_pending_authentication(
-                                            &mut state_store_write.write(), &change.previous.base_url,
-                                        ) {
-                                            auth_status.set(error.to_string());
-                                            is_busy.set(false);
-                                            return;
-                                        }
-                                        match crate::station_connection::confirm_change(&change).await {
-                                            Ok(()) => {
-                                                session.invalidate("Station connection changed; sign in again");
-                                                callback_retry_url.set(None);
-                                                connection_change.set(None);
-                                                auth_status.set("New connection accepted. Start a new sign-in.".into());
-                                            }
-                                            Err(error) => auth_status.set(error.to_string()),
-                                        }
-                                        is_busy.set(false);
-                                    });
-                                }
-                            },
-                            {crate::i18n::tr("login.connection.trust")}
-                        }
-                        }
-                    }
-                }
-                if let Some(resume_url) = callback_retry_url() {
-                    a { href: "{resume_url}", "data-testid": "retry-session-verification", {crate::i18n::tr("login.retry_verification")} }
-                }
-
-                // G3.Y0 — session state surface for cotest's
-                // `identity/account-device-auth.spec.ts`. These testids
-                // expose the live session triple (status / device id /
-                // actor DID) so a refresh assertion can see them rotate
-                // without scraping log lines.
-                {
-                    let token_value = token();
-                    let device_value = device_id();
-                    let actor_value = crate::app::principal_id_owned(principal_id());
-                    let store_snapshot = state_store_write.read();
-                    let session_status = compute_session_status(
-                        &token_value,
-                        store_snapshot.session_grant().as_ref(),
-                    );
-                    let jkt_display = store_snapshot
-                        .dpop_device_key()
-                        .map(|record| record.jkt)
-                        .unwrap_or_default();
-                    let actor_label = actor_display_label(&store_snapshot, &actor_value);
-                    drop(store_snapshot);
-                    let show_session_diagnostics = session_status != "signed-out";
-                    let device_label = short_protocol_id(&device_value);
-                    let jkt_label = short_protocol_id(&jkt_display);
-                    let session_status_label = crate::i18n::tr(match session_status {
-                        "signed-in" => "login.status.signed_in",
-                        "session-expired" => "login.status.session_expired",
-                        _ => "login.status.signed_out",
-                    });
-                    rsx! {
-                        if show_session_diagnostics {
-                            div { class: "auth-session-state", "data-testid": "session-state-card",
-                                div {
-                                    "data-testid": "session-status",
-                                    "data-status": session_status,
-                                    "{session_status_label}"
-                                }
-                                div {
-                                    "data-testid": "session-device-id",
-                                    title: "{device_value}",
-                                    "{device_label}"
-                                }
-                                div {
-                                    "data-testid": "session-actor-did",
-                                    title: "{actor_value}",
-                                    "{actor_label}"
-                                }
-                                if !jkt_display.is_empty() {
-                                    div {
-                                        "data-testid": "session-dpop-jkt",
-                                        title: "{jkt_display}",
-                                        "{jkt_label}"
-                                    }
-                                }
-                                Button {
-                                    variant: ButtonVariant::Ghost,
-                                    class: "ghost",
-                                    "data-testid": "refresh-now-button",
-                                    disabled: is_busy(),
-                                    onclick: {
-                                        let session = session.clone();
-                                        move |_| {
-                                        let session = session.clone();
-                                        is_busy.set(true);
-                                        auth_status.set("Refreshing session...".to_owned());
-                                        controller.refresh_session(session, token, on_login);
-                                        }
-                                    },
-                                    {crate::i18n::tr("login.refresh_now")}
-                                }
-                            }
-                        }
-                    }
-                }
+            if let Err(error) =
+                crate::identity::account_auth::clear_prepared_returning_session_request(
+                    &completed.consumed_handoff,
+                )
+            {
+                tracing::warn!(
+                    %error,
+                    "clear returning-session replay checkpoint after accepted account commit failed"
+                );
             }
+            if session_generation.get_untracked() != callback_generation {
+                return;
+            }
+            if let Err(error) = clear_persisted_oidc_scaffold(&returned_state) {
+                tracing::warn!(%error, "clear committed callback scaffold failed");
+            }
+            active_account.revise(|current| *current = Some(account.clone()));
+            base_url.revise(|current| *current = station_url.clone());
+            principal_id.revise(|current| *current = Some(account.principal_id().clone()));
+            device_id.revise(|current| *current = account.device_id.to_string());
+            crate::app::accept_authenticated_session(
+                &context.services.session,
+                session_generation,
+                token,
+                completed.session_credential.clone(),
+            );
+            auth_status
+                .revise(|current| *current = "Signed in on this authorized device.".to_owned());
+            context.navigate(Route::Dashboard);
         }
+        Ok(OidcCallbackOutcome::Onboarding { preferred_locale }) => {
+            // The pending handoff owns onboarding routing. Do not rewrite
+            // last-known account/device configuration before a successful
+            // authenticated commit; cancellation and reload must still be
+            // able to recover the previous account-scoped secure store.
+            token.revise(|current| *current = String::new());
+            apply_authenticated_account_locale(preferred_locale, state_store_write.clone(), locale);
+            auth_status.revise(|current| {
+                *current =
+                    "Account authenticated. Continue identity custody and binding.".to_owned()
+            });
+            context.navigate(Route::Onboarding);
+        }
+        Ok(OidcCallbackOutcome::RetryableSessionExchange { message }) => {
+            callback_retry_url.revise(|current| *current = resume_url);
+            auth_status.revise(|current| *current = format!(
+                    "{message} The signed request was preserved. Use Retry verification below to resume it."
+                ));
+        }
+        Ok(OidcCallbackOutcome::ReturningDeviceBlocked { reason, message }) => {
+            tracing::warn!(?reason, %message, "returning device session exchange was blocked");
+            auth_status
+                .revise(|current| *current = returning_device_block_message(reason).to_owned());
+        }
+        Ok(OidcCallbackOutcome::LocalEvidenceDiagnostics { reason }) => {
+            auth_status.revise(|current| *current = local_evidence_diagnostics_message(&reason));
+        }
+        Err(error) => auth_status.revise(|current| *current = discard_failed_oidc_callback(error)),
+    }
+    is_busy.revise(|current| *current = false);
+}
+
+fn launch_sign_in(context: Rc<InksonContext>, state: LoginState, owner: glory::ui::WeakScope) {
+    let selected = context
+        .config_store
+        .revise(|store| store.save_neutral_station_choice(&state.station.get_untracked()));
+    let principal = match selected {
+        Ok(selected) => selected,
+        Err(error) => {
+            state
+                .status
+                .revise(|value| *value = format!("Could not retain sign-in Station: {error}"));
+            return;
+        }
+    };
+    context.base_url.revise(|value| *value = principal.clone());
+    state.station.revise(|value| *value = principal.clone());
+    let config = context.config_store.with(LocalConfigStore::load);
+    let live_account = context.active_account.get_untracked();
+    let candidate = live_account.as_ref().or(config.active_account.as_ref());
+    let actor = candidate
+        .map(|account| account.did().to_string())
+        .unwrap_or_default();
+    let returning = match returning_sign_in_principal(&actor) {
+        Ok(value) => value,
+        Err(error) => {
+            state.status.revise(|value| *value = error);
+            return;
+        }
+    };
+    state.busy.revise(|value| *value = true);
+    state
+        .status
+        .revise(|value| *value = "Opening server sign-in...".into());
+    LoginController {
+        is_busy: state.busy,
+        auth_status: state.status,
+        owner,
+    }
+    .launch_sign_in(
+        principal,
+        context.locale.get_untracked().code().to_owned(),
+        returning,
+        config.active_account,
+        context.state_store.clone(),
+    );
+}
+
+pub fn page(scope: &Scope, context: Rc<InksonContext>, route: Route) -> View {
+    use glory::ui::{text, view};
+    let callback = route == Route::AuthCallback;
+    let state = LoginState {
+        station: scope.cage(context.base_url.get_untracked()),
+        pending_device: scope.cage(
+            context
+                .active_account
+                .get_untracked()
+                .map(|account| account.device_id.to_string())
+                .unwrap_or_else(crate::config::new_device_id),
+        ),
+        status: scope.cage(if callback {
+            "Completing sign in...".into()
+        } else {
+            String::new()
+        }),
+        busy: scope.cage(callback),
+        callback_started: scope.cage(false),
+        callback_retry_url: scope.cage(None),
+        connection_change: scope.cage(None),
+        presets_open: scope.cage(false),
+    };
+    let active_base = context.base_url;
+    scope.effect(move || {
+        let base = active_base.get();
+        state.station.revise(|station| *station = base);
+    });
+    if callback {
+        let context = context.clone();
+        if let Err(error) = scope.spawn(complete_callback(context, state)) {
+            scope.report_error(error);
+        }
+    }
+    let ready = scope.bond(move || !state.busy.get());
+    let station_context = context.clone();
+    let token = context.token;
+    let station_name = context.translated(scope, "login.station_url");
+    let station_control = move |field| {
+        let context = station_context.clone();
+        sapid::text_field()
+            .unstyled()
+            .field(field)
+            .name(station_name)
+            .value(state.station)
+            .enabled(ready)
+            .purpose(glory::render::Purpose::Url)
+            .on_value_change(move |next| {
+                state.station.revise(|value| *value = next);
+                token.revise(String::clear);
+            })
+            .on(glory::ui::events::focus_changed, move |event| {
+                if matches!(event, glory::render::Event::FocusChanged(false)) {
+                    retain_station(&context, state, &state.station.get_untracked());
+                }
+            })
+    };
+    let presets_context = context.clone();
+    let preset_menu = reactive(state.presets_open, move |scope, open| {
+        if !open {
+            return empty();
+        }
+        let context = presets_context.clone();
+        let options = station_options_for(
+            &context.base_url.get_untracked(),
+            &context.config_store.with(LocalConfigStore::load).stations,
+        );
+        let mut children = Vec::new();
+        for option in options {
+            let click_context = context.clone();
+            let selected = same_server_url(&option, &context.base_url.get_untracked());
+            children.push(Box::new(
+                sapid::button()
+                    .unstyled()
+                    .class(if selected {
+                        "auth-combobox-option active"
+                    } else {
+                        "auth-combobox-option"
+                    })
+                    .name(option.clone())
+                    .fill(
+                        glory::ui::group().fill((
+                            glory::ui::text()
+                                .class("auth-combobox-option-url mono")
+                                .content(option.clone()),
+                            glory::ui::text()
+                                .class("auth-combobox-option-check")
+                                .content(if selected { "✓" } else { "" }),
+                        )),
+                    )
+                    .on_press(move || {
+                        retain_station(&click_context, state, &option);
+                        click_context.token.revise(String::clear);
+                        state.presets_open.revise(|value| *value = false);
+                    }),
+            ) as View);
+        }
+        Box::new(
+            view()
+                .class("auth-combobox-menu")
+                .name(context.translated(scope, "login.preset_servers"))
+                .fill(children),
+        )
+    });
+    let preset_label = context.translated(scope, "login.show_preset_servers");
+    let preset_toggle = glory::ui::button()
+        .class("auth-combobox-toggle")
+        .enabled(ready)
+        .name(preset_label)
+        .semantics(scope.bond(move || {
+            Some(Box::new(glory::render::Semantics {
+                expanded: Some(state.presets_open.get()),
+                ..Default::default()
+            }))
+        }))
+        .fill(
+            glory::ui::when(state.presets_open, || {
+                crate::components::ui_icon("chevron-up")
+            })
+            .otherwise(|| crate::components::ui_icon("chevron-down")),
+        )
+        .on(glory::render::EventKind::Activate, move |_| {
+            state.presets_open.revise(|open| *open = !*open)
+        });
+    let mut preset_menu = Some(preset_menu);
+    let mut preset_toggle = Some(Box::new(preset_toggle) as View);
+    let station = sapid::field("login-station")
+        .unstyled()
+        .class("auth-station-field")
+        .label(context.translated(scope, "login.station"))
+        .control(move |field| {
+            view().class("auth-combobox").fill((
+                station_control(field),
+                preset_toggle.take().unwrap_or_else(empty),
+                preset_menu.take().unwrap_or_else(empty),
+            ))
+        });
+    let button_context = context.clone();
+    let owner = scope.downgrade();
+    let busy_label_context = context.clone();
+    let signin_label = scope.bond(move || {
+        busy_label_context.tr(if state.busy.get() {
+            "login.working"
+        } else {
+            "login.server_sign_in"
+        })
+    });
+    let sign_in = sapid::button()
+        .unstyled()
+        .class("btn btn-primary auth-primary")
+        .label(signin_label)
+        .enabled(ready)
+        .on_press(move || launch_sign_in(button_context.clone(), state, owner.clone()));
+    let footer_context = context.clone();
+    let return_previous = if callback {
+        empty()
+    } else {
+        crate::app::account_switch::return_to_previous_account(scope, context.clone(), ready.into())
+    };
+    let footer = if callback {
+        empty()
+    } else {
+        stack(
+            "auth-footer",
+            vec![Box::new(
+                internal_link()
+                    .class("auth-create-account")
+                    .target(Route::Register.to_string())
+                    .label(context.translated(scope, "login.create_identity"))
+                    .on(glory::render::EventKind::Activate, move |_| {
+                        footer_context.navigate(Route::Register)
+                    }),
+            )],
+        )
+    };
+    let review_phase =
+        scope.bond(move || (state.status.get(), state.connection_change.get().is_some()));
+    let status = reactive(review_phase, move |_, (value, reviewing)| {
+        if value.is_empty() || reviewing {
+            empty()
+        } else {
+            Box::new(
+                view()
+                    .role(glory::render::Role::Status)
+                    .class("auth-status")
+                    .fill(text().content(value)),
+            )
+        }
+    });
+    let review_context = context.clone();
+    let review_owner = scope.downgrade();
+    let review = reactive(review_phase, move |scope, (status, reviewing)| {
+        if callback || reviewing || !status.contains("Station identity or authentication changed") {
+            return empty();
+        }
+        let context = review_context.clone();
+        let owner = review_owner.clone();
+        Box::new(sapid::button().unstyled().class("btn btn-ghost")
+            .label(context.translated(scope, "login.connection.review")).enabled(ready)
+            .on_press(move || {
+                let Some(scope) = owner.upgrade() else { return };
+                let selected = context.base_url.get_untracked();
+                state.busy.revise(|value| *value = true);
+                if let Err(error) = scope.spawn(async move {
+                    match crate::station_connection::discover(&selected).await {
+                        Err(error) => {
+                            if let Some(change) = error.downcast_ref::<crate::station_connection::ConnectionTrustChange>() {
+                                state.connection_change.revise(|value| *value = Some(change.clone()));
+                            } else { state.status.revise(|value| *value = error.to_string()); }
+                        }
+                        Ok(_) => state.status.revise(|value| *value = "The server connection still matches the saved identity.".into()),
+                    }
+                    state.busy.revise(|value| *value = false);
+                }) { scope.report_error(error); }
+            }))
+    });
+    let trust_context = context.clone();
+    let trust_owner = scope.downgrade();
+    let trust = reactive(state.connection_change, move |scope, change| {
+        let Some(change) = change else {
+            return empty();
+        };
+        let context = trust_context.clone();
+        let owner = trust_owner.clone();
+        let may_trust = scope.bond({
+            let context = context.clone();
+            let url = change.candidate.base_url.clone();
+            move || !state.busy.get() && same_server_url(&context.base_url.get(), &url)
+        });
+        let details = connection_review_details(scope, context.clone(), &change);
+        stack("auth-status auth-connection-review station-connection-review", vec![details, line("auth-connection-actions", vec![
+            Box::new(sapid::button().unstyled().class("btn btn-ghost").enabled(ready).label(context.translated(scope, "login.connection.keep"))
+                .on_press(move || state.connection_change.revise(|value| *value = None))),
+            Box::new(sapid::button().unstyled().class("btn btn-primary").enabled(may_trust).label(context.translated(scope, "login.connection.trust"))
+                .on_press(move || {
+                    let Some(scope) = owner.upgrade() else { return };
+                    let change = change.clone(); let context = context.clone();
+                    state.busy.revise(|value| *value = true);
+                    if let Err(error) = scope.spawn(async move {
+                        let cleared = context.state_store.write(|store| crate::station_connection::clear_pending_authentication(store, &change.previous.base_url));
+                        if let Err(error) = cleared {
+                            state.status.revise(|value| *value = error.to_string());
+                            state.busy.revise(|value| *value = false); return;
+                        }
+                        match crate::station_connection::confirm_change(&change).await {
+                            Ok(()) => {
+                                context.services.session.invalidate("Station connection changed; sign in again");
+                                state.callback_retry_url.revise(|value| *value = None);
+                                state.connection_change.revise(|value| *value = None);
+                                state.status.revise(|value| *value = "New connection accepted. Start a new sign-in.".into());
+                            }
+                            Err(error) => state.status.revise(|value| *value = error.to_string()),
+                        }
+                        state.busy.revise(|value| *value = false);
+                    }) { scope.report_error(error); }
+                })),
+        ])])
+    });
+    let retry_context = context.clone();
+    let retry = reactive(state.callback_retry_url, move |scope, url| match url {
+        Some(url) => Box::new(
+            glory::ui::link()
+                .target(url)
+                .label(retry_context.translated(scope, "login.retry_verification")),
+        ) as View,
+        None => empty(),
+    });
+    let diagnostics_context = context.clone();
+    let diagnostics_owner = scope.downgrade();
+    let diagnostics_source = scope.bond({
+        let context = context.clone();
+        move || (context.token.get(), context.state_revision.get())
+    });
+    let diagnostics = reactive(diagnostics_source, move |scope, (credential, _)| {
+        let context = diagnostics_context.clone();
+        let (session_status, key_id, actor_label) = context.state_store.read(|store| {
+            (
+                compute_session_status(&credential, store.session_grant().as_ref()),
+                store
+                    .dpop_device_key()
+                    .map(|record| record.jkt)
+                    .unwrap_or_default(),
+                actor_display_label(
+                    store,
+                    &crate::app::principal_id_owned(context.principal_id.get_untracked()),
+                ),
+            )
+        });
+        if session_status == "signed-out" {
+            return empty();
+        }
+        let owner = diagnostics_owner.clone();
+        let refresh_context = context.clone();
+        stack(
+            "auth-session-state",
+            vec![
+                Box::new(
+                    glory::ui::text()
+                        .class("session-diagnostic session-status")
+                        .content(context.translated(
+                            scope,
+                            if session_status == "signed-in" {
+                                "login.status.signed_in"
+                            } else {
+                                "login.status.session_expired"
+                            },
+                        )),
+                ),
+                Box::new(
+                    glory::ui::text()
+                        .class("session-diagnostic session-device-id")
+                        .content(short_protocol_id(context.device_id.get_untracked())),
+                ),
+                Box::new(
+                    glory::ui::text()
+                        .class("session-diagnostic session-actor-did")
+                        .content(actor_label),
+                ),
+                Box::new(
+                    glory::ui::text()
+                        .class("session-diagnostic session-dpop-jkt")
+                        .content(short_protocol_id(&key_id)),
+                ),
+                Box::new(
+                    sapid::button()
+                        .unstyled()
+                        .class("btn btn-ghost")
+                        .enabled(ready)
+                        .label(context.translated(scope, "login.refresh_now"))
+                        .on_press(move || {
+                            state.busy.revise(|value| *value = true);
+                            state
+                                .status
+                                .revise(|value| *value = "Refreshing session...".into());
+                            let completed_context = refresh_context.clone();
+                            LoginController {
+                                is_busy: state.busy,
+                                auth_status: state.status,
+                                owner: owner.clone(),
+                            }
+                            .refresh_session(
+                                refresh_context.services.session.clone(),
+                                refresh_context.token,
+                                Rc::new(move || completed_context.navigate(Route::Dashboard)),
+                            );
+                        }),
+                ),
+            ],
+        )
+    });
+    let error = reactive(context.last_error, move |_, value| match value {
+        Some(error) => Box::new(
+            view()
+                .role(glory::render::Role::Alert)
+                .class("auth-error")
+                .fill((
+                    view().class("auth-error-mark").fill(text().content("!")),
+                    view()
+                        .class("auth-error-content")
+                        .fill(paragraph("", error)),
+                )),
+        ) as View,
+        None => empty(),
+    });
+    Box::new(view().class("auth-panel").fill((
+        error,
+        view().class("auth-brand").fill((
+            view().class("auth-logo").fill(text().content("C")),
+            view().fill((
+                heading(
+                    1,
+                    "",
+                    context.translated(
+                        scope,
+                        if callback {
+                            "login.completing"
+                        } else {
+                            "login.title"
+                        },
+                    ),
+                ),
+                paragraph("", "Arkret"),
+            )),
+        )),
+        view().class("auth-form").fill((
+            station,
+            sign_in,
+            return_previous,
+            footer,
+            status,
+            review,
+            trust,
+            retry,
+            diagnostics,
+        )),
+    )))
+}
+
+fn retain_station(context: &InksonContext, state: LoginState, url: &str) {
+    match context
+        .config_store
+        .revise(|store| store.save_neutral_station_choice(url))
+    {
+        Ok(selected) => {
+            context.base_url.revise(|value| *value = selected.clone());
+            state.station.revise(|value| *value = selected);
+        }
+        Err(error) => state
+            .status
+            .revise(|value| *value = format!("Could not retain sign-in Station: {error}")),
     }
 }
 
-// Translate only names emitted by the Station review model. Unknown future
-// field names and every old/new value remain literal, including dotted keys.
-fn connection_review_field_label(label: &str) -> String {
+fn connection_review_details(
+    scope: &Scope,
+    context: Rc<InksonContext>,
+    change: &crate::station_connection::ConnectionTrustChange,
+) -> View {
+    let mut summaries = Vec::new();
+    for (changed, key) in [
+        (
+            change.previous.service_id != change.candidate.service_id,
+            "login.connection.identity_changed",
+        ),
+        (
+            change.previous.trust_domain != change.candidate.trust_domain,
+            "login.connection.domain_changed",
+        ),
+        (
+            change.previous.authentication_metadata != change.candidate.authentication_metadata,
+            "login.connection.provider_changed",
+        ),
+    ] {
+        if changed {
+            summaries.push(Box::new(
+                glory::ui::view()
+                    .class("auth-connection-summary-item")
+                    .role(glory::render::Role::ListItem)
+                    .fill(glory::ui::text().content(context.translated(scope, key))),
+            ) as View);
+        }
+    }
+    let mut fields = vec![paragraph(
+        "auth-connection-server",
+        context.translated_args(scope, "login.connection.server", {
+            let url = change.candidate.base_url.clone();
+            move || vec![("url", url.clone())]
+        }),
+    )];
+    for detail in crate::station_connection::connection_changes(change) {
+        let label_context = context.clone();
+        let title =
+            scope.bond(move || connection_review_field_label(&label_context, &detail.label));
+        fields.push(stack(
+            "auth-connection-field",
+            vec![
+                Box::new(
+                    glory::ui::text()
+                        .class("auth-connection-label")
+                        .content(title),
+                ),
+                stack(
+                    "auth-connection-values",
+                    vec![
+                        paragraph(
+                            "auth-connection-term",
+                            context.translated(scope, "login.connection.previous"),
+                        ),
+                        paragraph("auth-connection-value", detail.previous),
+                        paragraph(
+                            "auth-connection-term",
+                            context.translated(scope, "login.connection.new"),
+                        ),
+                        paragraph("auth-connection-value", detail.candidate),
+                    ],
+                ),
+            ],
+        ));
+    }
+    let mut fields = Some(fields);
+    let details_label = context.translated(scope, "login.connection.details");
+    let details = Box::new(
+        sapid::collapsible("station-connection-details")
+            .unstyled()
+            .class("auth-connection-details")
+            .default_open(false)
+            .label(details_label)
+            .trigger_content(move || glory::ui::text().content(details_label))
+            .content_policy(sapid::ContentPolicy::KeepMounted)
+            .content(move || {
+                Box::new(glory::ui::group().fill(fields.take().unwrap_or_default())) as View
+            }),
+    ) as View;
+    Box::new(glory::ui::group().fill(vec![
+            Box::new(
+                glory::ui::text()
+                    .class("auth-connection-label")
+                    .content(context.translated(scope, "login.connection.changed")),
+            ) as View,
+            Box::new(
+                glory::ui::view()
+                    .class("auth-connection-summary")
+                    .role(glory::render::Role::List)
+                    .fill(summaries),
+            ),
+            paragraph("", context.translated(scope, "login.connection.warning")),
+            details,
+        ]))
+}
+
+fn connection_review_field_label(context: &InksonContext, label: &str) -> String {
     label
         .split(" · ")
         .map(|field| {
@@ -732,17 +898,15 @@ fn connection_review_field_label(label: &str) -> String {
                 _ => None,
             };
             if let Some(key) = key {
-                return crate::i18n::tr(key);
+                return context.tr(key);
             }
             if let Some(numbered) = field.strip_prefix("Sign-in method ")
                 && let Some((index, method)) = numbered.split_once(" (")
-                && !index.is_empty()
-                && index.bytes().all(|byte| byte.is_ascii_digit())
                 && index.parse::<usize>().is_ok_and(|index| index > 0)
                 && let Some(method) = method.strip_suffix(')')
             {
-                return crate::i18n::tr_args(
-                    "login.connection.field.numbered_method",
+                return crate::i18n::substitute_args(
+                    context.tr("login.connection.field.numbered_method"),
                     &[("index", index.to_owned()), ("method", method.to_owned())],
                 );
             }
@@ -750,157 +914,4 @@ fn connection_review_field_label(label: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join(" · ")
-}
-
-fn connection_review_details(change: &crate::station_connection::ConnectionTrustChange) -> Element {
-    rsx! {
-        strong { {crate::i18n::tr("login.connection.changed")} }
-        ul { class: "auth-connection-summary",
-            if change.previous.service_id != change.candidate.service_id {
-                li { {crate::i18n::tr("login.connection.identity_changed")} }
-            }
-            if change.previous.trust_domain != change.candidate.trust_domain {
-                li { {crate::i18n::tr("login.connection.domain_changed")} }
-            }
-            if change.previous.authentication_metadata != change.candidate.authentication_metadata {
-                li { {crate::i18n::tr("login.connection.provider_changed")} }
-            }
-        }
-        p { {crate::i18n::tr("login.connection.warning")} }
-        details { class: "auth-connection-details",
-            summary { {crate::i18n::tr("login.connection.details")} }
-            p { class: "auth-connection-server", {crate::i18n::tr_args("login.connection.server", &[("url", change.candidate.base_url.clone())])} }
-            for detail in crate::station_connection::connection_changes(change) {
-                div { class: "auth-connection-field",
-                    strong { {connection_review_field_label(&detail.label)} }
-                    dl {
-                        dt { {crate::i18n::tr("login.connection.previous")} }
-                        dd { "{detail.previous}" }
-                        dt { {crate::i18n::tr("login.connection.new")} }
-                        dd { "{detail.candidate}" }
-                    }
-                }
-            }
-        }
-    }
-}
-
-#[cfg(test)]
-mod connection_review_locale_tests {
-    use std::cell::RefCell;
-    use std::collections::BTreeMap;
-    use std::rc::Rc;
-
-    use super::*;
-    use crate::i18n::{I18nSignal, UiLocale};
-
-    type LocaleHandle = Rc<RefCell<Option<I18nSignal>>>;
-
-    fn retained_review(
-        (handle, change): (
-            LocaleHandle,
-            crate::station_connection::ConnectionTrustChange,
-        ),
-    ) -> Element {
-        let locale = use_context_provider(|| crate::i18n::init_i18n_with_locale(UiLocale::En));
-        *handle.borrow_mut() = Some(locale);
-        let change = use_signal(move || change);
-        rsx! {
-            div {
-                {connection_review_details(&change.read())}
-                p { {connection_review_field_label("future_label.{url} / 原文")} }
-                p { {connection_review_field_label("Sign-in method unknown (oidc)")} }
-            }
-        }
-    }
-
-    fn apply_text_edits(
-        text: &mut BTreeMap<usize, String>,
-        edits: dioxus::core::Mutations,
-    ) -> usize {
-        let mut changed = 0;
-        for edit in edits.edits {
-            match edit {
-                dioxus::core::Mutation::CreateTextNode { id, value }
-                | dioxus::core::Mutation::SetText { id, value } => {
-                    text.insert(id.0, value);
-                    changed += 1;
-                }
-                _ => {}
-            }
-        }
-        changed
-    }
-
-    #[test]
-    fn station_review_rerenders_retained_changes_without_translating_original_values() {
-        let mut previous: arkret_sdk::StationConnectionBinding = serde_json::from_value(serde_json::json!({
-            "base_url": "https://station.example/",
-            "service_id": "ak:did_core:webvh:z6mkfixture",
-            "trust_domain": "ak:trust_domain:station.example",
-            "authentication_metadata": {
-                "account_authority": { "origin": "https://auth.example", "gate_account_base_url": "https://auth.example/_arkret/gate/account" },
-                "methods": [{ "method": "oidc", "issuer_uri": "https://auth.example/", "client_id": "login.connection.new", "scopes": ["openid", "profile"], "grant_exchange": { "kind": "account_handoff" } }]
-            }
-        })).unwrap();
-        let mut second = previous.authentication_metadata.methods[0].clone();
-        second.client_id = Some("unchanged-client".to_owned());
-        previous.authentication_metadata.methods.push(second);
-        let mut candidate = previous.clone();
-        candidate.service_id = arkret_sdk::DidCoreId::new("ak:did_core:webvh:z6mkchanged").unwrap();
-        candidate.trust_domain =
-            arkret_sdk::TrustDomainId::new("ak:trust_domain:new-station.example").unwrap();
-        candidate.authentication_metadata.methods[0].client_id =
-            Some("{index} {method} / 原文".to_owned());
-        let change = crate::station_connection::ConnectionTrustChange {
-            previous,
-            candidate,
-        };
-        let raw_values = crate::station_connection::connection_changes(&change)
-            .into_iter()
-            .flat_map(|detail| [detail.previous, detail.candidate])
-            .collect::<Vec<_>>();
-        let handle = Rc::new(RefCell::new(None));
-        let mut dom = VirtualDom::new_with_props(retained_review, (handle.clone(), change));
-        let mut text = BTreeMap::new();
-        apply_text_edits(&mut text, dom.rebuild_to_vec());
-        let english = text.clone();
-        assert!(
-            text.values()
-                .any(|value| value == "Sign-in method 1 (oidc) · Client")
-        );
-        let mut locale = handle.borrow().expect("review provides locale");
-        for language in [UiLocale::Zh, UiLocale::En] {
-            dom.in_runtime(|| crate::i18n::set_locale(&mut locale, language));
-            assert!(apply_text_edits(&mut text, dom.render_immediate_to_vec()) > 0);
-            for raw in &raw_values {
-                assert!(
-                    text.values().any(|value| value == raw),
-                    "original trust value disappeared: {raw}"
-                );
-            }
-            for unknown in ["future_label.{url} / 原文", "Sign-in method unknown (oidc)"] {
-                assert!(text.values().any(|value| value == unknown));
-            }
-            if language == UiLocale::Zh {
-                for expected in [
-                    "服务器连接已变更",
-                    "服务器身份已变更",
-                    "信任域已变更",
-                    "登录提供方已变更",
-                    "登录方式 1（oidc） · 客户端",
-                    "原值",
-                    "新值",
-                    "服务器：https://station.example/",
-                ] {
-                    assert!(
-                        text.values().any(|value| value == expected),
-                        "review text missing: {expected}"
-                    );
-                }
-            } else {
-                assert_eq!(text, english);
-            }
-        }
-    }
 }

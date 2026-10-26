@@ -158,10 +158,126 @@ fn tracing_span_depth_delta(line: &str) -> isize {
     })
 }
 
+#[derive(Default)]
+struct NativeFrame {
+    close: char,
+    callee: String,
+    argument: usize,
+}
+/// Class/identity arguments have the same role as the old non-prose attributes.
+/// Display arguments, including names/placeholders and button labels, remain checked.
+fn native_nonprose_literals(source: &str) -> std::collections::BTreeSet<(usize, String)> {
+    let mut ignored = std::collections::BTreeSet::new();
+    let chars = source.chars().collect::<Vec<_>>();
+    let mut frames = Vec::<NativeFrame>::new();
+    let mut token = String::new();
+    let (mut index, mut line) = (0, 1);
+    while index < chars.len() {
+        let ch = chars[index];
+        if ch == '\n' {
+            line += 1;
+        }
+        if ch == '/' && chars.get(index + 1) == Some(&'/') {
+            while index < chars.len() && chars[index] != '\n' {
+                index += 1;
+            }
+            continue;
+        }
+        if ch == '"' {
+            let start_line = line;
+            let mut literal = String::new();
+            index += 1;
+            while index < chars.len() {
+                let ch = chars[index];
+                if ch == '\n' {
+                    line += 1;
+                }
+                if ch == '\\'
+                    && let Some(next) = chars.get(index + 1)
+                {
+                    literal.push(*next);
+                    index += 2;
+                    continue;
+                }
+                if ch == '"' {
+                    break;
+                }
+                literal.push(ch);
+                index += 1;
+            }
+            let nearest = frames.iter().rev().find(|frame| !frame.callee.is_empty());
+            let structural = nearest.is_some_and(|frame| {
+                let name = frame.callee.rsplit("::").next().unwrap_or(&frame.callee);
+                matches!(
+                    (name, frame.argument),
+                    (
+                        "stack" | "line" | "paragraph" | "class" | "href" | "target" | "source",
+                        0
+                    ) | ("heading", 1)
+                )
+            });
+            if structural {
+                ignored.insert((start_line, literal));
+            }
+            token.clear();
+            index += 1;
+            continue;
+        }
+        match ch {
+            '(' => {
+                frames.push(NativeFrame {
+                    close: ')',
+                    callee: {
+                        let mut end = index;
+                        while end > 0 && chars[end - 1].is_whitespace() {
+                            end -= 1;
+                        }
+                        let mut start = end;
+                        while start > 0
+                            && (chars[start - 1].is_alphanumeric()
+                                || matches!(chars[start - 1], '_' | ':'))
+                        {
+                            start -= 1;
+                        }
+                        chars[start..end].iter().collect()
+                    },
+                    argument: 0,
+                });
+            }
+            '[' | '{' => {
+                frames.push(NativeFrame {
+                    close: if ch == '[' { ']' } else { '}' },
+                    ..Default::default()
+                });
+                token.clear();
+            }
+            ')' | ']' | '}' => {
+                if frames.last().is_some_and(|frame| frame.close == ch) {
+                    frames.pop();
+                }
+                token.clear();
+            }
+            ',' => {
+                if let Some(frame) = frames.last_mut()
+                    && frame.close == ')'
+                {
+                    frame.argument += 1;
+                }
+                token.clear();
+            }
+            ch if ch.is_alphanumeric() || ch == '_' || ch == ':' => token.push(ch),
+            ch if ch.is_whitespace() => {}
+            _ => token.clear(),
+        }
+        index += 1;
+    }
+    ignored
+}
 fn bare_prose_in_file(path: &Path) -> Vec<(usize, String)> {
     let Ok(source) = fs::read_to_string(path) else {
         return Vec::new();
     };
+    let structural = native_nonprose_literals(&source);
     let mut findings = Vec::new();
     let mut tracing_depth = 0_isize;
     for (index, line) in source.lines().enumerate() {
@@ -180,7 +296,10 @@ fn bare_prose_in_file(path: &Path) -> Vec<(usize, String)> {
             continue;
         }
         for literal in string_literals(line) {
-            if is_i18n_key(&literal) || !looks_like_prose(&literal) {
+            if structural.contains(&(index + 1, literal.clone()))
+                || is_i18n_key(&literal)
+                || !looks_like_prose(&literal)
+            {
                 continue;
             }
             findings.push((index + 1, literal));
@@ -250,7 +369,7 @@ fn realm_creation_has_no_private_sovereign_deployment_controls() {
 }
 
 /// Not a gate — a visible backlog. Prints every UI file that still renders
-/// with `rsx!` but never calls `tr()`, so the remaining work is measurable
+/// through Glory/Sapid but never translates display text, so the remaining work is measurable
 /// instead of being discovered by a user seeing a half-translated page.
 #[test]
 fn report_unmigrated_ui_modules() {
@@ -276,14 +395,14 @@ fn report_unmigrated_ui_modules() {
         let Ok(source) = fs::read_to_string(&file) else {
             continue;
         };
-        if source.contains("rsx!") && !source.contains("tr(\"") && !source.contains("i18n::tr(") {
+        if is_native_ui_source(&source) && !has_translation_path(&source) {
             pending.push(relative);
         }
     }
 
     pending.sort();
     eprintln!(
-        "i18n backlog: {} UI file(s) render with rsx! but never call tr():\n{}",
+        "i18n backlog: {} UI file(s) render with Glory/Sapid but never translate display text:\n{}",
         pending.len(),
         pending
             .iter()
@@ -291,4 +410,97 @@ fn report_unmigrated_ui_modules() {
             .collect::<Vec<_>>()
             .join("\n")
     );
+}
+
+fn is_native_ui_source(source: &str) -> bool {
+    let code = source
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    code.contains("-> View")
+        || code.contains("->View")
+        || code.contains("sapid::")
+        || code.contains("glory::prelude::view(")
+        || code.contains("glory::ui::view(")
+}
+fn has_translation_path(source: &str) -> bool {
+    ["tr(", "tr_args(", "translated(", "tr_for_locale("]
+        .iter()
+        .any(|needle| source.contains(needle))
+}
+#[test]
+fn native_ui_scan_checks_display_text_and_preserves_structural_arguments() {
+    let source = "stack(\"event error-banner\",vec![paragraph(\"muted body\",\"English display text\"),sapid::button().class(\"btn secondary\").label(\"Untranslated action label\")])";
+    let structural = native_nonprose_literals(source);
+    assert!(structural.contains(&(1, "event error-banner".into())));
+    assert!(structural.contains(&(1, "muted body".into())));
+    assert!(structural.contains(&(1, "btn secondary".into())));
+    assert!(!structural.contains(&(1, "English display text".into())));
+    assert!(!structural.contains(&(1, "Untranslated action label".into())));
+    assert!(is_native_ui_source(
+        "pub fn page()->View { paragraph(\"\",\"bare prose\") }"
+    ));
+    assert!(!has_translation_path(
+        "sapid::button().label(\"bare prose\")"
+    ));
+}
+#[test]
+fn native_route_entrypoints_remain_covered() {
+    let src = crate_src_dir();
+    let routing =
+        fs::read_to_string(src.join("app/route_surface.rs")).expect("production view routing");
+    for module in [
+        "dashboard",
+        "contacts",
+        "directory",
+        "setup",
+        "settings",
+        "realm_admin",
+        "kanban",
+        "chat",
+        "call",
+        "applets",
+        "notifications",
+        "onboarding",
+        "quarantine",
+        "global_search",
+    ] {
+        let file = src.join(format!("views/{module}.rs"));
+        let file = if file.exists() {
+            file
+        } else {
+            src.join(format!("views/{module}/mod.rs"))
+        };
+        let dir = src.join(format!("views/{module}"));
+        let mut paths = if dir.is_dir() {
+            rust_files_under(&dir)
+        } else {
+            vec![]
+        };
+        if !paths.contains(&file) {
+            paths.push(file.clone());
+        }
+        let source = paths
+            .into_iter()
+            .map(|path| {
+                fs::read_to_string(&path).unwrap_or_else(|error| {
+                    panic!("missing actual UI entry {}: {error}", path.display())
+                })
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            is_native_ui_source(&source),
+            "{module} has no actual native UI entry"
+        );
+        assert!(
+            source.contains("pub fn page("),
+            "{module} must expose its real Glory page entry"
+        );
+        assert!(
+            routing.contains(&format!("{module}::page")),
+            "{module} is not reached by production routing"
+        );
+    }
 }

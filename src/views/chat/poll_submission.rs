@@ -56,7 +56,7 @@ fn ensure_response_heads_match_operation(
 
 pub(super) async fn submit_poll_operation(
     api: &TransportClient,
-    mut state_store: SyncSignal<LocalStateStore>,
+    state_store: crate::presentation::SharedStateStore,
     context: &PollSubmissionContext,
     operation: &crate::operation::LocalOperation,
     realm_id: &str,
@@ -64,7 +64,7 @@ pub(super) async fn submit_poll_operation(
     response_heads: Vec<arkret_sdk::PollResponseHead>,
 ) -> anyhow::Result<String> {
     let scope = operation.intent().scope_ref().clone();
-    let store = crate::app::runtime_adapter::state_store_handle(state_store);
+    let store = state_store.handle();
     anyhow::ensure!(
         store.read(|state| state.active_authority().as_ref() == Some(&context.authority)),
         "poll authoring account changed"
@@ -90,12 +90,15 @@ pub(super) async fn submit_poll_operation(
         .event_id;
     let accepted = arkret_sdk::EventId::new(event_id.clone())?;
     let message_id = arkret_sdk::MessageId::from_event_id(&accepted);
-    state_store.write().save_private_plaintext(
-        realm_id,
-        strand_id,
-        &format!("message-content:{message_id}"),
-        std::str::from_utf8(&content_bytes)?,
-    );
+    state_store.write(|value| -> anyhow::Result<_> {
+        let _: () = value.save_private_plaintext(
+            realm_id,
+            strand_id,
+            &format!("message-content:{message_id}"),
+            std::str::from_utf8(&content_bytes)?,
+        );
+        Ok(())
+    })?;
     Ok(event_id)
 }
 

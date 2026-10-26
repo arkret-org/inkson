@@ -1,6 +1,6 @@
-//! Composer writes, out of the `rsx!` and named.
+//! Target-owned composer commands and exact submission recovery.
 //!
-//! Every one of these ran as an inline `spawn(async move { … })` inside an
+//! Every one of these ran as an inline `super::super::task::dispatch(async move { … })` inside an
 //! `onclick` or `ondrop` — the three message-send paths among them, the
 //! longest over four hundred lines deep in the nesting.
 //!
@@ -33,21 +33,19 @@ enum ComposerSubmissionState {
 }
 
 struct PendingComposerDraft {
-    draft: Signal<String>,
-    pending: Signal<std::collections::BTreeMap<String, String>>,
+    draft: Cage<String>,
+    pending: Cage<std::collections::BTreeMap<String, String>>,
     operation: String,
     body: String,
     submission: ComposerSubmissionState,
-    attachments: Signal<Vec<crate::attachments::DraftAttachment>>,
+    attachments: Cage<Vec<crate::attachments::DraftAttachment>>,
     attachment_ids: Vec<String>,
 }
 
 impl PendingComposerDraft {
     fn new(controller: ChatController, operation: &str, body: &str) -> Self {
-        let mut pending = controller.pending_drafts;
-        pending
-            .write()
-            .insert(operation.to_owned(), body.to_owned());
+        let pending = controller.pending_drafts;
+        pending.revise(|value| value.insert(operation.to_owned(), body.to_owned()));
         Self {
             draft: controller.draft,
             pending,
@@ -57,7 +55,7 @@ impl PendingComposerDraft {
             attachments: controller.attachments,
             attachment_ids: controller
                 .attachments
-                .peek()
+                .get_untracked()
                 .iter()
                 .map(|a| a.id.clone())
                 .collect(),
@@ -89,19 +87,20 @@ impl PendingComposerDraft {
 
 impl Drop for PendingComposerDraft {
     fn drop(&mut self) {
-        if self.submission != ComposerSubmissionState::Recoverable
-            && let Ok(mut attachments) = self.attachments.try_write()
-        {
-            attachments.retain(|a| !self.attachment_ids.contains(&a.id));
+        if self.submission != ComposerSubmissionState::Recoverable {
+            let _ = self.attachments.try_revise(|attachments| {
+                attachments.retain(|a| !self.attachment_ids.contains(&a.id))
+            });
         }
-        if let Ok(mut pending) = self.pending.try_write() {
-            pending.remove(&self.operation);
-        }
-        if self.submission == ComposerSubmissionState::Recoverable
-            && let Ok(mut draft) = self.draft.try_write()
-            && draft.is_empty()
-        {
-            *draft = self.body.clone();
+        let _ = self
+            .pending
+            .try_revise(|pending| pending.remove(&self.operation));
+        if self.submission == ComposerSubmissionState::Recoverable {
+            let _ = self.draft.try_revise(|draft| {
+                if draft.is_empty() {
+                    *draft = self.body.clone();
+                }
+            });
         }
     }
 }
@@ -112,44 +111,56 @@ pub(super) fn upload_dropped_attachments(
     base_url: String,
     api_token: String,
     scope: Option<arkret_sdk::ScopeRef>,
-    files: Vec<dioxus::html::FileData>,
+    files: Vec<super::files::AttachmentFile>,
 ) {
-    let mut status = controller.compose_upload_status;
+    let status = controller.compose_upload_status;
     let Some(scope) = scope else {
-        status.set("Attachment upload requires a verified conversation scope.".into());
+        {
+            let next_value = "Attachment upload requires a verified conversation scope.".into();
+            status.revise(|value| *value = next_value);
+        };
         return;
     };
-    let selected_is_private = controller.channels.peek().iter().any(|channel| {
-        channel.strand_id == *controller.selected_channel.peek() && channel.is_private_sidecar
+    let selected_is_private = controller.channels.get_untracked().iter().any(|channel| {
+        channel.strand_id == controller.selected_channel.get_untracked()
+            && channel.is_private_sidecar
     });
     if selected_is_private && !matches!(scope, arkret_sdk::ScopeRef::Sidecar { .. }) {
-        status.set("Attachment upload requires a verified conversation scope.".into());
+        {
+            let next_value = "Attachment upload requires a verified conversation scope.".into();
+            status.revise(|value| *value = next_value);
+        };
         return;
     }
-    let mut attachments = controller.attachments;
-    let session = consume_context::<crate::app::SessionContext>();
-    let generation = *session.session_generation.peek();
-    let selected = controller.selected_channel.peek().clone();
-    let target_revision = *controller.attachment_target_revision.peek();
-    let mut upload_revision = controller.attachment_upload_revision;
-    let run = upload_revision.peek().wrapping_add(1);
-    upload_revision.set(run);
-    let selection_revision = *controller.selection_revision.peek();
-    let draft = controller.draft.peek().clone();
-    let account = session.active_account.peek().clone();
-    let store = crate::app::runtime_adapter::state_store_handle(session.state_store);
-    spawn(async move {
+    let attachments = controller.attachments;
+    let Some(session) = application_context(controller) else {
+        return;
+    };
+    let generation = session.session_generation.get_untracked();
+    let selected = controller.selected_channel.get_untracked().clone();
+    let target_revision = controller.attachment_target_revision.get_untracked();
+    let upload_revision = controller.attachment_upload_revision;
+    let run = upload_revision.get_untracked().wrapping_add(1);
+    {
+        let next_value = run;
+        upload_revision.revise(|value| *value = next_value);
+    };
+    let selection_revision = controller.selection_revision.get_untracked();
+    let draft = controller.draft.get_untracked().clone();
+    let account = session.active_account.get_untracked().clone();
+    let store = session.state_store.handle();
+    super::super::task::dispatch(async move {
         let result = async {
             let account = account.ok_or_else(|| anyhow::anyhow!("no active attachment account"))?;
             let strand = arkret_sdk::StrandId::new(selected.clone())?;
             let active = || {
-                *session.session_generation.peek() == generation
-                    && *upload_revision.peek() == run
-                    && *controller.selected_channel.peek() == selected
-                && *controller.attachment_target_revision.peek() == target_revision
-                && *controller.selection_revision.peek() == selection_revision
-                    && *controller.draft.peek() == draft
-                    && session.active_account.peek().as_ref().is_some_and(|a| {
+                session.session_generation.get_untracked() == generation
+                    && upload_revision.get_untracked() == run
+                    && controller.selected_channel.get_untracked() == selected
+                && controller.attachment_target_revision.get_untracked() == target_revision
+                && controller.selection_revision.get_untracked() == selection_revision
+                    && controller.draft.get_untracked() == draft
+                    && session.active_account.get_untracked().as_ref().is_some_and(|a| {
                         a.authority == account.authority && a.device_id == account.device_id
                     })
             };
@@ -258,9 +269,9 @@ pub(super) fn upload_dropped_attachments(
                 }
                 anyhow::ensure!(active(), "attachment session or draft changed");
                 let chunks = crate::state::current_index::AttachmentChunkStore::open(store.read(|s|s.current_index_location()), &account.authority, &account.device_id, &object.id).await?;
-                if !attachments.peek().iter().any(|a|a.id == object.id) {
-                    attachments.write().push(crate::attachments::DraftAttachment {id: object.id.clone(), scope: scope.clone(),
-                        content: object.prepared.as_ref().map(|p|p.content.clone()).unwrap_or_else(||arkret_sdk::ContentBlock::new(arkret_sdk::ContentBlockKind::File, object.filename.clone())), pending: !object.uploaded});
+                if !attachments.get_untracked().iter().any(|a|a.id == object.id) {
+                    attachments.revise(|value| value.push(crate::attachments::DraftAttachment {id: object.id.clone(), scope: scope.clone(),
+                        content: object.prepared.as_ref().map(|p|p.content.clone()).unwrap_or_else(||arkret_sdk::ContentBlock::new(arkret_sdk::ContentBlockKind::File, object.filename.clone())), pending: !object.uploaded}));
                 }
                 if object.prepared.is_none() {
                     let prepared = object.prepare(&chunks).await?;
@@ -284,47 +295,63 @@ pub(super) fn upload_dropped_attachments(
                 }
                 fence.check_session_identity()?;
                 anyhow::ensure!(active(), "attachment session or draft changed");
-                if let Some(draft) = attachments.write().iter_mut().find(|a|a.id == object.id) {
+                let prepared_content=object.prepared.clone().ok_or_else(||anyhow::anyhow!("missing attachment descriptor"))?.content;
+                attachments.revise(|values| {if let Some(draft)=values.iter_mut().find(|a|a.id == object.id){
                     draft.pending = false;
-                    draft.content = object.prepared.ok_or_else(||anyhow::anyhow!("missing attachment descriptor"))?.content;
-                }
+                    draft.content = prepared_content;
+                }});
 
             }
             Ok::<_, anyhow::Error>(())
         }
         .await;
-        if *session.session_generation.peek() != generation
-            || *upload_revision.peek() != run
-            || *controller.selected_channel.peek() != selected
-            || *controller.selection_revision.peek() != selection_revision
+        if session.session_generation.get_untracked() != generation
+            || upload_revision.get_untracked() != run
+            || controller.selected_channel.get_untracked() != selected
+            || controller.selection_revision.get_untracked() != selection_revision
         {
             return;
         }
-        if *controller.attachment_target_revision.peek() != target_revision
-            || *controller.draft.peek() != draft
+        if controller.attachment_target_revision.get_untracked() != target_revision
+            || controller.draft.get_untracked() != draft
         {
-            status.set("Attachment upload: attachment session or target changed".into());
+            {
+                let next_value = "Attachment upload: attachment session or target changed".into();
+                status.revise(|value| *value = next_value);
+            };
             return;
         }
         match result {
-            Ok(()) => status.set(format!("{} attachment(s) ready", attachments.peek().len())),
-            Err(e) => status.set(format!("Attachment upload: {e:#}")),
+            Ok(()) => {
+                let next_value =
+                    format!("{} attachment(s) ready", attachments.get_untracked().len());
+                status.revise(|value| *value = next_value);
+            }
+            Err(e) => {
+                let next_value = format!("Attachment upload: {e:#}");
+                status.revise(|value| *value = next_value);
+            }
         }
     });
 }
 
 /// Cancel the selected durable draft object and revoke its local parts.
 pub(super) fn discard_draft_attachment(controller: ChatController, id: String) {
-    let mut revision = controller.attachment_target_revision;
-    let next = revision.peek().wrapping_add(1);
-    revision.set(next);
-    let session = consume_context::<crate::app::SessionContext>();
-    let account = session.active_account.peek().clone();
-    let generation = *session.session_generation.peek();
-    let mut attachments = controller.attachments;
-    let mut status = controller.compose_upload_status;
-    let store = crate::app::runtime_adapter::state_store_handle(session.state_store);
-    spawn(async move {
+    let revision = controller.attachment_target_revision;
+    let next = revision.get_untracked().wrapping_add(1);
+    {
+        let next_value = next;
+        revision.revise(|value| *value = next_value);
+    };
+    let Some(session) = application_context(controller) else {
+        return;
+    };
+    let account = session.active_account.get_untracked().clone();
+    let generation = session.session_generation.get_untracked();
+    let attachments = controller.attachments;
+    let status = controller.compose_upload_status;
+    let store = session.state_store.handle();
+    super::super::task::dispatch(async move {
         let result = async {
             let account = account.ok_or_else(|| anyhow::anyhow!("no active attachment account"))?;
             let vault = crate::outbound_store::InksonOutboundStore::open(
@@ -341,14 +368,17 @@ pub(super) fn discard_draft_attachment(controller: ChatController, id: String) {
             .await?;
             chunks.clear("input").await?;
             chunks.clear("ciphertext").await?;
-            if *session.session_generation.peek() == generation {
-                attachments.write().retain(|a| a.id != id);
+            if session.session_generation.get_untracked() == generation {
+                attachments.revise(|value| value.retain(|a| a.id != id));
             }
             Ok::<_, anyhow::Error>(())
         }
         .await;
         if let Err(e) = result {
-            status.set(format!("Attachment removal: {e:#}"));
+            {
+                let next_value = format!("Attachment removal: {e:#}");
+                status.revise(|value| *value = next_value);
+            };
         }
     });
 }
@@ -371,7 +401,7 @@ pub(super) struct TypingSignalTarget {
 /// Send failures are deliberately ignored: presence is advisory, and a status
 /// line for a dropped typing indicator would be noise on every flaky keystroke.
 pub(super) fn send_typing_signal(target: TypingSignalTarget, api_token: String, typing: bool) {
-    spawn(async move {
+    super::super::task::dispatch(async move {
         let TypingSignalTarget {
             base_url,
             realm_id,
@@ -414,11 +444,14 @@ pub(super) fn send_poll(
     realm_id: String,
     strand_id: String,
 ) {
-    let mut messages = controller.messages;
-    let mut poll_cards = controller.poll_cards;
-    let mut status_msg = controller.status_msg;
-    let state_store = consume_context::<crate::app::SessionContext>().state_store;
-    spawn(async move {
+    let messages = controller.messages;
+    let poll_cards = controller.poll_cards;
+    let status_msg = controller.status_msg;
+    let Some(application) = application_context(controller) else {
+        return;
+    };
+    let state_store = application.state_store.clone();
+    super::super::task::dispatch(async move {
         let result =
             crate::transport::auth::with_authed_api(&base_url, api_token, |api| async move {
                 super::super::poll_submission::submit_poll_operation(
@@ -439,38 +472,47 @@ pub(super) fn send_poll(
                     &arkret_sdk::EventKind::MessageCreate,
                     &event_id,
                 );
-                if let Some(found) = messages
-                    .write()
-                    .iter_mut()
-                    .find(|candidate| candidate.matches_id_or_protocol(&local_message_id))
+                messages.revise(|values| {
+                    if let Some(found) = values
+                        .iter_mut()
+                        .find(|candidate| candidate.matches_id_or_protocol(&local_message_id))
+                    {
+                        found.protocol_message_id = message_ref.clone();
+                        found.pending = false;
+                        found.failed = false;
+                        found.error = None;
+                    }
+                });
+                poll_cards.revise(|values| {
+                    if let Some(card) = values
+                        .iter_mut()
+                        .find(|card| card.message_id == local_message_id)
+                        && let Some(message_ref) = message_ref
+                    {
+                        card.poll_ref = arkret_sdk::MessageId::new(message_ref).ok();
+                    }
+                });
                 {
-                    found.protocol_message_id = message_ref.clone();
-                    found.pending = false;
-                    found.failed = false;
-                    found.error = None;
-                }
-                if let Some(card) = poll_cards
-                    .write()
-                    .iter_mut()
-                    .find(|card| card.message_id == local_message_id)
-                    && let Some(message_ref) = message_ref
-                {
-                    card.poll_ref = arkret_sdk::MessageId::new(message_ref).ok();
-                }
-                status_msg.set("Poll sent".to_owned());
+                    let next_value = "Poll sent".to_owned();
+                    status_msg.revise(|value| *value = next_value);
+                };
             }
             Err(error) => {
                 let error_text = error.display();
-                if let Some(found) = messages
-                    .write()
-                    .iter_mut()
-                    .find(|candidate| candidate.matches_id_or_protocol(&local_message_id))
+                messages.revise(|values| {
+                    if let Some(found) = values
+                        .iter_mut()
+                        .find(|candidate| candidate.matches_id_or_protocol(&local_message_id))
+                    {
+                        found.pending = false;
+                        found.failed = true;
+                        found.error = Some(format!("Poll send failed: {error_text}"));
+                    }
+                });
                 {
-                    found.pending = false;
-                    found.failed = true;
-                    found.error = Some(format!("Poll send failed: {error_text}"));
-                }
-                status_msg.set(format!("Poll send failed: {error_text}"));
+                    let next_value = format!("Poll send failed: {error_text}");
+                    status_msg.revise(|value| *value = next_value);
+                };
             }
         }
     });
@@ -503,233 +545,265 @@ pub(super) struct OwnedAgentSidecarRoute {
 /// AccountId mentions, then submit the same unchanged draft in this Send action.
 pub(super) fn route_to_owned_agent_sidecar(
     controller: ChatController,
-    mut sidecar_session: Signal<Option<crate::sidecar::HostedSidecarState>>,
-    mut sidecar_route_pending: Signal<bool>,
+    sidecar_session: Cage<Option<crate::sidecar::HostedSidecarState>>,
+    sidecar_route_pending: Cage<bool>,
     route: OwnedAgentSidecarRoute,
 ) {
-    let mut status_msg = controller.status_msg;
-    let state_store = consume_context::<crate::app::SessionContext>().state_store;
+    let status_msg = controller.status_msg;
+    let Some(application) = application_context(controller) else {
+        return;
+    };
+    let state_store = application.state_store.clone();
     let session_fence = match crate::transport::auth::AuthoringSessionFence::capture() {
         Ok(fence) => fence,
         Err(error) => {
-            sidecar_route_pending.set(false);
-            status_msg.set(format!("Private Sidecar message was not sent: {error:#}"));
+            {
+                let next_value = false;
+                sidecar_route_pending.revise(|value| *value = next_value);
+            };
+            {
+                let next_value = format!("Private Sidecar message was not sent: {error:#}");
+                status_msg.revise(|value| *value = next_value);
+            };
             return;
         }
     };
-    let draft_fence = PendingSidecarDraftFence::capture_in_scope(
+    let draft_fence = PendingSidecarDraftFence::capture(
         controller.draft,
         controller.mention_picker_state,
         controller.selected_channel,
-        sidecar_route_pending.origin_scope(),
     );
-    dioxus::core::Runtime::current().in_scope(sidecar_route_pending.origin_scope(), || {
-        dioxus::core::spawn(async move {
-            let OwnedAgentSidecarRoute {
-                base_url,
-                api_token,
-                trace_id,
-                realm_id,
-                strand_id,
-                actor,
-                authority,
-                controller_did,
-                device_id,
-                mentions_enabled,
-                mentions,
-                body,
-                draft_at_send,
-                participants,
-            } = route;
-            trace_private_send_stage("private_route_ensure_started");
-            let addressed_agent_ids =
-                owned_agent_ids_from_composer(mentions_enabled, &mentions, &participants, &actor);
-            let sidecar_outcome = ensure_owned_agent_sidecar(
+    super::super::task::dispatch(async move {
+        let OwnedAgentSidecarRoute {
+            base_url,
+            api_token,
+            trace_id,
+            realm_id,
+            strand_id,
+            actor,
+            authority,
+            controller_did,
+            device_id,
+            mentions_enabled,
+            mentions,
+            body,
+            draft_at_send,
+            participants,
+        } = route;
+        trace_private_send_stage("private_route_ensure_started");
+        let addressed_agent_ids =
+            owned_agent_ids_from_composer(mentions_enabled, &mentions, &participants, &actor);
+        let sidecar_outcome = ensure_owned_agent_sidecar(
+            &base_url,
+            api_token.clone(),
+            &trace_id,
+            &authority,
+            &controller_did,
+            &device_id,
+            &realm_id,
+            &strand_id,
+            &addressed_agent_ids,
+            state_store.clone(),
+        )
+        .await;
+        trace_private_send_stage("private_route_ensure_finished");
+        let current_private_mode = if matches!(&sidecar_outcome, Ok(Some(_))) {
+            require_current_private_targets(
                 &base_url,
                 api_token.clone(),
-                &trace_id,
-                &authority,
-                &controller_did,
-                &device_id,
                 &realm_id,
-                &strand_id,
+                &authority,
+                &mentions,
                 &addressed_agent_ids,
-                state_store,
             )
-            .await;
-            trace_private_send_stage("private_route_ensure_finished");
-            let current_private_mode = if matches!(&sidecar_outcome, Ok(Some(_))) {
-                require_current_private_targets(
-                    &base_url,
-                    api_token.clone(),
-                    &realm_id,
-                    &authority,
-                    &mentions,
-                    &addressed_agent_ids,
-                )
-                .await
-            } else {
-                Ok(())
+            .await
+        } else {
+            Ok(())
+        };
+        let draft_unchanged = draft_fence.finish();
+        trace_private_send_stage(if draft_unchanged {
+            "private_route_draft_current"
+        } else {
+            "private_route_draft_replaced"
+        });
+        let same_session = session_fence.check().is_ok()
+            && crate::presentation::current_context()
+                .and_then(|context| context.active_account.try_get().ok().flatten())
+                .is_some_and(|active| {
+                    active.authority == authority && active.device_id == device_id
+                });
+        if !same_session {
+            trace_private_send_stage("private_route_session_replaced");
+            {
+                let next_value = false;
+                sidecar_route_pending.revise(|value| *value = next_value);
             };
-            let draft_unchanged = draft_fence.finish();
-            trace_private_send_stage(if draft_unchanged {
-                "private_route_draft_current"
-            } else {
-                "private_route_draft_replaced"
-            });
-            let same_session = session_fence.check().is_ok()
-                && consume_context::<crate::app::SessionContext>()
-                    .active_account()
-                    .is_some_and(|active| {
-                        active.authority == authority && active.device_id == device_id
-                    });
-            if !same_session {
-                trace_private_send_stage("private_route_session_replaced");
-                sidecar_route_pending.set(false);
-                return;
-            }
-            if let Err(error) = current_private_mode {
-                trace_private_send_stage("private_route_mode_rejected");
-                sidecar_route_pending.set(false);
-                status_msg.set(format!("Private Sidecar message was not sent: {error:#}"));
-                return;
-            }
-            match sidecar_outcome {
-                Ok(Some(sidecar)) => {
-                    let OwnedAgentSidecarEnsureResult {
-                        sidecar_id,
-                        view: sidecar_view,
-                    } = sidecar;
-                    if !draft_unchanged
-                        || controller.draft.peek().as_str() != draft_at_send
-                        || controller.selected_channel.peek().as_str() != strand_id
+            return;
+        }
+        if let Err(error) = current_private_mode {
+            trace_private_send_stage("private_route_mode_rejected");
+            {
+                let next_value = false;
+                sidecar_route_pending.revise(|value| *value = next_value);
+            };
+            {
+                let next_value = format!("Private Sidecar message was not sent: {error:#}");
+                status_msg.revise(|value| *value = next_value);
+            };
+            return;
+        }
+        match sidecar_outcome {
+            Ok(Some(sidecar)) => {
+                let OwnedAgentSidecarEnsureResult {
+                    sidecar_id,
+                    view: sidecar_view,
+                } = sidecar;
+                if !draft_unchanged
+                    || controller.draft.get_untracked().as_str() != draft_at_send
+                    || controller.selected_channel.get_untracked().as_str() != strand_id
+                {
+                    trace_private_send_stage("private_route_draft_changed_before_access");
                     {
-                        trace_private_send_stage("private_route_draft_changed_before_access");
-                        sidecar_route_pending.set(false);
-                        status_msg.set(
-                            "Private Sidecar ready. The edited draft has not been sent.".to_owned(),
-                        );
-                        return;
-                    }
-                    let native_mls_ready = crate::sidecar::native_mls_ready_for_view(
-                        &state_store.read(),
-                        &sidecar_view,
-                    );
-                    let addressed_agent_label =
-                        sidecar_agent_label(&addressed_agent_ids, &participants);
-                    let session = crate::sidecar::HostedSidecarState {
-                        trace_id,
-                        controller_account_id: sidecar_view.sidecar.controller_account_id.clone(),
-                        addressed_agent_ids: addressed_agent_ids.clone(),
-                        addressed_agent_label,
-                        source_realm_id: realm_id.clone(),
-                        source_strand_id: strand_id.clone(),
-                        sidecar_id: sidecar_id.clone(),
-                        access_readiness: sidecar_view.access_readiness,
-                        pending_access_reconciliations: sidecar_view
-                            .pending_access_reconciliations
-                            .clone(),
-                        mls_context: sidecar_view.mls_context.clone(),
-                        native_mls_ready,
-                        migrated_draft: String::new(),
-                        opened_at: chrono::Utc::now(),
+                        let next_value = false;
+                        sidecar_route_pending.revise(|value| *value = next_value);
                     };
-                    sidecar_session.set(Some(session.clone()));
-                    let readiness_fence = PendingSidecarDraftFence::capture_in_scope(
-                        controller.draft,
-                        controller.mention_picker_state,
-                        controller.selected_channel,
-                        sidecar_route_pending.origin_scope(),
-                    );
-                    let ready = wait_for_sidecar_access(
-                        || async {
-                            let api = crate::transport::auth::authed_api_ready(
-                                &base_url,
-                                api_token.clone(),
-                            )
-                            .await?;
-                            let view = api
-                                .sdk_http_client()?
-                                .agent_sidecar_get(&sidecar_id)
+                    {
+                        let next_value =
+                            "Private Sidecar ready. The edited draft has not been sent.".to_owned();
+                        status_msg.revise(|value| *value = next_value);
+                    };
+                    return;
+                }
+                let native_mls_ready = state_store
+                    .read(|store| crate::sidecar::native_mls_ready_for_view(store, &sidecar_view));
+                let addressed_agent_label =
+                    sidecar_agent_label(&addressed_agent_ids, &participants);
+                let session = crate::sidecar::HostedSidecarState {
+                    trace_id,
+                    controller_account_id: sidecar_view.sidecar.controller_account_id.clone(),
+                    addressed_agent_ids: addressed_agent_ids.clone(),
+                    addressed_agent_label,
+                    source_realm_id: realm_id.clone(),
+                    source_strand_id: strand_id.clone(),
+                    sidecar_id: sidecar_id.clone(),
+                    access_readiness: sidecar_view.access_readiness,
+                    pending_access_reconciliations: sidecar_view
+                        .pending_access_reconciliations
+                        .clone(),
+                    mls_context: sidecar_view.mls_context.clone(),
+                    native_mls_ready,
+                    migrated_draft: String::new(),
+                    opened_at: chrono::Utc::now(),
+                };
+                {
+                    let next_value = Some(session.clone());
+                    sidecar_session.revise(|value| *value = next_value);
+                };
+                let readiness_fence = PendingSidecarDraftFence::capture(
+                    controller.draft,
+                    controller.mention_picker_state,
+                    controller.selected_channel,
+                );
+                let ready = wait_for_sidecar_access(
+                    || async {
+                        let api =
+                            crate::transport::auth::authed_api_ready(&base_url, api_token.clone())
                                 .await?;
-                            crate::sidecar::validate_agent_sidecar_view(&view)?;
-                            anyhow::ensure!(
-                                view.sidecar.id == sidecar_id
-                                    && view.sidecar.realm_id.as_str() == realm_id
-                                    && view.sidecar.controller_account_id == authority
-                                    && addressed_agent_ids.iter().all(|id| view
-                                        .desired_agent_ids
-                                        .iter()
-                                        .any(|agent| agent.as_str() == id)),
-                                "Private Sidecar access or addressed Agent changed"
-                            );
-                            let ready = view.access_readiness
-                                == arkret_sdk::AgentSidecarAccessReadiness::Ready
-                                && view.mls_context.current_controller_device_ready
-                                && crate::sidecar::native_mls_ready_for_view(
-                                    &state_store.read(),
-                                    &view,
-                                );
-                            Ok(ready.then_some(view))
-                        },
-                        || {
-                            session_fence.check()?;
-                            anyhow::ensure!(
-                                readiness_fence.is_current()
-                                    && controller.draft.peek().as_str() == draft_at_send
-                                    && controller.selected_channel.peek().as_str() == strand_id
-                                    && sidecar_session.peek().as_ref().is_some_and(|open| {
+                        let view = api
+                            .sdk_http_client()?
+                            .agent_sidecar_get(&sidecar_id)
+                            .await?;
+                        crate::sidecar::validate_agent_sidecar_view(&view)?;
+                        anyhow::ensure!(
+                            view.sidecar.id == sidecar_id
+                                && view.sidecar.realm_id.as_str() == realm_id
+                                && view.sidecar.controller_account_id == authority
+                                && addressed_agent_ids.iter().all(|id| view
+                                    .desired_agent_ids
+                                    .iter()
+                                    .any(|agent| agent.as_str() == id)),
+                            "Private Sidecar access or addressed Agent changed"
+                        );
+                        let ready = view.access_readiness
+                            == arkret_sdk::AgentSidecarAccessReadiness::Ready
+                            && view.mls_context.current_controller_device_ready
+                            && state_store.read(|store| {
+                                crate::sidecar::native_mls_ready_for_view(store, &view)
+                            });
+                        Ok(ready.then_some(view))
+                    },
+                    || {
+                        session_fence.check()?;
+                        anyhow::ensure!(
+                            readiness_fence.is_current()
+                                && controller.draft.get_untracked().as_str() == draft_at_send
+                                && controller.selected_channel.get_untracked().as_str()
+                                    == strand_id
+                                && sidecar_session
+                                    .get_untracked()
+                                    .as_ref()
+                                    .is_some_and(|open| {
                                         open.trace_id == session.trace_id
                                             && open.controller_account_id == authority
                                             && open.matches_route(&realm_id, &strand_id)
                                     }),
-                                "Private Sidecar ready. The edited draft has not been sent"
-                            );
-                            Ok(())
-                        },
-                        60,
-                    )
-                    .await;
-                    trace_private_send_stage(if ready.is_ok() {
-                        "private_route_access_wait_finished"
-                    } else {
-                        "private_route_access_wait_failed"
-                    });
-                    let mode = if ready.is_ok() {
-                        require_current_private_targets(
-                            &base_url,
-                            api_token.clone(),
-                            &realm_id,
-                            &authority,
-                            &mentions,
-                            &addressed_agent_ids,
-                        )
-                        .await
-                        .and_then(|_| session_fence.check())
-                    } else {
+                            "Private Sidecar ready. The edited draft has not been sent"
+                        );
                         Ok(())
-                    };
-                    let unchanged = readiness_fence.finish()
-                        && sidecar_session.peek().as_ref().is_some_and(|open| {
+                    },
+                    60,
+                )
+                .await;
+                trace_private_send_stage(if ready.is_ok() {
+                    "private_route_access_wait_finished"
+                } else {
+                    "private_route_access_wait_failed"
+                });
+                let mode = if ready.is_ok() {
+                    require_current_private_targets(
+                        &base_url,
+                        api_token.clone(),
+                        &realm_id,
+                        &authority,
+                        &mentions,
+                        &addressed_agent_ids,
+                    )
+                    .await
+                    .and_then(|_| session_fence.check())
+                } else {
+                    Ok(())
+                };
+                let unchanged = readiness_fence.finish()
+                    && sidecar_session
+                        .get_untracked()
+                        .as_ref()
+                        .is_some_and(|open| {
                             open.trace_id == session.trace_id
                                 && open.controller_account_id == authority
                                 && open.matches_route(&realm_id, &strand_id)
                         });
-                    if session_fence.check_session_identity().is_err() {
-                        trace_private_send_stage("private_route_session_replaced_after_access");
-                        sidecar_route_pending.set(false);
-                        return;
-                    }
-                    let ready_view = match ready.and_then(|view| mode.map(|_| view)) {
-                        Ok(view) if unchanged => view,
-                        outcome => {
-                            trace_private_send_stage(if unchanged {
-                                "private_route_access_or_mode_rejected"
-                            } else {
-                                "private_route_draft_or_host_replaced"
-                            });
-                            sidecar_route_pending.set(false);
-                            status_msg.set(match outcome {
+                if session_fence.check_session_identity().is_err() {
+                    trace_private_send_stage("private_route_session_replaced_after_access");
+                    {
+                        let next_value = false;
+                        sidecar_route_pending.revise(|value| *value = next_value);
+                    };
+                    return;
+                }
+                let ready_view = match ready.and_then(|view| mode.map(|_| view)) {
+                    Ok(view) if unchanged => view,
+                    outcome => {
+                        trace_private_send_stage(if unchanged {
+                            "private_route_access_or_mode_rejected"
+                        } else {
+                            "private_route_draft_or_host_replaced"
+                        });
+                        {
+                            let next_value = false;
+                            sidecar_route_pending.revise(|value| *value = next_value);
+                        };
+                        {
+                            let next_value = match outcome {
                                 Err(error) => {
                                     format!("Private Sidecar message was not sent: {error:#}")
                                 }
@@ -737,53 +811,66 @@ pub(super) fn route_to_owned_agent_sidecar(
                                     "Private Sidecar ready. The edited draft has not been sent."
                                         .to_owned()
                                 }
-                            });
-                            return;
-                        }
-                    };
-                    let mut session = session;
-                    session.access_readiness = ready_view.access_readiness;
-                    session.pending_access_reconciliations =
-                        ready_view.pending_access_reconciliations;
-                    session.mls_context = ready_view.mls_context;
-                    session.native_mls_ready = true;
-                    sidecar_session.set(Some(session.clone()));
-                    sidecar_route_pending.set(false);
-                    let source_event_id = latest_source_event_anchor(
-                        &controller.messages.peek(),
-                        &realm_id,
-                        &strand_id,
-                    );
-                    trace_private_send_stage("private_route_submit_dispatched");
-                    send_sidecar_message_with_hosted(
-                        controller,
-                        sidecar_session,
-                        SidecarSendRequest {
-                            base_url,
-                            api_token,
-                            session,
-                            addressed_agent_ids,
-                            draft_at_send,
-                            sidecar_strand_id: strand_id,
-                            source_event_id,
-                            actor,
-                            authority,
-                            device_id,
-                            local_id: new_chat_local_id(),
-                            body,
-                            mentions,
-                        },
-                    );
-                    return;
-                }
-                Ok(None) => status_msg
-                    .set("Could not resolve an owned agent for the private sidecar.".to_owned()),
-                Err(error) => {
-                    status_msg.set(format!("Could not open private AI sidecar: {error:#}"))
-                }
+                            };
+                            status_msg.revise(|value| *value = next_value);
+                        };
+                        return;
+                    }
+                };
+                let mut session = session;
+                session.access_readiness = ready_view.access_readiness;
+                session.pending_access_reconciliations = ready_view.pending_access_reconciliations;
+                session.mls_context = ready_view.mls_context;
+                session.native_mls_ready = true;
+                {
+                    let next_value = Some(session.clone());
+                    sidecar_session.revise(|value| *value = next_value);
+                };
+                {
+                    let next_value = false;
+                    sidecar_route_pending.revise(|value| *value = next_value);
+                };
+                let source_event_id = latest_source_event_anchor(
+                    &controller.messages.get_untracked(),
+                    &realm_id,
+                    &strand_id,
+                );
+                trace_private_send_stage("private_route_submit_dispatched");
+                send_sidecar_message_with_hosted(
+                    controller,
+                    sidecar_session,
+                    SidecarSendRequest {
+                        base_url,
+                        api_token,
+                        session,
+                        addressed_agent_ids,
+                        draft_at_send,
+                        sidecar_strand_id: strand_id,
+                        source_event_id,
+                        actor,
+                        authority,
+                        device_id,
+                        local_id: new_chat_local_id(),
+                        body,
+                        mentions,
+                    },
+                );
+                return;
             }
-            sidecar_route_pending.set(false);
-        })
+            Ok(None) => {
+                let next_value =
+                    "Could not resolve an owned agent for the private sidecar.".to_owned();
+                status_msg.revise(|value| *value = next_value);
+            }
+            Err(error) => {
+                let next_value = format!("Could not open private AI sidecar: {error:#}");
+                status_msg.revise(|value| *value = next_value);
+            }
+        }
+        {
+            let next_value = false;
+            sidecar_route_pending.revise(|value| *value = next_value);
+        };
     });
 }
 
@@ -841,50 +928,43 @@ fn private_target_mode_matches(
 /// Any intervening draft/binding/Strand write cancels delayed automatic Send,
 /// including editing and restoring exactly the same visible text.
 struct PendingSidecarDraftFence {
-    context: dioxus::dioxus_core::ReactiveContext,
-    changed: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    draft: Cage<String>,
+    picker: Cage<crate::messaging::mentions::MentionPickerState>,
+    strand: Cage<String>,
+    versions: Option<(u64, u64, u64)>,
 }
-
 impl PendingSidecarDraftFence {
-    #[cfg(test)]
     fn capture(
-        draft: Signal<String>,
-        picker: Signal<crate::messaging::mentions::MentionPickerState>,
-        strand: Signal<String>,
+        draft: Cage<String>,
+        picker: Cage<crate::messaging::mentions::MentionPickerState>,
+        strand: Cage<String>,
     ) -> Self {
-        Self::capture_in_scope(draft, picker, strand, draft.origin_scope())
+        let versions = draft
+            .try_version()
+            .ok()
+            .zip(picker.try_version().ok())
+            .zip(strand.try_version().ok())
+            .map(|((draft, picker), strand)| (draft, picker, strand));
+        Self {
+            draft,
+            picker,
+            strand,
+            versions,
+        }
     }
-
-    fn capture_in_scope(
-        draft: Signal<String>,
-        picker: Signal<crate::messaging::mentions::MentionPickerState>,
-        strand: Signal<String>,
-        owner: ScopeId,
-    ) -> Self {
-        let changed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let dirty = changed.clone();
-        let context = dioxus::dioxus_core::ReactiveContext::new_with_callback(
-            move || {
-                dirty.store(true, std::sync::atomic::Ordering::SeqCst);
-            },
-            owner,
-            std::panic::Location::caller(),
-        );
-        context.run_in(|| {
-            let _ = draft.read();
-            let _ = picker.read();
-            let _ = strand.read();
-        });
-        Self { context, changed }
-    }
-
     fn finish(self) -> bool {
-        self.context.clear_subscribers();
         self.is_current()
     }
-
     fn is_current(&self) -> bool {
-        !self.changed.load(std::sync::atomic::Ordering::SeqCst)
+        self.versions.is_some()
+            && self.versions
+                == self
+                    .draft
+                    .try_version()
+                    .ok()
+                    .zip(self.picker.try_version().ok())
+                    .zip(self.strand.try_version().ok())
+                    .map(|((draft, picker), strand)| (draft, picker, strand))
     }
 }
 
@@ -941,197 +1021,207 @@ pub(super) struct PlaintextSendRequest {
 /// raw controller/slug text is inert under 0364 D2.
 pub(super) fn send_plaintext_message(
     controller: ChatController,
-    mut frontier_state: Signal<String>,
+    frontier_state: Cage<String>,
     request: PlaintextSendRequest,
 ) {
-    let mut messages = controller.messages;
-    let mut status_msg = controller.status_msg;
+    let messages = controller.messages;
+    let status_msg = controller.status_msg;
     let chat_draft = controller.draft;
-    let attachment_drafts = controller.attachments.peek().clone();
+    let attachment_drafts = controller.attachments.get_untracked().clone();
     let mut pending_draft = PendingComposerDraft::new(controller, &request.local_id, &request.body);
-    let mut state_store = consume_context::<crate::app::SessionContext>().state_store;
+    let Some(application) = application_context(controller) else {
+        return;
+    };
+    let state_store = application.state_store.clone();
     // A verified-current refresh can replace the composer send Button.
     // Its in-flight write belongs to the controller's message list.
-    dioxus::core::Runtime::current().in_scope(messages.origin_scope(), || {
-        dioxus::core::spawn(async move {
-            let PlaintextSendRequest {
-                base_url,
-                api_token,
-                wait_for,
-                realm_id,
-                circle_id,
-                strand_id,
-                actor,
-                local_id,
-                body,
-                reply_to,
-                mentions,
-                shared_agent_targets,
-            } = request;
-            if let Some(found) = messages
-                .write()
+    super::super::task::dispatch(async move {
+        let PlaintextSendRequest {
+            base_url,
+            api_token,
+            wait_for,
+            realm_id,
+            circle_id,
+            strand_id,
+            actor,
+            local_id,
+            body,
+            reply_to,
+            mentions,
+            shared_agent_targets,
+        } = request;
+        messages.revise(|values| {
+            if let Some(found) = values
                 .iter_mut()
                 .find(|candidate| candidate.matches_id_or_protocol(&local_id))
             {
                 found.mentions = mentions.clone();
             }
-            if let Err(error) = crate::transport::agent_interaction::require_public_targets(
-                &base_url,
-                api_token.clone(),
-                &realm_id,
-                shared_agent_targets.clone(),
-            )
-            .await
-            {
-                fail_optimistic_chat_send(
-                    messages,
-                    chat_draft,
-                    status_msg,
-                    &local_id,
-                    &body,
-                    format!("Send blocked: {error:#}"),
-                );
-                return;
-            }
-            let content = match chat_content_block_for_body_with_upload(
-                &base_url,
-                api_token.clone(),
-                wait_for.clone(),
-                &realm_id,
+        });
+        if let Err(error) = crate::transport::agent_interaction::require_public_targets(
+            &base_url,
+            api_token.clone(),
+            &realm_id,
+            shared_agent_targets.clone(),
+        )
+        .await
+        {
+            fail_optimistic_chat_send(
+                messages,
+                chat_draft,
+                status_msg,
+                &local_id,
                 &body,
-            )
-            .await
-            {
-                Ok(content) => content,
-                Err(error) => {
-                    fail_optimistic_send_row(
-                        messages,
-                        &local_id,
-                        format!("send failed: {error:#}"),
-                    );
-                    status_msg.set(format!("send failed: {error:#}"));
-                    return;
-                }
-            };
-            if let Err(error) = crate::transport::agent_interaction::require_public_targets(
-                &base_url,
-                api_token.clone(),
-                &realm_id,
-                shared_agent_targets,
-            )
-            .await
-            {
-                fail_optimistic_chat_send(
-                    messages,
-                    chat_draft,
-                    status_msg,
-                    &local_id,
-                    &body,
-                    format!("Send blocked: {error:#}"),
-                );
+                format!("Send blocked: {error:#}"),
+            );
+            return;
+        }
+        let content = match chat_content_block_for_body_with_upload(
+            &base_url,
+            api_token.clone(),
+            wait_for.clone(),
+            &realm_id,
+            &body,
+        )
+        .await
+        {
+            Ok(content) => content,
+            Err(error) => {
+                fail_optimistic_send_row(messages, &local_id, format!("send failed: {error:#}"));
+                {
+                    let next_value = format!("send failed: {error:#}");
+                    status_msg.revise(|value| *value = next_value);
+                };
                 return;
             }
-            let content = match chat_content_with_mentions(&body, content, &mentions) {
-                Ok(content) => content,
-                Err(error) => {
-                    fail_optimistic_send_row(
-                        messages,
-                        &local_id,
-                        format!("send failed: {error:#}"),
-                    );
-                    status_msg.set(format!("send failed: {error:#}"));
-                    return;
-                }
-            };
-            let local_operation_id =
-                crate::operation::LocalOperationId::from_holder_key(local_id.clone()).to_string();
-            let api = match authed_api_with_sync(&base_url, api_token, wait_for) {
-                Ok(api) => api,
-                Err(error) => {
-                    fail_optimistic_send_row(
-                        messages,
-                        &local_id,
-                        format!("send failed: {error:#}"),
-                    );
-                    status_msg.set(format!("send failed: {error:#}"));
-                    return;
-                }
-            };
-            let scope =
-                match arkret_sdk::RealmId::new(realm_id.clone()).and_then(
-                    |realm_id| match circle_id {
-                        Some(circle_id) => arkret_sdk::CircleId::new(circle_id).map(|circle_id| {
-                            arkret_sdk::ScopeRef::Circle {
-                                realm_id,
-                                circle_id,
-                            }
-                        }),
-                        None => Ok(arkret_sdk::ScopeRef::Realm { realm_id }),
-                    },
-                ) {
-                    Ok(scope) => scope,
-                    Err(error) => {
-                        fail_optimistic_send_row(
-                            messages,
-                            &local_id,
-                            format!("send failed: {error}"),
-                        );
-                        status_msg.set(format!("send failed: {error}"));
-                        return;
-                    }
+        };
+        if let Err(error) = crate::transport::agent_interaction::require_public_targets(
+            &base_url,
+            api_token.clone(),
+            &realm_id,
+            shared_agent_targets,
+        )
+        .await
+        {
+            fail_optimistic_chat_send(
+                messages,
+                chat_draft,
+                status_msg,
+                &local_id,
+                &body,
+                format!("Send blocked: {error:#}"),
+            );
+            return;
+        }
+        let content = match chat_content_with_mentions(&body, content, &mentions) {
+            Ok(content) => content,
+            Err(error) => {
+                fail_optimistic_send_row(messages, &local_id, format!("send failed: {error:#}"));
+                {
+                    let next_value = format!("send failed: {error:#}");
+                    status_msg.revise(|value| *value = next_value);
                 };
-            let content = match crate::attachments::compose_draft_attachments(content, &attachment_drafts, &scope) {
-                Ok(content) => content,
-                Err(error) => { fail_optimistic_send_row(messages, &local_id, format!("send failed: {error:#}")); status_msg.set(format!("send failed: {error:#}")); return; }
+                return;
+            }
+        };
+        let local_operation_id =
+            crate::operation::LocalOperationId::from_holder_key(local_id.clone()).to_string();
+        let api = match authed_api_with_sync(&base_url, api_token, wait_for) {
+            Ok(api) => api,
+            Err(error) => {
+                fail_optimistic_send_row(messages, &local_id, format!("send failed: {error:#}"));
+                {
+                    let next_value = format!("send failed: {error:#}");
+                    status_msg.revise(|value| *value = next_value);
+                };
+                return;
+            }
+        };
+        let scope =
+            match arkret_sdk::RealmId::new(realm_id.clone()).and_then(|realm_id| match circle_id {
+                Some(circle_id) => arkret_sdk::CircleId::new(circle_id).map(|circle_id| {
+                    arkret_sdk::ScopeRef::Circle {
+                        realm_id,
+                        circle_id,
+                    }
+                }),
+                None => Ok(arkret_sdk::ScopeRef::Realm { realm_id }),
+            }) {
+                Ok(scope) => scope,
+                Err(error) => {
+                    fail_optimistic_send_row(messages, &local_id, format!("send failed: {error}"));
+                    {
+                        let next_value = format!("send failed: {error}");
+                        status_msg.revise(|value| *value = next_value);
+                    };
+                    return;
+                }
             };
-            let content_for_store = serde_json::to_value(&content).unwrap_or(serde_json::Value::Null);
-            // The §4.5 mention-routing sidecar exists so an encrypted Realm can
-            // route a notification without revealing the mentioned DID. A
-            // plaintext send already carries `mentions` in the clear, so it gets
-            // no sidecar.
-            let mention_values_for_store = mention_nodes_to_values(&mentions);
-            match send_ordinary_chat_message(
-                &api,
-                crate::app::runtime_adapter::state_store_handle(state_store),
-                &realm_id,
-                scope,
-                &strand_id,
-                arkret_sdk::MessageAuthoringContent::Plaintext {
-                    content,
-                    metadata: None,
-                },
-                reply_to.as_deref(),
-                local_operation_id.clone(),
-            )
-            .await
-            {
-                Ok(resp) => {
-                    pending_draft.record_send_status(resp.status);
-                    match serde_json::to_value(AcceptedChatMessageOperation {
-                        event_id: &resp.event_id,
-                        kind: event_kind_str::MESSAGE_CREATE,
-                        actor_id: &actor,
-                        body: &body,
-                        content: &content_for_store,
-                        strand_id: &strand_id,
-                        message_id: &local_id,
-                        mentions: &mention_values_for_store,
-                        reply_to: reply_to.as_deref(),
-                        status: &resp.status,
-                    }) {
-                        Ok(raw_operation) => state_store.write().append_raw_operation(
+        let content = match crate::attachments::compose_draft_attachments(
+            content,
+            &attachment_drafts,
+            &scope,
+        ) {
+            Ok(content) => content,
+            Err(error) => {
+                fail_optimistic_send_row(messages, &local_id, format!("send failed: {error:#}"));
+                {
+                    let next_value = format!("send failed: {error:#}");
+                    status_msg.revise(|value| *value = next_value);
+                };
+                return;
+            }
+        };
+        let content_for_store = serde_json::to_value(&content).unwrap_or(serde_json::Value::Null);
+        // The §4.5 mention-routing sidecar exists so an encrypted Realm can
+        // route a notification without revealing the mentioned DID. A
+        // plaintext send already carries `mentions` in the clear, so it gets
+        // no sidecar.
+        let mention_values_for_store = mention_nodes_to_values(&mentions);
+        match send_ordinary_chat_message(
+            &api,
+            state_store.handle(),
+            &realm_id,
+            scope,
+            &strand_id,
+            arkret_sdk::MessageAuthoringContent::Plaintext {
+                content,
+                metadata: None,
+            },
+            reply_to.as_deref(),
+            local_operation_id.clone(),
+        )
+        .await
+        {
+            Ok(resp) => {
+                pending_draft.record_send_status(resp.status);
+                match serde_json::to_value(AcceptedChatMessageOperation {
+                    event_id: &resp.event_id,
+                    kind: event_kind_str::MESSAGE_CREATE,
+                    actor_id: &actor,
+                    body: &body,
+                    content: &content_for_store,
+                    strand_id: &strand_id,
+                    message_id: &local_id,
+                    mentions: &mention_values_for_store,
+                    reply_to: reply_to.as_deref(),
+                    status: &resp.status,
+                }) {
+                    Ok(raw_operation) => state_store.write(|value| {
+                        value.append_raw_operation(
                             local_operation_id.clone(),
                             Some(realm_id),
                             raw_operation,
-                        ),
-                        Err(error) => tracing::error!(
-                            %error,
-                            event_id = %resp.event_id,
-                            "accepted chat operation could not be cached"
-                        ),
-                    }
-                    if let Some(found) = messages
-                        .write()
+                        )
+                    }),
+                    Err(error) => tracing::error!(
+                        %error,
+                        event_id = %resp.event_id,
+                        "accepted chat operation could not be cached"
+                    ),
+                }
+                messages.revise(|values| {
+                    if let Some(found) = values
                         .iter_mut()
                         .find(|candidate| candidate.matches_id_or_protocol(&local_id))
                     {
@@ -1140,39 +1230,48 @@ pub(super) fn send_plaintext_message(
                         found.failed = false;
                         found.error = None;
                     }
-                    if resp.status == garth::SendQueueStatus::Committed {
-                        frontier_state.set(resp.event_id.clone());
-                        let barrier = state_store.read().begin_durable_flush();
-                        let persisted = match barrier {
-                            Ok(barrier) => barrier.wait().await,
-                            Err(error) => Err(error),
-                        };
-                        if let Err(error) = persisted {
-                            status_msg.set(format!(
+                });
+                if resp.status == garth::SendQueueStatus::Committed {
+                    {
+                        let next_value = resp.event_id.clone();
+                        frontier_state.revise(|value| *value = next_value);
+                    };
+                    let barrier = state_store.read(|value| value.begin_durable_flush());
+                    let persisted = match barrier {
+                        Ok(barrier) => barrier.wait().await,
+                        Err(error) => Err(error),
+                    };
+                    if let Err(error) = persisted {
+                        {
+                            let next_value = format!(
                                 "Message committed, but this device could not save its history: {error}"
-                            ));
-                            return;
-                        }
+                            );
+                            status_msg.revise(|value| *value = next_value);
+                        };
+                        return;
                     }
-                    status_msg.set(if resp.status == garth::SendQueueStatus::Committed {
+                }
+                {
+                    let next_value = if resp.status == garth::SendQueueStatus::Committed {
                         "Message sent".to_owned()
                     } else {
                         "Message queued; waiting for server confirmation".to_owned()
-                    });
-                }
-                Err(failure) => {
-                    pending_draft.record_failure(&failure);
-                    tracing::warn!(
-                        event_id = %local_id,
-                        error = %failure,
-                        "chat send did not reach an accepted result"
-                    );
-                    present_chat_send_failure(
-                        messages, status_msg, chat_draft, &local_id, &body, &failure,
-                    );
-                }
+                    };
+                    status_msg.revise(|value| *value = next_value);
+                };
             }
-        });
+            Err(failure) => {
+                pending_draft.record_failure(&failure);
+                tracing::warn!(
+                    event_id = %local_id,
+                    error = %failure,
+                    "chat send did not reach an accepted result"
+                );
+                present_chat_send_failure(
+                    messages, status_msg, chat_draft, &local_id, &body, &failure,
+                );
+            }
+        }
     });
 }
 
@@ -1183,9 +1282,9 @@ pub(super) fn send_plaintext_message(
 /// are durable and the drain owns them, so marking the bubble failed would
 /// invite the user to author a duplicate of a message that may already exist.
 pub(super) fn present_chat_send_failure(
-    mut messages: Signal<Vec<ChatMessage>>,
-    mut status_msg: Signal<String>,
-    mut chat_draft: Signal<String>,
+    messages: Cage<Vec<ChatMessage>>,
+    status_msg: Cage<String>,
+    chat_draft: Cage<String>,
     local_id: &str,
     body: &str,
     failure: &garth::MessageAuthoringFailure,
@@ -1197,20 +1296,27 @@ pub(super) fn present_chat_send_failure(
         failure,
         garth::MessageAuthoringFailure::SubmissionOutcomeUnknown { .. }
     ) {
-        status_msg.set(message);
+        {
+            let next_value = message;
+            status_msg.revise(|value| *value = next_value);
+        };
         return;
     }
     if matches!(
         failure,
         garth::MessageAuthoringFailure::Refused { code, .. } if code == "space_membership_denied"
     ) {
-        messages
-            .write()
-            .retain(|candidate| candidate.id != local_id);
-        if chat_draft().trim().is_empty() {
-            chat_draft.set(body.to_owned());
+        messages.revise(|value| value.retain(|candidate| candidate.id != local_id));
+        if chat_draft.get().trim().is_empty() {
+            {
+                let next_value = body.to_owned();
+                chat_draft.revise(|value| *value = next_value);
+            };
         }
-        status_msg.set(message);
+        {
+            let next_value = message;
+            status_msg.revise(|value| *value = next_value);
+        };
         return;
     }
     super::super::model::fail_optimistic_chat_send(
@@ -1223,16 +1329,17 @@ pub(super) fn present_chat_send_failure(
 /// Three of the plaintext path's exit arms wrote the same three fields on the
 /// same lookup; a fourth arm that forgets one of them leaves a bubble
 /// spinning forever.
-fn fail_optimistic_send_row(mut messages: Signal<Vec<ChatMessage>>, local_id: &str, error: String) {
-    if let Some(found) = messages
-        .write()
-        .iter_mut()
-        .find(|candidate| candidate.matches_id_or_protocol(local_id))
-    {
-        found.pending = false;
-        found.failed = true;
-        found.error = Some(error);
-    }
+fn fail_optimistic_send_row(messages: Cage<Vec<ChatMessage>>, local_id: &str, error: String) {
+    messages.revise(|values| {
+        if let Some(found) = values
+            .iter_mut()
+            .find(|candidate| candidate.matches_id_or_protocol(local_id))
+        {
+            found.pending = false;
+            found.failed = true;
+            found.error = Some(error);
+        }
+    });
 }
 
 /// One message sent into an active private sidecar, routed back to the source
@@ -1257,31 +1364,34 @@ pub(super) struct SidecarSendRequest {
 }
 
 pub(super) fn send_sidecar_message(controller: ChatController, request: SidecarSendRequest) {
-    let hosted = consume_context::<crate::sidecar::HostedSidecarStateContext>().0;
+    let Some(application) = application_context(controller) else {
+        return;
+    };
+    let hosted = application.hosted_sidecar;
     send_sidecar_message_with_hosted(controller, hosted, request);
 }
 
 fn send_sidecar_message_with_hosted(
     controller: ChatController,
-    mut hosted: Signal<Option<crate::sidecar::HostedSidecarState>>,
+    hosted: Cage<Option<crate::sidecar::HostedSidecarState>>,
     request: SidecarSendRequest,
 ) {
-    let mut messages = controller.messages;
-    let mut status_msg = controller.status_msg;
-    let mut chat_draft = controller.draft;
-    let attachment_drafts = controller.attachments.peek().clone();
-    let mut draft_attachments = controller.attachments;
-    let mut picker = controller.mention_picker_state;
-    let picker_at_send = picker.peek().clone();
-    let mut sending = controller.sidecar_send_pending;
-    if *sending.peek() {
+    let messages = controller.messages;
+    let status_msg = controller.status_msg;
+    let chat_draft = controller.draft;
+    let attachment_drafts = controller.attachments.get_untracked().clone();
+    let draft_attachments = controller.attachments;
+    let picker = controller.mention_picker_state;
+    let picker_at_send = picker.get_untracked().clone();
+    let sending = controller.sidecar_send_pending;
+    if sending.get_untracked() {
         trace_private_send_stage("private_submit_already_pending");
         return;
     }
     let authoring_fence = match crate::transport::auth::AuthoringSessionFence::capture() {
         Ok(fence)
-            if consume_context::<crate::app::SessionContext>()
-                .active_account()
+            if crate::presentation::current_context()
+                .and_then(|context| context.active_account.try_get().ok().flatten())
                 .is_some_and(|active| {
                     active.authority == request.authority && active.device_id == request.device_id
                 }) =>
@@ -1290,66 +1400,76 @@ fn send_sidecar_message_with_hosted(
         }
         _ => {
             trace_private_send_stage("private_submit_session_replaced");
-            status_msg
-                .set("Private Sidecar message was not sent: account session changed".to_owned());
+            {
+                let next_value =
+                    "Private Sidecar message was not sent: account session changed".to_owned();
+                status_msg.revise(|value| *value = next_value);
+            };
             return;
         }
     };
-    sending.set(true);
-    messages.write().push(ChatMessage {
-        protocol_content: None,
-        local_scope: None,
-        realm_id: request.session.source_realm_id.clone(),
-        id: request.local_id.clone(),
-        protocol_message_id: Some(request.local_id.clone()),
-        actor_id: crate::mls_api_helpers::local_account_actor_id(&request.actor).ok(),
-        sender: request.actor.clone(),
-        executed_by: None,
-        body: request.body.clone(),
-        content_format: Some(arkret_sdk::TextFormat::Markdown),
-        timestamp: chrono::Utc::now().format("%H:%M").to_string(),
-        created_at: Some(chrono::Utc::now()),
-        strand_id: request.session.source_strand_id.clone(),
-        reply_to: None,
-        reactions: Vec::new(),
-        redacted: false,
-        edited: false,
-        revisions: Vec::new(),
-        revision_source: None,
-        pending: true,
-        failed: false,
-        error: None,
-        mentions: request.mentions.clone(),
-        crypto_state: MessageCryptoState::Plaintext,
+    {
+        let next_value = true;
+        sending.revise(|value| *value = next_value);
+    };
+    messages.revise(|value| {
+        value.push(ChatMessage {
+            protocol_content: None,
+            local_scope: None,
+            realm_id: request.session.source_realm_id.clone(),
+            id: request.local_id.clone(),
+            protocol_message_id: Some(request.local_id.clone()),
+            actor_id: crate::mls_api_helpers::local_account_actor_id(&request.actor).ok(),
+            sender: request.actor.clone(),
+            executed_by: None,
+            body: request.body.clone(),
+            content_format: Some(arkret_sdk::TextFormat::Markdown),
+            timestamp: chrono::Utc::now().format("%H:%M").to_string(),
+            created_at: Some(chrono::Utc::now()),
+            strand_id: request.session.source_strand_id.clone(),
+            reply_to: None,
+            reactions: Vec::new(),
+            redacted: false,
+            edited: false,
+            revisions: Vec::new(),
+            revision_source: None,
+            pending: true,
+            failed: false,
+            error: None,
+            mentions: request.mentions.clone(),
+            crypto_state: MessageCryptoState::Plaintext,
+        })
     });
-    let mut reply_to = controller.reply_to_message;
-    reply_to.set(None);
-    let state_store = consume_context::<crate::app::SessionContext>().state_store;
-    dioxus::core::Runtime::current().in_scope(messages.origin_scope(), || {
-        dioxus::core::spawn(async move {
-            let SidecarSendRequest {
-                base_url,
-                api_token,
-                session,
-                addressed_agent_ids,
-                draft_at_send,
-                sidecar_strand_id,
-                source_event_id,
-                actor,
-                authority,
-                device_id,
-                local_id,
-                body,
-                mentions,
-            } = request;
-            trace_private_send_stage("private_submit_started");
-            let resolved_mentions = mentions;
-            let view = match crate::transport::auth::authed_api_with_sync(
-                &base_url,
-                api_token.clone(),
-                None,
-            )
-            .and_then(|api| api.sdk_http_client())
+    let reply_to = controller.reply_to_message;
+    {
+        let next_value = None;
+        reply_to.revise(|value| *value = next_value);
+    };
+    let Some(application) = application_context(controller) else {
+        return;
+    };
+    let state_store = application.state_store.clone();
+    super::super::task::dispatch(async move {
+        let SidecarSendRequest {
+            base_url,
+            api_token,
+            session,
+            addressed_agent_ids,
+            draft_at_send,
+            sidecar_strand_id,
+            source_event_id,
+            actor,
+            authority,
+            device_id,
+            local_id,
+            body,
+            mentions,
+        } = request;
+        trace_private_send_stage("private_submit_started");
+        let resolved_mentions = mentions;
+        let view =
+            match crate::transport::auth::authed_api_with_sync(&base_url, api_token.clone(), None)
+                .and_then(|api| api.sdk_http_client())
             {
                 Ok(http) => http
                     .agent_sidecar_get(&session.sidecar_id)
@@ -1357,56 +1477,57 @@ fn send_sidecar_message_with_hosted(
                     .map_err(anyhow::Error::from),
                 Err(error) => Err(error),
             };
-            let outcome = match view {
-                Ok(view) => {
-                    let modes = require_current_private_targets(
-                        &base_url,
-                        api_token.clone(),
-                        &session.source_realm_id,
-                        &authority,
-                        &resolved_mentions,
-                        &addressed_agent_ids,
-                    )
-                    .await
-                    .and_then(|_| authoring_fence.check());
-                    match modes {
-                        Err(error) => Err(error),
-                        Ok(()) => {
-                            super::submit_source_routed_sidecar_message(
-                                &base_url,
-                                api_token,
-                                &actor,
-                                &authority,
-                                &device_id,
-                                &session.source_realm_id,
-                                &session.source_strand_id,
-                                &sidecar_strand_id,
-                                source_event_id.as_deref(),
-                                &body,
-                                &attachment_drafts,
-                                &resolved_mentions,
-                                &addressed_agent_ids,
-                                state_store,
-                                &view,
-                            )
-                            .await
-                        }
+        let outcome = match view {
+            Ok(view) => {
+                let modes = require_current_private_targets(
+                    &base_url,
+                    api_token.clone(),
+                    &session.source_realm_id,
+                    &authority,
+                    &resolved_mentions,
+                    &addressed_agent_ids,
+                )
+                .await
+                .and_then(|_| authoring_fence.check());
+                match modes {
+                    Err(error) => Err(error),
+                    Ok(()) => {
+                        super::submit_source_routed_sidecar_message(
+                            application.clone(),
+                            &base_url,
+                            api_token,
+                            &actor,
+                            &authority,
+                            &device_id,
+                            &session.source_realm_id,
+                            &session.source_strand_id,
+                            &sidecar_strand_id,
+                            source_event_id.as_deref(),
+                            &body,
+                            &attachment_drafts,
+                            &resolved_mentions,
+                            &addressed_agent_ids,
+                            state_store,
+                            &view,
+                        )
+                        .await
                     }
                 }
-                Err(error) => Err(error),
-            };
-            match outcome {
-                Ok(routed) => {
-                    draft_attachments
-                        .write()
-                        .retain(|a| !attachment_drafts.iter().any(|used| used.id == a.id));
-                    trace_private_send_stage(if routed.history_pending.is_some() {
-                        "private_submit_accepted_history_pending"
-                    } else {
-                        "private_submit_accepted_history_verified"
-                    });
-                    if let Some(found) = messages
-                        .write()
+            }
+            Err(error) => Err(error),
+        };
+        match outcome {
+            Ok(routed) => {
+                draft_attachments.revise(|value| {
+                    value.retain(|a| !attachment_drafts.iter().any(|used| used.id == a.id))
+                });
+                trace_private_send_stage(if routed.history_pending.is_some() {
+                    "private_submit_accepted_history_pending"
+                } else {
+                    "private_submit_accepted_history_verified"
+                });
+                messages.revise(|values| {
+                    if let Some(found) = values
                         .iter_mut()
                         .find(|candidate| candidate.matches_id_or_protocol(&local_id))
                     {
@@ -1416,56 +1537,65 @@ fn send_sidecar_message_with_hosted(
                         found.error = None;
                         found.mentions = resolved_mentions;
                     }
-                    status_msg.set(match routed.history_pending {
+                });
+                {
+                    let next_value = match routed.history_pending {
                         Some(reason) => format!(
                             "Private Sidecar message accepted; awaiting verified history: {reason}"
                         ),
                         None => "Private Sidecar message sent".to_owned(),
-                    });
-                    let open_snapshot = hosted.peek().clone();
-                    if let Some(mut open) = open_snapshot.filter(|open| {
-                        authoring_fence.check_session_identity().is_ok()
-                            && open.sidecar_id == session.sidecar_id
+                    };
+                    status_msg.revise(|value| *value = next_value);
+                };
+                let open_snapshot = hosted.get_untracked().clone();
+                if let Some(mut open) = open_snapshot.filter(|open| {
+                    authoring_fence.check_session_identity().is_ok()
+                        && open.sidecar_id == session.sidecar_id
+                        && open.controller_account_id == session.controller_account_id
+                        && open.matches_route(&session.source_realm_id, &session.source_strand_id)
+                }) {
+                    open.addressed_agent_ids = addressed_agent_ids;
+                    if hosted.get_untracked().as_ref() != Some(&open) {
+                        {
+                            let next_value = Some(open);
+                            hosted.revise(|value| *value = next_value);
+                        };
+                    }
+                }
+                if authoring_fence.check_session_identity().is_ok()
+                    && chat_draft.get_untracked().as_str() == draft_at_send
+                    && picker.get_untracked() == picker_at_send
+                    && controller.selected_channel.get_untracked() == session.source_strand_id
+                    && hosted.get_untracked().as_ref().is_some_and(|open| {
+                        open.sidecar_id == session.sidecar_id
                             && open.controller_account_id == session.controller_account_id
                             && open
                                 .matches_route(&session.source_realm_id, &session.source_strand_id)
-                    }) {
-                        open.addressed_agent_ids = addressed_agent_ids;
-                        if hosted.peek().as_ref() != Some(&open) {
-                            hosted.set(Some(open));
-                        }
-                    }
-                    if authoring_fence.check_session_identity().is_ok()
-                        && chat_draft.peek().as_str() == draft_at_send
-                        && *picker.peek() == picker_at_send
-                        && (controller.selected_channel)() == session.source_strand_id
-                        && hosted.peek().as_ref().is_some_and(|open| {
-                            open.sidecar_id == session.sidecar_id
-                                && open.controller_account_id == session.controller_account_id
-                                && open.matches_route(
-                                    &session.source_realm_id,
-                                    &session.source_strand_id,
-                                )
-                        })
+                    })
+                {
                     {
-                        chat_draft.set(String::new());
-                        picker.write().clear();
-                    }
-                }
-                Err(error) => {
-                    trace_private_send_stage("private_submit_failed");
-                    fail_optimistic_chat_send(
-                        messages,
-                        chat_draft,
-                        status_msg,
-                        &local_id,
-                        &body,
-                        format!("Private Sidecar message was not sent: {error:#}"),
-                    )
+                        let next_value = String::new();
+                        chat_draft.revise(|value| *value = next_value);
+                    };
+                    picker.revise(|value| value.clear());
                 }
             }
-            sending.set(false);
-        })
+            Err(error) => {
+                trace_private_send_stage("private_submit_failed");
+                fail_optimistic_chat_send(
+                    messages,
+                    chat_draft,
+                    status_msg,
+                    &local_id,
+                    &body,
+                    format!("Private Sidecar message was not sent: {error:#}"),
+                )
+            }
+        }
+        {
+            let next_value = false;
+            sending.revise(|value| *value = next_value);
+        };
     });
 }
 
@@ -1494,25 +1624,27 @@ pub(super) struct EncryptedSendRequest {
     pub shared_agent_targets: Vec<arkret_sdk::AccountId>,
     /// Present only when the MLS backup prompt is mounted; a first encrypted
     /// write arms it.
-    pub backup_trigger_signal: Option<Signal<bool>>,
+    pub backup_trigger_signal: Option<Cage<bool>>,
 }
 
 pub(super) fn send_encrypted_message(
     controller: ChatController,
-    mut frontier_state: Signal<String>,
+    frontier_state: Cage<String>,
     request: EncryptedSendRequest,
 ) {
-    let mut messages = controller.messages;
-    let mut status_msg = controller.status_msg;
+    let messages = controller.messages;
+    let status_msg = controller.status_msg;
     let chat_draft = controller.draft;
-    let attachment_drafts = controller.attachments.peek().clone();
-    let selection_revision = *controller.selection_revision.peek();
-    let selected = controller.selected_channel.peek().clone();
+    let attachment_drafts = controller.attachments.get_untracked().clone();
+    let selection_revision = controller.selection_revision.get_untracked();
+    let selected = controller.selected_channel.get_untracked().clone();
     let mut pending_draft =
         PendingComposerDraft::new(controller, &request.message_id, &request.body);
-    let session = consume_context::<crate::app::SessionContext>();
-    let session_generation = *session.session_generation.peek();
-    let mut state_store = session.state_store;
+    let Some(session) = application_context(controller) else {
+        return;
+    };
+    let session_generation = session.session_generation.get_untracked();
+    let state_store = session.state_store.clone();
     let EncryptedSendRequest {
         base_url: base,
         api_token,
@@ -1534,17 +1666,31 @@ pub(super) fn send_encrypted_message(
     let base_for_backup_trigger = base.clone();
     let token_for_backup_trigger = api_token.clone();
     let actor_for_backup_trigger = actor.clone();
-    dioxus::core::Runtime::current().in_scope(messages.origin_scope(), || {
-      dioxus::core::spawn(async move {
-        if let Some(found) = messages
-            .write()
-            .iter_mut()
-            .find(|candidate| candidate.id == message_id)
+    super::super::task::dispatch(async move {
+        messages.revise(|values| {
+            if let Some(found) = values
+                .iter_mut()
+                .find(|candidate| candidate.id == message_id)
+            {
+                found.mentions = mentions.clone();
+            }
+        });
+        if let Err(error) = crate::transport::agent_interaction::require_public_targets(
+            &base,
+            api_token.clone(),
+            &realm,
+            shared_agent_targets.clone(),
+        )
+        .await
         {
-            found.mentions = mentions.clone();
-        }
-        if let Err(error) = crate::transport::agent_interaction::require_public_targets(&base, api_token.clone(), &realm, shared_agent_targets.clone()).await {
-            fail_optimistic_chat_send(messages, chat_draft, status_msg, &message_id, &body, format!("Send blocked: {error:#}"));
+            fail_optimistic_chat_send(
+                messages,
+                chat_draft,
+                status_msg,
+                &message_id,
+                &body,
+                format!("Send blocked: {error:#}"),
+            );
             return;
         }
         // Encrypt the canonical Content Block JSON with
@@ -1560,24 +1706,86 @@ pub(super) fn send_encrypted_message(
             .iter()
             .filter_map(|mention| mention.as_audience_mention().cloned())
             .collect::<Vec<_>>();
-        let scope = match arkret_sdk::RealmId::new(realm.clone()).and_then(|realm_id| match circle_id.as_ref() {
-            Some(id) => arkret_sdk::CircleId::new(id.clone()).map(|circle_id| arkret_sdk::ScopeRef::Circle {realm_id, circle_id}),
-            None => Ok(arkret_sdk::ScopeRef::Realm {realm_id}),
-        }) { Ok(scope) => scope, Err(e) => { status_msg.set(e.to_string()); return; } };
-        let content_api = match authed_api_with_sync(&base, api_token.clone(), wait_for.clone()) { Ok(api) => api, Err(e) => {status_msg.set(e.to_string()); return;} };
-        let target_active = || *controller.selection_revision.peek() == selection_revision
-            && *controller.selected_channel.peek() == selected
-            && *session.session_generation.peek() == session_generation;
-        let mut secure_content_block = match crate::attachments::with_target_fence(
-            crate::attachments::private_message_body(&content_api,
-                crate::app::runtime_adapter::state_store_handle(state_store), &authority_for_sidecar, &did, &scope, &strand_id, &message_id, &body),
-            target_active,
-        ).await {
-            Ok(content) => content,
-            Err(e) => { fail_optimistic_chat_send(messages, chat_draft, status_msg, &message_id, &body, format!("Send Secure: {e:#}")); return; }
+        let scope = match arkret_sdk::RealmId::new(realm.clone()).and_then(|realm_id| {
+            match circle_id.as_ref() {
+                Some(id) => arkret_sdk::CircleId::new(id.clone()).map(|circle_id| {
+                    arkret_sdk::ScopeRef::Circle {
+                        realm_id,
+                        circle_id,
+                    }
+                }),
+                None => Ok(arkret_sdk::ScopeRef::Realm { realm_id }),
+            }
+        }) {
+            Ok(scope) => scope,
+            Err(e) => {
+                {
+                    let next_value = e.to_string();
+                    status_msg.revise(|value| *value = next_value);
+                };
+                return;
+            }
         };
-        secure_content_block = match crate::attachments::compose_draft_attachments(secure_content_block, &attachment_drafts, &scope) {
-            Ok(content) => content, Err(e) => { fail_optimistic_chat_send(messages, chat_draft, status_msg, &message_id, &body, e.to_string()); return; }
+        let content_api = match authed_api_with_sync(&base, api_token.clone(), wait_for.clone()) {
+            Ok(api) => api,
+            Err(e) => {
+                {
+                    let next_value = e.to_string();
+                    status_msg.revise(|value| *value = next_value);
+                };
+                return;
+            }
+        };
+        let target_active = || {
+            controller.selection_revision.get_untracked() == selection_revision
+                && controller.selected_channel.get_untracked() == selected
+                && session.session_generation.get_untracked() == session_generation
+        };
+        let mut secure_content_block = match crate::attachments::with_target_fence(
+            crate::attachments::private_message_body(
+                &content_api,
+                state_store.handle(),
+                &authority_for_sidecar,
+                &did,
+                &scope,
+                &strand_id,
+                &message_id,
+                &body,
+            ),
+            target_active,
+        )
+        .await
+        {
+            Ok(content) => content,
+            Err(e) => {
+                fail_optimistic_chat_send(
+                    messages,
+                    chat_draft,
+                    status_msg,
+                    &message_id,
+                    &body,
+                    format!("Send Secure: {e:#}"),
+                );
+                return;
+            }
+        };
+        secure_content_block = match crate::attachments::compose_draft_attachments(
+            secure_content_block,
+            &attachment_drafts,
+            &scope,
+        ) {
+            Ok(content) => content,
+            Err(e) => {
+                fail_optimistic_chat_send(
+                    messages,
+                    chat_draft,
+                    status_msg,
+                    &message_id,
+                    &body,
+                    e.to_string(),
+                );
+                return;
+            }
         };
         if !actor_mentions.is_empty() {
             secure_content_block = match secure_content_block.with_mentions(actor_mentions) {
@@ -1679,7 +1887,7 @@ pub(super) fn send_encrypted_message(
         // shared secure send builder.
         let secure_build = match crate::views::secure_send::build_secure_send(
             &api,
-            state_store,
+            &state_store.handle(),
             &realm,
             &authority_for_sidecar,
             &actor,
@@ -1742,9 +1950,23 @@ pub(super) fn send_encrypted_message(
         // raw_operation record (X10.6 sidecar re-key) is
         // keyed on it.
         let msg_local_op_id = secure_build.message_local_operation_id.to_string();
-        spawn(async move {
-            if let Err(error) = crate::transport::agent_interaction::require_public_targets(&base, api_token, &realm_for_record, shared_agent_targets).await {
-                fail_optimistic_chat_send(messages, chat_draft, status_msg, &message_id_for_failure, &body_for_restore, format!("Send blocked: {error:#}"));
+        super::super::task::dispatch(async move {
+            if let Err(error) = crate::transport::agent_interaction::require_public_targets(
+                &base,
+                api_token,
+                &realm_for_record,
+                shared_agent_targets,
+            )
+            .await
+            {
+                fail_optimistic_chat_send(
+                    messages,
+                    chat_draft,
+                    status_msg,
+                    &message_id_for_failure,
+                    &body_for_restore,
+                    format!("Send blocked: {error:#}"),
+                );
                 return;
             }
             // Shared submit: forced ak.mls.commit first
@@ -1752,8 +1974,9 @@ pub(super) fn send_encrypted_message(
             // schedule + move record), then the encrypted
             // ak.message.create.
             let outcome = crate::views::secure_send::submit_secure_send(
+                session.clone(),
                 &api,
-                state_store,
+                &state_store.handle(),
                 secure_build,
                 &realm_for_record,
                 None,
@@ -1825,61 +2048,69 @@ pub(super) fn send_encrypted_message(
                 .unwrap_or_else(|| message_id_for_record.clone());
             // Acceptance belongs to the original account and device even when
             // the UI session was replaced while submission awaited the Station.
-            if *session.session_generation.peek() != session_generation
-                || !session.active_account.peek().as_ref().is_some_and(|account|
-                    account.authority == authority_for_sidecar && account.device_id == device_for_cache)
-                || state_store.peek().active_authority().as_ref() != Some(&authority_for_sidecar)
+            if session.session_generation.get_untracked() != session_generation
+                || !session
+                    .active_account
+                    .get_untracked()
+                    .as_ref()
+                    .is_some_and(|account| {
+                        account.authority == authority_for_sidecar
+                            && account.device_id == device_for_cache
+                    })
+                || state_store.read(|value| value.active_authority()).as_ref()
+                    != Some(&authority_for_sidecar)
             {
                 return;
             }
             {
-                let mut store = state_store.write();
-                // X10.6: persist the message identity
-                // (message_id + strand_id + actor), NOT the
-                // plaintext body, into the raw_operation
-                // record so the tab-switch / reload rebuild
-                // can reconstruct the sidecar key
-                // `message:{message_id}` under `strand_id`.
-                // `message_id` is the protocol id derived
-                // from the accepted event id, matching the
-                // read-side projection
-                // (`message_protocol_message_id_from_candidates`
-                // derives from `event_id` first).
-                // The body lives only in the account-private
-                // `mls_private_plaintext` sidecar saved just
-                // below. `encrypted_content` marks the row as
-                // E2EE for readers with no sidecar (another
-                // device / member).
-                store.append_raw_operation(
-                    msg_local_op_id.clone(),
-                    Some(realm_for_record.clone()),
-                    json!({
-                        "event_id": resp_event_id.clone(),
-                        "kind": event_kind_str::MESSAGE_CREATE,
-                        "actor_id": actor_for_record.clone(),
-                        "strand_id": strand_id_for_record.clone(),
-                        "message_id": protocol_message_id.clone(),
-                        "encrypted_content": true,
-                        "status": resp_status.clone(),
-                    }),
-                );
-                // BUG B (X9): persist the message plaintext
-                // into the author-owned sidecar so reload / a
-                // new device can render the author's own
-                // encrypted messages (OpenMLS forbids an
-                // author from decrypting their own
-                // ciphertext). Keyed by
-                // `message:{protocol_message_id}` under the
-                // discussion strand — the same derived id the
-                // read side looks up — sharing the
-                // `mls_private_plaintext` map that the X5.3
-                // cross-device backup already snapshots.
-                store.save_private_plaintext(
-                    &realm_for_record,
-                    &strand_id_for_sidecar,
-                    &format!("message:{protocol_message_id}"),
-                    &content_for_sidecar,
-                );
+                state_store.write(|store| {
+                    // X10.6: persist the message identity
+                    // (message_id + strand_id + actor), NOT the
+                    // plaintext body, into the raw_operation
+                    // record so the tab-switch / reload rebuild
+                    // can reconstruct the sidecar key
+                    // `message:{message_id}` under `strand_id`.
+                    // `message_id` is the protocol id derived
+                    // from the accepted event id, matching the
+                    // read-side projection
+                    // (`message_protocol_message_id_from_candidates`
+                    // derives from `event_id` first).
+                    // The body lives only in the account-private
+                    // `mls_private_plaintext` sidecar saved just
+                    // below. `encrypted_content` marks the row as
+                    // E2EE for readers with no sidecar (another
+                    // device / member).
+                    store.append_raw_operation(
+                        msg_local_op_id.clone(),
+                        Some(realm_for_record.clone()),
+                        json!({
+                            "event_id": resp_event_id.clone(),
+                            "kind": event_kind_str::MESSAGE_CREATE,
+                            "actor_id": actor_for_record.clone(),
+                            "strand_id": strand_id_for_record.clone(),
+                            "message_id": protocol_message_id.clone(),
+                            "encrypted_content": true,
+                            "status": resp_status.clone(),
+                        }),
+                    );
+                    // BUG B (X9): persist the message plaintext
+                    // into the author-owned sidecar so reload / a
+                    // new device can render the author's own
+                    // encrypted messages (OpenMLS forbids an
+                    // author from decrypting their own
+                    // ciphertext). Keyed by
+                    // `message:{protocol_message_id}` under the
+                    // discussion strand — the same derived id the
+                    // read side looks up — sharing the
+                    // `mls_private_plaintext` map that the X5.3
+                    // cross-device backup already snapshots.
+                    store.save_private_plaintext(
+                        &realm_for_record,
+                        &strand_id_for_sidecar,
+                        &format!("message:{protocol_message_id}"),
+                        &content_for_sidecar,
+                    );
+                });
             }
             // The optimistic row is allowed to settle
             // only after both durable stores contain
@@ -1888,32 +2119,43 @@ pub(super) fn send_encrypted_message(
             // immediately after the UI reports success
             // must not race either IndexedDB write.
             let durable_result: anyhow::Result<()> = async {
-                let account_barrier = state_store.read().begin_durable_flush()?;
+                let account_barrier = state_store.read(|value| value.begin_durable_flush())?;
                 super::super::persist_chat_cache_after_account_barrier(
-                    state_store,
+                    state_store.clone(),
                     &authority_for_sidecar,
                     account_barrier.wait(),
-                    || *session.session_generation.peek() == session_generation
-                        && session.active_account.peek().as_ref().is_some_and(|account|
-                            account.authority == authority_for_sidecar && account.device_id == device_for_cache),
+                    || {
+                        session.session_generation.get_untracked() == session_generation
+                            && session.active_account.get_untracked().as_ref().is_some_and(
+                                |account| {
+                                    account.authority == authority_for_sidecar
+                                        && account.device_id == device_for_cache
+                                },
+                            )
+                    },
                     crate::secure_key_store::default_secure_key_store("inkson").as_ref(),
-                ).await
+                )
+                .await
             }
             .await;
             if let Err(error) = durable_result {
                 let message = format!(
                     "Encrypted message was accepted, but local recovery state could not be persisted: {error}"
                 );
-                if let Some(found) = messages
-                    .write()
-                    .iter_mut()
-                    .find(|candidate| candidate.matches_id_or_protocol(&message_id_for_lookup))
+                messages.revise(|values| {
+                    if let Some(found) = values
+                        .iter_mut()
+                        .find(|candidate| candidate.matches_id_or_protocol(&message_id_for_lookup))
+                    {
+                        found.pending = false;
+                        found.failed = true;
+                        found.error = Some(message.clone());
+                    }
+                });
                 {
-                    found.pending = false;
-                    found.failed = true;
-                    found.error = Some(message.clone());
-                }
-                status_msg.set(message);
+                    let next_value = message;
+                    status_msg.revise(|value| *value = next_value);
+                };
                 return;
             }
             // BUG A (X9): clear the optimistic bubble's
@@ -1922,32 +2164,40 @@ pub(super) fn send_encrypted_message(
             // path). Reconcile the local id to the server
             // event_id so the synced copy dedups against this
             // echo.
-            if let Some(found) = messages
-                .write()
-                .iter_mut()
-                .find(|candidate| candidate.matches_id_or_protocol(&message_id_for_lookup))
-            {
-                found.id = resp_event_id.clone();
-                found.protocol_message_id = Some(protocol_message_id.clone());
-                found.pending = resp_status != "committed";
-                found.failed = false;
-                found.error = None;
-            }
-            if resp_status == "committed" {
-                frontier_state.set(resp_event_id.clone());
-            }
-            status_msg.set(if resp_status == "committed" {
-                "Encrypted message sent".to_owned()
-            } else {
-                "Encrypted message queued; waiting for server confirmation".to_owned()
+            messages.revise(|values| {
+                if let Some(found) = values
+                    .iter_mut()
+                    .find(|candidate| candidate.matches_id_or_protocol(&message_id_for_lookup))
+                {
+                    found.id = resp_event_id.clone();
+                    found.protocol_message_id = Some(protocol_message_id.clone());
+                    found.pending = resp_status != "committed";
+                    found.failed = false;
+                    found.error = None;
+                }
             });
+            if resp_status == "committed" {
+                {
+                    let next_value = resp_event_id.clone();
+                    frontier_state.revise(|value| *value = next_value);
+                };
+            }
+            {
+                let next_value = if resp_status == "committed" {
+                    "Encrypted message sent".to_owned()
+                } else {
+                    "Encrypted message queued; waiting for server confirmation".to_owned()
+                };
+                status_msg.revise(|value| *value = next_value);
+            };
             crate::components::schedule_mls_recovery_backups_after_encrypted_write(
+                session.clone(),
                 base_for_backup_trigger.clone(),
                 token_for_backup_trigger.clone(),
                 authority_for_sidecar.clone(),
                 actor_for_backup_trigger.clone(),
                 device_for_sidecar_backup.to_string(),
-                state_store,
+                state_store.handle(),
             );
 
             // X11.2 — first-write trigger. After this
@@ -1956,12 +2206,13 @@ pub(super) fn send_encrypted_message(
             // fall back to the prompt. Best-effort.
             if let Some(signal) = backup_trigger_signal {
                 crate::components::maybe_auto_backup_mls_after_encrypted_write(
+                    session.clone(),
                     base_for_backup_trigger.clone(),
                     token_for_backup_trigger.clone(),
                     authority_for_sidecar.clone(),
                     actor_for_backup_trigger.clone(),
                     device_for_sidecar_backup.to_string(),
-                    crate::app::runtime_adapter::state_store_handle(state_store),
+                    state_store.handle(),
                     signal,
                 )
                 .await;
@@ -1973,8 +2224,19 @@ pub(super) fn send_encrypted_message(
             // client MUST NOT manufacture one after an ordinary
             // message send, including inside a Direct Conversation.
         });
-      });
     });
+}
+
+fn application_context(
+    controller: ChatController,
+) -> Option<Rc<crate::presentation::InksonContext>> {
+    let context = crate::presentation::current_context();
+    if context.is_none() {
+        let _ = controller
+            .status_msg
+            .try_revise(|value| *value = "The application session is unavailable.".into());
+    }
+    context
 }
 
 #[cfg(test)]
@@ -1985,20 +2247,19 @@ mod pending_sidecar_draft_tests {
     use super::*;
 
     type Signals = (
-        Signal<String>,
-        Signal<crate::messaging::mentions::MentionPickerState>,
-        Signal<String>,
-        Signal<bool>,
+        Cage<String>,
+        Cage<crate::messaging::mentions::MentionPickerState>,
+        Cage<String>,
+        Cage<bool>,
     );
     type Control = Rc<RefCell<Option<Signals>>>;
 
-    fn harness(control: Control) -> Element {
-        let draft = use_signal(|| "original private draft".to_owned());
-        let picker = use_signal(crate::messaging::mentions::MentionPickerState::new);
-        let strand = use_signal(|| "source strand".to_owned());
-        let background_ready = use_signal(|| false);
+    fn harness(scope: &Scope, control: Control) {
+        let draft = scope.cage("original private draft".to_owned());
+        let picker = scope.cage(crate::messaging::mentions::MentionPickerState::new());
+        let strand = scope.cage("source strand".to_owned());
+        let background_ready = scope.cage(false);
         *control.borrow_mut() = Some((draft, picker, strand, background_ready));
-        rsx! { input { value: draft() } }
     }
 
     #[test]
@@ -2030,35 +2291,47 @@ mod pending_sidecar_draft_tests {
     #[test]
     fn delayed_sidecar_send_requires_unchanged_draft_binding_and_source_revision() {
         let control = Rc::new(RefCell::new(None));
-        let mut dom = VirtualDom::new_with_props(harness, control.clone());
-        dom.rebuild_to_vec();
-        let (mut draft, mut picker, mut strand, mut background) = control.borrow().unwrap();
-        dom.in_runtime(|| {
+        let app = glory::ui::App::memory();
+        harness(app.scope(), control.clone());
+        let (draft, picker, strand, background) = control.borrow().unwrap();
+        {
             let fence = PendingSidecarDraftFence::capture(draft, picker, strand);
-            background.set(true);
+            background.revise(|value| *value = true);
             assert!(
                 fence.finish(),
                 "background readiness must not cancel the frozen draft"
             );
 
             let fence = PendingSidecarDraftFence::capture(draft, picker, strand);
-            draft.set("ordinary edited message".into());
-            draft.set("original private draft".into());
+            {
+                let next_value = "ordinary edited message".into();
+                draft.revise(|value| *value = next_value);
+            };
+            {
+                let next_value = "original private draft".into();
+                draft.revise(|value| *value = next_value);
+            };
             assert!(
                 !fence.finish(),
                 "restoring the same text cannot restore the old Send authorization"
             );
 
             let fence = PendingSidecarDraftFence::capture(draft, picker, strand);
-            picker.write().clear();
+            picker.revise(|value| value.clear());
             assert!(
                 !fence.finish(),
                 "mention binding writes invalidate delayed Send"
             );
 
             let fence = PendingSidecarDraftFence::capture(draft, picker, strand);
-            strand.set("different source".into());
-            strand.set("source strand".into());
+            {
+                let next_value = "different source".into();
+                strand.revise(|value| *value = next_value);
+            };
+            {
+                let next_value = "source strand".into();
+                strand.revise(|value| *value = next_value);
+            };
             assert!(
                 !fence.finish(),
                 "returning to the same Strand cannot resume an old Send"
@@ -2066,29 +2339,35 @@ mod pending_sidecar_draft_tests {
 
             let fence = PendingSidecarDraftFence::capture(draft, picker, strand);
             assert!(fence.finish());
-        });
+        };
     }
 
     #[tokio::test]
     async fn pending_access_resumes_only_the_unchanged_private_send() {
         for edit_during_wait in [false, true] {
             let control = Rc::new(RefCell::new(None));
-            let mut dom = VirtualDom::new_with_props(harness, control.clone());
-            dom.rebuild_to_vec();
-            let (mut draft, picker, strand, mut background) = control.borrow().unwrap();
-            let fence = dom.in_runtime(|| PendingSidecarDraftFence::capture(draft, picker, strand));
+            let app = glory::ui::App::memory();
+            harness(app.scope(), control.clone());
+            let (draft, picker, strand, background) = control.borrow().unwrap();
+            let fence = PendingSidecarDraftFence::capture(draft, picker, strand);
             let reads = std::cell::Cell::new(0);
             let result = wait_for_sidecar_access(
                 || {
                     let call = reads.get() + 1;
                     reads.set(call);
-                    dom.in_runtime(|| {
-                        background.set(true);
+                    {
+                        background.revise(|value| *value = true);
                         if call == 2 && edit_during_wait {
-                            draft.set("edited ordinary draft".into());
-                            draft.set("original private draft".into());
+                            {
+                                let next_value = "edited ordinary draft".into();
+                                draft.revise(|value| *value = next_value);
+                            };
+                            {
+                                let next_value = "original private draft".into();
+                                draft.revise(|value| *value = next_value);
+                            };
                         }
-                    });
+                    };
                     std::future::ready(Ok((call == 2).then_some(true)))
                 },
                 || {

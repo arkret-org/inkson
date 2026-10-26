@@ -1,19 +1,18 @@
 use std::time::Duration;
 
-/// Register the task with the scope that owns its signals. Runtime::spawn
-/// alone does not register scope cancellation and can outlive those signals.
+/// Bind cancellation to the explicit owner of the state used by this task.
 pub(crate) fn spawn_owned(
-    scope: dioxus::core::ScopeId,
+    scope: &glory::Scope,
     future: impl std::future::Future<Output = ()> + 'static,
-) -> dioxus::core::Task {
-    dioxus::core::Runtime::current().in_scope(scope, || dioxus::core::spawn(future))
+) -> std::result::Result<glory::core::TaskToken, glory::core::AccessError> {
+    scope.owner().spawn(future)
 }
 
 // `tokio::time::sleep` reads `std::time::Instant::now()` and panics on
 // wasm32-unknown-unknown ("time not implemented on this platform"). Route the
 // wasm build through a cancellation-safe `setTimeout` future. The stock
 // `gloo_timers::future::TimeoutFuture` calls `unwrap_throw()` when its callback
-// races a dropped receiver. Dioxus routinely cancels effects during a route or
+// races a dropped receiver. The UI owner cancels effects during a route or
 // session-state transition, so that otherwise-benign race can abort the whole
 // wasm instance and leave the browser tab unresponsive.
 #[cfg(not(target_arch = "wasm32"))]
@@ -102,79 +101,79 @@ mod tests {
     use std::cell::{Cell, RefCell};
     use std::rc::Rc;
 
-    use dioxus::prelude::*;
-
     use super::*;
 
-    #[derive(Clone, PartialEq)]
-    struct Probe {
-        mounted: Rc<RefCell<Option<Signal<bool>>>>,
-        scopes: Rc<Cell<Option<(ScopeId, ScopeId)>>>,
+    #[derive(Default)]
+    struct Executor(RefCell<Vec<Rc<RefCell<Option<glory::core::LocalFuture>>>>>);
+    impl glory::core::Host for Executor {
+        fn spawn(
+            &self,
+            future: glory::core::LocalFuture,
+        ) -> std::result::Result<Box<dyn FnOnce()>, glory::core::HostError> {
+            let task = Rc::new(RefCell::new(Some(future)));
+            self.0.borrow_mut().push(task.clone());
+            Ok(Box::new(move || {
+                task.borrow_mut().take();
+            }))
+        }
+        fn wake(&self) {}
+        fn now(&self) -> Duration {
+            Duration::ZERO
+        }
+    }
+    struct PendingWrite {
+        value: glory::Cage<u32>,
         dropped: Rc<Cell<bool>>,
     }
-
-    struct PendingWrite {
-        value: Signal<u32>,
-        probe: Probe,
-    }
-
     impl std::future::Future for PendingWrite {
         type Output = ();
-
         fn poll(
-            mut self: std::pin::Pin<&mut Self>,
+            self: std::pin::Pin<&mut Self>,
             _: &mut std::task::Context<'_>,
         ) -> std::task::Poll<()> {
-            self.probe.scopes.set(Some((
-                dioxus::core::current_scope_id(),
-                self.value.origin_scope(),
-            )));
-            self.value.set(1);
+            self.value.revise(|value| *value = 1);
             std::task::Poll::Pending
         }
     }
-
     impl Drop for PendingWrite {
         fn drop(&mut self) {
-            self.probe.dropped.set(true);
+            self.dropped.set(true);
         }
     }
-
-    #[component]
-    fn SignalOwner(probe: Probe) -> Element {
-        let value = use_signal(|| 0);
-        use_hook(move || {
-            spawn_owned(value.origin_scope(), PendingWrite { value, probe });
-        });
-        rsx! { div { "{value}" } }
-    }
-
-    fn lifecycle_root(probe: Probe) -> Element {
-        let mounted = use_signal(|| true);
-        *probe.mounted.borrow_mut() = Some(mounted);
-        rsx! { if mounted() { SignalOwner { probe } } }
-    }
-
     #[test]
-    fn owned_task_updates_live_signals_and_cancels_on_owner_unmount() {
-        let probe = Probe {
-            mounted: Rc::new(RefCell::new(None)),
-            scopes: Rc::new(Cell::new(None)),
-            dropped: Rc::new(Cell::new(false)),
-        };
-        let mut dom = VirtualDom::new_with_props(lifecycle_root, probe.clone());
-        dom.rebuild_in_place();
-        dom.render_immediate_to_vec();
-        let (task_scope, signal_scope) = probe.scopes.get().expect("task writes while mounted");
-        assert_eq!(task_scope, signal_scope);
-        assert_ne!(task_scope, ScopeId::ROOT);
-        assert!(!probe.dropped.get());
-        dom.in_runtime(|| probe.mounted.borrow().unwrap().set(false));
-        dom.render_immediate_to_vec();
+    fn owned_task_updates_live_state_and_cancels_on_owner_unmount() {
+        let executor = Rc::new(Executor::default());
+        let app = glory::App::with_host(executor.clone(), glory::render::memory::Memory::new);
+        let child = app.scope().child().unwrap();
+        let value = child.cage(0_u32);
+        let dropped = Rc::new(Cell::new(false));
+        spawn_owned(
+            &child,
+            PendingWrite {
+                value,
+                dropped: dropped.clone(),
+            },
+        )
+        .unwrap();
+        let task = executor.0.borrow()[0].clone();
+        let _ = task
+            .borrow_mut()
+            .as_mut()
+            .unwrap()
+            .as_mut()
+            .poll(&mut std::task::Context::from_waker(std::task::Waker::noop()));
+        assert_eq!(value.get(), 1);
+        assert!(!dropped.get());
+        child.dispose();
         assert!(
-            probe.dropped.get(),
-            "owner unmount must cancel the pending write"
+            dropped.get(),
+            "retiring the child must drop its pending state writer"
         );
+        assert!(app.scope().is_alive());
+        assert!(matches!(
+            spawn_owned(&child, async {}),
+            Err(glory::core::AccessError::Disposed)
+        ));
     }
 
     #[test]

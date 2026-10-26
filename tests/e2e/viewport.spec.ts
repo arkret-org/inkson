@@ -1,14 +1,14 @@
+import { byClass } from "./strandsHarness";
 // Responsive viewport coverage for the web build.
 //
 // Native iOS / Android artifacts are still host-shell stubs, so this
-// suite exercises the shared Dioxus UI in web mode at phone and narrow
+// suite exercises the shared Glory/Sapid UI in web mode at phone and narrow
 // tablet widths.
 
 import { expect, test, type Page } from "@playwright/test";
-import { mockArkretApi } from "./mockArkretApi";
+import { DEMO_REALM, mockArkretApi } from "./mockArkretApi";
 import { writeSessionGrantInjection } from "./strandsHarness";
 
-const DEMO_REALM = "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk";
 const DESKTOP_VIEWPORT = { width: 1440, height: 900 };
 const MOBILE_VIEWPORT = { width: 390, height: 844 }; // iPhone 13
 const TABLET_VIEWPORT = { width: 820, height: 1180 }; // iPad Air narrow layout
@@ -23,7 +23,7 @@ async function bootAuthenticatedShell(page: Page, viewport = MOBILE_VIEWPORT) {
   await page.goto("/", { waitUntil: "domcontentloaded", timeout: 120_000 });
   await writeSessionGrantInjection(page);
   await page.reload({ waitUntil: "domcontentloaded" });
-  await expect(page.getByTestId("client-shell")).toBeVisible({
+  await expect(page.locator(".shell.app")).toBeVisible({
     timeout: 120_000,
   });
 }
@@ -46,7 +46,7 @@ test.describe("responsive viewport — desktop", () => {
   }) => {
     await bootAuthenticatedShell(page, DESKTOP_VIEWPORT);
 
-    const drawer = page.getByTestId("mobile-nav-drawer");
+    const drawer = page.locator(".mobile-drawer");
     const mobileNavLinks = [
       "mobile-dashboard-nav-button",
       "mobile-directory-nav-button",
@@ -55,13 +55,14 @@ test.describe("responsive viewport — desktop", () => {
 
     await expect(drawer).toBeHidden();
     for (const testId of mobileNavLinks) {
-      const link = page.getByTestId(testId);
+      const href = { "mobile-dashboard-nav-button": "/", "mobile-directory-nav-button": "/directory", "mobile-settings-nav-button": "/settings" }[testId];
+      const link = page.locator(`.mobile-primary-nav a[href="${href}"]`);
       const ancestry = await link.evaluate((element) => {
         const result: string[] = [];
         let current = element.parentElement;
         while (current && result.length < 4) {
           result.push(
-            current.dataset.testid ?? current.className ?? current.tagName,
+            [...current.classList].find(name => name === "mobile-primary-nav" || name === "mobile-drawer") ?? current.className ?? current.tagName,
           );
           current = current.parentElement;
         }
@@ -69,11 +70,11 @@ test.describe("responsive viewport — desktop", () => {
       });
       expect(ancestry.slice(0, 2)).toEqual([
         "mobile-primary-nav",
-        "mobile-nav-drawer",
+        "mobile-drawer",
       ]);
       await expect(link).toBeHidden();
       await expect(
-        page.locator(`.shell.app > [data-testid="${testId}"]`),
+        page.locator(`.shell.app > [class~="${testId}"]`),
       ).toHaveCount(0);
     }
   });
@@ -85,18 +86,18 @@ test.describe("responsive viewport — mobile", () => {
   }) => {
     await bootAuthenticatedShell(page);
 
-    await expect(page.getByTestId("dashboard-panel")).toBeVisible();
-    await expect(page.getByTestId("mobile-shellbar")).toBeVisible();
-    await expect(page.getByTestId("mobile-theme-toggle")).toBeVisible();
-    await expect(page.getByTestId("sidebar")).toBeHidden();
+    await expect(byClass(page, "dashboard-panel")).toBeVisible();
+    await expect(byClass(page, "mobile-shellbar")).toBeVisible();
+    await expect(page.locator(".mobile-shellbar .theme-toggle-button")).toBeVisible();
+    await expect(byClass(page, "sidebar")).toBeHidden();
     await expect(page.locator(".realm-header")).toBeHidden();
 
     const layout = await page.evaluate(() => {
       const shellbar = document
-        .querySelector('[data-testid="mobile-shellbar"]')
+        .querySelector('[class~="mobile-shellbar"]')
         ?.getBoundingClientRect();
       const main = document
-        .querySelector('[data-testid="main-view"]')
+        .querySelector('.main.realm')
         ?.getBoundingClientRect();
       return shellbar && main
         ? {
@@ -118,12 +119,12 @@ test.describe("responsive viewport — mobile", () => {
   test("drawer stays within the phone viewport", async ({ page }) => {
     await bootAuthenticatedShell(page);
 
-    await page.getByTestId("mobile-nav-toggle").click();
-    await expect(page.getByTestId("mobile-nav-drawer")).toBeVisible();
-    await expect(page.getByTestId("mobile-dashboard-nav-button")).toBeVisible();
-    await expect(page.getByTestId("mobile-directory-nav-button")).toBeVisible();
+    await byClass(page, "mobile-nav-toggle").click();
+    await expect(page.locator(".mobile-drawer")).toBeVisible();
+    await expect(page.locator('.mobile-primary-nav a[href="/"]')).toBeVisible();
+    await expect(page.locator('.mobile-primary-nav a[href="/directory"]')).toBeVisible();
 
-    const drawer = await page.getByTestId("mobile-nav-drawer").boundingBox();
+    const drawer = await page.locator(".mobile-drawer").boundingBox();
     expect(drawer).not.toBeNull();
     expect(drawer!.y).toBeGreaterThanOrEqual(MOBILE_VIEWPORT.height * 0.05);
     expect(drawer!.y + drawer!.height).toBeLessThanOrEqual(
@@ -136,16 +137,16 @@ test.describe("responsive viewport — mobile", () => {
     await bootAuthenticatedShell(page);
     await page.goto(`/kanban/${DEMO_REALM}`, { waitUntil: "domcontentloaded" });
 
-    await expect(page.getByTestId("kanban-panel")).toBeVisible();
-    await expect(page.getByTestId("kanban-board-grid")).toBeVisible();
-    await page.getByTestId("kanban-board-grid").scrollIntoViewIfNeeded();
+    await expect(byClass(page, "kanban-panel")).toBeVisible();
+    await expect(byClass(page, "kanban-board-grid")).toBeVisible();
+    await byClass(page, "kanban-board-grid").scrollIntoViewIfNeeded();
 
     const metrics = await page.evaluate(() => {
       const realm = document
         .querySelector(".realm-body")
         ?.getBoundingClientRect();
       const board = document
-        .querySelector('[data-testid="kanban-board-grid"]')
+        .querySelector('[class~="kanban-board-grid"]')
         ?.getBoundingClientRect();
       return realm && board
         ? {
@@ -178,16 +179,16 @@ test.describe("responsive viewport — narrow tablet", () => {
       timeout: 120_000,
     });
 
-    await expect(page.getByTestId("kanban-panel")).toBeVisible({
+    await expect(byClass(page, "kanban-panel")).toBeVisible({
       timeout: 60_000,
     });
-    await expect(page.getByTestId("mobile-shellbar")).toBeVisible();
+    await expect(byClass(page, "mobile-shellbar")).toBeVisible();
 
     const metrics = await page.evaluate(() => {
       const realm = document
         .querySelector(".realm-body")
         ?.getBoundingClientRect();
-      const board = document.querySelector('[data-testid="kanban-board-grid"]');
+      const board = document.querySelector('[class~="kanban-board-grid"]');
       const boardRect = board?.getBoundingClientRect();
       return realm && board && boardRect
         ? {
@@ -214,16 +215,16 @@ test.describe("ARIA — keyboard + screen reader", () => {
   test("mobile navigation controls expose expanded state", async ({ page }) => {
     await bootAuthenticatedShell(page);
 
-    const toggle = page.getByTestId("mobile-nav-toggle");
+    const toggle = byClass(page, "mobile-nav-toggle");
     await expect(toggle).toHaveAttribute("aria-label", "Open menu");
     await expect(toggle).toHaveAttribute("aria-expanded", "false");
     await expect(toggle).toHaveAttribute(
       "aria-controls",
       "mobile-navigation-drawer",
     );
-    await page.getByTestId("mobile-nav-toggle").click();
+    await byClass(page, "mobile-nav-toggle").click();
     await expect(toggle).toHaveAttribute("aria-label", "Close menu");
     await expect(toggle).toHaveAttribute("aria-expanded", "true");
-    await expect(page.getByTestId("mobile-nav-drawer")).toBeVisible();
+    await expect(page.locator(".mobile-drawer")).toBeVisible();
   });
 });

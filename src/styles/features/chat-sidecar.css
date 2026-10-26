@@ -38,9 +38,9 @@
   grid-template-columns: minmax(0, 1fr) auto;
 }
 
-.sidecar-mode [data-testid="chat-call-voice-button"],
-.sidecar-mode [data-testid="chat-call-video-button"],
-.sidecar-mode [data-testid="watch-level-picker"],
+.sidecar-mode [class~="chat-call-voice-button"],
+.sidecar-mode [class~="chat-call-video-button"],
+.sidecar-mode [class~="watch-level-picker"],
 .sidecar-mode .pinned-bar {
   display: none;
 }

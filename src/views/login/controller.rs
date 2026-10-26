@@ -7,11 +7,12 @@
 
 use super::*;
 
-/// Signals the sign-in panel's writes fold their outcome back into.
-#[derive(Clone, Copy, PartialEq)]
+/// UI outcomes remain owned by the page that started authentication.
+#[derive(Clone)]
 pub(super) struct LoginController {
-    pub(super) is_busy: Signal<bool>,
-    pub(super) auth_status: Signal<String>,
+    pub(super) is_busy: glory::Cage<bool>,
+    pub(super) auth_status: glory::Cage<String>,
+    pub(super) owner: glory::ui::WeakScope,
 }
 
 impl LoginController {
@@ -25,22 +26,24 @@ impl LoginController {
         ui_locale: String,
         returning_principal: Option<arkret_sdk::Did>,
         persisted_account: Option<crate::config::ActiveAccountContext>,
-        reset_state_store: SyncSignal<crate::state::LocalStateStore>,
+        reset_state_store: crate::presentation::SharedStateStore,
     ) {
         let Self {
-            mut is_busy,
-            mut auth_status,
+            is_busy,
+            auth_status,
             ..
         } = self;
-        let mut reset_state_store = reset_state_store;
-        spawn(async move {
+        let Some(owner) = self.owner.upgrade() else {
+            return;
+        };
+        if let Err(error) = owner.spawn(async move {
             #[cfg(target_arch = "wasm32")]
             if let Err(error) =
                 crate::secure_key_store::ensure_wasm_secure_key_store_ready("inkson").await
             {
                 tracing::warn!(%error, "secure store unavailable before sign-in");
-                is_busy.set(false);
-                auth_status.set(format!(
+                is_busy.revise(|current| *current = false);
+                auth_status.revise(|current| *current = format!(
                     "Could not open browser secure storage for sign-in: {error}. Close other Inkson tabs and try again."
                 ));
                 return;
@@ -50,26 +53,25 @@ impl LoginController {
                 match returning_device_id(secure_store.as_ref(), expected) {
                     Ok(device) => device,
                     Err(error) => {
-                        is_busy.set(false);
-                        auth_status.set(error);
+                        is_busy.revise(|current| *current = false);
+                        auth_status.revise(|current| *current = error);
                         return;
                     }
                 }
             } else {
                 None
             };
-            let (retained_state, current_checkpoint) = {
-                let store = reset_state_store.read();
+            let (retained_state, current_checkpoint) = reset_state_store.read(|store| {
                 (
                     store.retained_account_state(),
                     store.pending_principal_registration(),
                 )
-            };
+            });
             let retained_state = match retained_state {
                 Ok(state) => state,
                 Err(error) => {
-                    is_busy.set(false);
-                    auth_status.set(format!("Could not read the retained account: {error}"));
+                    is_busy.revise(|current| *current = false);
+                    auth_status.revise(|current| *current = format!("Could not read the retained account: {error}"));
                     return;
                 }
             };
@@ -82,16 +84,15 @@ impl LoginController {
             {
                 Ok(retained) => retained,
                 Err(error) => {
-                    is_busy.set(false);
-                    auth_status.set(error);
+                    is_busy.revise(|current| *current = false);
+                    auth_status.revise(|current| *current = error);
                     return;
                 }
             };
             if let Some(retained) = retained.as_ref()
                 && let Some((handoff, checkpoint, record)) = retained.onboarding.as_ref()
             {
-                let result = {
-                    let mut store = reset_state_store.write();
+                let result = reset_state_store.write(|store| {
                     let pending =
                         crate::secure_key_store::PendingLocalStore::new(retained.device_id.clone());
                     store
@@ -110,24 +111,23 @@ impl LoginController {
                                 .map_err(anyhow::Error::from)
                         })
                         .and_then(|()| store.begin_durable_flush())
-                };
+                });
                 let result = match result {
                     Ok(barrier) => barrier.wait().await,
                     Err(error) => Err(error),
                 };
                 if let Err(error) = result {
-                    is_busy.set(false);
-                    auth_status.set(format!("Could not restore the accepted setup: {error}"));
+                    is_busy.revise(|current| *current = false);
+                    auth_status.revise(|current| *current = format!("Could not restore the accepted setup: {error}"));
                     return;
                 }
             }
-            let (pending_handoff, pending_checkpoint) = {
-                let store = reset_state_store.read();
+            let (pending_handoff, pending_checkpoint) = reset_state_store.read(|store| {
                 (
                     store.pending_account_handoff(),
                     store.pending_principal_registration(),
                 )
-            };
+            });
             let checkpoint_disposition = pending_checkpoint.as_ref().map(|checkpoint| {
                 crate::identity::account_auth::registration_checkpoint_disposition(
                     checkpoint,
@@ -147,8 +147,7 @@ impl LoginController {
                     tracing::warn!(%error, "clear stale identity-creation request artifact failed");
                 }
                 if let Err(error) = reset_state_store
-                    .write()
-                    .set_pending_principal_registration(None)
+                    .write(|store| store.set_pending_principal_registration(None))
                 {
                     tracing::warn!(%error, "prune stale identity-creation checkpoint failed");
                 }
@@ -162,18 +161,16 @@ impl LoginController {
                 .map(|handoff| handoff.device_id.clone())
                 .or_else(|| {
                     reset_state_store
-                        .read()
-                        .pending_login()
+                        .read(LocalStateStore::pending_login)
                         .map(|pending| pending.device_id.to_string())
                 })
                 .filter(|device| crate::config::is_valid_device_id(device));
             let resume_account_handoff = if let Some(pending_device) = pending_device.as_deref() {
-                let mut store = reset_state_store.write();
-                recover_pending_handoff_for_sign_in(
-                    &mut store,
+                reset_state_store.write(|store| recover_pending_handoff_for_sign_in(
+                    store,
                     secure_store.as_ref(),
                     pending_device,
-                )
+                ))
             } else {
                 false
             };
@@ -184,8 +181,8 @@ impl LoginController {
                 {
                     Some(Ok(candidate)) => candidate,
                     Some(Err(error)) => {
-                        is_busy.set(false);
-                        auth_status.set(error);
+                        is_busy.revise(|current| *current = false);
+                        auth_status.revise(|current| *current = error);
                         return;
                     }
                     None => None,
@@ -202,8 +199,8 @@ impl LoginController {
             let pending_device_id = match arkret_sdk::DeviceId::new(device.clone()) {
                 Ok(device_id) => device_id,
                 Err(error) => {
-                    is_busy.set(false);
-                    auth_status.set(format!("The generated device id is invalid: {error}"));
+                    is_busy.revise(|current| *current = false);
+                    auth_status.revise(|current| *current = format!("The generated device id is invalid: {error}"));
                     return;
                 }
             };
@@ -248,15 +245,15 @@ impl LoginController {
                         secure_store.as_ref(),
                     )
                 {
-                    is_busy.set(false);
-                    auth_status.set(format!(
+                    is_busy.revise(|current| *current = false);
+                    auth_status.revise(|current| *current = format!(
                         "Could not clear the previous pending device pairing: {error}"
                     ));
                     return;
                 }
                 if let Err(error) = pending_store.delete(secure_store.as_ref()) {
-                    is_busy.set(false);
-                    auth_status.set(format!("Could not rotate the pending sign-in key: {error}"));
+                    is_busy.revise(|current| *current = false);
+                    auth_status.revise(|current| *current = format!("Could not rotate the pending sign-in key: {error}"));
                     return;
                 }
             }
@@ -264,8 +261,8 @@ impl LoginController {
                 .save_device_id_durable(secure_store.as_ref())
                 .await
             {
-                is_busy.set(false);
-                auth_status.set(format!(
+                is_busy.revise(|current| *current = false);
+                auth_status.revise(|current| *current = format!(
                     "Could not durably prepare the pending sign-in device: {error}"
                 ));
                 return;
@@ -282,8 +279,8 @@ impl LoginController {
             {
                 Ok(prepared) => prepared,
                 Err(error) => {
-                    is_busy.set(false);
-                    auth_status.set(error);
+                    is_busy.revise(|current| *current = false);
+                    auth_status.revise(|current| *current = error);
                     return;
                 }
             };
@@ -298,62 +295,70 @@ impl LoginController {
                 // soft continuation, so retain the holder key.
                 crate::secure_key_store::set_active_device_seed_scope(None);
                 let resumed = reset_state_store
-                    .write()
-                    .resume_pending_login(&pending_device_id);
+                    .write(|store| store.resume_pending_login(&pending_device_id));
                 debug_assert!(resumed, "validated handoff resume must remain valid");
             } else {
                 // Pre-DID: keep all bootstrap material in the transaction's
                 // `pending.<device_id>` namespace until accepted-context
                 // promotion re-homes it under the resolved principal.
                 reset_state_store
-                    .write()
-                    .begin_pending_login(&pending_device_id, None);
+                    .write(|store| store.begin_pending_login(&pending_device_id, None));
                 if let Err(error) = crate::secure_key_store::reset_device_seed_scope_for_signin(
                     secure_store.as_ref(),
                     &pending_device_id,
                 ) {
                     tracing::warn!(%error, "reset device seed scope for sign-in failed");
                 }
-                reset_state_store.write().set_dpop_device_key(None);
+                reset_state_store.write(|store| store.set_dpop_device_key(None));
             }
             pending_store.activate();
             if let Err(error) = prepared_authorization.launch() {
-                is_busy.set(false);
-                auth_status.set(error);
+                is_busy.revise(|current| *current = false);
+                auth_status.revise(|current| *current = error);
             }
-        });
+        }) {
+            owner.report_error(error);
+        }
     }
 
     /// Refresh the current session credential on demand.
     pub(super) fn refresh_session(
         self,
         session: crate::runtime::session::SessionCoordinator,
-        mut token: Signal<String>,
-        on_login: EventHandler<()>,
+        token: glory::Cage<String>,
+        on_login: std::rc::Rc<dyn Fn()>,
     ) {
         let Self {
-            mut is_busy,
-            mut auth_status,
+            is_busy,
+            auth_status,
             ..
         } = self;
-        spawn(async move {
+        let Some(owner) = self.owner.upgrade() else {
+            return;
+        };
+        if let Err(error) = owner.spawn(async move {
             match session.refresh().await {
                 crate::runtime::session::CurrentSessionRefresh::Credential(session_credential) => {
-                    token.set(session_credential);
-                    auth_status.set("Session restored".to_owned());
-                    on_login.call(());
+                    token.revise(|current| *current = session_credential);
+                    auth_status.revise(|current| *current = "Session restored".to_owned());
+                    on_login();
                 }
                 crate::runtime::session::CurrentSessionRefresh::SignInRequired { reason } => {
-                    auth_status.set(format!("Sign in required: {reason}"));
+                    auth_status.revise(|current| *current = format!("Sign in required: {reason}"));
                 }
                 crate::runtime::session::CurrentSessionRefresh::LoginRequired { reason } => {
-                    auth_status.set(format!("Session could not be restored: {reason}"));
+                    auth_status.revise(|current| {
+                        *current = format!("Session could not be restored: {reason}")
+                    });
                 }
                 crate::runtime::session::CurrentSessionRefresh::RetryLater { reason } => {
-                    auth_status.set(format!("Session refresh pending: {reason}"));
+                    auth_status
+                        .revise(|current| *current = format!("Session refresh pending: {reason}"));
                 }
             }
-            is_busy.set(false);
-        });
+            is_busy.revise(|current| *current = false);
+        }) {
+            owner.report_error(error);
+        }
     }
 }

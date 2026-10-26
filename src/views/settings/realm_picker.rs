@@ -1,9 +1,11 @@
 //! Stable Realm selection for holder-private preference editors.
 
-use dioxus::prelude::*;
+use std::rc::Rc;
 
+use glory::{Cage, Scope};
+
+use crate::presentation::{InksonContext, View};
 use crate::state::LocalStateStore;
-use crate::ui::select::{Select, SelectOption};
 
 pub(super) fn preference_realm_options(store: &LocalStateStore) -> Vec<(String, String)> {
     let joined = store.sync_joined_realm_ids();
@@ -28,55 +30,96 @@ pub(super) fn selected_realm_id(
         .flatten()
 }
 
-/// A controlled picker never substitutes another Realm when its options change.
-#[component]
-pub fn RealmPreferencePicker(
-    options: Vec<(String, String)>,
-    mut selected: Signal<String>,
-    test_id: &'static str,
-) -> Element {
-    let memo_options = options.clone();
-    let value = use_memo(use_reactive!(|(memo_options,)| {
-        Some(
-            selected_realm_id(&memo_options, &selected())
-                .map(|id| id.to_string())
-                .unwrap_or_default(),
-        )
-    }));
-    let choices = options.clone();
-    let placeholder = crate::i18n::tr(if options.is_empty() {
-        "settings.notifications.no_realms"
-    } else {
-        "settings.notifications.select_realm"
+pub(super) fn picker(
+    scope: &Scope,
+    context: Rc<InksonContext>,
+    selected: Cage<String>,
+    key: &str,
+) -> View {
+    let read = context.clone();
+    let options = scope.bond(move || {
+        let _ = read.state_revision.get();
+        read.state_store.read(preference_realm_options)
     });
-    rsx! {
-        label { class: "field",
-            span { class: "field-label", {crate::i18n::tr("friendly.realm")} }
-            Select::<String> {
-                class: "select",
-                "data-testid": test_id,
-                disabled: options.is_empty(),
-                value: Some(value.into()),
-                on_value_change: move |value: Option<String>| {
-                    selected.set(value.filter(|id| selected_realm_id(&choices, id).is_some()).unwrap_or_default());
-                },
-                SelectOption::<String> {
-                    index: 0usize,
-                    value: String::new(),
-                    text_value: placeholder.clone(),
-                    "{placeholder}"
-                }
-                for (index, (id, label)) in options.iter().enumerate() {
-                    SelectOption::<String> {
-                        key: "{id}",
-                        index: index + 1,
-                        value: id.clone(),
-                        "data-realm-id": id.clone(),
-                        text_value: label.clone(),
-                        "{label}"
-                    }
-                }
-            }
+    realm_preference_picker(scope, context, options.into(), selected, key)
+}
+/// The same controlled picker is used by all preference editors and browser conformance tests.
+pub fn realm_preference_picker(
+    scope: &Scope,
+    context: Rc<InksonContext>,
+    options: glory::Lotus<Vec<(String, String)>>,
+    selected: Cage<String>,
+    key: &str,
+) -> View {
+    let key = key.to_owned();
+    let label = context.translated(scope, "friendly.realm");
+    let control = crate::presentation::widgets::reactive(options, move |scope, mut options| {
+        let has_options = !options.is_empty();
+        let placeholder = context.tr(if has_options {
+            "settings.notifications.select_realm"
+        } else {
+            "settings.notifications.no_realms"
+        });
+        options.insert(0, (String::new(), placeholder));
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            use crate::presentation::native_choice::{
+                NativeChoiceOption, NativeChoiceProps, native_choice,
+            };
+            let valid = options.clone();
+            let value = scope.bond(move || Some(selected.get()));
+            native_choice(
+                scope,
+                NativeChoiceProps::new(
+                    format!("{key}-options"),
+                    context.translated(scope, "friendly.realm"),
+                    value,
+                    options
+                        .into_iter()
+                        .map(|(value, label)| NativeChoiceOption::new(value, label))
+                        .collect(),
+                    move |next| {
+                        if let Some(next) = next
+                            && (next.is_empty() || selected_realm_id(&valid, &next).is_some())
+                        {
+                            selected.revise(|value| *value = next);
+                        }
+                    },
+                )
+                .class(format!("select {key}"))
+                .enabled(has_options)
+                .close_label(context.translated(scope, "common.close")),
+            )
         }
-    }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let choices = options.clone();
+            let actual = scope.bond(move || super::widgets::select_key(&choices, &selected.get()));
+            let valid = options.clone();
+            let option_key = format!("{key}-options");
+            Box::new(
+                sapid::select(option_key)
+                    .unstyled()
+                    .class(format!("select {key}"))
+                    .name(context.translated(scope, "friendly.realm"))
+                    .value(actual)
+                    .enabled(has_options)
+                    .options(options.into_iter().enumerate().map(|(index, (_, label))| {
+                        sapid::select_option(format!("opt-{index}"), label)
+                    }))
+                    .on_value_change(move |next| {
+                        if let Some(next) =
+                            next.and_then(|key| super::widgets::select_value(&valid, &key))
+                            && (next.is_empty() || selected_realm_id(&valid, &next).is_some())
+                        {
+                            selected.revise(|value| *value = next);
+                        }
+                    }),
+            )
+        }
+    });
+    crate::presentation::widgets::stack(
+        "field realm-preference-picker",
+        vec![crate::presentation::widgets::plain(label), control],
+    )
 }

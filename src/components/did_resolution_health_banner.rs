@@ -2,9 +2,13 @@
 //!
 //! Renders the availability of the configured Station identity service.
 
-use dioxus::prelude::*;
+use std::rc::Rc;
 
-use super::UiIcon;
+use glory::prelude::*;
+
+use super::ui_icon;
+use crate::presentation::widgets::{line, paragraph, reactive, stack};
+use crate::presentation::{InksonContext, View};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DidResolutionHealthReason {
     IdentityDescribeFailed,
@@ -116,44 +120,49 @@ impl DidResolutionHealth {
     }
 }
 
-#[component]
-pub fn DidResolutionHealthBanner(health: Signal<DidResolutionHealth>) -> Element {
-    let current = health();
-    let Some(presentation) = current.presentation() else {
-        return rsx! {};
-    };
-    let role = if presentation.token == "outage" {
-        "alert"
-    } else {
-        "status"
-    };
-    let live = if presentation.token == "outage" {
-        "assertive"
-    } else {
-        "polite"
-    };
-    let token = presentation.token;
-    let title = crate::i18n::tr(presentation.title);
-    let label = crate::i18n::tr(presentation.label);
-    let detail = crate::i18n::tr(presentation.detail);
-
-    rsx! {
-        div {
-            class: "did-resolution-health-banner did-resolution-health-banner--{token}",
-            role: "{role}",
-            "aria-live": "{live}",
-            "data-testid": "did-resolution-health-banner",
-            "data-health": "{token}",
-            div { class: "did-resolution-health-banner-row",
-                span { class: "did-resolution-health-banner-icon",
-                    UiIcon { name: "alert" }
-                }
-                strong { "{title}" }
-                span { class: "did-resolution-health-banner-label", "{label}" }
-            }
-            p { "{detail}" }
-        }
-    }
+pub fn did_resolution_health_banner(
+    _scope: &Scope,
+    context: Rc<InksonContext>,
+    health: Cage<DidResolutionHealth>,
+) -> View {
+    reactive(health, move |scope, current| {
+        let Some(presentation) = current.presentation() else {
+            return Box::new(widget(|_| Ok(())));
+        };
+        let content = stack(
+            format!(
+                "did-resolution-health-banner did-resolution-health-banner--{}",
+                presentation.token
+            ),
+            vec![
+                line(
+                    "did-resolution-health-banner-row",
+                    vec![
+                        ui_icon("alert"),
+                        paragraph(
+                            "did-resolution-health-banner-title",
+                            context.translated(scope, presentation.title),
+                        ),
+                        paragraph(
+                            "did-resolution-health-banner-label",
+                            context.translated(scope, presentation.label),
+                        ),
+                    ],
+                ),
+                paragraph("", context.translated(scope, presentation.detail)),
+            ],
+        );
+        Box::new(
+            sapid::alert("did-resolution-health")
+                .unstyled()
+                .severity(if presentation.token == "outage" {
+                    sapid::AlertSeverity::Danger
+                } else {
+                    sapid::AlertSeverity::Warning
+                })
+                .fill(content),
+        )
+    })
 }
 
 #[cfg(test)]

@@ -1,3 +1,6 @@
+import { inputByClass } from "./uiControl";
+import { assertSearchSource, searchReference } from "./searchSource";
+import { byClass } from "./strandsHarness";
 import { expect, test } from "@playwright/test";
 import { dismissBlockingRecoveryModal, openKanban, registerStrandsBeforeEach } from "./strandsHarness";
 
@@ -8,13 +11,14 @@ test("an actual late IndexedDB search read cannot republish plaintext after hold
   await openKanban(page);
   await dismissBlockingRecoveryModal(page);
   await page.keyboard.press("Control+F");
-  const panel = page.getByTestId("global-search-panel");
-  const rows = panel.getByTestId("global-search-result-item");
+  const panel = byClass(page, "global-search-panel");
+  const rows = byClass(panel, "global-search-result-item");
   const body = "Alice sent a message in Demo Realm";
-  await panel.getByTestId("global-search-input").fill(body);
-  await panel.getByTestId("global-search-submit").click();
+  await inputByClass(panel, "global-search-input").fill(body);
+  await byClass(panel, "global-search-submit").click();
   await expect(rows).toHaveCount(1);
-  await expect(rows.getByTestId("global-search-result-snippet")).toHaveText(body);
+  await assertSearchSource(rows);
+  await expect(byClass(rows, "global-search-result-snippet")).toHaveText(body);
   await page.route("**/_arkret/self/keys/query", route => route.abort());
   await page.route("**/_arkret/self/auth/**", route => route.abort());
   await page.evaluate(() => {
@@ -42,14 +46,14 @@ test("an actual late IndexedDB search read cannot republish plaintext after hold
   });
   // An automatic refresh may already be paused at the real read barrier.
   // Enter submits when idle; the observed read below proves actual execution.
-  await panel.getByTestId("global-search-input").press("Enter");
+  await inputByClass(panel, "global-search-input").press("Enter");
   await expect.poll(() => page.evaluate(() => (window as unknown as {
     searchReadBarrier: { observed: number };
   }).searchReadBarrier.observed)).toBeGreaterThan(0);
-  await expect(panel.getByTestId("global-search-results-loading")).toBeVisible();
+  await expect(byClass(panel, "global-search-results-loading")).toBeVisible();
   await page.clock.setFixedTime(new Date(Date.now() + 8 * 60 * 60_000 + 1));
   await expect(rows).toHaveCount(0, { timeout: 70_000 });
-  await expect(panel.getByTestId("global-search-results-no-results")).toBeVisible();
+  await expect(byClass(panel, "global-search-results-no-results")).toBeVisible();
   await page.evaluate(() => (window as unknown as {
     searchReadBarrier: { release: () => void };
   }).searchReadBarrier.release());
@@ -57,8 +61,8 @@ test("an actual late IndexedDB search read cannot republish plaintext after hold
     requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
   // A completed older read and a new form submission both retain the expired
   // holder's refusal. The query and source dataset have never been replaced.
-  await panel.getByTestId("global-search-submit").click();
-  await expect(panel.getByTestId("global-search-results-no-results")).toBeVisible();
+  await byClass(panel, "global-search-submit").click();
+  await expect(byClass(panel, "global-search-results-no-results")).toBeVisible();
   await expect(rows).toHaveCount(0);
-  await expect(panel.getByTestId("global-search-input")).toHaveValue(body);
+  await expect(inputByClass(panel, "global-search-input")).toHaveValue(body);
 });

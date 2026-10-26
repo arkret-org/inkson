@@ -1,3 +1,5 @@
+import { inputByClass } from "./uiControl";
+import { byClass } from "./strandsHarness";
 import { expect, test } from "@playwright/test";
 import {
   CURRENT_ASSISTANT_ACCOUNT_ID,
@@ -22,6 +24,17 @@ import {
 registerStrandsBeforeEach();
 
 test("kanban coalesces delayed inventory reads into one worker", async ({ page }, testInfo) => {
+  const projectionStarted = Date.now();
+  const projectionTimeline: Array<{ elapsed: number; kind: string; value: string }> = [];
+  page.on("console", message => {
+    if (message.text().includes("kanban projection ")) projectionTimeline.push({ elapsed:Date.now()-projectionStarted, kind:"console", value:message.text() });
+  });
+  page.on("request", request => {
+    const path = new URL(request.url()).pathname;
+    if (/\/realms\/[^/]+\/(spaces|strands)$/.test(path)) projectionTimeline.push({ elapsed:Date.now()-projectionStarted, kind:"request", value:request.method()+" "+path });
+  });
+  try {
+
   const requests = new Map<import("@playwright/test").Request, "spaces" | "strands">();
   const active = { spaces: 0, strands: 0 };
   const maximum = { spaces: 0, strands: 0 };
@@ -63,9 +76,9 @@ test("kanban coalesces delayed inventory reads into one worker", async ({ page }
   expect(maximum.strands).toBeLessThanOrEqual(1);
   const settled = { ...totals };
   for (let index = 0; index < 20; index++) {
-    await page.getByTestId("kanban-card").first().click();
-    await expect(page.getByTestId("card-detail-edit-button")).toBeEnabled();
-    await page.getByTestId("card-detail-close-button").click();
+    await byClass(page, "kanban-card").first().click();
+    await expect(byClass(page, "card-detail-edit-button")).toBeEnabled();
+    await byClass(page, "card-detail-close-button").click();
   }
   await expect.poll(() => active.spaces + active.strands).toBe(0);
   expect(totals).toEqual(settled);
@@ -73,15 +86,19 @@ test("kanban coalesces delayed inventory reads into one worker", async ({ page }
     body: Buffer.from(JSON.stringify({ totals, maximum, discoveryStatuses }, null, 2)),
     contentType: "application/json",
   });
+
+  } finally {
+    await testInfo.attach("kanban-projection-lifecycle.json", { body:Buffer.from(JSON.stringify(projectionTimeline,null,2)), contentType:"application/json" });
+  }
 });
 
 test("kanban card detail embeds discussion without boundary copy", async ({
   page,
 }) => {
   await openKanban(page);
-  await page.getByTestId("kanban-card").first().click();
-  const detailPopup = page.getByTestId("card-detail-modal");
-  await expect(page.getByTestId("card-detail-overlay")).toBeVisible();
+  await byClass(page, "kanban-card").first().click();
+  const detailPopup = byClass(page, "card-detail-modal");
+  await expect(byClass(page, "card-detail-overlay")).toBeVisible();
   await expect(detailPopup).toHaveAttribute("role", "dialog");
   await expect(detailPopup).toContainText("Discussion");
   await expect(detailPopup).not.toContainText("Primary discussion");
@@ -89,56 +106,54 @@ test("kanban card detail embeds discussion without boundary copy", async ({
   await expect(detailPopup).not.toContainText(
     "card visibility != discussion visibility",
   );
-  await detailPopup.getByTestId("card-detail-edit-button").click();
+  await byClass(detailPopup, "card-detail-edit-button").click();
   await expect(
-    detailPopup.getByTestId("card-detail-save-button"),
+    byClass(detailPopup, "card-detail-save-button"),
   ).toBeVisible();
   await expect(
-    detailPopup.getByTestId("card-detail-cancel-edit-button"),
+    byClass(detailPopup, "card-detail-cancel-edit-button"),
   ).toBeVisible();
-  const descriptionTab = detailPopup.getByTestId("card-detail-tab-description");
-  const synthesisTab = detailPopup.getByTestId("card-detail-tab-synthesis");
-  const discussionTab = detailPopup.getByTestId("card-detail-tab-discussion");
+  const descriptionTab = byClass(detailPopup, "card-detail-tab-description");
+  const synthesisTab = byClass(detailPopup, "card-detail-tab-synthesis");
+  const discussionTab = byClass(detailPopup, "card-detail-tab-discussion");
   await expect(descriptionTab).toBeEnabled();
   await expect(synthesisTab).toBeEnabled();
   await expect(discussionTab).toBeEnabled();
-  const saveButtonBox = await detailPopup
-    .getByTestId("card-detail-save-button")
+  const saveButtonBox = await byClass(detailPopup, "card-detail-save-button")
     .boundingBox();
-  const cancelButtonBox = await detailPopup
-    .getByTestId("card-detail-cancel-edit-button")
+  const cancelButtonBox = await byClass(detailPopup, "card-detail-cancel-edit-button")
     .boundingBox();
   if (!saveButtonBox || !cancelButtonBox) {
     throw new Error("card detail edit action buttons were not measurable");
   }
   expect(saveButtonBox.height).toBeLessThanOrEqual(44);
   expect(cancelButtonBox.height).toBeLessThanOrEqual(44);
-  await detailPopup.getByTestId("card-detail-cancel-edit-button").click();
+  await byClass(detailPopup, "card-detail-cancel-edit-button").click();
 
   await descriptionTab.click();
-  await detailPopup.getByTestId("card-detail-edit-description-button").click();
+  await byClass(detailPopup, "card-detail-edit-description-button").click();
   await expect(
-    detailPopup.locator("#card-detail-description-toast-editor"),
+    detailPopup.getByRole("textbox", { name: "Description", exact: true }),
   ).toBeVisible();
   await synthesisTab.click();
   await expect(synthesisTab).toHaveAttribute("aria-selected", "true");
   await expect(
-    detailPopup.locator("#card-detail-synthesis-toast-editor"),
+    detailPopup.getByRole("textbox", { name: "Synthesis", exact: true }),
   ).toBeVisible();
   await discussionTab.click();
   await expect(discussionTab).toHaveAttribute("aria-selected", "true");
   await synthesisTab.click();
   await expect(
-    detailPopup.locator("#card-detail-synthesis-toast-editor"),
+    detailPopup.getByRole("textbox", { name: "Synthesis", exact: true }),
   ).toBeVisible();
   await descriptionTab.click();
   await expect(
-    detailPopup.locator("#card-detail-description-toast-editor"),
+    detailPopup.getByRole("textbox", { name: "Description", exact: true }),
   ).toBeVisible();
-  await detailPopup.getByTestId("card-detail-cancel-edit-button").click();
+  await byClass(detailPopup, "card-detail-cancel-edit-button").click();
   await synthesisTab.click();
-  await expect(detailPopup.getByTestId("card-synthesis-panel")).toBeVisible();
-  await detailPopup.getByTestId("card-detail-sidebar-tab-members").click();
+  await expect(byClass(detailPopup, "card-synthesis-panel")).toBeVisible();
+  await byClass(detailPopup, "card-detail-sidebar-tab-members").click();
   const selfMention = page.getByRole("button", {
     name: "Mention alice:local.host",
     exact: true,
@@ -148,38 +163,30 @@ test("kanban card detail embeds discussion without boundary copy", async ({
     exact: true,
   });
   await expect(selfMention).toContainText("alice:local.host");
-  await expect(selfMention).not.toContainText(CURRENT_PRINCIPAL_DID);
-  const agentRow = detailPopup.getByTestId("card-detail-agent-row");
-  await expect(agentRow).toHaveAttribute(
-    "data-agent-id",
-    CURRENT_ASSISTANT_CORE_ID,
+  await expect(byClass(selfMention, "card-detail-member")).not.toContainText(CURRENT_PRINCIPAL_DID);
+  const agentRow = byClass(detailPopup, "card-detail-agent-row");
+  await expect(agentMention).toHaveAccessibleDescription(
+    `Agent: ${CURRENT_ASSISTANT_CORE_ID} · Principal: ${CURRENT_ASSISTANT_ACCOUNT_ID.principal_id} · Station: ${CURRENT_ASSISTANT_ACCOUNT_ID.station_id}`,
   );
-  const memberActor = JSON.parse(
-    await agentRow.getAttribute("data-member-id") ?? "null",
-  );
-  expect(memberActor).toEqual({
-    kind: "account",
-    account_id: CURRENT_ASSISTANT_ACCOUNT_ID,
-  });
-  await expect(agentMention.getByTestId("card-detail-member")).toHaveText(
+  await expect(byClass(agentMention, "card-detail-member")).toHaveText(
     "assistant",
   );
   await expect(agentMention).toContainText("Private agent");
 
   await agentMention.click();
   await expect(
-    detailPopup.getByTestId("card-detail-tab-discussion"),
+    byClass(detailPopup, "card-detail-tab-discussion"),
   ).toHaveAttribute("aria-selected", "true");
-  await expect(page.getByTestId("chat-panel")).toBeVisible();
-  await expect(page.getByTestId("open-primary-discussion")).toHaveCount(0);
-  await expect(detailPopup.getByTestId("chat-input")).toHaveValue(
+  await expect(byClass(page, "chat-panel")).toBeVisible();
+  await expect(byClass(page, "open-primary-discussion")).toHaveCount(0);
+  await expect(inputByClass(detailPopup, "chat-input")).toHaveValue(
     "@me/assistant ",
   );
-  await detailPopup.getByTestId("mention-chip").getByRole("button").click();
-  await detailPopup.getByTestId("chat-input").fill("");
+  await byClass(detailPopup, "mention-chip").getByRole("button").click();
+  await inputByClass(detailPopup, "chat-input").fill("");
   await selfMention.click();
-  await expect(detailPopup.getByTestId("chat-input")).toHaveValue("@me ");
-  await expect(detailPopup.getByTestId("chat-input")).toBeFocused();
+  await expect(inputByClass(detailPopup, "chat-input")).toHaveValue("@me ");
+  await expect(inputByClass(detailPopup, "chat-input")).toBeFocused();
   const popupBox = await detailPopup.boundingBox();
   if (!popupBox) {
     throw new Error("card detail modal bounding box was unavailable");
@@ -192,9 +199,9 @@ test("kanban card detail embeds discussion without boundary copy", async ({
   await page.mouse.click(12, 12);
   await expect(detailPopup).toHaveCount(0);
 
-  await page.getByTestId("kanban-card").first().click();
+  await byClass(page, "kanban-card").first().click();
   await expect(detailPopup).toBeVisible();
-  await page.getByTestId("card-detail-close-button").click();
+  await byClass(page, "card-detail-close-button").click();
   await expect(detailPopup).toHaveCount(0);
 });
 
@@ -202,18 +209,19 @@ test("fresh Sidecar rejection preserves its bound draft without publishing to th
   page,
 }) => {
   await openKanban(page);
-  const sourceCard = page.getByTestId("kanban-card").first();
-  const sourceStrand = await sourceCard.getByTestId("card-archive-button").getAttribute("data-strand-id");
-  expect(sourceStrand).toMatch(/^ak:strand:[A-Za-z0-9_-]{44}$/);
+  const sourceCard = byClass(page, "kanban-card").first();
   const sourceRealm = decodeURIComponent(new URL(page.url()).pathname.split("/kanban/")[1].split("/")[0]);
   await sourceCard.click();
-  const detailPopup = page.getByTestId("card-detail-modal");
+  await expect(page).toHaveURL(/\/task\/ak:strand:[A-Za-z0-9_-]{44}/);
+  const sourceStrand = decodeURIComponent(new URL(page.url()).pathname.split("/task/")[1]);
+  expect(sourceStrand).toMatch(/^ak:strand:[A-Za-z0-9_-]{44}$/);
+  const detailPopup = byClass(page, "card-detail-modal");
   let ensureRequests = 0;
   let messageSubmissions = 0;
   const ensureBodies: Record<string, any>[] = [];
   await page.route("**/_arkret/self/agent-sidecars:ensure", async (route) => {
     const body = route.request().postDataJSON();
-    validateMockSchema("schemas/agent-operations.schema.json#/$defs/agent_sidecar_ensure_request_body", body);
+    validateMockSchema("schemas/principal-operations.schema.json#/$defs/agent_sidecar_ensure_request_body", body);
     ensureBodies.push(body);
     const problem = {
       type: "https://arkret.org/problems/service_unavailable",
@@ -234,25 +242,24 @@ test("fresh Sidecar rejection preserves its bound draft without publishing to th
       messageSubmissions += 1;
     }
   });
-  await detailPopup.getByTestId("card-detail-sidebar-tab-members").click();
-  await detailPopup
-    .getByTestId("card-detail-agent-row")
-    .getByTestId("card-detail-member-mention-button")
+  await byClass(detailPopup, "card-detail-sidebar-tab-members").click();
+  await byClass(byClass(detailPopup, "card-detail-agent-row"), "card-detail-member-mention-button")
     .click();
-  await detailPopup.getByTestId("chat-input").fill("@me/assistant hello");
+  await inputByClass(detailPopup, "chat-input").fill("@me/assistant hello");
 
   await expect(detailPopup.getByText(
     "Agent modes are unknown or these targets cannot share a scope. Edit the mentions to continue.",
     { exact: true },
   )).toHaveCount(0);
-  await expect(detailPopup.getByTestId("epoch-update-required-banner")).toContainText(
+  await expect(byClass(detailPopup, "epoch-update-required-banner")).toContainText(
     "Waiting for this device's encryption keys. Keep this conversation open to receive the MLS Welcome.",
   );
-  const send = detailPopup.getByTestId("send-chat-button");
-  await expect(send).toHaveAttribute("title", "Open Private Sidecar and send");
+  const send = byClass(detailPopup, "send-chat-button");
+  await expect(byClass(detailPopup, "composer-send-diagnostic")).toHaveText("Open Private Sidecar and send");
+  await expect(send).toBeEnabled();
   await send.click();
   await expect(page.getByText(/Could not open private AI sidecar:/)).toBeVisible();
-  await expect(page.getByTestId("sidecar-context-strip")).toHaveCount(0);
+  await expect(byClass(page, "sidecar-context-strip")).toHaveCount(0);
   await page.waitForTimeout(300);
   expect(ensureRequests).toBeGreaterThanOrEqual(1);
   expect(ensureBodies.length).toBeGreaterThanOrEqual(1);
@@ -263,11 +270,12 @@ test("fresh Sidecar rejection preserves its bound draft without publishing to th
     expect(body.context_ref).toEqual({kind: "strand", strand_id: sourceStrand});
   }
   expect(messageSubmissions).toBe(0);
-  await expect(detailPopup.getByTestId("chat-input")).toHaveValue("@me/assistant hello");
-  await expect(detailPopup.getByTestId("mention-chip")).toHaveCount(1);
-  await expect(detailPopup.getByTestId("mention-chip")).toHaveAttribute("data-mention-principal-id", CURRENT_ASSISTANT_ACCOUNT_ID.principal_id);
-  await expect(detailPopup.getByTestId("mention-chip")).toHaveAttribute("data-mention-station-id", CURRENT_ASSISTANT_ACCOUNT_ID.station_id);
-  await expect(detailPopup.getByTestId("chat-message")).toHaveCount(0);
+  await expect(inputByClass(detailPopup, "chat-input")).toHaveValue("@me/assistant hello");
+  await expect(byClass(detailPopup, "mention-chip")).toHaveCount(1);
+  await expect(byClass(detailPopup, "mention-chip")).toHaveAccessibleDescription(
+    `Principal: ${CURRENT_ASSISTANT_ACCOUNT_ID.principal_id} · Station: ${CURRENT_ASSISTANT_ACCOUNT_ID.station_id}`,
+  );
+  await expect(byClass(detailPopup, "chat-message")).toHaveCount(0);
 });
 
 test("kanban hides list creation until a board exists", async ({ page }) => {
@@ -303,22 +311,22 @@ test("kanban hides list creation until a board exists", async ({ page }) => {
   );
 
   await gotoAndDismissRecovery(page, `/kanban/${DEMO_REALM}`);
-  await expect(page.getByTestId("kanban-panel")).toBeVisible();
-  await expect(page.getByTestId("board-projection-toggle")).toHaveCount(0);
-  await expect(page.getByTestId("board-queue-toggle")).toHaveCount(0);
-  await expect(page.getByTestId("kanban-empty-board")).toContainText(
+  await expect(byClass(page, "kanban-panel")).toBeVisible();
+  await expect(byClass(page, "board-projection-toggle")).toHaveCount(0);
+  await expect(byClass(page, "board-queue-toggle")).toHaveCount(0);
+  await expect(byClass(page, "kanban-empty-board")).toContainText(
     "No board selected",
   );
-  await expect(page.getByTestId("add-column-button")).toHaveCount(0);
-  await expect(page.getByTestId("view-renderer-switcher")).toHaveCount(0);
-  await expect(page.getByTestId("board-space-selector")).not.toContainText(
+  await expect(byClass(page, "add-column-button")).toHaveCount(0);
+  await expect(byClass(page, "view-renderer-switcher")).toHaveCount(0);
+  await expect(byClass(page, "board-space-selector")).not.toContainText(
     "BOARD",
   );
 
-  await page.getByTestId("new-board-toggle").click();
-  await expect(page.getByTestId("new-board-title-input")).toBeVisible();
+  await byClass(page, "new-board-toggle").click();
+  await expect(inputByClass(page, "new-board-title-input")).toBeVisible();
   await page.mouse.click(12, 12);
-  await expect(page.getByTestId("new-board-title-input")).toHaveCount(0);
+  await expect(inputByClass(page, "new-board-title-input")).toHaveCount(0);
 
   let acceptBoardCreate: (() => void) | undefined;
   const boardCreateGate = new Promise<void>((resolve) => {
@@ -338,27 +346,27 @@ test("kanban hides list creation until a board exists", async ({ page }) => {
     await route.fallback();
   });
 
-  await page.getByTestId("new-board-toggle").click();
-  await page.getByTestId("new-board-title-input").fill("Design board");
-  await page.getByTestId("create-board-space-button").click();
-  await expect(page.getByTestId("add-column-button")).toBeVisible();
-  await expect(page.getByTestId("add-column-button")).toBeDisabled();
-  await expect(page.getByTestId("board-space-selector")).toContainText(
+  await byClass(page, "new-board-toggle").click();
+  await inputByClass(page, "new-board-title-input").fill("Design board");
+  await byClass(page, "create-board-space-button").click();
+  await expect(byClass(page, "add-column-button")).toBeVisible();
+  await expect(byClass(page, "add-column-button")).toBeDisabled();
+  await expect(byClass(page, "board-space-selector")).toContainText(
     "Design board",
   );
-  await expect(page.getByTestId("kanban-empty-board")).toContainText(
+  await expect(byClass(page, "kanban-empty-board")).toContainText(
     "No lists yet",
   );
   expect(new URL(page.url()).pathname).not.toContain("/board/");
 
   acceptBoardCreate?.();
-  await expect(page.getByTestId("add-column-button")).toBeEnabled();
+  await expect(byClass(page, "add-column-button")).toBeEnabled();
 });
 
 test("kanban submits canonical card-create events", async ({ page }) => {
   await openKanban(page);
-  await page.getByTestId("add-card-button").first().click();
-  await page.getByTestId("new-card-title-input").fill("Move-backed card");
+  await byClass(page, "add-card-button").first().click();
+  await inputByClass(page, "new-card-title-input").fill("Move-backed card");
   const eventSubmit = page.waitForRequest(
     (request) =>
       request.url().includes("/_arkret/self/events") &&
@@ -370,7 +378,7 @@ test("kanban submits canonical card-create events", async ({ page }) => {
     }
     return submittedEvent(request.postDataJSON())?.kind === "ak.strand.move";
   });
-  await page.getByTestId("save-card-button").click();
+  await byClass(page, "save-card-button").click();
   const eventBody = submittedEvent(
     await eventSubmit.then((request) => request.postDataJSON()),
   );
@@ -388,8 +396,8 @@ test("kanban submits canonical card-create events", async ({ page }) => {
   await page.reload({ waitUntil: "domcontentloaded" });
   await dismissHistoryRecoveryModal(page);
   await dismissBlockingRecoveryModal(page);
-  await expect(page.getByTestId("kanban-panel")).toBeVisible();
-  await expect(page.getByTestId("kanban-board-grid")).toContainText(
+  await expect(byClass(page, "kanban-panel")).toBeVisible();
+  await expect(byClass(page, "kanban-board-grid")).toContainText(
     "Move-backed card",
   );
 });
@@ -426,74 +434,88 @@ test("card create receipt survives opening the optimistic card", async ({
     await route.fallback();
   });
 
-  await page.getByTestId("add-card-button").first().click();
-  await page.getByTestId("new-card-title-input").fill("Route-safe card");
-  await page.getByTestId("save-card-button").click();
+  await byClass(page, "add-card-button").first().click();
+  await inputByClass(page, "new-card-title-input").fill("Route-safe card");
+  await byClass(page, "save-card-button").click();
   await cardCreateObserved;
 
-  const optimisticCard = page
-    .getByTestId("kanban-card")
+  const optimisticCard = byClass(page, "kanban-card")
     .filter({ hasText: "Route-safe card" });
-  await expect(optimisticCard).toHaveAttribute("data-card-draft", "true");
+  await expect(optimisticCard).toHaveClass(/\bis-draft\b/);
+  await expect(byClass(optimisticCard, "kanban-card-draft-badge")).toBeVisible();
   await optimisticCard.click();
-  const detail = page.getByTestId("card-detail-modal");
+  const detail = byClass(page, "card-detail-modal");
   await expect(detail).toBeVisible();
-  await detail.getByTestId("card-detail-tab-discussion").click();
-  await expect(detail.getByTestId("card-discussion-pending-target")).toHaveCount(
+  await byClass(detail, "card-detail-tab-discussion").click();
+  await expect(byClass(detail, "card-discussion-pending-target")).toHaveCount(
     1,
   );
-  await expect(detail.getByTestId("chat-panel")).toHaveCount(0);
+  await expect(byClass(detail, "chat-panel")).toHaveCount(0);
 
   const eventId = submittedCard?.event_id;
   expect(eventId).toMatch(/^ak:event:/);
   const strandId = eventId.replace(/^ak:event:/, "ak:strand:");
   releaseCardCreate?.();
 
-  await expect(detail.getByTestId("card-fields").locator("dd").first()).toHaveAttribute(
-    "title",
-    strandId,
-  );
-  await detail.getByTestId("card-detail-tab-discussion").click();
-  await expect(detail.getByTestId("card-discussion-pending-target")).toHaveCount(
+  await expect(byClass(detail, "card-detail-strand-identity")).toHaveAccessibleDescription(strandId);
+  await byClass(detail, "card-detail-tab-discussion").click();
+  await expect(byClass(detail, "card-discussion-pending-target")).toHaveCount(
     0,
   );
-  await expect(detail.getByTestId("chat-panel")).toBeVisible();
+  await expect(byClass(detail, "chat-panel")).toBeVisible();
 });
 
 test("kanban board selector swaps projected board columns", async ({
   page,
 }) => {
   await openKanban(page);
-  await expect(page.getByTestId("view-renderer-switcher")).toHaveCount(0);
-  await expect(page.getByTestId("kanban-board-grid")).toContainText(
+  await expect(byClass(page, "view-renderer-switcher")).toHaveCount(0);
+  await expect(byClass(page, "kanban-board-grid")).toContainText(
     "Legal review for public beta",
   );
 
-  await page.getByTestId("board-space-select-button").click();
-  await page.getByRole("option", { name: "Secondary planning board" }).click();
+  await byClass(page, "board-space-select-button").click();
+  await byClass(page, "board-select-menu-panel").getByRole("button", { name: "Secondary planning board", exact:true }).click();
 
-  await expect(page.getByTestId("kanban-column")).toHaveCount(1);
-  await expect(page.getByTestId("kanban-board-grid")).toContainText(
+  await expect(byClass(page, "kanban-column")).toHaveCount(1);
+  await expect(byClass(page, "kanban-board-grid")).toContainText(
     "Secondary board card",
   );
-  await expect(page.getByTestId("kanban-board-grid")).not.toContainText(
+  await expect(byClass(page, "kanban-board-grid")).not.toContainText(
     "Legal review for public beta",
   );
 });
 
-test("kanban card drag submits a strand move", async ({ page }) => {
+test("kanban card drag submits a strand move", async ({ page }, testInfo) => {
+  const moveRequests: unknown[]=[];
+  page.on("request", request=>{if(request.method()==="POST" && new URL(request.url()).pathname==="/_arkret/self/events"){const event=submittedEvent(request.postDataJSON());moveRequests.push({kind:event?.kind,payload:event?.kind==="ak.strand.move"?event.payload:undefined});}});
+  try {
   await refreshServer(page);
   await gotoAndDismissRecovery(page, `/kanban/${DEMO_REALM}`);
-  await expect(page.getByTestId("kanban-panel")).toBeVisible();
+  await expect(byClass(page, "kanban-panel")).toBeVisible();
 
-  await page
-    .getByTestId("kanban-card")
-    .first()
-    .dragTo(page.getByTestId("kanban-column").nth(1));
+  // Target the real committed card after its metadata read, rather than an
+  // initial unavailable placeholder which may be replaced during the drag.
+  const source = byClass(page, "kanban-card").filter({hasText:"Legal review for public beta"});
+  await expect(source).toBeVisible();
+  await expect(byClass(page, "add-card-button").first()).toBeEnabled();
+  await page.evaluate(() => {
+    (window as any).__kanbanDragEvents=[];
+    for(const name of ["pointerdown","pointermove","pointerup"]) document.addEventListener(name,event=>{
+      const list=(window as any).__kanbanDragEvents; if(list.length>=30)return;
+      const el=event.target instanceof Element?event.target:null; const p=event as PointerEvent;
+      list.push({type:name,x:p.clientX,y:p.clientY,target:el?.getAttribute("class"),interactive:el?.closest("button,a,input,textarea")?.tagName,capture:el?.closest("[data-gly-drag-capture]")?.getAttribute("data-gly-drag-capture"),source:document.querySelector(".dragging-source")?.getAttribute("class")});
+    },{capture:true});
+  });
+  await source.dragTo(byClass(page, "kanban-column").nth(1));
 
-  await expect(page.getByTestId("kanban-column").nth(1)).toContainText(
+  await expect(byClass(page, "kanban-column").nth(1)).toContainText(
     "Legal review for public beta",
   );
+  } finally {
+    const observation=await page.evaluate(()=>({pointerEvents:(window as any).__kanbanDragEvents??[],status:[...document.querySelectorAll(".board-status")].map(el=>el.textContent)})).catch(()=>null);
+    await testInfo.attach("real-card-drag-observation",{body:JSON.stringify({observation,moveRequests}),contentType:"application/json"});
+  }
 });
 
 test("kanban board routes keep the board Space under its home Realm", async ({
@@ -505,8 +527,8 @@ test("kanban board routes keep the board Space under its home Realm", async ({
     page,
     `/kanban/${DEMO_REALM}/board/${DEMO_BOARD_SPACE}`,
   );
-  await expect(page.getByTestId("kanban-panel")).toBeVisible();
-  await expect(page.getByTestId("selected-realm-id")).toHaveText(DEMO_REALM);
+  await expect(byClass(page, "kanban-panel")).toBeVisible();
+  await expect(byClass(page, "selected-realm-id")).toHaveText(DEMO_REALM);
   expect(new URL(page.url()).pathname).toBe(
     `/kanban/${DEMO_REALM}/board/${DEMO_BOARD_SPACE}`,
   );
@@ -517,23 +539,23 @@ test("card detail embeds discussion directly without discussion chrome", async (
 }) => {
   await refreshServer(page);
   await openDiscussion(page);
-  await expect(page.getByTestId("discussion-main-panel")).toBeVisible();
-  await expect(page.getByTestId("discussion-main-panel")).toContainText(
+  await expect(byClass(page, "discussion-main-panel")).toBeVisible();
+  await expect(byClass(page, "discussion-main-panel")).toContainText(
     "No messages yet",
   );
-  await expect(page.getByTestId("discussion-list-panel")).toHaveCount(0);
-  await expect(page.getByTestId("discussion-list-rail")).toHaveCount(0);
-  await expect(page.getByTestId("open-channel-dialog")).toHaveCount(0);
-  await expect(page.getByTestId("discussion-users-toggle")).toHaveCount(0);
-  await expect(page.getByTestId("discussion-settings-toggle")).toHaveCount(0);
-  await expect(page.getByTestId("channel-create-modal")).toHaveCount(0);
-  await expect(page.getByTestId("new-channel-members")).toHaveCount(0);
-  await expect(page.getByTestId("open-primary-discussion")).toHaveCount(0);
-  await expect(page.getByTestId("card-strand-tracks")).toHaveCount(0);
-  await expect(page.getByTestId("discussion-main-panel")).not.toContainText(
+  await expect(byClass(page, "discussion-list-panel")).toHaveCount(0);
+  await expect(byClass(page, "discussion-list-rail")).toHaveCount(0);
+  await expect(byClass(page, "open-channel-dialog")).toHaveCount(0);
+  await expect(byClass(page, "discussion-users-toggle")).toHaveCount(0);
+  await expect(byClass(page, "discussion-settings-toggle")).toHaveCount(0);
+  await expect(byClass(page, "channel-create-modal")).toHaveCount(0);
+  await expect(byClass(page, "new-channel-members")).toHaveCount(0);
+  await expect(byClass(page, "open-primary-discussion")).toHaveCount(0);
+  await expect(byClass(page, "card-strand-tracks")).toHaveCount(0);
+  await expect(byClass(page, "discussion-main-panel")).not.toContainText(
     "Launch board discussion",
   );
-  await expect(page.getByTestId("discussion-main-panel")).not.toContainText(
+  await expect(byClass(page, "discussion-main-panel")).not.toContainText(
     "Primary discussion",
   );
 
@@ -546,24 +568,23 @@ test("card detail embeds discussion directly without discussion chrome", async (
       chatSubmitPosts += 1;
     }
   });
-  await page
-    .getByTestId("chat-input")
+  await inputByClass(page, "chat-input")
     .fill("hello @did:web:bob.example about #ak:task:123");
   await expect(page.getByRole("alert")).toContainText(
     "Waiting for this device's encryption keys. Keep this conversation open to receive the MLS Welcome.",
   );
-  await expect(page.getByTestId("send-chat-button")).toBeDisabled();
+  await expect(byClass(page, "send-chat-button")).toBeDisabled();
   expect(chatSubmitPosts).toBe(0);
-  await expect(page.getByTestId("chat-input")).toHaveValue(
+  await expect(inputByClass(page, "chat-input")).toHaveValue(
     "hello @did:web:bob.example about #ak:task:123",
   );
-  await expect(page.getByTestId("chat-message")).toHaveCount(0);
-  await page.getByTestId("card-detail-tab-synthesis").click();
-  await expect(page.getByTestId("card-synthesis-panel")).toBeVisible();
-  await expect(page.getByTestId("card-discussion-panel")).toHaveCount(1);
-  await expect(page.getByTestId("card-discussion-panel")).toBeHidden();
-  await page.getByTestId("card-detail-tab-discussion").click();
-  await expect(page.getByTestId("chat-input")).toHaveValue(
+  await expect(byClass(page, "chat-message")).toHaveCount(0);
+  await byClass(page, "card-detail-tab-synthesis").click();
+  await expect(byClass(page, "card-synthesis-panel")).toBeVisible();
+  await expect(byClass(page, "card-discussion-panel")).toHaveCount(1);
+  await expect(byClass(page, "card-discussion-panel")).toBeHidden();
+  await byClass(page, "card-detail-tab-discussion").click();
+  await expect(inputByClass(page, "chat-input")).toHaveValue(
     "hello @did:web:bob.example about #ak:task:123",
   );
 });

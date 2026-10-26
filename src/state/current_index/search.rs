@@ -1775,8 +1775,20 @@ pub(crate) mod tests {
         store: &mut crate::state::LocalStateStore,
         policies: &[arkret_models_collaboration::governance::operation_wire::Policy],
     ) {
+        eprintln!(
+            "[search-phase] install:start now={} windows={:?}",
+            chrono::Utc::now(),
+            policies
+                .iter()
+                .map(|p| (p.not_before, p.expires_at))
+                .collect::<Vec<_>>()
+        );
         assert!(!policies.is_empty());
         let (_directory, _unused, mut snapshot, originals, _actor) = setup().await;
+        eprintln!(
+            "[search-phase] install:setup-done now={}",
+            chrono::Utc::now()
+        );
         let original = &originals[0];
         let mut entries = vec![("ak.message.create".into(), json!(original.event.payload))];
         entries.extend(policies.iter().map(|policy| {
@@ -1794,6 +1806,10 @@ pub(crate) mod tests {
             entries,
             "alice.example",
             "ak:device:0196419b-0000-7000-8000-000000000001",
+        );
+        eprintln!(
+            "[search-phase] install:verified-fixture-done now={}",
+            chrono::Utc::now()
         );
         assert_eq!(later[0], *original);
         let index = CurrentIndex::open(
@@ -1841,8 +1857,20 @@ pub(crate) mod tests {
             value: json!(policies.last().unwrap()),
         });
         FixtureStation::did_web().sign_snapshot(&mut snapshot);
+        eprintln!(
+            "[search-phase] install:stage-start now={}",
+            chrono::Utc::now()
+        );
         let staged = stage(&index, &snapshot, vec![], store.current_generation()).await;
+        eprintln!(
+            "[search-phase] install:stage-done now={}",
+            chrono::Utc::now()
+        );
         store.commit_current_stage_for_test(staged).unwrap();
+        eprintln!(
+            "[search-phase] install:committed now={}",
+            chrono::Utc::now()
+        );
     }
 
     pub(crate) async fn install_current_only_search_event_redaction(

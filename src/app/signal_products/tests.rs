@@ -3,10 +3,13 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use dioxus::prelude::*;
+use glory::prelude::*;
 
 use super::*;
-use crate::views::read_receipts::{ReadReceiptHub, ReadReceiptIndicator};
+use crate::presentation::{BootState, InksonContext, SharedStateStore, View};
+use crate::views::read_receipts::{
+    ReadReceiptHub, ReadReceiptIndicatorProps, read_receipt_indicator,
+};
 
 const REALM: &str = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
 const STRAND: &str = "ak:strand:ASyFf0qTUQ55a2qZp5fuTXRnIgf3ovKChQZ_XSkxdIPK";
@@ -77,6 +80,8 @@ fn target() -> crate::state::VerifiedMessageCommit {
     }
 }
 
+type ReadReceiptControl = Rc<RefCell<Option<(ReadReceiptHub, Rc<InksonContext>)>>>;
+
 #[derive(Clone)]
 struct Case {
     viewer: Option<crate::config::ActiveAccountContext>,
@@ -88,7 +93,7 @@ struct Case {
     display: bool,
     send: bool,
     path: std::path::PathBuf,
-    control: Rc<RefCell<Option<(ReadReceiptHub, crate::app::SessionContext)>>>,
+    control: ReadReceiptControl,
 }
 
 impl Case {
@@ -123,72 +128,98 @@ impl Case {
     }
 }
 
-fn receipt_page(case: Case) -> Element {
-    let viewer = use_signal(|| case.viewer.clone());
-    let state_store = use_signal_sync(|| {
-        let mut store = crate::state::LocalStateStore::with_path(case.path.clone());
-        let mut state = store.load();
-        state.verified_message_commits = case.targets.clone().into();
-        state.read_receipt_default_send = case.send;
-        store.save(state);
-        store
-    });
-    let session = crate::app::SessionContext {
-        active_account: viewer,
-        state_store,
-        base_url: use_signal(String::new),
-        session_generation: use_signal(|| 0),
-        owned_agents_rev: use_signal(|| 0),
+fn receipt_page(scope: &Scope, case: Case) -> View {
+    let mut store = crate::state::LocalStateStore::with_path(case.path.clone());
+    let mut state = store.load();
+    state.verified_message_commits = case.targets.clone().into();
+    state.read_receipt_default_send = case.send;
+    store.save(state);
+    let config = match &case.viewer {
+        Some(account) => crate::config::ClientConfig::authenticated(
+            account.clone(),
+            "receipt-test-credential".into(),
+        ),
+        None => crate::config::ClientConfig::default(),
     };
-    let receipts = use_context_provider(ReadReceiptHub::new);
-    let calls = use_hook(crate::views::call_signals::CallSignalHub::new);
-    let messages = use_hook(crate::views::message_streams::MessageStreamHub::new);
-    use_hook(|| {
-        let sink = AppSignalProductSink::new(calls, messages, receipts, session);
-        sink.read_receipt(&case.signal, &case.policy);
-    });
-    *case.control.borrow_mut() = Some((receipts, session));
-    let Some(local) = viewer
-        .read()
+    let context = InksonContext::new(
+        scope,
+        BootState {
+            config_store: crate::config::LocalConfigStore::with_path(
+                case.path.with_extension("config.json"),
+            ),
+            config,
+            state_store: SharedStateStore::new(store),
+            initial_credential: "receipt-test-credential".into(),
+            realm_tree_nodes: vec![],
+        },
+        crate::routes::Route::Dashboard,
+        |_| Box::pin(async { crate::runtime::session::CurrentSessionRefresh::retry_later("test") }),
+    );
+    scope.retain(context.clone()).unwrap();
+    let sink = AppSignalProductSink::new(
+        context.call_signal_hub,
+        context.message_stream_hub,
+        context.read_receipt_hub,
+        context.clone(),
+    );
+    sink.read_receipt(&case.signal, &case.policy);
+    *case.control.borrow_mut() = Some((context.read_receipt_hub, context.clone()));
+    let Some(local) = case
+        .viewer
         .as_ref()
         .map(|account| arkret_sdk::ActorId::account(account.authority.clone()))
     else {
-        return rsx! {};
+        return crate::presentation::widgets::empty();
     };
-    rsx! {
-        ReadReceiptIndicator {
-            realm_id: REALM,
-            strand_id: STRAND,
+    read_receipt_indicator(
+        scope,
+        context,
+        ReadReceiptIndicatorProps {
+            realm_id: REALM.into(),
+            strand_id: STRAND.into(),
             message_id: case.message,
             target_author: case.visible_author,
             viewer: local,
             display: case.display,
-            policy: Some(case.policy.clone()),
+            policy: Some(case.policy),
+        },
+    )
+}
+fn rendered_readers(app: &glory::ui::App) -> Vec<arkret_sdk::ActorId> {
+    fn visit(
+        tree: &glory::render::memory::Memory,
+        id: glory::render::NodeId,
+        result: &mut Vec<arkret_sdk::ActorId>,
+    ) {
+        let node = tree.node(id).unwrap();
+        if let glory::render::Props::Graphic(props) = node.descriptor.view().props
+            && let Some(value) = &props.alternative
+            && let Ok(actor) = serde_json::from_str(value)
+        {
+            result.push(actor);
+        }
+        for child in node.children.iter().copied() {
+            visit(tree, child, result);
         }
     }
+    let tree = app.tree();
+    let mut readers = Vec::new();
+    for root in tree.roots() {
+        visit(&tree, *root, &mut readers);
+    }
+    readers
 }
-
-fn rendered_readers(mutations: dioxus::core::Mutations) -> Vec<arkret_sdk::ActorId> {
-    mutations
-        .edits
-        .into_iter()
-        .find_map(|edit| match edit {
-            dioxus::core::Mutation::SetAttribute {
-                name: "data-readers",
-                value: dioxus::core::AttributeValue::Text(value),
-                ..
-            } => Some(serde_json::from_str(&value).unwrap()),
-            _ => None,
-        })
-        .unwrap_or_default()
-}
-
 fn render_case(change: impl FnOnce(&mut Case)) -> Vec<arkret_sdk::ActorId> {
     let temp = tempfile::tempdir().unwrap();
     let mut case = Case::private(temp.path().join("state.json"));
     change(&mut case);
-    let mut dom = VirtualDom::new_with_props(receipt_page, case);
-    rendered_readers(dom.rebuild_to_vec())
+    let app = glory::ui::App::memory();
+    app.mount(widget(move |scope| {
+        receipt_page(scope, case.clone()).build(scope)
+    }))
+    .unwrap();
+    app.flush().unwrap();
+    rendered_readers(&app)
 }
 
 #[test]
@@ -275,15 +306,23 @@ fn receipt_page_hides_retained_positions_after_account_switch() {
     let temp = tempfile::tempdir().unwrap();
     let case = Case::private(temp.path().join("state.json"));
     let control = case.control.clone();
-    let mut dom = VirtualDom::new_with_props(receipt_page, case);
-    assert_eq!(rendered_readers(dom.rebuild_to_vec()), vec![reader()]);
-    let (hub, mut session) = control.borrow().unwrap();
-    dom.in_runtime(|| {
-        session.active_account.set(Some(
-            crate::test_support::AccountFixture::new("did:web:author.example")
-                .station(OTHER_STATION)
-                .build(),
-        ));
+    let app = glory::ui::App::memory();
+    app.mount(widget(move |scope| {
+        receipt_page(scope, case.clone()).build(scope)
+    }))
+    .unwrap();
+    app.flush().unwrap();
+    assert_eq!(rendered_readers(&app), vec![reader()]);
+    let (hub, session) = control.borrow().as_ref().unwrap().clone();
+    let before = app.stats().nodes;
+    app.scope().owner().enter(|| {
+        session.active_account.revise(|value| {
+            *value = Some(
+                crate::test_support::AccountFixture::new("did:web:author.example")
+                    .station(OTHER_STATION)
+                    .build(),
+            )
+        });
         assert!(
             hub.readers_of(
                 REALM,
@@ -295,11 +334,12 @@ fn receipt_page_hides_retained_positions_after_account_switch() {
             .is_empty()
         );
     });
-    let edits = dom.render_immediate_to_vec();
-    assert!(edits.edits.iter().any(|edit| matches!(
-        edit,
-        dioxus::core::Mutation::Remove { .. } | dioxus::core::Mutation::ReplaceWith { .. }
-    )));
+    app.flush().unwrap();
+    assert!(rendered_readers(&app).is_empty());
+    assert!(
+        app.stats().nodes < before,
+        "retired author receipt avatars must be removed"
+    );
 }
 
 #[test]

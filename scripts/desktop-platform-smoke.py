@@ -23,27 +23,22 @@ if platform not in ('darwin', 'win32'):
 out = Path('dist/desktop-platform-runtime')
 out.mkdir(parents=True, exist_ok=True)
 result = {'platform': platform, 'binary_sha256': hashlib.sha256(binary.read_bytes()).hexdigest(),
-          'test': 'real owning process window visible after Dioxus initialize and real renderer; not authenticated acceptance'}
+          'test': 'real owning Glory/Blitz process window visible and remains live; visual and authenticated acceptance are separate'}
 
 
-def renderer_ids():
-    if platform == 'darwin':
-        rows = subprocess.check_output(['ps', '-eo', 'pid=,args='], text=True).splitlines()
-        return {int(row.split(None, 1)[0]) for row in rows if 'WebKit.WebContent' in row or 'WebKit WebContent' in row}
-    rows = json.loads(subprocess.check_output(['powershell', '-NoProfile', '-Command',
-        'Get-CimInstance Win32_Process | Where-Object Name -eq msedgewebview2.exe | Select-Object ProcessId | ConvertTo-Json -Compress'], text=True) or '[]')
-    if isinstance(rows, dict):
-        rows = [rows]
-    return {row['ProcessId'] for row in rows}
-
-
-private_directory = tempfile.TemporaryDirectory(prefix='inkson-desktop-runtime-')
+temporary_root = Path("D:/BuildCache/inkson-glory/tmp") if platform == "win32" else Path(tempfile.gettempdir())
+temporary_root.mkdir(parents=True, exist_ok=True)
+private_directory = tempfile.TemporaryDirectory(prefix="inkson-desktop-runtime-", dir=temporary_root)
 with private_directory as private:
     env = dict(os.environ)
-    env['RUST_LOG'] = 'inkson=info,dioxus_desktop=debug,warn'
-    env.update(HOME=private, APPDATA=private + '/roaming', LOCALAPPDATA=private + '/local',
+    env['RUST_LOG'] = 'inkson=info,glory_blitz=debug,warn'
+    env.update(APPDATA=private + '/roaming', LOCALAPPDATA=private + '/local',
                XDG_CONFIG_HOME=private + '/config', XDG_DATA_HOME=private + '/data',
                XDG_CACHE_HOME=private + '/cache')
+    env['INKSON_CONFIG_PATH'] = private + '/config.json'
+    env['INKSON_STATE_PATH'] = private + '/state.json'
+    env['INKSON_MEDIA_DATA_DIR'] = private + '/media'
+    env['INKSON_CRASH_TELEMETRY_OPT_IN'] = '0'
     for name in ('APPDATA', 'LOCALAPPDATA', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CACHE_HOME'):
         Path(env[name]).mkdir(parents=True, exist_ok=True)
     probe = None
@@ -93,8 +88,6 @@ print(String(data: try JSONSerialization.data(withJSONObject: rows), encoding: .
         user32.EnumWindows(visit, 0)
         return windows
 
-    baseline = renderer_ids()
-    result['baseline_renderer_pids'] = sorted(baseline)
     app = None
     try:
         with (out / (platform + '-application.log')).open('w') as app_output:
@@ -105,19 +98,16 @@ print(String(data: try JSONSerialization.data(withJSONObject: rows), encoding: .
                 if app.poll() is not None:
                     raise RuntimeError('desktop exited before real window initialization: ' + str(app.returncode))
                 windows = own_windows(app.pid)
-                renderers = renderer_ids() - baseline
                 result['last_window_observation'] = windows
-                result['last_new_renderer_pids'] = sorted(renderers)
-                if windows and renderers:
+                if windows:
                     break
                 time.sleep(0.5)
             else:
-                raise RuntimeError('real initialized window and new renderer were not both observed')
+                raise RuntimeError('the application owning process did not expose its visible window')
             time.sleep(3)
             if app.poll() is not None:
                 raise RuntimeError('desktop did not remain live after initialization')
-            result.update(own_visible_window=True, renderer_started=True, startup_remained_live=True,
-                          dioxus_initialize_observed_by_native_window_visibility=True)
+            result.update(own_visible_window=True, native_host="Glory/Blitz", startup_remained_live=True)
             if platform == 'win32':
                 for window in windows:
                     if not user32.PostMessageW(window['id'], 0x0010, 0, 0):
@@ -126,15 +116,7 @@ print(String(data: try JSONSerialization.data(withJSONObject: rows), encoding: .
                 if app.returncode != 0:
                     raise RuntimeError('normal window close failed: ' + str(app.returncode))
                 result['normal_window_close_exit'] = app.returncode
-                # The owning window can close before WebView2 has flushed its
-                # private profile. Observe natural subprocess shutdown before
-                # deleting it; a surviving renderer is an actual failure.
-                deadline = time.monotonic() + 30
-                while renderer_ids() - baseline:
-                    if time.monotonic() >= deadline:
-                        raise RuntimeError('WebView2 subprocesses did not exit after normal native close')
-                    time.sleep(0.25)
-                result['renderer_subprocesses_exited'] = True
+                result['owned_window_close_completed'] = True
             else:
                 app.send_signal(signal.SIGTERM)
                 app.wait(timeout=15)
@@ -148,7 +130,7 @@ print(String(data: try JSONSerialization.data(withJSONObject: rows), encoding: .
             app.terminate()
             app.wait(timeout=15)
         # Keep cleanup fatal and include it in the result. Windows can briefly
-        # retain filesystem handles after the last WebView2 process exits.
+        # retain filesystem handles after the native host closes.
         deadline = time.monotonic() + 30
         try:
             while True:

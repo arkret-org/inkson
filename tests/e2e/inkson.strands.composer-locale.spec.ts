@@ -1,4 +1,6 @@
-import { expect, test } from "@playwright/test";
+import { inputByClass } from "./uiControl";
+import { byClass } from "./strandsHarness";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import {
   openDiscussion,
   openSettings,
@@ -7,6 +9,50 @@ import {
 } from "./strandsHarness";
 
 registerStrandsBeforeEach();
+
+async function expectEmptyPrompt(input: Locator, text: string) {
+  await expect(input).toHaveAccessibleName(text);
+  await expect(input.locator("xpath=..").locator(":scope > .input-empty-prompt")).toHaveText(text);
+}
+
+async function expectSendReady(composer: Locator, send: Locator) {
+  await expect(send).toBeEnabled();
+  await expect(send).toHaveAttribute("aria-busy", "false");
+  await expect(composer.locator(".composer-send-diagnostic")).toHaveText("");
+}
+
+async function chooseScheduledDate(page: Page, schedule: Locator) {
+  await schedule.getByRole("button", { name: "Choose date and time", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Date and time", exact: true });
+  await expect(dialog).toBeVisible();
+  const month = dialog.locator(".sapid-calendar-month");
+  const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+  const visibleMonth = (await month.innerText()).trim();
+  const chinese = visibleMonth.match(/^(\d{4})年(\d{1,2})月$/);
+  const english = visibleMonth.match(/^([A-Za-z]+) (\d{4})$/);
+  expect(chinese !== null || english !== null).toBe(true);
+  const year = chinese ? Number(chinese[1]) : Number(english![2]);
+  const monthNumber = chinese ? Number(chinese[2]) : monthNames.indexOf(english![1]) + 1;
+  expect(monthNumber).toBeGreaterThanOrEqual(1);
+  let distance = (2030 - year) * 12 + 12 - monthNumber;
+  expect(Math.abs(distance)).toBeLessThanOrEqual(120);
+  while (Math.abs(distance) >= 12) {
+    const backwards = distance < 0;
+    await dialog.getByRole("button", { name: backwards ? "Previous year" : "Next year", exact: true }).click();
+    distance += backwards ? 12 : -12;
+  }
+  while (distance !== 0) {
+    const backwards = distance < 0;
+    await dialog.getByRole("button", { name: backwards ? "Previous month" : "Next month", exact: true }).click();
+    distance += backwards ? 1 : -1;
+  }
+  await expect(month).toHaveText(/^(December 2030|2030年12月)$/);
+  await dialog.getByRole("button", { name: /^(Tuesday, December 31, 2030|2030年12月31日 星期二)$/ }).click();
+  await dialog.locator("input.sapid-time-hour").fill("12");
+  await dialog.locator("input.sapid-time-minute").fill("30");
+  await dialog.getByRole("button", { name: "Done", exact: true }).click();
+  await expect(dialog).toBeHidden();
+}
 
 test("chat composer copy follows the active language while original drafts and send gates stay intact", async ({ page }) => {
   const writes: string[] = [];
@@ -21,86 +67,81 @@ test("chat composer copy follows the active language while original drafts and s
 
   for (const language of ["en", "zh", "en"] as const) {
     await openSettings(page);
-    await page.getByTestId("settings-nav-item-theme").click();
-    await page.getByTestId(`language-${language}`).click();
-    await expect(page.getByTestId("client-shell")).toHaveAttribute("data-locale", language);
+    await byClass(page, "settings-nav-item-theme").click();
+    await byClass(page, "settings-language-choice").filter({ hasText: language === "zh" ? "中文" : "English" }).click();
+    await expect(page.locator("html")).toHaveAttribute("lang", language);
     // Settings and normal card navigation remount the discussion. Draft
     // retention below is checked within each mount, not across navigation.
     await openDiscussion(page);
     const zh = language === "zh";
-    const composer = page.getByTestId("chat-composer");
+    const composer = byClass(page, "chat-composer");
     await expect(composer).toBeVisible();
-    const input = composer.getByTestId("chat-input");
-    await expect(input).toHaveAttribute("placeholder", zh
+    const input = inputByClass(composer, "chat-input");
+    await input.fill("");
+    await expect(byClass(composer, "chat-input-hint")).toHaveText(zh
       ? "在此讨论中发送消息。用 @alice:example.com 提及成员，或用 #task-123 链接卡片。"
       : "Message this discussion. Use @alice:example.com to mention a member or #task-123 to link a card.");
-    const scope = composer.getByTestId("composer-send-scope");
-    await expect(scope).toHaveAttribute("data-send-route", "Shared");
+    const scope = byClass(composer, "composer-send-scope");
     await expect(scope).toHaveText(zh
       ? /^原始 Strand：ak:strand:[A-Za-z0-9_-]+。仅限获授权读取此范围的成员。$/
       : /^Original Strand: ak:strand:[A-Za-z0-9_-]+\. Members authorized to read this scope\.$/);
     const originalScope = await scope.textContent();
-    const send = composer.getByTestId("send-chat-button");
+    const send = byClass(composer, "send-chat-button");
     await expect(send).toHaveText(zh ? "发送" : "Send");
     // This test title selects the unchanged harness's ordinary plaintext
     // Realm. The public primary action is ready; no encryption gate is pending.
-    await expect(send).toBeEnabled();
-    await expect(send).toHaveAttribute("title", "");
-    await expect(send).toHaveAttribute("data-mls-binding-pending", "false");
-    await expect(send).toHaveAttribute("data-creator-bootstrap-pending", "false");
-    await expect(page.getByTestId("chat-message")).toHaveCount(0);
+    await expectSendReady(composer, send);
+    await expect(byClass(page, "chat-message")).toHaveCount(0);
     await input.fill(literalDraft);
     await expect(input).toHaveValue(literalDraft);
 
-    const mention = composer.getByTestId("mention-trigger-button");
-    await expect(mention).toHaveAttribute("title", zh ? "提及成员" : "Mention member");
-    await expect(mention).toHaveAttribute("aria-label", zh ? "提及成员" : "Mention member");
+    const mention = byClass(composer, "mention-trigger-button");
+    await expect(mention).toHaveAccessibleName(zh ? "提及成员" : "Mention member");
     await mention.click();
-    const picker = composer.getByTestId("mention-picker");
+    const picker = byClass(composer, "mention-picker");
     await expect(picker).toBeVisible();
     const query = picker.locator("input.mention-picker-query");
-    await expect(query).toHaveAttribute("placeholder", zh ? "搜索成员" : "Search members");
+    await query.fill("");
+    await expectEmptyPrompt(query, zh ? "搜索成员" : "Search members");
     const literalQuery = "chat.composer.no_matches {member} 原文";
     await query.fill(literalQuery);
     await expect(query).toHaveValue(literalQuery);
     await expect(picker.getByText(zh ? "没有匹配的成员" : "No matches", { exact: true })).toBeVisible();
-    const close = picker.getByTestId("mention-picker-close-button");
+    const close = byClass(picker, "mention-picker-close-button");
     await expect(close).toHaveText(zh ? "关闭" : "Close");
     await close.click();
     await expect(picker).toHaveCount(0);
     await expect(input).toHaveValue(literalDraft);
 
-    const attachment = composer.getByTestId("attachment-menu-button");
-    await expect(attachment).toHaveAttribute("title", zh ? "添加附件" : "Add attachment");
-    await expect(attachment).toHaveAttribute("aria-label", zh ? "添加附件" : "Add attachment");
+    const attachment = byClass(composer, "attachment-menu-button");
+    await expect(attachment).toHaveAccessibleName(zh ? "添加附件" : "Add attachment");
     await attachment.click();
     await expect(composer.locator(".attachment-menu")).toBeVisible();
-    const menuPoll = composer.getByTestId("attachment-menu-poll");
+    const menuPoll = byClass(composer, "attachment-menu-poll");
     await expect(menuPoll).toHaveText(zh ? "创建投票" : "Create poll");
     await expect(menuPoll).toBeEnabled();
     await attachment.click();
-    await expect(composer.locator(".attachment-menu")).toHaveCount(0);
+    // The official file owner remains mounted for any accepted in-flight read.
+    await expect(composer.locator(".attachment-menu")).toBeHidden();
     await expect(input).toHaveValue(literalDraft);
     await expect(scope).toHaveText(originalScope!);
-    await expect(send).toBeEnabled();
-    await expect(send).toHaveAttribute("title", "");
+    await expectSendReady(composer, send);
 
-    const pollToggle = composer.getByTestId("open-poll-composer-button");
+    const pollToggle = byClass(composer, "open-poll-composer-button");
     await expect(pollToggle).toHaveText(zh ? "投票" : "Poll");
-    await expect(pollToggle).toHaveAttribute("title", zh ? "创建投票" : "Create poll");
-    await expect(pollToggle).toHaveAttribute("aria-label", zh ? "创建投票" : "Create poll");
+    await expect(pollToggle).toHaveAccessibleName(zh ? "创建投票" : "Create poll");
     await expect(pollToggle).toBeEnabled();
     await pollToggle.click();
-    const poll = composer.getByTestId("poll-composer");
+    const poll = byClass(composer, "poll-composer");
     await expect(poll).toBeVisible();
-    const question = poll.getByTestId("poll-question-input");
-    const options = poll.getByTestId("poll-option-input");
-    await expect(question).toHaveAttribute("placeholder", zh ? "问题" : "Question");
+    const question = inputByClass(poll, "poll-question-input");
+    const options = inputByClass(poll, "poll-option-input");
+    await expectEmptyPrompt(question, zh ? "问题" : "Question");
     await expect(options).toHaveCount(2);
     for (let index = 0; index < 2; index += 1) {
-      await expect(options.nth(index)).toHaveAttribute("placeholder", zh ? `选项 ${index + 1}` : `Option ${index + 1}`);
+      await expectEmptyPrompt(options.nth(index), zh ? `选项 ${index + 1}` : `Option ${index + 1}`);
     }
-    const sendPoll = poll.getByTestId("send-poll-button");
+    const sendPoll = byClass(poll, "send-poll-button");
     await expect(sendPoll).toHaveText(zh ? "发送投票" : "Send poll");
     await expect(sendPoll).toBeDisabled();
     const literalQuestion = "chat.composer.poll_question {number} 原文";
@@ -114,11 +155,11 @@ test("chat composer copy follows the active language while original drafts and s
     for (let index = 0; index < 2; index += 1) {
       await expect(options.nth(index)).toHaveValue(literalOptions[index]);
     }
-    const addOption = poll.getByTestId("poll-add-option-button");
+    const addOption = byClass(poll, "poll-add-option-button");
     await expect(addOption).toHaveText(zh ? "添加选项" : "Add option");
     await addOption.click();
     await expect(options).toHaveCount(3);
-    await expect(options.nth(2)).toHaveAttribute("placeholder", zh ? "选项 3" : "Option 3");
+    await expectEmptyPrompt(options.nth(2), zh ? "选项 3" : "Option 3");
     await expect(options.nth(2)).toHaveValue("");
     await expect(question).toHaveValue(literalQuestion);
     await expect(options.nth(0)).toHaveValue(literalOptions[0]);
@@ -128,19 +169,22 @@ test("chat composer copy follows the active language while original drafts and s
     await expect(poll).toHaveCount(0);
     await expect(input).toHaveValue(literalDraft);
 
-    const scheduleToggle = composer.getByTestId("open-scheduled-send-panel-button");
-    await expect(scheduleToggle).toHaveAttribute("title", zh ? "定时发送消息" : "Schedule message");
-    await expect(scheduleToggle).toHaveAttribute("aria-label", zh ? "定时发送消息" : "Schedule message");
+    const scheduleToggle = byClass(composer, "open-scheduled-send-panel-button");
+    await expect(scheduleToggle).toHaveAccessibleName(zh ? "定时发送消息" : "Schedule message");
     await scheduleToggle.click();
-    const schedule = composer.getByTestId("scheduled-send-panel");
+    const schedule = byClass(composer, "scheduled-send-panel");
     await expect(schedule).toBeVisible();
-    await expect(schedule.locator('label[for="scheduled-send-at-input"]')).toHaveText(zh ? "发送时间" : "Send at");
-    await expect(schedule.getByTestId("scheduled-send-empty")).toHaveText(zh ? "此讨论暂无定时消息。" : "No scheduled messages for this discussion.");
-    const scheduleCreate = schedule.getByTestId("scheduled-send-create-button");
+    const scheduledAt = schedule.getByRole("textbox", { name: zh ? "发送时间" : "Send at", exact: true });
+    const scheduledId = await scheduledAt.getAttribute("id");
+    expect(scheduledId).toBeTruthy();
+    await expect(schedule.locator(`label[for="${scheduledId}"]`)).toHaveText(zh ? "发送时间" : "Send at");
+    await expect(byClass(schedule, "scheduled-send-empty")).toHaveText(zh ? "此讨论暂无定时消息。" : "No scheduled messages for this discussion.");
+    const scheduleCreate = byClass(schedule, "scheduled-send-create-button");
     await expect(scheduleCreate).toHaveText(zh ? "定时发送" : "Schedule message");
     await expect(scheduleCreate).toBeDisabled();
-    await schedule.getByTestId("scheduled-send-at-input").fill("2030-12-31T12:30");
-    await expect(schedule.getByTestId("scheduled-send-at-input")).toHaveValue("2030-12-31T12:30");
+    await expect(scheduledAt).toHaveJSProperty("readOnly", true);
+    await chooseScheduledDate(page, schedule);
+    await expect(scheduledAt).toHaveValue(/^2030-12-31T12:30(?::00)?$/);
     await expect(scheduleCreate).toBeEnabled();
     await expect(input).toHaveValue(literalDraft);
     // Do not create a scheduled plan or send a poll/message. Only the public
@@ -149,13 +193,10 @@ test("chat composer copy follows the active language while original drafts and s
     await expect(schedule).toHaveCount(0);
     await expect(input).toHaveValue(literalDraft);
     await expect(scope).toHaveText(originalScope!);
-    await expect(send).toBeEnabled();
-    await expect(send).toHaveAttribute("title", "");
-    await expect(send).toHaveAttribute("data-mls-binding-pending", "false");
-    await expect(send).toHaveAttribute("data-creator-bootstrap-pending", "false");
-    await expect(page.getByTestId("chat-message")).toHaveCount(0);
-    await page.getByTestId("card-detail-close-button").click();
-    await expect(page.getByTestId("card-detail-modal")).toHaveCount(0);
+    await expectSendReady(composer, send);
+    await expect(byClass(page, "chat-message")).toHaveCount(0);
+    await byClass(page, "card-detail-close-button").click();
+    await expect(byClass(page, "card-detail-modal")).toHaveCount(0);
   }
   expect(writes).toEqual([]);
 });

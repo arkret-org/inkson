@@ -1,0 +1,50 @@
+/* Keep the official radio input and roving focus while matching the original
+   label-button presentation. The group name remains available to readers. */
+.theme-switcher.sapid-radio-group > [data-gly-kind=text] {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+}
+.theme-switcher > .sapid-radio-group-items { gap: 4px !important; }
+.theme-switcher .theme-switcher-option {
+  position: relative; display: inline-flex; box-sizing: border-box;
+  align-items: center; justify-content: center; flex: 0 0 auto;
+  height: 36px; min-height: 36px; padding: 8px 16px;
+  border: 0; border-radius: 8px; white-space: nowrap;
+  font-family: inherit; font-size: .85em; font-weight: 500; line-height: 20px;
+  background: var(--inkson-original-control-surface); color: var(--inkson-original-control-text);
+  box-shadow: none;
+}
+.theme-switcher .theme-switcher-option.primary { background: var(--accent); color: white; }
+.theme-switcher .theme-switcher-option input[type=radio] {
+  position: absolute; inset: 0; width: 100%; height: 100%; margin: 0;
+  opacity: 0; cursor: pointer;
+}
+.theme-switcher .theme-switcher-option:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+.theme-switcher .theme-switcher-option.secondary:hover { background: color-mix(in oklab, var(--inkson-original-control-surface) 80%, transparent); }
+
+/* Equal grid-card heights must not distribute the extra height into controls. */
+.theme-settings { align-content: start; }
+.language-settings > .actions { align-self: start; }
+.language-settings .settings-language-choice {
+  display: inline-flex; box-sizing: border-box; align-items: center; justify-content: center;
+  flex: 0 0 auto; align-self: start; height: 36px; min-height: 36px;
+  padding: 8px 16px; border: 0; border-radius: 8px;
+  font-family: inherit; font-size: 14px; font-weight: 500; line-height: 20px; white-space: nowrap;
+}
+.language-settings .settings-language-choice.secondary { background: var(--inkson-original-control-surface); color: var(--inkson-original-control-text); box-shadow: none; }
+.language-settings .settings-language-choice.primary {
+  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-2) 100%);
+  color: var(--primary-foreground); box-shadow: 0 14px 28px color-mix(in srgb, var(--primary) 24%, transparent);
+}
+
+/* The icon trio used Small Ghost/Primary Button metadata in the original UI;
+   its active gradient is separate from the solid radio selection below it. */
+.theme-settings .settings-theme-choice.ghost { border-color: var(--border-strong); }
+.theme-settings .settings-theme-choice.primary {
+  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-2) 100%);
+  color: var(--primary-foreground);
+  box-shadow: 0 14px 28px color-mix(in srgb, var(--primary) 24%, transparent);
+}
+.theme-settings .settings-theme-choice.primary:not(:disabled):hover {
+  background: linear-gradient(135deg, var(--primary-strong) 0%, color-mix(in srgb, var(--primary-2) 92%, white) 100%);
+}

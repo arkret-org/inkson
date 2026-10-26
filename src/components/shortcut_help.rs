@@ -4,11 +4,12 @@
 //! dismisses it with Escape. The list is limited to bindings that are
 //! currently implemented.
 
-use dioxus::prelude::*;
+use std::rc::Rc;
 
-use crate::components::DismissiblePopup;
-use crate::i18n::tr;
-use crate::ui::button::{Button, ButtonVariant};
+use glory::prelude::*;
+
+use crate::presentation::widgets::{heading, line, paragraph, reactive, stack};
+use crate::presentation::{InksonContext, View};
 
 /// One entry in the shortcut help list. `keys` is the visible chord
 /// rendered as a `<kbd>` group; `description_key` is the i18n key for
@@ -74,7 +75,7 @@ pub fn default_shortcuts() -> Vec<ShortcutEntry> {
 /// trigger. Mirrors the spec: Shift+`/` produces `"?"` on most layouts.
 ///
 /// Pure function so the `app.rs` keydown handler can call this without
-/// pulling in dioxus state.
+/// creating widget state.
 pub fn key_event_is_help_trigger(key: &str) -> bool {
     key == "?"
 }
@@ -93,69 +94,67 @@ pub fn target_is_text_input(tag: Option<&str>, contenteditable: bool) -> bool {
     )
 }
 
-#[component]
-pub fn ShortcutHelpOverlay(visible: Signal<bool>) -> Element {
-    if !visible() {
-        // Render nothing when hidden. A placeholder `div` here becomes an
-        // auto-placed grid item inside `.shell.app` and stretches to cover the
-        // main-content column, painting on top of live content (it is the last
-        // child) and silently intercepting pointer events — which blocked
-        // clicks on modal buttons such as the Recovery Key setup dialog.
-        return rsx! {};
-    }
-    let shortcuts = default_shortcuts();
-    let title = tr("shortcuts.title");
-    rsx! {
-        DismissiblePopup {
-            overlay_class: "shortcut-help-overlay",
-            surface_class: "shortcut-help-card",
-            overlay_test_id: Some("shortcut-help-overlay".to_owned()),
-            surface_test_id: Some("shortcut-help-card".to_owned()),
-            overlay_style: Some("position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.55);".to_owned()),
-            surface_style: Some("min-width: 320px; max-width: 480px; padding: 18px; border-radius: 10px; background: var(--bg-elevated, #1a1d22); color: var(--text-strong, #fff); border: 1px solid var(--border-default, #333); box-shadow: 0 12px 36px rgba(0,0,0,0.45);".to_owned()),
-            aria_label: title.clone(),
-            on_dismiss: move |_| visible.set(false),
-            header {
-                class: "shortcut-help-card-head",
-                style: "display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;",
-                h2 {
-                    style: "margin: 0; font-size: 1.05rem;",
-                    "{title}"
-                }
-                Button {
-                    variant: ButtonVariant::Secondary,
-                    "data-testid": "shortcut-help-dismiss",
-                    onclick: move |_| visible.set(false),
-                    "{tr(\"shortcuts.dismiss\")}"
-                }
-            }
-            ul {
-                class: "shortcut-help-list",
-                style: "list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px;",
-                for entry in shortcuts.iter() {
-                    li {
-                        class: "shortcut-help-row",
-                        style: "display: flex; align-items: center; justify-content: space-between; gap: 12px;",
-                        "data-testid": "shortcut-help-row",
-                        span {
-                            class: "shortcut-help-keys",
-                            style: "display: inline-flex; gap: 4px;",
-                            for (idx, key) in entry.keys.iter().enumerate() {
-                                if idx > 0 {
-                                    span { style: "opacity: 0.6; align-self: center;", "+" }
-                                }
-                                kbd {
-                                    style: "padding: 2px 6px; border: 1px solid var(--border-default, #555); border-radius: 4px; background: var(--bg-default, #11141a); font-family: monospace;",
-                                    "{key}"
-                                }
-                            }
-                        }
-                        span { class: "shortcut-help-description", "{tr(entry.description_key)}" }
-                    }
-                }
-            }
+pub fn shortcut_help_overlay(
+    _scope: &Scope,
+    context: Rc<InksonContext>,
+    visible: Cage<bool>,
+) -> View {
+    reactive(visible, move |scope, is_visible| {
+        if !is_visible {
+            return Box::new(widget(|_| Ok(())));
         }
-    }
+        let dismiss = Box::new(
+            sapid::button()
+                .unstyled()
+                .class("secondary")
+                .label(context.translated(scope, "shortcuts.dismiss"))
+                .on_press(move || visible.revise(|value| *value = false)),
+        ) as View;
+        let rows = default_shortcuts()
+            .into_iter()
+            .map(|entry| {
+                line(
+                    "shortcut-help-row",
+                    vec![
+                        paragraph("shortcut-help-keys", entry.keys.join(" + ")),
+                        paragraph(
+                            "shortcut-help-description",
+                            context.translated(scope, entry.description_key),
+                        ),
+                    ],
+                )
+            })
+            .collect();
+        let content = stack(
+            "shortcut-help-content",
+            vec![
+                line(
+                    "shortcut-help-card-head",
+                    vec![
+                        heading(2, "", context.translated(scope, "shortcuts.title")),
+                        dismiss,
+                    ],
+                ),
+                stack("shortcut-help-list", rows),
+            ],
+        );
+        let mut content = Some(content);
+        Box::new(
+            sapid::dialog("shortcut-help")
+                .unstyled()
+                .class("shortcut-help-card")
+                .name(context.translated(scope, "shortcuts.title"))
+                .show_trigger(false)
+                .show_close(false)
+                .open(true)
+                .on_dismiss(move |_| visible.revise(|value| *value = false))
+                .content(move || {
+                    content
+                        .take()
+                        .unwrap_or_else(|| Box::new(widget(|_| Ok(()))))
+                }),
+        )
+    })
 }
 
 #[cfg(test)]

@@ -1,8 +1,10 @@
+import { inputByClass } from "./uiControl";
+import { byClass } from "./strandsHarness";
 import { expect, test } from "@playwright/test";
 import {
   registerStrandsBeforeEach,
   CURRENT_PRINCIPAL_CORE_ID,
-  latestTestId,
+
   dismissBlockingRecoveryModal,
   refreshServer,
   gotoAndDismissRecovery,
@@ -19,22 +21,24 @@ registerStrandsBeforeEach();
 test("setup realm form stays in the main realm layout", async ({ page }) => {
   await refreshServer(page);
   await page.goto("/setup/realms", { waitUntil: "domcontentloaded" });
-  await expect(page.getByTestId("setup-panel")).toBeVisible();
-  await expect(page.getByTestId("realm-setup-guide")).toHaveCount(0);
+  await expect(byClass(page, "setup-panel")).toBeVisible();
+  await expect(byClass(page, "realm-setup-guide")).toHaveCount(0);
 
-  const titleInput = page.getByTestId("realm-title-input");
-  await expect(titleInput).toHaveAttribute("required", "true");
+  const titleInput = inputByClass(page, "realm-title-input");
+  await expect(titleInput).toHaveJSProperty("required", true);
   await expect(titleInput).toHaveAttribute("aria-required", "true");
-  await expect(page.locator('label[for="realm-title-input-input"]')).toHaveText(
-    /Realm title\s*\*/,
-  );
+  const titleId = await titleInput.getAttribute("id");
+  expect(titleId).toBeTruthy();
+  const titleLabel = page.locator(`label[for="${titleId}"]`);
+  await expect(titleLabel).toHaveText("Realm title");
+  expect(await titleLabel.evaluate((label) => getComputedStyle(label, "::after").content)).toContain("*");
 
   const fieldTops = await page.evaluate(() => ({
     alias: document
-      .querySelector('[data-testid="realm-alias-input"]')
+      .querySelector('[class~="realm-alias-input"]')
       ?.getBoundingClientRect().top,
     summary: document
-      .querySelector('[data-testid="realm-summary-input"]')
+      .querySelector('[class~="realm-summary-input"]')
       ?.getBoundingClientRect().top,
   }));
   expect(fieldTops.alias).toBeDefined();
@@ -42,10 +46,10 @@ test("setup realm form stays in the main realm layout", async ({ page }) => {
   expect(fieldTops.alias!).toBeLessThan(fieldTops.summary!);
 
   const activeStepButton = page.locator(
-    '.setup-step-list button[data-style="primary"]',
+    '.setup-step-list button.setup-step.active',
   );
   await expect(activeStepButton).toHaveCount(1);
-  await expect(activeStepButton).toHaveClass(/\bdx-button\b/);
+  await expect(activeStepButton).toHaveJSProperty("tagName", "BUTTON");
   const activeStepStyle = await activeStepButton.evaluate((button) => {
     const style = getComputedStyle(button);
     return {
@@ -54,7 +58,7 @@ test("setup realm form stays in the main realm layout", async ({ page }) => {
       backgroundImage: style.backgroundImage,
     };
   });
-  expect(activeStepStyle.display).toBe("flex");
+  expect(activeStepStyle.display).toBe("grid");
   expect(activeStepStyle.borderRadius).toBe("8px");
   expect(activeStepStyle.backgroundImage).toContain("linear-gradient");
 
@@ -80,9 +84,9 @@ test("setup realm form stays in the main realm layout", async ({ page }) => {
           : null;
       };
       return {
-        sidebar: rectOf('[data-testid="sidebar"]'),
-        main: rectOf('[data-testid="main-view"]'),
-        setup: rectOf('[data-testid="setup-panel"]'),
+        sidebar: rectOf('[class~="sidebar"]'),
+        main: rectOf('.main.realm'),
+        setup: rectOf('[class~="setup-panel"]'),
         header: rectOf(".realm-header"),
       };
     });
@@ -118,36 +122,37 @@ test("setup realm form stays in the main realm layout", async ({ page }) => {
 
   const layout = await measureLayout();
   assertRealmLayout(layout);
+  await test.info().attach("setup-basics", { body: await page.screenshot(), contentType: "image/png" });
 });
 
 test("setup, onboarding, and Board entry works", async ({ page }) => {
   await refreshServer(page);
-  await expect(page.getByTestId("sync-cursor")).toContainText(
+  await expect(byClass(page, "sync-cursor")).toContainText(
     "ak:cursor:e2e-2",
   );
 
   await page.goto("/onboarding", { waitUntil: "domcontentloaded" });
-  await expect(page.getByTestId("onboarding-panel")).toBeVisible();
+  await expect(byClass(page, "onboarding-panel")).toBeVisible();
   await dismissRecoveryMissingModal(page);
-  await expect(page.getByTestId("account-flow").locator("p")).toHaveText(
+  const accountFlow = byClass(page, "onboarding-panel");
+  await expect(accountFlow.getByText(
     /^Your account is linked to ak:did_core:webvh:.+\.\.\..+\.$/,
-  );
+  )).toBeVisible();
   expect((await readLocalConfig(page)).active_account.authority.principal_id).toBe(
     CURRENT_PRINCIPAL_CORE_ID,
   );
-  await expect(page.getByTestId("account-flow")).toContainText("You're all set");
-  await page
-    .getByTestId("account-flow")
-    .getByRole("link", { name: "Continue", exact: true })
+  await expect(accountFlow).toContainText("You're all set");
+  await accountFlow
+    .getByRole("button", { name: "Continue", exact: true })
     .click();
   await expect(page).toHaveURL(/\/$/);
-  await expect(page.getByTestId("client-shell")).toBeVisible();
+  await expect(page.locator(".shell.app")).toBeVisible();
 
-  await page.getByTestId("sidebar-new-realm-cta").click();
-  const setupPanel = page.getByTestId("setup-panel");
+  await page.getByRole("navigation", { name: "Main navigation", exact: true }).getByRole("link", { name: "New Realm", exact: true }).click();
+  const setupPanel = byClass(page, "setup-panel");
   await expect(setupPanel).toBeVisible();
   await dismissRecoveryMissingModal(page);
-  await expect(page.getByTestId("realm-title")).toContainText("New Realm");
+  await expect(page.locator(".realm-header .topbar-context-title")).toContainText("New Realm");
   await expect(setupPanel.getByRole("link", { name: "Search" })).toHaveCount(0);
   await expect(setupPanel.getByRole("link", { name: "Settings" })).toHaveCount(
     0,
@@ -165,16 +170,15 @@ test("setup, onboarding, and Board entry works", async ({ page }) => {
     setupPanel.getByRole("button", { name: "Delete Space" }),
   ).toHaveCount(0);
 
-  await page.getByTestId("realm-title-input").fill("Setup Strand Space");
-  await page
-    .getByTestId("realm-summary-input")
+  await inputByClass(page, "realm-title-input").fill("Setup Strand Space");
+  await inputByClass(page, "realm-summary-input")
     .fill("Created from inkson realm setup");
-  await page.getByTestId("new-realm-next-button").click();
-  const boundaryPanel = page.getByTestId("realm-lifecycle-strand");
-  await expect(page.getByTestId("realm-discoverability-input")).toBeVisible();
-  await expect(page.getByTestId("realm-mls-activation-input")).toBeVisible();
-  await expect(page.getByTestId("realm-encryption-profile-input")).toHaveCount(0);
-  await expect(page.getByTestId("realm-content-scheme-input")).toHaveCount(0);
+  await byClass(page, "new-realm-next-button").click();
+  const boundaryPanel = byClass(page, "realm-lifecycle-strand");
+  await expect(byClass(page, "realm-discoverability-input")).toBeVisible();
+  await expect(byClass(page, "realm-mls-activation-input")).toBeVisible();
+  await expect(byClass(page, "realm-encryption-profile-input")).toHaveCount(0);
+  await expect(byClass(page, "realm-content-scheme-input")).toHaveCount(0);
   await expect(
     boundaryPanel.locator(".setup-step-panel > .event-head"),
   ).toHaveCount(0);
@@ -184,6 +188,7 @@ test("setup, onboarding, and Board entry works", async ({ page }) => {
   await expect(primaryAxisCards).toHaveCount(5);
   await expect(primaryAxisCards.locator(".help-tip")).toHaveCount(5);
   await expect(primaryAxisCards.locator(".muted")).toHaveCount(0);
+  await test.info().attach("setup-boundary", { body: await page.screenshot(), contentType: "image/png" });
   for (const field of [
     "realm-discoverability-input",
     "realm-policy-join-rule-input",
@@ -191,39 +196,41 @@ test("setup, onboarding, and Board entry works", async ({ page }) => {
     "realm-mls-activation-input",
     "realm-security-class-input",
   ]) {
-    await expect(boundaryPanel.getByTestId(field)).toBeVisible();
+    await expect(byClass(boundaryPanel, field)).toBeVisible();
   }
-  const advanced = boundaryPanel.getByTestId("realm-advanced-config");
-  await expect(advanced).not.toHaveAttribute("open", "");
-  await expect(advanced.getByTestId("realm-federation-policy-input")).toBeHidden();
-  await expect(advanced.getByTestId("realm-hash-profile-input")).toBeHidden();
-  await advanced.locator("summary").click();
-  await expect(advanced).toHaveAttribute("open", "");
+  const advanced = byClass(boundaryPanel, "realm-advanced-config");
+  const advancedTrigger = advanced.locator("button.sapid-collapsible-trigger");
+  await expect(advancedTrigger).toHaveAttribute("aria-expanded", "false");
+  await expect(byClass(advanced, "realm-federation-policy-input")).toBeHidden();
+  await expect(byClass(advanced, "realm-hash-profile-input")).toBeHidden();
+  await advancedTrigger.click();
+  await expect(advancedTrigger).toHaveAttribute("aria-expanded", "true");
   await expect(advanced.locator(".setup-axis-card")).toHaveCount(2);
   await expect(advanced.locator(".help-tip")).toHaveCount(2);
-  await expect(advanced.getByTestId("realm-federation-policy-input")).toBeVisible();
-  await expect(advanced.getByTestId("realm-hash-profile-input")).toBeVisible();
-  await advanced.locator("summary").click();
-  await expect(advanced).not.toHaveAttribute("open", "");
-  await expect(advanced.getByTestId("realm-federation-policy-input")).toBeHidden();
-  await expect(advanced.getByTestId("realm-hash-profile-input")).toBeHidden();
+  await expect(byClass(advanced, "realm-federation-policy-input")).toBeVisible();
+  await expect(byClass(advanced, "realm-hash-profile-input")).toBeVisible();
+  await advancedTrigger.click();
+  await expect(advancedTrigger).toHaveAttribute("aria-expanded", "false");
+  await expect(byClass(advanced, "realm-federation-policy-input")).toBeHidden();
+  await expect(byClass(advanced, "realm-hash-profile-input")).toBeHidden();
   await expect(
     boundaryPanel.getByText("Who can discover that this Realm exists?"),
-  ).toHaveCount(0);
+  ).toBeHidden();
   const discoverabilityHelp = boundaryPanel
     .locator(".setup-axis-card")
     .filter({ hasText: "Discoverability" })
     .locator(".help-tip");
-  await expect(discoverabilityHelp).toHaveAttribute(
-    "title",
-    /Who can discover that this Realm exists\?.*Visible in Search/,
-  );
+  await expect(discoverabilityHelp).toHaveAccessibleName(/Who can discover that this Realm exists\?.*Visible in Search/);
+  await discoverabilityHelp.hover();
+  await expect(page.getByRole("tooltip")).toContainText(/Who can discover that this Realm exists\?.*Visible in Search/);
+  await page.mouse.move(0, 0);
+  await expect(page.getByRole("tooltip")).toBeHidden();
   // This test exercises plaintext Realm/Space navigation. MLS activation is
   // a separate accepted Genesis flow, not a create-time profile or a mock
   // server claim.
-  await page.getByTestId("realm-mls-activation-input").click();
+  await byClass(page, "realm-mls-activation-input").click();
   await page.getByRole("option", { name: "Not now" }).click();
-  await page.getByTestId("new-realm-next-button").click();
+  await byClass(page, "new-realm-next-button").click();
   await expect(
     setupPanel.getByRole("button", { name: "Create Realm" }),
   ).toBeVisible();
@@ -244,7 +251,7 @@ test("setup, onboarding, and Board entry works", async ({ page }) => {
         "ak.realm.plaintext_visible_services",
       ),
   );
-  await page.getByTestId("create-realm-button").click();
+  await byClass(page, "create-realm-button").click();
   const [realmCreateBody, plaintextPolicyBody] = await Promise.all([
     realmCreateRequest.then((request) => request.postDataJSON()),
     plaintextPolicyRequest.then((request) => request.postDataJSON()),
@@ -253,35 +260,34 @@ test("setup, onboarding, and Board entry works", async ({ page }) => {
   expect(JSON.stringify(plaintextPolicyBody)).toContain(
     CURRENT_STATION_ID,
   );
-  await expect(page.getByTestId("realm-lifecycle-strand")).toContainText(
+  await expect(byClass(page, "realm-lifecycle-strand")).toContainText(
     /Created ak:realm:/,
   );
-  await expect(page.getByTestId("realm-lifecycle-strand")).toContainText(
+  await expect(byClass(page, "realm-lifecycle-strand")).toContainText(
     "canonical policy listed / invite / since_join",
   );
-  await expect(page.getByTestId("realm-setup-done")).toBeVisible();
+  await expect(byClass(page, "realm-setup-done")).toBeVisible();
   await expect(
-    page.getByTestId("realm-lifecycle-strand").getByTestId("selected-realm-id"),
+    byClass(byClass(page, "realm-lifecycle-strand"), "selected-realm-id"),
   ).toContainText("ak:realm:");
 
-  await page
-    .getByTestId("realm-setup-done")
+  await byClass(page, "realm-setup-done")
     .getByRole("link", { name: "Open Realm", exact: true })
     .click();
-  await expect(page.getByTestId("kanban-panel")).toBeVisible();
-  await expect(page.getByTestId("sidebar")).toContainText("Setup Strand Space");
+  await expect(byClass(page, "kanban-panel")).toBeVisible();
+  await expect(byClass(page, "sidebar")).toContainText("Setup Strand Space");
   await page.reload({ waitUntil: "domcontentloaded" });
-  await expect(page.getByTestId("client-shell")).toBeVisible({
+  await expect(page.locator(".shell.app")).toBeVisible({
     timeout: 120_000,
   });
   // The reload re-runs account-health detection; dismiss any account-health
   // modal that re-appears so it doesn't block the Board.
   await dismissRecoveryMissingModal(page);
   await dismissMlsBackupModal(page);
-  await expect(page.getByTestId("sidebar")).toContainText("Setup Strand Space");
-  await expect(page.getByTestId("kanban-panel")).toBeVisible();
-  await page.getByTestId("account-menu-button").click();
-  await expect(page.getByTestId("account-menu-display-name")).toHaveText(
+  await expect(byClass(page, "sidebar")).toContainText("Setup Strand Space");
+  await expect(byClass(page, "kanban-panel")).toBeVisible();
+  await byClass(page, "account-menu-button").click();
+  await expect(byClass(page, "who")).toHaveText(
     "inkson",
   );
 });
@@ -290,7 +296,7 @@ test("realm profile fills the current canonical metadata values", async ({
   page,
 }) => {
   await refreshServer(page);
-  await expect(page.getByTestId("sync-cursor")).toContainText(
+  await expect(byClass(page, "sync-cursor")).toContainText(
     "ak:cursor:e2e-2",
   );
   await gotoAndDismissRecovery(
@@ -298,11 +304,11 @@ test("realm profile fills the current canonical metadata values", async ({
     `/realms/${DEMO_REALM}/settings/profile`,
   );
 
-  await expect(page.getByTestId("realm-profile")).toBeVisible();
-  await expect(page.getByTestId("realm-name-input")).toHaveValue(
+  await expect(page.locator(".realm-settings-content > .event").filter({ has: page.locator(".event-head", { hasText: /^Realm Profile$/ }) })).toBeVisible();
+  await expect(inputByClass(page, "realm-name-input")).toHaveValue(
     "Arkret Demo Realm",
   );
-  await expect(page.getByTestId("realm-summary-input")).toHaveValue(
+  await expect(inputByClass(page, "realm-summary-input")).toHaveValue(
     "Shared demo Realm served by mocked server",
   );
 });
@@ -314,32 +320,35 @@ test("realm admin page handles metadata, modal member invite, epoch rotation and
     page,
     `/realms/${DEMO_REALM}/settings`,
   );
-  await expect(latestTestId(page, "realm-admin-panel")).toBeVisible();
-  await expect(latestTestId(page, "realm-admin-overview")).toContainText(
+  await expect(byClass(page, "realm-settings")).toBeVisible();
+  await expect(byClass(page, "realm-admin-overview").last()).toContainText(
     "Realm settings",
   );
-  await expect(page.getByTestId("admin-discussion-admission")).toHaveCount(0);
-  await expect(page.getByTestId("realm-admin-advanced-sections")).toHaveCount(
+  await expect(byClass(page, "admin-discussion-admission")).toHaveCount(0);
+  await expect(byClass(page, "realm-admin-advanced-sections")).toHaveCount(
     0,
   );
-  const adminSections = latestTestId(page, "realm-admin-sections");
+  const adminSections = page.locator(".realm-settings .settings-sidebar-column");
   await expect(
     adminSections.getByRole("link", { name: "Members" }),
   ).toHaveCount(0);
   await expect(
-    adminSections.getByRole("link", { name: "Profile" }).last(),
+    adminSections.getByRole("button", { name: "Members", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    adminSections.getByRole("button", { name: "Profile", exact: true }),
   ).toBeVisible();
   await expect(
-    adminSections.getByRole("link", { name: "Access" }).last(),
+    adminSections.getByRole("button", { name: "Access", exact: true }),
   ).toBeVisible();
   await expect(
-    adminSections.getByRole("link", { name: "Security & MLS" }).last(),
+    adminSections.getByRole("button", { name: "Security & MLS", exact: true }),
   ).toBeVisible();
   await expect(
-    adminSections.getByRole("link", { name: "Federation" }).last(),
+    adminSections.getByRole("button", { name: "Federation", exact: true }),
   ).toBeVisible();
   await expect(
-    adminSections.getByRole("link", { name: "Repair & Danger" }).last(),
+    adminSections.getByRole("button", { name: "Repair & Danger", exact: true }),
   ).toBeVisible();
 
   await gotoAndDismissRecovery(
@@ -350,22 +359,23 @@ test("realm admin page handles metadata, modal member invite, epoch rotation and
     new RegExp(`/realms/${DEMO_REALM}/members$`),
   );
   await dismissBlockingRecoveryModal(page);
-  await expect(latestTestId(page, "realm-members-panel")).toBeVisible();
-  await expect(page.getByTestId("realm-admin-panel")).toHaveCount(0);
+  await expect(byClass(page, "realm-members-panel").last()).toBeVisible();
+  await expect(byClass(page, "realm-settings")).toHaveCount(0);
 
   await gotoAndDismissRecovery(
     page,
     `/realms/${DEMO_REALM}/settings/profile`,
   );
-  await expect(page.getByTestId("realm-profile")).toBeVisible();
-  await page.getByTestId("realm-name-input").fill("Updated Demo Realm");
-  await page.getByTestId("realm-summary-input").fill("Updated realm summary");
-  await expect(page.getByTestId("realm-avatar-blob-ref-input")).toHaveCount(0);
-  await expect(page.getByTestId("realm-avatar")).toBeVisible();
-  await expect(page.getByTestId("realm-avatar-upload-label")).toBeVisible();
-  await expect(page.getByTestId("realm-avatar-input")).toBeHidden();
-  await page.getByTestId("update-metadata-button").click();
-  await expect(page.getByTestId("realm-admin-status")).toContainText(
+  await expect(page.locator(".realm-settings-content > .event").filter({ has: page.locator(".event-head", { hasText: /^Realm Profile$/ }) })).toBeVisible();
+  await inputByClass(page, "realm-name-input").fill("Updated Demo Realm");
+  await inputByClass(page, "realm-summary-input").fill("Updated realm summary");
+  await expect(byClass(page, "realm-avatar-blob-ref-input")).toHaveCount(0);
+  await expect(page.locator(".avatar-uploader-preview svg, .avatar-uploader-preview img")).toBeVisible();
+  await expect(page.locator(".avatar-uploader-preview")).toBeVisible();
+  await expect(page.locator("button.realm-avatar-input")).toBeVisible();
+  await expect(page.locator('input[type="file"]:visible')).toHaveCount(0);
+  await byClass(page, "update-metadata-button").click();
+  await expect(page.locator(".realm-settings-content > .write-status")).toContainText(
     "profile updated",
   );
 
@@ -373,43 +383,44 @@ test("realm admin page handles metadata, modal member invite, epoch rotation and
     page,
     `/realms/${DEMO_REALM}/settings/access`,
   );
-  await expect(page.getByTestId("realm-profile")).toHaveCount(0);
-  await expect(page.getByTestId("realm-name-input")).toHaveCount(0);
-  await expect(page.getByTestId("join-policy")).toBeVisible();
+  await expect(page.locator(".realm-settings-content > .event").filter({ has: page.locator(".event-head", { hasText: /^Realm Profile$/ }) })).toHaveCount(0);
+  await expect(inputByClass(page, "realm-name-input")).toHaveCount(0);
+  await expect(page.locator(".realm-settings-content .event").filter({ has: page.locator(".event-head", { hasText: /^Join Policy$/ }) })).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Tighten to since joining" }),
+    page.getByRole("checkbox", { name: "Tighten to since joining", exact: true }),
   ).toBeVisible();
 
   await gotoAndDismissRecovery(
     page,
     `/realms/${DEMO_REALM}/members`,
   );
-  await expect(page.getByTestId("member-table")).toBeVisible();
-  await page.getByTestId("open-invite-modal-button").click();
-  await expect(page.getByTestId("invite-member-modal")).toBeVisible();
-  const inviteBackdrop = page.getByTestId("invite-member-modal");
+  await expect(byClass(page, "member-list-card")).toBeVisible();
+  await byClass(page, "open-invite-modal-button").click();
+  await expect(byClass(page, "invite-member-modal")).toBeVisible();
+  const inviteBackdrop = byClass(page, "invite-member-modal");
   const inviteDialog = page.getByRole("dialog", { name: "Invite member" });
-  const backdropBox = await inviteBackdrop.boundingBox();
+  const viewport = page.viewportSize();
   const dialogBox = await inviteDialog.boundingBox();
-  expect(backdropBox).not.toBeNull();
+  expect(viewport).not.toBeNull();
   expect(dialogBox).not.toBeNull();
+  const outside = { x: viewport!.width - 12, y: viewport!.height - 12 };
+  expect(outside.x > dialogBox!.x + dialogBox!.width || outside.y > dialogBox!.y + dialogBox!.height).toBe(true);
   await page.mouse.move(dialogBox!.x + 12, dialogBox!.y + 12);
   await page.mouse.down();
   await page.mouse.move(
-    backdropBox!.x + backdropBox!.width - 12,
-    backdropBox!.y + backdropBox!.height - 12,
+    outside.x,
+    outside.y,
   );
   await page.mouse.up();
   await expect(inviteBackdrop).toBeVisible();
   await page.mouse.click(
-    backdropBox!.x + backdropBox!.width - 12,
-    backdropBox!.y + backdropBox!.height - 12,
+    outside.x,
+    outside.y,
   );
   await expect(inviteBackdrop).toHaveCount(0);
-  await page.getByTestId("open-invite-modal-button").click();
-  await expect(page.getByTestId("invite-member-modal")).toBeVisible();
-  await page
-    .getByTestId("invite-target-input")
+  await byClass(page, "open-invite-modal-button").click();
+  await expect(byClass(page, "invite-member-modal")).toBeVisible();
+  await inputByClass(page, "invite-target-input")
     .fill(
       "http://127.0.0.1:8787/_arkret/open/invite-locators/resolve#token=e2e-invite-locator-token-00000001",
     );
@@ -419,7 +430,7 @@ test("realm admin page handles metadata, modal member invite, epoch rotation and
       request.method() === "POST" &&
       (request.postData() ?? "").includes("ak.invite.create"),
   );
-  await page.getByTestId("send-invite-button").click();
+  await byClass(page, "send-invite-button").click();
   const inviteBody = submittedEvent(
     await inviteCommit.then((request) => request.postDataJSON()),
   );
@@ -431,23 +442,23 @@ test("realm admin page handles metadata, modal member invite, epoch rotation and
   });
   expect(inviteBody.payload.invite_delivery_target).toBeUndefined();
   expect(inviteBody.payload.introduction_evidence_digest).toMatch(/^sha256:/);
-  await expect(page.getByTestId("realm-members-status")).toContainText(
+  await expect(page.locator(".realm-members-panel > .write-status")).toContainText(
     "invited ak:did_core:web:carol.example",
   );
   // The invite modal closes itself once the create event is accepted.
-  await expect(page.getByTestId("invite-member-modal")).toHaveCount(0);
+  await expect(byClass(page, "invite-member-modal")).toHaveCount(0);
 
   await gotoAndDismissRecovery(
     page,
     `/realms/${DEMO_REALM}/settings/security`,
   );
-  await page.getByTestId("rotate-realm-epoch").click();
+  await byClass(page, "rotate-realm-epoch").click();
   // rotation is now a real local `self_update_commit`
   // published as `ak.mls.commit`. The e2e fixture has no local MLS group
   // state for this realm, so the rotate must fail closed with a status
   // message instead of calling the former non-spec /_arkret/self/mls/rotate
   // shim.
-  await expect(page.getByTestId("realm-admin-status")).toContainText(
+  await expect(page.locator(".realm-settings-content > .write-status")).toContainText(
     "rotate failed",
   );
 
@@ -455,15 +466,14 @@ test("realm admin page handles metadata, modal member invite, epoch rotation and
     page,
     `/realms/${DEMO_REALM}/settings/repair`,
   );
-  await page.getByTestId("archive-realm-button").click();
-  await expect(page.getByTestId("realm-danger-confirm-modal")).toBeVisible();
-  await expect(page.getByTestId("realm-danger-confirm-submit")).toBeDisabled();
-  await page
-    .getByTestId("realm-danger-confirm-input")
+  await byClass(page, "archive-realm-button").click();
+  await expect(byClass(page, "realm-danger-confirm-modal")).toBeVisible();
+  await expect(byClass(page, "realm-danger-confirm-submit")).toBeDisabled();
+  await inputByClass(page, "realm-danger-confirm-input")
     .fill(DEMO_REALM);
-  await expect(page.getByTestId("realm-danger-confirm-submit")).toBeEnabled();
-  await page.getByTestId("realm-danger-confirm-submit").click();
-  await expect(page.getByTestId("realm-admin-status")).toContainText(
+  await expect(byClass(page, "realm-danger-confirm-submit")).toBeEnabled();
+  await byClass(page, "realm-danger-confirm-submit").click();
+  await expect(page.locator(".realm-settings-content > .write-status")).toContainText(
     "archive event submitted",
   );
 });
@@ -475,17 +485,19 @@ test("visual smoke renders core client pages on desktop and mobile", async ({
   for (const [route, testId] of [
     ["/", "dashboard-panel"],
     ["/kanban", "kanban-panel"],
-    ["/settings", "settings-panel"],
+    ["/settings", "settings-page"],
   ] as const) {
     await page.goto(route, { waitUntil: "domcontentloaded" });
-    await expect(page.getByTestId(testId)).toBeVisible();
+    await expect(byClass(page, testId)).toBeVisible();
     const shot = await page.screenshot();
     expect(shot.length).toBeGreaterThan(10_000);
   }
 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/kanban", { waitUntil: "domcontentloaded" });
-  await expect(page.getByTestId("mobile-shellbar")).toBeVisible();
+  await expect(byClass(page, "mobile-shellbar")).toBeVisible();
+  await expect(byClass(page, "kanban-panel")).toBeVisible();
+  await expect(byClass(page, "kanban-board-grid")).toBeVisible();
   const mobileShot = await page.screenshot();
   expect(mobileShot.length).toBeGreaterThan(10_000);
 });

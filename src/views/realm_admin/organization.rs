@@ -18,6 +18,8 @@
 //! organization-side signatures and does NOT call coauth admin endpoints; this
 //! panel only reads and links operators to where the binding flow lives.
 
+use std::rc::Rc;
+
 use arkret_identifiers::{Did, DidCoreId};
 use arkret_models_collaboration::events_payloads::{
     RealmOrganizationControlScope, RealmOrganizationRelationship, RealmOrganizationStatus,
@@ -26,30 +28,30 @@ use arkret_models_collaboration::governance::realm_governance::{
     RealmOrganizationLifecyclePhase, RealmOrganizationRelationshipList,
     RealmOrganizationRelationshipView,
 };
-use dioxus::prelude::*;
+use glory::{Cage, Scope};
 
 use crate::organization::{
     OrganizationStatementInput, load_organization_control_key, prepare_organization_inception,
     sign_organization_statement, store_organization_control_seed,
 };
+use crate::presentation::{InksonContext, View};
 use crate::transport::auth::with_authed_sdk_client;
 use crate::views::helpers::short_protocol_id;
+use crate::views::settings::widgets::*;
 
 /// Context-provided server-administrator signal (D0). Newtype-wrapped so the
 /// context lookup can't collide with any other bare `Signal<bool>`. Sourced from
 /// `AccountView.is_server_admin` (the server's configured admin principal set),
 /// NOT from any Realm-role `is_admin` placeholder.
 #[derive(Clone, Copy)]
-pub struct ServerAdminSignal(pub Signal<bool>);
+pub struct ServerAdminSignal(pub Cage<bool>);
 
 /// Best-effort read of the context-provided server-admin signal. Returns `false`
 /// when no provider is mounted (e.g. unit tests) so callers fail closed: the
 /// organization create/bind write UI stays hidden unless the viewer is a proven
 /// server administrator.
-pub fn is_server_admin() -> bool {
-    try_consume_context::<ServerAdminSignal>()
-        .map(|wrap| (wrap.0)())
-        .unwrap_or(false)
+pub fn is_server_admin(context: &InksonContext) -> bool {
+    context.is_server_admin.get()
 }
 
 /// SecureKeyStore-adjacent local index of organizations this administrator has
@@ -272,617 +274,658 @@ fn dtos_from_list(list: &RealmOrganizationRelationshipList) -> Vec<OrgRelationsh
 }
 
 /// Rendered inside the realm_admin Federation section.
-#[component]
-pub fn RealmOrganizationPanel(
-    token: Signal<String>,
-    realm_id: String,
-    /// Authenticated principal id (the operator). Used to scope the locally
-    /// stored organization control keys + created-organization index, and as the
-    /// outer event `actor`.
-    principal_id: String,
-) -> Element {
-    // A4 — base_url from session context instead of a prop. (state_store is read
-    // from context directly by the Create/Bind sub-panels; this panel doesn't need it.)
-    let base_url = crate::app::SessionContext::base_url_string();
-    // D0/D4 gate: the organization create + bind/revoke write UI is rendered ONLY
-    // for a proven server administrator (`AccountView.is_server_admin`). Read the
-    // context signal here so the whole write surface can be conditionally
-    // mounted; non-administrators keep the read-only relationship list below.
-    let server_admin = is_server_admin();
-    // Read the verified relationships + declared hints from the spec
-    // projection. Read-only: no bind / sign happens here.
-    let relationships = use_resource({
-        let base_url = base_url.clone();
-        let realm_id = realm_id.clone();
-        move || {
-            let base_url = base_url.clone();
-            let realm_id = realm_id.clone();
-            let session = token();
-            async move {
-                with_authed_sdk_client(&base_url, session, |http| async move {
-                    crate::transport::realm_read::list_realm_organizations(&http, &realm_id).await
-                })
-                .await
-                .map(|list| dtos_from_list(&list))
-                .map_err(|err| format!("{err:?}"))
-            }
-        }
-    });
-
-    rsx! {
-        div { class: "event", "data-testid": "realm-organization-panel",
-            div { class: "event-head",
-                span { "Organization control" }
-                span { title: "{realm_id}", "{short_protocol_id(&realm_id)}" }
-            }
-            div { class: "muted",
-                "View this Realm's verified organization relationships and declared hints. \
-                 An organization principal is a separate DID controller: binding and \
-                 organization-side signing are performed in the admin console (codmin), \
-                 never by your login session. This panel is read-only."
-            }
-
-            // Current relationships — each row shows its lifecycle phase so a
-            // declared hint can never be mistaken for a verified relationship.
-            match &*relationships.read_unchecked() {
-                None => rsx! {
-                    div { class: "muted", "data-testid": "org-relationship-loading",
-                        "Loading organization relationships…"
-                    }
-                },
-                Some(Err(err)) => rsx! {
-                    div { class: "muted", "data-testid": "org-relationship-error",
-                        "Could not load organization relationships: {err}"
-                    }
-                },
-                Some(Ok(rows)) if rows.is_empty() => rsx! {
-                    div { class: "metric-grid", "data-testid": "org-relationship-list",
-                        div { class: "muted", "data-testid": "org-relationship-empty",
-                            "No verified organization relationships or declared hints for this Realm."
-                        }
-                    }
-                },
-                Some(Ok(rows)) => rsx! {
-                    div { class: "metric-grid", "data-testid": "org-relationship-list",
-                        for rel in rows.clone() {
-                            {
-                                let phase = rel.phase;
-                                let organization_id = rel.organization_id.clone();
-                                let scopes = rel.control_scopes.join(", ");
-                                let relationship_suffix = if rel.relationship.is_empty() {
-                                    String::new()
-                                } else {
-                                    format!(" · {}", rel.relationship)
-                                };
-                                rsx! {
-                                    div {
-                                        class: "event nested-card",
-                                        "data-testid": "org-relationship-row",
-                                        "data-organization-id": "{organization_id}",
-                                        "data-phase": "{phase_slug(phase)}",
-                                        div { class: "event-head",
-                                            span { "{rel.organization_name}" }
-                                            span {
-                                                class: phase.badge_class(),
-                                                "data-testid": "org-relationship-phase-badge",
-                                                "{phase.label()}"
-                                            }
-                                        }
-                                        div { class: "muted", title: "{organization_id}", "{short_protocol_id(&organization_id)}{relationship_suffix}" }
-                                        div { class: "muted", "data-testid": "org-relationship-explainer", "{phase.explainer()}" }
-                                        if !scopes.is_empty() {
-                                            div { class: "muted", "data-testid": "org-relationship-scopes", "scopes: {scopes}" }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                },
-            }
-
-            // D2 / D3 — server-administrator-only write surface. The
-            // organization principal is a distinct `did:webvh` DID controller;
-            // creating it and signing its relationship statements is an operator
-            // authority, gated on `AccountView.is_server_admin`. Non-admins never
-            // see these controls (D4) and keep only the read-only list above.
-            if server_admin {
-                OrganizationCreatePanel { token }
-                OrganizationBindPanel {
-                    token,
-                    realm_id: realm_id.clone(),
-                    principal_id: principal_id.clone(),
-                }
-            } else {
-                div { class: "muted", "data-testid": "org-bind-readonly-note",
-                    "Binding a Realm to an organization, and revoking it, requires an \
-                     organization-authorized signature from the organization DID controller, \
-                     which only a server administrator can mint and sign here. This view is \
-                     read-only for your account."
-                }
-            }
-        }
-    }
+#[derive(Clone)]
+struct OrganizationPage {
+    context: Rc<InksonContext>,
+    owner: glory::ui::WeakScope,
+    realm: String,
+    display_name: Cage<String>,
+    handle: Cage<String>,
+    status_msg: Cage<String>,
+    created_did: Cage<String>,
+    busy: Cage<bool>,
+    selected_org: Cage<String>,
+    relationship: Cage<String>,
+    selected_scopes: Cage<Vec<String>>,
+    revoke_mode: Cage<bool>,
+    revokes_statement_id: Cage<String>,
 }
-
-/// D2 — create a new organization: mint its `did:webvh`, persist the control
-/// key locally, and display the minted DID. Server-administrator only (mounted
-/// only when `is_server_admin()` is true).
-#[component]
-fn OrganizationCreatePanel(token: Signal<String>) -> Element {
-    // A4 — base_url / state_store from session context instead of props.
-    let base_url = crate::app::SessionContext::base_url_string();
-    let mut state_store = crate::app::SessionContext::get().state_store;
-    let mut display_name = use_signal(String::new);
-    let mut handle = use_signal(String::new);
-    let mut status_msg = use_signal(String::new);
-    let mut created_did = use_signal(String::new);
-    let mut busy = use_signal(|| false);
-
-    rsx! {
-        div { class: "workflow-form", "data-testid": "org-create-form",
-            div { class: "event-head",
-                span { "Create an organization" }
-                span { class: "badge green", "server admin" }
-            }
-            div { class: "muted",
-                "Mint a new organization DID (did:webvh) anchored to this Station. \
-                 The organization control private key is stored securely on this device — it \
-                 is the signing authority for binding the organization to Realms."
-            }
-            div { class: "field",
-                label { "Display name" }
-                input {
-                    r#type: "text",
-                    "data-testid": "org-create-display-name",
-                    value: "{display_name}",
-                    placeholder: "Acme Foundation",
-                    oninput: move |evt| display_name.set(evt.value()),
+impl OrganizationPage {
+    #[allow(unused_variables)]
+    fn create(&self) {
+        let context = self.context.clone();
+        if !context.is_server_admin.get_untracked() {
+            return;
+        }
+        let owner = self.owner.clone();
+        let base_url = context.base_url.get();
+        let token = context.token;
+        let state_store = context.state_store.clone();
+        let realm_id = self.realm.clone();
+        let principal_id = context
+            .principal_id
+            .get()
+            .map(|value| value.to_string())
+            .unwrap_or_default();
+        let display_name = self.display_name;
+        let handle = self.handle;
+        let status_msg = self.status_msg;
+        let created_did = self.created_did;
+        let busy = self.busy;
+        let action = {
+            let base = base_url.clone();
+            move |_| {
+                let base = base.clone();
+                let api_token = token.get();
+                let local_id = handle.get().trim().to_owned();
+                let name = display_name.get().trim().to_owned();
+                if local_id.is_empty() {
+                    status_msg.revise(|value| {
+                        *value = "organization handle is required".to_owned();
+                    });
+                    return;
                 }
-            }
-            div { class: "field",
-                label { "Handle / local id" }
-                input {
-                    r#type: "text",
-                    "data-testid": "org-create-handle",
-                    value: "{handle}",
-                    placeholder: "acme",
-                    oninput: move |evt| handle.set(evt.value()),
-                }
-            }
-            div { class: "actions",
-                button {
-                    r#type: "button",
-                    class: "primary",
-                    "data-testid": "org-create-submit",
-                    disabled: busy(),
-                    onclick: {
-                        let base = base_url.clone();
-                        move |_| {
-                            let base = base.clone();
-                            let api_token = token();
-                            let local_id = handle().trim().to_owned();
-                            let name = display_name().trim().to_owned();
-                            if local_id.is_empty() {
-                                status_msg.set("organization handle is required".to_owned());
+                busy.revise(|value| {
+                    *value = true;
+                });
+                status_msg.revise(|value| {
+                    *value = "minting organization DID…".to_owned();
+                });
+                created_did.revise(|value| {
+                    *value = String::new();
+                });
+                if let Some(scope) = owner.upgrade() {
+                    spawn(&scope, async move {
+                        let (prepared, organization) = match prepare_organization_inception(
+                            &base,
+                            &local_id,
+                            Some(&name),
+                            &[],
+                        ) {
+                            Ok(pair) => pair,
+                            Err(err) => {
+                                busy.revise(|value| {
+                                    *value = false;
+                                });
+                                status_msg.revise(|value| {
+                                    *value = format!("inception build failed: {err}");
+                                });
                                 return;
                             }
-                            busy.set(true);
-                            status_msg.set("minting organization DID…".to_owned());
-                            created_did.set(String::new());
-                            spawn(async move {
-                                let (prepared, organization) = match prepare_organization_inception(
-                                    &base,
-                                    &local_id,
-                                    Some(&name),
-                                    &[],
-                                ) {
-                                    Ok(pair) => pair,
-                                    Err(err) => {
-                                        busy.set(false);
-                                        status_msg.set(format!("inception build failed: {err}"));
-                                        return;
-                                    }
-                                };
+                        };
 
-                                // Persist the control seed BEFORE submitting so a
-                                // network failure after a successful mint cannot
-                                // strand a DID with no recoverable control key.
-                                let secure_store =
-                                    crate::secure_key_store::default_secure_key_store("inkson");
-                                if let Err(err) = store_organization_control_seed(
-                                    secure_store.as_ref(),
-                                    &organization.organization_id,
-                                    &organization.control_seed,
-                                ) {
-                                    busy.set(false);
-                                    status_msg.set(format!(
-                                        "could not store organization control key: {err}"
-                                    ));
-                                    return;
-                                }
-
-                                let submit_body = prepared.submit_body.clone();
-                                match crate::transport::auth::with_authed_sdk_client(
-                                    &base,
-                                    api_token,
-                                    move |http| {
-                                        let submit_body = submit_body.clone();
-                                        async move { crate::transport::account::submit_did_operation(&http, &submit_body).await }
-                                    },
-                                )
-                                .await
-                                {
-                                    Ok(outcome) => {
-                                        // Record the created organization in the
-                                        // per-account index so the bind UI can list
-                                        // it.
-                                        {
-                                            let mut store = state_store.write();
-                                            upsert_created_organization(
-                                                &mut store,
-                                                CreatedOrganization {
-                                                    organization_id: organization
-                                                        .organization_id
-                                                        .clone(),
-                                                    organization_did: organization.organization_did.clone(),
-                                                    did_key_id: organization.did_key_id.clone(),
-                                                    display_name: name.clone(),
-                                                },
-                                            );
-                                        }
-                                        created_did.set(outcome.did.as_str().to_owned());
-                                        let outcome_status = match outcome.status {
-                                            arkret_sdk::DidOperationSubmitStatus::Accepted => "accepted",
-                                            arkret_sdk::DidOperationSubmitStatus::Duplicate => "duplicate",
-                                            arkret_sdk::DidOperationSubmitStatus::Pending => "pending",
-                                        };
-                                        status_msg.set(format!(
-                                            "organization minted ({outcome_status})"
-                                        ));
-                                        display_name.set(String::new());
-                                        handle.set(String::new());
-                                    }
-                                    Err(err) => {
-                                        status_msg.set(format!(
-                                            "organization mint failed: {}",
-                                            err.display()
-                                        ));
-                                    }
-                                }
-                                busy.set(false);
+                        // Persist the control seed BEFORE submitting so a
+                        // network failure after a successful mint cannot
+                        // strand a DID with no recoverable control key.
+                        let secure_store =
+                            crate::secure_key_store::default_secure_key_store("inkson");
+                        if let Err(err) = store_organization_control_seed(
+                            secure_store.as_ref(),
+                            &organization.organization_id,
+                            &organization.control_seed,
+                        ) {
+                            busy.revise(|value| {
+                                *value = false;
                             });
+                            status_msg.revise(|value| {
+                                *value = format!("could not store organization control key: {err}");
+                            });
+                            return;
                         }
-                    },
-                    "Create organization"
-                }
-            }
-            if !created_did().is_empty() {
-                div {
-                    class: "muted",
-                    "data-testid": "org-create-result",
-                    "data-organization-did": "{created_did}",
-                    title: "{created_did}",
-                    "Created: {created_did}"
-                }
-            }
-            if !status_msg().is_empty() {
-                div { class: "muted", "data-testid": "org-create-status", "{status_msg}" }
-            }
-        }
-    }
-}
 
-/// D3 — bind a created organization to this Realm (or revoke a prior binding).
-/// The organization-side statement proof is signed with the organization control
-/// key; the resulting `ak.realm.organization` event is submitted on the
-/// operator's self plane. Server-administrator only.
-#[component]
-fn OrganizationBindPanel(token: Signal<String>, realm_id: String, principal_id: String) -> Element {
-    // A4 — base_url / state_store from session context instead of props.
-    let base_url = crate::app::SessionContext::base_url_string();
-    let state_store = crate::app::SessionContext::get().state_store;
-    let created = use_memo(move || load_created_organizations(&state_store.read()));
-
-    let mut selected_org = use_signal(String::new);
-    let mut relationship = use_signal(|| "owner".to_owned());
-    let mut selected_scopes = use_signal(|| vec!["official_badge".to_owned()]);
-    let mut revoke_mode = use_signal(|| false);
-    let mut revokes_statement_id = use_signal(String::new);
-    let mut status_msg = use_signal(String::new);
-    let mut busy = use_signal(|| false);
-
-    rsx! {
-        div { class: "workflow-form", "data-testid": "org-bind-form",
-            div { class: "event-head",
-                span { "Bind organization to this Realm" }
-                span { class: "badge green", "server admin" }
-            }
-            if created().is_empty() {
-                div { class: "muted", "data-testid": "org-bind-no-orgs",
-                    "No organizations created on this device yet. Create one above, then bind it here."
-                }
-            } else {
-                div { class: "field",
-                    label { "Organization" }
-                    select {
-                        "data-testid": "org-bind-org-select",
-                        value: "{selected_org}",
-                        onchange: move |evt| selected_org.set(evt.value()),
-                        option { value: "", "Select an organization…" }
-                        for org in created() {
-                            option {
-                                value: "{org.organization_id}",
-                                "{org.display_name} ({short_protocol_id(org.organization_did.as_str())})"
-                            }
-                        }
-                    }
-                }
-                div { class: "field",
-                    label { "Relationship" }
-                    select {
-                        "data-testid": "org-bind-relationship-select",
-                        value: "{relationship}",
-                        onchange: move |evt| relationship.set(evt.value()),
-                        for (slug , label) in RELATIONSHIP_CHOICES.iter() {
-                            option { value: "{slug}", "{label}" }
-                        }
-                    }
-                }
-                div { class: "field",
-                    label { "Control scopes" }
-                    div { class: "metric-grid", "data-testid": "org-bind-scopes",
-                        for (slug , label) in CONTROL_SCOPE_CHOICES.iter() {
-                            {
-                                let slug = (*slug).to_owned();
-                                let checked = selected_scopes().iter().any(|s| s == &slug);
-                                rsx! {
-                                    label { class: "checkbox-row",
-                                        input {
-                                            r#type: "checkbox",
-                                            "data-scope": "{slug}",
-                                            checked,
-                                            onchange: move |evt| {
-                                                let mut scopes = selected_scopes();
-                                                if evt.checked() {
-                                                    if !scopes.iter().any(|s| s == &slug) {
-                                                        scopes.push(slug.clone());
-                                                    }
-                                                } else {
-                                                    scopes.retain(|s| s != &slug);
-                                                }
-                                                selected_scopes.set(scopes);
-                                            },
-                                        }
-                                        "{label}"
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                div { class: "field",
-                    label { class: "checkbox-row",
-                        input {
-                            r#type: "checkbox",
-                            "data-testid": "org-bind-revoke-toggle",
-                            checked: revoke_mode(),
-                            onchange: move |evt| revoke_mode.set(evt.checked()),
-                        }
-                        "Revoke a prior statement"
-                    }
-                }
-                if revoke_mode() {
-                    div { class: "field",
-                        label { "Revokes statement id" }
-                        input {
-                            r#type: "text",
-                            "data-testid": "org-bind-revokes-id",
-                            value: "{revokes_statement_id}",
-                            placeholder: "org-stmt-…",
-                            oninput: move |evt| revokes_statement_id.set(evt.value()),
-                        }
-                    }
-                }
-                div { class: "actions",
-                    button {
-                        r#type: "button",
-                        class: "primary",
-                        "data-testid": "org-bind-submit",
-                        disabled: busy(),
-                        onclick: {
-                            let base = base_url.clone();
-                            let realm_id = realm_id.clone();
-                            let principal_id = principal_id.clone();
-                            move |_| {
-                                let base = base.clone();
-                                let realm_id = realm_id.clone();
-                                let actor = principal_id.clone();
-                                let api_token = token();
-                                let selected_organization_id = selected_org().trim().to_owned();
-                                if selected_organization_id.is_empty() {
-                                    status_msg.set("select an organization first".to_owned());
-                                    return;
-                                }
-                                let Some(organization) = created()
-                                    .iter()
-                                    .find(|organization| {
-                                        organization.organization_id.as_str()
-                                            == selected_organization_id
-                                    })
-                                    .cloned()
-                                else {
-                                    status_msg.set("selected organization is unavailable".to_owned());
-                                    return;
-                                };
-                                let Some(relationship_value) = relationship_from_slug(&relationship())
-                                else {
-                                    status_msg.set("invalid relationship".to_owned());
-                                    return;
-                                };
-                                let scopes: Vec<RealmOrganizationControlScope> = selected_scopes()
-                                    .iter()
-                                    .filter_map(|slug| control_scope_from_slug(slug))
-                                    .collect();
-                                if scopes.is_empty() {
-                                    status_msg.set("select at least one control scope".to_owned());
-                                    return;
-                                }
-                                let is_revoke = revoke_mode();
-                                let revokes_id = revokes_statement_id().trim().to_owned();
-                                if is_revoke && revokes_id.is_empty() {
-                                    status_msg
-                                        .set("revoke requires the prior statement id".to_owned());
-                                    return;
-                                }
-                                // Resolve the organization control verification
-                                // method id + signing key from local storage.
-                                let did_key_id = organization.did_key_id.clone();
-                                let secure_store =
-                                    crate::secure_key_store::default_secure_key_store("inkson");
-                                let control_key = match load_organization_control_key(
-                                    secure_store.as_ref(),
-                                    &organization.organization_id,
-                                ) {
-                                    Ok(Some(key)) => key,
-                                    Ok(None) => {
-                                        status_msg.set(
-                                            "organization control key not found on this device"
-                                                .to_owned(),
-                                        );
-                                        return;
-                                    }
-                                    Err(err) => {
-                                        status_msg.set(format!(
-                                            "could not load organization control key: {err}"
-                                        ));
-                                        return;
-                                    }
-                                };
-
-                                let issued_at = crate::clock::now_utc();
-                                let statement_id = crate::operation::uuid_v7();
-                                let status_value = if is_revoke {
-                                    RealmOrganizationStatus::Revoked
-                                } else {
-                                    RealmOrganizationStatus::Active
-                                };
-                                let statement_input = OrganizationStatementInput {
-                                    statement_id: statement_id.clone(),
-                                    realm_id: realm_id.clone(),
-                                    organization_id: organization.organization_id.clone(),
-                                    organization_did: organization.organization_did.clone(),
-                                    verification_method: did_key_id.clone(),
-                                    relationship: relationship_value,
-                                    status: status_value,
-                                    control_scopes: scopes.clone(),
-                                    issued_at,
-                                    revokes_statement_id: is_revoke
-                                        .then(|| revokes_id.clone()),
-                                };
-                                // Sign the organization-side statement proof with
-                                // the organization control key (NOT the login /
-                                // device signer).
-                                let signed = match sign_organization_statement(
-                                    &statement_input,
-                                    &control_key,
-                                ) {
-                                    Ok(payload) => payload,
-                                    Err(err) => {
-                                        status_msg
-                                            .set(format!("organization signing failed: {err}"));
-                                        return;
-                                    }
-                                };
-
-                                // Feed the SAME fields plus the signed proof into
-                                // the ak.realm.organization builder; it
-                                // reconstructs an identical payload so the
-                                // canonical signing bytes — and the proof — stay
-                                // valid on the wire.
-                                let authorization = signed.authorization.clone();
-                                let builder =
-                                    match crate::operation::ak_ops::realm_organization_statement(
-                                        &realm_id,
-                                        &actor,
-                                        &statement_id,
-                                        &organization.organization_id,
-                                        relationship_value,
-                                        status_value,
-                                        scopes,
-                                        issued_at,
-                                        authorization,
-                                        is_revoke.then(|| revokes_id.clone()),
-                                    ) {
-                                        Ok(builder) => builder,
-                                        Err(err) => {
-                                            status_msg
-                                                .set(format!("statement build failed: {err}"));
-                                            return;
-                                        }
-                                    };
-                                let event = match builder.build_sdk_event("inkson") {
-                                    Ok(event) => event,
-                                    Err(err) => {
-                                        status_msg.set(format!("event build failed: {err}"));
-                                        return;
-                                    }
-                                };
-
-                                busy.set(true);
-                                status_msg.set(if is_revoke {
-                                    "revoking organization binding…".to_owned()
-                                } else {
-                                    "binding organization…".to_owned()
-                                });
-                                spawn(async move {
-                                    match crate::transport::auth::with_authed_api(
-                                        &base,
-                                        api_token,
-                                        move |api| {
-                                            let event = event.clone();
-                                            async move { api.event_submitter()?.submit_sdk_event(&event).await }
-                                        },
+                        let submit_body = prepared.submit_body.clone();
+                        match crate::transport::auth::with_authed_sdk_client(
+                            &base,
+                            api_token,
+                            move |http| {
+                                let submit_body = submit_body.clone();
+                                async move {
+                                    crate::transport::account::submit_did_operation(
+                                        &http,
+                                        &submit_body,
                                     )
                                     .await
-                                    {
-                                        Ok(resp) => {
-                                            status_msg.set(format!(
-                                                "submitted ak.realm.organization: event_id={}",
-                                                short_protocol_id(&resp.event_id)
-                                            ));
-                                        }
-                                        Err(err) => {
-                                            status_msg.set(format!(
-                                                "submit failed: {}",
-                                                err.display()
-                                            ));
-                                        }
-                                    }
-                                    busy.set(false);
+                                }
+                            },
+                        )
+                        .await
+                        {
+                            Ok(outcome) => {
+                                // Record the created organization in the
+                                // per-account index so the bind UI can list
+                                // it.
+                                {
+                                    state_store.write(|store| {
+                                        upsert_created_organization(
+                                            store,
+                                            CreatedOrganization {
+                                                organization_id: organization
+                                                    .organization_id
+                                                    .clone(),
+                                                organization_did: organization
+                                                    .organization_did
+                                                    .clone(),
+                                                did_key_id: organization.did_key_id.clone(),
+                                                display_name: name.clone(),
+                                            },
+                                        )
+                                    });
+                                }
+                                created_did.revise(|value| {
+                                    *value = outcome.did.as_str().to_owned();
+                                });
+                                let outcome_status = match outcome.status {
+                                    arkret_sdk::DidOperationSubmitStatus::Accepted => "accepted",
+                                    arkret_sdk::DidOperationSubmitStatus::Duplicate => "duplicate",
+                                    arkret_sdk::DidOperationSubmitStatus::Pending => "pending",
+                                };
+                                status_msg.revise(|value| {
+                                    *value = format!("organization minted ({outcome_status})");
+                                });
+                                display_name.revise(|value| {
+                                    *value = String::new();
+                                });
+                                handle.revise(|value| {
+                                    *value = String::new();
                                 });
                             }
-                        },
-                        if revoke_mode() {
-                            "Revoke binding"
-                        } else {
-                            "Bind organization"
+                            Err(err) => {
+                                status_msg.revise(|value| {
+                                    *value = format!("organization mint failed: {}", err.display());
+                                });
+                            }
                         }
-                    }
-                }
+                        busy.revise(|value| {
+                            *value = false;
+                        });
+                    });
+                };
             }
-            if !status_msg().is_empty() {
-                div { class: "muted", "data-testid": "org-bind-status", "{status_msg}" }
-            }
+        };
+        action(());
+    }
+    #[allow(unused_variables)]
+    fn bind(&self) {
+        let context = self.context.clone();
+        if !context.is_server_admin.get_untracked() {
+            return;
         }
+        let owner = self.owner.clone();
+        let base_url = context.base_url.get();
+        let token = context.token;
+        let state_store = context.state_store.clone();
+        let realm_id = self.realm.clone();
+        let principal_id = context
+            .principal_id
+            .get()
+            .map(|value| value.to_string())
+            .unwrap_or_default();
+        let status_msg = self.status_msg;
+        let busy = self.busy;
+        let selected_org = self.selected_org;
+        let relationship = self.relationship;
+        let selected_scopes = self.selected_scopes;
+        let revoke_mode = self.revoke_mode;
+        let revokes_statement_id = self.revokes_statement_id;
+        let action = {
+            let base = base_url.clone();
+            let realm_id = realm_id.clone();
+            let principal_id = principal_id.clone();
+            move |_| {
+                let base = base.clone();
+                let realm_id = realm_id.clone();
+                let actor = principal_id.clone();
+                let api_token = token.get();
+                let selected_organization_id = selected_org.get().trim().to_owned();
+                if selected_organization_id.is_empty() {
+                    status_msg.revise(|value| {
+                        *value = "select an organization first".to_owned();
+                    });
+                    return;
+                }
+                let Some(organization) = context
+                    .state_store
+                    .read(load_created_organizations)
+                    .iter()
+                    .find(|organization| {
+                        organization.organization_id.as_str() == selected_organization_id
+                    })
+                    .cloned()
+                else {
+                    status_msg.revise(|value| {
+                        *value = "selected organization is unavailable".to_owned();
+                    });
+                    return;
+                };
+                let Some(relationship_value) = relationship_from_slug(&relationship.get()) else {
+                    status_msg.revise(|value| {
+                        *value = "invalid relationship".to_owned();
+                    });
+                    return;
+                };
+                let scopes: Vec<RealmOrganizationControlScope> = selected_scopes
+                    .get()
+                    .iter()
+                    .filter_map(|slug| control_scope_from_slug(slug))
+                    .collect();
+                if scopes.is_empty() {
+                    status_msg.revise(|value| {
+                        *value = "select at least one control scope".to_owned();
+                    });
+                    return;
+                }
+                let is_revoke = revoke_mode.get();
+                let revokes_id = revokes_statement_id.get().trim().to_owned();
+                if is_revoke && revokes_id.is_empty() {
+                    status_msg.revise(|value| {
+                        *value = "revoke requires the prior statement id".to_owned();
+                    });
+                    return;
+                }
+                // Resolve the organization control verification
+                // method id + signing key from local storage.
+                let did_key_id = organization.did_key_id.clone();
+                let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+                let control_key = match load_organization_control_key(
+                    secure_store.as_ref(),
+                    &organization.organization_id,
+                ) {
+                    Ok(Some(key)) => key,
+                    Ok(None) => {
+                        status_msg.revise(|value| {
+                            *value = "organization control key not found on this device".to_owned();
+                        });
+                        return;
+                    }
+                    Err(err) => {
+                        status_msg.revise(|value| {
+                            *value = format!("could not load organization control key: {err}");
+                        });
+                        return;
+                    }
+                };
+
+                let issued_at = crate::clock::now_utc();
+                let statement_id = crate::operation::uuid_v7();
+                let status_value = if is_revoke {
+                    RealmOrganizationStatus::Revoked
+                } else {
+                    RealmOrganizationStatus::Active
+                };
+                let statement_input = OrganizationStatementInput {
+                    statement_id: statement_id.clone(),
+                    realm_id: realm_id.clone(),
+                    organization_id: organization.organization_id.clone(),
+                    organization_did: organization.organization_did.clone(),
+                    verification_method: did_key_id.clone(),
+                    relationship: relationship_value,
+                    status: status_value,
+                    control_scopes: scopes.clone(),
+                    issued_at,
+                    revokes_statement_id: is_revoke.then(|| revokes_id.clone()),
+                };
+                // Sign the organization-side statement proof with
+                // the organization control key (NOT the login /
+                // device signer).
+                let signed = match sign_organization_statement(&statement_input, &control_key) {
+                    Ok(payload) => payload,
+                    Err(err) => {
+                        status_msg.revise(|value| {
+                            *value = format!("organization signing failed: {err}");
+                        });
+                        return;
+                    }
+                };
+
+                // Feed the SAME fields plus the signed proof into
+                // the ak.realm.organization builder; it
+                // reconstructs an identical payload so the
+                // canonical signing bytes — and the proof — stay
+                // valid on the wire.
+                let authorization = signed.authorization.clone();
+                let builder = match crate::operation::ak_ops::realm_organization_statement(
+                    &realm_id,
+                    &actor,
+                    &statement_id,
+                    &organization.organization_id,
+                    relationship_value,
+                    status_value,
+                    scopes,
+                    issued_at,
+                    authorization,
+                    is_revoke.then(|| revokes_id.clone()),
+                ) {
+                    Ok(builder) => builder,
+                    Err(err) => {
+                        status_msg.revise(|value| {
+                            *value = format!("statement build failed: {err}");
+                        });
+                        return;
+                    }
+                };
+                let event = match builder.build_sdk_event("inkson") {
+                    Ok(event) => event,
+                    Err(err) => {
+                        status_msg.revise(|value| {
+                            *value = format!("event build failed: {err}");
+                        });
+                        return;
+                    }
+                };
+
+                busy.revise(|value| {
+                    *value = true;
+                });
+                status_msg.revise(|value| {
+                    *value = if is_revoke {
+                        "revoking organization binding…".to_owned()
+                    } else {
+                        "binding organization…".to_owned()
+                    };
+                });
+                if let Some(scope) = owner.upgrade() {
+                    spawn(&scope, async move {
+                        match crate::transport::auth::with_authed_api(
+                            &base,
+                            api_token,
+                            move |api| {
+                                let event = event.clone();
+                                async move { api.event_submitter()?.submit_sdk_event(&event).await }
+                            },
+                        )
+                        .await
+                        {
+                            Ok(resp) => {
+                                status_msg.revise(|value| {
+                                    *value = format!(
+                                        "submitted ak.realm.organization: event_id={}",
+                                        short_protocol_id(&resp.event_id)
+                                    );
+                                });
+                            }
+                            Err(err) => {
+                                status_msg.revise(|value| {
+                                    *value = format!("submit failed: {}", err.display());
+                                });
+                            }
+                        }
+                        busy.revise(|value| {
+                            *value = false;
+                        });
+                    });
+                };
+            }
+        };
+        action(());
     }
 }
-
 fn phase_slug(phase: OrgRelationshipPhase) -> &'static str {
     match phase {
         OrgRelationshipPhase::DeclaredHint => "declared_hint",
         OrgRelationshipPhase::VerifiedActive => "verified_active",
         OrgRelationshipPhase::RevokedOrExpired => "revoked_or_expired",
+    }
+}
+
+pub(super) fn page(scope: &Scope, context: Rc<InksonContext>, realm: String) -> View {
+    let load_context = context.clone();
+    let load_realm = realm.clone();
+    let relationships = crate::presentation::widgets::resource(scope, move || {
+        let base = load_context.base_url.get();
+        let token = load_context.token.get();
+        let realm = load_realm.clone();
+        let _ = load_context.session_generation.get();
+        async move {
+            with_authed_sdk_client(&base, token, |http| async move {
+                crate::transport::realm_read::list_realm_organizations(&http, &realm).await
+            })
+            .await
+            .map(|list| dtos_from_list(&list))
+            .map_err(|error| error.display())
+        }
+    });
+    let rows_context = context.clone();
+    let rows = crate::presentation::widgets::resource_content(
+        context.clone(),
+        format!("realm-organizations-{realm}"),
+        relationships,
+        "recovery.panel.loading",
+        move |scope, rows| {
+            let context = rows_context.clone();
+            let mut children = Vec::new();
+            if rows.is_empty() {
+                children.push(paragraph(
+                    "muted",
+                    "No verified organization relationships or declared hints.",
+                ));
+            }
+            for row in rows {
+                let mut details = vec![
+                    line(
+                        "event-head",
+                        vec![
+                            plain(row.organization_name),
+                            paragraph(row.phase.badge_class(), row.phase.label()),
+                        ],
+                    ),
+                    paragraph("muted", row.phase.explainer()),
+                    paragraph("mono", row.organization_id),
+                ];
+                if !row.relationship.is_empty() {
+                    details.push(paragraph("", row.relationship));
+                }
+                if !row.control_scopes.is_empty() {
+                    details.push(paragraph("muted", row.control_scopes.join(", ")));
+                }
+                if let Some(statement) = row.statement_id {
+                    details.push(paragraph("muted mono", short_protocol_id(&statement)));
+                }
+                children.push(stack(
+                    format!(
+                        "event organization-relationship-row org-phase-{}",
+                        phase_slug(row.phase)
+                    ),
+                    details,
+                ));
+            }
+            card(scope, context, "Realm organization relationships", children)
+        },
+    );
+    let admin = context.is_server_admin;
+    let forms_context = context.clone();
+    let forms = reactive(admin, move |scope, admin| {
+        if !admin {
+            return empty();
+        }
+        let context = forms_context.clone();
+        let create = organization_state(scope, context.clone(), realm.clone());
+        let bind = organization_state(scope, context.clone(), realm.clone());
+        let create_action = create.clone();
+        let bind_action = bind.clone();
+        let create_busy = create.busy;
+        let bind_busy = bind.busy;
+        let create_enabled = scope.bond(move || !create_busy.get());
+        let bind_enabled = scope.bond(move || !bind_busy.get());
+        let selected = bind.selected_org;
+        let relationship = bind.relationship;
+        let scopes = bind.selected_scopes;
+        let revoke = bind.revoke_mode;
+        let prior = bind.revokes_statement_id;
+        let options_context = context.clone();
+        let state_revision = context.state_revision;
+        let options = reactive(state_revision, move |scope, _| {
+            let context = options_context.clone();
+            let organizations = context.state_store.read(load_created_organizations);
+            let options = organizations
+                .into_iter()
+                .map(|org| {
+                    (
+                        org.organization_id.to_string(),
+                        format!(
+                            "{} ({})",
+                            org.display_name,
+                            short_protocol_id(org.organization_did.as_str())
+                        ),
+                    )
+                })
+                .collect();
+            choice(
+                scope,
+                context,
+                "org-bind-org-select",
+                "Organization",
+                selected,
+                options,
+                bind_enabled,
+                move |next| {
+                    selected.revise(|value| {
+                        *value = next;
+                    })
+                },
+            )
+        });
+        let mut scope_controls = Vec::new();
+        for (slug, label) in CONTROL_SCOPE_CHOICES.iter().copied() {
+            let checked = scope.bond(move || scopes.get().iter().any(|value| value == slug));
+            scope_controls.push(toggle(
+                scope,
+                context.clone(),
+                &format!("org-bind-scope-{slug}"),
+                label,
+                checked,
+                bind_enabled,
+                move |checked| {
+                    scopes.revise(|values| {
+                        values.retain(|value| value != slug);
+                        if checked {
+                            values.push(slug.to_owned());
+                        }
+                    })
+                },
+            ));
+        }
+        stack(
+            "settings-content-stack organization-admin-tools",
+            vec![
+                card(
+                    scope,
+                    context.clone(),
+                    "Create an organization",
+                    vec![
+                        paragraph(
+                            "muted",
+                            "Mint a new organization DID (did:webvh) anchored to this Station. The organization control private key is stored securely on this device — it is the signing authority for binding the organization to Realms.",
+                        ),
+                        input(
+                            scope,
+                            context.clone(),
+                            "org-create-display-name",
+                            "Display name",
+                            create.display_name,
+                            create_enabled,
+                        ),
+                        input(
+                            scope,
+                            context.clone(),
+                            "org-create-handle",
+                            "Handle / local id",
+                            create.handle,
+                            create_enabled,
+                        ),
+                        action(
+                            scope,
+                            context.clone(),
+                            "org-create-submit",
+                            "Create organization",
+                            "primary",
+                            create_enabled,
+                            move || create_action.create(),
+                        ),
+                        status(create.created_did),
+                        status(create.status_msg),
+                    ],
+                ),
+                card(
+                    scope,
+                    context.clone(),
+                    "Bind organization to this Realm",
+                    vec![
+                        options,
+                        choice(
+                            scope,
+                            context.clone(),
+                            "org-bind-relationship-select",
+                            "Relationship",
+                            relationship,
+                            RELATIONSHIP_CHOICES
+                                .iter()
+                                .map(|(slug, label)| (slug.to_string(), label.to_string()))
+                                .collect(),
+                            bind_enabled,
+                            move |next| {
+                                relationship.revise(|value| {
+                                    *value = next;
+                                })
+                            },
+                        ),
+                        stack("metric-grid org-bind-scopes", scope_controls),
+                        toggle(
+                            scope,
+                            context.clone(),
+                            "org-bind-revoke-toggle",
+                            "Revoke a prior statement",
+                            revoke,
+                            bind_enabled,
+                            move |next| {
+                                revoke.revise(|value| {
+                                    *value = next;
+                                })
+                            },
+                        ),
+                        input(
+                            scope,
+                            context.clone(),
+                            "org-bind-revokes-id",
+                            "Revokes statement id",
+                            prior,
+                            revoke,
+                        ),
+                        action(
+                            scope,
+                            context.clone(),
+                            "org-bind-submit",
+                            "Bind organization / Revoke binding",
+                            "primary",
+                            bind_enabled,
+                            move || bind_action.bind(),
+                        ),
+                        status(bind.status_msg),
+                    ],
+                ),
+            ],
+        )
+    });
+    stack("settings-content-stack", vec![rows, forms])
+}
+fn organization_state(
+    scope: &Scope,
+    context: Rc<InksonContext>,
+    realm: String,
+) -> OrganizationPage {
+    OrganizationPage {
+        context,
+        owner: scope.downgrade(),
+        realm,
+        display_name: scope.cage(String::new()),
+        handle: scope.cage(String::new()),
+        status_msg: scope.cage(String::new()),
+        created_did: scope.cage(String::new()),
+        busy: scope.cage(false),
+        selected_org: scope.cage(String::new()),
+        relationship: scope.cage("owner".into()),
+        selected_scopes: scope.cage(vec!["official_badge".into()]),
+        revoke_mode: scope.cage(false),
+        revokes_statement_id: scope.cage(String::new()),
     }
 }
 

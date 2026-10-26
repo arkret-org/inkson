@@ -1,5 +1,4 @@
 use super::*;
-use crate::components::HelpTip;
 
 pub(super) fn contact_manage_scope_summary(contact: &crate::models::ContactView) -> String {
     let mut seen = BTreeSet::<String>::new();
@@ -19,378 +18,555 @@ pub(super) fn contact_manage_scope_summary(contact: &crate::models::ContactView)
     }
 }
 
-#[component]
-pub(super) fn RealmsManagePage(
-    principal_id: String,
-    principal_control_realm_id: Option<String>,
-    token: Signal<String>,
-    has_session: bool,
-    realm_rows: Vec<RealmManageRow>,
-    mut realm_tree_nodes: Signal<Vec<RealmTreeNode>>,
-    mut selected_realm_id: Signal<String>,
-    mut sync_cursor: Signal<String>,
-    mut query: Signal<String>,
-) -> Element {
-    // A4 — base_url / state_store from session context instead of props.
-    let base_url = crate::app::SessionContext::base_url_string();
-    let state_store = crate::app::SessionContext::get().state_store;
-    let normalized_query = query().trim().to_ascii_lowercase();
-    let filtered_rows = realm_rows
-        .iter()
-        .filter(|row| {
-            sidebar_text_matches_query(
-                &normalized_query,
-                &[&row.realm_id, &row.title, &row.display_name],
+use std::rc::Rc;
+
+use glory::prelude::*;
+
+use super::session_shell::{action, block, nav};
+use super::shell_state::ShellState;
+use crate::presentation::widgets::*;
+use crate::presentation::{InksonContext, View};
+
+pub(super) fn realms_page(scope: &Scope, context: Rc<InksonContext>, ui: Rc<ShellState>) -> View {
+    let source = scope.bond({
+        let context = context.clone();
+        let ui = ui.clone();
+        move || {
+            (
+                context.realm_tree_nodes.get(),
+                context.state_revision.get(),
+                ui.realm_query.get(),
+                context.locale.get(),
             )
-        })
-        .cloned()
-        .collect::<Vec<_>>();
-    let mut pending_leave = use_signal(|| None::<(String, String)>);
-    let pending_leave_target = pending_leave();
-
-    rsx! {
-        div { class: "settings realm-manage-page", "data-testid": "realms-manage-page",
-            div { class: "settings-shell realm-manage-shell",
-                section { class: "settings-content-stack realm-manage-main",
-                    div { class: "event realm-manage-list-card",
-                        div { class: "realm-manage-list-tools", "data-testid": "realms-manage-toolbar",
-                            div { class: "realm-manage-search",
-                                span { class: "realm-manage-search-icon", UiIcon { name: "search" } }
-                                Input {
-                                    "data-testid": "realms-manage-search-input",
-                                    value: "{query}",
-                                    placeholder: crate::i18n::tr("sidebar.search_realms"),
-                                    oninput: move |event: FormEvent| query.set(event.value()),
-                                }
-                            }
-                            if principal_control_realm_id.is_some() {
-                                Link {
-                                    class: "btn sm secondary realm-manage-pcr-link",
-                                    "data-testid": "realms-manage-principal-control-button",
-                                    to: Route::PrincipalControl,
-                                    UiIcon { name: "key" }
-                                    {crate::i18n::tr("manage.principal_control_button")}
-                                }
-                            }
-                        }
-                        if realm_rows.is_empty() {
-                            div { class: "members-empty", "data-testid": "realms-manage-empty",
-                                div { class: "members-empty-title",
-                                    {if has_session { crate::i18n::tr("sidebar.realms_empty") } else { crate::i18n::tr("sidebar.realms_sign_in") }}
-                                }
-                                div { class: "muted members-empty-hint", {crate::i18n::tr("manage.realms_empty_hint")} }
-                            }
-                        } else if filtered_rows.is_empty() {
-                            div { class: "members-empty", "data-testid": "realms-manage-no-results",
-                                div { class: "members-empty-title", {crate::i18n::tr("sidebar.realms_no_results")} }
-                                div { class: "muted members-empty-hint", {crate::i18n::tr("manage.no_results_hint")} }
-                            }
-                        } else {
-                            div { class: "realm-manage-list", "data-testid": "realms-manage-list",
-                                for row in filtered_rows {
-                                    {
-                                        let realm_id = row.realm_id.clone();
-                                        let realm_label = row.display_name.clone();
-                                        let security_label = match row.encrypted {
-                                            Some(true) => crate::i18n::tr("manage.row_encrypted"),
-                                            Some(false) => crate::i18n::tr("manage.row_unencrypted"),
-                                            None => crate::i18n::tr("realm.security_unknown"),
-                                        };
-                                        let security_icon = match row.encrypted { Some(true) => "lock", Some(false) => "unlock", None => "help-circle" };
-                                        rsx! {
-                                            div {
-                                                class: "realm-manage-row",
-                                                "data-testid": "realms-manage-row",
-                                                "data-realm-id": "{realm_id}",
-                                                tabindex: "0",
-                                                "aria-label": "{realm_label}",
-                                                div { class: "realm-manage-row-main",
-                                                    strong { title: "{row.title}", "{row.display_name}" }
-                                                    span { class: "muted mono", title: "{realm_id}", "{realm_id}" }
-                                                }
-                                                div { class: "realm-manage-row-meta",
-                                                    span { class: "pill muted xs", title: "{security_label}",
-                                                        UiIcon { name: security_icon }
-                                                        "{security_label}"
-                                                    }
-                                                    span { class: "pill muted xs",
-                                                        {crate::i18n::tr_args("manage.row_spaces", &[("count", row.space_count.to_string())])}
-                                                    }
-                                                }
-                                                div { class: "realm-manage-row-actions",
-                                                    Link {
-                                                        class: "btn sm secondary",
-                                                        "data-testid": "realms-manage-row-open",
-                                                        to: Route::Realm { realm_id: realm_id.clone() },
-                                                        onclick: {
-                                                            let realm_id = realm_id.clone();
-                                                            move |_| selected_realm_id.set(realm_id.clone())
-                                                        },
-                                                        {crate::i18n::tr("setup.action.open_realm")}
-                                                    }
-                                                    Link {
-                                                        class: "btn sm secondary",
-                                                        "data-testid": "realms-manage-row-settings",
-                                                        to: Route::RealmAdmin { realm_id: realm_id.clone() },
-                                                        {crate::i18n::tr("realm.settings")}
-                                                    }
-                                                    Button {
-                                                        variant: ButtonVariant::Destructive,
-                                                        size: ButtonSize::Sm,
-                                                        r#type: "button",
-                                                        "data-testid": "realms-manage-row-leave",
-                                                        disabled: !has_session,
-                                                        onclick: {
-                                                            let realm_id = realm_id.clone();
-                                                            let realm_label = realm_label.clone();
-                                                            move |_| pending_leave.set(Some((realm_id.clone(), realm_label.clone())))
-                                                        },
-                                                        {crate::i18n::tr("realm_admin.leave_realm")}
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    if let Some((realm_id, realm_label)) = pending_leave_target {
-                        crate::components::DismissiblePopup {
-                            overlay_class: "modal-backdrop",
-                            surface_class: "modal danger-confirm-modal",
-                            overlay_test_id: Some("realms-manage-leave-modal".to_owned()),
-                            surface_test_id: Some("realms-manage-leave-dialog".to_owned()),
-                            aria_label: crate::i18n::tr("realm_admin.leave_confirm_title"),
-                            on_dismiss: move |_| pending_leave.set(None),
-                            div { class: "modal-head",
-                                h3 { {crate::i18n::tr("realm_admin.leave_confirm_title")} }
-                                Button {
-                                    variant: ButtonVariant::Secondary,
-                                    class: "icon-button close",
-                                    "aria-label": crate::i18n::tr("common.close"),
-                                    onclick: move |_| pending_leave.set(None),
-                                    "\u{2715}"
-                                }
-                            }
-                            div { class: "modal-body workflow-form",
-                                div { class: "callout danger",
-                                    p { {crate::i18n::tr("realm_admin.leave_confirm_body")} }
-                                }
-                                div { class: "metric",
-                                    strong { {crate::i18n::tr("realm_admin.leave_confirm_target")} }
-                                    span { "{realm_label}" }
-                                    span { class: "muted mono", title: "{realm_id}", "{short_protocol_id(&realm_id)}" }
-                                }
-                            }
-                            div { class: "modal-foot",
-                                Button {
-                                    variant: ButtonVariant::Secondary,
-                                    onclick: move |_| pending_leave.set(None),
-                                    {crate::i18n::tr("realm_admin.leave_confirm_cancel")}
-                                }
-                                Button {
-                                    variant: ButtonVariant::Destructive,
-                                    "data-testid": "realms-manage-leave-confirm",
-                                    onclick: {
-                                        let base = base_url.clone();
-                                        let realm_id = realm_id.clone();
-                                        let principal_id = principal_id.clone();
-                                        move |_| {
-                                            pending_leave.set(None);
-                                            leave_sidebar_realm(
-                                                base.clone(),
-                                                token(),
-                                                realm_id.clone(),
-                                                principal_id.clone(),
-                                                state_store,
-                                                realm_tree_nodes,
-                                                selected_realm_id,
-                                                sync_cursor,
-                                            );
-                                        }
+        }
+    });
+    let rows = reactive(source, {
+        let context = context.clone();
+        let ui = ui.clone();
+        move |scope, (nodes, _, query, _)| {
+            let mut rows = Vec::new();
+            let query = query.trim().to_ascii_lowercase();
+            let _ = nodes;
+            let data =
+                super::sidebar::navigation_model(&context, &context.route.get_untracked(), "")
+                    .manage_realm_rows;
+            for row in data.iter().filter(|row| {
+                sidebar_text_matches_query(&query, &[&row.realm_id, &row.title, &row.display_name])
+            }) {
+                let id = row.realm_id.clone();
+                let label = &row.display_name;
+                let encrypted = row.encrypted;
+                let target = id.clone();
+                let name = label.clone();
+                let pending = ui.pending_leave;
+                rows.push(block(
+                    "realm-manage-row",
+                    vec![
+                        block(
+                            "realm-manage-row-main",
+                            vec![plain(label.clone()), paragraph("muted mono", id.clone())],
+                        ),
+                        block(
+                            "realm-manage-row-meta",
+                            vec![
+                                paragraph(
+                                    "pill muted xs",
+                                    context.translated(
+                                        scope,
+                                        match encrypted {
+                                            Some(true) => "manage.row_encrypted",
+                                            Some(false) => "manage.row_unencrypted",
+                                            None => "realm.security_unknown",
+                                        },
+                                    ),
+                                ),
+                                paragraph(
+                                    "pill muted xs",
+                                    crate::i18n::tr_args(
+                                        "manage.row_spaces",
+                                        &[("count", row.space_count.to_string())],
+                                    ),
+                                ),
+                            ],
+                        ),
+                        block(
+                            "realm-manage-row-actions",
+                            vec![
+                                nav(
+                                    context.clone(),
+                                    Route::Realm {
+                                        realm_id: id.clone(),
                                     },
-                                    {crate::i18n::tr("realm_admin.leave_confirm_button")}
-                                }
-                            }
-                        }
-                    }
-                }
+                                    "btn sm secondary",
+                                    context.translated(scope, "setup.action.open_realm"),
+                                    "",
+                                ),
+                                nav(
+                                    context.clone(),
+                                    Route::RealmAdmin { realm_id: id },
+                                    "btn sm secondary",
+                                    context.translated(scope, "realm.settings"),
+                                    "",
+                                ),
+                                action(
+                                    "btn sm danger",
+                                    context.translated(scope, "realm_admin.leave_realm"),
+                                    move || {
+                                        pending.revise(|value| {
+                                            *value = Some((target.clone(), name.clone()))
+                                        })
+                                    },
+                                ),
+                            ],
+                        ),
+                    ],
+                ));
             }
+            if rows.is_empty() {
+                rows.push(block(
+                    "members-empty",
+                    vec![
+                        paragraph(
+                            "members-empty-title",
+                            context.translated(
+                                scope,
+                                if data.is_empty() {
+                                    "sidebar.realms_empty"
+                                } else {
+                                    "sidebar.realms_no_results"
+                                },
+                            ),
+                        ),
+                        paragraph(
+                            "muted members-empty-hint",
+                            context.translated(
+                                scope,
+                                if data.is_empty() {
+                                    "manage.realms_empty_hint"
+                                } else {
+                                    "manage.no_results_hint"
+                                },
+                            ),
+                        ),
+                    ],
+                ));
+            }
+            block("realm-manage-list", rows)
         }
-    }
+    });
+    block(
+        "settings realm-manage-page",
+        vec![block(
+            "settings-shell realm-manage-shell",
+            vec![block(
+                "settings-content-stack realm-manage-main",
+                vec![block(
+                    "event realm-manage-list-card",
+                    vec![
+                        block(
+                            "realm-manage-list-tools",
+                            vec![
+                                input_field(
+                                    context.clone(),
+                                    "manage-realms",
+                                    context.translated(scope, "sidebar.search_realms"),
+                                    ui.realm_query,
+                                    Purpose::Text,
+                                ),
+                                nav(
+                                    context.clone(),
+                                    Route::PrincipalControl,
+                                    "btn sm secondary realm-manage-pcr-link",
+                                    context.translated(scope, "manage.principal_control_button"),
+                                    "key",
+                                ),
+                            ],
+                        ),
+                        rows,
+                    ],
+                )],
+            )],
+        )],
+    )
 }
-
-#[component]
-pub(super) fn PrincipalControlRealmPage(realm_id: Option<String>) -> Element {
-    rsx! {
-        div { class: "settings realm-manage-page", "data-testid": "principal-control-realm-page",
-            div { class: "settings-shell realm-manage-shell",
-                section { class: "settings-content-stack realm-manage-main",
-                    div { class: "event realm-manage-list-card principal-control-card",
-                        div { class: "compact-page-actions",
-                            HelpTip { text: crate::i18n::tr("manage.principal_control_subtitle") }
-                            Link {
-                                class: "btn sm secondary",
-                                "data-testid": "principal-control-back-button",
-                                to: Route::RealmsManage,
-                                UiIcon { name: "chevron-left" }
-                                {crate::i18n::tr("manage.back_to_realms")}
-                            }
-                        }
-                        if let Some(realm_id) = realm_id {
-                            div { class: "principal-control-field",
-                                span { class: "muted", {crate::i18n::tr("manage.principal_control_purpose_label")} }
-                                strong { {crate::i18n::tr("manage.principal_control_purpose_value")} }
-                            }
-                            div { class: "principal-control-field",
-                                span { class: "muted", {crate::i18n::tr("manage.principal_control_realm_id")} }
-                                code { class: "mono", "data-testid": "principal-control-realm-id", "{realm_id}" }
-                            }
-                            div { class: "panel-notice",
-                                UiIcon { name: "lock" }
-                                span { {crate::i18n::tr("manage.principal_control_no_business_surfaces")} }
-                            }
-                        } else {
-                            div { class: "members-empty", "data-testid": "principal-control-realm-unavailable",
-                                div { class: "members-empty-title", {crate::i18n::tr("manage.principal_control_unavailable")} }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-#[component]
-pub(super) fn ContactsManagePage(
-    token: Signal<String>,
-    has_session: bool,
-    mut contact_rows: Signal<Vec<crate::models::ContactView>>,
-    mut contacts_loaded: Signal<bool>,
-    mut query: Signal<String>,
-) -> Element {
-    // A4 — base_url / state_store from session context instead of props.
-    let base_url = crate::app::SessionContext::base_url_string();
-    let state_store = crate::app::SessionContext::get().state_store;
-    {
-        let base = base_url.clone();
-        use_effect(move || {
-            if contacts_loaded() || token().trim().is_empty() {
-                return;
-            }
-            load_direct_contacts_for_sidebar(
-                base.clone(),
-                token(),
-                state_store,
-                contact_rows,
-                contacts_loaded,
-            );
-        });
-    }
-
-    let rows = contact_rows.read().clone();
-    let normalized_query = query().trim().to_ascii_lowercase();
-    let filtered_rows = rows
-        .iter()
-        .filter(|contact| {
-            let scopes = contact_manage_scope_summary(contact);
-            let display_name =
-                crate::views::helpers::contact_peer_label(&state_store.read(), contact);
-            let state = crate::models::contact_state_wire(contact.state);
-            sidebar_text_matches_query(
-                &normalized_query,
-                &[
-                    crate::models::contact_peer_id(contact).as_str(),
-                    state,
-                    &display_name,
-                    &scopes,
+pub(super) fn principal_control_page(
+    scope: &Scope,
+    context: Rc<InksonContext>,
+    realm_id: Option<String>,
+) -> View {
+    let mut children = vec![block(
+        "compact-page-actions",
+        vec![
+            crate::components::help_tip(
+                scope,
+                context.clone(),
+                crate::components::HelpTipProps {
+                    text: context.tr("manage.principal_control_subtitle"),
+                },
+            ),
+            nav(
+                context.clone(),
+                Route::RealmsManage,
+                "btn sm secondary",
+                context.translated(scope, "manage.back_to_realms"),
+                "chevron-left",
+            ),
+        ],
+    )];
+    if let Some(id) = realm_id {
+        children.extend([
+            block(
+                "principal-control-field",
+                vec![
+                    paragraph(
+                        "muted",
+                        context.translated(scope, "manage.principal_control_purpose_label"),
+                    ),
+                    plain(context.translated(scope, "manage.principal_control_purpose_value")),
                 ],
-            )
-        })
-        .cloned()
-        .collect::<Vec<_>>();
-
-    rsx! {
-        div { class: "settings realm-manage-page", "data-testid": "contacts-manage-page",
-            div { class: "settings-shell realm-manage-shell",
-                section { class: "settings-content-stack realm-manage-main",
-                    div { class: "event realm-manage-list-card",
-                        div { class: "realm-manage-list-tools", "data-testid": "contacts-manage-toolbar",
-                            div { class: "realm-manage-search",
-                                span { class: "realm-manage-search-icon", UiIcon { name: "search" } }
-                                Input {
-                                    "data-testid": "contacts-manage-search-input",
-                                    value: "{query}",
-                                    placeholder: crate::i18n::tr("manage.search_contacts"),
-                                    oninput: move |event: FormEvent| query.set(event.value()),
-                                }
-                            }
-                        }
-                        if rows.is_empty() {
-                            div { class: "members-empty", "data-testid": "contacts-manage-empty",
-                                div { class: "members-empty-title",
-                                    {if has_session { crate::i18n::tr("contacts.empty") } else { crate::i18n::tr("contacts.sign_in") }}
-                                }
-                                div { class: "muted members-empty-hint", {crate::i18n::tr("manage.contacts_empty_hint")} }
-                            }
-                        } else if filtered_rows.is_empty() {
-                            div { class: "members-empty", "data-testid": "contacts-manage-no-results",
-                                div { class: "members-empty-title", {crate::i18n::tr("manage.contacts_no_results")} }
-                                div { class: "muted members-empty-hint", {crate::i18n::tr("manage.no_results_hint")} }
-                            }
-                        } else {
-                            div { class: "realm-manage-list", "data-testid": "contacts-manage-list",
-                                for contact in filtered_rows {
-                                    {
-                                        let peer = crate::models::contact_peer_id(&contact).to_string();
-                                        let peer_label = crate::views::helpers::contact_peer_label(
-                                            &state_store.read(),
-                                            &contact,
-                                        );
-                                        let scopes_label = contact_manage_scope_summary(&contact);
-                                        let direct_label = contact
-                                            .direct_conversation
-                                            .as_ref()
-                                            .map(|summary| {
-                                                crate::i18n::tr_args(
-                                                    "manage.contact_dm",
-                                                    &[(
-                                                        "state",
-                                                        crate::models::direct_conversation_binding_state_wire(
-                                                            summary.state,
-                                                        )
-                                                        .to_owned(),
-                                                    )],
-                                                )
-                                            })
-                                            .unwrap_or_else(|| crate::i18n::tr("manage.contact_no_dm"));
-                                        let contact_state =
-                                            crate::models::contact_state_wire(contact.state);
-                                        rsx! {
-                                            div {
-                                                class: "realm-manage-row",
-                                                "data-testid": "contacts-manage-row",
-                                                "data-peer": "{peer}",
-                                                div { class: "realm-manage-row-main",
-                                                    strong { title: "{peer}", "{peer_label}" }
-                                                    span { class: "muted", title: "{scopes_label}", "{scopes_label}" }
-                                                }
-                                                div { class: "realm-manage-row-meta",
-                                                    span { class: "pill muted xs", "{contact_state}" }
-                                                    span { class: "pill muted xs", "{direct_label}" }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
+            ),
+            block(
+                "principal-control-field",
+                vec![
+                    paragraph(
+                        "muted",
+                        context.translated(scope, "manage.principal_control_realm_id"),
+                    ),
+                    paragraph("mono", id),
+                ],
+            ),
+            block(
+                "panel-notice",
+                vec![
+                    crate::components::ui_icon("lock"),
+                    plain(
+                        context.translated(scope, "manage.principal_control_no_business_surfaces"),
+                    ),
+                ],
+            ),
+        ]);
+    } else {
+        children.push(paragraph(
+            "members-empty-title",
+            context.translated(scope, "manage.principal_control_unavailable"),
+        ));
     }
+    block(
+        "settings realm-manage-page",
+        vec![block(
+            "settings-shell realm-manage-shell",
+            vec![block(
+                "settings-content-stack realm-manage-main",
+                vec![block(
+                    "event realm-manage-list-card principal-control-card",
+                    children,
+                )],
+            )],
+        )],
+    )
+}
+pub(super) fn contacts_page(scope: &Scope, context: Rc<InksonContext>, ui: Rc<ShellState>) -> View {
+    super::sidebar::load_direct_contacts_for_sidebar(
+        scope,
+        context.clone(),
+        context.base_url.get_untracked(),
+        context.token.get_untracked(),
+        context.state_store.clone(),
+        context.contact_rows,
+        scope.cage(false),
+    );
+    let source = scope.bond({
+        let context = context.clone();
+        let ui = ui.clone();
+        move || {
+            (
+                context.contact_rows.get(),
+                ui.contact_query.get(),
+                context.state_revision.get(),
+                context.locale.get(),
+            )
+        }
+    });
+    let rows = reactive(source, {
+        let context = context.clone();
+        move |scope, (contacts, query, ..)| {
+            let mut rows = Vec::new();
+            let query = query.trim().to_ascii_lowercase();
+            for contact in &contacts {
+                let peer = crate::models::contact_peer_id(contact).to_string();
+                let scopes = contact_manage_scope_summary(contact);
+                let name = context
+                    .state_store
+                    .read(|store| crate::views::helpers::contact_peer_label(store, contact));
+                let state = crate::models::contact_state_wire(contact.state);
+                if !sidebar_text_matches_query(&query, &[&peer, &scopes, &name, state]) {
+                    continue;
+                }
+                let direct = contact
+                    .direct_conversation
+                    .as_ref()
+                    .map(|summary| {
+                        crate::i18n::tr_args(
+                            "manage.contact_dm",
+                            &[(
+                                "state",
+                                crate::models::direct_conversation_binding_state_wire(
+                                    summary.state,
+                                )
+                                .to_owned(),
+                            )],
+                        )
+                    })
+                    .unwrap_or_else(|| context.tr("manage.contact_no_dm"));
+                let actor = contact.peer.contact_actor_id();
+                let identity = match actor.as_account_id() {
+                    Some(account) => format!(
+                        "Principal: {} · Station: {}",
+                        account.principal_id, account.station_id
+                    ),
+                    None => actor.to_string(),
+                };
+                use sha2::Digest;
+                let identity_id = match glory::render::SemanticId::new(format!(
+                    "managed-recipient-{}",
+                    hex::encode(sha2::Sha256::digest(actor.to_string().as_bytes()))
+                )) {
+                    Ok(id) => id,
+                    Err(error) => {
+                        scope.report_error(error);
+                        continue;
+                    }
+                };
+                let described_by = identity_id.clone();
+                rows.push(Box::new(
+                    view()
+                        .class("realm-manage-row contacts-manage-row")
+                        .role(glory::render::Role::Group)
+                        .name(name.clone())
+                        .semantics(Some(Box::new(glory::render::Semantics {
+                            described_by: Some(described_by),
+                            ..Default::default()
+                        })))
+                        .fill(vec![
+                            Box::new(
+                                text()
+                                    .class("sr-only contact-recipient-identity")
+                                    .content(identity)
+                                    .semantics(Some(Box::new(glory::render::Semantics {
+                                        id: Some(identity_id),
+                                        ..Default::default()
+                                    }))),
+                            ) as View,
+                            block(
+                                "realm-manage-row-main",
+                                vec![plain(name), paragraph("muted", scopes)],
+                            ),
+                            block(
+                                "realm-manage-row-meta",
+                                vec![
+                                    paragraph("pill muted xs", state),
+                                    paragraph("pill muted xs", direct),
+                                ],
+                            ),
+                        ]),
+                ) as View);
+            }
+            if rows.is_empty() {
+                rows.push(block(
+                    "members-empty",
+                    vec![
+                        paragraph(
+                            "members-empty-title",
+                            context.translated(
+                                scope,
+                                if contacts.is_empty() {
+                                    "contacts.empty"
+                                } else {
+                                    "manage.contacts_no_results"
+                                },
+                            ),
+                        ),
+                        paragraph(
+                            "muted members-empty-hint",
+                            context.translated(
+                                scope,
+                                if contacts.is_empty() {
+                                    "manage.contacts_empty_hint"
+                                } else {
+                                    "manage.no_results_hint"
+                                },
+                            ),
+                        ),
+                    ],
+                ));
+            }
+            block("realm-manage-list", rows)
+        }
+    });
+    block(
+        "settings realm-manage-page contacts-manage-page",
+        vec![block(
+            "settings-shell realm-manage-shell",
+            vec![block(
+                "settings-content-stack realm-manage-main",
+                vec![block(
+                    "event realm-manage-list-card",
+                    vec![
+                        block(
+                            "realm-manage-list-tools",
+                            vec![input_field(
+                                context.clone(),
+                                "manage-contacts",
+                                context.translated(scope, "manage.search_contacts"),
+                                ui.contact_query,
+                                Purpose::Text,
+                            )],
+                        ),
+                        rows,
+                    ],
+                )],
+            )],
+        )],
+    )
+}
+pub(super) fn confirmations(scope: &Scope, context: Rc<InksonContext>, ui: Rc<ShellState>) -> View {
+    let source = scope.bond({
+        let ui = ui.clone();
+        move || (ui.pending_leave.get(), ui.pending_delete.get())
+    });
+    reactive(source, move |scope, (leave, delete)| {
+        let (realm, id, label) = match (leave, delete) {
+            (Some((id, label)), _) => (true, id, label),
+            (_, Some((id, label))) => (false, id, label),
+            _ => return empty(),
+        };
+        let dismiss = ui.clone();
+        let content_ctx = context.clone();
+        let content_ui = ui.clone();
+        crate::components::dismissible_popup(
+            scope,
+            context.clone(),
+            crate::components::DismissiblePopupProps {
+                overlay_class: "modal-backdrop".into(),
+                surface_class: "modal danger-confirm-modal".into(),
+                aria_label: context.tr(if realm {
+                    "realm_admin.leave_confirm_title"
+                } else {
+                    "contacts.delete_confirm_title"
+                }),
+                overlay_test_id: None,
+                surface_test_id: Some("sidebar-danger-confirm".into()),
+                overlay_style: None,
+                surface_style: None,
+                on_dismiss: Rc::new(move |_| {
+                    dismiss.pending_leave.revise(|value| *value = None);
+                    dismiss.pending_delete.revise(|value| *value = None);
+                }),
+                children: Rc::new(move |scope| {
+                    let weak = scope.downgrade();
+                    let context = content_ctx.clone();
+                    let ui = content_ui.clone();
+                    let target = id.clone();
+                    block(
+                        "",
+                        vec![
+                            block(
+                                "modal-head",
+                                vec![heading(
+                                    3,
+                                    "",
+                                    content_ctx.translated(
+                                        scope,
+                                        if realm {
+                                            "realm_admin.leave_confirm_title"
+                                        } else {
+                                            "contacts.delete_confirm_title"
+                                        },
+                                    ),
+                                )],
+                            ),
+                            block(
+                                "modal-body workflow-form",
+                                vec![
+                                    paragraph(
+                                        "callout danger",
+                                        content_ctx.translated(
+                                            scope,
+                                            if realm {
+                                                "realm_admin.leave_confirm_body"
+                                            } else {
+                                                "contacts.delete_confirm_body"
+                                            },
+                                        ),
+                                    ),
+                                    plain(label.clone()),
+                                    paragraph("muted mono", id.clone()),
+                                ],
+                            ),
+                            block(
+                                "modal-foot",
+                                vec![
+                                    action(
+                                        "btn secondary",
+                                        content_ctx.translated(scope, "common.cancel"),
+                                        {
+                                            let ui = content_ui.clone();
+                                            move || {
+                                                ui.pending_leave.revise(|value| *value = None);
+                                                ui.pending_delete.revise(|value| *value = None);
+                                            }
+                                        },
+                                    ),
+                                    action(
+                                        "btn danger",
+                                        content_ctx.translated(
+                                            scope,
+                                            if realm {
+                                                "realm_admin.leave_confirm_button"
+                                            } else {
+                                                "contacts.delete"
+                                            },
+                                        ),
+                                        move || {
+                                            if let Some(scope) = weak.upgrade() {
+                                                if realm {
+                                                    leave_sidebar_realm(
+                                                        &scope,
+                                                        context.clone(),
+                                                        context.base_url.get(),
+                                                        context.token.get(),
+                                                        target.clone(),
+                                                        principal_id_owned(
+                                                            context.principal_id.get(),
+                                                        ),
+                                                        context.state_store.clone(),
+                                                        context.realm_tree_nodes,
+                                                        context.selected_realm_id,
+                                                        context.sync_cursor,
+                                                    );
+                                                } else {
+                                                    delete_sidebar_contact(
+                                                        &scope,
+                                                        context.clone(),
+                                                        context.base_url.get(),
+                                                        context.token.get(),
+                                                        target.clone(),
+                                                        context.state_store.clone(),
+                                                        context.contact_rows,
+                                                        ui.contacts_loaded,
+                                                    );
+                                                }
+                                                ui.pending_leave.revise(|value| *value = None);
+                                                ui.pending_delete.revise(|value| *value = None);
+                                            }
+                                        },
+                                    ),
+                                ],
+                            ),
+                        ],
+                    )
+                }),
+            },
+        )
+    })
 }

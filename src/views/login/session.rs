@@ -631,7 +631,7 @@ pub(super) fn format_sign_in_discovery_error(station_url: &str, error: &anyhow::
 pub(super) async fn finish_oidc_callback(
     callback_url: String,
     device_fallback: String,
-    mut state_store: SyncSignal<LocalStateStore>,
+    state_store: crate::presentation::SharedStateStore,
 ) -> Result<OidcCallbackOutcome, String> {
     let returned_state = extract_state_from_callback(&callback_url)
         .map_err(|error| format!("Could not read callback state: {error}"))?
@@ -706,19 +706,19 @@ pub(super) async fn finish_oidc_callback(
     .map_err(|error| format!("DPoP key failed: {error}"))?;
     {
         state_store
-            .write()
-            .set_pending_dpop_device_key_with_secure_store(
-                Some(dpop_record),
-                secure_store.as_ref(),
-                &pending_store,
-            )
+            .write(|store| {
+                store.set_pending_dpop_device_key_with_secure_store(
+                    Some(dpop_record),
+                    secure_store.as_ref(),
+                    &pending_store,
+                )
+            })
             .map_err(|error| format!("DPoP key metadata failed: {error}"))?;
         crate::event_signer::bind_active_signer_device_id(&device)
             .map_err(|error| format!("Event signer device binding failed: {error}"))?;
     }
     let resumable_handoff = state_store
-        .read()
-        .pending_account_handoff()
+        .read(LocalStateStore::pending_account_handoff)
         .filter(|handoff| {
             can_resume_returning_handoff_for_callback(
                 handoff,
@@ -762,7 +762,7 @@ pub(super) async fn finish_oidc_callback(
                 tracing::warn!(%error, "resumed returning-device exchange requires device setup");
                 pending_handoff.bound_device_entry_state =
                     Some(crate::state::BoundDeviceEntryState::NoReturningDevice);
-                persist_pending_account_handoff_durably(&mut state_store, &pending_handoff).await?;
+                persist_pending_account_handoff_durably(&state_store, &pending_handoff).await?;
                 let _ = clear_persisted_oidc_scaffold(&scaffold.expected_state);
                 return Ok(OidcCallbackOutcome::Onboarding {
                     preferred_locale: None,
@@ -841,7 +841,7 @@ pub(super) async fn finish_oidc_callback(
     )
     .await
     .map_err(|error| format!("Persist account handoff credential failed: {error}"))?;
-    persist_pending_account_handoff_durably(&mut state_store, &pending_handoff).await?;
+    persist_pending_account_handoff_durably(&state_store, &pending_handoff).await?;
     record_authenticated_account_route(&pending_handoff, &disposition, &account_route);
     if let (
         AuthenticatedAccountRoute::ReturningSession(returning_device),
@@ -872,7 +872,7 @@ pub(super) async fn finish_oidc_callback(
                 );
                 pending_handoff.bound_device_entry_state =
                     Some(crate::state::BoundDeviceEntryState::NoReturningDevice);
-                persist_pending_account_handoff_durably(&mut state_store, &pending_handoff).await?;
+                persist_pending_account_handoff_durably(&state_store, &pending_handoff).await?;
             }
             Err(ReturningSessionExchangeError::Blocked(reason, message)) => {
                 let _ = clear_persisted_oidc_scaffold(&scaffold.expected_state);
@@ -1286,17 +1286,15 @@ pub(super) fn persisted_session_grant_from_state(
 
 pub(super) fn apply_authenticated_account_locale(
     preferred_locale: Option<crate::i18n::UiLocale>,
-    mut state_store: SyncSignal<LocalStateStore>,
-    locale: &mut Signal<crate::i18n::UiLocale>,
+    state_store: crate::presentation::SharedStateStore,
+    locale: glory::Cage<crate::i18n::UiLocale>,
 ) {
     let Some(preferred_locale) = preferred_locale else {
         return;
     };
-    state_store
-        .write()
-        .set_device_pref("locale", preferred_locale.code());
-    if *locale.peek() != preferred_locale {
-        locale.set(preferred_locale);
+    state_store.write(|store| store.set_device_pref("locale", preferred_locale.code()));
+    if locale.get_untracked() != preferred_locale {
+        locale.revise(|locale| *locale = preferred_locale);
     }
 }
 
@@ -1308,17 +1306,16 @@ pub(super) fn persist_pending_account_handoff(
 }
 
 pub(super) async fn persist_pending_account_handoff_durably(
-    state_store: &mut SyncSignal<LocalStateStore>,
+    state_store: &crate::presentation::SharedStateStore,
     pending_handoff: &crate::state::PendingAccountHandoff,
 ) -> Result<(), String> {
-    let barrier = {
-        let mut store = state_store.write();
-        persist_pending_account_handoff(&mut store, pending_handoff.clone())
+    let barrier = state_store.write(|store| {
+        persist_pending_account_handoff(store, pending_handoff.clone())
             .map_err(|error| format!("Persist account handoff checkpoint failed: {error}"))?;
-        store.begin_durable_flush().map_err(|error| {
-            format!("Prepare account handoff durability barrier failed: {error}")
-        })?
-    };
+        store
+            .begin_durable_flush()
+            .map_err(|error| format!("Prepare account handoff durability barrier failed: {error}"))
+    })?;
     barrier
         .wait()
         .await

@@ -20,6 +20,8 @@ mod moderator;
 mod panel;
 mod projection;
 mod signaling;
+mod surface;
+mod task;
 mod types;
 
 /// The host consumes the registered own-Station media binding result, tied
@@ -30,5 +32,45 @@ pub const fn media_route_adapter_available() -> bool {
     true
 }
 
-pub use panel::CallPanel;
+pub use panel::{CallPanelProps, call_panel};
+pub fn page(
+    scope: &glory::Scope,
+    context: std::rc::Rc<crate::presentation::InksonContext>,
+    route: crate::routes::Route,
+) -> crate::presentation::View {
+    let crate::routes::Route::Call {
+        call_id,
+        peer,
+        realm_id,
+        video,
+        incoming,
+    } = route
+    else {
+        return crate::presentation::widgets::empty();
+    };
+    let realm = if realm_id.is_empty() {
+        context.selected_realm_id.get()
+    } else {
+        realm_id
+    };
+    let principal = context
+        .principal_id
+        .get()
+        .map(|value| value.to_string())
+        .unwrap_or_default();
+    let device = context.device_id.get();
+    call_panel(
+        scope,
+        context,
+        CallPanelProps {
+            selected_realm_id: realm,
+            principal_id: principal,
+            device_id: device,
+            call_id,
+            peer,
+            want_video: video == "1",
+            incoming: incoming == "1",
+        },
+    )
+}
 pub use types::{CallParticipantView, CallStage, RecordingState};

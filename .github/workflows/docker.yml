@@ -42,6 +42,22 @@ jobs:
           path: chime
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
 
+      - name: Checkout arkret-spec
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.repository_owner }}/arkret-spec
+          path: arkret-spec
+          token: ${{ secrets.CI_REPO_TOKEN }}
+
+      - name: Checkout Glory and Sapid
+        shell: bash
+        working-directory: inkson
+        run: bash .ci/checkout-ui-dependencies.sh
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
@@ -54,6 +70,8 @@ jobs:
             --exclude node_modules \
             --exclude test-results \
             --exclude playwright-report \
+            --exclude artifacts \
+            --exclude release-assets \
             inkson/ docker-context/inkson/
           rsync -a --delete \
             --exclude .git \
@@ -67,6 +85,7 @@ jobs:
             --exclude .git \
             --exclude target \
             chime/ docker-context/chime/
+          rsync -a --delete --exclude .git arkret-spec/ docker-context/arkret-spec/
 
       - name: Build image
         uses: docker/build-push-action@v6

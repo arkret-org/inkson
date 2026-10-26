@@ -19,8 +19,20 @@ function Get-CargoTargetDirectory {
         [string]$RepositoryRoot
     )
 
+    if ($env:OS -eq "Windows_NT") {
+        $cache = "D:/BuildCache/inkson-glory"
+        if (-not $env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR = "$cache/target" }
+        if (-not $env:CARGO_HOME) { $env:CARGO_HOME = "D:/BuildCache/cargo" }
+        foreach ($value in @($env:CARGO_TARGET_DIR,$env:CARGO_HOME)) {
+            if (-not [IO.Path]::GetFullPath($value).StartsWith("D:",[StringComparison]::OrdinalIgnoreCase)) { throw "Cargo cache and output must be on D:" }
+        }
+        New-Item -ItemType Directory -Force -Path "$cache/tmp" | Out-Null
+        $env:TEMP = "$cache/tmp"; $env:TMP = "$cache/tmp"
+        $env:PYTHONPYCACHEPREFIX = "$cache/pycache"
+        $env:npm_config_cache = "D:/BuildCache/npm"
+    }
     $manifest = Join-Path $RepositoryRoot "Cargo.toml"
-    $metadata = & cargo metadata --format-version 1 --no-deps --manifest-path $manifest
+    $metadata = & cargo metadata --locked --format-version 1 --no-deps --manifest-path $manifest
     if ($LASTEXITCODE -ne 0) {
         throw "cargo metadata failed with exit code $LASTEXITCODE for $manifest"
     }
@@ -30,6 +42,7 @@ function Get-CargoTargetDirectory {
         throw "cargo metadata reported no target directory for $manifest"
     }
 
+    if ($env:OS -eq "Windows_NT" -and -not [IO.Path]::GetFullPath($targetDirectory).StartsWith("D:",[StringComparison]::OrdinalIgnoreCase)) { throw "Cargo resolved an output directory outside D:" }
     return $targetDirectory
 }
 

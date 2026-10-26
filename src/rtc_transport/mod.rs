@@ -1,27 +1,11 @@
 //! Cross-platform WebRTC transport for Arkret calls.
 //!
-//! Dioxus targets two platforms with completely different media stacks, so
-//! the transport is `cfg`-split behind a single [`MediaTransport`] trait:
-//!
-//! - **wasm (`target_arch = "wasm32"`)** — [`web::WebRtcTransport`] drives the browser's native
-//!   `RtcPeerConnection` / `getUserMedia` / `getDisplayMedia` via `web-sys`. This is the real media
-//!   path for the web build: it captures local tracks, performs SDP offer/answer, and exchanges ICE
-//!   candidates. SFU rooms connect to the verified `connect_url` with the backend token.
-//! - **native (`not(target_arch = "wasm32")`)** — [`native::NativeRtcTransport`] reuses the web
-//!   media path: Dioxus desktop is native Rust hosting a `wry` webview, so the **SFU / conference
-//!   path** drives the genuine `livekit-client` SDK inside that webview over a long-lived Dioxus
-//!   `document::eval` bridge ([`assets/livekit_desktop_driver.js`]) — real `room.connect`, real MLS
-//!   E2EE key injection, real publish, and the real `RoomEvent.ParticipantConnected` stream pushed
-//!   back to native for the MEDIA-2 cross-check. Desktop ships without a bundled libwebrtc, so the
-//!   1:1 P2P path (raw `RtcPeerConnection`) is still honestly not-ready and fails closed with
-//!   [`crate::media::rtc::RtcClientError::DesktopMediaUnavailable`]; the call surface maps that to
-//!   the "desktop calling is not ready yet" toast for P2P only. The SFU path never fabricates a
-//!   session: a rejected `room.connect` keeps the state out of [`TransportState::Connected`].
-//!
-//! The SFrame keyprovider seed is ALWAYS the MLS-exporter-derived key from
-//! [`crate::media::rtc::join_call_media`]; [`MediaTransport::install_frame_key`]
-//! refuses any key whose provenance is not that derivation (MEDIA-1).
-
+//! The web build owns browser RtcPeerConnection and the genuine LiveKit SDK.
+//! The native Glory/Blitz window owns a private, bounded pipe to a separate Wry
+//! media process running the same bundled LiveKit SDK. Room connection, local
+//! publication, sender-bound MLS keys, and MEDIA-2 roster admission remain real.
+//! Desktop P2P stays fail-closed with DesktopMediaUnavailable; it has no native
+//! RtcPeerConnection and never fabricates SDP, ICE, participants, or connection.
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
@@ -31,6 +15,8 @@ use crate::media::rtc::{JoinedMediaSession, PerSenderFrameKeys, RtcClientError};
 pub mod livekit_shim;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod native;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod native_host;
 #[cfg(target_arch = "wasm32")]
 pub mod web;
 
@@ -213,8 +199,7 @@ pub fn new_transport(session: &JoinedMediaSession) -> Box<dyn MediaTransport> {
 /// MLS-exporter output. Anything else is rejected with
 /// `e2ee_key_source_unauthorised`. Used by the wasm (web) backend, which is
 /// the only target with a real media transport this milestone; the native
-/// backend is honestly not-ready and never installs a key, so this is
-/// unused outside tests there.
+/// desktop SFU backend enforces the same provenance before starting its host.
 #[cfg_attr(all(not(target_arch = "wasm32"), not(test)), allow(dead_code))]
 pub(crate) fn ensure_valid_frame_key(key: &[u8]) -> Result<(), RtcClientError> {
     if key.len() == arkret_crypto::sframe::MEDIA_KEY_LEN {

@@ -306,6 +306,7 @@ pub(super) struct AgentAdminView {
     pub(super) selected_pairing_request_id: String,
     pub(super) selected_pairing_code: String,
     pub(super) selected_pairing_is_expired: bool,
+    #[cfg(test)]
     pub(super) selected_has_pairing_handle: bool,
     pub(super) selected_is_replacement_pairing: bool,
     pub(super) selected_can_replace_runtime: bool,
@@ -441,6 +442,7 @@ pub(super) fn build_agent_admin_view(
         selected_pairing_request_id: selected_pairing_request_id.to_owned(),
         selected_pairing_code: selected_pairing_code.to_owned(),
         selected_pairing_is_expired,
+        #[cfg(test)]
         selected_has_pairing_handle,
         selected_is_replacement_pairing,
         selected_can_replace_runtime,

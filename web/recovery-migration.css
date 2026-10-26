@@ -1,0 +1,35 @@
+/* Map original strong-label rules to native semantic Text nodes. */
+.recovery-panel .metric > .recovery-strong-label {
+  display: block;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--text-3);
+  font-weight: 600;
+  margin-top: 0;
+  margin-bottom: 4px;
+}
+.recovery-key-empty > .recovery-strong-label { font-size: 14px; font-weight: 600; color: var(--text-2); }
+.recovery-panel .callout .body > .recovery-strong-label { font-weight: 600; }
+.recovery-fold-card { position: relative; }
+.recovery-fold { display: grid; gap: 6px; }
+.recovery-fold > .sapid-collapsible-trigger {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--ak-muted);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: inherit;
+  text-align: start;
+  width: 100%;
+  cursor: pointer;
+}
+.recovery-fold-card.has-help .sapid-collapsible-trigger { padding-right: 24px; }
+.recovery-fold-help { position: absolute; top: 14px; right: 16px; }
+.recovery-fold > .sapid-collapsible-panel { display: grid; gap: 6px; }
+.recovery-fold > .sapid-collapsible-panel[hidden] { display: none; }

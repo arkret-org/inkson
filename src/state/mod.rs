@@ -99,7 +99,7 @@ thread_local! {
 pub(crate) use account_store::run_browser_account_record_corruption_contract;
 pub(crate) use e2ee_secure_cache::{
     BrowserStorageEstimate, E2eeCacheWriteIntent, E2eePlaintextCacheClearScope,
-    E2eePlaintextCacheUsage, browser_storage_estimate,
+    browser_storage_estimate,
 };
 pub mod account_items;
 use account_items::MapExt as _;
@@ -1342,10 +1342,17 @@ impl LocalStateStore {
         Ok(())
     }
     pub(crate) fn account_records_boot_failed(&self, error: &anyhow::Error) {
-        self.corrupt_account_scopes
-            .lock()
-            .unwrap()
-            .insert(self.effective_account_key());
+        match self.corrupt_account_scopes.lock() {
+            Ok(mut scopes) => {
+                scopes.insert(self.effective_account_key());
+            }
+            Err(_) => {
+                *self.lock_persist_health() = Some(format!(
+                    "account record hydration failed; quarantine lock poisoned; durable data retained: {error}"
+                ));
+                return;
+            }
+        }
         *self.lock_persist_health() = Some(format!(
             "account record hydration failed; durable data retained: {error}"
         ));

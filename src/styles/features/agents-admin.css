@@ -9,7 +9,7 @@
 .agent-runtime-approval-dialog .modal-head,
 .agent-runtime-approval-dialog .modal-body,
 .agent-runtime-approval-dialog .modal-foot,
-.agent-runtime-approval-dialog [data-testid="agent-runtime-approval-status"] {
+.agent-runtime-approval-dialog [class~="agent-runtime-approval-status"] {
   min-width: 0;
   overflow-wrap: anywhere;
   word-break: break-word;

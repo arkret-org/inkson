@@ -1,5 +1,5 @@
 // Variable-height presentation index. It contains no message content or authority.
-class TimelineLayout {
+export class TimelineLayout {
   constructor(keys = [], heights = new Map()) {
     this.keys = keys;
     this.heights = heights;
@@ -55,13 +55,11 @@ class TimelineLayout {
   }
 }
 
-async function runVirtualTimeline() {
-  let config;
-  try { config = await dioxus.recv(); } catch (_) { return; }
+export function mountVirtualTimeline(config, publish, savePosition = () => {}) {
   const feed = document.getElementById(config.feed_id);
-  const list = feed?.querySelector('[data-testid="virtual-timeline"]');
+  const list = feed?.querySelector('.virtual-timeline');
   if (!feed || !list) return;
-  let heights = new Map(), layout = new TimelineLayout(), generation = 0;
+  let heights = new Map(), layout = new TimelineLayout(), generation = 0, indices = new Map();
   let frame = 0, last = '', disposed = false, awaiting = false;
   let followed = config.follows_latest !== false, pendingOffset = null, lastFocus = null;
   if (!followed) feed.scrollTop = config.restore_top || 0;
@@ -75,6 +73,7 @@ async function runVirtualTimeline() {
   mutations.observe(feed, { childList: true, subtree: true, characterData: true });
   const onScroll = () => {
     followed = feed.scrollHeight - feed.clientHeight - feed.scrollTop <= 32;
+    savePosition(feed.scrollTop, followed);
     schedule();
   };
   feed.addEventListener('scroll', onScroll, { passive: true });
@@ -88,14 +87,15 @@ async function runVirtualTimeline() {
     const anchor = layout.at(before);
     const anchorOffset = before - layout.prefix(anchor);
     const nearEnd = followed;
-    const nodes = [...list.querySelectorAll('[data-virtual-index]')];
+    const nodes = [...list.querySelectorAll('.chat-message-row')];
     const active = new Set(nodes);
     for (const node of observed) if (!active.has(node)) { resize.unobserve(node); observed.delete(node); }
     let changed = false;
     for (const node of nodes) {
       if (!observed.has(node)) { resize.observe(node); observed.add(node); }
-      const index = Number(node.dataset.virtualIndex);
-      if (layout.keys[index] !== node.dataset.messageId) continue;
+      const key = node.id.slice('chat-message-'.length);
+      const index = indices.get(key);
+      if (index === undefined || layout.keys[index] !== key) continue;
       changed = layout.measure(index, node.getBoundingClientRect().height) || changed;
     }
     if (changed && pendingOffset === null) {
@@ -118,14 +118,12 @@ async function runVirtualTimeline() {
     if (signature !== last && !awaiting) {
       last = signature;
       awaiting = true;
-      dioxus.send({ generation, ...window });
+      publish({ generation, ...window });
     }
   }
-  try {
-    for (;;) {
-      const next = await dioxus.recv();
-      if (next.dispose) break;
-      if (next.ack) { awaiting = false; schedule(); continue; }
+  function updateRows(next) {
+    if (disposed) return;
+    if (next.ack) { awaiting = false; schedule(); return; }
       const offset = origin();
       const index = layout.at(Math.max(0, feed.scrollTop - offset));
       const anchorKey = layout.keys[index];
@@ -134,6 +132,7 @@ async function runVirtualTimeline() {
       const allowed = new Set(next.keys);
       for (const key of heights.keys()) if (!allowed.has(key)) heights.delete(key);
       layout = new TimelineLayout(next.keys, heights);
+      indices = new Map(next.keys.map((key,index)=>[key,index]));
       generation = next.generation;
       awaiting = false;
       last = '';
@@ -144,10 +143,10 @@ async function runVirtualTimeline() {
         : wasFollowing ? 'latest'
         : restored >= 0 ? offset + layout.prefix(restored) + anchorOffset : feed.scrollTop;
       schedule();
-    }
-  } catch (_) {
-    // The owning component disposed its local eval channel.
-  } finally {
+  }
+  function dispose() {
+    if (disposed) return;
+    savePosition(feed.scrollTop, feed.scrollHeight - feed.clientHeight - feed.scrollTop <= 32);
     disposed = true;
     if (frame) cancelAnimationFrame(frame);
     resize.disconnect();
@@ -155,7 +154,7 @@ async function runVirtualTimeline() {
     feed.removeEventListener('scroll', onScroll);
     observed.clear();
     heights.clear();
+    indices.clear();
   }
+  return {update: updateRows, dispose};
 }
-if (typeof module !== 'undefined') module.exports = { TimelineLayout };
-if (typeof dioxus !== 'undefined') runVirtualTimeline();

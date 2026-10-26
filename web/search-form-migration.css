@@ -1,0 +1,4 @@
+/* The original search form uses a named placeholder input, without an extra field label. */
+.global-search-form { gap: 8px; }
+.global-search-form > .input-prompt-host { flex: 1; min-width: 280px; }
+.global-search-form .global-search-input { width: 100%; min-width: 0; }

@@ -1,10 +1,12 @@
 //! Protected E2EE cache occupancy, browser quota, and explicit cleanup controls.
 
-use dioxus::prelude::*;
+use std::rc::Rc;
 
-use crate::state::{BrowserStorageEstimate, E2eePlaintextCacheClearScope, E2eePlaintextCacheUsage};
-use crate::ui::button::{Button, ButtonSize, ButtonVariant};
-use crate::ui::dialog::Dialog;
+use glory::prelude::*;
+
+use super::widgets::*;
+use crate::presentation::{InksonContext, View};
+use crate::state::{BrowserStorageEstimate, E2eePlaintextCacheClearScope};
 use crate::views::helpers::short_protocol_id;
 
 // Keep the message identity until render so completed operations follow locale changes.
@@ -67,252 +69,528 @@ fn clear_target_text(scope: &E2eePlaintextCacheClearScope) -> String {
     }
 }
 
+fn metric(label: View, value: View) -> View {
+    stack("metric", vec![label, value])
+}
+
+fn metric_label(value: impl Into<Lotus<String>>) -> View {
+    Box::new(text().class("storage-metric-label").content(value))
+}
+
+fn warning(scope: &Scope, context: Rc<InksonContext>, title: &str, body: &str) -> View {
+    stack(
+        "callout warn",
+        vec![stack(
+            "body",
+            vec![
+                Box::new(
+                    text()
+                        .class("storage-warning-title")
+                        .content(context.translated(scope, title)),
+                ),
+                stack(
+                    "storage-warning-copy",
+                    vec![plain(context.translated(scope, body))],
+                ),
+            ],
+        )],
+    )
+}
+
+pub(super) fn settings(scope: &Scope, context: Rc<InksonContext>) -> View {
+    stack(
+        "settings-card-grid storage-settings-grid",
+        vec![
+            local_stores(scope, context.clone()),
+            page(scope, context.clone()),
+            diagnostics(scope, context),
+        ],
+    )
+}
+
+pub(super) fn local_stores(scope: &Scope, context: Rc<InksonContext>) -> View {
+    let config_store = context.config_store;
+    let locale = context.locale;
+    let config_bytes = scope.bond(move || {
+        let _ = locale.get();
+        let bytes = config_store
+            .get()
+            .load()
+            .server_url()
+            .map(|url| url.as_str().len())
+            .unwrap_or(0);
+        crate::i18n::tr_args(
+            "settings.local_stores.approx_bytes",
+            &[("bytes", bytes.to_string())],
+        )
+    });
+    let translated = |key| context.translated(scope, key);
+    stack(
+        "event storage-table",
+        vec![
+            line(
+                "event-head",
+                vec![
+                    plain(translated("settings.local_stores.title")),
+                    plain(translated("settings.local_stores.badge")),
+                ],
+            ),
+            stack(
+                "metric-grid",
+                vec![
+                    metric(
+                        metric_label(translated("settings.local_stores.config_store")),
+                        plain(translated("settings.local_stores.active")),
+                    ),
+                    metric(
+                        metric_label(translated("settings.local_stores.config_size")),
+                        plain(config_bytes),
+                    ),
+                    metric(
+                        metric_label(translated("settings.local_stores.state_store")),
+                        plain(translated("settings.local_stores.active")),
+                    ),
+                    metric(
+                        metric_label(translated("settings.local_stores.platform")),
+                        plain(translated(if cfg!(target_arch = "wasm32") {
+                            "settings.local_stores.platform_web"
+                        } else {
+                            "settings.local_stores.platform_native"
+                        })),
+                    ),
+                ],
+            ),
+        ],
+    )
+}
+
+pub(super) fn diagnostics(scope: &Scope, context: Rc<InksonContext>) -> View {
+    let label = context.translated(scope, "settings.storage_risks.title");
+    let advanced = context.translated(scope, "settings.group.advanced");
+    let content_context = context.clone();
+    Box::new(
+        sapid::collapsible("storage-risks")
+            .unstyled()
+            .class("event storage-risks")
+            .label(label)
+            .default_open(false)
+            .trigger_content(move || {
+                Box::new(group().fill(vec![plain(label), plain(advanced)])) as View
+            })
+            .content(move || {
+                let context = content_context.clone();
+                widget(move |scope| {
+                    let rows = if cfg!(target_arch = "wasm32") {
+                        vec![
+                            (
+                                "bounded_projection",
+                                "bounded_projection_hint",
+                                "badge-info risk-badge",
+                                "settings.storage_risks.badge_bounded",
+                            ),
+                            (
+                                "protected_e2ee",
+                                "protected_e2ee_hint",
+                                "badge-success",
+                                "manage.row_encrypted",
+                            ),
+                            (
+                                "single_tab",
+                                "single_tab_hint",
+                                "badge-info",
+                                "settings.storage_risks.badge_info",
+                            ),
+                        ]
+                    } else {
+                        vec![(
+                            "filesystem",
+                            "filesystem_hint",
+                            "badge-success",
+                            "settings.storage_risks.badge_ok",
+                        )]
+                    };
+                    let rows = rows
+                        .into_iter()
+                        .map(|(title, hint, badge, value)| {
+                            let label = line(
+                                "storage-metric-label",
+                                vec![
+                                    plain(context.translated(
+                                        scope,
+                                        format!("settings.storage_risks.{title}"),
+                                    )),
+                                    crate::components::help_tip(
+                                        scope,
+                                        context.clone(),
+                                        crate::components::HelpTipProps {
+                                            text: crate::i18n::tr(&format!(
+                                                "settings.storage_risks.{hint}"
+                                            )),
+                                        },
+                                    ),
+                                ],
+                            );
+                            metric(
+                                label,
+                                Box::new(
+                                    text()
+                                        .class(format!("badge {badge}"))
+                                        .content(context.translated(scope, value)),
+                                ),
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    group().fill(rows).build(scope)
+                })
+            }),
+    )
+}
+
 async fn refresh_browser_storage_quota(
-    mut quota: Signal<Option<BrowserStorageEstimate>>,
-    mut status: Signal<StorageFeedback>,
+    quota: Cage<Option<BrowserStorageEstimate>>,
+    status: Cage<StorageFeedback>,
 ) {
-    quota.set(None);
-    status.set(StorageFeedback::Message("settings.storage.checking"));
-    match crate::state::browser_storage_estimate().await {
+    quota.revise(|value| {
+        *value = None;
+    });
+    status.revise(|value| {
+        *value = StorageFeedback::Message("settings.storage.checking");
+    });
+    let result = crate::state::browser_storage_estimate().await;
+    match result {
         Ok(Some(estimate)) => {
-            quota.set(Some(estimate));
-            status.set(StorageFeedback::Empty);
+            quota.revise(|value| {
+                *value = Some(estimate);
+            });
+            status.revise(|value| {
+                *value = StorageFeedback::Empty;
+            });
         }
-        Ok(None) => status.set(StorageFeedback::Message("settings.storage.browser_only")),
-        Err(error) => status.set(StorageFeedback::Error(
-            "settings.storage.quota_error",
-            error.to_string(),
-        )),
+        Ok(None) => status.revise(|value| {
+            *value = StorageFeedback::Message("settings.storage.browser_only");
+        }),
+        Err(error) => status.revise(|value| {
+            *value = StorageFeedback::Error("settings.storage.quota_error", error.to_string())
+        }),
     }
 }
 
-#[component]
-pub(super) fn E2eeStorageManagement(principal_id: String, device_id: String) -> Element {
-    let session = crate::app::SessionContext::get();
-    let mut state_store = session.state_store;
-    if session.active_account().is_none() {
-        return rsx! {};
-    }
-    let mut cache_usage = use_signal(|| state_store.read().e2ee_plaintext_cache_usage());
-    let mut pending_clear = use_signal(|| None::<E2eePlaintextCacheClearScope>);
-    let mut cache_status = use_signal(StorageFeedback::default);
-    let browser_quota = use_signal(|| None::<BrowserStorageEstimate>);
-    let browser_quota_status = use_signal(StorageFeedback::default);
-    use_future(move || refresh_browser_storage_quota(browser_quota, browser_quota_status));
-
-    let usage: E2eePlaintextCacheUsage = cache_usage();
-    let quota = browser_quota();
-    let quota_status_text = browser_quota_status().text();
-    let cache_status_text = cache_status().text();
-
-    rsx! {
-        div { class: "event", "data-testid": "browser-storage-quota",
-            div { class: "event-head",
-                span { {crate::i18n::tr("settings.storage.quota_title")} }
-                if quota.is_some_and(|estimate| estimate.is_near_quota()) {
-                    span {
-                        class: "badge badge-warning",
-                        "data-testid": "browser-storage-quota-warning",
-                        {crate::i18n::tr("settings.storage.low_space")}
-                    }
-                } else {
-                    span { class: "badge badge-info", {crate::i18n::tr("settings.storage.origin_total")} }
-                }
+pub(super) fn page(scope: &Scope, context: Rc<InksonContext>) -> View {
+    let cache_usage = scope.cage(
+        context
+            .state_store
+            .read(|store| store.e2ee_plaintext_cache_usage()),
+    );
+    let pending_clear = scope.cage(None::<E2eePlaintextCacheClearScope>);
+    let cache_status = scope.cage(StorageFeedback::default());
+    let browser_quota = scope.cage(None::<BrowserStorageEstimate>);
+    let browser_quota_status = scope.cage(StorageFeedback::default());
+    spawn(
+        scope,
+        refresh_browser_storage_quota(browser_quota, browser_quota_status),
+    );
+    let quota_context = context.clone();
+    let quota = reactive(browser_quota, move |scope, estimate| {
+        let context = quota_context.clone();
+        let mut children = vec![line(
+            "event-head",
+            vec![
+                plain(context.translated(scope, "settings.storage.quota_title")),
+                Box::new(
+                    text()
+                        .class(if estimate.is_some_and(|value| value.is_near_quota()) {
+                            "badge badge-warning browser-storage-quota-warning"
+                        } else {
+                            "badge badge-info"
+                        })
+                        .content(context.translated(
+                            scope,
+                            if estimate.is_some_and(|value| value.is_near_quota()) {
+                                "settings.storage.low_space"
+                            } else {
+                                "settings.storage.origin_total"
+                            },
+                        )),
+                ),
+            ],
+        )];
+        if let Some(estimate) = estimate {
+            children.push(metric(
+                metric_label(context.translated(scope, "settings.storage.used_available")),
+                plain(browser_storage_summary(estimate)),
+            ));
+            if estimate.is_near_quota() {
+                children.push(warning(
+                    scope,
+                    context.clone(),
+                    "settings.storage.quota_warning",
+                    "settings.storage.quota_guidance",
+                ));
             }
-            if let Some(estimate) = quota {
-                div { class: "metric",
-                    strong { {crate::i18n::tr("settings.storage.used_available")} }
-                    span { "{browser_storage_summary(estimate)}" }
-                }
-                if estimate.is_near_quota() {
-                    div { class: "callout warn",
-                        div { class: "body",
-                            strong { {crate::i18n::tr("settings.storage.quota_warning")} }
-                            div { {crate::i18n::tr("settings.storage.quota_guidance")} }
-                        }
-                    }
-                }
-            } else {
-                div { class: "muted", "{quota_status_text}" }
-            }
+        } else {
+            children.push(status(
+                scope.bond(move || browser_quota_status.get().text()),
+            ));
         }
-
-        div { class: "event", "data-testid": "e2ee-plaintext-cache",
-            div { class: "event-head",
-                span { {crate::i18n::tr("settings.storage.cache_title")} }
-                span { {crate::i18n::tr("settings.storage.manual_only")} }
-            }
-            div { class: "metric-grid",
-                div { class: "metric",
-                    strong { {crate::i18n::tr("settings.storage.plaintext")} }
-                    span { "{format_storage_bytes(usage.plaintext_bytes as u64)}" }
-                }
-                div { class: "metric",
-                    strong { {crate::i18n::tr("settings.storage.entries")} }
-                    span { {crate::i18n::tr_args("settings.storage.entry_summary", &[("entries", usage.entry_count().to_string()), ("realms", usage.realms.len().to_string())])} }
-                }
-            }
-            div { class: "callout warn",
-                div { class: "body",
-                    strong { {crate::i18n::tr("settings.storage.eviction_disabled")} }
-                    div {
-                        {crate::i18n::tr("settings.storage.cache_warning")}
-                    }
-                }
-            }
-            if usage.realms.is_empty() {
-                div { class: "muted", {crate::i18n::tr("settings.storage.empty")} }
-            } else {
-                div { class: "metric-grid", "data-testid": "e2ee-cache-realm-usage",
-                    for (realm_id, realm_usage) in &usage.realms {
-                        {
-                            let realm_id_for_clear = realm_id.clone();
-                            let realm_label = short_protocol_id(realm_id);
-                            rsx! {
-                                div { class: "metric", key: "{realm_id}",
-                                    strong { title: "{realm_id}", "{realm_label}" }
-                                    span {
-                                        {crate::i18n::tr_args("settings.storage.realm_summary", &[("bytes", format_storage_bytes(realm_usage.plaintext_bytes as u64)), ("entries", realm_usage.entry_count().to_string()), ("authored", realm_usage.authored_entries.to_string()), ("received", realm_usage.received_entries.to_string())])}
-                                    }
-                                    div { class: "actions",
-                                        Button {
-                                            variant: ButtonVariant::Destructive,
-                                            size: ButtonSize::Sm,
-                                            "data-testid": "e2ee-cache-clear-realm",
-                                            onclick: move |_| pending_clear.set(Some(
-                                                E2eePlaintextCacheClearScope::Realm(
-                                                    realm_id_for_clear.clone(),
-                                                ),
-                                            )),
-                                            {crate::i18n::tr("settings.storage.clear_realm")}
-                                        }
-                                    }
-                                }
-                            }
+        stack("event browser-storage-quota", children)
+    });
+    let usage_context = context.clone();
+    let storage_owner = scope.downgrade();
+    let usage = reactive(cache_usage, move |scope, usage| {
+        let context = usage_context.clone();
+        let mut children = vec![
+            line(
+                "event-head",
+                vec![
+                    plain(context.translated(scope, "settings.storage.cache_title")),
+                    plain(context.translated(scope, "settings.storage.manual_only")),
+                ],
+            ),
+            line(
+                "metric-grid",
+                vec![
+                    metric(
+                        metric_label(context.translated(scope, "settings.storage.plaintext")),
+                        plain(format_storage_bytes(usage.plaintext_bytes as u64)),
+                    ),
+                    metric(
+                        metric_label(context.translated(scope, "settings.storage.entries")),
+                        plain(crate::i18n::tr_args(
+                            "settings.storage.entry_summary",
+                            &[
+                                ("entries", usage.entry_count().to_string()),
+                                ("realms", usage.realms.len().to_string()),
+                            ],
+                        )),
+                    ),
+                ],
+            ),
+            warning(
+                scope,
+                context.clone(),
+                "settings.storage.eviction_disabled",
+                "settings.storage.cache_warning",
+            ),
+        ];
+        if usage.realms.is_empty() {
+            children.push(paragraph(
+                "muted",
+                context.translated(scope, "settings.storage.empty"),
+            ));
+        }
+        let mut rows = Vec::new();
+        for (realm_id, realm_usage) in &usage.realms {
+            let realm_id = realm_id.clone();
+            let label = short_protocol_id(&realm_id);
+            rows.push(stack(
+                "metric",
+                vec![
+                    metric_label(label),
+                    plain(crate::i18n::tr_args(
+                        "settings.storage.realm_summary",
+                        &[
+                            (
+                                "bytes",
+                                format_storage_bytes(realm_usage.plaintext_bytes as u64),
+                            ),
+                            ("entries", realm_usage.entry_count().to_string()),
+                            ("authored", realm_usage.authored_entries.to_string()),
+                            ("received", realm_usage.received_entries.to_string()),
+                        ],
+                    )),
+                    line(
+                        "actions",
+                        vec![action(
+                            scope,
+                            context.clone(),
+                            "e2ee-cache-clear-realm",
+                            "settings.storage.clear_realm",
+                            "storage-action storage-action-sm storage-action-destructive",
+                            true,
+                            move || {
+                                pending_clear.revise(|value| {
+                                    *value =
+                                        Some(E2eePlaintextCacheClearScope::Realm(realm_id.clone()))
+                                })
+                            },
+                        )],
+                    ),
+                ],
+            ));
+        }
+        if !rows.is_empty() {
+            children.push(stack("metric-grid e2ee-cache-realm-usage", rows));
+        }
+        let weak = storage_owner.clone();
+        let refresh_context = context.clone();
+        children.push(line(
+            "actions",
+            vec![
+                action(
+                    scope,
+                    context.clone(),
+                    "e2ee-cache-refresh",
+                    "common.refresh",
+                    "storage-action storage-action-sm storage-action-secondary",
+                    true,
+                    move || {
+                        cache_usage.revise(|value| {
+                            *value = refresh_context
+                                .state_store
+                                .read(|store| store.e2ee_plaintext_cache_usage())
+                        });
+                        if let Some(scope) = weak.upgrade() {
+                            spawn(
+                                &scope,
+                                refresh_browser_storage_quota(browser_quota, browser_quota_status),
+                            );
                         }
-                    }
-                }
-            }
-            div { class: "actions",
-                Button {
-                    variant: ButtonVariant::Secondary,
-                    size: ButtonSize::Sm,
-                    "data-testid": "e2ee-cache-refresh",
-                    onclick: move |_| {
-                        cache_usage.set(state_store.read().e2ee_plaintext_cache_usage());
-                        spawn(refresh_browser_storage_quota(browser_quota, browser_quota_status));
                     },
-                    {crate::i18n::tr("common.refresh")}
-                }
-                Button {
-                    variant: ButtonVariant::Destructive,
-                    size: ButtonSize::Sm,
-                    "data-testid": "e2ee-cache-clear-all",
-                    disabled: usage.entry_count() == 0,
-                    onclick: move |_| pending_clear.set(Some(E2eePlaintextCacheClearScope::All)),
-                    {crate::i18n::tr("settings.storage.clear_all")}
-                }
-            }
-            if !cache_status_text.is_empty() {
-                div { class: "muted", role: "status", "{cache_status_text}" }
-            }
-        }
-
-        if let Some(clear_scope) = pending_clear() {
-            {
-                let clear_scope_for_action = clear_scope.clone();
-                let clear_target = clear_target_text(&clear_scope);
-                rsx! {
-                    Dialog {
-                        open: true,
-                        on_open_change: move |open: bool| {
-                            if !open {
-                                pending_clear.set(None);
-                            }
-                        },
-                        "data-testid": "e2ee-cache-clear-modal",
-                        "aria-labelledby": "e2ee-cache-clear-title",
-                        div { class: "modal event",
-                            div { class: "modal-head event-head",
-                                h3 {
-                                    id: "e2ee-cache-clear-title",
-                                    {crate::i18n::tr_args("settings.storage.clear_title", &[("target", clear_target.clone())])}
-                                }
-                                span { class: "badge red", {crate::i18n::tr("settings.storage.irreversible")} }
-                            }
-                            div { class: "modal-body",
-                                p {
-                                    {crate::i18n::tr_args("settings.storage.clear_body", &[("target", clear_target.clone())])}
-                                }
-                            }
-                            div { class: "modal-foot actions",
-                                Button {
-                                    variant: ButtonVariant::Secondary,
-                                    "data-testid": "e2ee-cache-clear-cancel",
-                                    onclick: move |_| pending_clear.set(None),
-                                    {crate::i18n::tr("common.cancel")}
-                                }
-                                Button {
-                                    variant: ButtonVariant::Destructive,
-                                    "data-testid": "e2ee-cache-clear-confirm",
-                                    onclick: move |_| {
-                                        let clear_scope = clear_scope_for_action.clone();
-                                        spawn(async move {
-                                            let secure_store =
-                                                crate::secure_key_store::default_secure_key_store("inkson");
-                                            let pending = state_store
-                                                .write()
-                                                .prepare_e2ee_plaintext_cache_clear_with_secure_store(
-                                                    &clear_scope,
-                                                    secure_store.as_ref(),
-                                                );
-                                            let result = match pending {
-                                                Ok(Some(pending)) => {
-                                                    if let Err(error) =
-                                                        pending.persist(secure_store.as_ref()).await
-                                                    {
-                                                        state_store
-                                                            .write()
-                                                            .rollback_e2ee_plaintext_cache_clear(
-                                                                pending,
-                                                            );
-                                                        Err(error)
-                                                    } else {
-                                                        Ok(Some(()))
-                                                    }
-                                                }
-                                                Ok(None) => Ok(None),
-                                                Err(error) => Err(error),
-                                            };
-                                            match result {
-                                                Ok(Some(())) => cache_status.set(
-                                                    StorageFeedback::Message("settings.storage.cleared"),
-                                                ),
-                                                Ok(None) => cache_status
-                                                    .set(StorageFeedback::Message("settings.storage.no_match")),
-                                                Err(error) => cache_status.set(StorageFeedback::Error("settings.storage.clear_error", error.to_string())),
+                ),
+                action(
+                    scope,
+                    context.clone(),
+                    "e2ee-cache-clear-all",
+                    "settings.storage.clear_all",
+                    "storage-action storage-action-sm storage-action-destructive",
+                    usage.entry_count() > 0,
+                    move || {
+                        pending_clear.revise(|value| {
+                            *value = Some(E2eePlaintextCacheClearScope::All);
+                        })
+                    },
+                ),
+            ],
+        ));
+        children.push(status(scope.bond(move || cache_status.get().text())));
+        stack("event e2ee-plaintext-cache", children)
+    });
+    let clear_context = context.clone();
+    let confirmation = reactive(pending_clear, move |scope, pending| {
+        let Some(clear_scope) = pending else {
+            return empty();
+        };
+        let context = clear_context.clone();
+        let clear_target = clear_target_text(&clear_scope);
+        let weak = scope.downgrade();
+        let write_context = context.clone();
+        let title = crate::i18n::tr_args(
+            "settings.storage.clear_title",
+            &[("target", clear_target.clone())],
+        );
+        let body = stack(
+            "modal-body",
+            vec![
+                paragraph(
+                    "muted",
+                    crate::i18n::tr_args(
+                        "settings.storage.clear_body",
+                        &[("target", clear_target)],
+                    ),
+                ),
+                line(
+                    "modal-foot actions",
+                    vec![
+                        action(
+                            scope,
+                            context.clone(),
+                            "e2ee-cache-clear-cancel",
+                            "common.cancel",
+                            "storage-action storage-action-default storage-action-secondary",
+                            true,
+                            move || {
+                                pending_clear.revise(|value| {
+                                    *value = None;
+                                })
+                            },
+                        ),
+                        action(
+                            scope,
+                            context.clone(),
+                            "e2ee-cache-clear-confirm",
+                            "settings.storage.clear_confirm",
+                            "storage-action storage-action-default storage-action-destructive",
+                            true,
+                            move || {
+                                let Some(scope) = weak.upgrade() else { return };
+                                let context = write_context.clone();
+                                let clear_scope = clear_scope.clone();
+                                spawn(&scope, async move {
+                                    let secure_store =
+                                        crate::secure_key_store::default_secure_key_store("inkson");
+                                    let pending = context.state_store.write(|store| {
+                                        store.prepare_e2ee_plaintext_cache_clear_with_secure_store(
+                                            &clear_scope,
+                                            secure_store.as_ref(),
+                                        )
+                                    });
+                                    let result = match pending {
+                                        Ok(Some(pending)) => {
+                                            if let Err(error) =
+                                                pending.persist(secure_store.as_ref()).await
+                                            {
+                                                context.state_store.write(|store| {
+                                                    store.rollback_e2ee_plaintext_cache_clear(
+                                                        pending,
+                                                    )
+                                                });
+                                                Err(error)
+                                            } else {
+                                                Ok(Some(()))
                                             }
-                                            cache_usage.set(
-                                                state_store.read().e2ee_plaintext_cache_usage(),
-                                            );
-                                            pending_clear.set(None);
-                                        });
-                                    },
-                                    {crate::i18n::tr("settings.storage.clear_confirm")}
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
+                                        }
+                                        Ok(None) => Ok(None),
+                                        Err(error) => Err(error),
+                                    };
+                                    let feedback = match result {
+                                        Ok(Some(())) => {
+                                            StorageFeedback::Message("settings.storage.cleared")
+                                        }
+                                        Ok(None) => {
+                                            StorageFeedback::Message("settings.storage.no_match")
+                                        }
+                                        Err(error) => StorageFeedback::Error(
+                                            "settings.storage.clear_error",
+                                            error.to_string(),
+                                        ),
+                                    };
+                                    cache_status.revise(|value| {
+                                        *value = feedback;
+                                    });
+                                    cache_usage.revise(|value| {
+                                        *value = context
+                                            .state_store
+                                            .read(|store| store.e2ee_plaintext_cache_usage())
+                                    });
+                                    pending_clear.revise(|value| {
+                                        *value = None;
+                                    });
+                                });
+                            },
+                        ),
+                    ],
+                ),
+            ],
+        );
+        super::widgets::confirmation(
+            scope,
+            context,
+            "e2ee-cache-clear-modal",
+            title,
+            body,
+            move || {
+                pending_clear.revise(|value| {
+                    *value = None;
+                })
+            },
+        )
+    });
+    Box::new(group().fill(vec![quota, usage, confirmation]))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
     #[test]
     fn storage_bytes_use_binary_units() {
         assert_eq!(format_storage_bytes(999), "999 B");
@@ -321,63 +599,203 @@ mod tests {
     }
 
     #[test]
-    fn completed_storage_feedback_retranslates_without_changing_error_detail() {
-        let mut dom = VirtualDom::new(|| rsx! {});
-        dom.rebuild_in_place();
-        dom.in_scope(ScopeId::ROOT, || {
-            let mut locale = provide_context(crate::i18n::init_i18n_with_locale(
-                crate::i18n::UiLocale::En,
-            ));
-            let error = StorageFeedback::Error(
-                "settings.storage.quota_error",
-                "quota-test-detail / 原文".into(),
-            );
-            let completed = StorageFeedback::Message("settings.storage.cleared");
-            assert_eq!(
-                error.text(),
-                "Browser quota unavailable: quota-test-detail / 原文"
-            );
-            assert!(completed.text().starts_with("Protected plaintext cleared."));
-            crate::i18n::set_locale(&mut locale, crate::i18n::UiLocale::Zh);
-            assert_eq!(error.text(), "无法获取浏览器配额：quota-test-detail / 原文");
-            assert!(completed.text().starts_with("受保护的明文已清理。"));
-            crate::i18n::set_locale(&mut locale, crate::i18n::UiLocale::En);
-            assert_eq!(
-                error.text(),
-                "Browser quota unavailable: quota-test-detail / 原文"
-            );
-        });
-    }
-
-    #[test]
-    fn cleanup_confirmation_keeps_scope_and_irreversibility_in_both_languages() {
-        let mut dom = VirtualDom::new(|| rsx! {});
-        dom.rebuild_in_place();
-        dom.in_scope(ScopeId::ROOT, || {
-            let mut locale = provide_context(crate::i18n::init_i18n_with_locale(
-                crate::i18n::UiLocale::En,
-            ));
-            for (language, all, warning) in [
-                (
-                    crate::i18n::UiLocale::En,
-                    "all Realms",
-                    "This cannot be undone.",
+    #[cfg(not(target_arch = "wasm32"))]
+    fn production_storage_retains_four_grid_cards_metrics_and_a_real_diagnostic_disclosure() {
+        use glory::render::{Event, NodeId, Props};
+        let directory = tempfile::Builder::new()
+            .prefix("storage-layout-")
+            .tempdir()
+            .unwrap();
+        let executor = Rc::new(glory::core::executor::Executor::new(128));
+        let app = App::with_host(executor.clone(), glory::render::memory::Memory::new);
+        let account = crate::test_support::AccountFixture::new("ak:did_core:web:alice.example")
+            .server_url("https://storage.example/")
+            .build();
+        let config = crate::config::ClientConfig {
+            active_account: Some(account),
+            ..Default::default()
+        };
+        let mut config_store =
+            crate::config::LocalConfigStore::with_path(directory.path().join("config.json"));
+        config_store.save(config.clone());
+        let context = InksonContext::new(
+            app.scope(),
+            crate::presentation::BootState {
+                config_store,
+                config,
+                state_store: crate::presentation::SharedStateStore::new(
+                    crate::state::LocalStateStore::with_path(directory.path().join("state.json")),
                 ),
-                (crate::i18n::UiLocale::Zh, "全部 Realm", "此操作无法撤销。"),
-            ] {
-                crate::i18n::set_locale(&mut locale, language);
-                assert_eq!(clear_target_text(&E2eePlaintextCacheClearScope::All), all);
-                let target =
-                    clear_target_text(&E2eePlaintextCacheClearScope::Realm("realm-test".into()));
-                assert!(target.contains(&short_protocol_id("realm-test")));
-                let body = crate::i18n::tr_args(
-                    "settings.storage.clear_body",
-                    &[("target", target.clone())],
-                );
-                assert!(body.contains(&target));
-                assert!(body.contains(warning));
-                assert!(body.contains("MLS"));
+                initial_credential: String::new(),
+                realm_tree_nodes: vec![],
+            },
+            crate::routes::Route::SettingsSection {
+                section: "storage".into(),
+                filter: String::new(),
+            },
+            |_| Box::pin(std::future::pending()),
+        );
+        app.mount(settings(app.scope(), context.clone())).unwrap();
+        for _ in 0..8 {
+            executor.poll_one();
+            app.flush().unwrap();
+        }
+        fn nodes(app: &App) -> Vec<NodeId> {
+            let tree = app.tree();
+            let mut pending = tree.roots().to_vec();
+            let mut result = vec![];
+            while let Some(id) = pending.pop() {
+                result.push(id);
+                pending.extend(tree.node(id).unwrap().children.iter().copied());
             }
-        });
+            result
+        }
+        fn class(app: &App, class: &str) -> NodeId {
+            nodes(app)
+                .into_iter()
+                .find(|id| {
+                    app.tree()
+                        .node(*id)
+                        .unwrap()
+                        .descriptor
+                        .view()
+                        .classes
+                        .iter()
+                        .any(|candidate| candidate == class)
+                })
+                .unwrap_or_else(|| panic!("missing Storage class {class}"))
+        }
+        fn boxed_children(app: &App, parent: NodeId) -> Vec<NodeId> {
+            let tree = app.tree();
+            let mut pending = tree
+                .node(parent)
+                .unwrap()
+                .children
+                .iter()
+                .rev()
+                .copied()
+                .collect::<Vec<_>>();
+            let mut result = vec![];
+            while let Some(id) = pending.pop() {
+                let node = tree.node(id).unwrap();
+                if matches!(node.descriptor.view().props, Props::Group) {
+                    pending.extend(node.children.iter().rev().copied());
+                } else {
+                    result.push(id);
+                }
+            }
+            result
+        }
+        let grid = class(&app, "storage-settings-grid");
+        let cards = boxed_children(&app, grid);
+        assert_eq!(
+            cards.len(),
+            4,
+            "quota/cache remain Fragment siblings of Local stores and diagnostics"
+        );
+        for (node, expected) in cards.into_iter().zip([
+            "storage-table",
+            "browser-storage-quota",
+            "e2ee-plaintext-cache",
+            "storage-risks",
+        ]) {
+            assert!(
+                app.tree()
+                    .node(node)
+                    .unwrap()
+                    .descriptor
+                    .view()
+                    .classes
+                    .iter()
+                    .any(|class| class == expected)
+            );
+        }
+        let local = class(&app, "storage-table");
+        let metrics = boxed_children(&app, local)
+            .into_iter()
+            .find(|id| {
+                app.tree()
+                    .node(*id)
+                    .unwrap()
+                    .descriptor
+                    .view()
+                    .classes
+                    .iter()
+                    .any(|class| class == "metric-grid")
+            })
+            .unwrap();
+        assert_eq!(boxed_children(&app, metrics).len(), 4);
+        assert!(nodes(&app).iter().any(|id| matches!(app.tree().node(*id).unwrap().descriptor.view().props, Props::Text(value) if value.content == crate::i18n::tr_args("settings.local_stores.approx_bytes", &[("bytes", "https://storage.example/".len().to_string())]))));
+        class(&app, "warn");
+        let clear = class(&app, "e2ee-cache-clear-all");
+        assert!(
+            matches!(app.tree().node(clear).unwrap().descriptor.view().props, Props::Button(button) if !button.enabled)
+        );
+        let refresh = class(&app, "e2ee-cache-refresh");
+        assert!(
+            app.tree()
+                .node(refresh)
+                .unwrap()
+                .descriptor
+                .view()
+                .classes
+                .iter()
+                .any(|class| class == "storage-action-sm")
+        );
+        let diagnostics = class(&app, "storage-risks");
+        let trigger = boxed_children(&app, diagnostics)
+            .into_iter()
+            .find(|id| {
+                matches!(
+                    app.tree().node(*id).unwrap().descriptor.view().props,
+                    Props::Button(_)
+                )
+            })
+            .unwrap();
+        assert_eq!(
+            app.tree()
+                .node(trigger)
+                .unwrap()
+                .descriptor
+                .view()
+                .semantics
+                .as_ref()
+                .unwrap()
+                .expanded,
+            Some(false)
+        );
+        app.dispatch(trigger, Event::Activate).unwrap();
+        app.flush().unwrap();
+        assert_eq!(
+            app.tree()
+                .node(trigger)
+                .unwrap()
+                .descriptor
+                .view()
+                .semantics
+                .as_ref()
+                .unwrap()
+                .expanded,
+            Some(true)
+        );
+        assert!(nodes(&app).iter().any(|id| matches!(app.tree().node(*id).unwrap().descriptor.view().props, Props::Text(value) if value.content == context.tr("settings.storage_risks.filesystem"))));
+        app.dispatch(trigger, Event::Activate).unwrap();
+        app.flush().unwrap();
+        assert_eq!(
+            app.tree()
+                .node(trigger)
+                .unwrap()
+                .descriptor
+                .view()
+                .semantics
+                .as_ref()
+                .unwrap()
+                .expanded,
+            Some(false)
+        );
+        assert!(
+            app.tree().node(refresh).is_ok(),
+            "diagnostic disclosure leaves cache controls mounted"
+        );
     }
 }

@@ -34,152 +34,110 @@ pub(crate) struct AgentModeReadKey {
 
 // Update the fence during render, before an older request can publish. The
 // generation also rejects leaving and returning to an identical scope (ABA).
-fn use_mode_reads<K: Clone + PartialEq + 'static>(
-    key: K,
-    expected_count: usize,
+fn mode_reads<K: Clone + PartialEq + 'static>(
+    scope: &Scope,
+    key: Lotus<K>,
+    expected_count: Rc<dyn Fn(&K) -> usize>,
     read: ModeRead<K>,
     wait: RetryWait,
     externally_current: Rc<dyn Fn(&K) -> bool>,
     _read_origin: &'static str,
-) -> Modes {
-    let mut modes = use_signal(|| (0_u64, Modes::new()));
-    let fence = use_hook(|| Rc::new(RefCell::new((key.clone(), 0_u64, true))));
-    let generation = {
-        let mut current = fence.borrow_mut();
-        if current.0 != key {
-            current.0 = key.clone();
-            current.1 = current.1.wrapping_add(1);
-        }
-        current.1
-    };
-    let snapshot_valid = externally_current(&key);
-    let drop_fence = fence.clone();
-    use_drop(move || drop_fence.borrow_mut().2 = false);
-    use_effect(use_reactive(
-        (&key, &expected_count),
-        move |(key, expected_count)| {
-            if fence.borrow().0 != key {
-                return;
+) -> Bond<Modes> {
+    let initial = glory::core::untracked(|| key.get());
+    let modes = scope.cage((0_u64, Modes::new()));
+    let fence = Rc::new(RefCell::new((initial, 0_u64, true)));
+    let running: Rc<RefCell<Option<glory::core::TaskToken>>> = Rc::new(RefCell::new(None));
+    let weak = scope.downgrade();
+    let retired_fence = fence.clone();
+    let retired_task = running.clone();
+    scope
+        .on_cleanup(move || {
+            retired_fence.borrow_mut().2 = false;
+            if let Some(task) = retired_task.borrow_mut().take() {
+                task.cancel();
             }
-            let generation = fence.borrow().1;
-            modes.set((generation, Modes::new()));
-            let fence = fence.clone();
-            let read = read.clone();
-            let wait = wait.clone();
-            let externally_current = externally_current.clone();
-            spawn(async move {
-                let current = || {
-                    let state = fence.borrow();
-                    let mounted = state.2;
-                    let key_matches = state.0 == key;
-                    let generation_matches = state.1 == generation;
-                    let session_current = externally_current(&key);
-                    let valid = mounted && key_matches && generation_matches && session_current;
-                    #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
-                    if !valid {
-                        tracing::warn!(
-                            read_origin = _read_origin,
-                            mounted,
-                            key_matches,
-                            generation_matches,
-                            session_current,
-                            "agent mode read superseded"
-                        );
-                    }
-                    valid
-                };
-                // A changing governing head can invalidate an otherwise successful
-                // HTTP response. Retry the verified operation, never its raw value.
-                for attempt in 0..8 {
-                    if !current() {
-                        return;
-                    }
-                    let result = read(key.clone()).await;
-                    if !current() {
-                        return;
-                    }
-                    let complete = result.len() == expected_count;
-                    #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
-                    tracing::warn!(
-                        read_origin = _read_origin,
-                        attempt,
-                        expected_count,
-                        verified_count = result.len(),
-                        complete,
-                        "agent mode verified read diagnostics"
-                    );
-                    if modes.peek().1 != result {
-                        modes.set((generation, result));
-                    }
-                    if complete {
-                        return;
-                    }
-                    if attempt < 7 {
-                        wait((500_u64 << attempt.min(2)).min(2_000)).await;
-                    }
-                }
-            });
-        },
-    ));
-    let (published_generation, snapshot) = modes();
-    #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
-    {
-        let signature = (
-            generation,
-            published_generation,
-            snapshot_valid,
-            snapshot.len(),
-            expected_count,
-        );
-        let previous = use_hook(|| Rc::new(RefCell::new(None)));
-        if previous.borrow().as_ref() != Some(&signature) {
-            tracing::warn!(
-                read_origin = _read_origin,
-                snapshot_valid,
-                generation_matches = published_generation == generation,
-                verified_count = snapshot.len(),
-                expected_count,
-                "agent mode render snapshot"
-            );
-            *previous.borrow_mut() = Some(signature);
+        })
+        .unwrap_or_else(|error| scope.report_error(error));
+    let observed_key = key.clone();
+    let observed_fence = fence.clone();
+    let observed_external = externally_current.clone();
+    scope.effect(move || {
+        let key = observed_key.get();
+        let generation = {
+            let mut state = observed_fence.borrow_mut();
+            if state.0 != key {
+                state.0 = key.clone();
+                state.1 = state.1.wrapping_add(1);
+            }
+            state.1
+        };
+        if let Some(task) = running.borrow_mut().take() {
+            task.cancel();
         }
-    }
-    if snapshot_valid && published_generation == generation {
-        snapshot
-    } else {
-        Modes::new()
-    }
+        modes.revise(|value| *value = (generation, Modes::new()));
+        let Some(scope) = weak.upgrade() else { return };
+        let fence = observed_fence.clone();
+        let source = observed_key.clone();
+        let read = read.clone();
+        let wait = wait.clone();
+        let external = observed_external.clone();
+        let expected = expected_count(&key);
+        if let Ok(task) = scope.spawn(async move {
+            let current = || {
+                let state = fence.borrow();
+                state.2
+                    && state.0 == key
+                    && state.1 == generation
+                    && glory::core::untracked(|| source.get()) == key
+                    && external(&key)
+            };
+            for attempt in 0..8 {
+                if !current() {
+                    return;
+                }
+                let result = read(key.clone()).await;
+                if !current() {
+                    return;
+                }
+                let complete = result.len() == expected;
+                if modes.get_untracked().1 != result {
+                    modes.revise(|value| *value = (generation, result));
+                }
+                if complete {
+                    return;
+                }
+                if attempt < 7 {
+                    wait((500_u64 << attempt.min(2)).min(2000)).await;
+                }
+            }
+        }) {
+            *running.borrow_mut() = Some(task);
+        }
+    });
+    scope.bond(move || {
+        let key = key.get();
+        let (published, snapshot) = modes.get();
+        let state = fence.borrow();
+        if state.2 && state.0 == key && published == state.1 && externally_current(&key) {
+            snapshot
+        } else {
+            Modes::new()
+        }
+    })
 }
 
-pub(crate) fn use_agent_modes(key: AgentModeReadKey, read_origin: &'static str) -> Modes {
-    #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
-    {
-        let previous = use_hook(|| Rc::new(RefCell::new(key.clone())));
-        let old = previous.borrow();
-        if *old != key {
-            tracing::warn!(
-                read_origin,
-                base_changed = old.base != key.base,
-                authority_changed = old.authority != key.authority,
-                realm_changed = old.realm != key.realm,
-                credential_changed = old.credential != key.credential,
-                session_epoch_changed = old.session_epoch != key.session_epoch,
-                sync_ready_changed = old.sync_ready != key.sync_ready,
-                ready_changed = old.ready != key.ready,
-                complete_changed = old.complete != key.complete,
-                reset_changed = old.reset != key.reset,
-                head_changed = old.head != key.head,
-                accounts_changed = old.accounts != key.accounts,
-                expected_count = key.accounts.len(),
-                "agent mode key invalidated"
-            );
-        }
-        drop(old);
-        *previous.borrow_mut() = key.clone();
-    }
-    use_mode_reads(
-        key.clone(),
-        key.accounts.len(),
+pub(crate) fn agent_modes(
+    scope: &Scope,
+    context: Rc<crate::presentation::InksonContext>,
+    key: Lotus<AgentModeReadKey>,
+    read_origin: &'static str,
+) -> Bond<Modes> {
+    let generation = context.session_generation.get_untracked();
+    let account = context.active_account.get_untracked();
+    mode_reads(
+        scope,
+        key,
+        Rc::new(|key| key.accounts.len()),
         Rc::new(move |request: AgentModeReadKey| {
             Box::pin(async move {
                 crate::transport::auth::with_authed_sdk_client(
@@ -209,7 +167,8 @@ pub(crate) fn use_agent_modes(key: AgentModeReadKey, read_origin: &'static str) 
             ))
         }),
         Rc::new(move |request: &AgentModeReadKey| {
-            crate::identity::device_directory::session_cache_epoch() == request.session_epoch
+            context.session_matches(generation, &account)
+                && crate::identity::device_directory::session_cache_epoch() == request.session_epoch
         }),
         read_origin,
     )
@@ -217,226 +176,102 @@ pub(crate) fn use_agent_modes(key: AgentModeReadKey, read_origin: &'static str) 
 
 #[cfg(test)]
 mod tests {
+    fn host() -> (glory::App, Rc<glory::core::executor::Executor>) {
+        let executor = Rc::new(glory::core::executor::Executor::new(256));
+        let app = glory::App::with_host(executor.clone(), glory::render::memory::Memory::new);
+        (app, executor)
+    }
+    fn settle(app: &glory::App, executor: &glory::core::executor::Executor) {
+        for _ in 0..64 {
+            executor.poll_one();
+            app.flush().unwrap();
+        }
+    }
     use std::cell::Cell;
 
     use super::*;
-
-    type ModeKeySignal = Rc<RefCell<Option<Signal<(String, String, u64)>>>>;
-
-    #[derive(Clone)]
-    struct Harness {
-        key: ModeKeySignal,
-        unrelated_revision: Rc<RefCell<Option<Signal<u64>>>>,
-        observed: Rc<RefCell<Modes>>,
-        calls: Rc<Cell<usize>>,
-        read_ready: Rc<Cell<bool>>,
-        waits: Rc<RefCell<Vec<tokio::sync::oneshot::Receiver<()>>>>,
-        external_current: Rc<Cell<bool>>,
-        account: arkret_sdk::AccountId,
-        pending_reads:
-            Rc<RefCell<std::collections::VecDeque<tokio::sync::oneshot::Receiver<Modes>>>>,
-    }
-    fn harness(props: Harness) -> Element {
-        let key = use_signal(|| ("account-a".to_owned(), "realm-a".to_owned(), 0));
-        *props.key.borrow_mut() = Some(key);
-        let unrelated_revision = use_signal(|| 0_u64);
-        *props.unrelated_revision.borrow_mut() = Some(unrelated_revision);
-        let _ = unrelated_revision();
-        let account = props.account.clone();
-        let calls = props.calls.clone();
-        let ready = props.read_ready.clone();
-        let waits = props.waits.clone();
-        let external = props.external_current.clone();
-        let pending = props.pending_reads.clone();
-        let result = use_mode_reads(
-            key(),
-            1,
+    #[test]
+    fn verified_reads_preserve_unknown_and_retry_with_exact_key_and_owner_fences() {
+        let (app, executor) = host();
+        let scope = app.scope();
+        let key = scope.cage(0_u64);
+        let calls = Rc::new(Cell::new(0));
+        let read_calls = calls.clone();
+        let live = Rc::new(Cell::new(true));
+        let current = live.clone();
+        let modes = mode_reads(
+            scope,
+            Lotus::<u64>::from(key),
+            Rc::new(|_| 1),
             Rc::new(move |_| {
-                calls.set(calls.get() + 1);
-                let result = if ready.get() {
-                    Modes::from([(account.clone(), arkret_sdk::AgentInteractionMode::Private)])
-                } else {
-                    Modes::new()
-                };
-                let receiver = pending.borrow_mut().pop_front();
-                Box::pin(async move {
-                    if let Some(receiver) = receiver {
-                        receiver.await.unwrap_or_default()
-                    } else {
-                        result
-                    }
-                })
+                read_calls.set(read_calls.get() + 1);
+                Box::pin(std::future::ready(Modes::new()))
             }),
-            Rc::new(move |_| {
-                let receiver = waits.borrow_mut().remove(0);
-                Box::pin(async move {
-                    let _ = receiver.await;
-                })
-            }),
-            Rc::new(move |_| external.get()),
+            Rc::new(|_| Box::pin(std::future::ready(()))),
+            Rc::new(move |_| current.get()),
             "test",
         );
-        *props.observed.borrow_mut() = result;
-        rsx! { div {} }
+        settle(&app, &executor);
+        assert_eq!(calls.get(), 8);
+        assert!(modes.get_untracked().is_empty());
+        key.revise(|value| *value = 1);
+        settle(&app, &executor);
+        assert_eq!(calls.get(), 16);
+        live.set(false);
+        key.revise(|value| *value = 2);
+        settle(&app, &executor);
+        assert_eq!(calls.get(), 16);
+        scope.dispose();
+        assert!(!modes.is_alive());
     }
-    fn fixture() -> (Harness, Vec<tokio::sync::oneshot::Sender<()>>) {
-        let mut senders = Vec::new();
-        let mut receivers = Vec::new();
-        for _ in 0..20 {
-            let (s, r) = tokio::sync::oneshot::channel();
-            senders.push(s);
-            receivers.push(r);
-        }
-        (
-            Harness {
-                key: Rc::new(RefCell::new(None)),
-                unrelated_revision: Rc::new(RefCell::new(None)),
-                observed: Rc::new(RefCell::new(Modes::new())),
-                calls: Rc::new(Cell::new(0)),
-                read_ready: Rc::new(Cell::new(false)),
-                waits: Rc::new(RefCell::new(receivers)),
-                external_current: Rc::new(Cell::new(true)),
-                pending_reads: Rc::new(RefCell::new(std::collections::VecDeque::new())),
-                account: arkret_sdk::AccountId::new(
-                    arkret_sdk::DidCoreId::new("ak:did_core:web:agent.example").unwrap(),
-                    arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
-                ),
-            },
-            senders,
-        )
-    }
-    fn drain(dom: &mut VirtualDom) {
-        for _ in 0..4 {
-            dom.process_events();
-            dom.render_immediate_to_vec();
-        }
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn agent_modes_inflight_read_survives_unrelated_projection_publication() {
-        let (props, _senders) = fixture();
-        let (sender, receiver) = tokio::sync::oneshot::channel();
-        props.pending_reads.borrow_mut().push_back(receiver);
-        let mut dom = VirtualDom::new_with_props(harness, props.clone());
-        dom.rebuild_in_place();
-        drain(&mut dom);
-        let mut revision = props.unrelated_revision.borrow().unwrap();
-        for next in 1..=8 {
-            dom.in_runtime(|| revision.set(next));
-            drain(&mut dom);
-        }
-        assert_eq!(props.calls.get(), 1);
-        let result = Modes::from([(
-            props.account.clone(),
-            arkret_sdk::AgentInteractionMode::Private,
-        )]);
-        sender.send(result.clone()).unwrap();
-        drain(&mut dom);
-        assert_eq!(*props.observed.borrow(), result);
-        dom.in_runtime(|| revision.set(9));
-        drain(&mut dom);
-        assert_eq!(*props.observed.borrow(), result);
-        assert_eq!(props.calls.get(), 1);
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn agent_modes_same_key_unresolved_read_recovers_without_inventing_private() {
-        let (props, mut senders) = fixture();
-        let mut dom = VirtualDom::new_with_props(harness, props.clone());
-        dom.rebuild_in_place();
-        drain(&mut dom);
-        assert!(props.observed.borrow().is_empty());
-        assert_eq!(props.calls.get(), 1);
-        props.read_ready.set(true);
-        senders.remove(0).send(()).unwrap();
-        drain(&mut dom);
-        assert_eq!(
-            props.observed.borrow().get(&props.account),
-            Some(&arkret_sdk::AgentInteractionMode::Private)
-        );
-        assert_eq!(props.calls.get(), 2);
-        drain(&mut dom);
-        assert_eq!(props.calls.get(), 2, "stable verified result does not poll");
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn agent_modes_retry_is_bounded_and_stale_scope_session_or_unmount_cannot_publish() {
-        let (props, mut senders) = fixture();
-        let mut dom = VirtualDom::new_with_props(harness, props.clone());
-        dom.rebuild_in_place();
-        drain(&mut dom);
-        for _ in 0..7 {
-            senders.remove(0).send(()).unwrap();
-            drain(&mut dom);
-        }
-        assert_eq!(props.calls.get(), 8);
-        assert!(props.observed.borrow().is_empty());
-        for change in [0, 1, 2, 3] {
-            let (props, mut senders) = fixture();
-            let mut dom = VirtualDom::new_with_props(harness, props.clone());
-            dom.rebuild_in_place();
-            drain(&mut dom);
-            if change == 3 {
-                props.external_current.set(false);
+    #[test]
+    fn inflight_response_cannot_authorize_a_returned_scope_or_unmounted_owner() {
+        for retire in [false, true] {
+            let (app, executor) = host();
+            let scope = app.scope();
+            let key = scope.cage(0_u64);
+            let calls = Rc::new(Cell::new(0));
+            let observed = calls.clone();
+            let (sender, receiver) = tokio::sync::oneshot::channel::<Modes>();
+            let receiver = Rc::new(RefCell::new(Some(receiver)));
+            let modes = mode_reads(
+                scope,
+                Lotus::<u64>::from(key),
+                Rc::new(|_| 1),
+                Rc::new(move |_| {
+                    observed.set(observed.get() + 1);
+                    let receiver = receiver.borrow_mut().take();
+                    Box::pin(async move {
+                        if let Some(receiver) = receiver {
+                            receiver.await.unwrap_or_default()
+                        } else {
+                            Modes::new()
+                        }
+                    })
+                }),
+                Rc::new(|_| Box::pin(std::future::pending())),
+                Rc::new(|_| true),
+                "test",
+            );
+            settle(&app, &executor);
+            assert_eq!(calls.get(), 1);
+            if retire {
+                scope.dispose();
             } else {
-                let mut signal = props.key.borrow().unwrap();
-                let original = dom.in_runtime(&*signal);
-                let next = match change {
-                    0 => ("account-b".into(), original.1.clone(), 0),
-                    1 => (original.0.clone(), "realm-b".into(), 0),
-                    _ => (original.0.clone(), original.1.clone(), 1),
-                };
-                dom.in_runtime(|| signal.set(next));
-                drain(&mut dom);
-                dom.in_runtime(|| signal.set(original));
-                drain(&mut dom);
+                key.revise(|value| *value = 1);
+                settle(&app, &executor);
+                key.revise(|value| *value = 0);
+                settle(&app, &executor);
             }
-            props.read_ready.set(true);
-            let _ = senders.remove(0).send(());
-            drain(&mut dom);
-            assert!(
-                props.observed.borrow().is_empty(),
-                "old retry must not publish after scope ABA or session revocation"
-            );
-        }
-        let (props, mut senders) = fixture();
-        let mut dom = VirtualDom::new_with_props(harness, props.clone());
-        dom.rebuild_in_place();
-        drain(&mut dom);
-        drop(dom);
-        assert!(senders.remove(0).send(()).is_err());
-        assert!(props.observed.borrow().is_empty());
-    }
-    #[tokio::test(flavor = "current_thread")]
-    async fn agent_modes_inflight_read_cannot_publish_after_account_realm_or_current_cut_aba() {
-        for change in 0..3 {
-            let (props, _senders) = fixture();
-            let (sender, receiver) = tokio::sync::oneshot::channel();
-            props.pending_reads.borrow_mut().push_back(receiver);
-            let mut dom = VirtualDom::new_with_props(harness, props.clone());
-            dom.rebuild_in_place();
-            drain(&mut dom);
-            let mut signal = props.key.borrow().unwrap();
-            let original = dom.in_runtime(&*signal);
-            let next = match change {
-                0 => ("account-b".into(), original.1.clone(), 0),
-                1 => (original.0.clone(), "realm-b".into(), 0),
-                _ => (original.0.clone(), original.1.clone(), 1),
-            };
-            dom.in_runtime(|| signal.set(next));
-            drain(&mut dom);
-            dom.in_runtime(|| signal.set(original));
-            drain(&mut dom);
-            let result = Modes::from([(
-                props.account.clone(),
+            let account = crate::test_support::authority("did:web:agent.example");
+            let _ = sender.send(Modes::from([(
+                account,
                 arkret_sdk::AgentInteractionMode::Private,
-            )]);
-            let _ = sender.send(result);
-            drain(&mut dom);
-            assert!(
-                props.observed.borrow().is_empty(),
-                "old verified response must not authorize the returned view"
-            );
+            )]));
+            settle(&app, &executor);
+            if !retire {
+                assert!(modes.get_untracked().is_empty());
+            }
         }
     }
 }

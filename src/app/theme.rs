@@ -23,10 +23,7 @@ pub(crate) fn browser_shell_color_scheme_is_dark() -> Option<bool> {
     {
         let window = web_sys::window()?;
         let document = window.document()?;
-        let shell = document
-            .query_selector("[data-testid=\"client-shell\"]")
-            .ok()
-            .flatten()?;
+        let shell = document.query_selector(".shell.app").ok().flatten()?;
         let styles = window.get_computed_style(&shell).ok().flatten()?;
         let color_scheme = styles
             .get_property_value("color-scheme")
@@ -55,21 +52,7 @@ pub(crate) fn theme_renders_as_night(theme: &str, system_theme_is_night: bool) -
     theme == "night" || (theme == "system" && system_theme_is_night)
 }
 
-/// Mirror the effective theme onto the document root (`<html>`).
-///
-/// The vendored dioxus-components theme declares its palette
-/// (`--primary-color`, …) on `:root` and flips it with a
-/// `var(--light, …) var(--dark, …)` switch keyed on `html[data-theme]`.
-/// Those derived custom properties are substituted **once at `:root`**, so
-/// toggling `--light`/`--dark` on the shell `<div>` (where inkson renders
-/// its `data-theme`) has no effect — descendants inherit the already-computed
-/// palette. CSS cannot propagate a `<div>` attribute up to `:root`, so the
-/// switch must live on `<html>` itself. Writing `data-theme` here lets the
-/// vendored switch — and the `[data-theme]` tokens in
-/// `styles/base/tokens.css` — resolve at the level the palette is
-/// declared, fixing dxc controls (select, tabs, …) and
-/// dialogs teleported under `<body>`. Uses the canonical `light`/`dark`
-/// values understood by both the vendored theme and `styles/base/tokens.css`.
+/// Mirror the effective theme onto the document root for inherited custom properties.
 pub(crate) fn apply_document_root_theme(is_night: bool) {
     #[cfg(target_arch = "wasm32")]
     {

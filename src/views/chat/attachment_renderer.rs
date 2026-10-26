@@ -1,27 +1,48 @@
-//! Structured, authenticated attachments; all network results are session fenced.
+//! Authenticated attachments retain source, historical-state and complete-content verification.
 use arkret_models_crypto::{EncryptedAttachment, EncryptedAttachmentGroupStateRef};
 
 use super::*;
 
 pub(super) fn render_protocol_content(
+    scope: &Scope,
+    context: Rc<crate::presentation::InksonContext>,
     source: &AuthenticatedMessageContent,
     mentions: &[MentionNode],
     base_url: &str,
-) -> Element {
+) -> View {
     let content = &source.content;
     if content.kind == arkret_sdk::ContentBlockKind::Composite {
-        return rsx! { div { class: "content-blocks", for (index, part) in content.parts.iter().enumerate() {
-            div { key: "{source.source}-{index}",
-                {render_protocol_content(&AuthenticatedMessageContent {content: part.clone(), ..source.clone()}, mentions, base_url)}
-            }
-        } } };
+        return super::native::block(
+            "content-blocks",
+            content
+                .parts
+                .iter()
+                .map(|part| {
+                    render_protocol_content(
+                        scope,
+                        context.clone(),
+                        &AuthenticatedMessageContent {
+                            content: part.clone(),
+                            ..source.clone()
+                        },
+                        mentions,
+                        base_url,
+                    )
+                })
+                .collect(),
+        );
     }
     match content.rendered_encrypted_attachment() {
         Ok(Some(descriptor)) => {
-            return rsx! { VerifiedAttachment {key: "{source.source}-{descriptor.blob_ref()}", source: source.clone(), descriptor} };
+            return verified_attachment(scope, context, source.clone(), descriptor);
         }
         Err(error) => {
-            return rsx! { p { role: "alert", "data-testid": "attachment-error", "Invalid attachment: {error}" } };
+            return Box::new(
+                view()
+                    .class("attachment-error")
+                    .role(glory::render::Role::Alert)
+                    .fill(text().content(format!("Invalid attachment: {error}"))),
+            );
         }
         Ok(None) => {}
     }
@@ -51,20 +72,27 @@ pub(super) fn render_protocol_content(
                 fallback: content.body.clone(),
                 markdown: content
                     .long_text_media_type()
-                    .is_some_and(|m| m.text_format() == arkret_sdk::TextFormat::Markdown),
+                    .is_some_and(|media| media.text_format() == arkret_sdk::TextFormat::Markdown),
             },
             _ => DisplayBlock::Attachment {
                 blob_ref: reference.into(),
                 media_type: Some(mime),
             },
         };
-        return crate::content::render_blocks(&[block]);
+        return crate::content::render_blocks(scope, context, &[block]);
     }
-    render_message_body(&content.body, content.text_format(), mentions, base_url)
+    render_message_body(
+        scope,
+        context,
+        &content.body,
+        content.text_format(),
+        mentions,
+        base_url,
+    )
 }
 
 async fn load_verified_attachment(
-    session: crate::app::SessionContext,
+    session: Rc<crate::presentation::InksonContext>,
     source: &AuthenticatedMessageContent,
     descriptor: &EncryptedAttachment,
 ) -> anyhow::Result<std::rc::Rc<crate::attachments::artifact::Artifact>> {
@@ -75,29 +103,30 @@ async fn load_verified_attachment(
     if source.content.kind == arkret_sdk::ContentBlockKind::LongText {
         source.content.validate_long_text()?;
     }
-    let generation = *session.session_generation.peek();
+    let generation = session.session_generation.get_untracked();
     let account = session
         .active_account
-        .peek()
+        .get_untracked()
         .clone()
         .ok_or_else(|| anyhow::anyhow!("no attachment account"))?;
     let fence = crate::transport::auth::AuthoringSessionFence::capture()?;
     let active = || {
         fence.check_session_identity().is_ok()
-            && *session.session_generation.peek() == generation
-            && session.active_account.peek().as_ref().is_some_and(|a| {
-                a.authority == account.authority && a.device_id == account.device_id
-            })
+            && session.session_generation.get_untracked() == generation
+            && session
+                .active_account
+                .get_untracked()
+                .as_ref()
+                .is_some_and(|a| {
+                    a.authority == account.authority && a.device_id == account.device_id
+                })
     };
-    let store = crate::app::runtime_adapter::state_store_handle(session.state_store);
-    let config = crate::config::LocalConfigStore::default().load();
-    let base = config
-        .server_url()
-        .ok_or_else(|| anyhow::anyhow!("no authenticated attachment route"))?;
-    let http =
-        crate::transport::auth::authed_api_ready(base.as_str(), config.session_credential.clone())
-            .await?
-            .sdk_http_client()?;
+    let store = session.state_store.handle();
+    let base = session.base_url.get_untracked();
+    let credential = session.token.get_untracked();
+    let http = crate::transport::auth::authed_api_ready(&base, credential)
+        .await?
+        .sdk_http_client()?;
     anyhow::ensure!(active(), "attachment session changed");
     let clients = crate::transport::EndpointClients::from_http(http.clone());
     // An authenticated source read is independent from possession of its ref,
@@ -149,9 +178,9 @@ async fn load_verified_attachment(
             0
         }
         arkret_sdk::EventKind::MlsCommit => {
-            let commit: arkret_sdk::MlsCommitPayload = serde_json::from_value(payload)?;
-            commit.validate()?;
-            commit.next_epoch()
+            let mls_commit: arkret_sdk::MlsCommitPayload = serde_json::from_value(payload)?;
+            mls_commit.validate()?;
+            mls_commit.next_epoch()
         }
         _ => anyhow::bail!("attachment_group_state_unresolved: reference is not an MLS state"),
     };
@@ -385,45 +414,37 @@ impl TextIntegrity {
     }
 }
 
-#[component]
-fn VerifiedAttachment(
+fn verified_attachment(
+    scope: &Scope,
+    context: Rc<crate::presentation::InksonContext>,
     source: AuthenticatedMessageContent,
     descriptor: EncryptedAttachment,
-) -> Element {
-    let session = consume_context::<crate::app::SessionContext>();
-    let instance = use_hook(uuid_v7);
-    let generation = *session.session_generation.read();
-    let mut result =
-        use_signal(|| None::<Result<std::rc::Rc<crate::attachments::artifact::Artifact>, String>>);
-    let mut revision = use_signal(|| 0_u64);
-    let mut requested =
-        use_signal(|| None::<(AuthenticatedMessageContent, EncryptedAttachment, u64)>);
-    let source_for_effect = source.clone();
-    let descriptor_for_effect = descriptor.clone();
-    use_effect(use_reactive(
-        (&source_for_effect, &descriptor_for_effect, &generation),
-        move |(source, descriptor, generation)| {
-            let binding = (source.clone(), descriptor.clone(), generation);
-            // Effect scheduling must be idempotent for this exact authenticated
-            // input. Unrelated folds must not revoke a verified artifact.
-            if requested.peek().as_ref() == Some(&binding) {
-                return;
+) -> View {
+    use crate::presentation::widgets::{paragraph, reactive_distinct, resource};
+    let request_context = context.clone();
+    let request_source = source.clone();
+    let request_descriptor = descriptor.clone();
+    let loaded = resource(scope, move || {
+        let generation = request_context.session_generation.get();
+        let account = request_context.active_account.get();
+        let _ = request_context.token.get();
+        let _ = request_context.base_url.get();
+        let context = request_context.clone();
+        let source = request_source.clone();
+        let descriptor = request_descriptor.clone();
+        async move {
+            if !context.session_matches(generation, &account) {
+                return Err("attachment session changed".into());
             }
-            requested.set(Some(binding));
-            result.set(None);
-            let captured = revision.peek().wrapping_add(1);
-            revision.set(captured);
-            spawn(async move {
-                let loaded = load_verified_attachment(session, &source, &descriptor)
-                    .await
-                    .map_err(|e| format!("{e:#}"));
-                if *revision.peek() == captured && *session.session_generation.peek() == generation
-                {
-                    result.set(Some(loaded));
-                }
-            });
-        },
-    ));
+            let artifact = load_verified_attachment(context.clone(), &source, &descriptor)
+                .await
+                .map_err(|error| format!("{error:#}"))?;
+            if !context.session_matches(generation, &account) {
+                return Err("attachment session changed".into());
+            }
+            Ok(artifact)
+        }
+    });
     let name = source
         .content
         .extra
@@ -431,203 +452,569 @@ fn VerifiedAttachment(
         .and_then(Value::as_str)
         .unwrap_or("attachment")
         .to_owned();
-    let resolved = result();
-    let status = match &resolved {
-        Some(Ok(_)) => "verified",
-        Some(Err(_)) => "failed",
-        None => "loading",
-    };
-    rsx! {div {"data-attachment-renderer-id": instance, "data-attachment-source": source.source.to_string(),
-        "data-attachment-status": status, "data-attachment-load-revision": "{revision}",
-    match resolved {
-        Some(Ok(artifact)) if source.content.kind == arkret_sdk::ContentBlockKind::LongText => {
-            rsx! { VerifiedLongText {artifact, name, markdown: descriptor.media_type() == "text/markdown"} }
+    let content = reactive_distinct(loaded.data, move |scope, result| {
+        let Some(result) = result else {
+            return paragraph("attachment-loading", "Verifying attachment…");
+        };
+        let artifact = match result {
+            Ok(artifact) => artifact,
+            Err(error) => {
+                return Box::new(
+                    view()
+                        .class("attachment-error")
+                        .role(glory::render::Role::Alert)
+                        .fill(text().content(error)),
+                );
+            }
+        };
+        let _ = scope.retain(artifact.clone());
+        if source.content.kind == arkret_sdk::ContentBlockKind::LongText {
+            return verified_long_text(
+                scope,
+                context.clone(),
+                artifact,
+                name.clone(),
+                descriptor.media_type() == "text/markdown",
+            );
         }
-        Some(Ok(artifact)) => match source.content.kind {
+        match source.content.kind {
             arkret_sdk::ContentBlockKind::Image if artifact.inline => {
-                rsx! {img {src: artifact.url.clone(), alt: name, "data-testid": "verified-attachment-image"}}
+                verified_image(scope, context.clone(), artifact, name.clone())
             }
-            arkret_sdk::ContentBlockKind::Video if artifact.inline => {
-                rsx! {video {src: artifact.url.clone(), controls: true, "data-testid": "verified-attachment-video"}}
+            arkret_sdk::ContentBlockKind::Video if artifact.inline => verified_media(
+                scope,
+                context.clone(),
+                artifact,
+                name.clone(),
+                descriptor.media_type(),
+                true,
+            ),
+            arkret_sdk::ContentBlockKind::Audio if artifact.inline => verified_media(
+                scope,
+                context.clone(),
+                artifact,
+                name.clone(),
+                descriptor.media_type(),
+                false,
+            ),
+            _ => artifact_download(scope, context.clone(), artifact, name.clone()),
+        }
+    });
+    super::native::block("verified-attachment", vec![content])
+}
+
+#[cfg(target_arch = "wasm32")]
+fn verified_image(
+    _scope: &Scope,
+    _context: Rc<crate::presentation::InksonContext>,
+    artifact: Rc<crate::attachments::artifact::Artifact>,
+    name: String,
+) -> View {
+    Box::new(
+        image()
+            .class("verified-attachment-image")
+            .source(artifact.url.clone())
+            .alt(name),
+    )
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn verified_image(
+    scope: &Scope,
+    context: Rc<crate::presentation::InksonContext>,
+    artifact: Rc<crate::attachments::artifact::Artifact>,
+    name: String,
+) -> View {
+    use crate::presentation::widgets::{paragraph, reactive_distinct, resource};
+    let owner = scope.downgrade();
+    let request_context = context.clone();
+    let request_artifact = artifact.clone();
+    let generation = context.session_generation.get_untracked();
+    let account = context.active_account.get_untracked();
+    let registered = resource(scope, move || {
+        let account = account.clone();
+        let context = request_context.clone();
+        let artifact = request_artifact.clone();
+        let owner = owner.clone();
+        async move {
+            if !context.session_matches(generation, &account) || owner.upgrade().is_none() {
+                return Err("attachment session changed".into());
             }
-            arkret_sdk::ContentBlockKind::Audio if artifact.inline => {
-                rsx! {audio {src: artifact.url.clone(), controls: true, "data-testid": "verified-attachment-audio"}}
+            let (mime, bytes) = artifact
+                .native_image_bytes()
+                .await
+                .map_err(|error| format!("{error:#}"))?;
+            let scope = owner.upgrade().ok_or("The image owner was retired.")?;
+            if !context.session_matches(generation, &account) {
+                return Err("attachment session changed".into());
             }
-            _ => {
-                rsx! {a {href: artifact.url.clone(), download: name.clone(), "data-testid": "verified-attachment-download", "{name}"}}
-            }
-        },
-        Some(Err(error)) => rsx! {p {role: "alert", "data-testid": "attachment-error", "{error}"}},
-        None => rsx! {p {"data-testid": "attachment-loading", "Verifying attachment…"}},
+            context.register_native_image(&scope, &mime, bytes)
+        }
+    });
+    reactive_distinct(registered.data, move |scope, result| match result {
+        None => paragraph("attachment-loading", "Loading verified image…"),
+        Some(Ok(url)) => Box::new(
+            image()
+                .class("verified-attachment-image")
+                .source(url)
+                .alt(name.clone()),
+        ),
+        Some(Err(error)) => super::native::block(
+            "verified-attachment-image-error",
+            vec![
+                Box::new(
+                    view()
+                        .class("attachment-error")
+                        .role(glory::render::Role::Alert)
+                        .fill(text().content(error)),
+                ),
+                artifact_download(scope, context.clone(), artifact.clone(), name.clone()),
+            ],
+        ),
+    })
+}
+
+fn verified_media(
+    scope: &Scope,
+    context: Rc<crate::presentation::InksonContext>,
+    artifact: Rc<crate::attachments::artifact::Artifact>,
+    name: String,
+    mime: &str,
+    video: bool,
+) -> View {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = (context, name, mime);
+        crate::content::media_url(scope, artifact.url.clone(), video)
     }
-    }}
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let extension = match mime {
+            "video/mp4" => Some("mp4"),
+            "video/quicktime" => Some("mov"),
+            "audio/mpeg" => Some("mp3"),
+            "audio/mp4" => Some("m4a"),
+            "audio/ogg" => Some("ogg"),
+            "audio/wav" | "audio/x-wav" => Some("wav"),
+            "audio/flac" | "audio/x-flac" => Some("flac"),
+            "audio/aac" => Some("aac"),
+            "audio/webm" | "video/webm" => Some("webm"),
+            _ => None,
+        };
+        let has_extension = std::path::Path::new(&name).extension().is_some();
+        let filename = match (has_extension, extension) {
+            (false, Some(extension)) => format!("{name}.{extension}"),
+            _ => name,
+        };
+        artifact_save_control(
+            scope,
+            context,
+            artifact,
+            filename,
+            true,
+            if video {
+                "Save and open video".into()
+            } else {
+                "Save and open audio".into()
+            },
+        )
+    }
 }
 
 type TextPageSelection = (String, u64);
-type LoadedTextPage = Option<(TextPageSelection, Result<String, String>)>;
-
-// Bind selection and results to the artifact itself. A deferred reset effect
-// must not overwrite a page change, and an older read cannot publish for a
-// replacement artifact or a different page.
-fn use_verified_text_page(
-    artifact: std::rc::Rc<crate::attachments::artifact::Artifact>,
-) -> (Signal<TextPageSelection>, Signal<LoadedTextPage>) {
-    const PAGE_BYTES: u64 = 65_536;
-    let identity = artifact.url.clone();
-    let mut selection = use_signal(|| (identity.clone(), 0_u64));
-    let mut text = use_signal(|| None::<(TextPageSelection, Result<String, String>)>);
-    let mut revision = use_signal(|| 0_u64);
-    if selection.peek().0 != identity {
-        selection.set((identity, 0));
-    }
-    let index = selection().1;
-    use_effect(use_reactive((&artifact, &index), move |(read, index)| {
-        text.set(None);
-        let captured = revision.peek().wrapping_add(1);
-        revision.set(captured);
-        spawn(async move {
-            let binding = (read.url.clone(), index);
-            let loaded = read
-                .text_page(index, PAGE_BYTES)
+type LoadedTextPage = Option<(TextPageSelection, std::result::Result<String, String>)>;
+fn verified_text_page(
+    scope: &Scope,
+    artifact: impl Into<Lotus<Rc<crate::attachments::artifact::Artifact>>>,
+) -> (Cage<TextPageSelection>, Cage<LoadedTextPage>) {
+    let artifact = artifact.into();
+    let selection = scope.cage((glory::core::untracked(|| artifact.get()).url.clone(), 0_u64));
+    let loaded = scope.cage(None);
+    let revision = Rc::new(std::cell::Cell::new(0_u64));
+    let requested = Rc::new(std::cell::RefCell::new(None::<TextPageSelection>));
+    let running = Rc::new(std::cell::RefCell::new(None::<glory::core::TaskToken>));
+    let owner = scope.downgrade();
+    scope.effect(move || {
+        let artifact = artifact.get();
+        let mut binding = selection.get();
+        if binding.0 != artifact.url {
+            binding = (artifact.url.clone(), 0);
+            selection.revise(|value| *value = binding.clone());
+        }
+        if requested.borrow().as_ref() == Some(&binding) {
+            return;
+        }
+        *requested.borrow_mut() = Some(binding.clone());
+        if let Some(task) = running.borrow_mut().take() {
+            task.cancel();
+        }
+        loaded.revise(|value| *value = None);
+        let next = revision.get().wrapping_add(1);
+        revision.set(next);
+        let Some(scope) = owner.upgrade() else { return };
+        let owner = owner.clone();
+        let revision = revision.clone();
+        if let Ok(task) = scope.spawn(async move {
+            let text = artifact
+                .text_page(binding.1, 65536)
                 .await
-                .map_err(|e| format!("{e:#}"));
-            if *revision.peek() == captured && *selection.peek() == binding {
-                text.set(Some((binding, loaded)));
+                .map_err(|error| format!("{error:#}"));
+            if owner.upgrade().is_some()
+                && revision.get() == next
+                && selection.get_untracked() == binding
+            {
+                loaded.revise(|value| *value = Some((binding, text)));
             }
-        });
-    }));
-    (selection, text)
+        }) {
+            *running.borrow_mut() = Some(task);
+        }
+    });
+    (selection, loaded)
+}
+
+fn verified_long_text(
+    scope: &Scope,
+    context: Rc<crate::presentation::InksonContext>,
+    artifact: Rc<crate::attachments::artifact::Artifact>,
+    name: String,
+    markdown: bool,
+) -> View {
+    use super::native::{block, button};
+    use crate::presentation::widgets::{line, paragraph, reactive_distinct};
+    let (selection, loaded) = verified_text_page(scope, artifact.clone());
+    let last = artifact.size.saturating_sub(1) / 65536;
+    let page = scope.bond(move || {
+        let selected = selection.get();
+        loaded
+            .get()
+            .and_then(|(binding, result)| (binding == selected).then_some(result))
+    });
+    let render_context = context.clone();
+    let body = reactive_distinct(page, move |scope, result| match result {
+        Some(Ok(body)) if markdown => crate::content::render_blocks(
+            scope,
+            render_context.clone(),
+            &[crate::content::ContentBlock::Markdown(
+                crate::content::renderer::markdown_to_safe_html(&body),
+            )],
+        ),
+        Some(Ok(body)) => Box::new(
+            text()
+                .kind(glory::render::TextKind::Code)
+                .class("verified-long-text-page")
+                .content(body),
+        ),
+        Some(Err(error)) => Box::new(
+            view()
+                .role(glory::render::Role::Alert)
+                .fill(text().content(error)),
+        ),
+        None => paragraph("muted", "Loading text…"),
+    });
+    let previous_identity = artifact.url.clone();
+    let next_identity = artifact.url.clone();
+    let last_identity = artifact.url.clone();
+    block(
+        "verified-long-text",
+        vec![
+            Box::new(
+                view()
+                    .class("verified-long-text-viewport")
+                    .role(glory::render::Role::Section)
+                    .name("Message text")
+                    .fill(body),
+            ),
+            line(
+                "actions",
+                vec![
+                    button(
+                        "Previous page",
+                        "secondary verified-long-text-previous",
+                        scope.bond(move || selection.get().1 > 0),
+                        move || {
+                            selection.revise(|value| {
+                                *value = (previous_identity.clone(), value.1.saturating_sub(1))
+                            })
+                        },
+                    ),
+                    button(
+                        "Next page",
+                        "secondary verified-long-text-next",
+                        scope.bond(move || selection.get().1 < last),
+                        move || {
+                            selection.revise(|value| {
+                                *value = (next_identity.clone(), (value.1 + 1).min(last))
+                            })
+                        },
+                    ),
+                    button(
+                        "Last page",
+                        "secondary verified-long-text-last",
+                        scope.bond(move || selection.get().1 < last),
+                        move || selection.revise(|value| *value = (last_identity.clone(), last)),
+                    ),
+                    artifact_download(scope, context, artifact, name),
+                ],
+            ),
+        ],
+    )
+}
+
+fn artifact_download(
+    scope: &Scope,
+    context: Rc<crate::presentation::InksonContext>,
+    artifact: Rc<crate::attachments::artifact::Artifact>,
+    name: String,
+) -> View {
+    artifact_save_control(scope, context, artifact, name.clone(), false, name)
+}
+
+#[derive(Clone)]
+struct ArtifactSaveFence {
+    owner: glory::ui::WeakScope,
+    context: Rc<crate::presentation::InksonContext>,
+    generation: u64,
+    account: Option<crate::config::ActiveAccountContext>,
+}
+
+impl ArtifactSaveFence {
+    fn current(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.owner.upgrade().is_some(),
+            "The attachment owner was retired."
+        );
+        anyhow::ensure!(
+            self.context.session_matches(self.generation, &self.account),
+            "The attachment session changed."
+        );
+        Ok(())
+    }
+}
+
+fn artifact_save_control(
+    scope: &Scope,
+    context: Rc<crate::presentation::InksonContext>,
+    artifact: Rc<crate::attachments::artifact::Artifact>,
+    name: String,
+    open_media: bool,
+    label: String,
+) -> View {
+    let busy = scope.cage(false);
+    let status = scope.cage(String::new());
+    let filename = name;
+    let fence = ArtifactSaveFence {
+        owner: scope.downgrade(),
+        generation: context.session_generation.get_untracked(),
+        account: context.active_account.get_untracked(),
+        context,
+    };
+    let active = Rc::new(std::cell::RefCell::new(None::<glory::core::TaskToken>));
+    let action = super::native::button(
+        label,
+        if open_media {
+            "secondary verified-attachment-media-open"
+        } else {
+            "secondary verified-attachment-download"
+        },
+        scope.bond(move || !busy.get()),
+        move || {
+            if busy.get_untracked() {
+                return;
+            }
+            if let Err(error) = fence.current() {
+                status.revise(|value| *value = error.to_string());
+                return;
+            }
+            let Some(scope) = fence.owner.upgrade() else {
+                return;
+            };
+            busy.revise(|value| *value = true);
+            status.revise(String::clear);
+            let artifact = artifact.clone();
+            let name = filename.clone();
+            let current = fence.clone();
+            let task = scope.spawn(async move {
+                let result = save_artifact(artifact, name, &current, open_media).await;
+                if current.current().is_ok() {
+                    let _ = status.try_revise(|value| {
+                        *value = result
+                            .err()
+                            .map(|error| error.to_string())
+                            .unwrap_or_default()
+                    });
+                    let _ = busy.try_revise(|value| *value = false);
+                }
+            });
+            match task {
+                Ok(task) => {
+                    if let Some(previous) = active.borrow_mut().replace(task) {
+                        previous.cancel();
+                    }
+                }
+                Err(error) => {
+                    busy.revise(|value| *value = false);
+                    status.revise(|value| *value = error.to_string());
+                }
+            }
+        },
+    );
+    super::native::block(
+        "verified-attachment-download-row",
+        vec![
+            action,
+            crate::presentation::widgets::paragraph("muted", status),
+        ],
+    )
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn save_artifact(
+    artifact: Rc<crate::attachments::artifact::Artifact>,
+    name: String,
+    fence: &ArtifactSaveFence,
+    _open_media: bool,
+) -> anyhow::Result<()> {
+    use wasm_bindgen::JsCast;
+    fence.current()?;
+    let document = web_sys::window()
+        .and_then(|window| window.document())
+        .ok_or_else(|| anyhow::anyhow!("download document unavailable"))?;
+    let anchor = document
+        .create_element("a")
+        .map_err(|error| anyhow::anyhow!("download anchor: {error:?}"))?
+        .dyn_into::<web_sys::HtmlAnchorElement>()
+        .map_err(|_| anyhow::anyhow!("download anchor unavailable"))?;
+    anchor.set_href(&artifact.url);
+    anchor.set_download(&name);
+    let body = document
+        .body()
+        .ok_or_else(|| anyhow::anyhow!("download document body unavailable"))?;
+    body.append_child(&anchor)
+        .map_err(|error| anyhow::anyhow!("download anchor: {error:?}"))?;
+    anchor.click();
+    anchor.remove();
+    Ok(())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+async fn save_artifact(
+    artifact: Rc<crate::attachments::artifact::Artifact>,
+    name: String,
+    fence: &ArtifactSaveFence,
+    open_media: bool,
+) -> anyhow::Result<()> {
+    use tokio::io::AsyncWriteExt;
+    fence.current()?;
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    std::thread::spawn(move || {
+        let _ = sender.send(rfd::FileDialog::new().set_file_name(&name).save_file());
+    });
+    let Some(path) = receiver.await? else {
+        return Ok(());
+    };
+    fence.current()?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("download destination unavailable"))?;
+    let temporary = tempfile::NamedTempFile::new_in(parent)?;
+    let (file, temporary) = temporary.into_parts();
+    let mut output = tokio::fs::File::from_std(file);
+    let mut response = reqwest::Client::new()
+        .get(&artifact.url)
+        .send()
+        .await?
+        .error_for_status()?;
+    fence.current()?;
+    let mut size = 0_u64;
+    while let Some(chunk) = response.chunk().await? {
+        fence.current()?;
+        size = size
+            .checked_add(chunk.len() as u64)
+            .ok_or_else(|| anyhow::anyhow!("download size overflow"))?;
+        anyhow::ensure!(
+            size <= artifact.size,
+            "verified download exceeded its commitment"
+        );
+        output.write_all(&chunk).await?;
+        fence.current()?;
+    }
+    anyhow::ensure!(size == artifact.size, "verified download was truncated");
+    output.flush().await?;
+    fence.current()?;
+    output.sync_all().await?;
+    fence.current()?;
+    drop(output);
+    temporary.persist(&path).map_err(|error| error.error)?;
+    if open_media {
+        fence.current()?;
+        crate::content::open_saved_media(&path).map_err(anyhow::Error::msg)?;
+    }
+    Ok(())
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod reader_tests {
-    use std::cell::RefCell;
-    use std::rc::Rc;
-
     use super::*;
-
-    type Handles = (
-        Signal<Rc<crate::attachments::artifact::Artifact>>,
-        Signal<u64>,
-        Signal<TextPageSelection>,
-        Signal<LoadedTextPage>,
-    );
-
-    #[derive(Clone)]
-    struct Control {
-        artifact: Rc<crate::attachments::artifact::Artifact>,
-        handles: Rc<RefCell<Option<Handles>>>,
-    }
-
-    fn reader_harness(control: Control) -> Element {
-        let artifact = use_signal(|| control.artifact);
-        let pulse = use_signal(|| 0_u64);
-        let (selection, text) = use_verified_text_page(artifact());
-        *control.handles.borrow_mut() = Some((artifact, pulse, selection, text));
-        let ready = text.read().is_some();
-        rsx! {span {"{pulse}:{ready}"}}
-    }
-
-    async fn settle(dom: &mut VirtualDom, control: &Control, identity: &str, index: u64) -> String {
+    async fn settle(
+        app: &glory::ui::App,
+        executor: &glory::core::executor::Executor,
+        selection: Cage<TextPageSelection>,
+        loaded: Cage<LoadedTextPage>,
+        identity: &str,
+        index: u64,
+    ) -> String {
         for _ in 0..200 {
-            dom.render_immediate_to_vec();
-            let text = dom.in_runtime(|| {
-                let (_, _, selection, text) = control.handles.borrow().unwrap();
-                assert_eq!(*selection.peek(), (identity.to_owned(), index));
-                text.peek().clone()
-            });
-            if let Some((binding, body)) = text
+            for _ in 0..32 {
+                executor.poll_one();
+                app.flush().unwrap();
+            }
+            assert_eq!(selection.get_untracked(), (identity.to_owned(), index));
+            if let Some((binding, result)) = loaded.get_untracked()
                 && binding == (identity.to_owned(), index)
             {
-                return body.unwrap();
+                return result.unwrap();
             }
             tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         }
         panic!("verified reader did not settle to the selected artifact/page");
     }
-
     #[tokio::test]
     async fn verified_text_page_survives_parent_updates_and_resets_only_for_new_artifact() {
-        // This exercises the real reader hook and native artifacts, with
-        // verified bytes given. It makes no authorization/install claim.
         let mut builder = crate::attachments::artifact::Builder::new("text/plain", false).unwrap();
-        builder.push(&vec![b'a'; 65_536]).unwrap();
+        builder.push(&vec![b'a'; 65536]).unwrap();
         builder.push(b"last page sentinel").unwrap();
         let first = builder.finish().await.unwrap();
-        let control = Control {
-            artifact: first.clone(),
-            handles: Rc::new(RefCell::new(None)),
-        };
-        let mut dom = VirtualDom::new_with_props(reader_harness, control.clone());
-        dom.rebuild_in_place();
+        let executor = Rc::new(glory::core::executor::Executor::new(256));
+        let app = glory::App::with_host(executor.clone(), glory::render::memory::Memory::new);
+        let artifact = app.scope().cage(first.clone());
+        let pulse = app.scope().cage(0_u64);
+        let (selection, loaded) = verified_text_page(app.scope(), artifact);
         assert_eq!(
-            settle(&mut dom, &control, &first.url, 0).await.len(),
-            65_536
+            settle(&app, &executor, selection, loaded, &first.url, 0)
+                .await
+                .len(),
+            65536
         );
-        dom.in_runtime(|| {
-            let (_, _, mut selection, _) = control.handles.borrow().unwrap();
-            selection.set((first.url.clone(), 1));
-        });
+        selection.revise(|value| *value = (first.url.clone(), 1));
         assert_eq!(
-            settle(&mut dom, &control, &first.url, 1).await,
+            settle(&app, &executor, selection, loaded, &first.url, 1).await,
             "last page sentinel"
         );
         for value in 1..=4 {
-            dom.in_runtime(|| {
-                let (_, mut pulse, ..) = control.handles.borrow().unwrap();
-                pulse.set(value);
-            });
+            pulse.revise(|pulse| *pulse = value);
             assert_eq!(
-                settle(&mut dom, &control, &first.url, 1).await,
+                settle(&app, &executor, selection, loaded, &first.url, 1).await,
                 "last page sentinel"
             );
         }
         let mut builder = crate::attachments::artifact::Builder::new("text/plain", false).unwrap();
         builder.push(b"replacement artifact").unwrap();
         let replacement = builder.finish().await.unwrap();
-        dom.in_runtime(|| {
-            let (mut artifact, ..) = control.handles.borrow().unwrap();
-            artifact.set(replacement.clone());
-        });
+        artifact.revise(|value| *value = replacement.clone());
+        app.flush().unwrap();
         assert_eq!(
-            settle(&mut dom, &control, &replacement.url, 0).await,
+            settle(&app, &executor, selection, loaded, &replacement.url, 0).await,
             "replacement artifact"
         );
     }
-}
-
-#[component]
-fn VerifiedLongText(
-    artifact: std::rc::Rc<crate::attachments::artifact::Artifact>,
-    name: String,
-    markdown: bool,
-) -> Element {
-    const PAGE_BYTES: u64 = 65_536;
-    let reader_identity = use_hook(uuid_v7);
-    let (mut selection, loaded) = use_verified_text_page(artifact.clone());
-    let current = selection();
-    let index = current.1;
-    let text = loaded().and_then(|(binding, result)| (binding == current).then_some(result));
-    let previous_identity = artifact.url.clone();
-    let next_identity = artifact.url.clone();
-    let last_identity = artifact.url.clone();
-    let last = artifact.size.saturating_sub(1) / PAGE_BYTES;
-    rsx! {div {"data-testid": "verified-long-text", "data-page-index": "{index}", "data-reader-id": reader_identity,
-        div {class: "verified-long-text-viewport", "data-testid": "verified-long-text-viewport",
-            tabindex: "0", role: "region", "aria-label": "Message text",
-            match text {
-                Some(Ok(body)) if markdown => {
-                    let html = crate::content::renderer::markdown_to_safe_html(&body);
-                    rsx! {div {"data-testid": "verified-long-text-page", class: "content-block-markdown", dangerous_inner_html: html}}
-                },
-                Some(Ok(body)) => rsx! {pre {"data-testid": "verified-long-text-page", "{body}"}},
-                Some(Err(error)) => rsx! {p {role: "alert", "{error}"}},
-                None => rsx! {p {"Loading text…"}},
-            }
-        }
-        button {disabled: index == 0, onclick: move |_| selection.set((previous_identity.clone(), index.saturating_sub(1))), "Previous page"}
-        button {"data-testid": "verified-long-text-next", disabled: index >= last, onclick: move |_|selection.set((next_identity.clone(), (index+1).min(last))), "Next page"}
-        button {"data-testid": "verified-long-text-last", disabled: index >= last, onclick: move |_|selection.set((last_identity.clone(), last)), "Last page"}
-        a {href: artifact.url.clone(), download: name, "Download full text"}
-    }}
 }

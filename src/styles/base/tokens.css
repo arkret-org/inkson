@@ -51,7 +51,8 @@
 }
 
 :root,
-[data-theme="light"] {
+[data-theme="light"],
+.inkson-theme-light {
   --bg: #f6eee7;
   --bg-elev: #ece2d9;
   --surface: rgba(255, 250, 245, 0.94);
@@ -125,7 +126,8 @@
   color-scheme: light;
 }
 
-[data-theme="dark"] {
+[data-theme="dark"],
+.inkson-theme-dark {
   --bg: #101722;
   --bg-elev: #223041;
   --surface: rgba(27, 36, 48, 0.94);

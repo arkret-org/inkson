@@ -1,49 +1,14 @@
-//! Native (desktop) media transport.
-//!
-//! ## SFU / conference path — real, via the webview
-//!
-//! The desktop build does not link an in-process libwebrtc (webrtc-rs and the
-//! LiveKit Rust client both pull a C++ toolchain and platform codec libraries
-//! outside this milestone's footprint). Per the desktop calling strategy the
-//! native client instead **reuses the web media path**: Dioxus desktop is
-//! native Rust hosting a `wry` webview whose browser engine runs the genuine
-//! `livekit-client` SDK. This transport drives that SDK over a long-lived
-//! Dioxus `document::eval` bridge ([`assets/livekit_desktop_driver.js`]),
-//! exactly the same real `LivekitClient.Room` API the wasm build uses through
-//! [`assets/livekit_shim.js`].
-//!
-//! [`MediaTransport::connect_sfu`] opens the eval bridge with the verified
-//! connect URL, backend token, desired-media flags, and the
-//! MLS-exporter-derived 32-byte SFrame key (the same key
-//! [`crate::media::rtc::join_call_media`] produced; nothing else is accepted by
-//! [`MediaTransport::install_frame_key`], MEDIA-1). The driver performs the
-//! real `room.connect`, injects the key into LiveKit's
-//! `ExternalE2EEKeyProvider`, publishes mic/cam, and forwards each real
-//! `RoomEvent.ParticipantConnected` identity back over the bridge. A spawned
-//! task cross-checks every reported identity against the durable
-//! `ak.component.call.roster.v1` effective OR-Set (MEDIA-2) before surfacing it, and
-//! only flips the FSM to [`TransportState::Connected`] when the driver reports
-//! a real `room.connect` success. A rejected connect emits `failed`, so the
-//! transport stays out of `Connected` (fail-closed) — it never fabricates a
-//! session, synthetic participants, or a fake connected state.
-//!
-//! ## 1:1 P2P path — honestly not-ready on desktop
-//!
-//! The 1:1 path uses a raw `RtcPeerConnection` with `web-sys`, which the
-//! native build does not link. There is no SFU to relay LiveKit's signaling,
-//! so the P2P offer/answer methods stay fail-closed with
-//! [`RtcClientError::DesktopMediaUnavailable`] on desktop. No synthetic SDP or
-//! ICE is ever produced.
-
+//! Desktop SFU media runs the genuine bundled LiveKit SDK in a dedicated Wry process.
+//! The Glory window owns its private pipe, task, and bounded shutdown. Verified roster
+//! identities and sender-bound MLS exporter keys remain enforced in this transport.
+//! Desktop P2P remains unavailable because no native RtcPeerConnection is linked.
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
-use dioxus::document::{self, Eval};
-use dioxus::prelude::spawn;
-use serde::Deserialize;
-use serde_json::{Value, json};
+use zeroize::Zeroize;
 
+use super::native_host::{DriverCommand, DriverConfig, DriverEvent, MediaHost, MediaKind};
 use super::{
     LocalMediaState, LocalSignal, MediaTransport, RemoteParticipant, TransportState,
     ensure_valid_frame_key,
@@ -52,38 +17,7 @@ use crate::media::rtc::{
     JoinedMediaSession, PerSenderFrameKeys, RtcClientError, cross_check_participant_id,
 };
 
-/// The desktop LiveKit driver, run in the webview over the eval bridge. The
-/// leading `__ARKRET_DRIVER_CONFIG__` token is replaced per call with the
-/// JSON connect config (URL, token, media flags, frame key); the
-/// `__ARKRET_LIVEKIT_UMD_SOURCE__` token is replaced once with the vendored
-/// UMD body so the SDK ships inside the binary (no runtime CDN fetch).
-const DESKTOP_DRIVER_JS: &str = include_str!("../../assets/livekit_desktop_driver.js");
-
-/// Vendored livekit-client UMD (pinned 2.19.2), bundled into the desktop
-/// binary. Injected into the driver as a JS string literal so the webview can
-/// evaluate it offline. Refresh with `scripts/vendor_livekit.sh`.
-const LIVEKIT_UMD_SOURCE: &str = include_str!("../../assets/vendor/livekit-client.umd.min.js");
-
-/// One event pushed back from the webview driver over the eval bridge.
-#[derive(Debug, Deserialize)]
-#[serde(tag = "event", rename_all = "snake_case")]
-enum DriverEvent {
-    /// The real `room.connect` resolved against the SFU.
-    Connected,
-    /// A real `RoomEvent.ParticipantConnected` (or a participant already
-    /// present at connect time). Cross-checked against the durable roster.
-    Participant { identity: String },
-    /// The driver failed closed (UMD load, connect rejected, or E2EE setup).
-    Failed,
-    /// `room.disconnect` completed after a leave command.
-    Left,
-}
-
-/// Desktop transport that drives the real livekit-client SDK in the webview.
-///
-/// SFU media is genuine (key injection + publish + participant cross-check run
-/// against the live SDK over the eval bridge); the 1:1 P2P path is honestly
-/// not-ready because the native build links no `RtcPeerConnection`.
+/// One call owns one isolated media process.
 pub struct NativeRtcTransport {
     desired_audio: bool,
     desired_video: bool,
@@ -109,9 +43,7 @@ pub struct NativeRtcTransport {
     /// the controller before `connect_sfu` and read inside the event loop for
     /// the MEDIA-2 cross-check.
     expected_participants: Rc<RefCell<BTreeSet<String>>>,
-    /// Live eval bridge to the webview driver once `connect_sfu` opens it.
-    /// `Eval` is `Copy`; commands (mute/screen/leave) are sent over it.
-    bridge: Option<Eval>,
+    bridge: Option<Rc<MediaHost>>,
 }
 
 impl NativeRtcTransport {
@@ -143,16 +75,14 @@ impl NativeRtcTransport {
         }
     }
 
-    /// If the SFU driver bridge is live, drive its real LiveKit publish toggle
-    /// (`setMicrophoneEnabled` / `setCameraEnabled` / `setScreenShareEnabled`
-    /// via the driver) and return `true`. Returns `false` when there is no SFU
-    /// bridge (1:1 P2P path), which on desktop has no live media to toggle.
-    fn drive_sfu_mute(&self, kind: &str, muted: bool) -> bool {
+    fn drive_sfu_mute(&self, kind: MediaKind, muted: bool) -> Result<bool, RtcClientError> {
         let Some(bridge) = self.bridge.as_ref() else {
-            return false;
+            return Ok(false);
         };
-        let _ = bridge.send(json!({ "cmd": "set_muted", "kind": kind, "muted": muted }));
-        true
+        bridge
+            .send(DriverCommand::SetMuted { kind, muted })
+            .map_err(|_| RtcClientError::FocusUnavailableForClient)?;
+        Ok(true)
     }
 }
 
@@ -168,7 +98,7 @@ impl MediaTransport for NativeRtcTransport {
     }
 
     fn set_audio_muted(&mut self, muted: bool) -> Result<bool, RtcClientError> {
-        if self.drive_sfu_mute("audio", muted) {
+        if self.drive_sfu_mute(MediaKind::Audio, muted)? {
             self.local.audio_muted = muted;
             return Ok(muted);
         }
@@ -177,7 +107,7 @@ impl MediaTransport for NativeRtcTransport {
     }
 
     fn set_video_muted(&mut self, muted: bool) -> Result<bool, RtcClientError> {
-        if self.drive_sfu_mute("video", muted) {
+        if self.drive_sfu_mute(MediaKind::Video, muted)? {
             self.local.video_muted = muted;
             return Ok(muted);
         }
@@ -188,7 +118,9 @@ impl MediaTransport for NativeRtcTransport {
         let Some(bridge) = self.bridge.as_ref() else {
             return Err(RtcClientError::DesktopMediaUnavailable);
         };
-        let _ = bridge.send(json!({ "cmd": "set_screen", "enabled": enabled }));
+        bridge
+            .send(DriverCommand::SetScreen { enabled })
+            .map_err(|_| RtcClientError::FocusUnavailableForClient)?;
         self.desired_screen = enabled;
         self.local.screen_captured = enabled;
         Ok(enabled)
@@ -200,6 +132,15 @@ impl MediaTransport for NativeRtcTransport {
         key: &[u8],
     ) -> Result<(), RtcClientError> {
         ensure_valid_frame_key(key)?;
+        if let Some(bridge) = &self.bridge {
+            bridge
+                .send(DriverCommand::SetE2eeKey {
+                    identity: participant_id.to_owned(),
+                    key: key.to_vec(),
+                    key_index: 0,
+                })
+                .map_err(|_| RtcClientError::FocusUnavailableForClient)?;
+        }
         // Retain the verified 32-byte MLS-exporter key and the local sender
         // identity it is bound to so `connect_sfu` can inject it into the
         // LiveKit ExternalE2EEKeyProvider under that identity in the webview.
@@ -232,115 +173,81 @@ impl MediaTransport for NativeRtcTransport {
         self.connect_url = session.connect_url.clone();
         self.backend_token = session.backend_token.clone();
 
-        // Build the per-call driver config. The frame key is the verified
-        // MLS-exporter-derived 32-byte key; it is passed as a number array so
-        // the webview can reconstruct a Uint8Array for the E2EE key provider.
-        let config = json!({
-            "connectUrl": session.connect_url,
-            "backendToken": session.backend_token,
-            "audio": self.desired_audio,
-            "video": self.desired_video,
-            "frameKey": self.frame_key,
-            // §8.1: the local key is sender-bound; install it under the local
-            // participant identity, never a room-wide slot.
-            "localIdentity": self.local_identity,
-        });
-        let config_json = serde_json::to_string(&config)
-            .map_err(|_| RtcClientError::FocusUnavailableForClient)?;
-        // Embed the vendored UMD as a JS string literal. serde_json produces a
-        // valid double-quoted JS string (escaping quotes/backslashes/newlines),
-        // which the driver evaluates via `new Function(...)` to register
-        // `window.LivekitClient` offline.
-        let umd_literal = serde_json::to_string(LIVEKIT_UMD_SOURCE)
-            .map_err(|_| RtcClientError::FocusUnavailableForClient)?;
-        let script = DESKTOP_DRIVER_JS
-            .replacen("__ARKRET_DRIVER_CONFIG__", &config_json, 1)
-            .replacen("__ARKRET_LIVEKIT_UMD_SOURCE__", &umd_literal, 1);
-
+        let owner = crate::presentation::current_context()
+            .and_then(|context| context.state_scope())
+            .ok_or(RtcClientError::FocusUnavailableForClient)?;
+        let (bridge, mut receiver) = MediaHost::launch(DriverConfig {
+            connect_url: session.connect_url.clone(),
+            backend_token: session.backend_token.clone(),
+            audio: self.desired_audio,
+            video: self.desired_video,
+            frame_key: self.frame_key.clone(),
+            local_identity: self.local_identity.clone(),
+        })
+        .map_err(|_| RtcClientError::FocusUnavailableForClient)?;
+        let bridge = Rc::new(bridge);
+        self.bridge = Some(bridge.clone());
         *self.state.borrow_mut() = TransportState::Connecting;
-
-        // Open the long-lived eval bridge to the webview driver. The driver
-        // runs the real `room.connect`, key injection, publish, and forwards
-        // ParticipantConnected events; we keep the `Eval` handle to send
-        // mute/screen/leave commands later. `Eval` is `Copy`, so the spawned
-        // event loop and the transport share the same bridge.
-        let bridge = document::eval(&script);
-        self.bridge = Some(bridge);
-
-        let mut event_bridge = bridge;
         let state = self.state.clone();
         let remotes = self.remotes.clone();
         let expected = self.expected_participants.clone();
         let remote_keys = self.remote_keys.clone();
         let identity_to_device = self.identity_to_device.clone();
-
-        spawn(async move {
-            loop {
-                let event: DriverEvent = match event_bridge.recv::<Value>().await {
-                    Ok(value) => match serde_json::from_value(value) {
-                        Ok(event) => event,
-                        // Ignore frames that are not a recognised driver event
-                        // rather than tearing the live room down.
-                        Err(_) => continue,
-                    },
-                    // The bridge closed (driver returned after leave, or the
-                    // webview tore the channel down).
-                    Err(_) => break,
-                };
-                match event {
-                    DriverEvent::Connected => {
-                        *state.borrow_mut() = TransportState::Connected;
+        owner
+            .spawn(async move {
+                while let Some(event) = receiver.recv().await {
+                    if *state.borrow() == TransportState::Closed {
+                        let _ = bridge.send(DriverCommand::Leave);
+                        return;
                     }
-                    DriverEvent::Participant { identity } => {
-                        // MEDIA-2: drop any SFU identity not in the durable
-                        // roster instead of trusting it.
-                        if cross_check_participant_id(&identity, &expected.borrow()).is_err() {
-                            continue;
+                    match event {
+                        DriverEvent::Ready => {}
+                        DriverEvent::Connected => *state.borrow_mut() = TransportState::Connected,
+                        DriverEvent::Participant { identity } => {
+                            if cross_check_participant_id(&identity, &expected.borrow()).is_err() {
+                                continue;
+                            }
+                            if let Some(keys) = remote_keys.as_ref()
+                                && let Some(device) = identity_to_device.get(&identity)
+                                && let Ok(key) = keys.derive_remote_key(&identity, device)
+                                && bridge
+                                    .send(DriverCommand::SetE2eeKey {
+                                        identity: identity.clone(),
+                                        key: key.to_vec(),
+                                        key_index: 0,
+                                    })
+                                    .is_err()
+                            {
+                                *state.borrow_mut() = TransportState::Failed;
+                                break;
+                            }
+                            let mut roster = remotes.borrow_mut();
+                            if !roster.iter().any(|remote| remote.identity == identity) {
+                                roster.push(RemoteParticipant {
+                                    identity,
+                                    audio_active: true,
+                                    video_active: false,
+                                    screen_active: false,
+                                });
+                            }
                         }
-                        // §8.1 receiver side: recompute THIS remote sender's
-                        // frame key from the same MLS group exporter at the same
-                        // epoch (the remote's own (participant_id,
-                        // device_id) context) and inject it into the webview
-                        // LiveKit provider under the remote identity so its
-                        // frames decrypt. Fail-closed: unknown device_id or a
-                        // derivation failure skips this one remote (its frames
-                        // stay undecryptable) without affecting any other.
-                        if let Some(keys) = remote_keys.as_ref()
-                            && let Some(device_id) = identity_to_device.get(&identity)
-                            && let Ok(remote_key) = keys.derive_remote_key(&identity, device_id)
-                        {
-                            let _ = event_bridge.send(json!({
-                                "cmd": "set_e2ee_key",
-                                "identity": identity,
-                                "key": remote_key.as_slice(),
-                                "keyIndex": 0,
-                            }));
+                        DriverEvent::Failed { .. } => {
+                            let mut current = state.borrow_mut();
+                            if *current != TransportState::Connected {
+                                *current = TransportState::Failed;
+                            }
                         }
-                        let mut roster = remotes.borrow_mut();
-                        if !roster.iter().any(|r| r.identity == identity) {
-                            roster.push(RemoteParticipant {
-                                identity,
-                                audio_active: true,
-                                video_active: false,
-                                screen_active: false,
-                            });
+                        DriverEvent::Left => {
+                            *state.borrow_mut() = TransportState::Closed;
+                            return;
                         }
-                    }
-                    DriverEvent::Failed => {
-                        // Fail-closed: the driver could not establish a real
-                        // session; never advance to Connected.
-                        let mut slot = state.borrow_mut();
-                        if *slot != TransportState::Connected {
-                            *slot = TransportState::Failed;
-                        }
-                    }
-                    DriverEvent::Left => {
-                        *state.borrow_mut() = TransportState::Closed;
-                        break;
                     }
                 }
-            }
-        });
+                if *state.borrow() != TransportState::Closed {
+                    *state.borrow_mut() = TransportState::Failed;
+                }
+            })
+            .map_err(|_| RtcClientError::FocusUnavailableForClient)?;
 
         Ok(())
     }
@@ -361,7 +268,6 @@ impl MediaTransport for NativeRtcTransport {
             });
         }
         drop(roster);
-        *self.state.borrow_mut() = TransportState::Connected;
         Ok(())
     }
 
@@ -377,10 +283,13 @@ impl MediaTransport for NativeRtcTransport {
         // Ask the webview driver to disconnect the real room, then drop the
         // bridge so its event loop ends.
         if let Some(bridge) = self.bridge.take() {
-            let _ = bridge.send(json!({ "cmd": "leave" }));
+            bridge.shutdown();
         }
         self.remotes.borrow_mut().clear();
         self.local = LocalMediaState::default();
+        self.frame_key.zeroize();
+        self.backend_token.zeroize();
+        self.frame_key_installed = false;
         *self.state.borrow_mut() = TransportState::Closed;
     }
 
@@ -412,6 +321,12 @@ impl MediaTransport for NativeRtcTransport {
         // 1:1 P2P path is not driven on desktop, so no synthetic signaling is
         // ever produced.
         Vec::new()
+    }
+}
+
+impl Drop for NativeRtcTransport {
+    fn drop(&mut self) {
+        self.close();
     }
 }
 

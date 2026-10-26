@@ -37,6 +37,7 @@ import pathlib
 import re
 import subprocess
 import sys
+from ui_dependencies import cargo_metadata, sapid_stylesheet
 
 INKSON = pathlib.Path(__file__).resolve().parents[1]
 APP_MOD = "src/app/mod.rs"
@@ -57,24 +58,22 @@ def read_ref(ref: str | None, rel: str) -> str:
     return out.stdout.decode("utf-8")
 
 
-def style_set(ref: str | None) -> list[tuple[str, str]]:
-    """Ordered `(relative path, css text)` for one revision."""
-    mod_rs = read_ref(ref, APP_MOD)
-    order = INCLUDE.findall(mod_rs)
-    if not order:
-        raise SystemExit(f"no include_str! stylesheet list found in {APP_MOD}")
-    return [(rel, read_ref(ref, f"src/{rel}")) for rel in order]
+def style_set(ref: str | None) -> list[tuple[str,str]]:
+    """Read the current manifest; archived revisions retain their include order."""
+    try:
+        listing=read_ref(ref,'web/styles.list')
+    except SystemExit:
+        if ref is None:raise
+        order=INCLUDE.findall(read_ref(ref,APP_MOD))
+        if not order:raise SystemExit(f'No stylesheet order found in {ref}:{APP_MOD}')
+        return [(rel,read_ref(ref,f'src/{rel}')) for rel in order]
+    order=[line.strip() for line in listing.splitlines() if line.strip() and not line.lstrip().startswith('#')]
+    if not order:raise SystemExit('Stylesheet manifest is empty')
+    return [(rel,read_ref(ref,rel)) for rel in order]
 
-
-def yoface_prelude() -> list[tuple[str, str]]:
-    """The two vendor sheets injected before the app's own stylesheets."""
-    root = pathlib.Path.home() / ".cargo" / "git" / "checkouts"
-    found: list[tuple[str, str]] = []
-    for name in ("tokens.css", "button.css"):
-        for path in sorted(root.glob(f"yoface-*/*/src/**/{name}")):
-            found.append((f"yoface/{name}", path.read_text(encoding="utf-8")))
-            break
-    return found
+def vendor_prelude() -> list[tuple[str,str]]:
+    source=sapid_stylesheet(cargo_metadata(INKSON))
+    return [('sapid/sapid.css',source.read_text(encoding='utf-8'))]
 
 
 # --- selector -> DOM probe ------------------------------------------------
@@ -322,7 +321,7 @@ def main() -> int:
     parser.add_argument("--out", default="target/cascade", help="output directory")
     args = parser.parse_args()
 
-    prelude = yoface_prelude()
+    prelude = vendor_prelude()
     before = prelude + style_set(args.before)
     after = prelude + style_set(None)
     probes = probe_set([before, after])

@@ -43,11 +43,22 @@ jobs:
           path: chime
           token: ${{ secrets.CI_REPO_TOKEN }}
 
-      # `yoface` is a private cargo git dependency on github.com, not a sibling
-      # checkout. `GITHUB_COM_TOKEN` must hold a GitHub PAT that can read
-      # arkret-org/yoface — the Gitea `CI_REPO_TOKEN` cannot authenticate there.
-      - name: Authenticate cargo for the private yoface git dependency
-        run: git config --global url."https://x-access-token:${{ secrets.GITHUB_COM_TOKEN }}@github.com/".insteadOf "https://github.com/"
+
+      - name: Checkout arkret-spec
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ gitea.repository_owner }}/arkret-spec
+          path: arkret-spec
+          token: ${{ secrets.CI_REPO_TOKEN }}
+
+      - name: Checkout Glory and Sapid
+        shell: bash
+        working-directory: inkson
+        run: bash .ci/checkout-ui-dependencies.sh
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
 
       - name: Install Linux desktop dependencies
         run: |
@@ -56,9 +67,9 @@ jobs:
             dbus-x11 \
             gnome-keyring \
             libsecret-tools \
-            libgtk-3-dev \
-            libwebkit2gtk-4.1-dev \
-            libayatana-appindicator3-dev \
+            libgtk-4-dev libwebkitgtk-6.0-dev libsoup-3.0-dev pulseaudio-utils libfontconfig1-dev \
+            libxkbcommon-dev \
+            libudev-dev \
             libxdo-dev \
             librsvg2-dev
 
@@ -67,13 +78,18 @@ jobs:
         with:
           components: rustfmt
 
+      - name: Install nightly rustfmt
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustfmt
+
       - name: Format check
         working-directory: inkson
-        run: cargo fmt --check
+        run: cargo +nightly fmt -p inkson -- --check
 
       - name: Cargo check
         working-directory: inkson
-        run: cargo check --locked --all-targets
+        run: cargo check --locked --features app --all-targets
 
       - name: Rust tests
         working-directory: inkson
@@ -109,19 +125,30 @@ jobs:
           path: chime
           token: ${{ secrets.CI_REPO_TOKEN }}
 
-      # `yoface` is a private cargo git dependency on github.com, not a sibling
-      # checkout. `GITHUB_COM_TOKEN` must hold a GitHub PAT that can read
-      # arkret-org/yoface — the Gitea `CI_REPO_TOKEN` cannot authenticate there.
-      - name: Authenticate cargo for the private yoface git dependency
-        run: git config --global url."https://x-access-token:${{ secrets.GITHUB_COM_TOKEN }}@github.com/".insteadOf "https://github.com/"
+
+      - name: Checkout arkret-spec
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ gitea.repository_owner }}/arkret-spec
+          path: arkret-spec
+          token: ${{ secrets.CI_REPO_TOKEN }}
+
+      - name: Checkout Glory and Sapid
+        shell: bash
+        working-directory: inkson
+        run: bash .ci/checkout-ui-dependencies.sh
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
 
       - name: Install Linux desktop dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            libgtk-3-dev \
-            libwebkit2gtk-4.1-dev \
-            libayatana-appindicator3-dev \
+            libgtk-4-dev libwebkitgtk-6.0-dev libsoup-3.0-dev pulseaudio-utils libfontconfig1-dev \
+            libxkbcommon-dev \
+            libudev-dev \
             libxdo-dev \
             librsvg2-dev
 
@@ -136,16 +163,17 @@ jobs:
             aarch64-apple-ios
             aarch64-linux-android
 
-      - name: Install Dioxus CLI
-        run: cargo install dioxus-cli --version 0.7.9 --locked
+      - name: Install matching wasm-bindgen CLI
+        working-directory: inkson
+        run: python .ci/install-wasm-bindgen.py
 
       - name: Web wasm check
         working-directory: inkson
-        run: cargo check --locked --target wasm32-unknown-unknown
+        run: cargo check --locked --features web --target wasm32-unknown-unknown
 
-      - name: Dioxus web build
+      - name: Glory/Sapid web build
         working-directory: inkson
-        run: dx build --platform web --features web --release
+        run: python scripts/build_web.py --release
 
       - name: Linux target check
         working-directory: inkson
@@ -201,19 +229,31 @@ jobs:
           path: chime
           token: ${{ secrets.CI_REPO_TOKEN }}
 
-      # `yoface` is a private cargo git dependency on github.com, not a sibling
-      # checkout. `GITHUB_COM_TOKEN` must hold a GitHub PAT that can read
-      # arkret-org/yoface — the Gitea `CI_REPO_TOKEN` cannot authenticate there.
-      - name: Authenticate cargo for the private yoface git dependency
-        run: git config --global url."https://x-access-token:${{ secrets.GITHUB_COM_TOKEN }}@github.com/".insteadOf "https://github.com/"
+
+      - name: Checkout arkret-spec
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ gitea.repository_owner }}/arkret-spec
+          path: arkret-spec
+          token: ${{ secrets.CI_REPO_TOKEN }}
+
+      - name: Checkout Glory and Sapid
+        shell: bash
+        working-directory: inkson
+        run: bash .ci/checkout-ui-dependencies.sh
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
 
       - name: Install Rust with wasm target
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
 
-      - name: Install Dioxus CLI
-        run: cargo install dioxus-cli --version 0.7.9 --locked
+      - name: Install matching wasm-bindgen CLI
+        working-directory: inkson
+        run: python .ci/install-wasm-bindgen.py
 
       - name: Install Node
         uses: actions/setup-node@v4

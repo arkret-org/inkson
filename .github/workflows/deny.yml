@@ -39,6 +39,22 @@ jobs:
           repository: ${{ github.repository_owner }}/chime
           path: chime
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
+      - name: Checkout arkret-spec
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.repository_owner }}/arkret-spec
+          path: arkret-spec
+          token: ${{ secrets.CI_REPO_TOKEN }}
+
+      - name: Checkout Glory and Sapid
+        shell: bash
+        working-directory: inkson
+        run: bash .ci/checkout-ui-dependencies.sh
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
       - uses: EmbarkStudios/cargo-deny-action@v2
         env:
           CARGO_NET_GIT_FETCH_WITH_CLI: "true"

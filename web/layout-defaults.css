@@ -1,0 +1,14 @@
+/* Defaults precede every original application rule on both semantic hosts. */
+/* Preserve semantic heading defaults reset by Glory's font:inherit. Original
+   class rules follow this layer and keep their declared type sizes/weights. */
+[data-gly-kind=text]:where(h1,h2,h3,h4,h5,h6) { font-weight: 700; }
+[data-gly-kind=text]:where(h1) { font-size: 2em; }
+[data-gly-kind=text]:where(h2) { font-size: 1.5em; }
+[data-gly-kind=text]:where(h3) { font-size: 1.17em; }
+[data-gly-kind=text]:where(h4) { font-size: 1em; }
+[data-gly-kind=text]:where(h5) { font-size: .83em; }
+[data-gly-kind=text]:where(h6) { font-size: .67em; }
+.inkson-stack { display: flex; flex-direction: column; min-width: 0; }
+.inkson-line { display: flex; flex-direction: row; min-width: 0; }
+/* New semantic wrappers have no pre-migration selector to supply layout. */
+.panel-content, .resource-error { display: flex; flex-direction: column; min-width: 0; }

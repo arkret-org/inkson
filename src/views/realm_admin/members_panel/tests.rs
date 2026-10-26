@@ -1517,3 +1517,61 @@ fn agent_add_state_blocks_duplicate_submits_and_allows_retry_after_failure() {
     assert!(state.begin("agent-one".to_owned()));
     assert_eq!(state, AgentAddState::Pending("agent-one".to_owned()));
 }
+
+#[test]
+fn production_identity_lines_render_secondary_handles_without_repeating_the_primary() {
+    let app = glory::ui::App::memory();
+    let mut profile = MemberProfile::bare(actor_key("ak:did_core:web:alice.example"));
+    profile.handles = vec!["alice:local.host".into(), "alice:work.local.host".into()];
+    profile.resolved_public_label = Some("alice:local.host".into());
+    profile.resolved_tier = Some(crate::views::member_display::MemberDisplayTier::Cached);
+    let mut lines = vec![heading(4, "member-row-title", profile.primary_label())];
+    lines.extend(member_identity_lines(&profile));
+    app.mount(stack("member-row-text", lines)).unwrap();
+    let tree = app.tree();
+    let mut pending = tree.roots().to_vec();
+    let mut text = Vec::new();
+    while let Some(id) = pending.pop() {
+        let node = tree.node(id).unwrap();
+        pending.extend(node.children.iter().copied());
+        if let glory::render::Props::Text(value) = node.descriptor.view().props {
+            text.push(value.content.to_owned());
+        }
+    }
+    assert_eq!(
+        text.iter()
+            .filter(|value| value.as_str() == "alice:local.host")
+            .count(),
+        1
+    );
+    assert_eq!(
+        text.iter()
+            .filter(|value| value.contains("alice:work.local.host"))
+            .count(),
+        1
+    );
+    assert!(
+        !text
+            .iter()
+            .any(|value| value.contains("alice:local.host ·"))
+    );
+}
+
+#[test]
+fn production_member_section_button_has_valid_inline_count_and_callback() {
+    let app = glory::ui::App::memory();
+    let chosen = app.scope().cage(false);
+    app.mount(
+        sapid::button()
+            .unstyled()
+            .fill(member_choice_contents("Members".into(), 3))
+            .on_press(move || chosen.revise(|value| *value = true)),
+    )
+    .unwrap();
+    app.flush().unwrap();
+    let button = app.tree().roots()[0];
+    app.dispatch(button, glory::render::Event::Activate)
+        .unwrap();
+    app.flush().unwrap();
+    assert!(chosen.get_untracked());
+}

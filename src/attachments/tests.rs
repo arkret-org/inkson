@@ -350,3 +350,151 @@ fn stream_mut(
     };
     stream
 }
+
+struct HostRangeSource {
+    bytes: Vec<u8>,
+    reads: std::cell::RefCell<Vec<(u64, usize)>>,
+    checks: std::cell::Cell<usize>,
+    short_read: bool,
+    reject_final_snapshot: bool,
+    retire_after_read: Option<std::rc::Rc<std::cell::Cell<bool>>>,
+}
+impl AttachmentSource for HostRangeSource {
+    fn size(&self) -> u64 {
+        self.bytes.len() as u64
+    }
+    fn read_range(
+        &self,
+        offset: u64,
+        length: usize,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<Vec<u8>>> + '_>> {
+        Box::pin(async move {
+            self.reads.borrow_mut().push((offset, length));
+            anyhow::ensure!(length <= 65536, "host range budget exceeded");
+            let start = usize::try_from(offset)?;
+            let end = start
+                .checked_add(length)
+                .ok_or_else(|| anyhow::anyhow!("range overflow"))?;
+            let mut bytes = self
+                .bytes
+                .get(start..end)
+                .ok_or_else(|| anyhow::anyhow!("range exceeds frozen file"))?
+                .to_vec();
+            if self.short_read {
+                bytes.pop();
+            }
+            if let Some(active) = &self.retire_after_read {
+                active.set(false);
+            }
+            Ok(bytes)
+        })
+    }
+    fn verify_snapshot(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + '_>> {
+        Box::pin(async move {
+            let check = self.checks.get() + 1;
+            self.checks.set(check);
+            anyhow::ensure!(
+                !(self.reject_final_snapshot && check > 1),
+                "selected host resource changed"
+            );
+            Ok(())
+        })
+    }
+}
+fn host_range_source(length: usize) -> HostRangeSource {
+    HostRangeSource {
+        bytes: (0..length).map(|index| (index % 251) as u8).collect(),
+        reads: Default::default(),
+        checks: Default::default(),
+        short_read: false,
+        reject_final_snapshot: false,
+        retire_after_read: None,
+    }
+}
+#[tokio::test]
+async fn selected_host_ranges_preserve_protocol_parts_digest_and_read_budget() {
+    let directory = tempfile::tempdir().unwrap();
+    let chunks =
+        crate::state::current_index::AttachmentChunkStore::for_test(directory.path().join("parts"))
+            .await
+            .unwrap();
+    let source = host_range_source(SEGMENT_BYTES as usize + 131);
+    let digest = file_to_parts(&chunks, &source, arkret_sdk::DigestSuite::Sha256, || true)
+        .await
+        .unwrap();
+    let mut expected = arkret_sdk::canonical::ContentHasher::new(arkret_sdk::DigestSuite::Sha256);
+    expected.update(&source.bytes);
+    assert_eq!(digest.as_str(), expected.finish());
+    assert_eq!(
+        &*chunks.read_part("input", 0).await.unwrap(),
+        &source.bytes[..SEGMENT_BYTES as usize]
+    );
+    assert_eq!(
+        &*chunks.read_part("input", 1).await.unwrap(),
+        &source.bytes[SEGMENT_BYTES as usize..]
+    );
+    assert_eq!(
+        &*source.reads.borrow(),
+        &[
+            (0, 65536),
+            (65536, 65536),
+            (131072, 65536),
+            (196608, 65536),
+            (262144, 131)
+        ]
+    );
+    assert_eq!(
+        source.checks.get(),
+        2,
+        "verify before and after the selected resource is consumed"
+    );
+}
+#[tokio::test]
+async fn short_host_read_never_freezes_a_truncated_protocol_part() {
+    let directory = tempfile::tempdir().unwrap();
+    let chunks =
+        crate::state::current_index::AttachmentChunkStore::for_test(directory.path().join("parts"))
+            .await
+            .unwrap();
+    let mut source = host_range_source(65537);
+    source.short_read = true;
+    assert!(
+        file_to_parts(&chunks, &source, arkret_sdk::DigestSuite::Sha256, || true)
+            .await
+            .is_err()
+    );
+    assert!(chunks.read_part("input", 0).await.is_err());
+}
+#[tokio::test]
+async fn retired_target_cannot_publish_a_successful_host_read() {
+    let directory = tempfile::tempdir().unwrap();
+    let chunks =
+        crate::state::current_index::AttachmentChunkStore::for_test(directory.path().join("parts"))
+            .await
+            .unwrap();
+    let active = std::rc::Rc::new(std::cell::Cell::new(true));
+    let mut source = host_range_source(8192);
+    source.retire_after_read = Some(active.clone());
+    assert!(
+        file_to_parts(&chunks, &source, arkret_sdk::DigestSuite::Sha256, || active
+            .get())
+        .await
+        .is_err()
+    );
+    assert!(chunks.read_part("input", 0).await.is_err());
+}
+#[tokio::test]
+async fn changed_host_snapshot_cannot_return_a_frozen_object_digest() {
+    let directory = tempfile::tempdir().unwrap();
+    let chunks =
+        crate::state::current_index::AttachmentChunkStore::for_test(directory.path().join("parts"))
+            .await
+            .unwrap();
+    let mut source = host_range_source(8192);
+    source.reject_final_snapshot = true;
+    let result = file_to_parts(&chunks, &source, arkret_sdk::DigestSuite::Sha256, || true).await;
+    assert!(result.is_err());
+    assert_eq!(source.checks.get(), 2);
+}

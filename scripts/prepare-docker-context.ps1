@@ -1,34 +1,30 @@
 $ErrorActionPreference = "Stop"
-
-$repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
-$parent = Resolve-Path (Join-Path $repoRoot "..")
-$context = Join-Path $repoRoot "docker-context"
-
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$parent = (Resolve-Path (Join-Path $repoRoot "..")).Path
+$context = [IO.Path]::GetFullPath((Join-Path $repoRoot "docker-context"))
+$expected = [IO.Path]::GetFullPath((Join-Path $repoRoot "docker-context"))
+if (-not $context.Equals($expected,[StringComparison]::OrdinalIgnoreCase) -or -not $context.StartsWith($repoRoot + [IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)) { throw "Docker context is outside the repository" }
 if (Test-Path -LiteralPath $context) {
-    Remove-Item -LiteralPath $context -Recurse -Force
+    $resolvedContext = (Resolve-Path -LiteralPath $context).Path
+    $item = Get-Item -LiteralPath $context -Force
+    if (-not $resolvedContext.Equals($expected,[StringComparison]::OrdinalIgnoreCase) -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw "Refusing to replace a redirected Docker context" }
+    Remove-Item -LiteralPath $resolvedContext -Recurse -Force
 }
-
 New-Item -ItemType Directory -Force -Path $context | Out-Null
-
 function Copy-CleanDirectory {
-    param(
-        [Parameter(Mandatory = $true)][string]$Source,
-        [Parameter(Mandatory = $true)][string]$Destination
-    )
-
-    $excludeNames = @(".git", "target", "node_modules", "test-results", "playwright-report", "docker-context")
+    param([string]$Source,[string]$Destination,[bool]$TopLevel=$true)
+    $excluded = @(".git","target","node_modules","test-results","playwright-report","docker-context","release-assets",".local")
     New-Item -ItemType Directory -Force -Path $Destination | Out-Null
-    Get-ChildItem -LiteralPath $Source -Force | Where-Object {
-        $excludeNames -notcontains $_.Name
-    } | ForEach-Object {
-        Copy-Item -LiteralPath $_.FullName -Destination $Destination -Recurse -Force
+    foreach ($item in Get-ChildItem -LiteralPath $Source -Force) {
+        if ($excluded -contains $item.Name -or ($TopLevel -and $item.Name -eq "artifacts")) { continue }
+        if ($item.PSIsContainer) {
+            Copy-CleanDirectory -Source $item.FullName -Destination (Join-Path $Destination $item.Name) -TopLevel $false
+        } else { Copy-Item -LiteralPath $item.FullName -Destination $Destination -Force }
     }
 }
-
-Copy-CleanDirectory -Source (Join-Path $parent "inkson") -Destination (Join-Path $context "inkson")
-Copy-CleanDirectory -Source (Join-Path $parent "arkret-rust-sdk") -Destination (Join-Path $context "arkret-rust-sdk")
-Copy-CleanDirectory -Source (Join-Path $parent "garth") -Destination (Join-Path $context "garth")
-Copy-CleanDirectory -Source (Join-Path $parent "chime") -Destination (Join-Path $context "chime")
-# Cargo fetches the public `yoface` git dependency instead of copying it here.
-
-Write-Host "Prepared Docker context at $context"
+foreach ($name in @("inkson","arkret-rust-sdk","arkret-spec","garth","chime")) {
+    $source = Join-Path $parent $name
+    if (-not (Test-Path -LiteralPath $source)) { throw "Missing sibling dependency: $source" }
+    Copy-CleanDirectory -Source $source -Destination (Join-Path $context $name)
+}
+Write-Host "Prepared Docker context at $context; Cargo fetches Glory/Sapid at their locked Git revisions"

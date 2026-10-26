@@ -1,24 +1,16 @@
 //! Device-local recovery metadata load/save and recovery-material predicates.
 
-use dioxus::prelude::*;
-
 use super::RECOVERY_STATE_KEY;
 use super::types::RecoveryState;
+use crate::presentation::SharedStateStore;
 use crate::recovery_crypto::fingerprint_recovery_key;
 use crate::state::LocalStateStore;
 
-pub(crate) fn load_state(state_store: &SyncSignal<LocalStateStore>) -> RecoveryState {
-    match state_store.read().load_plain_local_data(RECOVERY_STATE_KEY) {
+pub(crate) fn load_state(state_store: &SharedStateStore) -> RecoveryState {
+    match state_store.read(|store| store.load_plain_local_data(RECOVERY_STATE_KEY)) {
         Some(raw) => serde_json::from_str(&raw).unwrap_or_default(),
         None => RecoveryState::default(),
     }
-}
-
-pub(crate) fn save_generated_recovery_key_metadata(
-    state_store: &mut SyncSignal<LocalStateStore>,
-    recovery_key: &str,
-) -> Option<(String, String)> {
-    save_generated_recovery_key_metadata_in_store(&mut state_store.write(), recovery_key)
 }
 
 /// Persist public Recovery Key metadata into the caller-selected account

@@ -1,0 +1,59 @@
+/* Inline button children preserve the original two-line assignee option grid. */
+.card-detail-field-list.semantic-card-fields {
+  grid-template-columns: 88px minmax(0, 1fr);
+  column-gap: 10px;
+  align-items: start;
+}
+.semantic-card-fields > dt { grid-column: 1; }
+.semantic-card-fields > dd { grid-column: 2; }
+.board-popover-scrim {
+  border: 0;
+  padding: 0;
+  border-radius: 0;
+}
+.assignee-option.assignee-picker-option {
+  grid-template-rows: auto auto;
+  column-gap: 8px;
+  row-gap: 1px;
+  line-height: 1.25;
+}
+.assignee-picker-option .assignee-option-check {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+}
+.assignee-picker-option .assignee-avatar {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+}
+.assignee-picker-option .assignee-option-label {
+  grid-column: 3;
+  grid-row: 1;
+}
+.assignee-picker-option .assignee-option-meta {
+  grid-column: 3;
+  grid-row: 2;
+}
+.assignee-picker-option.secondary:not(:disabled):hover,
+.assignee-picker-option.secondary:focus-visible {
+  background: var(--surface-2, var(--ak-panel));
+  outline: none;
+}
+.assignee-picker-option.secondary.selected {
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+}
+/* History options use inline children admitted by the shared button contract. */
+.card-synthesis-history-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.card-synthesis-history-item > .card-synthesis-history-preview {
+  flex-basis: 100%;
+}
+.card-synthesis-history-author,
+.card-synthesis-history-time {
+  font-size: 12px;
+}
+
+/* The original new-Board popover labels its input with an empty prompt. */
+.board-create-popover .sapid-field-label { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }

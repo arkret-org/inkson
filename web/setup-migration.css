@@ -1,0 +1,33 @@
+/* Preserve the original multiline step Buttons with inline semantic children. */
+.setup-step-list > button.setup-step {
+  display: grid; grid-template-columns: 20px minmax(0, 1fr); grid-template-rows: auto auto;
+  align-items: center; column-gap: 10px; row-gap: 1px; height: auto; min-height: 3.5rem;
+  padding: 10px 14px; border-radius: 8px; font-family: inherit; font-size: 14px; font-weight: 500; line-height: 20px;
+}
+/* These originally used the shared Secondary Button palette without a border. */
+.setup-step-list > button.setup-step.secondary:not(:disabled) {
+  border: 0; background: var(--inkson-original-control-surface);
+  color: var(--inkson-original-control-text); box-shadow: none;
+}
+.setup-step-list > button.setup-step.secondary:not(:disabled):hover {
+  background: color-mix(in oklab, var(--inkson-original-control-surface) 80%, transparent);
+}
+.setup-step > .setup-step-index { grid-row: 1 / span 2; grid-column: 1; }
+.setup-step > .setup-step-title, .setup-step > .setup-step-subtitle {
+  display: block; grid-column: 2; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.setup-step > .setup-step-title { grid-row: 1; font-weight: 700; }
+.setup-step > .setup-step-subtitle { grid-row: 2; color: inherit; opacity: .72; font-size: 11px; font-weight: 600; }
+.setup-field > .sapid-field-label.is-required::after { content: " *" / ""; color: var(--danger); }
+.setup-axis-title { font-size: 12px; font-weight: 700; color: var(--text-2); margin-bottom: 4px; }
+.setup-summary-label { color: var(--text, var(--ak-ink)); font-size: 13px; font-weight: 700; }
+.setup-advanced > .sapid-collapsible-trigger {
+  display: block; padding: 0; background: transparent; color: inherit; font: inherit; text-align: left;
+}
+.setup-advanced > .sapid-collapsible-trigger::before { content: "▸"; margin-right: 6px; }
+.setup-advanced > .sapid-collapsible-trigger[aria-expanded=true]::before { content: "▾"; }
+@container (max-width: 720px) {
+  .setup-step-list > button.setup-step { min-height: 2.5rem; padding: 8px; column-gap: 6px; }
+  .setup-step > .setup-step-subtitle { display: none; }
+  .setup-step > .setup-step-title { grid-row: 1 / span 2; }
+}

@@ -7,13 +7,15 @@
 //! Writing new audit events is owned by the SDK / reducer path; this view
 //! does not emit anything.
 
+use std::rc::Rc;
+
 use arkret_wire::event_kind_str;
-use dioxus::prelude::*;
+use glory::Scope;
 use serde_json::Value;
 
-use crate::components::{EmptyState, EmptyStateKind, HelpTip};
-use crate::i18n::tr;
+use crate::presentation::{InksonContext, View};
 use crate::views::helpers::short_protocol_id;
+use crate::views::settings::widgets::*;
 
 #[derive(Clone, Debug, PartialEq)]
 struct AuditRow {
@@ -46,90 +48,108 @@ fn classify_audit_row(operation_id: &str, body: &Value) -> Option<AuditRow> {
     })
 }
 
-#[component]
-pub fn AuditPanel() -> Element {
-    let state_store = crate::app::SessionContext::get().state_store;
-    let state = state_store.read().load();
-    let rows: Vec<AuditRow> = state
-        .raw_operations
-        .iter()
-        .filter_map(|record| classify_audit_row(&record.operation_id, &record.payload))
-        .collect();
-    let attested_count = rows
-        .iter()
-        .filter(|row| row.kind == event_kind_str::AUDIT_ACCESSED)
-        .count();
-    rsx! {
-        div { class: "timeline", "data-testid": "audit-panel", role: "region", "aria-label": tr("audit.title"),
-                div { class: "event",
-                    div { class: "event-head",
-                        span { {tr("audit.title")} }
-                    HelpTip { text: tr("audit.help") }
-                }
-                div { class: "metric-grid",
-                    div { class: "metric",
-                        strong { {tr("audit.access_events")} }
-                        span { "data-testid": "audit-accessed-count", "{attested_count}" }
-                        div { class: "muted", {tr("audit.access_events_hint")} }
-                    }
-                    div { class: "metric",
-                        strong { {tr("audit.total_observed")} }
-                        span { "data-testid": "audit-total-count", "{rows.len()}" }
-                        div { class: "muted", {tr("audit.total_observed_hint")} }
-                    }
-                }
-            }
-            if rows.is_empty() {
-                EmptyState {
-                    title: tr("audit.empty_title"),
-                    kind: EmptyStateKind::Empty,
-                    message: Some(tr("audit.empty_message")),
+pub fn page(scope: &Scope, context: Rc<InksonContext>, _route: crate::routes::Route) -> View {
+    let revision = context.state_revision;
+    let locale = context.locale;
+    let source = scope.bond(move || (revision.get(), locale.get()));
+    let render = context.clone();
+    reactive(source, move |scope, _| {
+        let context = render.clone();
+        let state = context.snapshot();
+        let rows: Vec<_> = state
+            .raw_operations
+            .iter()
+            .filter_map(|record| classify_audit_row(&record.operation_id, &record.payload))
+            .collect();
+        let attested = rows
+            .iter()
+            .filter(|row| row.kind == event_kind_str::AUDIT_ACCESSED)
+            .count();
+        let metric = |title: &str, count: String, key: &str, hint: &str| {
+            stack(
+                "metric",
+                vec![
+                    paragraph("audit-metric-label", context.translated(scope, title)),
+                    paragraph(key, count),
+                    paragraph("muted", context.translated(scope, hint)),
+                ],
+            )
+        };
+        let mut children = vec![stack(
+            "event",
+            vec![
+                line(
+                    "event-head",
+                    vec![
+                        plain(context.translated(scope, "audit.title")),
+                        crate::components::help_tip(
+                            scope,
+                            context.clone(),
+                            crate::components::HelpTipProps {
+                                text: context.tr("audit.help"),
+                            },
+                        ),
+                    ],
+                ),
+                line(
+                    "metric-grid",
+                    vec![
+                        metric(
+                            "audit.access_events",
+                            attested.to_string(),
+                            "audit-accessed-count",
+                            "audit.access_events_hint",
+                        ),
+                        metric(
+                            "audit.total_observed",
+                            rows.len().to_string(),
+                            "audit-total-count",
+                            "audit.total_observed_hint",
+                        ),
+                    ],
+                ),
+            ],
+        )];
+        if rows.is_empty() {
+            children.push(crate::components::empty_state(
+                scope,
+                context.clone(),
+                crate::components::EmptyStateProps {
+                    title: context.tr("audit.empty_title"),
+                    kind: crate::components::EmptyStateKind::Empty,
+                    message: Some(context.tr("audit.empty_message")),
+                    badge_override: None,
                     test_id: Some("audit-empty".to_owned()),
-                }
-            } else {
-                for row in rows.iter() {
-                    {
-                        let operation_id_label = short_protocol_id(&row.operation_id);
-                        rsx! {
-                            div { class: "event", "data-testid": "audit-row",
-                                div { class: "event-head",
-                                    span { class: "badge", "{row.kind}" }
-                                    if let Some(realm) = &row.realm_id {
-                                        {
-                                            let realm_label = short_protocol_id(realm);
-                                            rsx! {
-                                                span {
-                                                    class: "mono",
-                                                    "data-testid": "audit-row-realm",
-                                                    title: "{realm}",
-                                                    "{realm_label}"
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                if let Some(target) = &row.target_event_id {
-                                    {
-                                        let target_label = short_protocol_id(target);
-                                        rsx! { div { class: "muted", title: "{target}", "target {target_label}" } }
-                                    }
-                                }
-                                if let Some(reader) = &row.reader_device {
-                                    {
-                                        let reader_label = short_protocol_id(reader);
-                                        rsx! { div { class: "muted", title: "{reader}", "reader {reader_label}" } }
-                                    }
-                                }
-                                div { class: "muted mono", "data-testid": "audit-row-op", title: "{row.operation_id}", "op {operation_id_label}" }
-                            }
-                        }
-                    }
-                }
-            }
+                },
+            ));
         }
-    }
+        for row in rows {
+            let mut header = vec![paragraph("badge", row.kind)];
+            if let Some(realm) = row.realm_id {
+                header.push(paragraph("mono audit-row-realm", short_protocol_id(&realm)));
+            }
+            let mut details = vec![line("event-head", header)];
+            if let Some(target) = row.target_event_id {
+                details.push(paragraph(
+                    "muted",
+                    format!("target {}", short_protocol_id(&target)),
+                ));
+            }
+            if let Some(reader) = row.reader_device {
+                details.push(paragraph(
+                    "muted",
+                    format!("reader {}", short_protocol_id(&reader)),
+                ));
+            }
+            details.push(paragraph(
+                "muted mono audit-row-op",
+                format!("op {}", short_protocol_id(&row.operation_id)),
+            ));
+            children.push(stack("event audit-row", details));
+        }
+        stack("timeline audit-panel", children)
+    })
 }
-
 #[cfg(test)]
 mod tests {
     use serde_json::json;

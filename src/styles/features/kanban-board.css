@@ -356,17 +356,17 @@
   min-height: 14px;
   padding-top: 2px;
 }
-.board-column-actions [data-testid="list-archive-button"],
-.board-card-footer [data-testid="card-archive-button"] {
+.board-column-actions [class~="list-archive-button"],
+.board-card-footer [class~="card-archive-button"] {
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
   transition: opacity 120ms ease, visibility 120ms ease;
 }
-.board-column:hover .board-column-actions [data-testid="list-archive-button"],
-.board-column:focus-within .board-column-actions [data-testid="list-archive-button"],
-.board-card:hover .board-card-footer [data-testid="card-archive-button"],
-.board-card:focus-within .board-card-footer [data-testid="card-archive-button"] {
+.board-column:hover .board-column-actions [class~="list-archive-button"],
+.board-column:focus-within .board-column-actions [class~="list-archive-button"],
+.board-card:hover .board-card-footer [class~="card-archive-button"],
+.board-card:focus-within .board-card-footer [class~="card-archive-button"] {
   opacity: 1;
   visibility: visible;
   pointer-events: auto;

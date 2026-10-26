@@ -19,7 +19,12 @@
 //! accepted / soft-failed / quarantined / CAS-conflict), which is a
 //! richer vocabulary than "did upload succeed".
 
-use dioxus::prelude::*;
+use std::rc::Rc;
+
+use glory::prelude::*;
+
+use crate::presentation::widgets::paragraph;
+use crate::presentation::{InksonContext, View};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SyncBadgeState {
@@ -39,7 +44,7 @@ pub enum SyncBadgeState {
 impl SyncBadgeState {
     /// Default label for each state. Callers can override these via the
     /// `local_label` / `pending_label` / `synced_label` / `failed_label`
-    /// props on [`SyncBadge`] when domain-specific copy reads better
+    /// props on [`sync_badge`] when domain-specific copy reads better
     /// (e.g. "Uploading…" vs "Pending sync…").
     pub fn default_label(self) -> &'static str {
         match self {
@@ -63,34 +68,31 @@ impl SyncBadgeState {
     }
 }
 
-#[component]
-pub fn SyncBadge(
-    state: SyncBadgeState,
-    /// Optional per-call override for the Local label (e.g. "Local
-    /// draft"). When `None` the default from [`SyncBadgeState::default_label`]
-    /// is used.
-    local_label: Option<String>,
-    pending_label: Option<String>,
-    synced_label: Option<String>,
-    failed_label: Option<String>,
-    test_id: Option<String>,
-) -> Element {
-    let label = match state {
-        SyncBadgeState::Local => local_label,
-        SyncBadgeState::Pending => pending_label,
-        SyncBadgeState::Synced => synced_label,
-        SyncBadgeState::Failed => failed_label,
+#[derive(Clone)]
+pub struct SyncBadgeProps {
+    pub state: SyncBadgeState,
+    pub local_label: Option<String>,
+    pub pending_label: Option<String>,
+    pub synced_label: Option<String>,
+    pub failed_label: Option<String>,
+    pub test_id: Option<String>,
+}
+pub fn sync_badge(_scope: &Scope, _context: Rc<InksonContext>, props: SyncBadgeProps) -> View {
+    let label = match props.state {
+        SyncBadgeState::Local => props.local_label,
+        SyncBadgeState::Pending => props.pending_label,
+        SyncBadgeState::Synced => props.synced_label,
+        SyncBadgeState::Failed => props.failed_label,
     }
-    .unwrap_or_else(|| state.default_label().to_owned());
-    let class = state.class_name();
-    let testid = test_id.unwrap_or_else(|| "sync-badge".to_owned());
-    rsx! {
-        span {
-            class: "{class}",
-            "data-testid": "{testid}",
-            "{label}"
-        }
-    }
+    .unwrap_or_else(|| props.state.default_label().into());
+    paragraph(
+        format!(
+            "{} {}",
+            props.state.class_name(),
+            props.test_id.unwrap_or_default()
+        ),
+        label,
+    )
 }
 
 #[cfg(test)]

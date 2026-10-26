@@ -7,8 +7,10 @@ pub(crate) mod model;
 #[cfg(test)]
 mod tests;
 
-pub use admin::AgentAdminPanel;
-pub use components::{ActionApproveDialog, ActorKindBadge, DraftApprovalPanel};
+pub use admin::page;
+pub use components::{
+    ActionApproveDialogProps, action_approve_dialog, actor_kind_badge, draft_approval_panel,
+};
 pub(crate) use model::mentionable_owned_agent_slugs;
 pub use model::{
     ActionApproveDialogState, ActionRequestNonceStatus, AgentGrantPreset, AgentServiceScopePreset,

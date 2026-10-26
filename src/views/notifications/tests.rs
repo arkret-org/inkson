@@ -960,8 +960,6 @@ fn ordinary_notification_with_another_recipient_id_is_discarded() {
 
 #[test]
 fn local_notification_action_feedback_retranslates_without_changing_identity() {
-    use dioxus::prelude::*;
-
     use super::model::NotificationFeedback;
     let path = std::env::temp_dir().join(format!(
         "notification-locale-{}.json",
@@ -976,44 +974,40 @@ fn local_notification_action_feedback_retranslates_without_changing_identity() {
     );
     let rows = hydrate_notifications(vec![raw], &ClientLocalState::default(), None, None);
     let original = rows[0].clone();
-    let mut dom = VirtualDom::new(|| rsx! {});
-    dom.rebuild_in_place();
-    dom.in_scope(ScopeId::ROOT, || {
-        let mut locale = provide_context(crate::i18n::init_i18n_with_locale(
+    let app = glory::ui::App::memory();
+    let scope = app.scope();
+    let store =
+        crate::presentation::SharedStateStore::new(LocalStateStore::with_path(path.clone()));
+    let notifications = scope.cage(rows.clone());
+    let feedback = scope.cage(NotificationFeedback::default());
+    super::actions::mark_notification_read_state(
+        scope.downgrade(),
+        String::new(),
+        String::new(),
+        String::new(),
+        String::new(),
+        original.clone(),
+        false,
+        store,
+        notifications,
+        feedback,
+    );
+    app.flush().unwrap();
+
+    for (language, expected) in [
+        (
             crate::i18n::UiLocale::En,
-        ));
-        let store = SyncSignal::new_maybe_sync_in_scope(
-            LocalStateStore::with_path(path.clone()),
-            ScopeId::ROOT,
-        );
-        let notifications = Signal::new(rows.clone());
-        let feedback = Signal::new(NotificationFeedback::default());
-        // Actual production action: marking unread is local and issues no HTTP.
-        super::actions::mark_notification_read_state(
-            String::new(),
-            String::new(),
-            String::new(),
-            String::new(),
-            original.clone(),
-            false,
-            store,
-            notifications,
-            feedback,
-        );
-        for (language, expected) in [
-            (
-                crate::i18n::UiLocale::En,
-                "Notification marked unread locally.",
-            ),
-            (crate::i18n::UiLocale::Zh, "已在本机将通知标为未读。"),
-            (
-                crate::i18n::UiLocale::En,
-                "Notification marked unread locally.",
-            ),
-        ] {
-            crate::i18n::set_locale(&mut locale, language);
-            assert_eq!(feedback.read().render(), expected);
-            let snapshot = notifications.read();
+            "Notification marked unread locally.",
+        ),
+        (crate::i18n::UiLocale::Zh, "已在本机将通知标为未读。"),
+        (
+            crate::i18n::UiLocale::En,
+            "Notification marked unread locally.",
+        ),
+    ] {
+        crate::i18n::with_test_locale(language, || {
+            assert_eq!(feedback.get_untracked().render(), expected);
+            let snapshot = notifications.get_untracked();
             let current = &snapshot[0];
             assert!(!current.read);
             assert_eq!(current.id, original.id);
@@ -1025,16 +1019,14 @@ fn local_notification_action_feedback_retranslates_without_changing_identity() {
                 "notifications.default_title.message"
             );
             assert_eq!(current.render_body(), "User body {error} / 原文");
-        }
-    });
-    drop(dom);
+        });
+    }
+    drop(app);
     let _ = std::fs::remove_file(path);
 }
 
 #[test]
 fn retained_notification_defaults_and_api_errors_follow_the_current_locale() {
-    use dioxus::prelude::*;
-
     use super::model::NotificationFeedback;
     use crate::transport::auth::ApiCallError;
     let problem: arkret_sdk::Problem = serde_json::from_value(json!({
@@ -1066,18 +1058,12 @@ fn retained_notification_defaults_and_api_errors_follow_the_current_locale() {
     let mut raw = Vec::new();
     push_test_invite_projection(&mut raw, vec![invite.clone()], &JoinedRealmIds::default());
     let rows = hydrate_notifications(raw, &ClientLocalState::default(), None, None);
-    let mut dom = VirtualDom::new(|| rsx! {});
-    dom.rebuild_in_place();
-    dom.in_scope(ScopeId::ROOT, || {
-        let mut locale = provide_context(crate::i18n::init_i18n_with_locale(
-            crate::i18n::UiLocale::En,
-        ));
-        for language in [
-            crate::i18n::UiLocale::En,
-            crate::i18n::UiLocale::Zh,
-            crate::i18n::UiLocale::En,
-        ] {
-            crate::i18n::set_locale(&mut locale, language);
+    for language in [
+        crate::i18n::UiLocale::En,
+        crate::i18n::UiLocale::Zh,
+        crate::i18n::UiLocale::En,
+    ] {
+        crate::i18n::with_test_locale(language, || {
             for feedback in &retained {
                 let output = feedback.render();
                 // Same original ApiCallError, evaluated at render time with the
@@ -1134,6 +1120,6 @@ fn retained_notification_defaults_and_api_errors_follow_the_current_locale() {
                     })
             );
             assert_eq!(rows[0].realm_id, invite.realm_id.as_str());
-        }
-    });
+        });
+    }
 }

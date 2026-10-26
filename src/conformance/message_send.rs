@@ -56,11 +56,7 @@ pub async fn send_native_ordinary_mls_message(
         host.call_http_client(),
         crate::transport::RequestContext::new(""),
     );
-    // The composer adapter reads optional Dioxus session context. Poll the
-    // unchanged product entry inside its normal runtime and root scope; the
-    // explicit authenticated HTTP client and durable host store remain real.
-    let mut dom = dioxus::prelude::VirtualDom::new(dioxus::prelude::VNode::empty);
-    dom.rebuild_in_place();
+    // The ordinary product author takes the real host store explicitly.
     let send = crate::views::chat::model::send_ordinary_chat_message(
         &api,
         store,
@@ -75,14 +71,7 @@ pub async fn send_native_ordinary_mls_message(
         None,
         format!("native-message:{}", crate::operation::uuid_v7()),
     );
-    tokio::pin!(send);
-    std::future::poll_fn(|cx| {
-        dom.runtime().in_scope(dioxus::prelude::ScopeId::ROOT, || {
-            std::future::Future::poll(send.as_mut(), cx)
-        })
-    })
-    .await
-    .map_err(anyhow::Error::msg)
+    send.await.map_err(anyhow::Error::msg)
 }
 
 /// Inspect the ordinary protected durable queue without replacing its store.

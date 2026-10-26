@@ -324,7 +324,7 @@
    line / hints must wrap instead of widening the dialog past its max-width. */
 .recovery-key-setup-dialog .modal-body,
 .recovery-key-setup-dialog .muted,
-.recovery-key-setup-dialog [data-testid="recovery-key-setup-status"] {
+.recovery-key-setup-dialog [class~="recovery-key-setup-status"] {
   overflow-wrap: anywhere;
   word-break: break-word;
   min-width: 0;

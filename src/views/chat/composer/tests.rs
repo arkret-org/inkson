@@ -1,9 +1,38 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use dioxus::dioxus_core::{AttributeValue, ElementId, Mutation};
-
 use super::*;
+
+#[test]
+fn semantic_keyboard_submit_preserves_original_chat_modifier_rules() {
+    for key in ["Enter", "x"] {
+        for shift in [false, true] {
+            for alt in [false, true] {
+                for composing in [false, true] {
+                    for repeat in [false, true] {
+                        for (control, meta) in [(false, false), (true, false), (false, true)] {
+                            let command = glory::render::KeyboardInput {
+                                key,
+                                shift,
+                                alt,
+                                composing,
+                                repeat,
+                                control,
+                                meta,
+                                editable: true,
+                            }
+                            .command();
+                            assert_eq!(
+                                command == Some(glory::render::KeyboardCommand::Submit),
+                                chat_composer_should_send_key(key, shift, alt, composing, repeat),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
 
 fn prior_private_session(controller: arkret_sdk::AccountId) -> crate::sidecar::HostedSidecarState {
     crate::sidecar::HostedSidecarState {
@@ -148,8 +177,6 @@ fn private_history_does_not_supply_a_draft_target_or_block_original_send() {
     ));
 }
 
-type SendState = Rc<RefCell<Option<Signal<(bool, bool, bool)>>>>;
-
 #[test]
 fn installed_sidecar_requires_its_own_private_group_without_parent_scope_keys() {
     let current: arkret_wire::MlsGroupValue = serde_json::from_value(serde_json::json!({
@@ -182,114 +209,83 @@ fn installed_sidecar_requires_its_own_private_group_without_parent_scope_keys() 
     );
 }
 
-fn send_actions_harness(control: SendState) -> Element {
-    let state = use_signal(|| (false, true, false));
-    *control.borrow_mut() = Some(state);
-    let (plaintext, pending, checking) = state();
-    rsx! {
-        OrdinarySendActions {
-            plaintext,
-            plaintext_disabled: pending,
-            secure_disabled: pending,
-            mls_binding_pending: pending,
-            creator_bootstrap_pending: pending,
-            secure_title: if pending { "Waiting for verified current" } else { "" },
-            opening: false,
-            readiness_checking: checking,
-            on_plaintext: move |_| {},
-            on_secure: move |_| {},
+fn primary(app: &glory::App) -> (glory::render::NodeId, bool) {
+    fn visit(
+        app: &glory::App,
+        id: glory::render::NodeId,
+        result: &mut Vec<(glory::render::NodeId, bool)>,
+    ) {
+        let tree = app.tree();
+        let node = tree.node(id).unwrap();
+        if let glory::render::Props::Button(props) = node.descriptor.view().props {
+            result.push((id, props.enabled));
+        }
+        for child in &node.children {
+            visit(app, *child, result);
         }
     }
+    let mut result = Vec::new();
+    for id in app.tree().roots() {
+        visit(app, *id, &mut result);
+    }
+    assert_eq!(result.len(), 1, "there must be exactly one primary Send");
+    result[0]
 }
-
-fn primary_send_id(edits: &[Mutation]) -> ElementId {
-    let ids: Vec<_> = edits
-        .iter()
-        .filter_map(|edit| match edit {
-            Mutation::SetAttribute {
-                name: "data-testid",
-                value: AttributeValue::Text(value),
-                id,
-                ..
-            } if value == "send-chat-button" => Some(*id),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(ids.len(), 1, "there must be exactly one primary Send");
-    ids[0]
-}
-
-fn assert_primary_disabled(edits: &[Mutation], primary: ElementId, disabled: bool) {
-    assert!(
-        edits.iter().any(|edit| matches!(
-            edit,
-            Mutation::SetAttribute {
-                name: "disabled",
-                value: AttributeValue::Bool(value),
-                id,
-                ..
-            } if *id == primary && *value == disabled
-        )),
-        "the mounted primary Send must receive the current send gate"
-    );
-}
-
 #[test]
 fn primary_send_keeps_its_dom_identity_across_scope_probe_and_encryption_changes() {
-    let control = Rc::new(RefCell::new(None));
-    let mut dom = VirtualDom::new_with_props(send_actions_harness, control.clone());
-    let initial = dom.rebuild_to_vec();
-    let primary = primary_send_id(&initial.edits);
-    assert_primary_disabled(&initial.edits, primary, true);
-
-    for (plaintext, pending, checking) in [
+    let app = glory::App::memory();
+    let scope = app.scope();
+    let state = scope.cage((false, true, false));
+    let enabled = scope.bond(move || {
+        let (_, pending, _) = state.get();
+        !pending
+    });
+    let busy = scope.bond(move || state.get().1);
+    app.mount(primary_send_action(scope, "Send", enabled, busy, || {}))
+        .unwrap();
+    let (id, enabled) = primary(&app);
+    assert!(!enabled);
+    for next in [
         (true, false, false),
         (false, true, true),
         (false, false, false),
         (true, true, false),
         (true, false, false),
     ] {
-        dom.in_runtime(|| {
-            control
-                .borrow()
+        state.revise(|value| *value = next);
+        app.flush().unwrap();
+        let (next_id, enabled) = primary(&app);
+        assert_eq!(next_id, id, "scope probes must retain primary Send");
+        assert_eq!(enabled, !next.1);
+        assert_eq!(
+            app.tree()
+                .node(id)
                 .unwrap()
-                .set((plaintext, pending, checking));
-        });
-        let update = dom.render_immediate_to_vec();
-        assert_primary_disabled(&update.edits, primary, pending);
-        for edit in &update.edits {
-            match edit {
-                Mutation::Remove { id } | Mutation::ReplaceWith { id, .. } => {
-                    assert_ne!(*id, primary, "scope probes must not replace primary Send");
-                }
-                Mutation::SetAttribute {
-                    name: "data-testid",
-                    value: AttributeValue::Text(value),
-                    id,
-                    ..
-                } if *id == primary => {
-                    assert_eq!(value, "send-chat-button");
-                }
-                _ => {}
-            }
-        }
+                .descriptor
+                .view()
+                .semantics
+                .as_ref()
+                .unwrap()
+                .busy,
+            Some(next.1)
+        );
     }
 }
 
-type FailureState = Rc<RefCell<Option<(Signal<Vec<ChatMessage>>, Signal<String>, Signal<String>)>>>;
+type FailureState = Rc<RefCell<Option<(Cage<Vec<ChatMessage>>, Cage<String>, Cage<String>)>>>;
 
 #[test]
 fn private_echoes_and_unconfirmed_rows_cannot_anchor_the_next_private_request() {
     let control = Rc::new(RefCell::new(None));
-    let mut dom = VirtualDom::new_with_props(send_failure_harness, control.clone());
-    dom.rebuild_to_vec();
-    dom.in_scope(dioxus::dioxus_core::ScopeId::ROOT, || {
+    let app = glory::App::memory();
+    send_failure_harness(app.scope(), control.clone());
+    {
         let (messages, ..) = control.borrow().unwrap();
         let id =
             |byte| arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [byte; 32]);
         let realm = arkret_sdk::RealmId::from_event_id(&id(1));
         let strand = arkret_sdk::StrandId::from_event_id(&id(2));
-        let mut source = messages.read()[0].clone();
+        let mut source = messages.get()[0].clone();
         source.realm_id = realm.to_string();
         source.strand_id = strand.to_string();
         source.id = id(3).to_string();
@@ -334,53 +330,50 @@ fn private_echoes_and_unconfirmed_rows_cannot_anchor_the_next_private_request() 
             latest_source_event_anchor(&[private, unknown], realm.as_str(), strand.as_str()),
             None
         );
-    });
+    }
 }
 
-fn send_failure_harness(control: FailureState) -> Element {
-    let messages = use_signal(|| {
-        vec![ChatMessage {
-            protocol_content: None,
-            local_scope: None,
-            realm_id: String::new(),
-            id: "local-send".to_owned(),
-            protocol_message_id: Some("protocol-send".to_owned()),
-            actor_id: None,
-            sender: String::new(),
-            executed_by: None,
-            body: "original draft".to_owned(),
-            content_format: None,
-            timestamp: String::new(),
-            created_at: None,
-            strand_id: String::new(),
-            reply_to: None,
-            reactions: Vec::new(),
-            redacted: false,
-            edited: false,
-            revisions: Vec::new(),
-            revision_source: None,
-            pending: true,
-            failed: false,
-            error: None,
-            mentions: Vec::new(),
-            crypto_state: MessageCryptoState::Plaintext,
-        }]
-    });
-    let status = use_signal(String::new);
-    let draft = use_signal(String::new);
+fn send_failure_harness(scope: &Scope, control: FailureState) {
+    let messages = scope.cage(vec![ChatMessage {
+        protocol_content: None,
+        local_scope: None,
+        realm_id: String::new(),
+        id: "local-send".to_owned(),
+        protocol_message_id: Some("protocol-send".to_owned()),
+        actor_id: None,
+        sender: String::new(),
+        executed_by: None,
+        body: "original draft".to_owned(),
+        content_format: None,
+        timestamp: String::new(),
+        created_at: None,
+        strand_id: String::new(),
+        reply_to: None,
+        reactions: Vec::new(),
+        redacted: false,
+        edited: false,
+        revisions: Vec::new(),
+        revision_source: None,
+        pending: true,
+        failed: false,
+        error: None,
+        mentions: Vec::new(),
+        crypto_state: MessageCryptoState::Plaintext,
+    }]);
+    let status = scope.cage(String::new());
+    let draft = scope.cage(String::new());
     *control.borrow_mut() = Some((messages, status, draft));
-    rsx! {}
 }
 
 #[test]
 fn encryption_context_refusal_restores_plaintext_for_fresh_authoring() {
     for next_draft in ["", "next message"] {
         let control = Rc::new(RefCell::new(None));
-        let mut dom = VirtualDom::new_with_props(send_failure_harness, control.clone());
-        dom.rebuild_to_vec();
-        dom.in_scope(dioxus::dioxus_core::ScopeId::ROOT, || {
-            let (messages, status, mut draft) = control.borrow().unwrap();
-            draft.set(next_draft.to_owned());
+        let app = glory::App::memory();
+        send_failure_harness(app.scope(), control.clone());
+        {
+            let (messages, status, draft) = control.borrow().unwrap();
+            draft.revise(|value| *value = next_draft.to_owned());
             commands::present_chat_send_failure(
                 messages,
                 status,
@@ -391,28 +384,28 @@ fn encryption_context_refusal_restores_plaintext_for_fresh_authoring() {
                     detail: "epoch_mismatch".to_owned(),
                 },
             );
-            let rows = messages.read();
+            let rows = messages.get();
             assert!(!rows[0].pending);
             assert!(rows[0].failed);
-            assert_eq!(rows[0].error.as_deref(), Some(status().as_str()));
+            assert_eq!(rows[0].error.as_deref(), Some(status.get().as_str()));
             assert_eq!(
-                draft(),
+                draft.get(),
                 if next_draft.is_empty() {
                     "original draft"
                 } else {
                     next_draft
                 }
             );
-        });
+        }
     }
 }
 
 #[test]
 fn unknown_submission_remains_pending_without_inviting_duplicate_authoring() {
     let control = Rc::new(RefCell::new(None));
-    let mut dom = VirtualDom::new_with_props(send_failure_harness, control.clone());
-    dom.rebuild_to_vec();
-    dom.in_scope(dioxus::dioxus_core::ScopeId::ROOT, || {
+    let app = glory::App::memory();
+    send_failure_harness(app.scope(), control.clone());
+    {
         let (messages, status, draft) = control.borrow().unwrap();
         commands::present_chat_send_failure(
             messages,
@@ -424,9 +417,9 @@ fn unknown_submission_remains_pending_without_inviting_duplicate_authoring() {
                 detail: "connection lost after submission".to_owned(),
             },
         );
-        assert!(messages.read()[0].pending);
-        assert!(!messages.read()[0].failed);
-        assert!(draft().is_empty());
-        assert!(!status().is_empty());
-    });
+        assert!(messages.get()[0].pending);
+        assert!(!messages.get()[0].failed);
+        assert!(draft.get().is_empty());
+        assert!(!status.get().is_empty());
+    }
 }

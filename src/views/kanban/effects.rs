@@ -97,65 +97,67 @@ async fn fetch_kanban_projection_snapshot(
     })
 }
 
-#[component]
-pub(super) fn KanbanEffects(
+pub(super) fn mount_effects(
+    scope: &Scope,
+    app: Rc<InksonContext>,
     controller: KanbanController,
-    columns: Memo<Vec<KanbanColumn>>,
-    current_inventory: Memo<Result<Option<KanbanCurrentInventory>, String>>,
+    columns: glory::Bond<Vec<KanbanColumn>>,
+    current_inventory: glory::Bond<Result<Option<KanbanCurrentInventory>, String>>,
     route: Route,
     local_realm_id: String,
     base_url: String,
-    token: Signal<String>,
+    token: Cage<String>,
     selected_realm_id: String,
-    projection_realm_id: String,
+    _projection_realm_id: String,
     authority: arkret_sdk::AccountId,
     principal_id: String,
     device_id: String,
-    sync_cursor: Signal<String>,
-    realm_live_epoch: Signal<u64>,
-) -> Element {
-    let mut state_store = crate::app::SessionContext::get().state_store;
-    let navigator = use_navigator();
+    sync_cursor: Cage<String>,
+    realm_live_epoch: Cage<u64>,
+) {
+    let state_store = app.state_store.clone();
+    let weak = scope.downgrade();
     // Board-create operation ids still pending as of the last reconciliation
     // pass. Remembered across passes so the receipt migration below can detect
     // the pending -> accepted TRANSITION (an accepted row is no longer
     // pending, so it cannot be found by scanning the pending set).
-    let mut awaiting_board_ops = use_signal(BTreeSet::<String>::new);
+    let awaiting_board_ops = scope.cage(BTreeSet::<String>::new());
     let KanbanController {
-        mut board_space_options,
-        mut selected_board,
-        mut lifecycle_container_projection,
-        mut lifecycle_strand_projection,
-        mut selected_card,
-        mut mls_sidecar_restore_key_seen,
-        mut card_edit_title,
-        mut card_edit_description,
-        mut card_edit_body,
-        mut card_edit_synthesis,
-        mut card_edit_synthesis_target_id,
-        mut card_edit_labels,
-        mut card_edit_assignee,
-        mut card_edit_due,
-        mut card_edit_calendar,
-        mut calendar_rsvp_occurrence,
-        mut editing_card_detail,
-        mut card_detail_edit_status,
-        mut assignee_picker_open,
-        mut assignee_filter,
-        mut assignee_selected_actor_ids,
-        mut assignee_edit_status,
-        mut due_picker_open,
-        mut due_edit_value,
-        mut due_calendar_month,
-        mut due_edit_status,
-        mut card_detail_actions_open,
-        mut card_detail_discussion_mounted_for,
-        mut card_detail_tab,
+        board_space_options,
+        selected_board,
+        lifecycle_container_projection,
+        lifecycle_strand_projection,
+        selected_card,
+        mls_sidecar_restore_key_seen,
+        card_edit_title,
+        card_edit_description,
+        card_edit_body,
+        card_edit_synthesis,
+        card_edit_synthesis_target_id,
+        card_edit_labels,
+        card_edit_assignee,
+        card_edit_due,
+        card_edit_calendar,
+        calendar_rsvp_occurrence,
+        editing_card_detail,
+        card_edit_scope,
+        card_detail_edit_status,
+        assignee_picker_open,
+        assignee_filter,
+        assignee_selected_actor_ids,
+        assignee_edit_status,
+        due_picker_open,
+        due_edit_value,
+        due_calendar_month,
+        due_edit_status,
+        card_detail_actions_open,
+        card_detail_discussion_mounted_for,
+        card_detail_tab,
         card_detail_sidebar_tab: _,
-        mut card_synthesis_history_open_id,
-        mut card_synthesis_selected_revision_id,
+        card_synthesis_history_open_id,
+        card_synthesis_selected_revision_id,
         member_handle_fetching: _,
-        mut command_queue,
+        command_queue,
         board_status,
         ..
     } = controller;
@@ -175,371 +177,552 @@ pub(super) fn KanbanEffects(
     {
         let route_realm_id = selected_realm_id.clone();
         let pending_realm_id = local_realm_id.clone();
-        use_effect(move || {
-            let raw_operations = state_store.read().load().raw_operations;
-            let pending = pending_board_creates_from_ops(&raw_operations, &pending_realm_id);
-            let aliases = event_derived_target_aliases(&raw_operations);
-            let (accepted, still_pending) =
-                accepted_board_create_transition(&awaiting_board_ops.peek(), &pending, &aliases);
-            if *awaiting_board_ops.peek() != still_pending {
-                awaiting_board_ops.set(still_pending);
-            }
-            let Some(space_id) = accepted else {
-                return;
-            };
-            // The confirmed-options effect can observe the accepted Space in
-            // the same render pass and seed this exact selection first.  That
-            // ordering must not suppress the second half of the migration:
-            // installing the canonical Board route.  A genuinely different
-            // user selection still wins and is never hijacked.
-            if selected_board
-                .peek()
-                .as_ref()
-                .is_some_and(|selected| selected != &space_id)
-            {
-                return;
-            }
-            if selected_board.peek().is_none() {
-                selected_board.set(Some(space_id.clone()));
-            }
-            let _ = navigator.replace(kanban_board_route(&route_realm_id, space_id.as_str()));
-        });
+        {
+            let app = app.clone();
+            let state_store = state_store.clone();
+            let _weak = weak.clone();
+            scope.effect(move || {
+                let _ = app.state_revision.get();
+                let raw_operations = state_store.read(|store| store.load()).raw_operations;
+                let pending = pending_board_creates_from_ops(&raw_operations, &pending_realm_id);
+                let aliases = event_derived_target_aliases(&raw_operations);
+                let (accepted, still_pending) = accepted_board_create_transition(
+                    &awaiting_board_ops.get_untracked(),
+                    &pending,
+                    &aliases,
+                );
+                if awaiting_board_ops.get_untracked() != still_pending {
+                    awaiting_board_ops.revise(|value| {
+                        let next = still_pending;
+                        *value = next;
+                    });
+                }
+                let Some(space_id) = accepted else {
+                    return;
+                };
+                // The confirmed-options effect can observe the accepted Space in
+                // the same render pass and seed this exact selection first.  That
+                // ordering must not suppress the second half of the migration:
+                // installing the canonical Board route.  A genuinely different
+                // user selection still wins and is never hijacked.
+                if selected_board
+                    .get_untracked()
+                    .as_ref()
+                    .is_some_and(|selected| selected != &space_id)
+                {
+                    return;
+                }
+                if selected_board.get_untracked().is_none() {
+                    selected_board.revise(|value| {
+                        let next = Some(space_id.clone());
+                        *value = next;
+                    });
+                }
+                app.replace_route(kanban_board_route(&route_realm_id, space_id.as_str()));
+            });
+        };
     }
 
     {
         let realm = local_realm_id.clone();
-        use_effect(move || {
-            let operations = state_store.read().load().raw_operations;
-            let (projected, raw_operations) = match current_inventory() {
-                Ok(Some(inventory)) => (
-                    inventory.containers,
-                    std::borrow::Cow::Owned(kanban_pending_operations(&operations)),
-                ),
-                Ok(None) => (
-                    lifecycle_container_projection(),
-                    std::borrow::Cow::Borrowed(operations.as_slice()),
-                ),
-                Err(_) => (Vec::new(), std::borrow::Cow::Borrowed(&[][..])),
-            };
-            let entries = state_store.read().realm_current_state_entries(&realm);
-            let mut containers = space_container_views_from_projection_and_ops(
-                &projected,
-                &raw_operations,
-                &realm,
-                &entries,
-            );
-            if let Some(endpoint) = crate::secure_key_store::active_device_seed_scope() {
-                let state = state_store.read();
-                for view in &mut containers {
-                    if let Some(title) = crate::views::metadata::current_title(
-                        &state,
-                        &realm,
-                        &view.space_id,
-                        &endpoint.authority,
-                        &endpoint.device_id,
-                    ) {
-                        view.title = title;
+        {
+            let app = app.clone();
+            let state_store = state_store.clone();
+            let _weak = weak.clone();
+            scope.effect(move || {
+                let _ = app.state_revision.get();
+                let operations = state_store.read(|store| store.load()).raw_operations;
+                let (projected, raw_operations) = match current_inventory.get() {
+                    Ok(Some(inventory)) => (
+                        inventory.containers,
+                        std::borrow::Cow::Owned(kanban_pending_operations(&operations)),
+                    ),
+                    Ok(None) => (
+                        lifecycle_container_projection.get(),
+                        std::borrow::Cow::Borrowed(operations.as_slice()),
+                    ),
+                    Err(_) => (Vec::new(), std::borrow::Cow::Borrowed(&[][..])),
+                };
+                let entries = state_store.read(|store| store.realm_current_state_entries(&realm));
+                let mut containers = space_container_views_from_projection_and_ops(
+                    &projected,
+                    &raw_operations,
+                    &realm,
+                    &entries,
+                );
+                if let Some(endpoint) = crate::secure_key_store::active_device_seed_scope() {
+                    for view in &mut containers {
+                        if let Some(title) = state_store.read(|state| {
+                            crate::views::metadata::current_title(
+                                state,
+                                &realm,
+                                &view.space_id,
+                                &endpoint.authority,
+                                &endpoint.device_id,
+                            )
+                        }) {
+                            view.title = title;
+                        }
                     }
                 }
-            }
-            // `board_space_options_from_projection` fails closed on non-SpaceId
-            // rows, so a pending Board create never enters the confirmed option
-            // set; it is rendered from `pending_board_creates_from_ops` until
-            // the receipt reconciles it.
-            let options = board_space_options_from_projection(&containers);
-            if *board_space_options.peek() != options {
-                board_space_options.set(options.clone());
-            }
-            // Seeding the first confirmed Board must yield while a create is
-            // pending: the create handler cleared the selection precisely so
-            // the pending surface (title + creating state) can show instead of
-            // snapping back to the previous Board.
-            if selected_board.peek().is_none()
-                && pending_board_creates_from_ops(&raw_operations, &realm).is_empty()
-                && let Some(first) = options.first()
-            {
-                selected_board.set(Some(first.id.clone()));
-            }
-        });
+                // `board_space_options_from_projection` fails closed on non-SpaceId
+                // rows, so a pending Board create never enters the confirmed option
+                // set; it is rendered from `pending_board_creates_from_ops` until
+                // the receipt reconciles it.
+                let options = board_space_options_from_projection(&containers);
+                if board_space_options.get_untracked() != options {
+                    board_space_options.revise(|value| {
+                        let next = options.clone();
+                        *value = next;
+                    });
+                }
+                // Seeding the first confirmed Board must yield while a create is
+                // pending: the create handler cleared the selection precisely so
+                // the pending surface (title + creating state) can show instead of
+                // snapping back to the previous Board.
+                if selected_board.get_untracked().is_none()
+                    && pending_board_creates_from_ops(&raw_operations, &realm).is_empty()
+                    && let Some(first) = options.first()
+                {
+                    selected_board.revise(|value| {
+                        let next = Some(first.id.clone());
+                        *value = next;
+                    });
+                }
+            });
+        };
     }
 
-    use_effect(move || {
-        let commands = command_queue();
-        if commands.is_empty() {
-            return;
-        }
-        command_queue.set(std::collections::VecDeque::new());
-        for command in commands {
-            match command {
-                KanbanCommand::SubmitOperation {
-                    base_url,
-                    token,
-                    realm_id,
-                    operation,
-                    scope_security_encrypted,
-                } => {
-                    // Remember this create before starting the detached submit.
-                    // A local Coland can accept the Event before Dioxus gets a
-                    // render pass that observes the queued op-log row. Without
-                    // this producer-side marker, that fast queued -> accepted
-                    // transition is indistinguishable from a cold-start row and
-                    // the canonical Board route is never installed.
-                    if *operation.kind() == arkret_sdk::EventKind::SpaceCreate
-                        && operation
-                            .typed_payload::<arkret_wire::event_spec::SpaceCreate>()
-                            .is_ok_and(|payload| {
-                                payload.object.kind == "board"
-                                    && payload.object.realm_id.as_str() == realm_id
-                            })
-                    {
-                        awaiting_board_ops
-                            .write()
-                            .insert(operation.local_operation_id().to_string());
-                    }
-                    submit_kanban_operation_event(
+    {
+        let app = app.clone();
+        let state_store = state_store.clone();
+        let _weak = weak.clone();
+        scope.effect(move || {
+            let _ = app.state_revision.get();
+            let commands = command_queue.get();
+            if commands.is_empty() {
+                return;
+            }
+            command_queue.revise(|value| {
+                let next = std::collections::VecDeque::new();
+                *value = next;
+            });
+            for command in commands {
+                match command {
+                    KanbanCommand::SubmitOperation {
                         base_url,
                         token,
                         realm_id,
-                        *operation,
+                        operation,
                         scope_security_encrypted,
-                        state_store,
-                        board_status,
-                    );
+                    } => {
+                        // Remember this create before starting the detached submit.
+                        // A local Coland can accept the Event before Dioxus gets a
+                        // render pass that observes the queued op-log row. Without
+                        // this producer-side marker, that fast queued -> accepted
+                        // transition is indistinguishable from a cold-start row and
+                        // the canonical Board route is never installed.
+                        if *operation.kind() == arkret_sdk::EventKind::SpaceCreate
+                            && operation
+                                .typed_payload::<arkret_wire::event_spec::SpaceCreate>()
+                                .is_ok_and(|payload| {
+                                    payload.object.kind == "board"
+                                        && payload.object.realm_id.as_str() == realm_id
+                                })
+                        {
+                            awaiting_board_ops.revise(|value| {
+                                value.insert(operation.local_operation_id().to_string())
+                            });
+                        }
+                        submit_kanban_operation_event(
+                            app.clone(),
+                            base_url,
+                            token,
+                            realm_id,
+                            *operation,
+                            scope_security_encrypted,
+                            state_store.clone(),
+                            board_status,
+                        );
+                    }
                 }
             }
-        }
-    });
+        });
+    };
 
-    use_effect(move || {
-        if !state_store.read().has_pending_local_projection_commands() {
-            return;
-        }
-        state_store.write().project_pending_local_commands();
-    });
+    {
+        let app = app.clone();
+        let state_store = state_store.clone();
+        let _weak = weak.clone();
+        scope.effect(move || {
+            let _ = app.state_revision.get();
+            if !state_store.read(|store| store.has_pending_local_projection_commands()) {
+                return;
+            }
+            state_store.write(|store| store.project_pending_local_commands());
+        });
+    };
 
     let detail_realm = local_realm_id.clone();
-    use_effect(move || {
-        // Preserve an accepted editor basis while allowing a pending create's
-        // receipt to install its event-derived identity. Editor signals retain
-        // the user's draft through that transition.
-        let preserve_edit_basis =
-            editing_card_detail() || due_picker_open() || assignee_picker_open();
-        let raw_operations = state_store.read().load().raw_operations;
-        let refreshing_content = {
-            let store = state_store.read();
-            !store.current_reset_required()
-                && store.realm_tree_projection(&detail_realm).is_some()
-                && store.current_product_view().is_some_and(|view| {
-                    view.realm_id == detail_realm
-                        && !view.complete_cut
-                        && selected_card.peek().as_ref().is_some_and(|card| {
-                            arkret_sdk::StrandId::new(card.id.clone()).is_ok_and(|id| {
-                                strand_current_basis(&view.entries, &id)
-                                    == StrandCurrentBasis::Missing
-                            })
+    {
+        let app = app.clone();
+        let state_store = state_store.clone();
+        let _weak = weak.clone();
+        scope.effect(move || {
+            let _ = app.state_revision.get();
+            // Preserve an accepted editor basis while allowing a pending create's
+            // receipt to install its event-derived identity. Editor signals retain
+            // the user's draft through that transition.
+            let preserve_edit_basis =
+                editing_card_detail.get() || due_picker_open.get() || assignee_picker_open.get();
+            let raw_operations = state_store.read(|store| store.load()).raw_operations;
+            let refreshing_content = {
+                state_store.read(|store| {
+                    !store.current_reset_required()
+                        && store.realm_tree_projection(&detail_realm).is_some()
+                        && store.current_product_view().is_some_and(|view| {
+                            view.realm_id == detail_realm
+                                && !view.complete_cut
+                                && selected_card.get_untracked().as_ref().is_some_and(|card| {
+                                    arkret_sdk::StrandId::new(card.id.clone()).is_ok_and(|id| {
+                                        strand_current_basis(&view.entries, &id)
+                                            == StrandCurrentBasis::Missing
+                                    })
+                                })
                         })
                 })
-        };
-        sync_selected_card_from_columns(
-            selected_card,
-            &columns(),
-            &raw_operations,
-            preserve_edit_basis,
-            refreshing_content,
-        );
-    });
+            };
+            sync_selected_card_from_columns(
+                selected_card,
+                &columns.get(),
+                &raw_operations,
+                preserve_edit_basis,
+                refreshing_content,
+            );
+        });
+    };
 
     {
         let card_route = route.clone();
-        use_effect(move || {
-            let Some(card) = selected_card() else {
-                return;
-            };
-            let raw_operations = state_store.read().load().raw_operations;
-            let Some(accepted_route) =
-                card_task_route_after_acceptance(&card_route, &card, &raw_operations)
-            else {
-                return;
-            };
-            let _ = navigator.replace(accepted_route);
-        });
+        {
+            let app = app.clone();
+            let state_store = state_store.clone();
+            let _weak = weak.clone();
+            scope.effect(move || {
+                let _ = app.state_revision.get();
+                let Some(card) = selected_card.get() else {
+                    return;
+                };
+                let raw_operations = state_store.read(|store| store.load()).raw_operations;
+                let Some(accepted_route) =
+                    card_task_route_after_acceptance(&card_route, &card, &raw_operations)
+                else {
+                    return;
+                };
+                app.replace_route(accepted_route);
+            });
+        };
     }
 
     {
         let routed_strand_id = route_card_strand_id(&route);
-        use_effect(move || {
-            let routed_tab = card_detail_tab_from_current_route();
-            let Some(strand_id) = routed_strand_id.clone() else {
-                return;
-            };
-            let raw_operations = state_store.read().load().raw_operations;
-            let aliases = event_derived_target_aliases(&raw_operations);
-            let strand_id = resolve_event_derived_target_alias(&aliases, &strand_id);
-            if selected_card()
-                .as_ref()
-                .is_some_and(|card| card_matches_strand_id(card, &strand_id))
-            {
-                if *card_detail_tab.peek() != routed_tab {
-                    card_detail_tab.set(routed_tab);
-                }
-                if routed_tab == CardDetailContentTab::Discussion
-                    && let Some(card) = selected_card.peek().as_ref()
-                    && card_detail_discussion_mounted_for.peek().as_deref()
-                        != Some(card.primary_strand_id.as_str())
+        {
+            let app = app.clone();
+            let state_store = state_store.clone();
+            let _weak = weak.clone();
+            scope.effect(move || {
+                let _ = app.state_revision.get();
+                let routed_tab = card_detail_tab_from_current_route(&app);
+                let Some(strand_id) = routed_strand_id.clone() else {
+                    return;
+                };
+                let raw_operations = state_store.read(|store| store.load()).raw_operations;
+                let aliases = event_derived_target_aliases(&raw_operations);
+                let strand_id = resolve_event_derived_target_alias(&aliases, &strand_id);
+                if selected_card
+                    .get()
+                    .as_ref()
+                    .is_some_and(|card| card_matches_strand_id(card, &strand_id))
                 {
-                    card_detail_discussion_mounted_for.set(Some(card.primary_strand_id.clone()));
+                    if let Some(edit_scope) = super::card_detail_surface::content_edit_scope_for_tab(
+                        editing_card_detail.get_untracked(), card_edit_scope.get_untracked(), routed_tab,
+                    ) && card_edit_scope.get_untracked() != edit_scope {
+                        card_edit_scope.revise(|value| *value = edit_scope);
+                    }
+                    if card_detail_tab.get_untracked() != routed_tab {
+                        card_detail_tab.revise(|value| {
+                            let next = routed_tab;
+                            *value = next;
+                        });
+                    }
+                    if routed_tab == CardDetailContentTab::Discussion
+                        && let Some(card) = selected_card.get_untracked().as_ref()
+                        && card_detail_discussion_mounted_for
+                            .get_untracked()
+                            .as_deref()
+                            != Some(card.primary_strand_id.as_str())
+                    {
+                        card_detail_discussion_mounted_for.revise(|value| {
+                            let next = Some(card.primary_strand_id.clone());
+                            *value = next;
+                        });
+                    }
+                    return;
                 }
-                return;
-            }
-            if let Some(card) = find_card_by_strand_id(&columns.read(), &strand_id) {
-                let draft = card_detail_draft_from_card(&card);
-                card_edit_title.set(draft.title);
-                card_edit_description.set(draft.description);
-                card_edit_body.set(draft.description_body);
-                card_edit_synthesis.set(draft.synthesis);
-                card_edit_synthesis_target_id.set(None);
-                card_edit_labels.set(draft.labels.join(", "));
-                card_edit_assignee.set(draft.assignee);
-                card_edit_due.set(draft.due);
-                let calendar = draft.calendar.clone();
-                card_edit_calendar.set(calendar.clone());
-                calendar_rsvp_occurrence.set(calendar_occurrence_hint(&calendar));
-                editing_card_detail.set(false);
-                card_detail_edit_status.set(String::new());
-                assignee_picker_open.set(false);
-                assignee_filter.set(String::new());
-                assignee_selected_actor_ids
-                    .set(card_assigned_actor_ids(&card).into_iter().collect());
-                assignee_edit_status.set(String::new());
-                due_picker_open.set(false);
-                due_edit_value.set(editor_value_for_optional_card_field(&card.due));
-                due_calendar_month.set(due_calendar_month_for_value(&card.due));
-                due_edit_status.set(String::new());
-                card_detail_actions_open.set(false);
-                if routed_tab == CardDetailContentTab::Discussion {
-                    card_detail_discussion_mounted_for.set(Some(card.primary_strand_id.clone()));
+                if let Some(card) = find_card_by_strand_id(&columns.get(), &strand_id) {
+                    let draft = card_detail_draft_from_card(&card);
+                    card_edit_title.revise(|value| {
+                        let next = draft.title;
+                        *value = next;
+                    });
+                    card_edit_description.revise(|value| {
+                        let next = draft.description;
+                        *value = next;
+                    });
+                    card_edit_body.revise(|value| {
+                        let next = draft.description_body;
+                        *value = next;
+                    });
+                    card_edit_synthesis.revise(|value| {
+                        let next = draft.synthesis;
+                        *value = next;
+                    });
+                    card_edit_synthesis_target_id.revise(|value| {
+                        let next = None;
+                        *value = next;
+                    });
+                    card_edit_labels.revise(|value| {
+                        let next = draft.labels.join(", ");
+                        *value = next;
+                    });
+                    card_edit_assignee.revise(|value| {
+                        let next = draft.assignee;
+                        *value = next;
+                    });
+                    card_edit_due.revise(|value| {
+                        let next = draft.due;
+                        *value = next;
+                    });
+                    let calendar = draft.calendar.clone();
+                    card_edit_calendar.revise(|value| {
+                        let next = calendar.clone();
+                        *value = next;
+                    });
+                    calendar_rsvp_occurrence.revise(|value| {
+                        let next = calendar_occurrence_hint(&calendar);
+                        *value = next;
+                    });
+                    editing_card_detail.revise(|value| {
+                        let next = false;
+                        *value = next;
+                    });
+                    card_detail_edit_status.revise(|value| {
+                        let next = String::new();
+                        *value = next;
+                    });
+                    assignee_picker_open.revise(|value| {
+                        let next = false;
+                        *value = next;
+                    });
+                    assignee_filter.revise(|value| {
+                        let next = String::new();
+                        *value = next;
+                    });
+                    assignee_selected_actor_ids.revise(|value| {
+                        let next = card_assigned_actor_ids(&card).into_iter().collect();
+                        *value = next;
+                    });
+                    assignee_edit_status.revise(|value| {
+                        let next = String::new();
+                        *value = next;
+                    });
+                    due_picker_open.revise(|value| {
+                        let next = false;
+                        *value = next;
+                    });
+                    due_edit_value.revise(|value| {
+                        let next = editor_value_for_optional_card_field(&card.due);
+                        *value = next;
+                    });
+                    due_calendar_month.revise(|value| {
+                        let next = due_calendar_month_for_value(&card.due);
+                        *value = next;
+                    });
+                    due_edit_status.revise(|value| {
+                        let next = String::new();
+                        *value = next;
+                    });
+                    card_detail_actions_open.revise(|value| {
+                        let next = false;
+                        *value = next;
+                    });
+                    if routed_tab == CardDetailContentTab::Discussion {
+                        card_detail_discussion_mounted_for.revise(|value| {
+                            let next = Some(card.primary_strand_id.clone());
+                            *value = next;
+                        });
+                    }
+                    card_detail_tab.revise(|value| {
+                        let next = routed_tab;
+                        *value = next;
+                    });
+                    card_synthesis_history_open_id.revise(|value| {
+                        let next = None;
+                        *value = next;
+                    });
+                    card_synthesis_selected_revision_id.revise(|value| {
+                        let next = None;
+                        *value = next;
+                    });
+                    selected_card.revise(|value| {
+                        let next = Some(card);
+                        *value = next;
+                    });
                 }
-                card_detail_tab.set(routed_tab);
-                card_synthesis_history_open_id.set(None);
-                card_synthesis_selected_revision_id.set(None);
-                selected_card.set(Some(card));
-            }
-        });
+            });
+        };
     }
 
     {
         let routed_board_id = route_board_id(&route);
-        use_effect(move || {
-            let Some(board_id) = routed_board_id.clone() else {
-                return;
-            };
-            // `route_board_id` already failed closed on anything that is not a
-            // canonical Space id, so the routed value is trusted here.
-            if selected_board().as_ref() != Some(&board_id) {
-                selected_board.set(Some(board_id));
-            }
-        });
+        {
+            let app = app.clone();
+            let _state_store = state_store.clone();
+            let _weak = weak.clone();
+            scope.effect(move || {
+                let _ = app.state_revision.get();
+                let Some(board_id) = routed_board_id.clone() else {
+                    return;
+                };
+                // `route_board_id` already failed closed on anything that is not a
+                // canonical Space id, so the routed value is trusted here.
+                if selected_board.get().as_ref() != Some(&board_id) {
+                    selected_board.revise(|value| {
+                        let next = Some(board_id);
+                        *value = next;
+                    });
+                }
+            });
+        };
     }
 
     {
         let routed_strand_id = route_card_strand_id(&route);
-        use_effect(move || {
-            let Some(strand_id) = routed_strand_id.clone() else {
-                return;
-            };
-            let raw_operations = state_store.read().load().raw_operations;
-            let aliases = event_derived_target_aliases(&raw_operations);
-            let strand_id = resolve_event_derived_target_alias(&aliases, &strand_id);
-            let (projected, overlay) = match current_inventory() {
-                Ok(Some(inventory)) => (
-                    inventory.strands,
-                    std::borrow::Cow::Owned(kanban_pending_operations(&raw_operations)),
-                ),
-                Ok(None) => (
-                    lifecycle_strand_projection(),
-                    std::borrow::Cow::Borrowed(raw_operations.as_slice()),
-                ),
-                Err(_) => return,
-            };
-            let Some(strand_board) = strand_views_from_projection_and_ops(&projected, &overlay)
-                .into_iter()
-                .find(|view| view.strand_id == strand_id)
-                .and_then(|view| view.board_space_id)
-            else {
-                return;
-            };
-            // The projection may still reference a holder-local handle; only a
-            // canonical Space id may drive the selection.
-            let Ok(strand_board) = arkret_sdk::SpaceId::new(strand_board) else {
-                return;
-            };
-            if selected_board().as_ref() != Some(&strand_board) {
-                selected_board.set(Some(strand_board));
-            }
-        });
+        {
+            let app = app.clone();
+            let state_store = state_store.clone();
+            let _weak = weak.clone();
+            scope.effect(move || {
+                let _ = app.state_revision.get();
+                let Some(strand_id) = routed_strand_id.clone() else {
+                    return;
+                };
+                let raw_operations = state_store.read(|store| store.load()).raw_operations;
+                let aliases = event_derived_target_aliases(&raw_operations);
+                let strand_id = resolve_event_derived_target_alias(&aliases, &strand_id);
+                let (projected, overlay) = match current_inventory.get() {
+                    Ok(Some(inventory)) => (
+                        inventory.strands,
+                        std::borrow::Cow::Owned(kanban_pending_operations(&raw_operations)),
+                    ),
+                    Ok(None) => (
+                        lifecycle_strand_projection.get(),
+                        std::borrow::Cow::Borrowed(raw_operations.as_slice()),
+                    ),
+                    Err(_) => return,
+                };
+                let Some(strand_board) = strand_views_from_projection_and_ops(&projected, &overlay)
+                    .into_iter()
+                    .find(|view| view.strand_id == strand_id)
+                    .and_then(|view| view.board_space_id)
+                else {
+                    return;
+                };
+                // The projection may still reference a holder-local handle; only a
+                // canonical Space id may drive the selection.
+                let Ok(strand_board) = arkret_sdk::SpaceId::new(strand_board) else {
+                    return;
+                };
+                if selected_board.get().as_ref() != Some(&strand_board) {
+                    selected_board.revise(|value| {
+                        let next = Some(strand_board);
+                        *value = next;
+                    });
+                }
+            });
+        };
     }
 
     // The admitted current view contains the whole Realm inventory. Prefer
     // local projection; HTTP only bootstraps a still-missing display baseline.
     // The ordinary follower owns subsequent current/history recovery.
-    let session = crate::app::SessionContext::get();
-    let read_scope = use_memo(use_reactive(
-        (&base_url, &local_realm_id),
-        move |(base, realm)| {
+    let session = app.clone();
+    let read_scope = {
+        let app = app.clone();
+        let base = base_url.clone();
+        let realm = local_realm_id.clone();
+        scope.bond(move || {
             (
-                base,
-                realm,
-                (session.session_generation)(),
-                kanban_read_account_scope((session.active_account)()),
+                base.clone(),
+                realm.clone(),
+                app.session_generation.get(),
+                kanban_read_account_scope(app.active_account.get()),
             )
-        },
-    ));
-    let read_owner = use_hook(|| {
-        std::rc::Rc::new(std::cell::RefCell::new(
-            super::projection_reads::ProjectionReadOwner::default(),
-        ))
-    });
-    use_effect(move || {
-        let scope = read_scope();
-        let credential = token();
+        })
+    };
+    #[cfg(all(target_arch = "wasm32", feature = "spec-conformance"))]
+    tracing::warn!(owner = ?scope.id(), generation = app.session_generation.get_untracked(), board_selected = controller.selected_board.get_untracked().is_some(), "kanban projection owner mounted");
+    let read_owner = controller.inventory_owner.get_untracked();
+    {
+        let app = app.clone();
+        let state_store = state_store.clone();
+        let weak = weak.clone();
+        let read_owner = read_owner.clone();
+        let session = session.clone();
+        scope.effect(move || {
+ let _=app.state_revision.get();
+        let scope = read_scope.get();
+        let credential = token.get();
         let account = scope.3.as_ref().map(|(_, account, ..)| account);
         let enabled = !credential.trim().is_empty()
             && !scope.0.trim().is_empty()
             && !scope.1.trim().is_empty()
             && account.is_some_and(|account| {
-                state_store.read().active_authority().as_ref() == Some(account)
+                state_store.read(|store|store.active_authority()).as_ref() == Some(account)
             })
-            && !state_store.read().account_scope_read_denied(&scope.1);
+            && !state_store.read(|store|store.account_scope_read_denied(&scope.1));
         if read_owner
             .borrow_mut()
             .set_scope(enabled.then_some(scope.clone()))
         {
-            lifecycle_container_projection.set(Vec::new());
-            lifecycle_strand_projection.set(Vec::new());
+            #[cfg(all(target_arch = "wasm32", feature = "spec-conformance"))]
+            tracing::warn!(generation = scope.2, enabled, has_account = scope.3.is_some(), "kanban projection scope reset");
+            lifecycle_container_projection.revise(|value|{let next=Vec::new();*value=next;});
+            lifecycle_strand_projection.revise(|value|{let next=Vec::new();*value=next;});
         }
         if !enabled {
             return;
         }
-        match current_inventory() {
+        match current_inventory.get() {
             Ok(Some(inventory)) => {
                 read_owner.borrow_mut().cancel_pending();
                 read_owner.borrow_mut().cover(ProjectionReadSet::all());
-                if *lifecycle_container_projection.peek() != inventory.containers {
-                    lifecycle_container_projection.set(inventory.containers);
+                if lifecycle_container_projection.get_untracked() != inventory.containers {
+                    lifecycle_container_projection.revise(|value|{let next=inventory.containers;*value=next;});
                 }
-                if *lifecycle_strand_projection.peek() != inventory.strands {
-                    lifecycle_strand_projection.set(inventory.strands);
+                if lifecycle_strand_projection.get_untracked() != inventory.strands {
+                    lifecycle_strand_projection.revise(|value|{let next=inventory.strands;*value=next;});
                 }
                 return;
             }
             Err(error) => {
-                read_owner.borrow_mut().cancel_pending();
+                read_owner.borrow_mut().invalidate();
                 tracing::warn!(%error, "admitted Kanban inventory is unavailable");
-                if !lifecycle_container_projection.peek().is_empty() {
-                    lifecycle_container_projection.set(Vec::new());
+                if !lifecycle_container_projection.get_untracked().is_empty() {
+                    lifecycle_container_projection.revise(|value|{let next=Vec::new();*value=next;});
                 }
-                if !lifecycle_strand_projection.peek().is_empty() {
-                    lifecycle_strand_projection.set(Vec::new());
+                if !lifecycle_strand_projection.get_untracked().is_empty() {
+                    lifecycle_strand_projection.revise(|value|{let next=Vec::new();*value=next;});
                 }
                 return;
             }
@@ -550,15 +733,16 @@ pub(super) fn KanbanEffects(
         }
         let request = (
             scope,
-            crate::app::account_sync_ready(&sync_cursor()),
-            realm_live_epoch(),
-            state_store.read().current_generation(),
+            crate::app::account_sync_ready(&sync_cursor.get()),
+            realm_live_epoch.get(),
+            state_store.read(|store|store.current_generation()),
         );
         if !read_owner.borrow_mut().queue.request(request) {
             return;
         }
         let owner = read_owner.clone();
-        let task = spawn(async move {
+        let session=session.clone();let state_store=state_store.clone();
+        let task = {let Some(scope)=weak.upgrade()else{return;};scope.owner().spawn(async move {
             loop {
                 let next = owner.borrow_mut().queue.next();
                 let Some(request) = next else {
@@ -566,10 +750,10 @@ pub(super) fn KanbanEffects(
                     return;
                 };
                 let (scope, ..) = request.clone();
-                if *read_scope.peek() != scope
-                    || *session.session_generation.peek() != scope.2
-                    || kanban_read_account_scope(session.active_account.peek().clone()) != scope.3
-                    || token.peek().trim().is_empty()
+                if read_scope.get_untracked() != scope
+                    || session.session_generation.get_untracked() != scope.2
+                    || kanban_read_account_scope(session.active_account.get_untracked().clone()) != scope.3
+                    || token.get_untracked().trim().is_empty()
                 {
                     continue;
                 }
@@ -578,15 +762,17 @@ pub(super) fn KanbanEffects(
                     continue;
                 }
                 let realm = scope.1.clone();
-                let list_fence = state_store.peek().realm_list_read_fence(&realm);
-                if state_store.peek().account_scope_read_denied(&realm) {
+                let list_fence = state_store.read(|store|store.realm_list_read_fence(&realm));
+                if state_store.read(|store|store.account_scope_read_denied(&realm)) {
                     continue;
                 }
                 let Some((_, expected_account, expected_device, _)) = scope.3.clone() else {
                     continue;
                 };
-                let credential = token.peek().clone();
+                let credential = token.get_untracked().clone();
                 let request_fence = list_fence.clone();
+                #[cfg(all(target_arch = "wasm32", feature = "spec-conformance"))]
+                tracing::warn!(generation = scope.2, live_epoch = request.2, spaces = needed.spaces, strands = needed.strands, "kanban projection fetch begins");
                 let result = with_authed_api(&scope.0, credential, move |api| async move {
                     let http = api.sdk_http_client()?;
                     let bound =
@@ -613,23 +799,19 @@ pub(super) fn KanbanEffects(
                 .await;
                 // An old account, Station, session or route may finish after
                 // its replacement. Never install its display rows there.
-                if *read_scope.peek() != scope
-                    || *session.session_generation.peek() != scope.2
-                    || kanban_read_account_scope(session.active_account.peek().clone()) != scope.3
-                    || token.peek().trim().is_empty()
+                if read_scope.get_untracked() != scope
+                    || session.session_generation.get_untracked() != scope.2
+                    || kanban_read_account_scope(session.active_account.get_untracked().clone()) != scope.3
+                    || token.get_untracked().trim().is_empty()
                 {
                     continue;
                 }
-                let store = state_store.peek();
-                if store.account_scope_read_denied(&scope.1)
+                if state_store.read(|store|store.account_scope_read_denied(&scope.1)
                     || store
                         .require_realm_list_read_fence(&scope.1, Some(&list_fence))
                         .is_err()
                     || store.current_product_view_stamp(&scope.1).is_some()
-                {
-                    continue;
-                }
-                drop(store);
+                ){continue;}
                 match result {
                     Ok(snapshot) => {
                         owner.borrow_mut().cover_if_latest(
@@ -640,10 +822,10 @@ pub(super) fn KanbanEffects(
                             },
                         );
                         if let Some(containers) = snapshot.containers {
-                            lifecycle_container_projection.set(containers);
+                            lifecycle_container_projection.revise(|value|{let next=containers;*value=next;});
                         }
                         if let Some(strands) = snapshot.strands {
-                            lifecycle_strand_projection.set(strands);
+                            lifecycle_strand_projection.revise(|value|{let next=strands;*value=next;});
                         }
                     }
                     Err(error) => {
@@ -651,10 +833,15 @@ pub(super) fn KanbanEffects(
                     }
                 }
             }
-        });
-        read_owner.borrow_mut().attach(task);
+        })};
+        if let Ok(task)=task{read_owner.borrow_mut().attach(task);}
     });
+    };
 
+    {
+        let owner = read_owner.clone();
+        let _ = scope.on_cleanup(move || owner.borrow_mut().cancel_pending());
+    }
     // Locked author-private fields can become readable after another device
     // uploads the account-private plaintext sidecar. A device that already has
     // the account MLS secret should restore that sidecar silently with active
@@ -668,14 +855,19 @@ pub(super) fn KanbanEffects(
         let restore_device = device_id.clone();
         let restore_sync_cursor = sync_cursor;
         let restore_realm_live_epoch = realm_live_epoch;
-        use_effect(move || {
-            let Some(card) = selected_card() else {
+        {
+            let app = app.clone();
+            let state_store = state_store.clone();
+            let weak = weak.clone();
+            scope.effect(move || {
+ let _=app.state_revision.get();
+            let Some(card) = selected_card.get() else {
                 return;
             };
             if !private_narrative_restore_needed(card.description_locked, card.synthesis_locked) {
                 return;
             }
-            let api_token = restore_token();
+            let api_token = restore_token.get();
             if restore_base.trim().is_empty()
                 || api_token.trim().is_empty()
                 || restore_realm_id.trim().is_empty()
@@ -695,8 +887,8 @@ pub(super) fn KanbanEffects(
                 return;
             }
             let projection_shape = {
-                let containers_len = lifecycle_container_projection.read().len();
-                let strands_len = lifecycle_strand_projection.read().len();
+                let containers_len = lifecycle_container_projection.get().len();
+                let strands_len = lifecycle_strand_projection.get().len();
                 format!("{containers_len}:{strands_len}")
             };
             let restore_key = format!(
@@ -713,23 +905,24 @@ pub(super) fn KanbanEffects(
             // Wake when account bootstrap first becomes ready, but never use
             // the opaque cursor token as a data revision. Durable Realm
             // changes are represented by the explicit live epoch.
-            let account_sync_ready = crate::app::account_sync_ready(&restore_sync_cursor());
-            let live_epoch = restore_realm_live_epoch();
+            let account_sync_ready = crate::app::account_sync_ready(&restore_sync_cursor.get());
+            let live_epoch = restore_realm_live_epoch.get();
             let restore_key = format!(
                 "{restore_key}|sync_ready={}|epoch={live_epoch}",
                 account_sync_ready as u8
             );
-            if mls_sidecar_restore_key_seen() == restore_key {
+            if mls_sidecar_restore_key_seen.get() == restore_key {
                 return;
             }
-            mls_sidecar_restore_key_seen.set(restore_key);
+            mls_sidecar_restore_key_seen.revise(|value|{let next=restore_key;*value=next;});
 
             let base = restore_base.clone();
             let actor = restore_actor.clone();
             let authority = restore_authority.clone();
             let device = restore_device.clone();
-            let restore_scope = read_scope.peek().clone();
-            spawn(async move {
+            let restore_scope = read_scope.get_untracked().clone();
+            let state_store=state_store.clone();
+            {let Some(scope)=weak.upgrade()else{return;};let _=scope.owner().spawn(async move {
                 for attempt in 0..5u32 {
                     if attempt > 0 {
                         crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(
@@ -737,7 +930,7 @@ pub(super) fn KanbanEffects(
                         ))
                         .await;
                     }
-                    if *read_scope.peek() != restore_scope {
+                    if read_scope.get_untracked() != restore_scope {
                         return;
                     }
                     let actor_for_fetch = actor.clone();
@@ -753,7 +946,7 @@ pub(super) fn KanbanEffects(
                             Ok(payload)
                         })
                         .await;
-                    if *read_scope.peek() != restore_scope {
+                    if read_scope.get_untracked() != restore_scope {
                         return;
                     }
                     let payload = match result {
@@ -788,7 +981,7 @@ pub(super) fn KanbanEffects(
                     let restored_private_plaintext = {
                         let report = crate::mls::account_recovery::restore_mls_history_with_local_secret_from_payload(
                             &payload,
-                            &crate::app::runtime_adapter::state_store_handle(state_store),
+                            &state_store.handle(),
                             secure_store.as_ref(),
                             &authority,
                             &actor,
@@ -798,17 +991,16 @@ pub(super) fn KanbanEffects(
 
                     // Restoring the sidecar writes the local store, which
                     // invalidates the columns memo without another Event scan.
-                    let card_unlocked = selected_card()
+                    let card_unlocked = selected_card.get()
                         .is_some_and(|card| !card.description_locked && !card.synthesis_locked);
                     if restored_private_plaintext || card_unlocked {
                         break;
                     }
                 }
-            });
+            });};
         });
+        };
     }
-
-    rsx! {}
 }
 
 fn private_narrative_restore_needed(description_locked: bool, synthesis_locked: bool) -> bool {
@@ -877,7 +1069,7 @@ mod projection_read_tests {
                     "strands"
                 };
                 let body =
-                    json!({"realm_id": realm, (collection): [], "total": 0, "has_more": false})
+                    json!({"realm_id": realm, (collection): [], "total_count": 0, "has_more": false})
                         .to_string();
                 write!(connection, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{}", body.len(), body).unwrap();
                 paths.push(path);

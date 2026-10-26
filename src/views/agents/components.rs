@@ -1,42 +1,16 @@
-//! Reusable agent UI components: actor-kind badge, the action-approve dialog, and the
-//! controller-owned draft-approval panel.
+use std::rc::Rc;
 
-use dioxus::prelude::*;
+use glory::Scope;
 use serde_json::{Value, json};
 
 use super::model::{
     ActionApproveDialogState, ActionRequestNonceStatus, actor_kind_badge_class, actor_kind_label,
     approval_publication, build_action_approve_payload, build_action_reject_payload,
 };
+use crate::presentation::{InksonContext, View};
 use crate::transport::auth::{ApiCallError, with_authed_api};
-use crate::ui::button::{Button, ButtonVariant};
-use crate::ui::input::Input;
 use crate::views::helpers::short_protocol_id;
-
-/// Render the non-authoritative `actor_kind` badge from an Actor Profile. Pure helper so
-/// the dashboard / chat / kanban can reuse the same colored chip
-/// without duplicating the mapping.
-#[component]
-pub fn ActorKindBadge(actor_kind: Option<String>) -> Element {
-    let kind = actor_kind.as_deref();
-    let label = actor_kind_label(kind).unwrap_or("actor");
-    let class = actor_kind_badge_class(kind);
-    rsx! {
-        span {
-            class: "{class}",
-            "data-testid": "actor-kind-badge",
-            "data-actor-kind": kind.unwrap_or("unknown"),
-            "{label}"
-        }
-    }
-}
-
-/// Classify a failed confirmation submit into the dialog state it leaves and
-/// the status copy it shows.
-///
-/// Expiry is only ever the governance Station's verdict against the covering
-/// RealmCommit `committed_at` (`constraint-schema.md` §9.2.6); the client
-/// never compares `expires_at` with its own clock.
+use crate::views::settings::widgets::*;
 fn approval_submit_failure(error: &ApiCallError) -> (ActionApproveDialogState, String) {
     let inner = error.inner();
     if crate::api_error::is_agent_confirmation_expired_error(inner) {
@@ -56,440 +30,435 @@ fn approval_submit_failure(error: &ApiCallError) -> (ActionApproveDialogState, S
         )
     }
 }
-
-/// Review a complete pre-signed Agent publication before submitting its
-/// target-Realm approval command. The attachment remains immutable on retries.
-#[component]
-pub fn ActionApproveDialog(
-    token: Signal<String>,
-    actor_id: String,
-    request_id: String,
-    agent_id: String,
-    proposed_action: String,
-    target_json: String,
-    publication_event: arkret_sdk::Event,
-    expires_at: String,
-    nonce_status: String,
-) -> Element {
-    // A4 — base_url from session context instead of a prop.
-    let base_url = crate::app::SessionContext::base_url_string();
-    let mut state = use_signal(|| ActionApproveDialogState::Reviewing);
-    let mut status_text = use_signal(String::new);
-
-    let nonce_st = match nonce_status.as_str() {
+#[derive(Clone)]
+pub struct ActionApproveDialogProps {
+    pub actor_id: String,
+    pub request_id: String,
+    pub agent_id: String,
+    pub proposed_action: String,
+    pub target_json: String,
+    pub publication_event: arkret_sdk::Event,
+    pub expires_at: String,
+    pub nonce_status: String,
+}
+pub fn actor_kind_badge(actor_kind: Option<String>) -> View {
+    let kind = actor_kind.as_deref();
+    paragraph(
+        actor_kind_badge_class(kind),
+        actor_kind_label(kind).unwrap_or("actor"),
+    )
+}
+pub fn action_approve_dialog(
+    scope: &Scope,
+    context: Rc<InksonContext>,
+    props: ActionApproveDialogProps,
+) -> View {
+    let state = scope.cage(ActionApproveDialogState::Reviewing);
+    let feedback = scope.cage(String::new());
+    let nonce = match props.nonce_status.as_str() {
         "fresh" => ActionRequestNonceStatus::Fresh,
         "consumed" => ActionRequestNonceStatus::Consumed,
         _ => ActionRequestNonceStatus::Unknown,
     };
-    let can_submit = nonce_st != ActionRequestNonceStatus::Consumed
-        && state() == ActionApproveDialogState::Reviewing;
-
-    rsx! {
-        div {
-            class: "event",
-            "data-testid": "action-approve-dialog",
-            "data-state": "{state().as_data_state()}",
-            "data-request-id": "{request_id}",
-            div { class: "event-head",
-                span { "Approve agent action" }
-                span { class: "{nonce_st.badge_class()}", "nonce {nonce_st.label()}" }
-            }
-            div { class: "muted", "data-testid": "action-approve-publication-event",
-                "publication Event: {publication_event.event_id}"
-            }
-            div { class: "muted", "data-testid": "action-approve-expires-at",
-                "expires_at: {expires_at}"
-            }
-            div { class: "actions",
-                Button {
-                    variant: ButtonVariant::Primary,
-                    "data-testid": "action-approve-confirm-button",
-                    disabled: !can_submit,
-                    onclick: {
-                        let base = base_url.clone();
-                        let actor = actor_id.clone();
-                        let request_id = request_id.clone();
-                        let agent = agent_id.clone();
-                        let action = proposed_action.clone();
-                        let target_json = target_json.clone();
-                        let publication = publication_event.clone();
-                        let approval_expires_at = expires_at.clone();
-                        move |_| {
-                            state.set(ActionApproveDialogState::Submitting);
-                            let base = base.clone();
-                            let actor = actor.clone();
-                            let request_id = request_id.clone();
-                            let agent = agent.clone();
-                            let action = action.clone();
-                            let target_json = target_json.clone();
-                            let publication = publication.clone();
-                            let approval_expires_at = approval_expires_at.clone();
-                            let api_token = token();
-                            spawn(async move {
-                                let target = match serde_json::from_str::<arkret_sdk::AgentActionTarget>(&target_json) {
-                                    Ok(target) => target,
-                                    Err(error) => {
-                                        state.set(ActionApproveDialogState::Reviewing);
-                                        status_text.set(format!("invalid approval target: {error}"));
-                                        return;
-                                    }
-                                };
-                                let request_payload = json!({
-                                    "request_id": request_id,
-                                    "agent_id": agent,
-                                    "proposed_action": action,
-                                    "target": target,
-                                    "publication_event": publication,
-                                });
-                                let op = build_action_approve_payload(
-                                    &request_payload,
-                                    &approval_expires_at,
-                                )
-                                .and_then(|payload| {
-                                    let publication = approval_publication(&request_payload)?;
-                                    crate::operation::TypedOperationBuilder::new::<
-                                        arkret_sdk::event_spec::AgentActionApprove,
-                                    >(
-                                        &publication.realm_id.to_string(),
-                                        &actor,
-                                        payload,
-                                    )
-                                    .build_sdk_event("inkson")?
-                                    .with_publication_event(publication)
-                                });
+    let can_submit = scope.bond(move || {
+        nonce != ActionRequestNonceStatus::Consumed
+            && state.get() == ActionApproveDialogState::Reviewing
+    });
+    let owner = scope.downgrade();
+    let approve_context = context.clone();
+    let approval = props.clone();
+    card(
+        scope,
+        context.clone(),
+        "Approve agent action",
+        vec![
+            paragraph(nonce.badge_class(), format!("nonce {}", nonce.label())),
+            paragraph(
+                "muted",
+                format!("publication Event: {}", props.publication_event.event_id),
+            ),
+            paragraph("muted", format!("expires_at: {}", props.expires_at)),
+            line(
+                "actions",
+                vec![
+                    action(
+                        scope,
+                        context.clone(),
+                        "action-approve-confirm-button",
+                        "Approve",
+                        "primary",
+                        can_submit,
+                        move || {
+                            if nonce == ActionRequestNonceStatus::Consumed
+                                || state.get_untracked() != ActionApproveDialogState::Reviewing
+                            {
+                                return;
+                            }
+                            let context = approve_context.clone();
+                            let props = approval.clone();
+                            let Some(scope) = owner.upgrade() else { return };
+                            let base = context.base_url.get();
+                            let token = context.token.get();
+                            state.revise(|value| *value = ActionApproveDialogState::Submitting);
+                            spawn(&scope, async move {
+                                let target =
+                                    match serde_json::from_str::<arkret_sdk::AgentActionTarget>(
+                                        &props.target_json,
+                                    ) {
+                                        Ok(target) => target,
+                                        Err(error) => {
+                                            state.revise(|value| {
+                                                *value = ActionApproveDialogState::Reviewing
+                                            });
+                                            feedback.revise(|value| {
+                                                *value = format!("invalid approval target: {error}")
+                                            });
+                                            return;
+                                        }
+                                    };
+                                let request = json!({"request_id":props.request_id,"agent_id":props.agent_id,"proposed_action":props.proposed_action,
+      "target":target,"publication_event":props.publication_event});
+                                let op = build_action_approve_payload(&request, &props.expires_at)
+                                    .and_then(|payload| {
+                                        let publication = approval_publication(&request)?;
+                                        crate::operation::TypedOperationBuilder::new::<
+                                            arkret_sdk::event_spec::AgentActionApprove,
+                                        >(
+                                            &publication.realm_id.to_string(),
+                                            &props.actor_id,
+                                            payload,
+                                        )
+                                        .build_sdk_event("inkson")?
+                                        .with_publication_event(publication)
+                                    });
                                 let op = match op {
                                     Ok(op) => op,
-                                    Err(err) => {
-                                        state.set(ActionApproveDialogState::Reviewing);
-                                        status_text.set(format!("approval build failed: {err}"));
+                                    Err(error) => {
+                                        state.revise(|value| {
+                                            *value = ActionApproveDialogState::Reviewing
+                                        });
+                                        feedback.revise(|value| {
+                                            *value = format!("approval build failed: {error}")
+                                        });
                                         return;
                                     }
                                 };
-                                match with_authed_api(&base, api_token, move |api| {
-                                    let op = op.clone();
-                                    async move {
-                                        api.event_submitter()?.submit_sdk_event(&op).await
-                                    }
+                                let result = with_authed_api(&base, token, move |api| async move {
+                                    api.event_submitter()?.submit_sdk_event(&op).await
                                 })
-                                .await
-                                {
-                                    Ok(resp) => {
-                                        state.set(ActionApproveDialogState::Submitted);
-                                        status_text.set(format!(
-                                            "approved; event_id {}",
-                                            resp.event_id
-                                        ));
+                                .await;
+                                match result {
+                                    Ok(response) => {
+                                        state.revise(|value| {
+                                            *value = ActionApproveDialogState::Submitted
+                                        });
+                                        feedback.revise(|value| {
+                                            *value =
+                                                format!("approved; event_id {}", response.event_id)
+                                        });
                                     }
-                                    Err(err) => {
-                                        let (next, status) = approval_submit_failure(&err);
-                                        state.set(next);
-                                        status_text.set(status);
+                                    Err(error) => {
+                                        let (next, message) = approval_submit_failure(&error);
+                                        state.revise(|value| *value = next);
+                                        feedback.revise(|value| *value = message);
                                     }
                                 }
                             });
-                        }
-                    },
-                    "Approve"
-                }
-                Button {
-                    variant: ButtonVariant::Secondary,
-                    "data-testid": "action-approve-reject-button",
-                    disabled: state() == ActionApproveDialogState::Submitting,
-                    onclick: move |_| {
-                        state.set(ActionApproveDialogState::Rejected);
-                        status_text.set("rejected locally — no approve event will be submitted".to_owned());
-                    },
-                    "Reject"
-                }
-            }
-            if !status_text().is_empty() {
-                div { class: "muted", "data-testid": "action-approve-status", "{status_text}" }
-            }
-        }
-    }
-}
-
-/// Approval panel for controller-owne`ak.agent.action_approve
-/// requests. Lets `ak.agent.action_rejectwith `ak.agent.action_approve`
-/// or reject with `ak.agent.action_reject`.
-///
-/// `ak.self.accounttroller-owned account-data over
-/// `ak.self.account.subscribe`; until the subscribe fold is attached to
-/// this component, operators can paste a draft or action request payload.
-#[component]
-pub fn DraftApprovalPanel(token: Signal<String>, controller_principal_id: String) -> Element {
-    // A4 — base_url from session context instead of a prop.
-    let base_url = crate::app::SessionContext::base_url_string();
-    let mut drafts = use_signal(Vec::<Value>::new);
-    let mut draft_input = use_signal(String::new);
-    let mut panel_status = use_signal(String::new);
-    let mut reject_reason = use_signal(String::new);
-
-    // Controller-private events (action_approve / action_reject) author
-    // in the controller's principal-control realm.
-    // The draft DTO does not carry the controller's accepted PCR create or a
-    // typed PCR binding. Keep approval disabled instead of deriving a Realm
-    // identifier from the controller DID.
-    let principal_realm: Option<String> = None;
-
-    rsx! {
-        div { class: "event", "data-testid": "agent-draft-approval",
-            div { class: "event-head",
-                span { "Draft and action approvals" }
-                span { class: "badge blue", "ak.agent.* approval" }
-            }
-            div { class: "muted",
-                "Review agent-proposed drafts or action requests before anything reaches a shared Realm. Approve submits ak.agent.action_approve; reject submits ak.agent.action_reject with a human reason when provided."
-            }
-            div { class: "muted", "data-testid": "agent-draft-data-source",
-                "Data source: controller-owned account-data over ak.self.account.subscribe; paste a ak.agent.draft.v1 or ak.agent.action_request payload below to review it now."
-            }
-            if principal_realm.is_none() {
-                div { class: "badge amber", "data-testid": "agent-draft-no-realm",
-                    "controller principal realm unavailable — sign in to enable approvals"
-                }
-            }
-            div { class: "workflow-form",
-                Input {
-                    "data-testid": "agent-draft-input",
-                    placeholder: "ak.agent.draft.v1 or ak.agent.action_request payload (JSON)",
-                    value: "{draft_input}",
-                    oninput: move |event: FormEvent| draft_input.set(event.value()),
-                }
-                Input {
-                    "data-testid": "agent-draft-reject-reason-input",
-                    placeholder: "Optional rejection reason",
-                    value: "{reject_reason}",
-                    oninput: move |event: FormEvent| reject_reason.set(event.value()),
-                }
-                div { class: "actions",
-                    Button {
-                        variant: ButtonVariant::Secondary,
-                        "data-testid": "agent-draft-add-button",
-                        disabled: draft_input().trim().is_empty(),
-                        onclick: move |_| {
-                            match serde_json::from_str::<Value>(draft_input().as_str()) {
-                                Ok(value) => {
-                                    drafts.write().push(value);
-                                    draft_input.set(String::new());
-                                    panel_status.set("approval item added".to_owned());
-                                }
-                                Err(err) => panel_status.set(format!(
-                                    "approval item is not valid JSON: {err}"
-                                )),
-                            }
                         },
-                        "Add approval item"
-                    }
-                }
-                if !panel_status().is_empty() {
-                    div { class: "muted", "data-testid": "agent-draft-status", "{panel_status}" }
-                }
-            }
-            if drafts.read().is_empty() {
-                div { class: "muted", "data-testid": "agent-draft-empty",
-                    "No drafts or action requests to review."
-                }
+                    ),
+                    action(
+                        scope,
+                        context.clone(),
+                        "action-approve-reject-button",
+                        "Reject",
+                        "secondary",
+                        scope.bond(move || state.get() != ActionApproveDialogState::Submitting),
+                        move || {
+                            state.revise(|value| *value = ActionApproveDialogState::Rejected);
+                            feedback.revise(|value| {
+                                *value =
+                                    "rejected locally — no approve event will be submitted".into()
+                            });
+                        },
+                    ),
+                ],
+            ),
+            status(feedback),
+        ],
+    )
+}
+pub fn draft_approval_panel(
+    scope: &Scope,
+    context: Rc<InksonContext>,
+    controller_principal_id: String,
+) -> View {
+    let drafts = scope.cage(Vec::<Value>::new());
+    let input_value = scope.cage(String::new());
+    let reason = scope.cage(String::new());
+    let feedback = scope.cage(String::new());
+    let list_context = context.clone();
+    let list_owner = scope.downgrade();
+    // A draft carries no accepted principal-control Realm binding.
+    let principal_realm: Option<String> = None;
+    let rows = reactive(drafts, move |scope, rows| {
+        let context = list_context.clone();
+        let mut children = Vec::new();
+        for (index, draft) in rows.into_iter().enumerate() {
+            let string = |key| {
+                draft
+                    .get(key)
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_owned()
+            };
+            let request = string("request_id");
+            let draft_id = string("draft_id");
+            let id = if request.is_empty() {
+                draft_id
             } else {
-                div { class: "timeline", "data-testid": "agent-draft-list",
-                    for (idx, draft) in drafts.read().iter().enumerate() {
-                        {
-                            let request_id = draft
-                                .get("request_id")
-                                .and_then(Value::as_str)
-                                .unwrap_or("")
-                                .to_owned();
-                            let draft_id = draft
-                                .get("draft_id")
-                                .and_then(Value::as_str)
-                                .unwrap_or("")
-                                .to_owned();
-                            let item_id = if request_id.is_empty() {
-                                draft_id.clone()
-                            } else {
-                                request_id.clone()
-                            };
-                            let item_id = if item_id.is_empty() {
-                                "?".to_owned()
-                            } else {
-                                item_id
-                            };
-                            let proposed_action = draft
-                                .get("proposed_action")
-                                .and_then(Value::as_str)
-                                .unwrap_or("?")
-                                .to_owned();
-                            let agent_id = draft
-                                .get("agent_id")
-                                .and_then(Value::as_str)
-                                .unwrap_or("?")
-                                .to_owned();
-                            let expires_at = draft
-                                .get("expires_at")
-                                .and_then(Value::as_str)
-                                .unwrap_or("-")
-                                .to_owned();
-                            let body_preview = draft
-                                .get("content")
-                                .and_then(|c| c.get("body"))
-                                .and_then(Value::as_str)
-                                .unwrap_or("")
-                                .to_owned();
-                            let agent_id_label = short_protocol_id(&agent_id);
-                            let item_id_label = short_protocol_id(&item_id);
-                            rsx! {
-                                div {
-                                    class: "event",
-                                    "data-testid": "agent-draft-row",
-                                    "data-draft-id": "{draft_id}",
-                                    "data-request-id": "{request_id}",
-                                    div { class: "event-head",
-                                        span { class: "mono", title: "{item_id}", "{item_id_label}" }
-                                        span { class: "badge", "{proposed_action}" }
-                                        span { class: "mono", title: "{agent_id}", "agent {agent_id_label}" }
-                                    }
-                                    if !body_preview.is_empty() {
-                                        div { class: "muted", "draft: {body_preview}" }
-                                    }
-                                    div { class: "muted", "expires_at: {expires_at}" }
-                                    div { class: "actions",
-                                        Button {
-                                            variant: ButtonVariant::Primary,
-                                            "data-testid": "agent-draft-approve-button",
-                                            onclick: {
-                                                let base = base_url.clone();
-                                                let actor = controller_principal_id.clone();
-                                                move |_| {
-                                                    let base = base.clone();
-                                                    let actor = actor.clone();
-                                                    let api_token = token();
-                                                    let draft = drafts.read()[idx].clone();
-                                                    // Default approval window: 1h
-                                                    // from now, single-use nonce.
-                                                    let approval_expires_at = crate::clock::timestamp_in(60);
-                                                    let op = build_action_approve_payload(
-                                                        &draft,
-                                                        &approval_expires_at,
+                request
+            };
+            let proposed = string("proposed_action");
+            let agent = string("agent_id");
+            let expires = string("expires_at");
+            let body = draft
+                .get("content")
+                .and_then(|content| content.get("body"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_owned();
+            let owner = list_owner.clone();
+            let submit_context = context.clone();
+            let actor = controller_principal_id.clone();
+            let reject_context = context.clone();
+            let reject_owner = list_owner.clone();
+            let reject_actor = controller_principal_id.clone();
+            let reject_draft = draft.clone();
+            let reject_realm = principal_realm.clone();
+            let can_reject = reject_realm.is_some();
+            children.push(stack(
+                "event agent-draft-row",
+                vec![
+                    line(
+                        "event-head",
+                        vec![
+                            plain(short_protocol_id(&id)),
+                            paragraph("badge", proposed),
+                            paragraph("mono", short_protocol_id(&agent)),
+                        ],
+                    ),
+                    paragraph("muted", body),
+                    paragraph("muted", format!("expires_at: {expires}")),
+                    line(
+                        "actions",
+                        vec![
+                            action(
+                                scope,
+                                context.clone(),
+                                "agent-draft-approve-button",
+                                "Approve",
+                                "primary",
+                                true,
+                                move || {
+                                    let Some(scope) = owner.upgrade() else { return };
+                                    let base = submit_context.base_url.get();
+                                    let token = submit_context.token.get();
+                                    let actor = actor.clone();
+                                    let draft = draft.clone();
+                                    let op = build_action_approve_payload(
+                                        &draft,
+                                        &crate::clock::timestamp_in(60),
+                                    )
+                                    .and_then(|payload| {
+                                        let publication = approval_publication(&draft)?;
+                                        crate::operation::TypedOperationBuilder::new::<
+                                            arkret_sdk::event_spec::AgentActionApprove,
+                                        >(
+                                            &publication.realm_id.to_string(), &actor, payload
+                                        )
+                                        .build_sdk_event("inkson")?
+                                        .with_publication_event(publication)
+                                    });
+                                    spawn(&scope, async move {
+                                        let op = match op {
+                                            Ok(op) => op,
+                                            Err(error) => {
+                                                feedback.revise(|value| {
+                                                    *value =
+                                                        format!("approve build failed: {error}")
+                                                });
+                                                return;
+                                            }
+                                        };
+                                        let result =
+                                            with_authed_api(&base, token, move |api| async move {
+                                                api.event_submitter()?.submit_sdk_event(&op).await
+                                            })
+                                            .await;
+                                        match result {
+                                            Ok(response) => {
+                                                drafts.revise(|rows| {
+                                                    if index < rows.len() {
+                                                        rows.remove(index);
+                                                    }
+                                                });
+                                                feedback.revise(|value| {
+                                                    *value = format!(
+                                                        "approved; event_id {}",
+                                                        response.event_id
                                                     )
-                                                    .and_then(|payload| {
-                                                        let publication = approval_publication(&draft)?;
-                                                        crate::operation::TypedOperationBuilder::new::<
-                                                            arkret_sdk::event_spec::AgentActionApprove,
-                                                        >(
-                                                            &publication.realm_id.to_string(),
-                                                            &actor,
-                                                            payload,
-                                                        )
-                                                        .build_sdk_event("inkson")?
-                                    .with_publication_event(publication)
-                                                    });
-                                                    spawn(async move {
-                                                        let op = match op {
-                                                            Ok(op) => op,
-                                                            Err(err) => {
-                                                                panel_status.set(format!(
-                                                                    "approve build failed: {err}"
-                                                                ));
-                                                                return;
-                                                            }
-                                                        };
-                                                        match with_authed_api(&base, api_token, move |api| {
-                                                            let op = op.clone();
-                                                            async move {
-                                                                api.event_submitter()?.submit_sdk_event(&op).await
-                                                            }
-                                                        })
-                                                        .await
-                                                        {
-                                                            Ok(resp) => {
-                                                                drafts.write().remove(idx);
-                                                                panel_status.set(format!(
-                                                                    "approved; event_id {}",
-                                                                    resp.event_id
-                                                                ));
-                                                            }
-                                                            Err(err) => {
-                                                                panel_status.set(approval_submit_failure(&err).1)
-                                                            }
-                                                        }
-                                                    });
-                                                }
-                                            },
-                                            "Approve"
+                                                });
+                                            }
+                                            Err(error) => feedback.revise(|value| {
+                                                *value = approval_submit_failure(&error).1
+                                            }),
                                         }
-                                        Button {
-                                            variant: ButtonVariant::Secondary,
-                                            "data-testid": "agent-draft-reject-button",
-                                            disabled: principal_realm.is_none(),
-                                            onclick: {
-                                                let base = base_url.clone();
-                                                let actor = controller_principal_id.clone();
-                                                let realm = principal_realm.clone();
-                                                move |_| {
-                                                    let Some(realm) = realm.clone() else { return; };
-                                                    let base = base.clone();
-                                                    let actor = actor.clone();
-                                                    let api_token = token();
-                                                    let draft = drafts.read()[idx].clone();
-                                                    let reason = reject_reason();
-                                                    let rejected_at = crate::clock::now_timestamp();
-                                                    let op = build_action_reject_payload(
-                                                        &draft,
-                                                        &rejected_at,
-                                                        Some(&reason),
+                                    });
+                                },
+                            ),
+                            action(
+                                scope,
+                                context.clone(),
+                                "agent-draft-reject-button",
+                                "Reject",
+                                "secondary",
+                                can_reject,
+                                move || {
+                                    let Some(realm) = reject_realm.clone() else {
+                                        return;
+                                    };
+                                    let Some(scope) = reject_owner.upgrade() else {
+                                        return;
+                                    };
+                                    let context = reject_context.clone();
+                                    let generation = context.session_generation.get();
+                                    let account = context.active_account.get();
+                                    let base = context.base_url.get();
+                                    let token = context.token.get();
+                                    let op = build_action_reject_payload(
+                                        &reject_draft,
+                                        &crate::clock::now_timestamp(),
+                                        Some(&reason.get()),
+                                    )
+                                    .and_then(|payload| {
+                                        crate::operation::TypedOperationBuilder::new::<
+                                            arkret_sdk::event_spec::AgentActionReject,
+                                        >(
+                                            &realm, &reject_actor, payload
+                                        )
+                                        .build_sdk_event("inkson")
+                                    });
+                                    let submitted = reject_draft.clone();
+                                    spawn(&scope, async move {
+                                        let op = match op {
+                                            Ok(op) => op,
+                                            Err(error) => {
+                                                feedback.revise(|value| {
+                                                    *value = format!("reject build failed: {error}")
+                                                });
+                                                return;
+                                            }
+                                        };
+                                        let result =
+                                            with_authed_api(&base, token, move |api| async move {
+                                                api.event_submitter()?.submit_sdk_event(&op).await
+                                            })
+                                            .await;
+                                        if !context.session_matches(generation, &account) {
+                                            return;
+                                        }
+                                        match result {
+                                            Ok(response) => {
+                                                drafts.revise(|rows| {
+                                                    if let Some(at) = rows
+                                                        .iter()
+                                                        .position(|row| row == &submitted)
+                                                    {
+                                                        rows.remove(at);
+                                                    }
+                                                });
+                                                reason.revise(String::clear);
+                                                feedback.revise(|value| {
+                                                    *value = format!(
+                                                        "rejected; event_id {}",
+                                                        response.event_id
                                                     )
-                                                    .and_then(|payload| {
-                                                        crate::operation::TypedOperationBuilder::new::<
-                                                            arkret_sdk::event_spec::AgentActionReject,
-                                                        >(
-                                                            &realm,
-                                                            &actor,
-                                                            payload,
-                                                        )
-                                                        .build_sdk_event("inkson")
-                                                    });
-                                                    spawn(async move {
-                                                        let op = match op {
-                                                            Ok(op) => op,
-                                                            Err(err) => {
-                                                                panel_status.set(format!(
-                                                                    "reject build failed: {err}"
-                                                                ));
-                                                                return;
-                                                            }
-                                                        };
-                                                        match with_authed_api(&base, api_token, move |api| {
-                                                            let op = op.clone();
-                                                            async move {
-                                                                api.event_submitter()?.submit_sdk_event(&op).await
-                                                            }
-                                                        })
-                                                        .await
-                                                        {
-                                                            Ok(resp) => {
-                                                                drafts.write().remove(idx);
-                                                                reject_reason.set(String::new());
-                                                                panel_status.set(format!(
-                                                                    "rejected; event_id {}",
-                                                                    resp.event_id
-                                                                ));
-                                                            }
-                                                            Err(err) => panel_status.set(format!(
-                                                                "reject failed: {}", err.display()
-                                                            )),
-                                                        }
-                                                    });
-                                                }
-                                            },
-                                            "Reject"
+                                                });
+                                            }
+                                            Err(error) => feedback.revise(|value| {
+                                                *value =
+                                                    format!("reject failed: {}", error.display())
+                                            }),
                                         }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+                                    });
+                                },
+                            ),
+                        ],
+                    ),
+                ],
+            ));
         }
-    }
+        if children.is_empty() {
+            children.push(paragraph(
+                "muted",
+                "No drafts or action requests to review.",
+            ));
+        }
+        stack("timeline agent-draft-list", children)
+    });
+    card(
+        scope,
+        context.clone(),
+        "Draft and action approvals",
+        vec![
+            paragraph(
+                "muted",
+                "Review agent-proposed drafts or action requests before anything reaches a shared Realm. Approve submits ak.agent.action_approve; reject submits ak.agent.action_reject with a human reason when provided.",
+            ),
+            paragraph(
+                "muted",
+                "Data source: controller-owned account-data over ak.self.account.subscribe; paste a ak.agent.draft.v1 or ak.agent.action_request payload below to review it now.",
+            ),
+            paragraph(
+                "badge amber",
+                "controller principal realm unavailable — sign in to enable approvals",
+            ),
+            input(
+                scope,
+                context.clone(),
+                "agent-draft-input",
+                "ak.agent.draft.v1 or ak.agent.action_request payload (JSON)",
+                input_value,
+                true,
+            ),
+            input(
+                scope,
+                context.clone(),
+                "agent-draft-reject-reason-input",
+                "Optional rejection reason",
+                reason,
+                true,
+            ),
+            action(
+                scope,
+                context.clone(),
+                "agent-draft-add-button",
+                "Add approval item",
+                "secondary",
+                scope.bond(move || !input_value.get().trim().is_empty()),
+                move || match serde_json::from_str::<Value>(&input_value.get()) {
+                    Ok(value) => {
+                        drafts.revise(|rows| rows.push(value));
+                        input_value.revise(|value| value.clear());
+                        feedback.revise(|value| *value = "approval item added".into());
+                    }
+                    Err(error) => feedback.revise(|value| {
+                        *value = format!("approval item is not valid JSON: {error}")
+                    }),
+                },
+            ),
+            status(feedback),
+            rows,
+        ],
+    )
 }

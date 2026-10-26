@@ -2,7 +2,7 @@
 
 > **Spec target**: the current Arkret v1 protocol in the sibling [arkret-spec](../arkret-spec) repository.
 
-Cross-platform Arkret client built with Dioxus 0.7.
+Cross-platform Arkret client built with Glory and Sapid.
 
 ## Pre-commit hook setup
 
@@ -88,31 +88,18 @@ the arkret-work specs for the active cross-project task plan.
 
 ## Targets
 
-- Web: `just web`
-- Desktop Windows/Linux: `just desktop`
-- iOS/mobile: `just mobile`
+- Web: `just web` or `python scripts/dev_glory.py --platform web --port 8080`.
+- Native desktop: `just desktop` or `python scripts/dev_glory.py --platform desktop`.
+- Release Web bundle: `python scripts/build_web.py --release`.
+- Release desktop binary and local assets: `python scripts/build_desktop.py --release`.
 
-The `just` recipes wrap the underlying Dioxus commands:
+The developer runner repairs stale SDK registry projections through the SDK’s `tools/sync-spec.ps1`, verifies the canonical registry, and rebuilds after application or local path dependency changes. `python scripts/dev_glory.py --check` is read-only. PowerShell and the SDK generator must be available for automatic repair.
 
-- Web: `python scripts/dev_dioxus.py --platform web --port 8080`
-- Desktop Windows/Linux: `python scripts/dev_dioxus.py --platform desktop`
-- iOS/mobile: `python scripts/dev_dioxus.py --platform mobile`
+Windows tooling uses `D:/BuildCache/inkson-glory` for build output, temporary files and caches; Cargo metadata verifies the resolved target. WSL builds must use a verified D-drive mount. Glory and Sapid resolve from their GitHub `main` branches at the exact revisions in `Cargo.lock`; local path overrides are not used.
 
-The wrapper automatically runs the SDK's `tools/sync-spec.ps1` when the generated
-Arkret SDK registry does not match the canonical `registry/contract-registry.json`
-spec artifact, then verifies alignment before starting or rebuilding. PowerShell
-(`pwsh` or `powershell`) and the SDK generation toolchain must be available.
-`python scripts/dev_dioxus.py --check` validates without changing generated sources.
-The wrapper also bridges changes from sibling Cargo path
-dependencies into Inkson's workspace so Dioxus performs a full Rust rebuild;
-running bare `dx serve` can miss those changes with Dioxus 0.7.
+The browser host uses Glory Web and Sapid semantic controls. The desktop host uses Glory/Blitz and the same application state and stylesheet layers. It loads assets beside the executable, or from `Contents/Resources/assets` in a macOS bundle. The development runner sets an explicit repository asset directory. Native file and clipboard actions use OS services.
 
-Platform notes:
-
-- Web builds use the Dioxus web renderer and must talk to `coland` through an HTTP(S) origin allowed by the Station CORS configuration. Keep the settings panel pointed at the externally reachable server URL, not an internal desktop-only loopback address.
-- Windows and Linux desktop builds use the Dioxus desktop renderer. Local development defaults to `https://local.host` and stores the last server/account/device/session settings in the local config store.
-- iOS/mobile builds use the Dioxus mobile renderer. Device builds require the platform toolchain (`dx`, Xcode/iOS signing on macOS for iOS, platform SDKs for other mobile targets). Treat loopback URLs as emulator-local; use a LAN or tunneled server URL when testing against a desktop server process.
-- All platforms use the same typed API client, bounded retry/backoff policy, Arkret error envelope decoding, and encrypted-payload preservation path.
+Mobile host-bridge stub checks remain available with `just check-mobile-stubs`; this repository does not ship a new native mobile launcher. Responsive Web pages remain part of browser validation. All hosts retain the typed API client, retry policy, error decoding, encrypted payload storage and account/session fences.
 
 Station presets can be added to the local config file with `stations`. The login screen shows these values as selectable suggestions while still accepting a custom URL:
 
@@ -133,17 +120,32 @@ Station presets can be added to the local config file with `stations`. The login
 The Rust crate also runs normal verification:
 
 ```powershell
-cargo test
+$env:CARGO_HOME = "D:/BuildCache/cargo"
+$env:CARGO_TARGET_DIR = "D:/BuildCache/inkson-glory/target"
+$env:TEMP = "D:/BuildCache/inkson-glory/tmp"
+$env:TMP = $env:TEMP
+New-Item -ItemType Directory -Force -Path $env:TEMP | Out-Null
+cargo test --locked --features app
 ```
 
 Browser workflow verification uses Playwright with mocked Arkret HTTP endpoints:
 
 ```powershell
-npm install
+$env:CARGO_HOME = "D:/BuildCache/cargo"
+$env:CARGO_TARGET_DIR = "D:/BuildCache/inkson-glory/target"
+$env:TEMP = "D:/BuildCache/inkson-glory/tmp"
+$env:TMP = $env:TEMP
+New-Item -ItemType Directory -Force -Path $env:TEMP | Out-Null
+$inksonMetadata = cargo metadata --locked --no-deps --format-version 1 | ConvertFrom-Json
+cargo build --locked --profile joint-e2e --no-default-features --features spec-conformance --bin inkson-wire
+$env:INKSON_WIRE_BIN = Join-Path $inksonMetadata.target_directory "joint-e2e/inkson-wire.exe"
+npm ci
 npm run e2e
 ```
 
-The Playwright runner builds the web bundle with `dx build --platform web --profile joint-e2e --features web,wasm-localstorage-secrets-test` (into `target/playwright-e2e`) and serves it via `node tests/e2e/staticServer.mjs` on port 4727, exercising the web shell against mocked `/_arkret/*` responses. Use `INKSON_E2E_BASE_URL=http://127.0.0.1:<port>` when testing an already-running web build.
+The language-sync regression sends its fixture secret only through an in-memory pipe to the prebuilt verifier and checks the real SDK AEAD result. It requires `INKSON_WIRE_BIN`; it does not use the generic file-backed fixture helper for secrets.
+
+The Playwright runner invokes `scripts/serve_e2e.mjs`, builds the real Web artifact with the `joint-e2e` profile and test-only fixture feature, then starts the static host on port 4727. Windows E2E output lives under `D:/BuildCache/inkson-glory/playwright-e2e`. Use `INKSON_E2E_BASE_URL=http://127.0.0.1:<port>` for an already-running build. The production bundle never enables the fixture feature.
 
 That validation runs on its own too, without a browser and without the WASM build:
 
@@ -151,16 +153,16 @@ That validation runs on its own too, without a browser and without the WASM buil
 npm run contract
 ```
 
-`tests/contract/` drives the mock's route handler directly and checks every response the embedded OpenAPI inventory names, in about half a minute. Reach for it whenever the spec moves: a stale mock field otherwise costs a full `dx build` to discover, and the next stale field costs another, because each rejection stops at the first. Set `INKSON_WIRE_BIN` to a prebuilt `inkson-wire` so the check does not `cargo run` once per response.
+`tests/contract/` drives the mock's route handler directly and checks every response the embedded OpenAPI inventory names, in about half a minute. Reach for it whenever the spec moves: a stale mock field otherwise costs a full Web build to discover, and the next stale field costs another, because each rejection stops at the first. Set `INKSON_WIRE_BIN` to a prebuilt `inkson-wire` so the check does not `cargo run` once per response.
 
 The e2e suite under `tests/e2e/` is **mock-only**: every mocked JSON response is validated against the SDK's embedded OpenAPI and schema artifacts before it reaches inkson, and the suite never speaks to a real Arkret server. Full UI ↔ real-server integration lives in the sibling [`cotest`](../cotest) joint suite (`cotest/e2e/`), which boots both `inkson` and a real `coland` process. Any test that needs a live server should be added there, not here.
 
-The UI compile guard is included in `cargo test` and verifies the exported Dioxus root component signature used by `src/main.rs`.
+The UI compile guard is included in `cargo test` and verifies the exported Glory root factory signature used by `src/main.rs`.
 
 The release gate used by CI is available locally:
 
 ```powershell
-npm install
+npm ci
 npm run release:check
 ```
 
@@ -171,32 +173,30 @@ npm run release:check
 The repository includes CI for:
 
 - `Typos`: spell checking through `crate-ci/typos`.
-- `CI`: Rust format, clippy, tests, and Dioxus web build on Ubuntu.
-- `Packages` (manual `workflow_dispatch`): release binary artifacts and local signing dry-run evidence for Linux, Windows, and macOS runners. Run this explicitly when package evidence is needed; ordinary CI and CrossPlatform remain automatic. The desktop advisory gate remains mandatory. The GTK4 dependency migration removes the old `glib 0.18.5` renderer graph without an advisory waiver. The isolated `75fd322d` candidate passed its strict desktop audit, three-platform builds, Linux package and native runtime checks; these results apply to that fixed source and its pinned dependencies. Changes to the main application or dependency sources require new package evidence.
+- `CI`: Rust format, clippy, tests, and Glory/Sapid Web build on Ubuntu.
+- `Packages` (manual `workflow_dispatch`): native Linux, Windows and macOS artifacts, actual platform startup probes, advisory checks and local signing evidence. Historical renderer receipts describe their original fixed source; a framework migration requires fresh platform evidence.
 - `Docker`: local web image build, Trivy scan, SBOM evidence, and local cosign blob evidence when a local key is supplied. It does not push to GHCR or any registry.
 - `Dependabot`: weekly updates for GitHub Actions, Cargo, npm, and Docker.
 
 CI checks out `arkret-rust-sdk`, `garth`, and `chime` next to `inkson` because `Cargo.toml` uses sibling path dependencies. The expected GitHub repository names use those three names under `${OWNER}`.
 
-Library consumers use the default features without a renderer. Build the desktop application with `cargo build --release --features desktop` or the Web application with `dx build --platform web --features web`. The main application binary requires `app`, which both renderer features enable. The desktop adapter uses GTK4/WebKitGTK6 with real Tao/Wry source commits and a licensed Dioxus desktop adapter. The full desktop dependency graph is audited before packaging; the pinned GTK4 source forks are not official supported releases. See [desktop dependency maintenance](docs/desktop-dependency-maintenance.md) for exact upstream sources, licenses and maintenance boundaries. Successful library or Web builds do not establish desktop security or runtime acceptance.
-
-`yoface` is a public Cargo git dependency (`git = "https://github.com/arkret-org/yoface"`, branch `main`), so Cargo fetches it instead of reading a sibling checkout. The Docker build does not require a GitHub token.
+Library consumers keep the default renderer-free feature set. The `app` feature enables application code, `web` selects the browser host, and `desktop` selects the native host. Cargo fetches Glory/Sapid from the exact GitHub revisions recorded in Cargo.lock. The desktop graph uses the reviewed renderer sources recorded in Cargo.lock; see [desktop dependency maintenance](docs/desktop-dependency-maintenance.md). Library or Web success alone does not establish native desktop startup or authenticated UI acceptance.
 
 ### Gitea Actions
 
-The Gitea smoke workflow lives in `.gitea/workflows/smoke.yml`. It follows the lightweight Rust-check structure used by the related synpad workflows and checks out `inkson`, `arkret-rust-sdk`, `garth`, and `chime` as sibling directories so the local path dependencies resolve. `yoface` is fetched from GitHub instead, using the `GITHUB_COM_TOKEN` secret.
+The Gitea smoke workflow lives in `.gitea/workflows/smoke.yml`. It follows the lightweight Rust-check structure used by the related synpad workflows and checks out `inkson`, `arkret-rust-sdk`, `garth`, and `chime` as sibling directories so the local path dependencies resolve. Glory/Sapid are checked out as public UI dependencies.
 
 The smoke job installs the Linux desktop build packages and runs:
 
 ```powershell
-cargo fmt --check
-cargo check --locked --all-targets
-cargo test --locked
+cargo +nightly fmt -p inkson -- --check
+cargo check --locked --features app --all-targets
+cargo test --locked --features app
 ```
 
 The expected Gitea repository names use the three dependency repository names under `${OWNER}`.
 
-The Docker image serves the Dioxus web build with nginx. Build it from a clean context containing `inkson`, `arkret-rust-sdk`, `garth`, and `chime`:
+The Docker image serves the Glory/Sapid Web bundle with nginx and SPA deep-link fallback. Prepare the sibling application/SDK/spec context; Cargo fetches the locked Glory/Sapid Git dependencies during the build. On Windows, verify that the builder stores its data on D: or a remote host before building:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/prepare-docker-context.ps1

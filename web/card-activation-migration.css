@@ -1,0 +1,7 @@
+/* Keep the original whole-card activation while retaining real, independent
+   title/archive buttons and the explicit drag grip. */
+.board-card { position: relative; }
+.board-card .board-card-title { position: static; }
+.board-card .board-card-title::after { content: ""; position: absolute; inset: 0; z-index: 1; }
+.board-card .board-card-footer { position: relative; z-index: 2; pointer-events: none; }
+.board-card .board-card-footer button, .board-card .board-card-drag-handle { pointer-events: auto; }

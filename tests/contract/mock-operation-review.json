@@ -715,9 +715,9 @@
       "operation_id": "ak.gate.account.command.logout.v1",
       "method": "POST",
       "path": "/_arkret/gate/account/logout",
-      "mock_implementation": "missing",
-      "verification_need": "native_authority",
-      "reason": "Requires the Account Authority's authenticated holder/DPoP context and its actual issuer/onboarding/session/device/revocation ledger. OIDC exchange, leases/fences, accepted device possession, ordered PCR admission and terminal replay cannot be established by a client-created response. The exact operation obligations are retained verbatim in normative_notes.",
+      "mock_implementation": "implemented",
+      "verification_need": "mock_behavior",
+      "reason": "The browser transport fixture validates the canonical POST and empty body, exact fixture grant, fixed registered DPoP key, real Ed25519 signature, method/URL/token binding, freshness and proof identifier before returning the closed revoked Boolean outcome. Its positive and negative contracts do not execute the Account Authority's issuer/session/device/revocation ledger or prove terminal chain cleanup; native authority coverage remains not_run.",
       "normative_notes": "Account Authority ordinary hard logout (account-lifecycle §4.1): single client-visible logout entry. The presented grant chain is the stable protocol-sequence identity. The handler validates the ak.session.grant + DPoP when metadata remains, idempotently terminates the Auth-side auth session / complete grant rotation chain inside the Station TCB when Auth-side is split out, and completes or durably schedules the Principal-side local account session + device session cleanup and to-device/push removal. Exact retries on an already terminal or pruned chain return an equivalent successful no-op; audience mismatch still fails closed. Distinct from revoke_session (targeted session-grant revoke). HTTP-only Account Authority op; not exposed over gRPC/MQ.",
       "spec_operation_ref": "registry/contract-registry.json#/operation_registry/operations/22",
       "spec_operation_sha256": "b5d7693e4b54f46f653919bf43d15ecd489c7f12406cd909e83927f52476f8e1",
@@ -744,7 +744,10 @@
           "execution": "not_run"
         }
       ],
-      "mock_test": null,
+      "mock_test": {
+        "file": "tests/contract/remaining-operations.spec.ts",
+        "name": "remaining valid request and response contract: ak.gate.account.command.logout.v1"
+      },
       "error_mapping_ref": "registry/operations-error-mapping.json#/operations/22",
       "error_mapping_sha256": "064ca8e2ca27af283ea6be5e8f99320ceb5fcf7a5a58f8acc9c3747e44af71cb",
       "operation_specific_errors": [],
@@ -3119,7 +3122,7 @@
       "path": "/_arkret/self/actor-profiles/query",
       "mock_implementation": "archival_fixture",
       "verification_need": "native_fixture_replay",
-      "reason": "The accepted Human ProfileCreate Event and covering PCR Commit are resolved through an actual joined ordinary Realm relationship and compared to the native committed original. Browser tests replay only the exact archived request/response at its recorded verification cut; this is not live authorization or a new admission. StandardGrant introspection uses the trusted native test channel.",
+      "reason": "The accepted Human ProfileCreate Event and covering PCR Commit are resolved through an actual joined ordinary Realm relationship and compared to the native committed original. Browser tests replay only the exact archived request/response at its recorded verification cut; this is not live authorization or a new admission. StandardGrant introspection uses the trusted native test channel. Separately, the ordinary live UI mock now verifies the exact canonical DPoP request and schema, returns not_found without accepted joined-holder Realm evidence, and otherwise returns only per-actor profile_unavailable. This negative transport fixture never replays archival evidence or emits a successful live Profile projection.",
       "normative_notes": "Only outward carrier for the PCR-resident ak.profile.create / ak.profile.update facts. A global profile Event lives in its owner's Principal Control Realm, so a co-member cannot reach it through a Realm-scoped read and MUST NOT reach it through a cross-principal actor selector on ak.self.committed_event.read.scan.v1. Authorization is current effective joined membership of body realm_id for both the caller and each returned actor; realm_id MUST NOT be a Principal Control Realm. Each row returns the display projection, one exact signed profile Event and the exact RealmCommit that accepted it; the service and caller verify event_ref, PCR stream, authority generation and signature. The authenticated own-Station projection is not independently proven complete by that pair; a patch Event alone cannot reconstruct the full profile. It grants no authority and exposes no other PCR Event. Unknown actor, actor without an accepted profile, missing committed provenance, non-member actor and unauthorized caller all report profile_unavailable so the operation cannot probe membership or account existence.",
       "spec_operation_ref": "registry/contract-registry.json#/operation_registry/operations/102",
       "spec_operation_sha256": "9d9a4b7711ed824b020de9d3d5e1804475131cd7f264aef707e085f87b91609b",
@@ -3154,6 +3157,13 @@
       "native_fixture_test": {
         "file": "coland/crates/storage-postgres/tests/realm_actor_control.rs",
         "name": "public_read_contracts_preserve_fourteen_native_authority_closures"
+      },
+      "live_unavailable_transport_fixture": {
+        "file": "tests/contract/actor-profile-unavailable.spec.ts",
+        "outcome": "profile_unavailable",
+        "unknown_realm_status": 404,
+        "accepted_profile_evidence": "not_produced",
+        "native_authority_contract": "not_run"
       }
     },
     {
@@ -3860,7 +3870,14 @@
       "path": "/_arkret/self/keys/backups/{backup_id}/unlock-challenge",
       "mock_implementation": "missing",
       "verification_need": "native_authority",
-      "reason": "Existing UI fixtures contain backup summaries, not the durable current-device/high-risk challenge and unlock ledger. A positive case needs the real signed challenge/proof, opaque encrypted backup and one-use/replay transaction; a guessed nonce or empty acknowledgement would skip that contract.",
+      "reason": "Existing UI fixtures contain backup summaries, not the durable current-device/high-risk challenge and unlock ledger. Only the explicit preseedRecoveryMaterial scenario has a strict signed-transport failure producer: a schema-valid current-device request receives a closed 503 temporarily_unavailable Problem, without any unlock challenge, nonce, key or proof. Default scenarios still reject before responding. A positive native case needs the real signed challenge/proof, opaque encrypted backup and one-use/replay transaction; native authority remains not_run.",
+      "conditional_mock_transport_fixture": {
+        "scenario": "preseedRecoveryMaterial",
+        "outcome": "temporarily_unavailable",
+        "http_status": 503,
+        "mock_test": "tests/contract/backup-unlock-unavailable.spec.ts",
+        "native_authority_contract": "not_run"
+      },
       "normative_notes": "Issue a durable current-device-only challenge with lifetime at most 300 seconds. Recovery unlock reuses its recovery session challenge.",
       "spec_operation_ref": "registry/contract-registry.json#/operation_registry/operations/163",
       "spec_operation_sha256": "b2bd88cd2fd03295bd20e613571ce653a33ce576ba2846372fa9606d395d7783",

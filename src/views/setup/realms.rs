@@ -1,40 +1,20 @@
-//! Realm bootstrap wizard (`ak.realm.create`) section component.
+use std::rc::Rc;
 
-use dioxus::prelude::*;
-use dioxus_router::Link;
+use glory::Scope;
+use glory::ui::Widget;
 
-use super::data::{
-    DISCOVERABILITY_OPTIONS, FEDERATION_POLICY_OPTIONS, HASH_PROFILE_OPTIONS,
-    HISTORY_ACCESS_OPTIONS, JOIN_RULE_OPTIONS, MLS_ACTIVATION_OPTIONS, SECURITY_CLASS_OPTIONS,
-    option_hint,
-};
-use super::helpers::{
-    mls_activation_history_hint, mls_activation_requested, plaintext_services_for_policy,
-    policy_combination_hint,
-};
-use super::model::{NEW_REALM_STEPS, NewRealmStep};
+use super::data::*;
+use super::helpers::*;
+use super::model::*;
 use crate::api_error::is_auth_expired_error;
-use crate::components::HelpTip;
 use crate::i18n::{tr, tr_args};
+use crate::presentation::{InksonContext, View};
 use crate::routes::Route;
 use crate::transport::auth::authed_api_ready;
-use crate::ui::button::{Button, ButtonVariant};
-use crate::ui::input::Input;
-use crate::ui::label::Label;
-use crate::ui::select::{Select, SelectOption};
-use crate::ui::textarea::Textarea;
-use crate::views::helpers::short_protocol_id;
+use crate::views::settings::widgets::*;
 
-/// Bootstrap-progress templates resolved *before* the create task is
-/// spawned.
-///
-/// `tr()` reads the i18n signal out of Dioxus context, which is not
-/// available inside a spawned task — the same constraint that makes
-/// `components::feedback` carry keys + args across the boundary instead of
-/// resolved text. Here the messages are consumed by `realm_state` rather
-/// than the toast host, so the component resolves the templates on render
-/// and moves this struct into the task, then fills `{placeholder}`s with
-/// [`crate::i18n::substitute_args`] — the one substitution implementation.
+#[path = "realms/presentation.rs"]
+mod presentation;
 #[derive(Clone)]
 struct BootstrapProgressStrings {
     accepted: String,
@@ -160,653 +140,133 @@ fn encrypted_realm_recovery_gate_state(
     }
 }
 
-#[component]
-pub(super) fn RealmsSection(
-    plaintext_service_id: String,
-    secure_store_ready: bool,
-    token: Signal<String>,
-    account_recovery_configured: Signal<Option<bool>>,
-    mut selected_realm_id: Signal<String>,
-    // State signals are owned by the parent `SetupPanel` so the wizard's
-    // in-progress draft survives switching between setup sections (the
-    // sections are conditionally rendered, so locally-owned hooks would reset
-    // on every section change).
-    mut create_step: Signal<NewRealmStep>,
-    mut realm_title: Signal<String>,
-    mut realm_summary: Signal<String>,
-    mut realm_alias: Signal<String>,
-    mut realm_discoverability: Signal<String>,
-    mut realm_policy_join_rule: Signal<String>,
-    mut realm_policy_history_access: Signal<String>,
-    mut realm_mls_activation: Signal<String>,
-    mut realm_security_class: Signal<String>,
-    mut realm_federation_policy: Signal<String>,
-    mut realm_digest_algorithm: Signal<String>,
-    mut realm_state: Signal<String>,
-    mut realm_create_busy: Signal<bool>,
-    mut created_realm_id: Signal<String>,
-    mut pending_recovery_gate: Signal<bool>,
-) -> Element {
-    let active_account = crate::app::SessionContext::get().active_account;
-    // A4 — base_url / state_store from session context instead of props.
-    let base_url = crate::app::SessionContext::base_url_string();
-    let mut state_store = crate::app::SessionContext::get().state_store;
-    let has_session = !token().trim().is_empty();
-
-    let realm_discoverability_selected = use_memo(move || Some(realm_discoverability()));
-    let realm_policy_join_rule_selected = use_memo(move || Some(realm_policy_join_rule()));
-    let realm_policy_history_access_selected =
-        use_memo(move || Some(realm_policy_history_access()));
-    let realm_mls_activation_selected = use_memo(move || Some(realm_mls_activation()));
-    let realm_security_class_selected = use_memo(move || Some(realm_security_class()));
-    let realm_federation_policy_selected = use_memo(move || Some(realm_federation_policy()));
-    let realm_digest_algorithm_selected = use_memo(move || Some(realm_digest_algorithm()));
-
-    let active_create_step = create_step();
-    let title_value = realm_title();
-    let summary_value = realm_summary();
-    let alias_value = realm_alias();
-    let discoverability_value = realm_discoverability();
-    let join_rule_value = realm_policy_join_rule();
-    let history_access_value = realm_policy_history_access();
-    let mls_activation_value = realm_mls_activation();
-    let mls_history_warning = mls_activation_history_hint(
-        mls_activation_requested(&mls_activation_value),
-        &history_access_value,
-    );
-    let security_class_value = realm_security_class();
-    let federation_policy_value = realm_federation_policy();
-    let digest_algorithm_value = realm_digest_algorithm();
-    let federation_policy_open_forbidden = security_class_value == "high_assurance";
-
-    let discoverability_help = [
-        tr("setup.axis.discoverability.question"),
-        option_hint(
-            &DISCOVERABILITY_OPTIONS,
-            &discoverability_value,
-            "setup.axis.discoverability.unset",
-        ),
-    ]
-    .join(" ");
-    let join_rule_help = [
-        tr("setup.axis.join_rule.question"),
-        option_hint(
-            &JOIN_RULE_OPTIONS,
-            &join_rule_value,
-            "setup.axis.join_rule.unset",
-        ),
-    ]
-    .join(" ");
-    let history_access_help = [
-        tr("setup.axis.history_access.question"),
-        option_hint(
-            &HISTORY_ACCESS_OPTIONS,
-            &history_access_value,
-            "setup.axis.history_access.unset",
-        ),
-    ]
-    .join(" ");
-    let mls_activation_help = [
-        tr("setup.axis.mls_activation.question"),
-        option_hint(
-            &MLS_ACTIVATION_OPTIONS,
-            &mls_activation_value,
-            "setup.axis.mls_activation.unset",
-        ),
-        tr("setup.axis.mls_activation.separate"),
-    ]
-    .join(" ");
-    let security_class_help = [
-        tr("setup.axis.security_class.question"),
-        option_hint(
-            &SECURITY_CLASS_OPTIONS,
-            &security_class_value,
-            "setup.axis.security_class.unset",
-        ),
-    ]
-    .join(" ");
-    let mut federation_policy_help_parts = vec![
-        tr("setup.axis.federation_policy.question"),
-        option_hint(
-            &FEDERATION_POLICY_OPTIONS,
-            &federation_policy_value,
-            "setup.axis.federation_policy.unset",
-        ),
-    ];
-    if federation_policy_open_forbidden {
-        federation_policy_help_parts.push(tr("setup.axis.federation_policy.high_assurance"));
-    }
-    let federation_policy_help = federation_policy_help_parts.join(" ");
-    let hash_profile_help = [
-        tr("setup.axis.hash_profile.question"),
-        option_hint(
-            &HASH_PROFILE_OPTIONS,
-            &digest_algorithm_value,
-            "setup.axis.hash_profile.unset",
-        ),
-    ]
-    .join(" ");
-
-    let realm_state_value = realm_state();
-    let realm_create_busy_value = realm_create_busy();
-    let created_realm_id_value = created_realm_id();
-    let has_created_realm = !created_realm_id_value.trim().is_empty();
-    let created_realm_id_label = short_protocol_id(&created_realm_id_value);
-    let current_visibility_hint = policy_combination_hint(
-        &discoverability_value,
-        &join_rule_value,
-        &history_access_value,
-    );
-    let current_policy_error = matches!(current_visibility_hint, Some(("error", _, _)));
-    let basics_ready = !title_value.trim().is_empty();
-    let boundary_ready = !current_policy_error && mls_history_warning.is_none();
-    let create_blocker = if has_created_realm {
-        Some(tr("setup.blocker.already_created"))
-    } else if !has_session {
-        Some(tr("setup.blocker.sign_in"))
-    } else if !secure_store_ready {
-        Some(tr("setup.blocker.secure_store"))
-    } else if realm_create_busy_value {
-        Some(tr("setup.blocker.creating"))
-    } else {
-        None
-    };
-    let draft_state_label = tr("setup.state.draft");
-    let progress_strings = BootstrapProgressStrings::resolve();
-    let can_advance_step = match active_create_step {
-        NewRealmStep::Basics => basics_ready,
-        NewRealmStep::Boundary => boundary_ready,
-        NewRealmStep::Create => basics_ready && boundary_ready,
-        NewRealmStep::Done => has_created_realm,
-    };
-    let can_create_realm = realm_create_available(
-        has_session,
-        basics_ready,
-        boundary_ready,
-        secure_store_ready,
-        realm_create_busy_value,
-        has_created_realm,
-    );
-
-    // The authoritative recovery check is asynchronous. If the gate was
-    // opened from an earlier negative result, close it as soon as either the
-    // server policy or a local fallback proves Recovery is configured.
-    use_effect(move || {
-        let gate_state =
-            active_account().map_or(EncryptedRealmRecoveryGateState::Checking, |_account| {
-                let store = state_store.read();
-                encrypted_realm_recovery_gate_state(
-                    account_recovery_configured(),
-                    crate::views::recovery::recovery_options_configured(&store),
-                    crate::components::mls_recovery_backup_configured(&store),
-                )
-            });
-        if gate_state == EncryptedRealmRecoveryGateState::Ready && pending_recovery_gate() {
-            pending_recovery_gate.set(false);
-        }
-    });
-
-    rsx! {
-        if pending_recovery_gate() {
-            crate::ui::dialog::Dialog {
-                open: true,
-                on_open_change: move |open: bool| {
-                    if !open {
-                        pending_recovery_gate.set(false);
-                    }
-                },
-                "data-testid": "encrypted-realm-recovery-gate",
-                "aria-label": tr("setup.recovery_gate.aria"),
-                div { class: "modal event",
-                    div { class: "modal-head event-head",
-                        h3 { {tr("setup.recovery_gate.title")} }
-                        span { class: "muted", {tr("setup.recovery_gate.badge")} }
-                    }
-                    div { class: "modal-body",
-                        div { class: "muted",
-                            {tr("setup.recovery_gate.body")}
+impl super::SetupDraft {
+    pub(super) fn create_realm(self, context: Rc<InksonContext>) {
+        let token = context.token;
+        let active_account = context.active_account;
+        let selected_realm_id = context.selected_realm_id;
+        let account_recovery_configured = context.account_recovery_configured;
+        let _realm_tree_nodes = context.realm_tree_nodes;
+        let _new_space_context_node = context.new_space_context_node;
+        let state_store = context.state_store.clone();
+        let base_url = context.base_url.get_untracked();
+        let plaintext_service_id = context
+            .server_description
+            .get_untracked()
+            .as_ref()
+            .map(|description| description.service_id.as_str().to_owned())
+            .unwrap_or_default();
+        let create_step = self.create_step;
+        let realm_title = self.realm_title;
+        let realm_summary = self.realm_summary;
+        let realm_alias = self.realm_alias;
+        let realm_discoverability = self.realm_discoverability;
+        let realm_policy_join_rule = self.realm_policy_join_rule;
+        let realm_policy_history_access = self.realm_policy_history_access;
+        let realm_mls_activation = self.realm_mls_activation;
+        let realm_security_class = self.realm_security_class;
+        let realm_federation_policy = self.realm_federation_policy;
+        let realm_digest_algorithm = self.realm_digest_algorithm;
+        let realm_state = self.realm_state;
+        let realm_create_busy = self.realm_create_busy;
+        let created_realm_id = self.created_realm_id;
+        let pending_recovery_gate = self.pending_recovery_gate;
+        let _new_space_realm_id = self.new_space_realm_id;
+        let _new_space_title = self.new_space_title;
+        let _new_space_summary = self.new_space_summary;
+        let _new_space_kind = self.new_space_kind;
+        let _new_space_parent_id = self.new_space_parent_id;
+        let _new_space_context_seen = self.new_space_context_seen;
+        let _new_space_state = self.new_space_state;
+        let _new_space_created_id = self.new_space_created_id;
+        let progress_strings = BootstrapProgressStrings::resolve();
+        let submit = {
+            let base = base_url.clone();
+            let strings = progress_strings.clone();
+            move |_| {
+                let strings = strings.clone();
+                let history_access = realm_policy_history_access.get();
+                let request_mls_genesis = mls_activation_requested(&realm_mls_activation.get());
+                if let Some(hint) =
+                    mls_activation_history_hint(request_mls_genesis, &history_access)
+                {
+                    realm_state.revise(|value| {
+                        *value = tr(hint);
+                    });
+                    return;
+                }
+                // `recovery_material_pending` is a normative hard gate:
+                // explicit MLS initialization requires a recovery path.
+                if request_mls_genesis {
+                    let recovery_gate_state = active_account.get().map_or(
+                        EncryptedRealmRecoveryGateState::Checking,
+                        |_account| {
+                            state_store.read(|store| {
+                                encrypted_realm_recovery_gate_state(
+                                    account_recovery_configured.get(),
+                                    crate::views::recovery::recovery_options_configured(store),
+                                    crate::components::mls_recovery_backup_configured(store),
+                                )
+                            })
+                        },
+                    );
+                    match recovery_gate_state {
+                        EncryptedRealmRecoveryGateState::Ready => {}
+                        EncryptedRealmRecoveryGateState::Missing => {
+                            pending_recovery_gate.revise(|value| {
+                                *value = true;
+                            });
+                            return;
                         }
-                    }
-                    div { class: "modal-foot actions",
-                        Link {
-                            class: "primary",
-                            "data-testid": "encrypted-realm-recovery-gate-setup",
-                            to: Route::SettingsRecovery,
-                            onclick: move |_| pending_recovery_gate.set(false),
-                            {tr("setup.action.setup_recovery_key")}
+                        EncryptedRealmRecoveryGateState::Checking => {
+                            let message = tr("setup.recovery_gate.checking");
+                            realm_state.revise(|value| {
+                                *value = message;
+                            });
+                            crate::components::feedback::toast_info(
+                                "setup.recovery_gate.checking",
+                                vec![],
+                            );
+                            return;
                         }
                     }
                 }
-            }
-        }
-        div { class: "setup-shell new-realm-shell", "data-testid": "realm-lifecycle-strand",
-            div { class: "setup-column",
-                div { class: "event new-realm-stepper",
-                    div { class: "event-head",
-                        span { {tr("setup.create_steps")} }
-                        span {
-                            {tr_args(
-                                "setup.step_progress",
-                                &[
-                                    ("current", active_create_step.number().to_owned()),
-                                    ("total", NEW_REALM_STEPS.len().to_string()),
-                                ],
-                            )}
-                        }
-                    }
-                    div { class: "setup-step-list",
-                        for step in NEW_REALM_STEPS {
-                            Button {
-                                variant: if active_create_step == step { ButtonVariant::Primary } else { ButtonVariant::Secondary },
-                                disabled: step == NewRealmStep::Done && !has_created_realm,
-                                onclick: move |_| create_step.set(step),
-                                span { class: "setup-step-index", "{step.number()}" }
-                                span { class: "setup-step-label",
-                                    strong { {tr(step.label_key())} }
-                                    small { {tr(step.subtitle_key())} }
-                                }
-                            }
-                        }
-                    }
-
-                if active_create_step == NewRealmStep::Basics {
-                    div { class: "setup-step-panel",
-                        div { class: "workflow-form setup-form-grid",
-                            div { class: "setup-field",
-                                Label {
-                                    html_for: "realm-title-input-input",
-                                    {tr("setup.field.realm_title")}
-                                    span { class: "required-indicator", "aria-hidden": "true", " *" }
-                                }
-                                Input {
-                                    id: "realm-title-input-input",
-                                    "data-testid": "realm-title-input",
-                                    required: true,
-                                    "aria-required": "true",
-                                    value: "{title_value}",
-                                    placeholder: tr("setup.field.realm_title_placeholder"),
-                                    oninput: move |event: FormEvent| realm_title.set(event.value())
-                                }
-                            }
-                            div { class: "setup-field",
-                                Label {
-                                    html_for: "realm-alias-input-input",
-                                    {tr("setup.field.realm_alias")}
-                                }
-                                Input {
-                                    id: "realm-alias-input-input",
-                                    "data-testid": "realm-alias-input",
-                                    value: "{alias_value}",
-                                    placeholder: tr("setup.field.realm_alias_placeholder"),
-                                    oninput: move |event: FormEvent| realm_alias.set(event.value())
-                                }
-                            }
-                            div { class: "setup-field setup-field-span-2",
-                                Label { html_for: "realm-summary-input-input", {tr("setup.field.summary")} }
-                                Textarea {
-                                    id: "realm-summary-input-input",
-                                    "data-testid": "realm-summary-input",
-                                    value: "{summary_value}",
-                                    rows: "2",
-                                    placeholder: tr("setup.field.realm_summary_placeholder"),
-                                    oninput: move |event: FormEvent| realm_summary.set(event.value())
-                                }
-                            }
-                        }
-                        div { class: "actions setup-nav-actions",
-                            Button {
-                                variant: ButtonVariant::Primary,
-                                "data-testid": "new-realm-next-button",
-                                disabled: !can_advance_step,
-                                onclick: move |_| create_step.set(active_create_step.next()),
-                                {tr("setup.action.next_boundary")}
-                            }
-                        }
-                    }
-                }
-
-                if active_create_step == NewRealmStep::Boundary {
-                    div { class: "setup-step-panel",
-                        div { class: "setup-axis-grid",
-                            div { class: "metric directory-axis-card setup-axis-card",
-                                div { class: "setup-axis-card-heading",
-                                    strong { {tr("setup.axis.discoverability")} }
-                                    HelpTip { text: discoverability_help }
-                                }
-                                div { class: "workflow-form setup-field",
-                                    Select::<String> {
-                                        "data-testid": "realm-discoverability-input",
-                                        "aria-label": tr("setup.axis.discoverability"),
-                                        value: Some(realm_discoverability_selected.into()),
-                                        on_value_change: move |v: Option<String>| {
-                                            if let Some(v) = v {
-                                                realm_discoverability.set(v);
-                                            }
-                                        },
-                                        for (i, (option_value, label, _)) in DISCOVERABILITY_OPTIONS.iter().enumerate() {
-                                            SelectOption::<String> {
-                                                index: i,
-                                                value: option_value.to_string(),
-                                                text_value: tr(label),
-                                                {tr(label)}
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            div { class: "metric directory-axis-card setup-axis-card",
-                                div { class: "setup-axis-card-heading",
-                                    strong { {tr("setup.axis.join_rule")} }
-                                    HelpTip { text: join_rule_help }
-                                }
-                                div { class: "workflow-form setup-field",
-                                    Select::<String> {
-                                        "data-testid": "realm-policy-join-rule-input",
-                                        "aria-label": tr("setup.axis.join_rule"),
-                                        value: Some(realm_policy_join_rule_selected.into()),
-                                        on_value_change: move |v: Option<String>| {
-                                            if let Some(v) = v {
-                                                realm_policy_join_rule.set(v);
-                                            }
-                                        },
-                                        for (i, (option_value, label, _)) in JOIN_RULE_OPTIONS.iter().enumerate() {
-                                            SelectOption::<String> {
-                                                index: i,
-                                                value: option_value.to_string(),
-                                                text_value: tr(label),
-                                                {tr(label)}
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            div { class: "metric directory-axis-card setup-axis-card",
-                                div { class: "setup-axis-card-heading",
-                                    strong { {tr("setup.axis.history_access")} }
-                                    HelpTip { text: history_access_help }
-                                }
-                                div { class: "workflow-form setup-field",
-                                    Select::<String> {
-                                        "data-testid": "realm-policy-history-access-input",
-                                        "aria-label": tr("setup.axis.history_access"),
-                                        value: Some(realm_policy_history_access_selected.into()),
-                                        on_value_change: move |v: Option<String>| {
-                                            if let Some(v) = v {
-                                                realm_policy_history_access.set(v);
-                                            }
-                                        },
-                                        for (i, (option_value, label, _)) in HISTORY_ACCESS_OPTIONS.iter().enumerate() {
-                                            SelectOption::<String> {
-                                                index: i,
-                                                value: option_value.to_string(),
-                                                text_value: tr(label),
-                                                {tr(label)}
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            // This is a local follow-up action, not a Realm-create
-                            // encryption profile. Only accepted Genesis activates MLS.
-                            div { class: "metric directory-axis-card setup-axis-card",
-                                div { class: "setup-axis-card-heading",
-                                    strong { {tr("setup.axis.mls_activation")} }
-                                    HelpTip { text: mls_activation_help }
-                                }
-                                div { class: "workflow-form setup-field",
-                                    Select::<String> {
-                                        "data-testid": "realm-mls-activation-input",
-                                        "aria-label": tr("setup.axis.mls_activation"),
-                                        value: Some(realm_mls_activation_selected.into()),
-                                        on_value_change: move |v: Option<String>| {
-                                            if let Some(v) = v {
-                                                realm_mls_activation.set(v);
-                                            }
-                                        },
-                                        for (i, (option_value, label, _)) in MLS_ACTIVATION_OPTIONS.iter().enumerate() {
-                                            SelectOption::<String> {
-                                                index: i,
-                                                value: option_value.to_string(),
-                                                text_value: tr(label),
-                                                {tr(label)}
-                                            }
-                                        }
-                                    }
-                                    if let Some(hint) = mls_history_warning {
-                                        div { class: "inline-warn",
-                                            span { class: "body", {tr(hint)} }
-                                        }
-                                    }
-                                }
-                            }
-                            div { class: "metric directory-axis-card setup-axis-card",
-                                div { class: "setup-axis-card-heading",
-                                    strong { {tr("setup.axis.security_class")} }
-                                    HelpTip { text: security_class_help }
-                                }
-                                div { class: "workflow-form setup-field",
-                                    Select::<String> {
-                                        "data-testid": "realm-security-class-input",
-                                        "aria-label": tr("setup.axis.security_class"),
-                                        value: Some(realm_security_class_selected.into()),
-                                        on_value_change: move |v: Option<String>| {
-                                            if let Some(v) = v {
-                                                realm_security_class.set(v);
-                                            }
-                                        },
-                                        for (i, (option_value, label, _)) in SECURITY_CLASS_OPTIONS.iter().enumerate() {
-                                            SelectOption::<String> {
-                                                index: i,
-                                                value: option_value.to_string(),
-                                                text_value: tr(label),
-                                                {tr(label)}
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // Spec realm-and-space.md §2.3 advanced
-                        // fields — collapsed by default. All
-                        // two are create-locked. Defaults
-                        // (restricted / sha256) suit the dev +
-                        // small-deployment cases; production operators
-                        // tweak as needed. The notary signer is derived from
-                        // verified Station evidence, not selected by
-                        // an unbacked profile string.
-                        details { class: "setup-advanced",
-                            "data-testid": "realm-advanced-config",
-                            summary { class: "setup-advanced-summary",
-                                {tr("setup.boundary.advanced_summary")}
-                            }
-                            div { class: "setup-axis-grid setup-advanced-grid",
-                                div { class: "metric directory-axis-card setup-axis-card",
-                                    div { class: "setup-axis-card-heading",
-                                        strong { {tr("setup.axis.federation_policy")} }
-                                        HelpTip { text: federation_policy_help }
-                                    }
-                                    div { class: "workflow-form setup-field",
-                                        Select::<String> {
-                                            "data-testid": "realm-federation-policy-input",
-                                            "aria-label": tr("setup.axis.federation_policy"),
-                                            value: Some(realm_federation_policy_selected.into()),
-                                            on_value_change: move |v: Option<String>| {
-                                                if let Some(v) = v {
-                                                    realm_federation_policy.set(v);
-                                                }
-                                            },
-                                            for (i, (option_value, label, _)) in FEDERATION_POLICY_OPTIONS.iter().enumerate() {
-                                                SelectOption::<String> {
-                                                    index: i,
-                                                    value: option_value.to_string(),
-                                                    text_value: tr(label),
-                                                    disabled: federation_policy_open_forbidden && *option_value == "open",
-                                                    {tr(label)}
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                div { class: "metric directory-axis-card setup-axis-card",
-                                    div { class: "setup-axis-card-heading",
-                                        strong { {tr("setup.axis.hash_profile")} }
-                                        HelpTip { text: hash_profile_help }
-                                    }
-                                    div { class: "workflow-form setup-field",
-                                        Select::<String> {
-                                            "data-testid": "realm-hash-profile-input",
-                                            "aria-label": tr("setup.axis.hash_profile"),
-                                            value: Some(realm_digest_algorithm_selected.into()),
-                                            on_value_change: move |v: Option<String>| {
-                                                if let Some(v) = v {
-                                                    realm_digest_algorithm.set(v);
-                                                }
-                                            },
-                                            for (i, (option_value, label, _)) in HASH_PROFILE_OPTIONS.iter().enumerate() {
-                                                SelectOption::<String> {
-                                                    index: i,
-                                                    value: option_value.to_string(),
-                                                    text_value: tr(label),
-                                                    {tr(label)}
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        if let Some((tone, heading_key, body_key)) = current_visibility_hint {
-                            div { class: if tone == "error" { "inline-error" } else { "inline-warn" },
-                                span { class: "body",
-                                    strong { {tr(heading_key)} }
-                                    " "
-                                    {tr(body_key)}
-                                }
-                            }
-                        }
-
-                        div { class: "actions setup-nav-actions",
-                            Button {
-                                variant: ButtonVariant::Secondary,
-                                "data-testid": "new-realm-back-button",
-                                onclick: move |_| create_step.set(active_create_step.previous()),
-                                {tr("setup.action.back")}
-                            }
-                            Button {
-                                variant: ButtonVariant::Primary,
-                                "data-testid": "new-realm-next-button",
-                                disabled: !can_advance_step,
-                                onclick: move |_| create_step.set(active_create_step.next()),
-                                {tr("setup.action.next_create")}
-                            }
-                        }
-                    }
-                }
-
-                if active_create_step == NewRealmStep::Create {
-                    div { class: "setup-step-panel",
-                        if let Some(blocker) = create_blocker {
-                            div { class: "inline-warn", "data-testid": "realm-create-blocker",
-                                span { class: "body", "{blocker}" }
-                            }
-                        }
-                        if realm_state_value != draft_state_label {
-                            div { class: "setup-summary-list", "data-testid": "realm-create-status",
-                                div { class: "setup-summary-row setup-summary-row-stack",
-                                    strong { {tr("setup.state.bootstrap")} }
-                                    span { class: "muted", "{realm_state_value}" }
-                                }
-                            }
-                        }
-                        div { class: "actions setup-nav-actions",
-                            Button {
-                                variant: ButtonVariant::Secondary,
-                                "data-testid": "new-realm-back-button",
-                                onclick: move |_| create_step.set(active_create_step.previous()),
-                                {tr("setup.action.back")}
-                            }
-                            Button {
-                                variant: ButtonVariant::Primary,
-                                "data-testid": "create-realm-button",
-                                disabled: !can_create_realm,
-                                onclick: {
-                                    let base = base_url.clone();
-                                    let strings = progress_strings.clone();
-                                    move |_| {
-                                        let strings = strings.clone();
-                                        let history_access = realm_policy_history_access();
-                                        let request_mls_genesis =
-                                            mls_activation_requested(&realm_mls_activation());
-                                        if let Some(hint) =
-                                            mls_activation_history_hint(request_mls_genesis, &history_access)
-                                        {
-                                            realm_state.set(tr(hint));
-                                            return;
-                                        }
-                                        // `recovery_material_pending` is a normative hard gate:
-                                        // explicit MLS initialization requires a recovery path.
-                                        if request_mls_genesis {
-                                            let recovery_gate_state = active_account().map_or(
-                                                EncryptedRealmRecoveryGateState::Checking,
-                                                |_account| {
-                                                    let store = state_store.read();
-                                                    encrypted_realm_recovery_gate_state(
-                                                        account_recovery_configured(),
-                                                        crate::views::recovery::recovery_options_configured(
-                                                            &store,
-                                                        ),
-                                                        crate::components::mls_recovery_backup_configured(
-                                                            &store,
-                                                        ),
-                                                    )
-                                                },
-                                            );
-                                            match recovery_gate_state {
-                                                EncryptedRealmRecoveryGateState::Ready => {}
-                                                EncryptedRealmRecoveryGateState::Missing => {
-                                                    pending_recovery_gate.set(true);
-                                                    return;
-                                                }
-                                                EncryptedRealmRecoveryGateState::Checking => {
-                                                    let message = tr("setup.recovery_gate.checking");
-                                                    realm_state.set(message);
-                                                    crate::components::feedback::toast_info(
-                                                        "setup.recovery_gate.checking",
-                                                        vec![],
-                                                    );
-                                                    return;
-                                                }
-                                            }
-                                        }
-                                        realm_create_busy.set(true);
-                                        realm_state.set(tr("setup.blocker.creating"));
-                                        let Some(account) = active_account() else {
-                                            realm_create_busy.set(false);
-                                            realm_state.set(tr("setup.blocker.account_context_unavailable"));
-                                            return;
-                                        };
-                                        let authority = account.authority.clone();
-                                        let account_device_id = account.device_id.clone();
-                                        let api_token = token();
-                                        let base = base.clone();
-                                        let backup_trigger_signal =
-                                            crate::components::try_needs_mls_backup_signal();
-                                        let title = realm_title();
-                                        let summary = realm_summary();
-                                        let alias = realm_alias();
-                                        let discoverability = realm_discoverability();
-                                        let join_rule = realm_policy_join_rule();
-                                        let security_class = realm_security_class();
-                                        let federation_policy = realm_federation_policy();
-                                        let digest_algorithm = realm_digest_algorithm();
-                                        let actor = active_account()
-                                            .map(|account| account.principal_id().to_string())
-                                            .unwrap_or_default();
-                                        let configured_plaintext_service_id =
-                                            plaintext_service_id.clone();
-                                        spawn(async move {
+                realm_create_busy.revise(|value| {
+                    *value = true;
+                });
+                realm_state.revise(|value| {
+                    *value = tr("setup.blocker.creating");
+                });
+                let Some(account) = active_account.get() else {
+                    realm_create_busy.revise(|value| {
+                        *value = false;
+                    });
+                    realm_state.revise(|value| {
+                        *value = tr("setup.blocker.account_context_unavailable");
+                    });
+                    return;
+                };
+                let authority = account.authority.clone();
+                let account_device_id = account.device_id.clone();
+                let api_token = token.get();
+                let base = base.clone();
+                let backup_trigger_signal = crate::components::try_needs_mls_backup_state();
+                let title = realm_title.get();
+                let summary = realm_summary.get();
+                let alias = realm_alias.get();
+                let discoverability = realm_discoverability.get();
+                let join_rule = realm_policy_join_rule.get();
+                let security_class = realm_security_class.get();
+                let federation_policy = realm_federation_policy.get();
+                let digest_algorithm = realm_digest_algorithm.get();
+                let actor = active_account
+                    .get()
+                    .map(|account| account.principal_id().to_string())
+                    .unwrap_or_default();
+                let configured_plaintext_service_id = plaintext_service_id.clone();
+                {
+                    let task_owner = context.clone();
+                    let _ = task_owner.spawn(async move {
                                             if crate::event_signer::active_signer().is_none() {
                                                 match crate::event_signer::bootstrap_default_signer("inkson") {
                                                     Ok(_) => {}
@@ -815,8 +275,8 @@ pub(super) fn RealmsSection(
                                                             &strings.signer_not_ready,
                                                             &[("error", error.to_string())],
                                                         );
-                                                        realm_create_busy.set(false);
-                                                        realm_state.set(message.clone());
+                                                        realm_create_busy.revise(|value|{*value=false;});
+                                                        realm_state.revise(|value|{*value=message.clone();});
                                                         crate::components::feedback::toast_error(
                                                             "feedback.realm_create_failed",
                                                             vec![],
@@ -849,9 +309,7 @@ pub(super) fn RealmsSection(
                                                     // after describe; if it isn't set
                                                     // yet we ask the API to fall back
                                                     // to the describe response.
-                                                    let cached_trust_domain = state_store
-                                                        .read()
-                                                        .load()
+                                                    let cached_trust_domain = state_store.read(|store| store.load())
                                                         .server_trust_domain
                                                         .clone();
                                                     let trust_domain = match cached_trust_domain {
@@ -868,8 +326,8 @@ pub(super) fn RealmsSection(
                                                                 &strings.create_failed,
                                                                 &[("error", error.to_string())],
                                                             );
-                                                            realm_create_busy.set(false);
-                                                            realm_state.set(message.clone());
+                                                            realm_create_busy.revise(|value|{*value=false;});
+                                                            realm_state.revise(|value|{*value=message.clone();});
                                                             crate::components::feedback::toast_error(
                                                                 "feedback.realm_create_failed",
                                                                 vec![],
@@ -908,8 +366,8 @@ pub(super) fn RealmsSection(
                                                                 &strings.created_then_failed,
                                                                 &[("id", realm_id.clone()), ("error", error)],
                                                             );
-                                                            realm_create_busy.set(false);
-                                                            realm_state.set(message.clone());
+                                                            realm_create_busy.revise(|value|{*value=false;});
+                                                            realm_state.revise(|value|{*value=message.clone();});
                                                             crate::components::feedback::toast_error(
                                                                 "feedback.realm_create_failed",
                                                                 vec![],
@@ -924,8 +382,8 @@ pub(super) fn RealmsSection(
                                                             state = "committed",
                                                             "Realm setup phase completed"
                                                         );
-                                                        selected_realm_id.set(realm_id.clone());
-                                                        created_realm_id.set(realm_id.clone());
+                                                        selected_realm_id.revise(|value|{*value=realm_id.clone();});
+                                                        created_realm_id.revise(|value|{*value=realm_id.clone();});
                                                         // Optimistic sidebar update goes
                                                         // through the canonical store —
                                                         // the Realm tree Signal is derived
@@ -958,15 +416,15 @@ pub(super) fn RealmsSection(
                                                                 },
                                                             )
                                                             .into_value();
-                                                        state_store.write().save_realm_tree_projection(
+                                                        state_store.write(|store| store.save_realm_tree_projection(
                                                             realm_id.clone(),
                                                             projection_body,
-                                                        );
+                                                        ));
                                                         // The first authority-signed RealmCommit is the sole
                                                         // completion boundary. Keep the committed Realm
                                                         // reachable even when later product initialization
                                                         // (default discussion / MLS artifacts) needs recovery.
-                                                        create_step.set(NewRealmStep::Done);
+                                                        create_step.revise(|value|{*value=NewRealmStep::Done;});
                                                         if let Err(err) = create_initial_default_discussion(
                                                             &api,
                                                             &realm_id,
@@ -981,8 +439,8 @@ pub(super) fn RealmsSection(
                                                                     ("error", err.to_string()),
                                                                 ],
                                                             );
-                                                            realm_create_busy.set(false);
-                                                            realm_state.set(message.clone());
+                                                            realm_create_busy.revise(|value|{*value=false;});
+                                                            realm_state.revise(|value|{*value=message.clone();});
                                                             crate::components::feedback::toast_error(
                                                                 "feedback.realm_create_failed",
                                                                 vec![],
@@ -993,10 +451,10 @@ pub(super) fn RealmsSection(
                                                         // The accepted Realm remains on Done throughout
                                                         // post-create setup; keep its progress visible while
                                                         // MLS initialization and backup finish below.
-                                                        realm_state.set(BootstrapProgressStrings::fill(
+                                                        realm_state.revise(|value|{*value=BootstrapProgressStrings::fill(
                                                             &strings.accepted,
                                                             &[("id", realm_id.clone())],
-                                                        ));
+                                                        );});
 
                                                         if request_mls_genesis {
                                                             tracing::debug!(
@@ -1013,7 +471,7 @@ pub(super) fn RealmsSection(
                                                             // the Realm permanently unable to perform encrypted writes.
                                                             match crate::mls::creator_bootstrap::start_creator_realm_mls_genesis(
                                                                      &api,
-                                                                     &crate::app::runtime_adapter::state_store_handle(state_store),
+                                                                     &state_store.handle(),
                                                                      &realm_id,
                                                                      &authority,
                                                                      &account_device_id,
@@ -1043,8 +501,8 @@ pub(super) fn RealmsSection(
                                                                                 ("error", err.to_string()),
                                                                             ],
                                                                         );
-                                                                        realm_create_busy.set(false);
-                                                                        realm_state.set(message.clone());
+                                                                        realm_create_busy.revise(|value|{*value=false;});
+                                                                        realm_state.revise(|value|{*value=message.clone();});
                                                                         crate::components::feedback::toast_error(
                                                                             "feedback.realm_create_failed",
                                                                             vec![],
@@ -1085,22 +543,20 @@ pub(super) fn RealmsSection(
                                                         }
 
                                                         let message = steps.join(" · ");
-                                                        realm_create_busy.set(false);
-                                                        realm_state.set(message);
+                                                        realm_create_busy.revise(|value|{*value=false;});
+                                                        realm_state.revise(|value|{*value=message;});
                                                         if request_mls_genesis && let Some(signal) = backup_trigger_signal {
                                                             // Realm bootstrap creates the account MLS secret
                                                             // before the first encrypted message/card write,
                                                             // so attempt the recovery-public-key backup here
                                                             // instead of waiting for a later write hook.
-                                                            crate::components::maybe_auto_backup_mls_after_encrypted_write(
+                                                            crate::components::maybe_auto_backup_mls_after_encrypted_write(context.clone(),
                                                                  base.clone(),
                                                                  api_token.clone(),
                                                                  authority.clone(),
                                                                  actor.clone(),
                                                                  account_device_id.to_string(),
-                                                                crate::app::runtime_adapter::state_store_handle(
-                                                                    state_store,
-                                                                ),
+                                                                state_store.handle(),
                                                                 signal,
                                                             )
                                                             .await;
@@ -1115,8 +571,8 @@ pub(super) fn RealmsSection(
                                                                 &[("error", error.to_string())],
                                                             )
                                                         };
-                                                        realm_create_busy.set(false);
-                                                        realm_state.set(message.clone());
+                                                        realm_create_busy.revise(|value|{*value=false;});
+                                                        realm_state.revise(|value|{*value=message.clone();});
                                                         crate::components::feedback::toast_error(
                                                             "feedback.realm_create_failed",
                                                             vec![],
@@ -1135,8 +591,8 @@ pub(super) fn RealmsSection(
                                                             &[("error", error_text)],
                                                         )
                                                     };
-                                                    realm_create_busy.set(false);
-                                                    realm_state.set(message.clone());
+                                                    realm_create_busy.revise(|value|{*value=false;});
+                                                    realm_state.revise(|value|{*value=message.clone();});
                                                     crate::components::feedback::toast_error(
                                                         "feedback.realm_create_failed",
                                                         vec![],
@@ -1145,87 +601,524 @@ pub(super) fn RealmsSection(
                                                 }
                                             }
                                         });
-                                    }
-                                },
-                                {tr("setup.action.create_realm")}
-                            }
-                        }
-                    }
-                }
-
-                if active_create_step == NewRealmStep::Done {
-                    div { class: "setup-step-panel", "data-testid": "realm-setup-done",
-                        if has_created_realm {
-                            div { class: "setup-summary-list",
-                                div { class: "setup-summary-row",
-                                    strong { {tr("setup.done.created_realm")} }
-                                    span { class: "mono", title: "{created_realm_id_value}", "data-testid": "selected-realm-id", "{created_realm_id_label}" }
-                                }
-                                div { class: "setup-summary-row setup-summary-row-stack",
-                                    strong { {tr("setup.state.bootstrap")} }
-                                    span { class: "muted", "{realm_state_value}" }
-                                }
-                            }
-                            crate::components::mls_creator_retry::CreatorMlsRetry {
-                                realm_id: created_realm_id_value.clone(),
-                                refresh_hint: realm_state_value.clone(),
-                                token,
-                            }
-                            div { class: "actions setup-nav-actions",
-                                if realm_create_busy_value {
-                                    Button {
-                                        variant: ButtonVariant::Primary,
-                                        disabled: true,
-                                        {tr("setup.action.finishing")}
-                                    }
-                                } else {
-                                    Link {
-                                        class: "primary",
-                                        to: Route::Realm { realm_id: created_realm_id_value.clone() },
-                                        {tr("setup.action.open_realm")}
-                                    }
-                                    Button {
-                                        variant: ButtonVariant::Secondary,
-                                        "data-testid": "new-realm-start-another",
-                                        disabled: pending_recovery_gate(),
-                                        onclick: move |_| {
-                                            if created_realm_id().trim().is_empty()
-                                                || realm_create_busy()
-                                                || pending_recovery_gate()
-                                            {
-                                                return;
-                                            }
-                                            // Only the completed wizard is reset. The accepted
-                                            // Realm and its durable MLS recovery remain intact.
-                                            created_realm_id.set(String::new());
-                                            realm_title.set(String::new());
-                                            realm_summary.set(String::new());
-                                            realm_alias.set(String::new());
-                                            realm_discoverability.set("listed".into());
-                                            realm_policy_join_rule.set("invite".into());
-                                            realm_policy_history_access.set("since_join".into());
-                                            realm_mls_activation.set("after_create".into());
-                                            realm_security_class.set("standard".into());
-                                            realm_federation_policy.set("restricted".into());
-                                            realm_digest_algorithm.set("sha256".into());
-                                            realm_state.set(tr("setup.state.draft"));
-                                            create_step.set(NewRealmStep::Basics);
-                                        },
-                                        {tr("setup.new_realm")}
-                                    }
-                                }
-                            }
-                        } else {
-                            div { class: "muted", {tr("setup.done.empty")} }
-                        }
-                    }
-                }
-                }
+                };
             }
-        }
+        };
+        submit(());
     }
 }
 
+fn realm_step_contents(step: NewRealmStep) -> impl glory::ui::Widget {
+    glory::ui::group().fill((
+        glory::ui::text()
+            .class("setup-step-index setup-step-number")
+            .content(step.number()),
+        glory::ui::text()
+            .class("setup-step-label setup-step-copy setup-step-title")
+            .content(tr(step.label_key())),
+        glory::ui::text()
+            .class("setup-step-subtitle muted")
+            .content(tr(step.subtitle_key())),
+    ))
+}
+pub(super) fn page(scope: &Scope, context: Rc<InksonContext>, draft: super::SetupDraft) -> View {
+    let enabled = {
+        let ctx = context.clone();
+        scope.bond(move || {
+            realm_create_available(
+                !ctx.token.get().is_empty(),
+                !draft.realm_title.get().trim().is_empty(),
+                !matches!(
+                    policy_combination_hint(
+                        &draft.realm_discoverability.get(),
+                        &draft.realm_policy_join_rule.get(),
+                        &draft.realm_policy_history_access.get()
+                    ),
+                    Some(("error", _, _))
+                ) && mls_activation_history_hint(
+                    mls_activation_requested(&draft.realm_mls_activation.get()),
+                    &draft.realm_policy_history_access.get(),
+                )
+                .is_none(),
+                ctx.secure_store_bootstrap_ready.get(),
+                draft.realm_create_busy.get(),
+                !draft.created_realm_id.get().is_empty(),
+            )
+        })
+    };
+    {
+        let ctx = context.clone();
+        scope.effect(move || {
+            let ready = ctx.active_account.get().is_some()
+                && ctx.state_store.read(|store| {
+                    encrypted_realm_recovery_gate_state(
+                        ctx.account_recovery_configured.get(),
+                        crate::views::recovery::recovery_options_configured(store),
+                        crate::components::mls_recovery_backup_configured(store),
+                    )
+                }) == EncryptedRealmRecoveryGateState::Ready;
+            if ready && draft.pending_recovery_gate.get_untracked() {
+                draft.pending_recovery_gate.revise(|v| *v = false);
+            }
+        });
+    }
+    let stepper = {
+        let ctx = context.clone();
+        reactive(draft.create_step, move |scope, current| {
+            Box::new(glory::ui::group().fill(vec![
+                    line(
+                        "event-head",
+                        vec![
+                            plain(ctx.translated(scope, "setup.create_steps")),
+                            plain(tr_args(
+                                "setup.step_progress",
+                                &[
+                                    ("current", current.number().to_owned()),
+                                    ("total", NEW_REALM_STEPS.len().to_string()),
+                                ],
+                            )),
+                        ],
+                    ),
+                    stack(
+                        "setup-step-list",
+                        NEW_REALM_STEPS
+                            .into_iter()
+                            .map(|step| {
+                                let selected = step == current;
+                                Box::new(
+                                    sapid::button()
+                                        .unstyled()
+                                        .class(if selected {
+                                            "primary setup-step active"
+                                        } else {
+                                            "secondary setup-step"
+                                        })
+                                        .enabled(scope.bond(move || {
+                                            step != NewRealmStep::Done
+                                                || !draft.created_realm_id.get().is_empty()
+                                        }))
+                                        .fill(realm_step_contents(step))
+                                        .on_press(move || draft.create_step.revise(|v| *v = step)),
+                                ) as View
+                            })
+                            .collect(),
+                    ),
+                ])) as View
+        })
+    };
+    let editor = {
+        let ctx = context.clone();
+        reactive(draft.create_step, move |scope, step| {
+            let edit = scope.bond(move || {
+                !draft.realm_create_busy.get() && draft.created_realm_id.get().is_empty()
+            });
+            let mut nodes = Vec::new();
+            match step {
+                NewRealmStep::Basics => {
+                    nodes.push(stack(
+                        "workflow-form setup-form-grid",
+                        vec![
+                            presentation::input_field(
+                                scope,
+                                ctx.clone(),
+                                presentation::InputField {
+                                    key: "realm-title-input",
+                                    label: "setup.field.realm_title",
+                                    prompt: "setup.field.realm_title_placeholder",
+                                    value: draft.realm_title,
+                                    multiline: false,
+                                    required: true,
+                                    span_two: false,
+                                },
+                                edit,
+                            ),
+                            presentation::input_field(
+                                scope,
+                                ctx.clone(),
+                                presentation::InputField {
+                                    key: "realm-alias-input",
+                                    label: "setup.field.realm_alias",
+                                    prompt: "setup.field.realm_alias_placeholder",
+                                    value: draft.realm_alias,
+                                    multiline: false,
+                                    required: false,
+                                    span_two: false,
+                                },
+                                edit,
+                            ),
+                            presentation::input_field(
+                                scope,
+                                ctx.clone(),
+                                presentation::InputField {
+                                    key: "realm-summary-input",
+                                    label: "setup.field.summary",
+                                    prompt: "setup.field.realm_summary_placeholder",
+                                    value: draft.realm_summary,
+                                    multiline: true,
+                                    required: false,
+                                    span_two: true,
+                                },
+                                edit,
+                            ),
+                        ],
+                    ));
+                    nodes.push(line(
+                        "actions setup-nav-actions",
+                        vec![action(
+                            scope,
+                            ctx.clone(),
+                            "new-realm-next-button",
+                            "setup.action.next_boundary",
+                            "primary",
+                            scope.bond(move || !draft.realm_title.get().trim().is_empty()),
+                            move || draft.create_step.revise(|v| *v = v.next()),
+                        )],
+                    ));
+                }
+                NewRealmStep::Boundary => {
+                    let axes = [
+                        (
+                            "realm-discoverability-input",
+                            "setup.axis.discoverability",
+                            draft.realm_discoverability,
+                            DISCOVERABILITY_OPTIONS.as_slice(),
+                            None,
+                        ),
+                        (
+                            "realm-policy-join-rule-input",
+                            "setup.axis.join_rule",
+                            draft.realm_policy_join_rule,
+                            JOIN_RULE_OPTIONS.as_slice(),
+                            None,
+                        ),
+                        (
+                            "realm-policy-history-access-input",
+                            "setup.axis.history_access",
+                            draft.realm_policy_history_access,
+                            HISTORY_ACCESS_OPTIONS.as_slice(),
+                            None,
+                        ),
+                        (
+                            "realm-mls-activation-input",
+                            "setup.axis.mls_activation",
+                            draft.realm_mls_activation,
+                            MLS_ACTIVATION_OPTIONS.as_slice(),
+                            Some(draft.realm_policy_history_access),
+                        ),
+                        (
+                            "realm-security-class-input",
+                            "setup.axis.security_class",
+                            draft.realm_security_class,
+                            SECURITY_CLASS_OPTIONS.as_slice(),
+                            None,
+                        ),
+                    ]
+                    .into_iter()
+                    .map(|(key, label, value, options, dependency)| {
+                        presentation::axis(
+                            scope,
+                            ctx.clone(),
+                            presentation::Axis {
+                                key,
+                                label,
+                                value,
+                                options: options.to_vec(),
+                                dependency,
+                                enabled: edit,
+                            },
+                        )
+                    })
+                    .collect();
+                    nodes.push(stack("setup-axis-grid", axes));
+                    let advanced_context = ctx.clone();
+                    let federation = draft.realm_federation_policy;
+                    let security = draft.realm_security_class;
+                    let digest = draft.realm_digest_algorithm;
+                    nodes.push(Box::new(
+                        sapid::collapsible("realm-advanced-config")
+                            .unstyled()
+                            .class("setup-advanced realm-advanced-config")
+                            .label(ctx.translated(scope, "setup.boundary.advanced_summary"))
+                            .default_open(false)
+                            .content_policy(sapid::ContentPolicy::KeepMounted)
+                            .content(move || {
+                                let context = advanced_context.clone();
+                                glory::ui::widget(move |scope| {
+                                    stack(
+                                        "setup-axis-grid setup-advanced-grid",
+                                        vec![
+                                            presentation::axis(
+                                                scope,
+                                                context.clone(),
+                                                presentation::Axis {
+                                                    key: "realm-federation-policy-input",
+                                                    label: "setup.axis.federation_policy",
+                                                    value: federation,
+                                                    options: FEDERATION_POLICY_OPTIONS.to_vec(),
+                                                    dependency: Some(security),
+                                                    enabled: edit,
+                                                },
+                                            ),
+                                            presentation::axis(
+                                                scope,
+                                                context.clone(),
+                                                presentation::Axis {
+                                                    key: "realm-hash-profile-input",
+                                                    label: "setup.axis.hash_profile",
+                                                    value: digest,
+                                                    options: HASH_PROFILE_OPTIONS.to_vec(),
+                                                    dependency: None,
+                                                    enabled: edit,
+                                                },
+                                            ),
+                                        ],
+                                    )
+                                    .build(scope)
+                                })
+                            }),
+                    ) as View);
+                    let warning_context = ctx.clone();
+                    nodes.push(crate::presentation::widgets::reactive_distinct(
+                        scope.bond(move || {
+                            policy_combination_hint(
+                                &draft.realm_discoverability.get(),
+                                &draft.realm_policy_join_rule.get(),
+                                &draft.realm_policy_history_access.get(),
+                            )
+                        }),
+                        move |scope, hint| match hint {
+                            Some((tone, title, body)) => stack(
+                                if tone == "error" {
+                                    "inline-error"
+                                } else {
+                                    "inline-warn"
+                                },
+                                vec![line(
+                                    "body",
+                                    vec![
+                                        plain(warning_context.translated(scope, title)),
+                                        plain(warning_context.translated(scope, body)),
+                                    ],
+                                )],
+                            ),
+                            None => empty(),
+                        },
+                    ));
+                    nodes.push(line(
+                        "actions setup-nav-actions",
+                        vec![
+                            action(
+                                scope,
+                                ctx.clone(),
+                                "new-realm-back-button",
+                                "setup.action.back",
+                                "secondary",
+                                edit,
+                                move || draft.create_step.revise(|value| *value = value.previous()),
+                            ),
+                            action(
+                                scope,
+                                ctx.clone(),
+                                "new-realm-next-button",
+                                "setup.action.next_create",
+                                "primary",
+                                scope.bond(move || {
+                                    !matches!(
+                                        policy_combination_hint(
+                                            &draft.realm_discoverability.get(),
+                                            &draft.realm_policy_join_rule.get(),
+                                            &draft.realm_policy_history_access.get()
+                                        ),
+                                        Some(("error", _, _))
+                                    ) && mls_activation_history_hint(
+                                        mls_activation_requested(&draft.realm_mls_activation.get()),
+                                        &draft.realm_policy_history_access.get(),
+                                    )
+                                    .is_none()
+                                }),
+                                move || draft.create_step.revise(|value| *value = value.next()),
+                            ),
+                        ],
+                    ));
+                }
+                NewRealmStep::Create => {
+                    let ctx_create = ctx.clone();
+                    let blocker_context = ctx.clone();
+                    let blocker_label_context = ctx.clone();
+                    nodes.push(crate::presentation::widgets::reactive_distinct(
+                        scope.bond(move || {
+                            if !draft.created_realm_id.get().is_empty() {
+                                Some("setup.blocker.already_created")
+                            } else if blocker_context.token.get().trim().is_empty() {
+                                Some("setup.blocker.sign_in")
+                            } else if !blocker_context.secure_store_bootstrap_ready.get() {
+                                Some("setup.blocker.secure_store")
+                            } else if draft.realm_create_busy.get() {
+                                Some("setup.blocker.creating")
+                            } else {
+                                None
+                            }
+                        }),
+                        move |scope, blocker| match blocker {
+                            Some(key) => stack(
+                                "inline-warn realm-create-blocker",
+                                vec![paragraph(
+                                    "body",
+                                    blocker_label_context.translated(scope, key),
+                                )],
+                            ),
+                            None => empty(),
+                        },
+                    ));
+                    let status_context = ctx.clone();
+                    nodes.push(crate::presentation::widgets::reactive_distinct(
+                        scope.bond(move || draft.realm_state.get() != tr("setup.state.draft")),
+                        move |scope, visible| {
+                            if visible {
+                                presentation::bootstrap_status(
+                                    scope,
+                                    status_context.clone(),
+                                    draft.realm_state,
+                                )
+                            } else {
+                                empty()
+                            }
+                        },
+                    ));
+                    nodes.push(line(
+                        "actions setup-nav-actions",
+                        vec![
+                            action(
+                                scope,
+                                ctx.clone(),
+                                "new-realm-back-button",
+                                "setup.action.back",
+                                "secondary",
+                                edit,
+                                move || draft.create_step.revise(|v| *v = v.previous()),
+                            ),
+                            action(
+                                scope,
+                                ctx.clone(),
+                                "create-realm-button",
+                                "setup.action.create_realm",
+                                "primary",
+                                enabled,
+                                move || draft.create_realm(ctx_create.clone()),
+                            ),
+                        ],
+                    ));
+                }
+                NewRealmStep::Done => {
+                    let done_context = ctx.clone();
+                    nodes.push(crate::presentation::widgets::reactive_distinct(
+                        scope.bond(move || !draft.created_realm_id.get().trim().is_empty()),
+                        move |scope, has_created| {
+                            if !has_created {
+                                return paragraph("muted realm-setup-done", done_context.translated(scope, "setup.done.empty"));
+                            }
+                            let context = done_context.clone();
+                            let realm = draft.created_realm_id;
+                            let identity = Box::new(glory::ui::view().class("mono selected-realm-id")
+                                .role(glory::render::Role::Group)
+                                .name(realm)
+                                .fill(glory::ui::text().content(scope.bond(move || crate::views::helpers::short_protocol_id(realm.get()))))) as View;
+                            let navigation_context = context.clone();
+                            let navigation = crate::presentation::widgets::reactive_distinct(draft.realm_create_busy, move |scope, busy| {
+                                if busy {
+                                    return action(scope, navigation_context.clone(), "realm-finishing", "setup.action.finishing", "primary", false, || {});
+                                }
+                                let navigate = navigation_context.clone();
+                                let label = navigation_context.translated(scope, "setup.action.open_realm");
+                                line("actions setup-nav-actions", vec![
+                                    Box::new(crate::presentation::widgets::internal_link()
+                                        .class("primary open-created-realm")
+                                        .name(label)
+                                        .target(scope.bond(move || Route::Realm { realm_id: realm.get() }.to_string()))
+                                        .fill(glory::ui::text().content(label))
+                                        .on(glory::render::EventKind::Activate, move |_| navigate.navigate(Route::Realm { realm_id: realm.get_untracked() }))) as View,
+                                    action(scope, navigation_context.clone(), "new-realm-start-another", "setup.new_realm", "secondary",
+                                        scope.bond(move || !draft.realm_create_busy.get() && !draft.pending_recovery_gate.get()),
+                                        move || {
+                                            if draft.created_realm_id.get_untracked().trim().is_empty() || draft.realm_create_busy.get_untracked() || draft.pending_recovery_gate.get_untracked() { return; }
+                                            draft.created_realm_id.revise(|value| value.clear());
+                                            draft.realm_title.revise(|value| value.clear());
+                                            draft.realm_summary.revise(|value| value.clear());
+                                            draft.realm_alias.revise(|value| value.clear());
+                                            draft.realm_discoverability.revise(|value| *value = "listed".into());
+                                            draft.realm_policy_join_rule.revise(|value| *value = "invite".into());
+                                            draft.realm_policy_history_access.revise(|value| *value = "since_join".into());
+                                            draft.realm_mls_activation.revise(|value| *value = "after_create".into());
+                                            draft.realm_security_class.revise(|value| *value = "standard".into());
+                                            draft.realm_federation_policy.revise(|value| *value = "restricted".into());
+                                            draft.realm_digest_algorithm.revise(|value| *value = "sha256".into());
+                                            draft.realm_state.revise(|value| *value = tr("setup.state.draft"));
+                                            draft.create_step.revise(|value| *value = NewRealmStep::Basics);
+                                        }),
+                                ])
+                            });
+                            stack("realm-setup-done", vec![
+                                stack("setup-summary-list", vec![line("setup-summary-row", vec![
+                                    Box::new(glory::ui::text().class("setup-summary-label").content(context.translated(scope, "setup.done.created_realm"))) as View,
+                                    identity,
+                                ]), presentation::bootstrap_status(scope, context.clone(), draft.realm_state)]),
+                                crate::components::mls_creator_retry::creator_mls_retry(scope, context.clone(), crate::components::mls_creator_retry::CreatorMlsRetryProps {
+                                    realm_id: realm.into(), circle_id: None, refresh_hint: draft.realm_state.into(), token: context.token,
+                                }),
+                                navigation,
+                            ])
+                        },
+                    ));
+                }
+            }
+            stack("setup-step-panel new-realm-editor", nodes)
+        })
+    };
+    let ctx = context.clone();
+    let gate =
+        reactive(draft.pending_recovery_gate, move |scope, open| {
+            if !open {
+                return empty();
+            }
+            let nav = ctx.clone();
+            confirmation(
+                scope,
+                ctx.clone(),
+                "encrypted-realm-recovery-gate",
+                ctx.translated(scope, "setup.recovery_gate.title"),
+                stack(
+                    "modal-body",
+                    vec![
+                        paragraph("muted", ctx.translated(scope, "setup.recovery_gate.body")),
+                        Box::new(
+                            crate::presentation::widgets::internal_link()
+                                .class("primary encrypted-realm-recovery-gate-setup")
+                                .target(Route::SettingsRecovery.to_string())
+                                .name(ctx.translated(scope, "setup.action.setup_recovery_key"))
+                                .fill(glory::ui::text().content(
+                                    ctx.translated(scope, "setup.action.setup_recovery_key"),
+                                ))
+                                .on(glory::render::EventKind::Activate, move |_| {
+                                    draft.pending_recovery_gate.revise(|v| *v = false);
+                                    nav.navigate(Route::SettingsRecovery);
+                                }),
+                        ) as View,
+                    ],
+                ),
+                move || draft.pending_recovery_gate.revise(|v| *v = false),
+            )
+        });
+    stack(
+        "setup-shell new-realm-shell realm-lifecycle-strand",
+        vec![
+            stack(
+                "setup-column",
+                vec![stack("event new-realm-stepper", vec![stepper, editor])],
+            ),
+            gate,
+        ],
+    )
+}
 #[cfg(test)]
 mod tests {
     use super::{
@@ -1233,6 +1126,26 @@ mod tests {
         realm_create_available,
     };
 
+    #[test]
+    fn production_step_content_is_a_valid_multiline_button() {
+        for step in super::NEW_REALM_STEPS {
+            let app = glory::ui::App::memory();
+            let selected = app.scope().cage(false);
+            app.mount(
+                sapid::button()
+                    .unstyled()
+                    .fill(super::realm_step_contents(step))
+                    .on_press(move || selected.revise(|value| *value = true)),
+            )
+            .unwrap();
+            app.flush().unwrap();
+            let button = app.tree().roots()[0];
+            app.dispatch(button, glory::render::Event::Activate)
+                .unwrap();
+            app.flush().unwrap();
+            assert!(selected.get_untracked());
+        }
+    }
     #[test]
     fn realm_create_does_not_wait_for_background_grant_rotation() {
         assert!(realm_create_available(true, true, true, true, false, false));

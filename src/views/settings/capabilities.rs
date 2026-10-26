@@ -18,19 +18,18 @@
 //! - `authz/capabilities.md` §3.4 — audit trail.
 //! - `authz/capabilities.md` §10.4 — subject-only relinquish.
 
+use std::rc::Rc;
+
 use arkret_models_collaboration::governance::authorization::EffectiveCapabilityGrantView;
 use arkret_models_collaboration::governance::grant_constraint::{
     CapabilitySubject, GrantConstraintKind, IssuerAuthorityRef,
 };
-use dioxus::prelude::*;
+use glory::prelude::*;
 
-use crate::components::{EmptyState, EmptyStateKind};
+use super::widgets::*;
+use crate::presentation::{InksonContext, View};
 use crate::transport::auth::with_authed_sdk_client;
-use crate::ui::button::{Button, ButtonSize, ButtonVariant};
-use crate::ui::dialog::Dialog;
-use crate::ui::input::Input;
-use crate::ui::label::Label;
-use crate::views::helpers::{actor_display_label, short_protocol_id};
+use crate::views::helpers::short_protocol_id;
 
 /// One row in the user's capability list. Backed by either the user
 /// being the subject (capability held) or the issuer (capability
@@ -159,367 +158,395 @@ fn build_confirmed_relinquish_payload(
     })
 }
 
-#[component]
-pub fn CapabilitiesSettingsCard(principal_id: Signal<String>, token: Signal<String>) -> Element {
-    // A4 — base_url / state_store from session context instead of props.
-    let active_account = crate::app::SessionContext::get().active_account;
-    let base_url = use_signal(move || {
-        active_account()
-            .map(|account| account.server_url.to_string())
-            .unwrap_or_default()
-    });
-    let state_store = crate::app::SessionContext::get().state_store;
-    let mut rows = use_signal(Vec::<CapabilityRow>::new);
-    let mut status = use_signal(|| ("", Vec::<(&'static str, String)>::new()));
-    let mut detail_for = use_signal(|| Option::<String>::None);
-    // Subject-only relinquish confirmation binds the selected capability id
-    // and exact current-state revision. Any list refresh invalidates it.
-    let mut relinquish_for = use_signal(|| Option::<RelinquishConfirmation>::None);
-    let mut relinquish_reason = use_signal(String::new);
-    let mut refresh_nonce = use_signal(|| 0_u64);
-    // Relinquish belongs to the complete account, not just its signing principal.
-    let my_actor = active_account().map(|account| arkret_sdk::ActorId::account(account.authority));
-
-    // Fire a single effective-grants probe per token change.
-    use_effect(move || {
-        let _ = refresh_nonce();
-        let base = base_url();
-        let tok = token();
-        let did = principal_id();
-        // A refresh (including the mandatory refresh after cas_conflict) makes
-        // every prior user confirmation stale even if the grant id survives.
-        relinquish_for.set(None);
-        relinquish_reason.set(String::new());
-        rows.set(Vec::new());
-        if tok.trim().is_empty() || did.trim().is_empty() {
-            return;
-        }
-        let Some(subject) =
-            active_account().map(|account| arkret_sdk::ActorId::account(account.authority))
-        else {
-            status.set(("settings.capabilities.no_account", vec![]));
+pub(super) fn page(scope: &Scope, context: Rc<InksonContext>) -> View {
+    let rows = scope.cage(Vec::<CapabilityRow>::new());
+    let feedback = scope.cage(("", Vec::<(&'static str, String)>::new()));
+    let detail = scope.cage(None::<String>);
+    let relinquish = scope.cage(None::<RelinquishConfirmation>);
+    let reason = scope.cage(String::new());
+    let refresh = scope.cage(0_u64);
+    let busy = scope.cage(false);
+    let weak = scope.downgrade();
+    let load_context = context.clone();
+    let sequence = Rc::new(std::cell::Cell::new(0_u64));
+    scope.effect(move || {
+        let _ = refresh.get();
+        let account = load_context.active_account.get();
+        let generation = load_context.session_generation.get();
+        let token = load_context.token.get();
+        relinquish.revise(|value| {
+            *value = None;
+        });
+        reason.revise(|value| value.clear());
+        rows.revise(|value| value.clear());
+        let serial = sequence.get().wrapping_add(1);
+        sequence.set(serial);
+        let Some(account) = account else {
+            feedback.revise(|value| {
+                *value = ("settings.capabilities.no_account", vec![]);
+            });
             return;
         };
-        let realm_ids = state_store.read().known_realm_ids();
-        spawn(async move {
-            match with_authed_sdk_client(&base, tok, |http| async move {
-                let mut grants = Vec::new();
-                for realm_id in realm_ids {
-                    let response =
-                        crate::transport::realm_read::effective_grants(&http, &realm_id, &subject)
-                            .await?;
-                    grants.extend(
-                        response
-                            .grants
-                            .into_iter()
-                            .map(|row| (realm_id.clone(), row)),
-                    );
-                }
-                Ok::<_, anyhow::Error>(grants)
-            })
-            .await
-            {
+        if token.trim().is_empty() {
+            return;
+        }
+        let Some(scope) = weak.upgrade() else { return };
+        let context = load_context.clone();
+        let realm_ids = context.state_store.read(|store| store.known_realm_ids());
+        let subject = arkret_sdk::ActorId::account(account.authority.clone());
+        let session = Some(account.clone());
+        let sequence = sequence.clone();
+        spawn(&scope, async move {
+            let result =
+                with_authed_sdk_client(account.server_url.as_str(), token, |http| async move {
+                    let mut grants = Vec::new();
+                    for realm_id in realm_ids {
+                        let response = crate::transport::realm_read::effective_grants(
+                            &http, &realm_id, &subject,
+                        )
+                        .await?;
+                        grants.extend(
+                            response
+                                .grants
+                                .into_iter()
+                                .map(|row| (realm_id.clone(), row)),
+                        );
+                    }
+                    Ok::<_, anyhow::Error>(grants)
+                })
+                .await;
+            if sequence.get() != serial || !context.session_matches(generation, &session) {
+                return;
+            }
+            match result {
                 Ok(grants) => {
-                    let decoded: Vec<CapabilityRow> = grants
+                    let decoded: Vec<_> = grants
                         .iter()
                         .map(|(realm_id, row)| decode_capability_row(row, realm_id.as_str()))
                         .collect();
-                    status.set((
-                        "settings.capabilities.loaded",
-                        vec![("count", decoded.len().to_string())],
-                    ));
-                    rows.set(decoded);
+                    feedback.revise(|value| {
+                        *value = (
+                            "settings.capabilities.loaded",
+                            vec![("count", decoded.len().to_string())],
+                        )
+                    });
+                    rows.revise(|value| {
+                        *value = decoded;
+                    });
                 }
-                Err(err) => {
-                    rows.set(Vec::new());
-                    status.set((
+                Err(error) => feedback.revise(|value| {
+                    *value = (
                         "settings.capabilities.load_failed",
-                        api_error_feedback_args(&err),
-                    ));
-                }
+                        api_error_feedback_args(&error),
+                    )
+                }),
             }
         });
     });
-
-    rsx! {
-        div { class: "event", "data-testid": "capability-list-panel",
-            div { class: "event-head",
-                span { {crate::i18n::tr("settings.capabilities.title")} }
-            }
-            if !status.read().0.is_empty() {
-                div { class: "muted", {capability_feedback_text(&status.read())} }
-            }
-            if rows.read().is_empty() {
-                EmptyState {
-                    title: crate::i18n::tr("settings.capabilities.empty_title"),
-                    kind: EmptyStateKind::Empty,
-                    message: Some(
-                        crate::i18n::tr("settings.capabilities.empty_hint"),
-                    ),
-                    test_id: Some("capability-empty".to_owned()),
-                }
-            } else {
-                ul { class: "settings-list",
-                    for row in rows.read().iter().cloned() {
-                        {
-                            let issuer_did_label =
-                                actor_display_label(&state_store.read(), &row.issuer_id);
-                            let subject_did_label =
-                                actor_display_label(&state_store.read(), &row.subject);
-                            rsx! {
-                                li {
-                                    class: "event",
-                                    "data-testid": "capability-row",
-                                    "data-capability-id": "{row.capability_id}",
-                                    "data-action": "{row.action}",
-                                    "data-scope": "{row.scope}",
-                                    "data-issuer-id": "{row.issuer_id}",
-                                    "data-subject": "{row.subject}",
-                                    "data-expires-at": "{row.expires_at}",
-                                    div { class: "event-head",
-                                        span { "{row.action}" }
-                                        span { class: "muted", {crate::i18n::tr_args("settings.capabilities.expires", &[("time", row.expires_at.clone())])} }
-                                    }
-                                    div {
-                                        class: "muted",
-                                        title: "{row.issuer_id} → {row.subject}",
-                                        {crate::i18n::tr_args("settings.capabilities.issued", &[("issuer", issuer_did_label.clone()), ("subject", subject_did_label.clone())])}
-                                    }
-                                    div { class: "muted mono", {crate::i18n::tr_args("settings.capabilities.scope", &[("scope", row.scope.clone())])} }
-                                    div { class: "actions",
-                                        Button {
-                                            variant: ButtonVariant::Secondary,
-                                            "data-testid": "capability-detail-button",
-                                            "data-capability-id": "{row.capability_id}",
-                                            onclick: {
-                                                let id = row.capability_id.clone();
-                                                move |_| detail_for.set(Some(id.clone()))
-                                            },
-                                            {crate::i18n::tr("settings.capabilities.detail")}
-                                        }
-                                        // Subject-only self-service: any member
-                                        // may drop a grant they hold, with no
-                                        // revoke authority involved.
-                                        if row.can_relinquish(my_actor.as_ref()) {
-                                            Button {
-                                                variant: ButtonVariant::Destructive,
-                                                "data-testid": "capability-relinquish-button",
-                                                "data-capability-id": "{row.capability_id}",
-                                                onclick: {
-                                                    let confirmation = RelinquishConfirmation {
-                                                        capability_id: row.capability_id.clone(),
-                                                        revision: row.revision.clone(),
-                                                    };
-                                                    move |_| {
-                                                        relinquish_reason.set(String::new());
-                                                        relinquish_for.set(Some(confirmation.clone()));
-                                                    }
-                                                },
-                                                {crate::i18n::tr("settings.capabilities.relinquish")}
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            if let Some(confirmation) = relinquish_for.read().clone() {
-                if let Some(row) = rows
-                    .read()
-                    .iter()
-                    .find(|row| row.capability_id == confirmation.capability_id)
-                    .cloned()
-                {
-                    {
-                        let capability_id_label = short_protocol_id(&row.capability_id);
-                        rsx! {
-                            Dialog {
-                                open: true,
-                                on_open_change: move |open: bool| {
-                                    if !open {
-                                        relinquish_for.set(None);
-                                    }
-                                },
-                                "data-testid": "capability-relinquish-modal",
-                                "data-capability-id": "{row.capability_id}",
-                                div {
-                                    class: "event modal",
-                                    div { class: "event-head",
-                                        span { {crate::i18n::tr("settings.capabilities.relinquish_title")} }
-                                        Button {
-                                            variant: ButtonVariant::Ghost,
-                                            size: ButtonSize::Icon,
-                                            class: "btn",
-                                            "data-testid": "capability-relinquish-close",
-                                            "aria-label": crate::i18n::tr("settings.capabilities.close_relinquish"),
-                                            onclick: move |_| relinquish_for.set(None),
-                                            "×"
-                                        }
-                                    }
-                                    div { class: "muted", title: "{row.capability_id}",
-                                        "{capability_id_label} · {row.action}"
-                                    }
-                                    div { class: "muted", "data-testid": "capability-relinquish-impact",
-                                        {crate::i18n::tr("settings.capabilities.impact")}
-                                    }
-                                    Label {
-                                        html_for: "capability-relinquish-reason-input",
-                                        {crate::i18n::tr("settings.capabilities.reason")}
-                                    }
-                                    Input {
-                                        id: "capability-relinquish-reason-input",
-                                        "data-testid": "capability-relinquish-reason-input",
-                                        value: "{relinquish_reason}",
-                                        placeholder: crate::i18n::tr("settings.capabilities.reason_placeholder"),
-                                        oninput: move |event: FormEvent| relinquish_reason.set(event.value()),
-                                    }
-                                    div { class: "actions",
-                                        Button {
-                                            variant: ButtonVariant::Secondary,
-                                            "data-testid": "capability-relinquish-cancel",
-                                            onclick: move |_| relinquish_for.set(None),
-                                            {crate::i18n::tr("common.cancel")}
-                                        }
-                                        Button {
-                                            variant: ButtonVariant::Destructive,
-                                            "data-testid": "capability-relinquish-confirm",
-                                            onclick: {
-                                                let row = row.clone();
-                                                let confirmation = confirmation.clone();
-                                                move |_| {
-                                                    let base = base_url();
-                                                    let api_token = token();
-                                                    let actor = principal_id().trim().to_owned();
-                                                    if actor.is_empty() {
-                                                        status.set(("settings.capabilities.disconnected", vec![]));
-                                                        return;
-                                                    }
-                                                    let realm_id = match arkret_sdk::RealmId::new(row.realm_id.clone()) {
-                                                        Ok(realm_id) => realm_id,
-                                                        Err(err) => {
-                                                            status.set(("settings.capabilities.invalid_realm", vec![("error", err.to_string())]));
-                                                            return;
-                                                        }
-                                                    };
-                                                    let reason_val = relinquish_reason().trim().to_owned();
-                                                    let payload = match build_confirmed_relinquish_payload(
-                                                        &row,
-                                                        &confirmation,
-                                                        &reason_val,
-                                                    ) {
-                                                        Ok(payload) => payload,
-                                                        Err(err) => {
-                                                            status.set(if err.to_string() == CONFIRMED_ROW_CHANGED {
-                                                                ("settings.capabilities.row_changed", vec![])
-                                                            } else {
-                                                                ("settings.capabilities.build_failed", vec![("error", err.to_string())])
-                                                            });
-                                                            return;
-                                                        }
-                                                    };
-                                                    relinquish_for.set(None);
-                                                    let capability_for_msg = row.capability_id.clone();
-                                                    spawn(async move {
-                                                        match crate::transport::auth::with_event_submitter(
-                                                            &base,
-                                                            api_token,
-                                                            |sub| async move {
-                                                                crate::transport::realm_write::relinquish_capability(
-                                                                    &sub, realm_id, &actor, payload,
-                                                                )
-                                                                .await
-                                                            },
-                                                        )
-                                                        .await
-                                                        {
-                                                            Ok(resp) => status.set(("settings.capabilities.submitted", vec![("grant", short_protocol_id(&capability_for_msg)), ("event", short_protocol_id(&resp.event_id))])),
-                                                            Err(err) => {
-                                                                let text = err.display();
-                                                                if relinquish_failure_requires_refresh(&text) {
-                                                                    rows.set(Vec::new());
-                                                                    relinquish_for.set(None);
-                                                                    let next_refresh = (*refresh_nonce.peek())
-                                                                        .wrapping_add(1);
-                                                                    refresh_nonce.set(next_refresh);
-                                                                }
-                                                                status.set(("settings.capabilities.failed", api_error_feedback_args(&err)));
-                                                            }
-                                                        }
-                                                    });
-                                                }
-                                            },
-                                            {crate::i18n::tr("settings.capabilities.confirm")}
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            if let Some(capability_id) = detail_for.read().clone() {
-                if let Some(row) = rows.read().iter().find(|r| r.capability_id == capability_id).cloned() {
-                    {
-                        let capability_id_label = short_protocol_id(&row.capability_id);
-                        rsx! {
-                            Dialog {
-                                open: true,
-                                on_open_change: move |open: bool| {
-                                    if !open {
-                                        detail_for.set(None);
-                                    }
-                                },
-                                "data-testid": "capability-detail-modal",
-                                "data-capability-id": "{row.capability_id}",
-                                div {
-                                    class: "event modal",
-                                    div { class: "event-head",
-                                        span { {crate::i18n::tr("settings.capabilities.audit")} }
-                                        Button {
-                                            variant: ButtonVariant::Ghost,
-                                            size: ButtonSize::Icon,
-                                            class: "btn",
-                                            "data-testid": "capability-detail-close",
-                                            "aria-label": crate::i18n::tr("settings.capabilities.close_detail"),
-                                            onclick: move |_| detail_for.set(None),
-                                            "×"
-                                        }
-                                    }
-                                    div { class: "muted", title: "{row.capability_id}", "{capability_id_label}" }
-                                    if row.issuer_authority_refs.is_empty() {
-                                        div {
-                                            class: "muted",
-                                            "data-testid": "capability-authority-empty",
-                                            {crate::i18n::tr("settings.capabilities.authority_empty")}
-                                        }
-                                    } else {
-                                        ol { class: "settings-list",
-                                            for (idx, authority) in row.issuer_authority_refs.iter().enumerate() {
-                                                li {
-                                                    class: "event",
-                                                    "data-testid": "capability-authority-ref",
-                                                    "data-ref-index": "{idx}",
-                                                    div { class: "mono", "{authority_label(authority)}" }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+    let list_context = context.clone();
+    let list = reactive(rows, move |scope, rows| {
+        let context = list_context.clone();
+        let my_actor = context
+            .active_account
+            .get()
+            .map(|account| arkret_sdk::ActorId::account(account.authority));
+        let mut children = Vec::new();
+        if rows.is_empty() {
+            children.push(crate::components::empty_state(
+                scope,
+                context.clone(),
+                crate::components::EmptyStateProps {
+                    title: context.tr("settings.capabilities.empty_title"),
+                    kind: crate::components::EmptyStateKind::Empty,
+                    message: Some(context.tr("settings.capabilities.empty_hint")),
+                    badge_override: None,
+                    test_id: Some("capabilities-empty".to_owned()),
+                },
+            ));
         }
-    }
+        for row in rows {
+            let id = row.capability_id.clone();
+            let confirmation = RelinquishConfirmation {
+                capability_id: id.clone(),
+                revision: row.revision.clone(),
+            };
+            let mut actions = vec![action(
+                scope,
+                context.clone(),
+                "capability-detail-open",
+                "settings.capabilities.audit",
+                "secondary",
+                true,
+                move || {
+                    detail.revise(|value| {
+                        *value = Some(id.clone());
+                    })
+                },
+            )];
+            if row.can_relinquish(my_actor.as_ref()) {
+                actions.push(action(
+                    scope,
+                    context.clone(),
+                    "capability-relinquish-open",
+                    "settings.capabilities.relinquish",
+                    "destructive",
+                    scope.bond(move || !busy.get()),
+                    move || {
+                        reason.revise(|value| value.clear());
+                        relinquish.revise(|value| {
+                            *value = Some(confirmation.clone());
+                        });
+                    },
+                ));
+            }
+            children.push(stack(
+                "event capability-row",
+                vec![
+                    heading(4, "", row.action.clone()),
+                    paragraph("mono", row.capability_id),
+                    line(
+                        "metric-grid",
+                        vec![
+                            plain(row.scope),
+                            plain(row.issuer_id),
+                            plain(row.subject),
+                            plain(row.expires_at),
+                        ],
+                    ),
+                    line("actions", actions),
+                ],
+            ));
+        }
+        stack("settings-list", children)
+    });
+    let modal_context = context.clone();
+    let modal_source = scope.bond(move || (relinquish.get(), rows.get()));
+    let relinquish_modal = reactive(modal_source, move |scope, (confirmation, rows)| {
+        let Some(confirmation) = confirmation else {
+            return empty();
+        };
+        let Some(row) = rows
+            .iter()
+            .find(|row| row.capability_id == confirmation.capability_id)
+            .cloned()
+        else {
+            return empty();
+        };
+        let context = modal_context.clone();
+        let weak = scope.downgrade();
+        let submit_context = context.clone();
+        let body = stack(
+            "modal-body",
+            vec![
+                paragraph(
+                    "muted",
+                    format!("{} · {}", short_protocol_id(&row.capability_id), row.action),
+                ),
+                paragraph(
+                    "muted",
+                    context.translated(scope, "settings.capabilities.impact"),
+                ),
+                super::widgets::input(
+                    scope,
+                    context.clone(),
+                    "capability-relinquish-reason-input",
+                    "settings.capabilities.reason",
+                    reason,
+                    true,
+                ),
+                line(
+                    "actions",
+                    vec![
+                        action(
+                            scope,
+                            context.clone(),
+                            "capability-relinquish-cancel",
+                            "common.cancel",
+                            "secondary",
+                            true,
+                            move || {
+                                relinquish.revise(|value| {
+                                    *value = None;
+                                })
+                            },
+                        ),
+                        action(
+                            scope,
+                            context.clone(),
+                            "capability-relinquish-confirm",
+                            "settings.capabilities.confirm",
+                            "destructive",
+                            scope.bond(move || !busy.get()),
+                            move || {
+                                if busy.get_untracked() {
+                                    return;
+                                }
+                                let context = submit_context.clone();
+                                let Some(account) = context.active_account.get() else {
+                                    feedback.revise(|value| {
+                                        *value = ("settings.capabilities.disconnected", vec![])
+                                    });
+                                    return;
+                                };
+                                let realm_id = match arkret_sdk::RealmId::new(row.realm_id.clone())
+                                {
+                                    Ok(value) => value,
+                                    Err(error) => {
+                                        feedback.revise(|value| {
+                                            *value = (
+                                                "settings.capabilities.invalid_realm",
+                                                vec![("error", error.to_string())],
+                                            )
+                                        });
+                                        return;
+                                    }
+                                };
+                                let payload = match build_confirmed_relinquish_payload(
+                                    &row,
+                                    &confirmation,
+                                    reason.get().trim(),
+                                ) {
+                                    Ok(value) => value,
+                                    Err(error) => {
+                                        feedback.revise(|value| {
+                                            *value = if error.to_string() == CONFIRMED_ROW_CHANGED {
+                                                ("settings.capabilities.row_changed", vec![])
+                                            } else {
+                                                (
+                                                    "settings.capabilities.build_failed",
+                                                    vec![("error", error.to_string())],
+                                                )
+                                            }
+                                        });
+                                        return;
+                                    }
+                                };
+                                relinquish.revise(|value| {
+                                    *value = None;
+                                });
+                                busy.revise(|value| {
+                                    *value = true;
+                                });
+                                let generation = context.session_generation.get();
+                                let session = Some(account.clone());
+                                let token = context.token.get();
+                                let actor = account.principal_id().to_string();
+                                let id = row.capability_id.clone();
+                                let Some(scope) = weak.upgrade() else { return };
+                                spawn(&scope, async move {
+                                    let result = crate::transport::auth::with_event_submitter(
+                                        account.server_url.as_str(),
+                                        token,
+                                        |submitter| async move {
+                                            crate::transport::realm_write::relinquish_capability(
+                                                &submitter, realm_id, &actor, payload,
+                                            )
+                                            .await
+                                        },
+                                    )
+                                    .await;
+                                    if !context.session_matches(generation, &session) {
+                                        return;
+                                    }
+                                    busy.revise(|value| {
+                                        *value = false;
+                                    });
+                                    match result {
+                                        Ok(response) => feedback.revise(|value| {
+                                            *value = (
+                                                "settings.capabilities.submitted",
+                                                vec![
+                                                    ("grant", short_protocol_id(&id)),
+                                                    (
+                                                        "event",
+                                                        short_protocol_id(&response.event_id),
+                                                    ),
+                                                ],
+                                            )
+                                        }),
+                                        Err(error) => {
+                                            if relinquish_failure_requires_refresh(&error.display())
+                                            {
+                                                refresh.revise(|value| {
+                                                    *value = value.wrapping_add(1);
+                                                });
+                                            }
+                                            feedback.revise(|value| {
+                                                *value = (
+                                                    "settings.capabilities.failed",
+                                                    api_error_feedback_args(&error),
+                                                )
+                                            });
+                                        }
+                                    }
+                                });
+                            },
+                        ),
+                    ],
+                ),
+            ],
+        );
+        super::widgets::confirmation(
+            scope,
+            context.clone(),
+            "capability-relinquish-modal",
+            context.translated(scope, "settings.capabilities.relinquish_title"),
+            body,
+            move || {
+                relinquish.revise(|value| {
+                    *value = None;
+                })
+            },
+        )
+    });
+    let detail_context = context.clone();
+    let detail_source = scope.bond(move || (detail.get(), rows.get()));
+    let details = reactive(detail_source, move |scope, (detail_id, rows)| {
+        let Some(id) = detail_id else {
+            return empty();
+        };
+        let Some(row) = rows.iter().find(|row| row.capability_id == id) else {
+            return empty();
+        };
+        let context = detail_context.clone();
+        let mut children = vec![paragraph("mono", row.capability_id.clone())];
+        if row.issuer_authority_refs.is_empty() {
+            children.push(paragraph(
+                "muted",
+                context.translated(scope, "settings.capabilities.authority_empty"),
+            ));
+        }
+        children.extend(
+            row.issuer_authority_refs
+                .iter()
+                .map(|authority| paragraph("event mono", authority_label(authority))),
+        );
+        confirmation(
+            scope,
+            context.clone(),
+            "capability-detail-modal",
+            context.translated(scope, "settings.capabilities.audit"),
+            stack("settings-list", children),
+            move || {
+                detail.revise(|value| {
+                    *value = None;
+                })
+            },
+        )
+    });
+    card(
+        scope,
+        context.clone(),
+        "settings.capabilities.title",
+        vec![
+            status(scope.bond(move || capability_feedback_text(&feedback.get()))),
+            list,
+            relinquish_modal,
+            details,
+        ],
+    )
 }
 
-// Keep the existing safe API-error classification, then translate at render time.
-// Local errors have no server envelope and retain their opaque message.
 pub(super) fn api_error_feedback_args(
     error: &crate::transport::auth::ApiCallError,
 ) -> Vec<(&'static str, String)> {
@@ -616,30 +643,25 @@ mod tests {
         );
         // Capture once, before either locale change, as an async completion does.
         let retained_safe_error = super::api_error_feedback_args(&server_error);
-        let mut dom = dioxus::prelude::VirtualDom::new(|| dioxus::prelude::rsx! {});
-        dom.rebuild_in_place();
-        dom.in_scope(dioxus::prelude::ScopeId::ROOT, || {
-            let mut locale = dioxus::prelude::provide_context(crate::i18n::init_i18n_with_locale(
+
+        for (language, authority, hint) in [
+            (
                 crate::i18n::UiLocale::En,
-            ));
-            for (language, authority, hint) in [
-                (
-                    crate::i18n::UiLocale::En,
-                    "realm root",
-                    "only the subject may relinquish",
-                ),
-                (
-                    crate::i18n::UiLocale::Zh,
-                    "Realm 根授权",
-                    "仅持有人可放弃授权",
-                ),
-                (
-                    crate::i18n::UiLocale::En,
-                    "realm root",
-                    "only the subject may relinquish",
-                ),
-            ] {
-                crate::i18n::set_locale(&mut locale, language);
+                "realm root",
+                "only the subject may relinquish",
+            ),
+            (
+                crate::i18n::UiLocale::Zh,
+                "Realm 根授权",
+                "仅持有人可放弃授权",
+            ),
+            (
+                crate::i18n::UiLocale::En,
+                "realm root",
+                "only the subject may relinquish",
+            ),
+        ] {
+            crate::i18n::with_test_locale(language, || {
                 let safe = super::localized_feedback_args(&retained_safe_error);
                 assert_eq!(safe[0].0, "error");
                 assert_eq!(safe[0].1, server_error.display());
@@ -664,8 +686,8 @@ mod tests {
                     effective.grant.issuer_authority_refs
                 );
                 assert_eq!(row.revision, effective.revision);
-            }
-        });
+            });
+        }
     }
 
     use super::*;

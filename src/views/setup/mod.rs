@@ -1,128 +1,99 @@
-//! Setup surface: Realm bootstrap, Space create, and the overview map.
-//!
-//! `SetupPanel` is a thin router over three section components, split out by
-//! responsibility:
-//! - [`overview::OverviewSection`] — the setup surface map.
-//! - [`realms::RealmsSection`] — the `ak.realm.create` wizard.
-//! - [`new_space::NewSpaceSection`] — the `ak.space.create` form + lifecycle.
-//!
-//! Shared static option tables live in [`data`], the section / wizard-step
-//! enums in [`model`], and pure helpers in [`helpers`].
+use std::cell::RefCell;
+use std::collections::BTreeMap;
+use std::rc::{Rc, Weak};
 
-use dioxus::prelude::*;
+use glory::{Cage, Scope};
 
 use crate::i18n::tr;
-use crate::models::RealmTreeNode;
-
+use crate::presentation::{InksonContext, View};
+use crate::routes::Route;
+use crate::views::settings::widgets::*;
 mod data;
 mod helpers;
 mod model;
 mod new_space;
 mod overview;
 mod realms;
-
 use model::{NewRealmStep, SetupSection};
-use new_space::NewSpaceSection;
-use overview::OverviewSection;
-use realms::RealmsSection;
-
-#[component]
-pub fn SetupPanel(
-    plaintext_service_id: String,
-    secure_store_ready: bool,
-    token: Signal<String>,
-    account_recovery_configured: Signal<Option<bool>>,
-    realm_tree_nodes: Signal<Vec<RealmTreeNode>>,
-    selected_realm_id: Signal<String>,
-    new_space_context_node: Signal<String>,
-    section: Option<String>,
-) -> Element {
-    // A4 — base_url / state_store are read from the session context directly by
-    // the child sections now; SetupPanel no longer threads them through.
-    let active_section = SetupSection::from_slug(section.as_deref());
-
-    // Wizard / form state lives on the parent so each section's in-progress
-    // draft survives switching between conditionally-rendered sections.
-    let create_step = use_signal(|| NewRealmStep::Basics);
-    let realm_title = use_signal(String::new);
-    let realm_summary = use_signal(String::new);
-    let realm_alias = use_signal(String::new);
-    let realm_discoverability = use_signal(|| "listed".to_owned());
-    let realm_policy_join_rule = use_signal(|| "invite".to_owned());
-    // The first accepted MLS Genesis requires current history_access=since_join.
-    // Default to that policy and request a separate post-create MLS start;
-    // neither choice is an encryption field on ak.realm.create.
-    let realm_policy_history_access = use_signal(|| "since_join".to_owned());
-    let realm_mls_activation = use_signal(|| "after_create".to_owned());
-    let realm_security_class = use_signal(|| "standard".to_owned());
-    // Spec realm-and-space.md §2.3 advanced create-locked fields; safe defaults
-    // `restricted` / `sha256`. The Realm notary signer is frozen from verified
-    // Station signer evidence during submission.
-    let realm_federation_policy = use_signal(|| "restricted".to_owned());
-    let realm_digest_algorithm = use_signal(|| "sha256".to_owned());
-    let realm_state = use_signal(|| tr("setup.state.draft"));
-    let realm_create_busy = use_signal(|| false);
-    let created_realm_id = use_signal(String::new);
-    // recovery_material_pending gate for encrypted-Realm creation.
-    let pending_recovery_gate = use_signal(|| false);
-
-    // `ak.space.create` form state.
-    let new_space_realm_id = use_signal(String::new);
-    let new_space_title = use_signal(String::new);
-    let new_space_summary = use_signal(String::new);
-    let new_space_kind = use_signal(|| "space".to_owned());
-    let new_space_parent_id = use_signal(String::new);
-    let new_space_context_seen = use_signal(String::new);
-    let new_space_state = use_signal(|| tr("setup.state.draft"));
-    let new_space_created_id = use_signal(String::new);
-
-    rsx! {
-        div { class: "timeline", "data-testid": "setup-panel",
-            if active_section == SetupSection::Overview {
-                OverviewSection { selected_realm_id }
+#[derive(Clone, Copy)]
+struct SetupDraft {
+    create_step: Cage<NewRealmStep>,
+    realm_title: Cage<String>,
+    realm_summary: Cage<String>,
+    realm_alias: Cage<String>,
+    realm_discoverability: Cage<String>,
+    realm_policy_join_rule: Cage<String>,
+    realm_policy_history_access: Cage<String>,
+    realm_mls_activation: Cage<String>,
+    realm_security_class: Cage<String>,
+    realm_federation_policy: Cage<String>,
+    realm_digest_algorithm: Cage<String>,
+    realm_state: Cage<String>,
+    realm_create_busy: Cage<bool>,
+    created_realm_id: Cage<String>,
+    pending_recovery_gate: Cage<bool>,
+    new_space_realm_id: Cage<String>,
+    new_space_title: Cage<String>,
+    new_space_summary: Cage<String>,
+    new_space_kind: Cage<String>,
+    new_space_parent_id: Cage<String>,
+    new_space_context_seen: Cage<String>,
+    new_space_state: Cage<String>,
+    new_space_created_id: Cage<String>,
+}
+thread_local! {static DRAFTS:RefCell<BTreeMap<usize,(Weak<InksonContext>,SetupDraft)>>=const { RefCell::new(BTreeMap::new()) };}
+impl SetupDraft {
+    fn for_context(scope: &Scope, context: &Rc<InksonContext>) -> Self {
+        let key = Rc::as_ptr(context) as usize;
+        DRAFTS.with(|drafts| {
+            let mut drafts = drafts.borrow_mut();
+            drafts.retain(|_, (owner, _)| owner.strong_count() > 0);
+            if let Some((_, draft)) = drafts.get(&key) {
+                return *draft;
             }
-
-            if active_section == SetupSection::Realms {
-                RealmsSection {
-                    plaintext_service_id,
-                    secure_store_ready,
-                    token,
-                    account_recovery_configured,
-                    selected_realm_id,
-                    create_step,
-                    realm_title,
-                    realm_summary,
-                    realm_alias,
-                    realm_discoverability,
-                    realm_policy_join_rule,
-                    realm_policy_history_access,
-                    realm_mls_activation,
-                    realm_security_class,
-                    realm_federation_policy,
-                    realm_digest_algorithm,
-                    realm_state,
-                    realm_create_busy,
-                    created_realm_id,
-                    pending_recovery_gate,
-                }
-            }
-
-            if active_section == SetupSection::NewSpace {
-                NewSpaceSection {
-                    token,
-                    selected_realm_id,
-                    realm_tree_nodes,
-                    new_space_context_node,
-                    new_space_realm_id,
-                    new_space_title,
-                    new_space_summary,
-                    new_space_kind,
-                    new_space_parent_id,
-                    new_space_context_seen,
-                    new_space_state,
-                    new_space_created_id,
-                }
-            }
-        }
+            let owner = context.state_scope().unwrap_or_else(|| scope.clone());
+            let draft = Self {
+                create_step: owner.cage(NewRealmStep::Basics),
+                realm_title: owner.cage(String::new()),
+                realm_summary: owner.cage(String::new()),
+                realm_alias: owner.cage(String::new()),
+                realm_discoverability: owner.cage("listed".to_owned()),
+                realm_policy_join_rule: owner.cage("invite".to_owned()),
+                realm_policy_history_access: owner.cage("since_join".to_owned()),
+                realm_mls_activation: owner.cage("after_create".to_owned()),
+                realm_security_class: owner.cage("standard".to_owned()),
+                realm_federation_policy: owner.cage("restricted".to_owned()),
+                realm_digest_algorithm: owner.cage("sha256".to_owned()),
+                realm_state: owner.cage(tr("setup.state.draft")),
+                realm_create_busy: owner.cage(false),
+                created_realm_id: owner.cage(String::new()),
+                pending_recovery_gate: owner.cage(false),
+                new_space_realm_id: owner.cage(String::new()),
+                new_space_title: owner.cage(String::new()),
+                new_space_summary: owner.cage(String::new()),
+                new_space_kind: owner.cage("space".to_owned()),
+                new_space_parent_id: owner.cage(String::new()),
+                new_space_context_seen: owner.cage(String::new()),
+                new_space_state: owner.cage(tr("setup.state.draft")),
+                new_space_created_id: owner.cage(String::new()),
+            };
+            drafts.insert(key, (Rc::downgrade(context), draft));
+            draft
+        })
     }
+}
+pub fn page(scope: &Scope, context: Rc<InksonContext>, route: Route) -> View {
+    let draft = SetupDraft::for_context(scope, &context);
+    let section = match route {
+        Route::SetupSection { section } => SetupSection::from_slug(Some(&section)),
+        _ => SetupSection::from_slug(None),
+    };
+    stack(
+        "timeline setup-panel",
+        vec![match section {
+            SetupSection::Overview => overview::page(scope, context),
+            SetupSection::Realms => realms::page(scope, context, draft),
+            SetupSection::NewSpace => new_space::page(scope, context, draft),
+        }],
+    )
 }

@@ -1,4 +1,6 @@
 //! Normal Realm administration of an exact Agent management Policy.
+use std::rc::Rc;
+
 use arkret_models_collaboration::governance::operation_wire::{
     Policy, PolicySetStatePayload, PolicySetValue,
 };
@@ -7,7 +9,10 @@ use arkret_sdk::exact_current_state::{
     ExactCurrentStateSelector, PolicyExactCurrentSelector, PolicyExactCurrentSelectorKind,
 };
 use arkret_sdk::{AccountId, CommitStreamRef, CurrentRevision, PolicyId, RealmId, ScopeRef};
-use dioxus::prelude::*;
+use glory::{Cage, Scope};
+
+use crate::presentation::{InksonContext, View};
+use crate::views::settings::widgets::*;
 
 mod model;
 use model::{Draft, ResourceDraft, RuleDraft, supported_by_current_backend};
@@ -22,24 +27,28 @@ struct LoadedPolicy {
     revision: Option<CurrentRevision>,
     scope: ScopeRef,
 }
-fn check_session(account: &AccountId, generation: u64) -> anyhow::Result<()> {
-    let context = crate::app::SessionContext::get();
+fn check_session(
+    context: &InksonContext,
+    account: &AccountId,
+    generation: u64,
+) -> anyhow::Result<()> {
     anyhow::ensure!(
-        (context.session_generation)() == generation
-            && context.active_account().as_ref().map(|a| &a.authority) == Some(account),
+        context.session_generation.get() == generation
+            && context.active_account.get().as_ref().map(|a| &a.authority) == Some(account),
         "The Account or Device session changed; read current again"
     );
     Ok(())
 }
 async fn read_policy(
+    context: Rc<InksonContext>,
     http: &arkret_sdk::http_client::Client,
     realm: &RealmId,
     id: &PolicyId,
 ) -> anyhow::Result<LoadedPolicy> {
-    let context = crate::app::SessionContext::get();
-    let generation = (context.session_generation)();
+    let generation = context.session_generation.get();
     let account = context
-        .active_account()
+        .active_account
+        .get()
         .ok_or_else(|| anyhow::anyhow!("No active Account"))?
         .authority;
     let client = crate::transport::own_station_results::client_for_http(http).await?;
@@ -90,7 +99,7 @@ async fn read_policy(
                 == Some(result_head),
         "The Policy read crossed a governance cut; read current again"
     );
-    check_session(&account, generation)?;
+    check_session(&context, &account, generation)?;
     let (policy, revision, scope) = match result.into_value()? {
         ExactCurrentStateReadResponseBody::NeverWritten { .. } => (
             None,
@@ -138,10 +147,11 @@ async fn read_policy(
     })
 }
 fn prepare_write(
+    context: &InksonContext,
     form: &Draft,
     current: &LoadedPolicy,
 ) -> anyhow::Result<(PolicySetStatePayload, ScopeRef)> {
-    check_session(&current.account, current.session_generation)?;
+    check_session(context, &current.account, current.session_generation)?;
     anyhow::ensure!(
         form.policy_id.trim() == current.id.as_str(),
         "Policy id changed; read the exact id first"
@@ -173,132 +183,6 @@ fn ensure_editor_scope(
     Ok(())
 }
 
-#[component]
-pub(super) fn AgentPolicyEditor(realm_id: String, token: Signal<String>) -> Element {
-    let mut form = use_signal(Draft::default);
-    let mut loaded = use_signal(|| None::<LoadedPolicy>);
-    let mut pending = use_signal(|| false);
-    let mut awaiting = use_signal(|| None::<PendingPolicyWrite>);
-    let mut message = use_signal(|| {
-        "Read an exact Policy id before saving. Hidden or unavailable results do not prove absence."
-            .to_owned()
-    });
-    let realm_for_effect = realm_id.clone();
-    let context = crate::app::SessionContext::get();
-    use_effect(move || {
-        let _ = &realm_for_effect;
-        let _ = (context.session_generation)();
-        loaded.set(None);
-        awaiting.set(None);
-        pending.set(false);
-        message.set("Read current for this Realm and Account before saving.".into());
-    });
-    let support = loaded
-        .read()
-        .as_ref()
-        .and_then(|current| {
-            form.read()
-                .build(
-                    &current.realm,
-                    &current.account,
-                    current.policy.as_ref(),
-                    current.revision.clone(),
-                )
-                .ok()
-                .and_then(|p| {
-                    form.read().scope(&current.realm).ok().map(|s| {
-                        supported_by_current_backend(&p, &s)
-                            && ensure_editor_scope(current.policy.is_some(), &current.scope, &s)
-                                .is_ok()
-                    })
-                })
-        })
-        .unwrap_or(false);
-    rsx! {
-        section { class: "event", "data-testid": "agent-policy-editor",
-            h3 { "Agent management Policy" }
-            p { "Management limits are separate from Realm joining, member consent and Agent capability grants. A controller selector applies to that complete Account's current and future Agents." }
-            fieldset { disabled: pending(),
-                TextField { label: "Exact Policy id", value: form.read().policy_id.clone(), onvalue: move |v| { form.write().policy_id = v; loaded.set(None); } }
-                button { "data-testid": "agent-policy-read-current", onclick: {
-                    let realm = realm_id.clone();
-                    move |_| {
-                        let context = crate::app::SessionContext::get();
-                        let Some(account) = context.active_account().map(|a| a.authority) else { return };
-                        let generation = (context.session_generation)();
-                        let realm = realm.clone(); let id = form.read().policy_id.clone(); pending.set(true); loaded.set(None);
-                        spawn(async move {
-                            let base = crate::app::SessionContext::base_url_string();
-                            let read_account = account.clone();
-                            let result = crate::transport::auth::with_authed_sdk_client(&base, token(), |http| async move {
-                                check_session(&read_account, generation)?;
-                                read_policy(&http, &RealmId::new(realm)?, &PolicyId::new(id.trim())?).await
-                            }).await;
-                            if check_session(&account, generation).is_err() { return; }
-                            match result {
-                                Ok(current) => {
-                                    if let Some(policy) = &current.policy {
-                                        match Draft::from_policy(policy, &current.scope) {
-                                            Ok(draft) => form.set(draft),
-                                            Err(error) => { message.set(error.to_string()); pending.set(false); return; }
-                                        }
-                                        let Some(revision) = current.revision.as_ref() else {
-                                            message.set("Accepted policy has no current revision; editing remains blocked.".into());
-                                            pending.set(false);
-                                            return;
-                                        };
-                                        message.set(format!("Accepted current {} at {}. Editing does not change the accepted value.", current.id, revision.commit_id));
-                                    } else { message.set("Authoritative never_written: this exact id can be created with null expected_revision.".into()); }
-                                    loaded.set(Some(current));
-                                }
-                                Err(error) => message.set(format!("Current is unavailable or hidden; creation remains blocked: {}", error.display())),
-                            }
-                            pending.set(false);
-                        });
-                    }
-                }, "Read current" }
-                TextField { label: "Scope Circle id (blank means this Realm)", value: form.read().circle.clone(), onvalue: move |v| form.write().circle = v }
-                Choice { label: "Default effect", value: form.read().default_effect.clone(), options: effects(), onvalue: move |v| form.write().default_effect = v }
-                if form.read().default_effect == "require_review" {
-                    OperationChoices { selected: form.read().default_operations.clone(), review_only: true, onvalue: move |v| form.write().default_operations = v }
-                    Lines { label: "Default approvers: complete SDK ActorId array", value: form.read().default_approvers.clone(), onvalue: move |v| form.write().default_approvers = v }
-                    TextField { label: "Default approval threshold", value: form.read().default_threshold.clone(), onvalue: move |v| form.write().default_threshold = v }
-                    TextField { label: "Default approval lifetime seconds (1–86400)", value: form.read().default_max_age.clone(), onvalue: move |v| form.write().default_max_age = v }
-                }
-                TextField { label: "Policy priority (optional)", value: form.read().priority.clone(), onvalue: move |v| form.write().priority = v }
-                TextField { label: "Not before (RFC 3339, optional)", value: form.read().not_before.clone(), onvalue: move |v| form.write().not_before = v }
-                TextField { label: "Expires at (RFC 3339, optional)", value: form.read().expires_at.clone(), onvalue: move |v| form.write().expires_at = v }
-                for index in 0..form.read().rules.len() {
-                    RuleEditor { key: "{index}", form, index }
-                }
-                button { onclick: move |_| form.write().rules.push(RuleDraft::default()), "Add rule" }
-                p { "Realm and Circle policies support the registered Agent operations and allow, deny or quarantine effects. Realm Join and Publish can require review; Circle review is unavailable. Action and resource filters must match the selected operations and registered resources. Saving a policy does not confirm runtime authorization." }
-                if awaiting.read().is_some() {
-                    p { "A submission is awaiting its exact final outcome. New authoring remains blocked; retry uses the original signed Event and durable queue." }
-                    button { "data-testid": "agent-policy-retry-pending", onclick: move |_| {
-                        let write = awaiting.read().clone();
-                        if let Some(write) = write {
-                            submit_pending(write, token, pending, awaiting, loaded, message);
-                        }
-                    }, "Retry original pending Policy" }
-                }
-                button { "data-testid": "agent-policy-save", disabled: !support || loaded.read().is_none() || awaiting.read().is_some(), onclick: move |_| {
-                    let Some(current) = loaded.read().clone() else { return };
-                    let prepared = prepare_write(&form.read(), &current);
-                    let (payload, scope) = match prepared { Ok(v) => v, Err(e) => { message.set(e.to_string()); return } };
-                    let operation = crate::operation::TypedOperationBuilder::new_for_station::<arkret_sdk::event_spec::PolicySet>(
-                        current.realm.as_str(), current.account.principal_id.as_str(), current.account.station_id.clone(), payload.clone())
-                        .effective_scope(scope.clone()).build_sdk_event("inkson");
-                    let operation = match operation { Ok(v) => v, Err(e) => { message.set(e.to_string()); return } };
-                    let write = PendingPolicyWrite { current, payload, scope, operation, signed: None };
-                    awaiting.set(Some(write.clone()));
-                    submit_pending(write, token, pending, awaiting, loaded, message);
-                }, "Save Agent Policy" }
-            }
-            p { "data-testid": "agent-policy-status", "{message}" }
-        }
-    }
-}
 #[derive(Clone)]
 struct PendingPolicyWrite {
     current: LoadedPolicy,
@@ -323,105 +207,162 @@ where
 }
 
 fn submit_pending(
+    owner: glory::ui::WeakScope,
+    context: Rc<InksonContext>,
     mut write: PendingPolicyWrite,
-    token: Signal<String>,
-    mut busy: Signal<bool>,
-    mut awaiting: Signal<Option<PendingPolicyWrite>>,
-    mut loaded: Signal<Option<LoadedPolicy>>,
-    mut message: Signal<String>,
+    token: Cage<String>,
+    busy: Cage<bool>,
+    awaiting: Cage<Option<PendingPolicyWrite>>,
+    loaded: Cage<Option<LoadedPolicy>>,
+    message: Cage<String>,
 ) {
-    busy.set(true);
+    busy.revise(|value| {
+        *value = true;
+    });
     let original_account = write.current.account.clone();
     let original_generation = write.current.session_generation;
-    spawn(async move {
-        let base = crate::app::SessionContext::base_url_string();
-        let result =
-            crate::transport::auth::with_authed_sdk_client(&base, token(), |http| async move {
-                check_session(&write.current.account, write.current.session_generation)?;
-                let submitter = crate::app::runtime_adapter::event_submitter(http.clone());
-                if write.signed.is_none() {
-                    // No queue/network submission exists before this one-shot authoring completes.
-                    awaiting.set(None);
-                    author_policy_once(&mut write.signed, || {
-                        submitter.author_for_direct_submission(&write.operation)
-                    })
-                    .await?;
-                    check_session(&write.current.account, write.current.session_generation)?;
-                    // Freeze the proof as well as the Event identity before any network submission.
-                    awaiting.set(Some(write.clone()));
-                }
-                let accepted = submitter
-                    .submit_signed_sdk_events_in_order(std::slice::from_ref(
-                        write.signed.as_ref().ok_or_else(|| {
-                            anyhow::anyhow!("Policy authoring did not produce a signed event")
-                        })?,
-                    ))
-                    .await;
-                check_session(&write.current.account, write.current.session_generation)?;
-                let accepted = match accepted {
-                    Ok(mut results) => results
-                        .pop()
-                        .ok_or_else(|| anyhow::anyhow!("Submission omits its final result"))?,
-                    Err(error) if definitive_policy_refusal(&error) => {
-                        awaiting.set(None);
-                        return Ok(None);
-                    }
-                    Err(error) => return Err(error),
-                };
-                anyhow::ensure!(
-                    accepted.is_committed(),
-                    "The original Policy is still pending"
-                );
-                awaiting.set(None);
-                let reread = read_policy(&http, &write.current.realm, &write.current.id).await?;
-                check_session(&write.current.account, write.current.session_generation)?;
-                let commit = accepted
-                    .commit
-                    .as_ref()
-                    .ok_or_else(|| anyhow::anyhow!("Committed Policy omits its Commit"))?;
-                anyhow::ensure!(
-                    reread
-                        .revision
-                        .as_ref()
-                        .is_some_and(|r| r.commit_id == commit.commit_id
-                            && r.stream_position == commit.stream_position)
-                        && reread.scope == write.scope
-                        && serde_json::to_value(reread.policy.as_ref())?
-                            == serde_json::to_value(match &write.payload.value {
-                                PolicySetValue::Governance(p) => Some(p),
-                                _ => None,
+    if let Some(scope) = owner.upgrade() {
+        crate::views::settings::widgets::spawn(&scope, async move {
+            let base = context.base_url.get();
+            let result =
+                crate::transport::auth::with_authed_sdk_client(&base, token.get(), |http| {
+                    let context = context.clone();
+                    async move {
+                        check_session(
+                            &context,
+                            &write.current.account,
+                            write.current.session_generation,
+                        )?;
+                        let submitter = crate::app::runtime_adapter::event_submitter(http.clone());
+                        if write.signed.is_none() {
+                            // No queue/network submission exists before this one-shot authoring
+                            // completes.
+                            awaiting.revise(|value| {
+                                *value = None;
+                            });
+                            author_policy_once(&mut write.signed, || {
+                                submitter.author_for_direct_submission(&write.operation)
+                            })
+                            .await?;
+                            check_session(
+                                &context,
+                                &write.current.account,
+                                write.current.session_generation,
+                            )?;
+                            // Freeze the proof as well as the Event identity before any network
+                            // submission.
+                            awaiting.revise(|value| {
+                                *value = Some(write.clone());
+                            });
+                        }
+                        let accepted = submitter
+                            .submit_signed_sdk_events_in_order(std::slice::from_ref(
+                                write.signed.as_ref().ok_or_else(|| {
+                                    anyhow::anyhow!(
+                                        "Policy authoring did not produce a signed event"
+                                    )
+                                })?,
+                            ))
+                            .await;
+                        check_session(
+                            &context,
+                            &write.current.account,
+                            write.current.session_generation,
+                        )?;
+                        let accepted = match accepted {
+                            Ok(mut results) => results.pop().ok_or_else(|| {
+                                anyhow::anyhow!("Submission omits its final result")
                             })?,
-                    "The exact current does not yet confirm this accepted Policy"
-                );
-                Ok(Some(reread))
-            })
-            .await;
-        if check_session(&original_account, original_generation).is_err() {
-            return;
-        }
-        match result {
-            Ok(Some(current)) => {
-                loaded.set(Some(current));
-                awaiting.set(None);
-                message.set("Policy committed and exact current confirmed. Business actions still require their own current checks.".into());
+                            Err(error) if definitive_policy_refusal(&error) => {
+                                awaiting.revise(|value| {
+                                    *value = None;
+                                });
+                                return Ok(None);
+                            }
+                            Err(error) => return Err(error),
+                        };
+                        anyhow::ensure!(
+                            accepted.is_committed(),
+                            "The original Policy is still pending"
+                        );
+                        awaiting.revise(|value| {
+                            *value = None;
+                        });
+                        let reread = read_policy(
+                            context.clone(),
+                            &http,
+                            &write.current.realm,
+                            &write.current.id,
+                        )
+                        .await?;
+                        check_session(
+                            &context,
+                            &write.current.account,
+                            write.current.session_generation,
+                        )?;
+                        let commit = accepted
+                            .commit
+                            .as_ref()
+                            .ok_or_else(|| anyhow::anyhow!("Committed Policy omits its Commit"))?;
+                        anyhow::ensure!(
+                            reread
+                                .revision
+                                .as_ref()
+                                .is_some_and(|r| r.commit_id == commit.commit_id
+                                    && r.stream_position == commit.stream_position)
+                                && reread.scope == write.scope
+                                && serde_json::to_value(reread.policy.as_ref())?
+                                    == serde_json::to_value(match &write.payload.value {
+                                        PolicySetValue::Governance(p) => Some(p),
+                                        _ => None,
+                                    })?,
+                            "The exact current does not yet confirm this accepted Policy"
+                        );
+                        Ok(Some(reread))
+                    }
+                })
+                .await;
+            if check_session(&context, &original_account, original_generation).is_err() {
+                return;
             }
-            Ok(None) => {
-                loaded.set(None);
-                awaiting.set(None);
-                message.set("The original Policy was rejected. Read current and confirm a new edit; no automatic overwrite occurred.".into());
+            match result {
+                Ok(Some(current)) => {
+                    loaded.revise(|value| {
+                        *value = Some(current);
+                    });
+                    awaiting.revise(|value| {
+                        *value = None;
+                    });
+                    message.revise(|value|{*value="Policy committed and exact current confirmed. Business actions still require their own current checks.".into();});
+                }
+                Ok(None) => {
+                    loaded.revise(|value| {
+                        *value = None;
+                    });
+                    awaiting.revise(|value| {
+                        *value = None;
+                    });
+                    message.revise(|value|{*value="The original Policy was rejected. Read current and confirm a new edit; no automatic overwrite occurred.".into();});
+                }
+                Err(error) => {
+                    loaded.revise(|value| {
+                        *value = None;
+                    });
+                    let state = if awaiting.get().is_some() {
+                        "Final outcome remains unknown; new authoring is blocked. Retry the original pending Policy."
+                    } else {
+                        "No pending signed submission remains. Read exact current before editing again; success has not been confirmed."
+                    };
+                    message.revise(|value| {
+                        *value = format!("{} {}", state, error.display());
+                    });
+                }
             }
-            Err(error) => {
-                loaded.set(None);
-                let state = if awaiting.read().is_some() {
-                    "Final outcome remains unknown; new authoring is blocked. Retry the original pending Policy."
-                } else {
-                    "No pending signed submission remains. Read exact current before editing again; success has not been confirmed."
-                };
-                message.set(format!("{} {}", state, error.display()));
-            }
-        }
-        busy.set(false);
-    });
+            busy.revise(|value| {
+                *value = false;
+            });
+        });
+    };
 }
 
 fn definitive_policy_refusal(error: &anyhow::Error) -> bool {
@@ -588,82 +529,768 @@ fn effects() -> Vec<String> {
         .map(str::to_owned)
         .into()
 }
-#[component]
-fn TextField(label: String, value: String, onvalue: EventHandler<String>) -> Element {
-    rsx! { label { "{label}" input { value, oninput: move |e| onvalue.call(e.value()) } } }
+
+#[derive(Clone)]
+struct PolicyPage {
+    context: Rc<InksonContext>,
+    owner: glory::ui::WeakScope,
+    realm: String,
+    form: Cage<Draft>,
+    loaded: Cage<Option<LoadedPolicy>>,
+    pending: Cage<bool>,
+    awaiting: Cage<Option<PendingPolicyWrite>>,
+    message: Cage<String>,
+    structure: Cage<u64>,
 }
-#[component]
-fn Lines(label: String, value: String, onvalue: EventHandler<String>) -> Element {
-    rsx! { label { "{label}" textarea { value, oninput: move |e| onvalue.call(e.value()) } } }
+impl PolicyPage {
+    fn load(&self) {
+        if self.pending.get_untracked() {
+            return;
+        }
+        let context = self.context.clone();
+        let form = self.form;
+        let loaded = self.loaded;
+        let pending = self.pending;
+        let message = self.message;
+        let structure = self.structure;
+        let Some(account) = context.active_account.get().map(|value| value.authority) else {
+            return;
+        };
+        let generation = context.session_generation.get();
+        let realm = self.realm.clone();
+        let id = form.get().policy_id;
+        let token = context.token.get();
+        let base = context.base_url.get();
+        let task_context = context.clone();
+        let Some(scope) = self.owner.upgrade() else {
+            return;
+        };
+        pending.revise(|value| {
+            *value = true;
+        });
+        loaded.revise(|value| {
+            *value = None;
+        });
+        spawn(&scope, async move {
+            let result =
+                crate::transport::auth::with_authed_sdk_client(&base, token, |http| async move {
+                    check_session(&task_context, &account, generation)?;
+                    read_policy(
+                        task_context,
+                        &http,
+                        &RealmId::new(realm)?,
+                        &PolicyId::new(id.trim())?,
+                    )
+                    .await
+                })
+                .await;
+            if context.session_generation.get() != generation {
+                return;
+            }
+            match result {
+                Ok(current) => {
+                    if let Some(policy) = &current.policy {
+                        match Draft::from_policy(policy, &current.scope) {
+                            Ok(draft) => {
+                                form.revise(|value| {
+                                    *value = draft;
+                                });
+                                structure.revise(|value| *value += 1);
+                            }
+                            Err(error) => {
+                                message.revise(|value| {
+                                    *value = error.to_string();
+                                });
+                                pending.revise(|value| {
+                                    *value = false;
+                                });
+                                return;
+                            }
+                        }
+                        let Some(revision) = current.revision.as_ref() else {
+                            message.revise(|value|{*value="Accepted policy has no current revision; editing remains blocked.".into();});
+                            pending.revise(|value| {
+                                *value = false;
+                            });
+                            return;
+                        };
+                        message.revise(|value|{*value=format!("Accepted current {} at {}. Editing does not change the accepted value.",current.id,revision.commit_id);});
+                    } else {
+                        message.revise(|value|{*value="Authoritative never_written: this exact id can be created with null expected_revision.".into();});
+                    }
+                    loaded.revise(|value| {
+                        *value = Some(current);
+                    });
+                }
+                Err(error) => message.revise(|value| {
+                    *value = format!(
+                        "Current is unavailable or hidden; creation remains blocked: {}",
+                        error.display()
+                    );
+                }),
+            }
+            pending.revise(|value| {
+                *value = false;
+            });
+        });
+    }
+    fn save(&self) {
+        if self.pending.get_untracked() || self.awaiting.get_untracked().is_some() {
+            return;
+        }
+        let Some(current) = self.loaded.get() else {
+            return;
+        };
+        let (payload, scope) = match prepare_write(&self.context, &self.form.get(), &current) {
+            Ok(value) => value,
+            Err(error) => {
+                self.message.revise(|value| {
+                    *value = error.to_string();
+                });
+                return;
+            }
+        };
+        let operation = crate::operation::TypedOperationBuilder::new_for_station::<
+            arkret_sdk::event_spec::PolicySet,
+        >(
+            current.realm.as_str(),
+            current.account.principal_id.as_str(),
+            current.account.station_id.clone(),
+            payload.clone(),
+        )
+        .effective_scope(scope.clone())
+        .build_sdk_event("inkson");
+        let operation = match operation {
+            Ok(value) => value,
+            Err(error) => {
+                self.message.revise(|value| {
+                    *value = error.to_string();
+                });
+                return;
+            }
+        };
+        let write = PendingPolicyWrite {
+            current,
+            payload,
+            scope,
+            operation,
+            signed: None,
+        };
+        self.awaiting.revise(|value| {
+            *value = Some(write.clone());
+        });
+        submit_pending(
+            self.owner.clone(),
+            self.context.clone(),
+            write,
+            self.context.token,
+            self.pending,
+            self.awaiting,
+            self.loaded,
+            self.message,
+        );
+    }
+    fn retry(&self) {
+        if self.pending.get_untracked() {
+            return;
+        }
+        if let Some(write) = self.awaiting.get() {
+            submit_pending(
+                self.owner.clone(),
+                self.context.clone(),
+                write,
+                self.context.token,
+                self.pending,
+                self.awaiting,
+                self.loaded,
+                self.message,
+            );
+        }
+    }
 }
-#[component]
-fn Choice(
-    label: String,
-    value: String,
+
+fn draft_field(
+    scope: &Scope,
+    _context: Rc<InksonContext>,
+    key: String,
+    label: &str,
+    form: Cage<Draft>,
+    enabled: glory::Bond<bool>,
+    multiline: bool,
+    read: impl Fn(&Draft) -> String + 'static,
+    write: impl Fn(&mut Draft, String) + 'static,
+) -> View {
+    let read = Rc::new(read);
+    let write = Rc::new(write);
+    let value = scope.bond(move || read(&form.get()));
+    Box::new(
+        sapid::field(key)
+            .unstyled()
+            .class("field")
+            .label(label.to_owned())
+            .control(move |field| {
+                let write = write.clone();
+                sapid::text_field()
+                    .unstyled()
+                    .field(field)
+                    .value(value)
+                    .enabled(enabled)
+                    .multiline(multiline)
+                    .on_value_change(move |next| form.revise(|draft| write(draft, next)))
+            }),
+    )
+}
+fn draft_choice(
+    scope: &Scope,
+    key: String,
+    label: &str,
+    form: Cage<Draft>,
+    structure: Cage<u64>,
+    enabled: glory::Bond<bool>,
     options: Vec<String>,
-    onvalue: EventHandler<String>,
-) -> Element {
-    rsx! { label { "{label}" select { "aria-label": label.clone(), value, onchange: move |e| onvalue.call(e.value()), for option in options { option { value: "{option}", "{option}" } } } } }
+    read: impl Fn(&Draft) -> String + 'static,
+    write: impl Fn(&mut Draft, String) + 'static,
+) -> View {
+    let read = Rc::new(read);
+    let write = Rc::new(write);
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        use crate::presentation::native_choice::{
+            NativeChoiceOption, NativeChoiceProps, native_choice,
+        };
+        let value = scope.bond(move || Some(read(&form.get())));
+        native_choice(
+            scope,
+            NativeChoiceProps::new(
+                key,
+                label.to_owned(),
+                value,
+                options
+                    .into_iter()
+                    .map(|value| NativeChoiceOption::new(value.clone(), value))
+                    .collect(),
+                move |next| {
+                    if let Some(next) = next {
+                        form.revise(|draft| write(draft, next));
+                        structure.revise(|value| *value += 1);
+                    }
+                },
+            )
+            .class("select")
+            .enabled(enabled),
+        )
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let options: Vec<_> = options
+            .into_iter()
+            .map(|label| (label.clone(), label))
+            .collect();
+        let selection = options.clone();
+        let value = scope.bond(move || {
+            crate::views::settings::widgets::select_key(&selection, &read(&form.get()))
+        });
+        let callback_options = options.clone();
+        Box::new(
+            sapid::select(key)
+                .unstyled()
+                .class("select")
+                .label(label.to_owned())
+                .value(value)
+                .enabled(enabled)
+                .options(
+                    options.into_iter().enumerate().map(|(index, (_, label))| {
+                        sapid::select_option(format!("opt-{index}"), label)
+                    }),
+                )
+                .on_value_change(move |next| {
+                    if let Some(next) = next.and_then(|key| {
+                        crate::views::settings::widgets::select_value(&callback_options, &key)
+                    }) {
+                        form.revise(|draft| write(draft, next));
+                        structure.revise(|value| *value += 1);
+                    }
+                }),
+        )
+    }
 }
-#[component]
-fn OperationChoices(
-    selected: Vec<String>,
+
+fn operations(
+    scope: &Scope,
+    form: Cage<Draft>,
+    enabled: glory::Bond<bool>,
+    index: Option<usize>,
     review_only: bool,
-    onvalue: EventHandler<Vec<String>>,
-) -> Element {
-    let choices = if review_only {
-        vec!["join", "publish"]
-    } else {
+) -> View {
+    let mut children = Vec::new();
+    for op in [
+        "join",
+        "authorize",
+        "execute",
+        "read",
+        "deliver",
+        "publish",
+        "serve",
+    ] {
+        if review_only && !matches!(op, "join" | "publish") {
+            continue;
+        }
+        let checked = scope.bond(move || {
+            let draft = form.get();
+            let values = if let Some(index) = index {
+                &draft.rules[index].operations
+            } else {
+                &draft.default_operations
+            };
+            values.iter().any(|value| value == op)
+        });
+        children.push(Box::new(
+            sapid::checkbox()
+                .unstyled()
+                .label(op)
+                .checked(checked)
+                .enabled(enabled)
+                .on_checked_change(move |checked| {
+                    form.revise(|draft| {
+                        let values = if let Some(index) = index {
+                            &mut draft.rules[index].operations
+                        } else {
+                            &mut draft.default_operations
+                        };
+                        values.retain(|value| value != op);
+                        if checked {
+                            values.push(op.into());
+                        }
+                    })
+                }),
+        ) as View);
+    }
+    line("actions", children)
+}
+pub(super) fn page(scope: &Scope, context: Rc<InksonContext>, realm: String) -> View {
+    let state=PolicyPage{context:context.clone(),owner:scope.downgrade(),realm,form:scope.cage(Draft::default()),
+  loaded:scope.cage(None),pending:scope.cage(false),awaiting:scope.cage(None),
+  message:scope.cage("Read an exact Policy id before saving. Hidden or unavailable results do not prove absence.".into()),structure:scope.cage(0)};
+    let session_state = state.clone();
+    scope.effect(move || {
+        let _ = session_state.context.session_generation.get();
+        session_state.loaded.revise(|value| {
+            *value = None;
+        });
+        session_state.awaiting.revise(|value| {
+            *value = None;
+        });
+        session_state.pending.revise(|value| {
+            *value = false;
+        });
+    });
+    let form = state.form;
+    let pending = state.pending;
+    let loaded = state.loaded;
+    let awaiting = state.awaiting;
+    let structure = state.structure;
+    let enabled = scope.bond(move || !pending.get());
+    let read_state = state.clone();
+    let save_state = state.clone();
+    let retry_state = state.clone();
+    let support_context = context.clone();
+    let supported = scope.bond(move || {
+        !pending.get()
+            && awaiting.get().is_none()
+            && loaded.get().as_ref().is_some_and(|current| {
+                prepare_write(&support_context, &form.get(), current).is_ok()
+            })
+    });
+    let editor_context = context.clone();
+    let dynamic = reactive(structure, move |scope, _| {
+        let context = editor_context.clone();
+        let draft = form.get_untracked();
+        let mut fields = Vec::new();
+        if draft.default_effect == "require_review" {
+            fields.push(operations(scope, form, enabled, None, true));
+            fields.push(draft_field(
+                scope,
+                context.clone(),
+                "policy-default-approvers".into(),
+                "Default approvers: complete SDK ActorId array",
+                form,
+                enabled,
+                true,
+                |draft| draft.default_approvers.clone(),
+                |draft, value| draft.default_approvers = value,
+            ));
+            fields.push(draft_field(
+                scope,
+                context.clone(),
+                "policy-default-threshold".into(),
+                "Default approval threshold",
+                form,
+                enabled,
+                false,
+                |draft| draft.default_threshold.clone(),
+                |draft, value| draft.default_threshold = value,
+            ));
+            fields.push(draft_field(
+                scope,
+                context.clone(),
+                "policy-default-max-age".into(),
+                "Default approval lifetime seconds (1–86400)",
+                form,
+                enabled,
+                false,
+                |draft| draft.default_max_age.clone(),
+                |draft, value| draft.default_max_age = value,
+            ));
+        }
+        for (index, rule) in draft.rules.iter().enumerate() {
+            let mut children = vec![
+                draft_field(
+                    scope,
+                    context.clone(),
+                    format!("rule-{index}-id"),
+                    "Stable rule id",
+                    form,
+                    enabled,
+                    false,
+                    move |draft| draft.rules[index].id.clone(),
+                    move |draft, value| draft.rules[index].id = value,
+                ),
+                draft_field(
+                    scope,
+                    context.clone(),
+                    format!("rule-{index}-priority"),
+                    "Rule priority",
+                    form,
+                    enabled,
+                    false,
+                    move |draft| draft.rules[index].priority.clone(),
+                    move |draft, value| draft.rules[index].priority = value,
+                ),
+                draft_choice(
+                    scope,
+                    format!("rule-{index}-effect"),
+                    "Effect",
+                    form,
+                    structure,
+                    enabled,
+                    effects(),
+                    move |draft| draft.rules[index].effect.clone(),
+                    move |draft, value| draft.rules[index].effect = value,
+                ),
+                draft_choice(
+                    scope,
+                    format!("rule-{index}-target"),
+                    "Agent selector",
+                    form,
+                    structure,
+                    enabled,
+                    ["all", "controller", "agent"].map(str::to_owned).into(),
+                    move |draft| draft.rules[index].target.clone(),
+                    move |draft, value| draft.rules[index].target = value,
+                ),
+            ];
+            if rule.target != "all" {
+                children.push(draft_field(
+                    scope,
+                    context.clone(),
+                    format!("rule-{index}-principal"),
+                    "Complete Account: principal_id",
+                    form,
+                    enabled,
+                    false,
+                    move |draft| draft.rules[index].principal.clone(),
+                    move |draft, value| draft.rules[index].principal = value,
+                ));
+                children.push(draft_field(
+                    scope,
+                    context.clone(),
+                    format!("rule-{index}-station"),
+                    "Complete Account: station_id",
+                    form,
+                    enabled,
+                    false,
+                    move |draft| draft.rules[index].station.clone(),
+                    move |draft, value| draft.rules[index].station = value,
+                ));
+            }
+            children.push(operations(scope, form, enabled, Some(index), false));
+            children.push(draft_field(
+                scope,
+                context.clone(),
+                format!("rule-{index}-actions"),
+                "Registered action ids (optional, whitespace separated)",
+                form,
+                enabled,
+                true,
+                move |draft| draft.rules[index].actions.clone(),
+                move |draft, value| draft.rules[index].actions = value,
+            ));
+            for resource_index in 0..rule.resources.len() {
+                children.push(stack(
+                    "policy-resource-editor",
+                    vec![
+                        draft_choice(
+                            scope,
+                            format!("rule-{index}-resource-{resource_index}-kind"),
+                            "Resource kind",
+                            form,
+                            structure,
+                            enabled,
+                            ["realm", "strand", "space", "object", "service"]
+                                .map(str::to_owned)
+                                .into(),
+                            move |draft| draft.rules[index].resources[resource_index].kind.clone(),
+                            move |draft, value| {
+                                draft.rules[index].resources[resource_index].kind = value
+                            },
+                        ),
+                        draft_field(
+                            scope,
+                            context.clone(),
+                            format!("rule-{index}-resource-{resource_index}-realm"),
+                            "Resource Realm (optional)",
+                            form,
+                            enabled,
+                            false,
+                            move |draft| draft.rules[index].resources[resource_index].realm.clone(),
+                            move |draft, value| {
+                                draft.rules[index].resources[resource_index].realm = value
+                            },
+                        ),
+                        draft_field(
+                            scope,
+                            context.clone(),
+                            format!("rule-{index}-resource-{resource_index}-reference"),
+                            "Exact resource reference (optional)",
+                            form,
+                            enabled,
+                            false,
+                            move |draft| {
+                                draft.rules[index].resources[resource_index]
+                                    .reference
+                                    .clone()
+                            },
+                            move |draft, value| {
+                                draft.rules[index].resources[resource_index].reference = value
+                            },
+                        ),
+                        action(
+                            scope,
+                            context.clone(),
+                            "policy-remove-resource",
+                            "Remove resource",
+                            "secondary",
+                            enabled,
+                            move || {
+                                form.revise(|draft| {
+                                    draft.rules[index].resources.remove(resource_index);
+                                });
+                                structure.revise(|value| *value += 1);
+                            },
+                        ),
+                    ],
+                ));
+            }
+            children.push(action(
+                scope,
+                context.clone(),
+                "policy-add-resource",
+                "Add resource",
+                "secondary",
+                enabled,
+                move || {
+                    form.revise(|draft| {
+                        draft.rules[index].resources.push(ResourceDraft {
+                            kind: "realm".into(),
+                            ..ResourceDraft::default()
+                        })
+                    });
+                    structure.revise(|value| *value += 1);
+                },
+            ));
+            if rule.effect == "require_review" {
+                children.push(draft_field(
+                    scope,
+                    context.clone(),
+                    format!("rule-{index}-approvers"),
+                    "Approvers: complete SDK ActorId array",
+                    form,
+                    enabled,
+                    true,
+                    move |draft| draft.rules[index].approvers.clone(),
+                    move |draft, value| draft.rules[index].approvers = value,
+                ));
+                children.push(draft_field(
+                    scope,
+                    context.clone(),
+                    format!("rule-{index}-threshold"),
+                    "Approval threshold",
+                    form,
+                    enabled,
+                    false,
+                    move |draft| draft.rules[index].threshold.clone(),
+                    move |draft, value| draft.rules[index].threshold = value,
+                ));
+                children.push(draft_field(
+                    scope,
+                    context.clone(),
+                    format!("rule-{index}-max-age"),
+                    "Approval lifetime seconds (1–86400)",
+                    form,
+                    enabled,
+                    false,
+                    move |draft| draft.rules[index].max_age.clone(),
+                    move |draft, value| draft.rules[index].max_age = value,
+                ));
+            }
+            children.push(action(
+                scope,
+                context.clone(),
+                "policy-remove-rule",
+                "Remove rule",
+                "secondary",
+                enabled,
+                move || {
+                    form.revise(|draft| {
+                        draft.rules.remove(index);
+                    });
+                    structure.revise(|value| *value += 1);
+                },
+            ));
+            fields.push(card(
+                scope,
+                context.clone(),
+                &format!("Rule {index}"),
+                children,
+            ));
+        }
+        stack("agent-policy-rules", fields)
+    });
+    card(
+        scope,
+        context.clone(),
+        "Agent management Policy",
         vec![
-            "join",
-            "authorize",
-            "execute",
-            "read",
-            "deliver",
-            "publish",
-            "serve",
-        ]
-    };
-    rsx! { div { for op in choices {
-        label { input { r#type: "checkbox", checked: selected.iter().any(|v| v == op), onchange: {
-            let selected = selected.clone();
-            move |e: Event<FormData>| { let mut values = selected.clone(); values.retain(|v| v != op); if e.checked() { values.push(op.into()); } onvalue.call(values); }
-        } } "{op}" }
-    } } }
-}
-#[component]
-fn RuleEditor(mut form: Signal<Draft>, index: usize) -> Element {
-    let rule = form.read().rules[index].clone();
-    rsx! { fieldset { "data-testid": "agent-policy-rule", legend { "Rule {index}" }
-        TextField { label: "Stable rule id", value: rule.id, onvalue: move |v| form.write().rules[index].id = v }
-        TextField { label: "Rule priority", value: rule.priority, onvalue: move |v| form.write().rules[index].priority = v }
-        Choice { label: "Effect", value: rule.effect.clone(), options: effects(), onvalue: move |v| form.write().rules[index].effect = v }
-        Choice { label: "Agent selector", value: rule.target.clone(), options: ["all", "controller", "agent"].map(str::to_owned).into(), onvalue: move |v| form.write().rules[index].target = v }
-        if rule.target != "all" {
-            TextField { label: "Complete Account: principal_id", value: rule.principal, onvalue: move |v| form.write().rules[index].principal = v }
-            TextField { label: "Complete Account: station_id", value: rule.station, onvalue: move |v| form.write().rules[index].station = v }
-        }
-        OperationChoices { selected: rule.operations, review_only: false, onvalue: move |v| form.write().rules[index].operations = v }
-        Lines { label: "Registered action ids (optional, whitespace separated)", value: rule.actions, onvalue: move |v| form.write().rules[index].actions = v }
-        for resource_index in 0..rule.resources.len() {
-            ResourceEditor { form, rule_index: index, resource_index }
-        }
-        button { onclick: move |_| form.write().rules[index].resources.push(ResourceDraft { kind: "realm".into(), ..ResourceDraft::default() }), "Add resource" }
-        if rule.effect == "require_review" {
-            Lines { label: "Approvers: complete SDK ActorId array", value: rule.approvers, onvalue: move |v| form.write().rules[index].approvers = v }
-            TextField { label: "Approval threshold", value: rule.threshold, onvalue: move |v| form.write().rules[index].threshold = v }
-            TextField { label: "Approval lifetime seconds (1–86400)", value: rule.max_age, onvalue: move |v| form.write().rules[index].max_age = v }
-        }
-        button { onclick: move |_| { form.write().rules.remove(index); }, "Remove rule" }
-    } }
-}
-#[component]
-fn ResourceEditor(mut form: Signal<Draft>, rule_index: usize, resource_index: usize) -> Element {
-    let resource = form.read().rules[rule_index].resources[resource_index].clone();
-    rsx! { div {
-        Choice { label: "Resource kind", value: resource.kind, options: ["realm", "strand", "space", "object", "service"].map(str::to_owned).into(), onvalue: move |v| form.write().rules[rule_index].resources[resource_index].kind = v }
-        TextField { label: "Resource Realm (optional)", value: resource.realm, onvalue: move |v| form.write().rules[rule_index].resources[resource_index].realm = v }
-        TextField { label: "Exact resource reference (optional)", value: resource.reference, onvalue: move |v| form.write().rules[rule_index].resources[resource_index].reference = v }
-        button { onclick: move |_| { form.write().rules[rule_index].resources.remove(resource_index); }, "Remove resource" }
-    } }
+            paragraph(
+                "",
+                "Management limits are separate from Realm joining, member consent and Agent capability grants. A controller selector applies to that complete Account's current and future Agents.",
+            ),
+            draft_field(
+                scope,
+                context.clone(),
+                "agent-policy-id".into(),
+                "Exact Policy id",
+                form,
+                enabled,
+                false,
+                |draft| draft.policy_id.clone(),
+                move |draft, value| {
+                    draft.policy_id = value;
+                    loaded.revise(|value| {
+                        *value = None;
+                    });
+                },
+            ),
+            action(
+                scope,
+                context.clone(),
+                "agent-policy-read-current",
+                "Read current",
+                "secondary",
+                enabled,
+                move || read_state.load(),
+            ),
+            draft_field(
+                scope,
+                context.clone(),
+                "agent-policy-circle".into(),
+                "Scope Circle id (blank means this Realm)",
+                form,
+                enabled,
+                false,
+                |draft| draft.circle.clone(),
+                |draft, value| draft.circle = value,
+            ),
+            draft_choice(
+                scope,
+                "policy-default-effect".into(),
+                "Default effect",
+                form,
+                structure,
+                enabled,
+                effects(),
+                |draft| draft.default_effect.clone(),
+                |draft, value| draft.default_effect = value,
+            ),
+            draft_field(
+                scope,
+                context.clone(),
+                "agent-policy-priority".into(),
+                "Policy priority (optional)",
+                form,
+                enabled,
+                false,
+                |draft| draft.priority.clone(),
+                |draft, value| draft.priority = value,
+            ),
+            draft_field(
+                scope,
+                context.clone(),
+                "agent-policy-not-before".into(),
+                "Not before (RFC 3339, optional)",
+                form,
+                enabled,
+                false,
+                |draft| draft.not_before.clone(),
+                |draft, value| draft.not_before = value,
+            ),
+            draft_field(
+                scope,
+                context.clone(),
+                "agent-policy-expires".into(),
+                "Expires at (RFC 3339, optional)",
+                form,
+                enabled,
+                false,
+                |draft| draft.expires_at.clone(),
+                |draft, value| draft.expires_at = value,
+            ),
+            dynamic,
+            action(
+                scope,
+                context.clone(),
+                "policy-add-rule",
+                "Add rule",
+                "secondary",
+                enabled,
+                move || {
+                    form.revise(|draft| draft.rules.push(RuleDraft::default()));
+                    structure.revise(|value| *value += 1);
+                },
+            ),
+            paragraph(
+                "muted",
+                "Realm and Circle policies support the registered Agent operations and allow, deny or quarantine effects. Realm Join and Publish can require review; Circle review is unavailable. Saving a policy does not confirm runtime authorization.",
+            ),
+            action(
+                scope,
+                context.clone(),
+                "agent-policy-retry-pending",
+                "Retry original pending Policy",
+                "secondary",
+                scope.bond(move || !pending.get() && awaiting.get().is_some()),
+                move || retry_state.retry(),
+            ),
+            action(
+                scope,
+                context.clone(),
+                "agent-policy-save",
+                "Save Agent Policy",
+                "primary",
+                supported,
+                move || save_state.save(),
+            ),
+            status(state.message),
+        ],
+    )
 }

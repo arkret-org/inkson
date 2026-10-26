@@ -3,21 +3,12 @@ name = "inkson"
 version = "0.3.0"
 edition = "2024"
 rust-version = "1.98"
-description = "Dioxus desktop and web Arkret v1 reference client"
+description = "Glory/Sapid desktop and web Arkret v1 reference client"
 license = "Apache-2.0"
 repository = "https://github.com/arkret-org/inkson"
 
 [workspace]
 resolver = "3"
-
-# Upstream's rand 0.8 migration predates the PHF 0.9 API release. Keep the
-# renderer's PHF 0.8 API while resolving rand to a patched registry release.
-# Both crates must share a source so phf_codegen uses the same PhfHash trait.
-[patch.crates-io]
-dioxus-desktop = { git = "https://github.com/arkret-org/dioxus", rev = "0c19002e89ab70729bf6fbeda24e98eafb861cb9" }
-ksni = { git = "https://github.com/arkret-org/ksni", rev = "c95fc5ba94780c2376ee8b89ad91f7412abd3966" }
-phf_generator = { git = "https://github.com/rust-phf/rust-phf", rev = "6d5bfb4a377270d2ae69e05347044b1a95499973" }
-phf_shared = { git = "https://github.com/rust-phf/rust-phf", rev = "6d5bfb4a377270d2ae69e05347044b1a95499973" }
 
 [workspace.lints.rust]
 unsafe_code = "deny"
@@ -41,9 +32,8 @@ base64 = "0.23"
 chacha20poly1305 = { version = "0.11", default-features = false }
 chime = { version = "0.3.0", path = "../chime" }
 chrono = "0.4.45"
-dioxus = { version = "=0.7.10", default-features = false, features = ["minimal", "asset", "document", "mounted"] }
-dioxus-primitives = { version = "0.0.1", git = "https://github.com/DioxusLabs/components", default-features = false }
-dioxus-router = "=0.7.10"
+glory = { git = "https://github.com/glory-rs/glory.git", branch = "main", version = "0.3.1", default-features = false, features = ["css"] }
+sapid = { git = "https://github.com/sapid-ui/sapid.git", branch = "main", version = "0.1.0", default-features = false, features = ["chat", "code", "editor", "files", "json", "dates"] }
 ed25519-dalek = "3.0.0"
 futures-util = { version = "0.3.34", default-features = false, features = ["sink", "std"] }
 getrandom = "0.4.3"
@@ -86,8 +76,8 @@ default = []
 # Library consumers do not choose a UI renderer. Application builds select
 # their actual renderer explicitly, keeping desktop system libraries optional.
 app = []
-desktop = ["app", "dioxus/desktop"]
-web = ["app", "dioxus/web"]
+desktop = ["app", "glory/blitz-shell", "glory/blitz-assets", "glory/blitz-accesskit", "dep:wry", "dep:tao"]
+web = ["app", "glory/web"]
 # Deferred protocol surfaces are compiled by default for unit coverage but
 # hidden from the local 1.0 UI unless explicitly opted in.
 experimental-discussion-promote = []
@@ -114,6 +104,9 @@ wasm-localstorage-secrets-test = []
 mobile-android = []
 mobile-ios = []
 
+[lib]
+crate-type = ["rlib", "cdylib"]
+
 [[bin]]
 name = "inkson"
 path = "src/main.rs"
@@ -125,6 +118,7 @@ path = "src/bin/inkson-wire.rs"
 required-features = ["spec-conformance"]
 
 [dependencies]
+kurbo = "0.13.1"
 arkret-test-kit = { path = "../arkret-rust-sdk/crates/test-kit", optional = true }
 rand_chacha = "0.10"
 # Feature-unification alias: `getrandom@0.2` is pulled in transitively by the
@@ -186,8 +180,8 @@ base64 = { workspace = true }
 chacha20poly1305 = { workspace = true, default-features = false, features = ["alloc"] }
 chime = { workspace = true, features = ["http"] }
 chrono = { workspace = true, features = ["serde"] }
-dioxus-primitives = { workspace = true, default-features = false }
-dioxus-router = { workspace = true }
+glory = { workspace = true }
+sapid = { workspace = true }
 ed25519-dalek = { workspace = true, features = ["pem", "pkcs8", "zeroize"] }
 futures-util = { workspace = true }
 getrandom = { workspace = true, features = ["sys_rng", "wasm_js"] }
@@ -207,15 +201,17 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 url = { workspace = true }
 x25519-dalek = { workspace = true, features = ["static_secrets"] }
-# C3: shared Arkret frontend component crate. The former `src/ui/`
-# css-module wrappers now live in yoface, which re-exports
-# `dioxus_primitives` and `dioxus_icons`; inkson imports
-# `yoface::ui::*` through the SDK-local `pub use yoface::ui`.
-# Keep the patch sections below aligned with the yoface README.
-yoface = { git = "https://github.com/arkret-org/yoface", branch = "main" }
 zeroize = { workspace = true, features = ["derive"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+opener = "0.9.0"
+# The isolated media process hosts the existing LiveKit/SFrame implementation.
+# Product controls and navigation use Glory/Blitz in the parent process.
+wry = { git = "https://github.com/Ranrar/wry", rev = "006d0155eb46dedb6c43fa3aa152e55d162a4aa5", version = "0.57.0", features = ["wayland"], optional = true }
+tao = { git = "https://github.com/johncarmack1984/tao", rev = "1879ad839cb8caaf7b4c733392c21f68a86787f4", version = "0.35.3", optional = true }
+arboard = { version = "3.6.1", default-features = false }
+mime_guess = { version = "2" }
+rfd = { version = "0.15.4", default-features = false, features = ["xdg-portal", "async-std"] }
 # P3.2c request-layer SSRF guard for DID fetches (native only): judges the
 # derived URL, resolves the host, judges every DNS answer, and pins the
 # validated addresses into the client. wasm has no socket to pin — the
@@ -241,7 +237,6 @@ arkret-egress-reqwest = { version = "0.3.0", path = "../arkret-rust-sdk/crates/e
 # MLS, signer and platform-keystore integrations. Crypto capabilities are
 # selected directly on `arkret-crypto`.
 arkret-sdk = { workspace = true, features = ["client", "mls", "signer", "tls-rustls", "keystore-macos", "keystore-linux", "keystore-windows"] }
-dioxus = { workspace = true }
 fs2 = "0.4.3"
 garth = { path = "../garth", default-features = false, features = ["native"] }
 reqwest = { workspace = true, default-features = false, features = ["json", "multipart", "rustls", "stream", "form"] }
@@ -276,7 +271,6 @@ tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 # `sleep_for` uses for HTTP retry backoff in the wasm build.
 # See the non-wasm note above.
 arkret-sdk = { workspace = true, features = ["client", "mls", "signer"] }
-dioxus = { workspace = true }
 garth = { path = "../garth", default-features = false, features = ["wasm"] }
 gloo-timers = { workspace = true, features = ["futures"] }
 js-sys = { workspace = true }
@@ -294,9 +288,15 @@ web-sys = { workspace = true, features = [
     "Storage",
     "StorageEvent",
     "Window",
+    "History",
+    "PopStateEvent",
+    "EventTarget",
+    "KeyboardEvent",
+    "Event",
     "CssStyleDeclaration",
     "MediaQueryList",
     "Navigator",
+    "Clipboard",
     "StorageManager",
     "ServiceWorker",
     "ServiceWorkerContainer",
@@ -314,6 +314,7 @@ web-sys = { workspace = true, features = [
     "Element",
     "HtmlAnchorElement",
     "HtmlElement",
+    "HtmlMediaElement",
     "Url",
     # IndexedDB-backed secure key store.
     # `IndexedDbSecureKeyStore` opens an IDB database, derives an
@@ -358,8 +359,9 @@ web-sys = { workspace = true, features = [
 chrono = { workspace = true }
 
 [dev-dependencies]
+# Test poll assertions use the explicit macro feature formerly unified by the old UI.
+futures-util = { workspace = true, features = ["async-await-macro"] }
 # Upload fixtures use serialized FileData without selecting a native renderer.
-dioxus-html = { version = "=0.7.10", default-features = false, features = ["serialize"] }
 arkret-test-kit = { path = "../arkret-rust-sdk/crates/test-kit" }
 arkret-schema-conformance = { version = "0.3.0", path = "../arkret-rust-sdk/crates/schema-conformance", default-features = false }
 arkret-sdk = { workspace = true, features = ["mls-test-utils"] }
@@ -380,7 +382,7 @@ regex = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 wasm-bindgen-test = "0.3"
-web-sys = { version = "0.3", features = ["EventInit"] }
+web-sys = { version = "0.3", features = ["EventInit", "NodeList"] }
 
 [lints]
 workspace = true
@@ -393,15 +395,11 @@ strip = "debuginfo"
 # opt-level >= 1 + incremental on wasm32 makes LLVM internalize cross-CGU
 # `.llvm.`/`anon.*` symbols that rust-lld then reports as "undefined symbol"
 # at link time (rust-lang/rust#115297). `cargo check` never links, so it
-# passes while `dx build/serve --platform web` fails. Disabling incremental
+# passes while a browser application build fails. Disabling incremental
 # for this profile is the standard workaround.
 incremental = false
 
-# cotest serves the web output as static files rather than through `dx serve`.
-# Disable debug assertions so dioxus-web does not embed its devtools WebSocket
-# client in that bundle; failed `/_dioxus` reconnect callbacks can otherwise
-# corrupt the long-lived wasm instance. Keep the wasm-dev optimization/linker
-# settings without invoking release-only wasm-opt in the offline harness.
+# Predictable optimized development artifacts for the static browser harness.
 [profile.joint-e2e]
 inherits = "dev"
 opt-level = 1
@@ -409,3 +407,8 @@ debug = 0
 strip = "debuginfo"
 incremental = false
 debug-assertions = false
+
+# Sapid main currently declares its sibling Glory path. Resolve that package
+# from the same remote Glory source as the application, without a local override.
+[patch."https://github.com/sapid-ui/sapid.git"]
+glory = { git = "https://github.com/glory-rs/glory.git", branch = "main", version = "0.3.1" }

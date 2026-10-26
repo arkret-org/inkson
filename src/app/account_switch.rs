@@ -1,138 +1,82 @@
-//! Local account selection over the existing, single root session authority.
-use dioxus::core::{Task, spawn_forever};
+//! Account selection retains its root authority while page owners retire.
+use std::rc::Rc;
 
-use super::*;
-use crate::config::{ActiveAccountContext, MultiProfileConfig};
-#[cfg(all(target_arch = "wasm32", feature = "spec-conformance"))]
-pub use crate::state::{LocalStateStore, PersistedSessionGrant};
+use glory::{Cage, Lotus, Scope};
 
-/// Stable handles survive account-view teardown. The revision is only a UI
-/// mount key; authorization continues to use the existing session generation.
+use crate::config::{ActiveAccountContext, LocalConfigStore, MultiProfileConfig};
+use crate::presentation::widgets::{empty, reactive, stack};
+use crate::presentation::{InksonContext, SharedStateStore, View};
+use crate::routes::Route;
+#[cfg(any(test, target_arch = "wasm32"))]
+use crate::state::LocalStateStore;
+#[cfg(all(any(test, target_arch = "wasm32"), not(feature = "spec-conformance")))]
+use crate::state::PersistedSessionGrant;
+// Name the grant type used by the public browser conformance storage helpers.
+#[cfg(feature = "spec-conformance")]
+#[doc(hidden)]
+pub use crate::state::PersistedSessionGrant;
+
 #[derive(Clone)]
 pub struct AccountSessionRoot {
-    pub(crate) config: Signal<LocalConfigStore>,
-    pub(crate) base_url: Signal<String>,
-    pub(crate) account: Signal<Option<ActiveAccountContext>>,
-    pub(crate) principal: Signal<Option<arkret_sdk::DidCoreId>>,
-    pub(crate) device: Signal<String>,
-    pub(crate) token: Signal<String>,
-    pub(crate) generation: Signal<u64>,
-    pub(crate) profiles: Signal<MultiProfileConfig>,
-    revision: Signal<u64>,
-    busy: Signal<bool>,
-    view_retired: Signal<bool>,
-    blocked: Signal<bool>,
-    error: Signal<Option<String>>,
-    store: SyncSignal<LocalStateStore>,
+    context: Rc<InksonContext>,
+    pub(crate) config: Cage<LocalConfigStore>,
+    pub(crate) base_url: Cage<String>,
+    pub(crate) account: Cage<Option<ActiveAccountContext>>,
+    pub(crate) principal: Cage<Option<arkret_sdk::DidCoreId>>,
+    pub(crate) device: Cage<String>,
+    pub(crate) token: Cage<String>,
+    pub(crate) generation: Cage<u64>,
+    pub(crate) profiles: Cage<MultiProfileConfig>,
+    revision: Cage<u64>,
+    busy: Cage<bool>,
+    view_retired: Cage<bool>,
+    blocked: Cage<bool>,
+    error: Cage<Option<String>>,
+    store: SharedStateStore,
     services: crate::runtime::services::RuntimeServices,
 }
 
-fn root_signal<T: 'static>(value: T) -> Signal<T> {
-    Signal::new_in_scope(value, ScopeId::ROOT)
-}
-
-/// Dioxus reconciles keys in fragments/lists. A key on a lone static
-/// component is insufficient to retire its hook state. Replacing this keyed
-/// parent destroys every account-local descendant while preserving the root.
-#[component]
-pub fn AccountViewBoundary(revision: u64, children: Element) -> Element {
-    rsx! {
-        for key in [revision] {
-            div { key: "{key}", style: "display: contents", {children.clone()} }
-        }
-    }
-}
-
-/// The leader mounts this once, outside the account-specific bootstrap.
-#[component]
-pub fn SessionRoot(
-    state_store: SyncSignal<LocalStateStore>,
-    #[props(default)] config_store: Option<Signal<LocalConfigStore>>,
-    children: Element,
-) -> Element {
-    let root = use_hook(|| {
-        let config = config_store.unwrap_or_else(|| root_signal(LocalConfigStore::default()));
-        let (initial, _, state) =
-            read_bootstrap_snapshot(config.peek().clone(), state_store.peek().clone());
-        let account = root_signal(initial.active_account.clone());
-        let base_url = root_signal(
-            initial
-                .server_url()
-                .or_else(|| initial.stations.first())
-                .map(ToString::to_string)
-                .unwrap_or_else(|| "https://local.host".into()),
-        );
-        let principal = root_signal(initial.principal_id().cloned());
-        let device = root_signal(
-            initial
-                .device_id()
-                .map(ToString::to_string)
-                .unwrap_or_else(crate::config::new_device_id),
-        );
-        let token = root_signal(initial_session_credential_from_state(
-            &state,
-            &initial,
-            chrono::Utc::now().timestamp(),
-        ));
-        let generation = root_signal(0_u64);
-        let session = crate::runtime::session::SessionCoordinator::new(move || {
-            Box::pin(refresh_session_credential_for_active_context(
-                base_url,
-                state_store,
-                token,
-                config,
-                generation,
-                account,
-            ))
-        });
-        let adapter = crate::client_core::InksonLocalStateStoreAdapter::from_backend(
-            runtime_adapter::SignalLocalStateBackend::new(state_store),
-        );
-        AccountSessionRoot {
-            config,
-            base_url,
-            account,
-            principal,
-            device,
-            token,
-            generation,
-            profiles: root_signal(MultiProfileConfig::default()),
-            revision: root_signal(0_u64),
-            busy: root_signal(false),
-            view_retired: root_signal(false),
-            blocked: root_signal(false),
-            error: root_signal(None),
-            store: state_store,
-            services: crate::runtime::services::RuntimeServices::new(adapter, session),
-        }
-    });
-    // Keep handles only: the initial decrypted account snapshot must be
-    // released instead of living for the lifetime of all subsequent accounts.
-    use_context_provider(|| root.services.clone());
-    use_context_provider(|| root);
-    rsx! { {children} }
-}
-
 impl AccountSessionRoot {
-    pub fn get() -> Self {
-        consume_context()
+    pub fn from_context(context: Rc<InksonContext>) -> Self {
+        Self {
+            config: context.config_store,
+            base_url: context.base_url,
+            account: context.active_account,
+            principal: context.principal_id,
+            device: context.device_id,
+            token: context.token,
+            generation: context.session_generation,
+            profiles: context.profiles,
+            revision: context.account_revision,
+            busy: context.account_busy,
+            view_retired: context.account_view_retired,
+            blocked: context.account_blocked,
+            error: context.account_error,
+            store: context.state_store.clone(),
+            services: context.services.clone(),
+            context,
+        }
     }
+}
+impl AccountSessionRoot {
     pub fn revision(&self) -> u64 {
-        (self.revision)()
+        self.revision.get()
     }
+    #[cfg(test)]
     pub(crate) fn blocked(&self) -> bool {
-        (self.blocked)()
+        self.blocked.get()
     }
     pub fn active_account(&self) -> Option<ActiveAccountContext> {
-        (self.account)()
+        self.account.get()
     }
 
     pub fn is_switching(&self) -> bool {
-        (self.busy)()
+        self.busy.get()
     }
 
+    #[cfg(test)]
     pub(crate) fn account_view_retired(&self) -> bool {
-        (self.view_retired)()
+        self.view_retired.get()
     }
 
     /// The initiating menu can unmount while persistence is pending. Only
@@ -141,12 +85,17 @@ impl AccountSessionRoot {
         self,
         id: String,
         done: impl FnOnce(anyhow::Result<()>) + 'static,
-    ) -> Task {
-        spawn_forever(async move { done(self.select_profile(id).await) })
+    ) -> Result<(), glory::core::AccessError> {
+        let context = self.context.clone();
+        context.spawn(async move { done(self.select_profile(id).await) })
     }
 
-    pub fn start_add_account(self, done: impl FnOnce(anyhow::Result<()>) + 'static) -> Task {
-        spawn_forever(async move { done(self.add_account().await) })
+    pub fn start_add_account(
+        self,
+        done: impl FnOnce(anyhow::Result<()>) + 'static,
+    ) -> Result<(), glory::core::AccessError> {
+        let context = self.context.clone();
+        context.spawn(async move { done(self.add_account().await) })
     }
 
     fn retire(&mut self) {
@@ -154,6 +103,11 @@ impl AccountSessionRoot {
         self.services.session.clear_invalidator();
         self.services.effects.retire_all();
         self.services.websocket_rail.reset_for_account_switch();
+        self.context.clear_account_projections();
+        #[cfg(target_arch = "wasm32")]
+        self.context
+            .secure_store_bootstrap_ready
+            .revise(|value| *value = false);
         crate::identity::device_directory::reset_session_cache();
         crate::identity::contact_profile::reset_session_cache();
         self.services.projection_sink.install(std::rc::Rc::new(
@@ -162,27 +116,27 @@ impl AccountSessionRoot {
         self.services.signal_product_sink.install(std::rc::Rc::new(
             crate::runtime::projection::NoopSignalProductSink,
         ));
-        let next = (*self.generation.peek()).wrapping_add(1);
-        self.generation.set(next);
-        self.token.set(String::new());
-        self.view_retired.set(true);
+        let next = (self.generation.get_untracked()).wrapping_add(1);
+        self.generation.revise(|current| *current = next);
+        self.token.revise(|current| *current = String::new());
+        self.view_retired.revise(|current| *current = true);
     }
 
     fn check_selection_coherence(&mut self) {
         let expected = self
             .account
-            .peek()
+            .get_untracked()
             .as_ref()
             .map(|account| account.authority.clone());
-        let actual = self.store.read().active_authority();
-        let configured = self.config.read().selected_authority();
+        let actual = self.store.read(|store| store.active_authority());
+        let configured = self.config.with(|store| store.selected_authority());
         self.blocked
-            .set(actual != expected || configured != expected);
+            .revise(|value| *value = actual != expected || configured != expected);
     }
 
     fn remount(&mut self) {
         crate::event_signer::clear_active_device_signer();
-        match self.account.peek().as_ref() {
+        match self.account.get_untracked().as_ref() {
             Some(account) => match crate::secure_key_store::UserLocalStore::new(
                 account.authority.clone(),
                 account.device_id.clone(),
@@ -191,23 +145,23 @@ impl AccountSessionRoot {
                 Err(error) => {
                     tracing::error!(%error, "selected account key scope is invalid");
                     crate::secure_key_store::set_active_device_seed_scope(None);
-                    self.blocked.set(true);
+                    self.blocked.revise(|current| *current = true);
                 }
             },
             None => crate::secure_key_store::set_active_device_seed_scope(None),
         }
-        let next = (*self.revision.peek()).wrapping_add(1);
-        self.revision.set(next);
-        self.view_retired.set(false);
+        let next = (self.revision.get_untracked()).wrapping_add(1);
+        self.revision.revise(|current| *current = next);
+        self.view_retired.revise(|current| *current = false);
     }
 
     /// Select a saved, pinned account. No logout, grant issuance or revocation.
     pub async fn select_profile(mut self, profile_id: String) -> anyhow::Result<()> {
         anyhow::ensure!(
-            !*self.busy.peek(),
+            !self.busy.get_untracked(),
             "an account switch is already in progress"
         );
-        let mut profiles = self.config.read().load_profile_metadata()?;
+        let mut profiles = self.config.with(|store| store.load_profile_metadata())?;
         let selected = profiles
             .profiles
             .iter()
@@ -215,65 +169,75 @@ impl AccountSessionRoot {
             .ok_or_else(|| anyhow::anyhow!("selected account is no longer saved"))?
             .account
             .clone();
-        if self.account.peek().as_ref().is_some_and(|current| {
-            current.authority == selected.authority
-                && current.device_id == selected.device_id
-                && current.server_url == selected.server_url
-                && current.profile_id == selected.profile_id
-        }) && !*self.blocked.peek()
-            && self.store.read().active_authority() == Some(selected.authority.clone())
-            && self.config.read().selected_authority() == Some(selected.authority.clone())
-            && self.store.read().pending_login().is_none()
+        if self
+            .account
+            .get_untracked()
+            .as_ref()
+            .is_some_and(|current| {
+                current.authority == selected.authority
+                    && current.device_id == selected.device_id
+                    && current.server_url == selected.server_url
+                    && current.profile_id == selected.profile_id
+            })
+            && !self.blocked.get_untracked()
+            && self.store.read(|store| store.active_authority()) == Some(selected.authority.clone())
+            && self.config.with(|store| store.selected_authority())
+                == Some(selected.authority.clone())
+            && self.store.read(|store| store.pending_login()).is_none()
         {
             return Ok(());
         }
-        self.busy.set(true);
-        let expected = *self.generation.peek();
-        let probe = self.store.read().clone();
+        self.busy.revise(|current| *current = true);
+        let expected = self.generation.get_untracked();
+        let probe = self.store.read(|store| store.clone());
         let prepared = probe.prepare_saved_account(&selected).await;
         if let Err(error) = prepared {
-            self.busy.set(false);
+            self.busy.revise(|current| *current = false);
             return Err(error);
         }
-        if *self.generation.peek() != expected {
-            self.busy.set(false);
+        if self.generation.get_untracked() != expected {
+            self.busy.revise(|current| *current = false);
             anyhow::bail!("session changed while preparing the selected account");
         }
         self.retire();
-        let switching_generation = *self.generation.peek();
+        let switching_generation = self.generation.get_untracked();
         let result = async {
-            let barrier = self.store.read().begin_durable_flush()?;
+            let barrier = self.store.read(|store| store.begin_durable_flush())?;
             barrier.wait().await?;
             anyhow::ensure!(
-                *self.generation.peek() == switching_generation,
+                self.generation.get_untracked() == switching_generation,
                 "session changed during account persistence"
             );
             crate::identity::account_auth::clear_all_persisted_oidc_scaffolds()?;
             profiles.activate(&profile_id);
             // Persist selection first. If activating the target store fails,
             // restore metadata before the old account can resume.
-            let old_account = self.account.peek().clone();
-            let old_profiles = self.config.read().load_profile_metadata()?;
+            let old_account = self.account.get_untracked().clone();
+            let old_profiles = self.config.with(|store| store.load_profile_metadata())?;
             self.config
-                .write()
-                .save_account_selection(Some(selected.clone()), &profiles)?;
-            if let Err(error) = self.store.write().switch_saved_account(&selected) {
+                .revise(|store| store.save_account_selection(Some(selected.clone()), &profiles))?;
+            if let Err(error) = self
+                .store
+                .write(|store| store.switch_saved_account(&selected))
+            {
                 self.config
-                    .write()
-                    .save_account_selection(old_account, &old_profiles)?;
+                    .revise(|store| store.save_account_selection(old_account, &old_profiles))?;
                 return Err(error);
             }
-            self.base_url.set(selected.server_url.to_string());
-            self.principal.set(Some(selected.principal_id().clone()));
-            self.device.set(selected.device_id.to_string());
-            self.account.set(Some(selected));
-            self.profiles.set(profiles);
-            self.blocked.set(false);
+            self.base_url
+                .revise(|current| *current = selected.server_url.to_string());
+            self.principal
+                .revise(|current| *current = Some(selected.principal_id().clone()));
+            self.device
+                .revise(|current| *current = selected.device_id.to_string());
+            self.account.revise(|current| *current = Some(selected));
+            self.profiles.revise(|current| *current = profiles);
+            self.blocked.revise(|current| *current = false);
             Ok(())
         }
         .await;
-        self.busy.set(false);
-        if *self.generation.peek() != switching_generation {
+        self.busy.revise(|current| *current = false);
+        if self.generation.get_untracked() != switching_generation {
             self.retire();
             self.check_selection_coherence();
             self.remount();
@@ -288,40 +252,41 @@ impl AccountSessionRoot {
 
     pub async fn add_account(mut self) -> anyhow::Result<()> {
         anyhow::ensure!(
-            !*self.busy.peek(),
+            !self.busy.get_untracked(),
             "an account switch is already in progress"
         );
-        self.busy.set(true);
+        self.busy.revise(|current| *current = true);
         self.retire();
-        let switching_generation = *self.generation.peek();
+        let switching_generation = self.generation.get_untracked();
         let result = async {
-            let barrier = self.store.read().begin_durable_flush()?;
+            let barrier = self.store.read(|store| store.begin_durable_flush())?;
             barrier.wait().await?;
             anyhow::ensure!(
-                *self.generation.peek() == switching_generation,
+                self.generation.get_untracked() == switching_generation,
                 "session changed during account persistence"
             );
             crate::identity::account_auth::clear_all_persisted_oidc_scaffolds()?;
-            let profiles = self.config.read().load_profile_metadata()?;
+            let profiles = self.config.with(|store| store.load_profile_metadata())?;
             self.config
-                .write()
-                .save_account_selection(None, &profiles)?;
+                .revise(|store| store.save_account_selection(None, &profiles))?;
             let device = arkret_sdk::DeviceId::new(crate::config::new_device_id())?;
-            if let Err(error) = self.store.write().begin_account_switch_login(&device) {
-                let old_account = self.account.peek().clone();
+            if let Err(error) = self
+                .store
+                .write(|store| store.begin_account_switch_login(&device))
+            {
+                let old_account = self.account.get_untracked().clone();
                 self.config
-                    .write()
-                    .save_account_selection(old_account, &profiles)?;
+                    .revise(|store| store.save_account_selection(old_account, &profiles))?;
                 return Err(error);
             }
-            self.account.set(None);
-            self.principal.set(None);
-            self.device.set(device.to_string());
+            self.account.revise(|current| *current = None);
+            self.principal.revise(|current| *current = None);
+            self.device.revise(|current| *current = device.to_string());
             Ok(())
         }
         .await;
-        self.busy.set(false);
-        if *self.generation.peek() != switching_generation {
+        self.busy.revise(|current| *current = false);
+        if self.generation.get_untracked() != switching_generation {
             self.retire();
             self.check_selection_coherence();
             self.remount();
@@ -330,49 +295,6 @@ impl AccountSessionRoot {
         self.check_selection_coherence();
         self.remount();
         result
-    }
-}
-
-/// Account switching lives in the authenticated account menu.
-#[component]
-pub fn SavedAccountPicker(
-    options: Vec<(String, String)>,
-    selected: String,
-    busy: bool,
-    on_select: EventHandler<String>,
-    on_add: EventHandler<()>,
-) -> Element {
-    if options.is_empty() {
-        return rsx! {};
-    }
-    rsx! {
-        div { class: "account-picker", "data-testid": "account-switcher",
-            label { class: "account-picker__field",
-                {crate::i18n::tr("app.account.switch")}
-                span { class: "account-picker__control",
-                    select { class: "select account-picker__select",
-                        "data-testid": "account-switch-select",
-                        disabled: busy,
-                        value: selected,
-                        onchange: move |event| on_select.call(event.value()),
-                        option { value: "", disabled: true, {crate::i18n::tr("app.account.choose")} }
-                        for (id, label) in options {
-                            option { key: "{id}", value: id,
-                                "{label}"
-                            }
-                        }
-                    }
-                    span { class: "account-picker__caret", "aria-hidden": "true",
-                        UiIcon { name: "chevron-down" }
-                    }
-                }
-            }
-            Button { variant: ButtonVariant::Ghost, size: ButtonSize::Sm,
-                class: "account-picker__add",
-                disabled: busy, "data-testid": "account-add", onclick: move |_| on_add.call(()),
-                {crate::i18n::tr("app.account.add")}
-            }
-        }
     }
 }
 
@@ -400,85 +322,195 @@ pub fn account_picker_options(profiles: &MultiProfileConfig) -> Vec<(String, Str
         .collect()
 }
 
-#[component]
-pub(crate) fn AccountSwitcher(#[props(default)] disabled: bool) -> Element {
-    let root = AccountSessionRoot::get();
-    let mut error = root.error;
-    let account = (root.account)();
-    let _token = (root.token)();
-    let profiles = root.config.read().load_profile_metadata();
-    let navigator = use_navigator();
-    match profiles {
-        Err(_) => rsx! { p { role: "alert", {crate::i18n::tr("app.account.saved_unavailable")} } },
-        Ok(profiles) => {
-            let selecting = root.clone();
-            let adding = root.clone();
-            rsx! {
-                SavedAccountPicker {
-                    options: account_picker_options(&profiles),
-                    selected: if root.blocked() { String::new() } else { account.map(|account| account.profile_id).unwrap_or_default() },
-                    busy: disabled || (root.busy)(),
-                    on_select: move |id| {
-                        let selecting = selecting.clone();
-                        selecting.start_select_profile(id, move |outcome| {
-                            match outcome {
-                                Ok(()) => { error.set(None); navigator.replace(Route::Dashboard); }
-                                Err(failure) => { tracing::warn!(%failure, "account selection failed"); error.set(Some(crate::i18n::tr("app.account.switch_failed"))); }
-                            }
-                        });
-                    },
-                    on_add: move |_| {
-                        let adding = adding.clone();
-                        adding.start_add_account(move |outcome| {
-                            match outcome {
-                                Ok(()) => { error.set(None); navigator.push(Route::Login); }
-                                Err(failure) => { tracing::warn!(%failure, "add-account preparation failed"); error.set(Some(crate::i18n::tr("app.account.switch_failed"))); }
-                            }
-                        });
-                    },
-                }
-                if let Some(message) = (root.error)() { p { role: "alert", "{message}" } }
-            }
+pub fn account_switcher(scope: &Scope, context: Rc<InksonContext>, enabled: Lotus<bool>) -> View {
+    let root = AccountSessionRoot::from_context(context.clone());
+    let source = scope.bond({
+        let context = context.clone();
+        move || {
+            (
+                context.account_revision.get(),
+                context.account_view_retired.get(),
+                context.token.get(),
+            )
         }
-    }
+    });
+    reactive(source, move |scope, _| {
+        let context = context.clone();
+        let profiles = match root.config.with(LocalConfigStore::load_profile_metadata) {
+            Ok(profiles) => profiles,
+            Err(_) => {
+                return crate::presentation::widgets::paragraph(
+                    "error",
+                    context.translated(scope, "app.account.saved_unavailable"),
+                );
+            }
+        };
+        let options = account_picker_options(&profiles);
+        if options.is_empty() {
+            return empty();
+        }
+        let selecting = root.clone();
+        let adding = root.clone();
+        let busy = root.busy;
+        let ready = scope.bond({
+            let enabled = enabled.clone();
+            move || enabled.get() && !busy.get()
+        });
+        let selection = scope.bond({
+            let context = context.clone();
+            move || {
+                if context.account_blocked.get() {
+                    None
+                } else {
+                    context
+                        .active_account
+                        .get()
+                        .map(|account| account.profile_id)
+                }
+            }
+        });
+        let selected_context = context.clone();
+        let add_context = context.clone();
+        let errors = reactive(root.error, |_, error| match error {
+            Some(error) => crate::presentation::widgets::paragraph("error", error),
+            None => empty(),
+        });
+        let on_select = move |id: Option<String>| {
+            if let Some(id) = id {
+                let context = selected_context.clone();
+                let failure = context.clone();
+                if let Err(error) = selecting.clone().start_select_profile(id, move |result| {
+                    finish_switch(context, result, Route::Dashboard)
+                }) {
+                    failure
+                        .account_error
+                        .revise(|value| *value = Some(error.to_string()));
+                }
+            }
+        };
+        #[cfg(target_arch = "wasm32")]
+        let picker = Box::new(
+            sapid::native_select("account-switcher")
+                .unstyled()
+                .class("select account-picker__select")
+                .label(context.translated(scope, "app.account.switch"))
+                .enabled(ready)
+                .value(selection)
+                .options(
+                    options
+                        .into_iter()
+                        .map(|(id, label)| sapid::select_option(id.clone(), label).value(id)),
+                )
+                .on_value_change(on_select),
+        ) as View;
+        #[cfg(not(target_arch = "wasm32"))]
+        let picker = {
+            use crate::presentation::native_choice::{
+                NativeChoiceOption, NativeChoiceProps, native_choice,
+            };
+            native_choice(
+                scope,
+                NativeChoiceProps::new(
+                    "account-switcher",
+                    context.translated(scope, "app.account.switch"),
+                    selection,
+                    options
+                        .into_iter()
+                        .map(|(value, label)| NativeChoiceOption::new(value, label))
+                        .collect(),
+                    on_select,
+                )
+                .enabled(ready)
+                .class("select account-picker__select")
+                .close_label(context.translated(scope, "common.close")),
+            )
+        };
+        stack(
+            "account-picker",
+            vec![
+                picker,
+                Box::new(
+                    sapid::button()
+                        .unstyled()
+                        .class("btn btn-ghost account-picker__add")
+                        .enabled(ready)
+                        .label(context.translated(scope, "app.account.add"))
+                        .on_press(move || {
+                            let context = add_context.clone();
+                            let failure = context.clone();
+                            if let Err(error) = adding.clone().start_add_account(move |result| {
+                                finish_switch(context, result, Route::Login)
+                            }) {
+                                failure
+                                    .account_error
+                                    .revise(|value| *value = Some(error.to_string()));
+                            }
+                        }),
+                ),
+                errors,
+            ],
+        )
+    })
 }
 
-#[component]
-pub(crate) fn ReturnToPreviousAccount(#[props(default)] disabled: bool) -> Element {
-    let root = AccountSessionRoot::get();
-    let navigator = use_navigator();
-    if root.active_account().is_some() {
-        return rsx! {};
+pub(crate) fn return_to_previous_account(
+    scope: &Scope,
+    context: Rc<InksonContext>,
+    enabled: Lotus<bool>,
+) -> View {
+    if context.active_account.get_untracked().is_some() {
+        return empty();
     }
-    let Ok(profiles) = root.config.read().load_profile_metadata() else {
-        return rsx! {};
+    let Ok(profiles) = context
+        .config_store
+        .with(LocalConfigStore::load_profile_metadata)
+    else {
+        return empty();
     };
     let Some(previous) = profiles
         .active()
         .map(|profile| profile.account.profile_id.clone())
     else {
-        return rsx! {};
+        return empty();
     };
-    let mut error = root.error;
-    let busy = disabled || root.is_switching();
-    rsx! {
-        Button { variant: ButtonVariant::Ghost,
-            disabled: busy, "data-testid": "return-previous-account",
-            onclick: move |_| {
-                root.clone().start_select_profile(previous.clone(), move |outcome| {
-                    match outcome {
-                        Ok(()) => { error.set(None); navigator.replace(Route::Dashboard); }
-                        Err(failure) => {
-                            tracing::warn!(%failure, "return to previous account failed");
-                            error.set(Some(crate::i18n::tr("app.account.switch_failed")));
-                        }
-                    }
-                });
-            },
-            UiIcon { name: "chevron-left" }
-            {crate::i18n::tr("app.account.return_previous")}
+    let root = AccountSessionRoot::from_context(context.clone());
+    let busy = context.account_busy;
+    let ready = scope.bond(move || enabled.get() && !busy.get());
+    Box::new(
+        sapid::button()
+            .unstyled()
+            .class("btn btn-ghost")
+            .enabled(ready)
+            .label(context.translated(scope, "app.account.return_previous"))
+            .on_press(move || {
+                let context = context.clone();
+                let failure = context.clone();
+                if let Err(error) = root
+                    .clone()
+                    .start_select_profile(previous.clone(), move |result| {
+                        finish_switch(context, result, Route::Dashboard)
+                    })
+                {
+                    failure
+                        .account_error
+                        .revise(|value| *value = Some(error.to_string()));
+                }
+            }),
+    )
+}
+
+fn finish_switch(context: Rc<InksonContext>, result: anyhow::Result<()>, route: Route) {
+    match result {
+        Ok(()) => {
+            context.account_error.revise(|value| *value = None);
+            context.navigate(route);
         }
-        if let Some(message) = error() { p { role: "alert", "{message}" } }
+        Err(error) => {
+            tracing::warn!(%error, "account selection failed");
+            context
+                .account_error
+                .revise(|value| *value = Some(context.tr("app.account.switch_failed")));
+        }
     }
 }
 

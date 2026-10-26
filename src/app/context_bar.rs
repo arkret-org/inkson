@@ -1,144 +1,165 @@
-use super::*;
+use std::rc::Rc;
 
-#[component]
-pub(super) fn RealmContextBar(
+use glory::prelude::*;
+use glory::render::EventKind;
+
+use super::session_shell::block;
+use super::*;
+use crate::presentation::widgets::*;
+use crate::presentation::{InksonContext, View};
+
+pub(super) fn context_bar(
+    scope: &Scope,
+    context: Rc<InksonContext>,
     realm_id: String,
-    current_surface: Option<RealmSurface>,
-    principal_id: String,
-    members_active: bool,
+    route: Route,
     board_ready: bool,
-) -> Element {
-    // A4 — state_store from session context instead of a prop.
-    let mut state_store = crate::app::SessionContext::get().state_store;
-    let mut menu_open = use_signal(|| false);
-    let spaces_allowed = state_store.read().realm_allows_spaces(&realm_id);
-    let (current_nav_label, current_nav_icon) = match current_surface {
-        Some(surface) => (surface.short_label(), surface.icon_name()),
-        None if members_active => ("Members", "users"),
-        None => ("Settings", "settings"),
-    };
-    rsx! {
-        div { class: "realm-context-bar", "data-testid": "realm-context-bar",
-            div { class: "actions realm-nav-inline", "data-testid": "realm-context-inline",
-                for surface in RealmSurface::top_nav().into_iter().filter(|_| spaces_allowed) {
-                    if surface.is_available(board_ready) {
-                        Link {
-                            class: if current_surface == Some(surface) { "primary" } else { "secondary" },
-                            to: surface.route(realm_id.clone()),
-                            onclick: {
-                                let principal_id = principal_id.clone();
-                                let realm_id = realm_id.clone();
-                                move |_| {
-                                    persist_realm_surface_preference(
-                                        &mut state_store.write(),
-                                        &principal_id,
-                                        &realm_id,
-                                        surface,
-                                    );
-                                }
-                            },
-                            UiIcon { name: surface.icon_name() }
-                            "{surface.short_label()}"
-                        }
+) -> View {
+    let menu = scope.cage(false);
+    let account = principal_id_owned(context.principal_id.get());
+    let (allows, current) = context.state_store.read(|store| {
+        (
+            store.realm_allows_spaces(&realm_id),
+            resolve_realm_surface(&route, store, &account, Some(&realm_id)),
+        )
+    });
+    let members = matches!(route, Route::RealmMembers { .. });
+    let links = {
+        let context = context.clone();
+        move |popup: bool| {
+            let mut children = Vec::<View>::new();
+            let class = |active: bool| {
+                if popup {
+                    if active {
+                        "realm-nav-menu-item is-active"
                     } else {
-                        Button {
-                            variant: ButtonVariant::Secondary,
-                            disabled: true,
-                            UiIcon { name: surface.icon_name() }
-                            "{surface.short_label()}"
-                        }
+                        "realm-nav-menu-item"
                     }
+                } else if active {
+                    "primary"
+                } else {
+                    "secondary"
                 }
-                Link {
-                    class: if members_active { "primary" } else { "secondary" },
-                    to: Route::RealmMembers { realm_id: realm_id.clone() },
-                    UiIcon { name: "users" }
-                    "Members"
-                }
-                Link {
-                    class: if current_surface.is_none() && !members_active { "primary" } else { "secondary" },
-                    to: Route::RealmAdmin { realm_id: realm_id.clone() },
-                    UiIcon { name: "settings" }
-                    "Settings"
-                }
-            }
-            div {
-                class: if menu_open() { "realm-nav-menu-host is-open" } else { "realm-nav-menu-host" },
-                "data-testid": "realm-context-menu",
-                Button {
-                    variant: ButtonVariant::Secondary,
-                    size: ButtonSize::Sm,
-                    class: "btn icon realm-nav-menu-button",
-                    "data-testid": "realm-context-menu-button",
-                    title: "Switch view: {current_nav_label}",
-                    "aria-label": "Switch Realm view",
-                    "aria-expanded": "{menu_open()}",
-                    onclick: move |_| menu_open.toggle(),
-                    UiIcon { name: current_nav_icon }
-                }
-                if menu_open() {
-                    Button {
-                        variant: ButtonVariant::Secondary,
-                        class: "realm-nav-menu-scrim",
-                        "aria-label": "Close Realm view menu",
-                        onclick: move |_| menu_open.set(false),
-                    }
-                    div {
-                        class: "realm-nav-menu-panel",
-                        role: "menu",
-                        "aria-label": "Realm views",
-                        for surface in RealmSurface::top_nav().into_iter().filter(|_| spaces_allowed) {
-                            if surface.is_available(board_ready) {
-                                Link {
-                                    class: if current_surface == Some(surface) { "realm-nav-menu-item is-active" } else { "realm-nav-menu-item" },
-                                    role: "menuitem",
-                                    to: surface.route(realm_id.clone()),
-                                    onclick: {
-                                        let principal_id = principal_id.clone();
-                                        let realm_id = realm_id.clone();
-                                        move |_| {
-                                            persist_realm_surface_preference(
-                                                &mut state_store.write(),
-                                                &principal_id,
-                                                &realm_id,
-                                                surface,
-                                            );
-                                            menu_open.set(false);
-                                        }
-                                    },
-                                    UiIcon { name: surface.icon_name() }
-                                    "{surface.short_label()}"
-                                }
-                            } else {
-                                Button {
-                                    variant: ButtonVariant::Secondary,
-                                    class: "realm-nav-menu-item",
-                                    role: "menuitem",
-                                    disabled: true,
-                                    UiIcon { name: surface.icon_name() }
-                                    "{surface.short_label()}"
-                                }
+            };
+            let make_link = |target: Route,
+                             label: String,
+                             icon: &str,
+                             active: bool,
+                             surface: Option<RealmSurface>|
+             -> View {
+                let context = context.clone();
+                let realm_id = realm_id.clone();
+                let account = account.clone();
+                Box::new(
+                    internal_link()
+                        .target(target.to_string())
+                        .class(class(active))
+                        .name(label.clone())
+                        .fill(vec![crate::components::ui_icon(icon), plain(label)])
+                        .on(EventKind::Activate, move |_| {
+                            if let Some(surface) = surface {
+                                context.state_store.write(|store| {
+                                    persist_realm_surface_preference(
+                                        store, &account, &realm_id, surface,
+                                    )
+                                });
                             }
-                        }
-                        Link {
-                            class: if members_active { "realm-nav-menu-item is-active" } else { "realm-nav-menu-item" },
-                            role: "menuitem",
-                            to: Route::RealmMembers { realm_id: realm_id.clone() },
-                            onclick: move |_| menu_open.set(false),
-                            UiIcon { name: "users" }
-                            "Members"
-                        }
-                        Link {
-                            class: if current_surface.is_none() && !members_active { "realm-nav-menu-item is-active" } else { "realm-nav-menu-item" },
-                            role: "menuitem",
-                            to: Route::RealmAdmin { realm_id: realm_id.clone() },
-                            onclick: move |_| menu_open.set(false),
-                            UiIcon { name: "settings" }
-                            "Settings"
-                        }
-                    }
+                            menu.revise(|value| *value = false);
+                            context.navigate(target.clone());
+                        }),
+                )
+            };
+            for surface in RealmSurface::top_nav().into_iter().filter(|_| allows) {
+                if surface.is_available(board_ready) {
+                    children.push(make_link(
+                        surface.route(realm_id.clone()),
+                        surface.short_label().into(),
+                        surface.icon_name(),
+                        current == Some(surface),
+                        Some(surface),
+                    ));
+                } else {
+                    children.push(Box::new(
+                        sapid::button()
+                            .unstyled()
+                            .class(class(false))
+                            .enabled(false)
+                            .label(surface.short_label())
+                            .left_section(crate::components::ui_icon(surface.icon_name())),
+                    ));
                 }
             }
+            children.push(make_link(
+                Route::RealmMembers {
+                    realm_id: realm_id.clone(),
+                },
+                context.tr("realm_admin.members"),
+                "users",
+                members,
+                None,
+            ));
+            children.push(make_link(
+                Route::RealmAdmin {
+                    realm_id: realm_id.clone(),
+                },
+                context.tr("nav.settings"),
+                "settings",
+                current.is_none() && !members,
+                None,
+            ));
+            children
         }
-    }
+    };
+    let normal = block("actions realm-nav-inline", links(false));
+    let (label, icon) = current
+        .map(|surface| (surface.short_label(), surface.icon_name()))
+        .unwrap_or(if members {
+            ("Members", "users")
+        } else {
+            ("Settings", "settings")
+        });
+    let popup = reactive(menu, move |_, open| {
+        if !open {
+            return empty();
+        }
+        block(
+            "realm-nav-menu-overlay",
+            vec![
+                super::session_shell::action(
+                    "realm-nav-menu-scrim",
+                    "Close Realm view menu",
+                    move || menu.revise(|value| *value = false),
+                ),
+                block("realm-nav-menu-panel", links(true)),
+            ],
+        )
+    });
+    block(
+        "realm-context-bar",
+        vec![
+            normal,
+            Box::new(
+                view()
+                    .class(scope.bond(move || {
+                        if menu.get() {
+                            "realm-nav-menu-host is-open".to_owned()
+                        } else {
+                            "realm-nav-menu-host".to_owned()
+                        }
+                    }))
+                    .fill(vec![
+                        super::session_shell::icon_action(
+                            "btn icon realm-nav-menu-button",
+                            format!(
+                                "Switch view: {}",
+                                current.map(RealmSurface::title).unwrap_or(label)
+                            ),
+                            icon,
+                            move || menu.revise(|value| *value = !*value),
+                        ),
+                        popup,
+                    ]),
+            ),
+        ],
+    )
 }

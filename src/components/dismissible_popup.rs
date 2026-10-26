@@ -1,78 +1,52 @@
-//! Shared outside-click dismissal layer for modal-like popups.
-//!
-//! The popup closes from a real overlay `click`, except when the press started
-//! inside the surface and was dragged outside before release.
+//! Focus-managed popup; the host only dismisses a completed outside press.
+use std::rc::Rc;
 
-use dioxus::prelude::*;
+use glory::prelude::*;
 
-#[derive(Clone, PartialEq, Props)]
+use crate::presentation::{InksonContext, View};
 pub struct DismissiblePopupProps {
     pub overlay_class: String,
     pub surface_class: String,
     pub aria_label: String,
-    pub on_dismiss: EventHandler<()>,
-    pub children: Element,
-    #[props(default)]
+    pub on_dismiss: Rc<dyn Fn(())>,
+    pub children: Rc<dyn Fn(&Scope) -> View>,
     pub overlay_test_id: Option<String>,
-    #[props(default)]
     pub surface_test_id: Option<String>,
-    #[props(default)]
-    pub overlay_style: Option<String>,
-    #[props(default)]
-    pub surface_style: Option<String>,
+    pub overlay_style: Option<Style>,
+    pub surface_style: Option<Style>,
 }
-
-#[component]
-pub fn DismissiblePopup(props: DismissiblePopupProps) -> Element {
-    let DismissiblePopupProps {
-        overlay_class,
-        surface_class,
-        aria_label,
-        on_dismiss,
-        children,
-        overlay_test_id,
-        surface_test_id,
-        overlay_style,
-        surface_style,
-    } = props;
-    let overlay_test_id = overlay_test_id.unwrap_or_default();
-    let surface_test_id = surface_test_id.unwrap_or_default();
-    let overlay_style = overlay_style.unwrap_or_default();
-    let surface_style = surface_style.unwrap_or_default();
-    let mut surface_press_started = use_signal(|| false);
-
-    rsx! {
-        div {
-            class: "{overlay_class}",
-            "data-testid": "{overlay_test_id}",
-            style: "{overlay_style}",
-            onclick: move |_| {
-                if surface_press_started() {
-                    surface_press_started.set(false);
-                    return;
-                }
-                on_dismiss.call(());
-            },
-            div {
-                class: "{surface_class}",
-                "data-testid": "{surface_test_id}",
-                style: "{surface_style}",
-                role: "dialog",
-                "aria-modal": "true",
-                "aria-label": "{aria_label}",
-                onmousedown: move |event: dioxus::events::MouseEvent| {
-                    surface_press_started.set(true);
-                    event.stop_propagation();
-                },
-                onmouseup: move |_| {
-                    surface_press_started.set(false);
-                },
-                onclick: move |event: dioxus::events::MouseEvent| {
-                    surface_press_started.set(false);
-                    event.stop_propagation();
-                },
-                {children}
-            }
-        }
-    }
+pub fn dismissible_popup(
+    _scope: &Scope,
+    _context: Rc<InksonContext>,
+    props: DismissiblePopupProps,
+) -> View {
+    let dismiss = props.on_dismiss;
+    let children = props.children;
+    let key = props
+        .surface_test_id
+        .clone()
+        .unwrap_or_else(|| props.surface_class.replace(' ', "-"));
+    let popup = sapid::dialog(key.clone())
+        .unstyled()
+        .class(format!("{} {}", props.surface_class, key))
+        .name(props.aria_label)
+        .open(true)
+        .show_trigger(false)
+        .show_close(false)
+        .style(props.surface_style.unwrap_or_default())
+        .on_dismiss(move |_| dismiss(()))
+        .content(move || {
+            let children = children.clone();
+            widget(move |scope| children(scope).build(scope))
+        });
+    Box::new(
+        view()
+            .class(format!(
+                "{} {}",
+                props.overlay_class,
+                props.overlay_test_id.unwrap_or_default()
+            ))
+            .style(props.overlay_style.unwrap_or_default())
+            .fill(popup),
+    )
 }

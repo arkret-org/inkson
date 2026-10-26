@@ -2,7 +2,7 @@ use super::*;
 
 #[derive(Clone, PartialEq)]
 pub(super) struct SidecarTimelineProjection {
-    pub current: Result<Vec<arkret_sdk::AgentSidecarExchangeProjection>, String>,
+    pub current: std::result::Result<Vec<arkret_sdk::AgentSidecarExchangeProjection>, String>,
     pub closes: Vec<(
         arkret_sdk::AgentSidecarExchangeProjection,
         arkret_sdk::AgentSidecarExchangeControl,
@@ -20,30 +20,30 @@ thread_local! {
 
 /// One disposable read projection per store/evidence/context change. Composer,
 /// panel and send-status repaints must not restore and verify private history.
-pub(super) fn use_sidecar_timeline_projection(
-    state_store: SyncSignal<LocalStateStore>,
-    timeline_basis: Memo<super::timeline_projection::TimelineProjectionBasis>,
+pub(super) fn sidecar_timeline_projection(
+    scope: &Scope,
+    state_store: crate::presentation::SharedStateStore,
+    timeline_basis: Bond<super::timeline_projection::TimelineProjectionBasis>,
     authority: arkret_sdk::AccountId,
     device: arkret_sdk::DeviceId,
     realm: String,
     evidence_epoch: u64,
-) -> Memo<SidecarTimelineProjection> {
-    use_memo(use_reactive(
-        (&authority, &device, &realm, &evidence_epoch),
-        move |(authority, device, realm, _)| {
-            let _basis = timeline_basis.read();
-            #[cfg(test)]
-            PROJECTION_BUILDS.with(|count| count.set(count.get() + 1));
-            let store = state_store.peek();
+) -> Bond<SidecarTimelineProjection> {
+    scope.bond(move || {
+        let _ = evidence_epoch;
+        let _basis = timeline_basis.get();
+        #[cfg(test)]
+        PROJECTION_BUILDS.with(|count| count.set(count.get() + 1));
+        state_store.read(|store| {
             let (current, closes) =
-                match crate::sidecar_fold::rebuild_with_closes(&store, &authority, &realm) {
+                match crate::sidecar_fold::rebuild_with_closes(store, &authority, &realm) {
                     Ok((projections, closes)) => (Ok(projections), closes),
                     Err(error) => (Err(format!("{error:#}")), Vec::new()),
                 };
             let projections = current.as_deref().unwrap_or_default();
             let close_cut = current
                 .is_ok()
-                .then(|| SidecarCloseCutFence::capture(&store, &authority, &device, &realm))
+                .then(|| SidecarCloseCutFence::capture(store, &authority, &device, &realm))
                 .flatten();
             let private_event_ids = projections
                 .iter()
@@ -68,7 +68,7 @@ pub(super) fn use_sidecar_timeline_projection(
                         chat_message_from_event_with_sidecar(
                             &realm,
                             &event,
-                            Some(&store),
+                            Some(store),
                             Some((&authority, authority.principal_id.as_str(), &device)),
                         )
                     })
@@ -77,7 +77,7 @@ pub(super) fn use_sidecar_timeline_projection(
                 Vec::new()
             };
             let privacy_gate = crate::sidecar::SidecarPrivacyGate::from_store_with_projection(
-                &store,
+                store,
                 authority.principal_id.as_str(),
                 Some((&realm, projections)),
             );
@@ -89,6 +89,6 @@ pub(super) fn use_sidecar_timeline_projection(
                 messages,
                 privacy_gate,
             }
-        },
-    ))
+        })
+    })
 }

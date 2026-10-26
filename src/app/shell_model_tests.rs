@@ -385,34 +385,27 @@ fn contact_inbox_badge_tracks_only_pending_incoming_requests() {
     use std::cell::Cell;
     use std::rc::Rc;
 
-    use dioxus::prelude::*;
+    let app = glory::App::memory();
     let count = Rc::new(Cell::new(usize::MAX));
-    let mut dom = dioxus::prelude::VirtualDom::new_with_props(
-        |count: Rc<Cell<usize>>| {
-            let rows = dioxus::prelude::use_signal(|| {
-                [
-                    arkret_sdk::ContactState::PendingIncoming,
-                    arkret_sdk::ContactState::PendingOutgoing,
-                    arkret_sdk::ContactState::Accepted,
-                    arkret_sdk::ContactState::Rejected,
-                ]
-                .into_iter()
-                .map(|state| {
-                    let mut row = contact_row("ak:did_core:web:peer.example");
-                    row.state = state;
-                    row
-                })
-                .collect()
-            });
-            count.set(
-                crate::app::ContactInbox(rows)
-                    .pending_count(&crate::state::ClientLocalState::default()),
-            );
-            dioxus::prelude::rsx! {}
-        },
-        count.clone(),
+    let rows = app.scope().cage({
+        [
+            arkret_sdk::ContactState::PendingIncoming,
+            arkret_sdk::ContactState::PendingOutgoing,
+            arkret_sdk::ContactState::Accepted,
+            arkret_sdk::ContactState::Rejected,
+        ]
+        .into_iter()
+        .map(|state| {
+            let mut row = contact_row("ak:did_core:web:peer.example");
+            row.state = state;
+            row
+        })
+        .collect()
+    });
+    count.set(
+        crate::app::ContactInbox(rows).pending_count(&crate::state::ClientLocalState::default()),
     );
-    dom.rebuild_in_place();
+    app.flush().unwrap();
     assert_eq!(count.get(), 1);
 }
 
@@ -424,69 +417,63 @@ fn contact_inbox_uses_one_revision_for_visible_rows_and_attention() {
     use arkret_models_collaboration::objects::productivity::{
         AccountBlocklistMode, AccountBlocklistSurface,
     };
-    use dioxus::prelude::*;
+    let app = glory::App::memory();
 
-    let result = Rc::new(RefCell::new(Vec::new()));
-    let mut dom = VirtualDom::new_with_props(
-        |result: ContactGateResults| {
-            let rows = use_signal(|| {
-                [
-                    "block.example",
-                    "hide.example",
-                    "mute.example",
-                    "clear.example",
-                ]
-                .into_iter()
-                .map(|station| {
-                    let mut row = contact_row(&format!("ak:did_core:web:{station}"));
-                    row.state = arkret_sdk::ContactState::PendingIncoming;
-                    row
-                })
-                .collect()
-            });
-            let mut snapshot = crate::state::ClientLocalState {
-                client_blocklist_revision: 7,
-                ..Default::default()
-            };
-            snapshot.client_blocklist = [
-                ("block.example", AccountBlocklistMode::Block),
-                ("hide.example", AccountBlocklistMode::Hide),
-                ("mute.example", AccountBlocklistMode::Mute),
-            ]
-            .into_iter()
-            .map(|(station, mode)| {
-                let actor = contact_row(&format!("ak:did_core:web:{station}"))
-                    .peer
-                    .contact_actor_id();
-                let mut entry = crate::account_data::new_blocklist_entry(
-                    crate::account_data::BlocklistUiTargetKind::Actor,
-                    &actor.to_string(),
-                    None,
-                    vec![AccountBlocklistSurface::Contacts],
-                    None,
-                    chrono::Utc::now(),
-                )
-                .unwrap();
-                entry.mode = mode;
-                entry
-            })
-            .collect();
-            let inbox = crate::app::ContactInbox(rows);
-            let visible = inbox
-                .visible_pending(&snapshot)
-                .into_iter()
-                .map(|row| row.peer.contact_actor_id().to_string())
-                .collect();
-            result.borrow_mut().push((
-                snapshot.client_blocklist_revision,
-                inbox.pending_count(&snapshot),
-                visible,
-            ));
-            rsx! {}
-        },
-        result.clone(),
-    );
-    dom.rebuild_in_place();
+    let result: ContactGateResults = Rc::new(RefCell::new(Vec::new()));
+    let rows = app.scope().cage({
+        [
+            "block.example",
+            "hide.example",
+            "mute.example",
+            "clear.example",
+        ]
+        .into_iter()
+        .map(|station| {
+            let mut row = contact_row(&format!("ak:did_core:web:{station}"));
+            row.state = arkret_sdk::ContactState::PendingIncoming;
+            row
+        })
+        .collect()
+    });
+    let mut snapshot = crate::state::ClientLocalState {
+        client_blocklist_revision: 7,
+        ..Default::default()
+    };
+    snapshot.client_blocklist = [
+        ("block.example", AccountBlocklistMode::Block),
+        ("hide.example", AccountBlocklistMode::Hide),
+        ("mute.example", AccountBlocklistMode::Mute),
+    ]
+    .into_iter()
+    .map(|(station, mode)| {
+        let actor = contact_row(&format!("ak:did_core:web:{station}"))
+            .peer
+            .contact_actor_id();
+        let mut entry = crate::account_data::new_blocklist_entry(
+            crate::account_data::BlocklistUiTargetKind::Actor,
+            &actor.to_string(),
+            None,
+            vec![AccountBlocklistSurface::Contacts],
+            None,
+            chrono::Utc::now(),
+        )
+        .unwrap();
+        entry.mode = mode;
+        entry
+    })
+    .collect();
+    let inbox = crate::app::ContactInbox(rows);
+    let visible = inbox
+        .visible_pending(&snapshot)
+        .into_iter()
+        .map(|row| row.peer.contact_actor_id().to_string())
+        .collect();
+    result.borrow_mut().push((
+        snapshot.client_blocklist_revision,
+        inbox.pending_count(&snapshot),
+        visible,
+    ));
+    app.flush().unwrap();
     let observed = result.borrow();
     let (revision, attention, visible) = &observed[0];
     assert_eq!(*revision, 7);

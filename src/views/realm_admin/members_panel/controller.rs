@@ -111,116 +111,137 @@ pub(super) async fn fetch_owned_agent_rows(
 }
 
 pub(super) fn spawn_set_agent_interaction(
+    owner: glory::ui::WeakScope,
+    presentation: Rc<InksonContext>,
     base: String,
     api_token: String,
     realm: String,
     agent_id: String,
     mode: arkret_sdk::AgentInteractionMode,
-    mut status_msg: Signal<String>,
-    mut pending: Signal<BTreeSet<String>>,
+    status_msg: Cage<String>,
+    pending: Cage<BTreeSet<String>>,
 ) {
-    if !pending.with_mut(|agents| agents.insert(agent_id.clone())) {
+    if pending.get_untracked().contains(&agent_id) {
         return;
     }
-    let account = crate::app::SessionContext::get()
-        .active_account()
-        .map(|a| a.authority);
-    status_msg.set("Updating Agent interaction mode…".into());
-    spawn(async move {
-        let result = crate::transport::auth::with_authed_sdk_client(&base, api_token, |http| {
-            let agent_id = agent_id.clone();
-            async move {
-                let controller =
-                    account.ok_or_else(|| anyhow::anyhow!("account session is unavailable"))?;
-                let agent = arkret_sdk::AccountId::new(
-                    arkret_sdk::DidCoreId::new(agent_id)?,
-                    controller.station_id.clone(),
-                );
-                crate::transport::agent_interaction::write(
-                    &http,
-                    arkret_sdk::RealmId::new(realm)?,
-                    agent,
-                    controller,
-                    mode,
-                )
-                .await
-            }
-        })
-        .await;
-        match result {
-            Ok(value) => status_msg.set(format!(
-                "Agent group interaction is {:?}",
-                value.interaction_mode
-            )),
-            Err(error) => status_msg.set(format!(
-                "Agent interaction update failed: {}",
-                error.display()
-            )),
-        }
-        pending.with_mut(|agents| {
-            agents.remove(&agent_id);
-        });
+    pending.revise(|agents| {
+        agents.insert(agent_id.clone());
     });
+    let account = presentation.active_account.get().map(|a| a.authority);
+    status_msg.revise(|value| {
+        *value = "Updating Agent interaction mode…".into();
+    });
+    if let Some(scope) = owner.upgrade() {
+        crate::views::settings::widgets::spawn(&scope, async move {
+            let result = crate::transport::auth::with_authed_sdk_client(&base, api_token, |http| {
+                let agent_id = agent_id.clone();
+                async move {
+                    let controller =
+                        account.ok_or_else(|| anyhow::anyhow!("account session is unavailable"))?;
+                    let agent = arkret_sdk::AccountId::new(
+                        arkret_sdk::DidCoreId::new(agent_id)?,
+                        controller.station_id.clone(),
+                    );
+                    crate::transport::agent_interaction::write(
+                        &http,
+                        arkret_sdk::RealmId::new(realm)?,
+                        agent,
+                        controller,
+                        mode,
+                    )
+                    .await
+                }
+            })
+            .await;
+            match result {
+                Ok(response) => status_msg.revise(|value| {
+                    *value = format!("Agent group interaction is {:?}", response.interaction_mode);
+                }),
+                Err(error) => status_msg.revise(|value| {
+                    *value = format!("Agent interaction update failed: {}", error.display());
+                }),
+            }
+            pending.revise(|agents| {
+                agents.remove(&agent_id);
+            });
+        });
+    };
 }
 
 pub(super) fn spawn_set_agent_realm_behavior(
+    owner: glory::ui::WeakScope,
+    _presentation: Rc<InksonContext>,
     base: String,
     api_token: String,
     realm: String,
     agent_id: String,
     selection: ParticipationBits,
-    mut owned_agents: Signal<Vec<MemberAgentRow>>,
-    mut status_msg: Signal<String>,
-    mut pending: Signal<BTreeSet<String>>,
+    owned_agents: Cage<Vec<MemberAgentRow>>,
+    status_msg: Cage<String>,
+    pending: Cage<BTreeSet<String>>,
 ) {
     let realm_id = match arkret_sdk::RealmId::new(realm.clone()) {
         Ok(realm_id) => realm_id,
         Err(err) => {
-            status_msg.set(format!("invalid realm id: {err:?}"));
+            status_msg.revise(|value| {
+                *value = format!("invalid realm id: {err:?}");
+            });
             return;
         }
     };
     // These controls replace the whole CAS selection. Admit only one local
     // write per Agent until its authoritative outcome has updated every bit.
-    if !pending.with_mut(|agents| agents.insert(agent_id.clone())) {
+    if pending.get_untracked().contains(&agent_id) {
         return;
     }
-    status_msg.set("Updating Agent behavior…".to_owned());
-    spawn(async move {
-        let scope = ParticipationScope::Realm { realm_id };
-        match crate::transport::auth::with_authed_sdk_client(&base, api_token, |http| {
-            let scope = scope.clone();
-            let agent_id = agent_id.clone();
-            async move {
-                crate::transport::account::replace_agent_participation(
-                    &http, &agent_id, scope, selection,
-                )
-                .await
-            }
-        })
-        .await
-        {
-            Ok(outcome) => {
-                let (mention_policy, selection) =
-                    mention_state_from_entries(&outcome.participation_entries, &realm);
-                owned_agents.with_mut(|rows| {
-                    if let Some(row) = rows.iter_mut().find(|row| row.agent_id == outcome.agent_id)
-                    {
-                        row.mention_policy = mention_policy;
-                        row.selection = selection;
-                    }
-                });
-                status_msg.set(format!(
-                    "Realm behavior updated for {}",
-                    short_protocol_id(&outcome.agent_id)
-                ));
-            }
-            Err(err) => status_msg.set(format!("Realm behavior update failed: {}", err.display())),
-        }
-        pending.with_mut(|agents| {
-            agents.remove(&agent_id);
-        });
+    pending.revise(|agents| {
+        agents.insert(agent_id.clone());
     });
+    status_msg.revise(|value| {
+        *value = "Updating Agent behavior…".to_owned();
+    });
+    if let Some(scope) = owner.upgrade() {
+        crate::views::settings::widgets::spawn(&scope, async move {
+            let scope = ParticipationScope::Realm { realm_id };
+            match crate::transport::auth::with_authed_sdk_client(&base, api_token, |http| {
+                let scope = scope.clone();
+                let agent_id = agent_id.clone();
+                async move {
+                    crate::transport::account::replace_agent_participation(
+                        &http, &agent_id, scope, selection,
+                    )
+                    .await
+                }
+            })
+            .await
+            {
+                Ok(outcome) => {
+                    let (mention_policy, selection) =
+                        mention_state_from_entries(&outcome.participation_entries, &realm);
+                    owned_agents.revise(|rows| {
+                        if let Some(row) =
+                            rows.iter_mut().find(|row| row.agent_id == outcome.agent_id)
+                        {
+                            row.mention_policy = mention_policy;
+                            row.selection = selection;
+                        }
+                    });
+                    status_msg.revise(|value| {
+                        *value = format!(
+                            "Realm behavior updated for {}",
+                            short_protocol_id(&outcome.agent_id)
+                        );
+                    });
+                }
+                Err(err) => status_msg.revise(|value| {
+                    *value = format!("Realm behavior update failed: {}", err.display());
+                }),
+            }
+            pending.revise(|agents| {
+                agents.remove(&agent_id);
+            });
+        });
+    };
 }
 
 /// Recover from `invite_live_target_occupied` (`governance-objects.md` §5.3).
@@ -324,26 +345,27 @@ pub(super) enum RealmMembersCommand {
 }
 
 /// Signals every members-panel write folds its outcome back into.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone)]
 pub(super) struct RealmMembersController {
-    pub(super) token: Signal<String>,
-    pub(super) status_msg: Signal<String>,
-    pub(super) sync_cursor: Signal<String>,
-    pub(super) frontier_state: Signal<String>,
-    pub(super) members: Signal<Vec<MemberProfile>>,
-    pub(super) invite_target: Signal<String>,
-    pub(super) invite_modal_open: Signal<bool>,
-    pub(super) agent_add_modal_open: Signal<bool>,
-    pub(super) agent_add_state: Signal<AgentAddState>,
-    pub(super) selected_contacts: Signal<BTreeSet<String>>,
-    pub(super) owned_agents: Signal<Vec<MemberAgentRow>>,
-    pub(super) permissions: Signal<RealmMemberCapabilities>,
+    pub(super) owner: glory::ui::WeakScope,
+    pub(super) token: Cage<String>,
+    pub(super) status_msg: Cage<String>,
+    pub(super) sync_cursor: Cage<String>,
+    pub(super) frontier_state: Cage<String>,
+    pub(super) members: Cage<Vec<MemberProfile>>,
+    pub(super) invite_target: Cage<String>,
+    pub(super) invite_modal_open: Cage<bool>,
+    pub(super) agent_add_modal_open: Cage<bool>,
+    pub(super) agent_add_state: Cage<AgentAddState>,
+    pub(super) selected_contacts: Cage<BTreeSet<String>>,
+    pub(super) owned_agents: Cage<Vec<MemberAgentRow>>,
+    pub(super) permissions: Cage<RealmMemberCapabilities>,
     /// The caller's accepted contacts, loaded the first time the invite modal
     /// opens and not again.
-    pub(super) invite_contacts: Signal<Vec<crate::models::ContactView>>,
-    pub(super) invite_contacts_loaded: Signal<bool>,
-    pub(super) invite_contacts_status: Signal<String>,
-    pub(super) state_store: SyncSignal<LocalStateStore>,
+    pub(super) invite_contacts: Cage<Vec<crate::models::ContactView>>,
+    pub(super) invite_contacts_loaded: Cage<bool>,
+    pub(super) invite_contacts_status: Cage<String>,
+    pub(super) state_store: SharedStateStore,
 }
 
 impl RealmMembersController {
@@ -351,15 +373,24 @@ impl RealmMembersController {
     ///
     /// The token is sampled here rather than inside the task: an event handler
     /// is the last point at which the value is the one the user acted on.
-    pub(super) fn dispatch(mut self, context: RealmWriteContext, command: RealmMembersCommand) {
-        if let RealmMembersCommand::AddOwnedAgent { target_id, .. } = &command
-            && !self.agent_add_state.write().begin(target_id.clone())
-        {
-            return;
+    pub(super) fn dispatch(self, context: RealmWriteContext, command: RealmMembersCommand) {
+        if let RealmMembersCommand::AddOwnedAgent { target_id, .. } = &command {
+            let mut draft = self.agent_add_state.get_untracked();
+            if !draft.begin(target_id.clone()) {
+                return;
+            }
+            self.agent_add_state.revise(|value| {
+                *value = draft;
+            });
         }
         let token = self.token;
-        let api_token = token();
-        spawn(async move { self.run(context, api_token, command).await });
+        let api_token = token.get();
+        let owner = self.owner.clone();
+        if let Some(scope) = owner.upgrade() {
+            crate::views::settings::widgets::spawn(&scope, async move {
+                self.run(context, api_token, command).await
+            });
+        };
     }
 
     async fn run(
@@ -428,7 +459,7 @@ impl RealmMembersController {
     /// group still owes the matching commit. Returns the suffix the status
     /// line carries when it did.
     fn note_pending_mls_binding(
-        mut self,
+        &self,
         realm_id: &str,
         submission_key: String,
         event_id: Option<String>,
@@ -437,14 +468,12 @@ impl RealmMembersController {
     ) -> &'static str {
         let mls_encrypted = self
             .state_store
-            .read()
-            .realm_projection_is_mls_encrypted(realm_id);
+            .read(|store| store.realm_projection_is_mls_encrypted(realm_id));
         if !mls_encrypted {
             return "";
         }
-        self.state_store
-            .write()
-            .record_move_submission_with_event_id(
+        self.state_store.write(|store| {
+            store.record_move_submission_with_event_id(
                 submission_key,
                 event_id,
                 realm_id.to_owned(),
@@ -452,11 +481,12 @@ impl RealmMembersController {
                 MoveSubmissionState::PendingMlsBinding,
                 Some(reason.to_owned()),
                 None,
-            );
+            )
+        });
         "; epoch_update_required"
     }
 
-    async fn leave_realm(mut self, context: RealmWriteContext, api_token: String) {
+    async fn leave_realm(&self, context: RealmWriteContext, api_token: String) {
         let RealmWriteContext {
             base_url,
             realm_id,
@@ -470,15 +500,17 @@ impl RealmMembersController {
         {
             Ok(_) => {
                 self.state_store
-                    .write()
-                    .forget_realm_tree_projection(&realm_id);
-                self.sync_cursor.set(String::new());
-                self.status_msg
-                    .set(format!("left {realm_id}; local cache cleared"));
+                    .write(|store| store.forget_realm_tree_projection(&realm_id));
+                self.sync_cursor.revise(|value| {
+                    *value = String::new();
+                });
+                self.status_msg.revise(|value| {
+                    *value = format!("left {realm_id}; local cache cleared");
+                });
             }
-            Err(err) => self
-                .status_msg
-                .set(format!("leave failed: {}", err.display())),
+            Err(err) => self.status_msg.revise(|value| {
+                *value = format!("leave failed: {}", err.display());
+            }),
         }
     }
 
@@ -486,7 +518,7 @@ impl RealmMembersController {
     /// report; both take the same member out of the roster and leave the same
     /// MLS Remove commit owing.
     async fn transition_member_out(
-        mut self,
+        self,
         context: RealmWriteContext,
         api_token: String,
         target_id: String,
@@ -538,17 +570,18 @@ impl RealmMembersController {
                      required",
                 );
                 let past = if ban { "banned" } else { "kicked" };
-                self.status_msg
-                    .set(format!("{past} {target_label}{suffix}"));
+                self.status_msg.revise(|value| {
+                    *value = format!("{past} {target_label}{suffix}");
+                });
             }
-            Err(err) => self
-                .status_msg
-                .set(format!("{verb} failed: {}", err.display())),
+            Err(err) => self.status_msg.revise(|value| {
+                *value = format!("{verb} failed: {}", err.display());
+            }),
         }
     }
 
     async fn add_owned_agent(
-        mut self,
+        self,
         context: RealmWriteContext,
         api_token: String,
         target_id: String,
@@ -580,11 +613,18 @@ impl RealmMembersController {
                     "epoch_update_required: agent membership frontier changed; MLS Add commit \
                      required",
                 );
-                self.sync_cursor.set(String::new());
-                self.agent_add_state.set(AgentAddState::Idle);
-                self.agent_add_modal_open.set(false);
-                self.status_msg
-                    .set(format!("added agent {target_label} to Realm{suffix}"));
+                self.sync_cursor.revise(|value| {
+                    *value = String::new();
+                });
+                self.agent_add_state.revise(|value| {
+                    *value = AgentAddState::Idle;
+                });
+                self.agent_add_modal_open.revise(|value| {
+                    *value = false;
+                });
+                self.status_msg.revise(|value| {
+                    *value = format!("added agent {target_label} to Realm{suffix}");
+                });
             }
             Err(err) => {
                 tracing::warn!(
@@ -599,9 +639,12 @@ impl RealmMembersController {
                 } else {
                     format!("agent add failed: {}", err.display())
                 };
-                self.agent_add_state
-                    .set(AgentAddState::Failed(message.clone()));
-                self.status_msg.set(message);
+                self.agent_add_state.revise(|value| {
+                    *value = AgentAddState::Failed(message.clone());
+                });
+                self.status_msg.revise(|value| {
+                    *value = message;
+                });
             }
         }
     }
@@ -612,7 +655,7 @@ impl RealmMembersController {
     /// the roster re-hydrates; it differs from an admin kick in its transition
     /// reason and in who is allowed to ask for it.
     async fn remove_owned_agent(
-        mut self,
+        self,
         context: RealmWriteContext,
         api_token: String,
         target_id: String,
@@ -646,18 +689,21 @@ impl RealmMembersController {
                     "mls_member_remove",
                     "epoch_update_required: membership frontier changed; MLS Remove commit                      required",
                 );
-                self.sync_cursor.set(String::new());
-                self.status_msg
-                    .set(format!("removed agent {target_label} from Realm{suffix}"));
+                self.sync_cursor.revise(|value| {
+                    *value = String::new();
+                });
+                self.status_msg.revise(|value| {
+                    *value = format!("removed agent {target_label} from Realm{suffix}");
+                });
             }
-            Err(err) => self
-                .status_msg
-                .set(format!("agent remove failed: {}", err.display())),
+            Err(err) => self.status_msg.revise(|value| {
+                *value = format!("agent remove failed: {}", err.display());
+            }),
         }
     }
 
     async fn terminate_pending_invite(
-        mut self,
+        self,
         context: RealmWriteContext,
         api_token: String,
         invite_id: String,
@@ -702,41 +748,49 @@ impl RealmMembersController {
         .await
         {
             Ok(resp) => {
-                self.frontier_state.set(resp.event_id.clone());
-                self.state_store.write().append_raw_operation(
-                    format!("ak:operation:{}", crate::operation::uuid_v7()),
-                    Some(realm_id),
-                    json!({
-                        "kind": if is_direct {
-                            event_kind_str::INVITE_CANCEL
-                        } else {
-                            event_kind_str::INVITE_REVOKE
-                        },
-                        "invite_id": invite_id.clone(),
-                        "invitee_id": direct_invitee,
-                        "state": "revoked",
-                        "event_id": resp.event_id,
-                    }),
-                );
-                let mut next_members = self.members.read().clone();
+                self.frontier_state.revise(|value| {
+                    *value = resp.event_id.clone();
+                });
+                self.state_store.write(|store| {
+                    store.append_raw_operation(
+                        format!("ak:operation:{}", crate::operation::uuid_v7()),
+                        Some(realm_id),
+                        json!({
+                            "kind": if is_direct {
+                                event_kind_str::INVITE_CANCEL
+                            } else {
+                                event_kind_str::INVITE_REVOKE
+                            },
+                            "invite_id": invite_id.clone(),
+                            "invitee_id": direct_invitee,
+                            "state": "revoked",
+                            "event_id": resp.event_id,
+                        }),
+                    )
+                });
+                let mut next_members = self.members.get();
                 next_members.retain(|profile| {
                     profile.invite_id.as_deref() != Some(invite_id.as_str())
                         && !(profile.actor_id == member_id && profile.is_pending_invite())
                 });
-                self.members.set(next_members);
-                self.status_msg.set(format!(
-                    "{} invite for {member_label}",
-                    if is_direct { "cancelled" } else { "revoked" }
-                ));
+                self.members.revise(|value| {
+                    *value = next_members;
+                });
+                self.status_msg.revise(|value| {
+                    *value = format!(
+                        "{} invite for {member_label}",
+                        if is_direct { "cancelled" } else { "revoked" }
+                    );
+                });
             }
-            Err(err) => self
-                .status_msg
-                .set(format!("cancel invite failed: {}", err.display())),
+            Err(err) => self.status_msg.revise(|value| {
+                *value = format!("cancel invite failed: {}", err.display());
+            }),
         }
     }
 
     async fn invite_contacts(
-        mut self,
+        self,
         context: RealmWriteContext,
         api_token: String,
         targets: Vec<arkret_sdk::AccountId>,
@@ -750,10 +804,10 @@ impl RealmMembersController {
         let api = match crate::transport::auth::authed_api(&base_url, api_token) {
             Ok(api) => api,
             Err(err) => {
-                self.status_msg.set(
-                    crate::i18n::tr("realm_admin.invite_bad_server")
-                        .replace("{error}", &err.to_string()),
-                );
+                self.status_msg.revise(|value| {
+                    *value = crate::i18n::tr("realm_admin.invite_bad_server")
+                        .replace("{error}", &err.to_string());
+                });
                 return;
             }
         };
@@ -768,15 +822,16 @@ impl RealmMembersController {
                 Ok((event_id, invite_id)) => {
                     ok += 1;
                     ok_invites.push((account, event_id.clone(), invite_id));
-                    self.frontier_state.set(event_id);
+                    self.frontier_state.revise(|value| {
+                        *value = event_id;
+                    });
                 }
                 Err(err) => last_err = err.to_string(),
             }
         }
         if !ok_invites.is_empty() {
-            let mut next_members = self.members.read().clone();
-            {
-                let mut store = self.state_store.write();
+            let mut next_members = self.members.get();
+            self.state_store.write(|store| {
                 for (account, event_id, invite_id) in ok_invites {
                     let did = arkret_sdk::ActorId::account(account.clone()).to_string();
                     upsert_pending_invite_profile(&mut next_members, &did, None, Some(&invite_id));
@@ -792,26 +847,34 @@ impl RealmMembersController {
                         }),
                     );
                 }
-            }
-            self.members.set(next_members);
+            });
+            self.members.revise(|value| {
+                *value = next_members;
+            });
         }
-        self.selected_contacts.set(BTreeSet::new());
+        self.selected_contacts.revise(|value| {
+            *value = BTreeSet::new();
+        });
         if ok == total {
-            self.invite_modal_open.set(false);
-            self.status_msg
-                .set(crate::i18n::tr("realm_admin.invite_sent").replace("{ok}", &ok.to_string()));
+            self.invite_modal_open.revise(|value| {
+                *value = false;
+            });
+            self.status_msg.revise(|value| {
+                *value =
+                    crate::i18n::tr("realm_admin.invite_sent").replace("{ok}", &ok.to_string());
+            });
         } else {
-            self.status_msg.set(
-                crate::i18n::tr("realm_admin.invite_partial")
+            self.status_msg.revise(|value| {
+                *value = crate::i18n::tr("realm_admin.invite_partial")
                     .replace("{ok}", &ok.to_string())
                     .replace("{total}", &total.to_string())
-                    .replace("{error}", &last_err),
-            );
+                    .replace("{error}", &last_err);
+            });
         }
     }
 
     async fn invite_resolved_target(
-        mut self,
+        self,
         context: RealmWriteContext,
         api_token: String,
         target: String,
@@ -825,7 +888,9 @@ impl RealmMembersController {
         let api = match authed_api_with_sync(&base_url, api_token, wait_for) {
             Ok(api) => api,
             Err(error) => {
-                self.status_msg.set(format!("invalid server URL: {error}"));
+                self.status_msg.revise(|value| {
+                    *value = format!("invalid server URL: {error}");
+                });
                 return;
             }
         };
@@ -835,10 +900,12 @@ impl RealmMembersController {
         {
             Ok(did) => did,
             Err(error) => {
-                self.status_msg.set(format!(
-                    "invite target resolve failed: {}",
-                    crate::api_error::display_user_facing(&error)
-                ));
+                self.status_msg.revise(|value| {
+                    *value = format!(
+                        "invite target resolve failed: {}",
+                        crate::api_error::display_user_facing(&error)
+                    );
+                });
                 return;
             }
         };
@@ -857,15 +924,18 @@ impl RealmMembersController {
         {
             Ok(event) => event,
             Err(err) => {
-                self.status_msg.set(format!("invite failed: {err:#}"));
+                self.status_msg.revise(|value| {
+                    *value = format!("invite failed: {err:#}");
+                });
                 return;
             }
         };
         // The Invite is named by its own create Event, so its id arrives with
         // the receipt.
         let op_id = submit_event.local_operation_id().to_string();
-        self.status_msg
-            .set(format!("submitting invite for {invitee_label}"));
+        self.status_msg.revise(|value| {
+            *value = format!("submitting invite for {invitee_label}");
+        });
         let submitted = match api.event_submitter() {
             Ok(es) => es.submit_sdk_event(&submit_event).await,
             Err(err) => Err(err),
@@ -878,51 +948,64 @@ impl RealmMembersController {
                 {
                     Ok(outcome) => outcome,
                     Err(error) => {
-                        self.status_msg.set(format!(
-                            "invite fact accepted but private delivery failed: {error}"
-                        ));
+                        self.status_msg.revise(|value| {
+                            *value = format!(
+                                "invite fact accepted but private delivery failed: {error}"
+                            );
+                        });
                         return;
                     }
                 };
-                self.frontier_state.set(submitted.event_id.clone());
+                self.frontier_state.revise(|value| {
+                    *value = submitted.event_id.clone();
+                });
                 // The Invite is `retype(create.event_id)`, so its id is read
                 // from the accepted receipt.
                 let invite_id = match arkret_sdk::EventId::new(submitted.event_id.clone()) {
                     Ok(event_id) => arkret_sdk::InviteId::from_event_id(&event_id).to_string(),
                     Err(error) => {
-                        self.status_msg.set(format!(
-                            "invite accepted but its Event id is invalid: {error}"
-                        ));
+                        self.status_msg.revise(|value| {
+                            *value =
+                                format!("invite accepted but its Event id is invalid: {error}");
+                        });
                         return;
                     }
                 };
-                self.state_store.write().append_raw_operation(
-                    op_id.clone(),
-                    Some(realm_id),
-                    json!({
-                        "kind": event_kind_str::INVITE_CREATE,
-                        "invite_id": invite_id.clone(),
-                        "invitee_account_id": invitee.account_id().clone(),
-                        "invitee_label": invitee_label.clone(),
-                        "state": "pending",
-                        "event_id": submitted.event_id,
-                    }),
-                );
-                let mut next_members = self.members.read().clone();
+                self.state_store.write(|store| {
+                    store.append_raw_operation(
+                        op_id.clone(),
+                        Some(realm_id),
+                        json!({
+                            "kind": event_kind_str::INVITE_CREATE,
+                            "invite_id": invite_id.clone(),
+                            "invitee_account_id": invitee.account_id().clone(),
+                            "invitee_label": invitee_label.clone(),
+                            "state": "pending",
+                            "event_id": submitted.event_id,
+                        }),
+                    )
+                });
+                let mut next_members = self.members.get();
                 upsert_pending_invite_profile(
                     &mut next_members,
                     &arkret_sdk::ActorId::account(invitee.account_id().clone()).to_string(),
                     Some(&invitee_label),
                     Some(&invite_id),
                 );
-                self.members.set(next_members);
-                self.invite_target.set(String::new());
-                self.invite_modal_open.set(false);
-                self.status_msg.set(format!(
+                self.members.revise(|value| {
+                    *value = next_members;
+                });
+                self.invite_target.revise(|value| {
+                    *value = String::new();
+                });
+                self.invite_modal_open.revise(|value| {
+                    *value = false;
+                });
+                self.status_msg.revise(|value|{*value=format!(
                     "invited {} (pending) fact {}; {}; MLS admission will reconcile after acceptance",
                     invitee_label,
                     short_protocol_id(&op_id), invite_delivery_summary(&delivery)
-                ));
+                );});
             }
             Err(error) => {
                 // A live-target collision is not a generic failure:
@@ -942,7 +1025,9 @@ impl RealmMembersController {
                         crate::api_error::display_user_facing(&error)
                     ),
                 };
-                self.status_msg.set(message);
+                self.status_msg.revise(|value| {
+                    *value = message;
+                });
             }
         }
     }

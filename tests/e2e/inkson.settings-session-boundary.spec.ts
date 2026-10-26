@@ -1,3 +1,4 @@
+import { byClass } from "./strandsHarness";
 import { expect, test, type Request } from "@playwright/test";
 import {
   registerStrandsBeforeEach,
@@ -47,15 +48,14 @@ test("root logout suppresses a pending settings query in the same page instance"
     // The panel begins with a localized directory placeholder, not an
     // empty string. A result must change that original content to count.
     const initialReceipt = document.querySelector(
-      '[data-testid="mimi-directory-result"] pre',
+      '.mimi-directory-result pre',
     )?.textContent;
     Object.assign(window, { __settingsLogoutWitness: state });
     const inspect = () => {
-      state.observedMimiError ||= !!document.querySelector(
-        '[data-testid="toast-item"][data-i18n-key="feedback.mimi_failed"]',
-      );
+      state.observedMimiError ||= Array.from(document.querySelectorAll(".toast-body"))
+        .some(toast => /MIMI request failed|MIMI 请求失败/.test(toast.textContent ?? ""));
       const receipt = document.querySelector(
-        '[data-testid="mimi-directory-result"] pre',
+        '.mimi-directory-result pre',
       );
       state.observedReceipt ||= receipt !== null && receipt.textContent !== initialReceipt;
     };
@@ -72,14 +72,17 @@ test("root logout suppresses a pending settings query in the same page instance"
   // Directory reads are ordinary own-Station reads. Provider-signed POSTs
   // cannot be used as account-session requests (mimi-interop section 5).
   try {
-    await page.getByTestId("mimi-refresh-directory").click();
+    await byClass(page, "mimi-refresh-directory").click();
     await expect.poll(() => !!queryRequest).toBe(true);
-    await expect(page.getByTestId("mimi-refresh-directory")).toBeDisabled();
-    await page.getByTestId("account-menu-button").click();
-    await page.getByTestId("account-menu-session-logout").click();
+    await expect(byClass(page, "mimi-refresh-directory")).toBeDisabled();
+    await byClass(page, "account-menu-button").click();
+    const logoutResponse = page.waitForResponse(response => response.request().method() === "POST"
+      && new URL(response.url()).pathname === "/_arkret/gate/account/logout");
+    await byClass(page, "account-menu").getByRole("button", { name: "Log out", exact: true }).click();
+    expect((await logoutResponse).status()).toBe(200);
     await expect(page).toHaveURL(/\/login(?:[?#]|$)/);
-    await expect(page.getByTestId("login-panel")).toBeVisible();
-    await expect(page.getByTestId("settings-panel")).toHaveCount(0);
+    await expect(byClass(page, "auth-panel")).toBeVisible();
+    await expect(byClass(page, "settings-page")).toHaveCount(0);
     releaseQuery();
     await expect.poll(() => routeSettled).toBe(true);
     await expect.poll(() => responseStatus !== undefined || failureText !== undefined).toBe(true);
@@ -102,9 +105,9 @@ test("root logout suppresses a pending settings query in the same page instance"
     }));
     expect(witness.timeOrigin).toBe(timeOrigin);
     expect(witness.state).toEqual({ observedMimiError: false, observedReceipt: false });
-    await expect(page.getByTestId("login-panel")).toBeVisible();
-    await expect(page.getByTestId("mimi-directory-result")).toHaveCount(0);
-    await expect(page.locator('[data-i18n-key="feedback.mimi_failed"]')).toHaveCount(0);
+    await expect(byClass(page, "auth-panel")).toBeVisible();
+    await expect(byClass(page, "mimi-directory-result")).toHaveCount(0);
+    await expect(byClass(page, "toast-body").filter({ hasText: /MIMI request failed|MIMI 请求失败/ })).toHaveCount(0);
     await testInfo.attach("settings-logout-network-outcome", {
       body: JSON.stringify({ responseStatus, failureText, fulfillError, samePage: true }),
       contentType: "application/json",

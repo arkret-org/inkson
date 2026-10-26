@@ -174,6 +174,9 @@ fn add_generic_error_keys_zh(dict: &mut TranslationDict) {
 /// Build Chinese translation dictionary.
 pub fn chinese_translations() -> TranslationDict {
     let mut dict = TranslationDict::new(UiLocale::Zh);
+    dict.set("search.result_source", "搜索结果来源");
+    dict.set("search.source_event", "事件");
+    dict.set("search.source_commit", "覆盖提交");
     dict.set("consent.resume_original", "恢复已签名的待定提交");
     dict.set("consent.replace_success", "完整权限替换已提交");
     dict.set("consent.replace_failed", "权限替换未完成：{error}");
@@ -315,6 +318,12 @@ pub fn chinese_translations() -> TranslationDict {
     );
     dict.set("kanban.ui.card_pages", "卡片分页");
     dict.set("kanban.ui.card_title", "卡片标题");
+    dict.set("kanban.editor.choose_markdown", "编辑 Markdown");
+    dict.set("kanban.editor.choose_rich", "富文本");
+    dict.set(
+        "kanban.editor.native_rich_unavailable",
+        "当前桌面版暂不支持富文本编辑，可选择 Markdown 编辑。",
+    );
     dict.set(
         "kanban.ui.choose_a_date_for_this_card",
         "为此卡片选择日期。",
@@ -409,6 +418,8 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("kanban.ui.sat", "周六");
     dict.set("kanban.ui.save_card", "保存卡片");
     dict.set("kanban.ui.select_board", "选择看板");
+    dict.set("kanban.ui.loading_realm", "正在加载 Realm…");
+    dict.set("kanban.ui.invalid_realm", "Realm 标识无效。");
     dict.set("kanban.ui.set_due_date", "设置截止日期");
     dict.set(
         "kanban.ui.set_the_event_time_recurrence_and_calendar_details",
@@ -2040,6 +2051,7 @@ pub fn chinese_translations() -> TranslationDict {
     );
     // A4b - avatar upload.
     dict.set("settings.avatar.upload", "上传新头像");
+    dict.set("settings.avatar.replace_image", "选择其他图片");
     dict.set("settings.avatar.clear", "清除头像");
     dict.set("settings.avatar.uploading", "上传中…");
     dict.set("settings.avatar.processing", "正在准备头像…");
@@ -2726,6 +2738,7 @@ fn add_feedback_keys_zh(dict: &mut TranslationDict) {
     dict.set("feedback.toast_overflow", "还有 {count} 条");
     dict.set("feedback.copy_detail", "复制详情");
     dict.set("feedback.dismiss", "关闭");
+    dict.set("feedback.external_link_failed", "无法打开链接");
 
     // Wave 1 — operation-feedback toasts (former global status writes).
     dict.set("feedback.account_not_connected", "账号未连接,请先登录");

@@ -37,10 +37,15 @@ pub(crate) struct PreparedDecision {
 }
 
 pub(crate) fn check_session(account: &AccountId, generation: u64) -> anyhow::Result<()> {
-    let context = crate::app::SessionContext::get();
+    let context = crate::presentation::require_current_context()?;
     anyhow::ensure!(
-        (context.session_generation)() == generation
-            && context.active_account().as_ref().map(|v| &v.authority) == Some(account),
+        context.session_generation.get_untracked() == generation
+            && context
+                .active_account
+                .get_untracked()
+                .as_ref()
+                .map(|v| &v.authority)
+                == Some(account),
         "Account or Device changed; load the review again"
     );
     Ok(())
@@ -129,10 +134,11 @@ pub(crate) async fn freeze_and_request<F: FnOnce(PreparedReview)>(
     if let Some(prepared) = retained {
         return request_prepared(http, prepared).await;
     }
-    let context = crate::app::SessionContext::get();
-    let generation = (context.session_generation)();
+    let context = crate::presentation::require_current_context()?;
+    let generation = context.session_generation.get_untracked();
     let controller = context
-        .active_account()
+        .active_account
+        .get_untracked()
         .ok_or_else(|| anyhow::anyhow!("No active Account"))?
         .authority;
     anyhow::ensure!(
@@ -231,10 +237,11 @@ pub(crate) async fn load(
         &event.realm_id == realm,
         "Shared request belongs to another Realm"
     );
-    let context = crate::app::SessionContext::get();
-    let generation = (context.session_generation)();
+    let context = crate::presentation::require_current_context()?;
+    let generation = context.session_generation.get_untracked();
     let account = context
-        .active_account()
+        .active_account
+        .get_untracked()
         .ok_or_else(|| anyhow::anyhow!("No active Account"))?
         .authority;
     let outcome = http

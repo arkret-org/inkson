@@ -195,7 +195,7 @@ fn shared_pin_operation_body(
     })
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone)]
 pub(super) struct ChatCommandContext {
     pub base_url: String,
     pub authority: arkret_sdk::AccountId,
@@ -204,9 +204,8 @@ pub(super) struct ChatCommandContext {
     pub selected_realm_id: String,
     pub selected_channel_id: String,
     pub selected_channel_security_encrypted: bool,
-    pub token: Signal<String>,
-    pub sync_cursor: Signal<String>,
-    pub frontier_state: Signal<String>,
+    pub token: Cage<String>,
+    pub frontier_state: Cage<String>,
     pub known_agent_accounts: std::collections::BTreeSet<arkret_sdk::AccountId>,
     pub private_agent_scope: bool,
 }
@@ -259,178 +258,443 @@ impl ChatProjectionSink {
         Self(controller)
     }
 
-    pub fn emit(mut self, event: ChatProjectionEvent) {
+    pub fn emit(self, event: ChatProjectionEvent) {
         match event {
             ChatProjectionEvent::EnsureChannel(channel) => {
                 // EnsureChannel runs in the route-derived effect. An observed
                 // read here would subscribe that effect to user selection and
                 // reset every newly selected Strand back to the route default.
-                if self.0.selected_channel.peek().as_str() != channel.strand_id.as_str() {
-                    self.0.selected_channel.set(channel.strand_id.clone());
+                if self.0.selected_channel.get_untracked().as_str() != channel.strand_id.as_str() {
+                    {
+                        let next_value = channel.strand_id.clone();
+                        self.0.selected_channel.revise(|value| *value = next_value);
+                    };
                 }
                 if !self
                     .0
                     .channels
-                    .peek()
+                    .get_untracked()
                     .iter()
                     .any(|current| current.strand_id == channel.strand_id)
                 {
-                    self.0.channels.write().push(channel);
+                    self.0.channels.revise(|value| value.push(channel));
                 }
             }
-            ChatProjectionEvent::SharedPins(pins) => self.0.shared_pins.set(pins),
-            ChatProjectionEvent::PrivateSaved { targets, entries } => {
-                self.0.private_saved_targets.set(targets);
-                self.0.private_saved_account_data.set(entries);
+            ChatProjectionEvent::SharedPins(pins) => {
+                let next_value = pins;
+                self.0.shared_pins.revise(|value| *value = next_value);
             }
-            ChatProjectionEvent::Connectivity(online) => self.0.is_online.set(online),
+            ChatProjectionEvent::PrivateSaved { targets, entries } => {
+                {
+                    let next_value = targets;
+                    self.0
+                        .private_saved_targets
+                        .revise(|value| *value = next_value);
+                };
+                {
+                    let next_value = entries;
+                    self.0
+                        .private_saved_account_data
+                        .revise(|value| *value = next_value);
+                };
+            }
+            ChatProjectionEvent::Connectivity(online) => {
+                let next_value = online;
+                self.0.is_online.revise(|value| *value = next_value);
+            }
             ChatProjectionEvent::Typing {
                 actors,
                 expires_at_ms,
             } => {
-                self.0.typing_actors.set(actors);
-                self.0.typing_next_expires_at_ms.set(expires_at_ms);
+                {
+                    let next_value = actors;
+                    self.0.typing_actors.revise(|value| *value = next_value);
+                };
+                {
+                    let next_value = expires_at_ms;
+                    self.0
+                        .typing_next_expires_at_ms
+                        .revise(|value| *value = next_value);
+                };
             }
-            ChatProjectionEvent::ReadCursor(cursor) => self.0.latest_read_cursor.set(cursor),
-            ChatProjectionEvent::OwnedAgents(agents) => self.0.owned_agent_slugs.set(agents),
+            ChatProjectionEvent::ReadCursor(cursor) => {
+                let next_value = cursor;
+                self.0
+                    .latest_read_cursor
+                    .revise(|value| *value = next_value);
+            }
+            ChatProjectionEvent::OwnedAgents(agents) => {
+                let next_value = agents;
+                self.0.owned_agent_slugs.revise(|value| *value = next_value);
+            }
             ChatProjectionEvent::AgentParticipation(visibility) => {
-                self.0.agent_participation_visibility.set(visibility);
+                {
+                    let next_value = visibility;
+                    self.0
+                        .agent_participation_visibility
+                        .revise(|value| *value = next_value);
+                };
             }
             ChatProjectionEvent::Presence {
                 states,
                 labels,
                 status_messages,
             } => {
-                self.0.presence_states.set(states);
-                self.0.presence_labels.set(labels);
-                self.0.presence_status_messages.set(status_messages);
+                {
+                    let next_value = states;
+                    self.0.presence_states.revise(|value| *value = next_value);
+                };
+                {
+                    let next_value = labels;
+                    self.0.presence_labels.revise(|value| *value = next_value);
+                };
+                {
+                    let next_value = status_messages;
+                    self.0
+                        .presence_status_messages
+                        .revise(|value| *value = next_value);
+                };
             }
             ChatProjectionEvent::InitialSync {
                 requested,
                 finished,
             } => {
-                self.0.initial_sync_requested.set(requested);
-                self.0.initial_sync_finished.set(finished);
+                {
+                    let next_value = requested;
+                    self.0
+                        .initial_sync_requested
+                        .revise(|value| *value = next_value);
+                };
+                {
+                    let next_value = finished;
+                    self.0
+                        .initial_sync_finished
+                        .revise(|value| *value = next_value);
+                };
             }
             ChatProjectionEvent::MergeChannels(channels) => {
-                merge_channels(&mut self.0.channels.write(), channels);
+                self.0
+                    .channels
+                    .revise(|value| merge_channels(value, channels));
             }
             ChatProjectionEvent::MergeMessages(messages) => {
-                merge_chat_messages(&mut self.0.messages.write(), messages);
+                self.0
+                    .messages
+                    .revise(|value| merge_chat_messages(value, messages));
             }
-            ChatProjectionEvent::ReplaceMessages(messages) => self.0.messages.set(messages),
+            ChatProjectionEvent::ReplaceMessages(messages) => {
+                let next_value = messages;
+                self.0.messages.revise(|value| *value = next_value);
+            }
             ChatProjectionEvent::ReplacePollProjection(cards) => {
-                replace_poll_projection(&mut self.0.poll_cards.write(), cards);
+                self.0
+                    .poll_cards
+                    .revise(|value| replace_poll_projection(value, cards));
             }
             ChatProjectionEvent::AccountDisplayName(name) => {
-                self.0.account_display_name.set(name);
+                {
+                    let next_value = name;
+                    self.0
+                        .account_display_name
+                        .revise(|value| *value = next_value);
+                };
             }
         }
     }
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy)]
 pub(super) struct ChatController {
-    pub channels: Signal<Vec<ChannelEntity>>,
-    pub selected_channel: Signal<String>,
-    pub messages: Signal<Vec<ChatMessage>>,
-    pub draft: Signal<String>,
-    pub draft_storage: Signal<&'static str>,
-    pub draft_saved: Signal<String>,
-    pub pending_drafts: Signal<std::collections::BTreeMap<String, String>>,
+    pub channels: Cage<Vec<ChannelEntity>>,
+    pub selected_channel: Cage<String>,
+    pub messages: Cage<Vec<ChatMessage>>,
+    pub draft: Cage<String>,
+    pub draft_storage: Cage<&'static str>,
+    pub draft_saved: Cage<String>,
+    pub pending_drafts: Cage<std::collections::BTreeMap<String, String>>,
     pub typing_throttle: crate::perf::TypingThrottle,
-    pub compose_dragover: Signal<bool>,
-    pub compose_upload_status: Signal<String>,
-    pub attachments: Signal<Vec<crate::attachments::DraftAttachment>>,
-    pub attachment_target_key: Signal<String>,
-    pub attachment_target_revision: Signal<u64>,
-    pub attachment_upload_revision: Signal<u64>,
-    pub selection_revision: Signal<u64>,
-    pub shared_pins: Signal<Vec<SharedMessagePin>>,
-    pub private_saved_targets: Signal<std::collections::BTreeSet<String>>,
-    pub private_saved_account_data: Signal<std::collections::BTreeMap<String, serde_json::Value>>,
-    pub message_context_menu: Signal<Option<String>>,
-    pub moderation_report_draft: Signal<Option<ModerationReportDraft>>,
-    pub moderation_report_pending: Signal<bool>,
-    pub new_channel_name: Signal<String>,
-    pub new_channel_topic: Signal<String>,
-    pub new_channel_create_card: Signal<bool>,
-    pub create_dialog_open: Signal<bool>,
-    pub strand_watch_level: Signal<WatchLevel>,
-    pub strand_watch_current: Signal<Option<arkret_sdk::StrandWatchCurrentResponseBody>>,
-    pub strand_watch_pending: Signal<bool>,
-    pub strand_watch_queued: Signal<bool>,
-    pub strand_watch_request: Signal<u64>,
-    pub strand_watch_refresh: Signal<WatchRefreshQueue>,
-    pub watch_level_menu_open: Signal<bool>,
-    pub status_msg: Signal<String>,
+    pub compose_dragover: Cage<bool>,
+    pub compose_upload_status: Cage<String>,
+    pub attachments: Cage<Vec<crate::attachments::DraftAttachment>>,
+    pub attachment_target_key: Cage<String>,
+    pub attachment_target_revision: Cage<u64>,
+    pub attachment_upload_revision: Cage<u64>,
+    pub selection_revision: Cage<u64>,
+    pub shared_pins: Cage<Vec<SharedMessagePin>>,
+    pub private_saved_targets: Cage<std::collections::BTreeSet<String>>,
+    pub private_saved_account_data: Cage<std::collections::BTreeMap<String, serde_json::Value>>,
+    pub message_context_menu: Cage<Option<String>>,
+    pub moderation_report_draft: Cage<Option<ModerationReportDraft>>,
+    pub moderation_report_pending: Cage<bool>,
+    pub new_channel_name: Cage<String>,
+    pub new_channel_topic: Cage<String>,
+    pub new_channel_create_card: Cage<bool>,
+    pub create_dialog_open: Cage<bool>,
+    pub strand_watch_level: Cage<WatchLevel>,
+    pub strand_watch_current: Cage<Option<arkret_sdk::StrandWatchCurrentResponseBody>>,
+    pub strand_watch_pending: Cage<bool>,
+    pub strand_watch_queued: Cage<bool>,
+    pub strand_watch_request: Cage<u64>,
+    pub strand_watch_refresh: Cage<WatchRefreshQueue>,
+    pub watch_level_menu_open: Cage<bool>,
+    pub status_msg: Cage<String>,
     /// Holder-local ids of the sends still sitting in the durable queue.
     ///
     /// Holder-local because a queued send has no accepted Message id: the
     /// Message is named by the create Event, and nothing has accepted it yet.
-    pub queued_outbound_local_operation_ids: Signal<std::collections::BTreeSet<String>>,
-    pub is_online: Signal<bool>,
-    pub reply_to_message: Signal<Option<String>>,
-    pub editing_message: Signal<Option<String>>,
-    pub edit_draft: Signal<String>,
-    pub redact_confirm: Signal<Option<String>>,
-    pub reaction_picker: Signal<Option<String>>,
-    pub initial_sync_requested: Signal<bool>,
-    pub initial_sync_finished: Signal<bool>,
-    pub mention_picker_state: Signal<crate::messaging::mentions::MentionPickerState>,
-    pub owned_agent_slugs: Signal<std::collections::BTreeMap<String, String>>,
-    pub owned_agent_sync_key_seen: Signal<String>,
-    pub agent_participation_visibility: Signal<std::collections::BTreeMap<String, bool>>,
-    pub agent_participation_sync_key_seen: Signal<String>,
-    pub attachment_menu_open: Signal<bool>,
-    pub poll_draft: Signal<Option<crate::messaging::polls::PollDraft>>,
-    pub poll_cards: Signal<Vec<crate::messaging::polls::PollCard>>,
-    pub typing_actors: Signal<Vec<String>>,
-    pub typing_next_expires_at_ms: Signal<Option<i64>>,
-    pub presence_states: Signal<std::collections::BTreeMap<String, String>>,
-    pub presence_labels: Signal<std::collections::BTreeMap<String, String>>,
-    pub presence_status_messages: Signal<std::collections::BTreeMap<String, String>>,
-    pub presence_sync_key_seen: Signal<String>,
-    pub presence_announce_key_seen: Signal<String>,
-    pub presence_heartbeat_tick: Signal<u64>,
+    pub queued_outbound_local_operation_ids: Cage<std::collections::BTreeSet<String>>,
+    pub is_online: Cage<bool>,
+    pub reply_to_message: Cage<Option<String>>,
+    pub editing_message: Cage<Option<String>>,
+    pub edit_draft: Cage<String>,
+    pub redact_confirm: Cage<Option<String>>,
+    pub reaction_picker: Cage<Option<String>>,
+    pub initial_sync_requested: Cage<bool>,
+    pub initial_sync_finished: Cage<bool>,
+    pub mention_picker_state: Cage<crate::messaging::mentions::MentionPickerState>,
+    pub owned_agent_slugs: Cage<std::collections::BTreeMap<String, String>>,
+    pub owned_agent_sync_key_seen: Cage<String>,
+    pub agent_participation_visibility: Cage<std::collections::BTreeMap<String, bool>>,
+    pub agent_participation_sync_key_seen: Cage<String>,
+    pub attachment_menu_open: Cage<bool>,
+    pub poll_draft: Cage<Option<crate::messaging::polls::PollDraft>>,
+    pub poll_cards: Cage<Vec<crate::messaging::polls::PollCard>>,
+    pub typing_actors: Cage<Vec<String>>,
+    pub typing_next_expires_at_ms: Cage<Option<i64>>,
+    pub presence_states: Cage<std::collections::BTreeMap<String, String>>,
+    pub presence_labels: Cage<std::collections::BTreeMap<String, String>>,
+    pub presence_status_messages: Cage<std::collections::BTreeMap<String, String>>,
+    pub presence_sync_key_seen: Cage<String>,
+    pub presence_announce_key_seen: Cage<String>,
+    pub presence_heartbeat_tick: Cage<u64>,
     pub promote_discussion_draft:
-        Signal<crate::messaging::discussion_promote::PromoteDiscussionDraft>,
-    pub promoted_targets: Signal<std::collections::BTreeMap<String, String>>,
-    pub latest_read_cursor: Signal<String>,
-    pub blocked_show_anyway: Signal<std::collections::BTreeSet<String>>,
-    pub account_display_name: Signal<String>,
-    pub track_filter: Signal<String>,
-    pub left_panel_open: Signal<bool>,
+        Cage<crate::messaging::discussion_promote::PromoteDiscussionDraft>,
+    pub promoted_targets: Cage<std::collections::BTreeMap<String, String>>,
+    pub latest_read_cursor: Cage<String>,
+    pub blocked_show_anyway: Cage<std::collections::BTreeSet<String>>,
+    pub account_display_name: Cage<String>,
+    pub track_filter: Cage<String>,
+    pub left_panel_open: Cage<bool>,
     /// Circles the signed-in account may scope a new Strand to. Loaded once
     /// per (server, actor, Realm); the two keys below are the guard that keeps
     /// the load from re-triggering its own effect.
-    pub eligible_circle_scopes: Signal<Vec<crate::circle::CircleSummary>>,
-    pub eligible_circle_scope_request_key_seen: Signal<String>,
-    pub eligible_circle_scope_request_in_flight: Signal<bool>,
-    pub new_channel_scope: Signal<crate::circle::CircleScope>,
-    pub sidecar_send_pending: Signal<bool>,
+    pub eligible_circle_scopes: Cage<Vec<crate::circle::CircleSummary>>,
+    pub eligible_circle_scope_request_key_seen: Cage<String>,
+    pub eligible_circle_scope_request_in_flight: Cage<bool>,
+    pub new_channel_scope: Cage<crate::circle::CircleScope>,
+    pub sidecar_send_pending: Cage<bool>,
     /// Member handle lookups already in flight, so a re-render does not issue
     /// the same Directory request twice.
-    pub member_handle_fetching: Signal<std::collections::BTreeSet<String>>,
+    pub member_handle_fetching: Cage<std::collections::BTreeSet<String>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum CommonCoordinate<T> {
+    Unselected,
+    Typed(T),
+    Invalid(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) struct CommonTarget {
+    authority: arkret_sdk::AccountId,
+    device_id: arkret_sdk::DeviceId,
+    realm: CommonCoordinate<arkret_sdk::RealmId>,
+    initial_strand: CommonCoordinate<arkret_sdk::StrandId>,
+}
+impl CommonTarget {
+    fn new(
+        authority: &arkret_sdk::AccountId,
+        device: &arkret_sdk::DeviceId,
+        realm: &str,
+        strand: &str,
+    ) -> Self {
+        let realm = if realm.trim().is_empty() {
+            CommonCoordinate::Unselected
+        } else {
+            match arkret_sdk::RealmId::new(realm.to_owned()) {
+                Ok(id) => CommonCoordinate::Typed(id),
+                Err(_) => CommonCoordinate::Invalid(realm.to_owned()),
+            }
+        };
+        let initial_strand = if strand.trim().is_empty() {
+            CommonCoordinate::Unselected
+        } else {
+            match arkret_sdk::StrandId::new(strand.trim().to_owned()) {
+                Ok(id) => CommonCoordinate::Typed(id),
+                Err(_) => CommonCoordinate::Invalid(strand.to_owned()),
+            }
+        };
+        Self {
+            authority: authority.clone(),
+            device_id: device.clone(),
+            realm,
+            initial_strand,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct CachedChatController {
+    pub(super) controller: ChatController,
+    pub(super) revision: u64,
 }
 
 impl ChatController {
-    pub fn select_channel(mut self, strand_id: String) {
-        if *self.selected_channel.peek() != strand_id {
-            let next = self.selection_revision.peek().wrapping_add(1);
-            self.selection_revision.set(next);
+    fn command_store(self) -> Option<crate::presentation::SharedStateStore> {
+        match crate::presentation::require_current_context() {
+            Ok(context) => Some(context.state_store.clone()),
+            Err(_) => {
+                let _ = self
+                    .status_msg
+                    .try_revise(|status| *status = "The chat window is unavailable.".into());
+                None
+            }
         }
-        self.selected_channel.set(strand_id);
-        self.message_context_menu.set(None);
-        self.reaction_picker.set(None);
+    }
+
+    /// Retire operational projections after the pool fences and cancels work.
+    /// Keep the allocated handles and the separately pooled composer drafts.
+    pub(super) fn retire_common_session(self) {
+        macro_rules! clear { ($($field:ident),+ $(,)?) => { $(let _ = self.$field.try_revise(|value| value.clear());)+ }; }
+        macro_rules! set {
+            ($field:ident, $next:expr) => {
+                let _ = self.$field.try_revise(|value| *value = $next);
+            };
+        }
+        clear!(
+            channels,
+            selected_channel,
+            messages,
+            shared_pins,
+            private_saved_targets,
+            private_saved_account_data,
+            new_channel_name,
+            new_channel_topic,
+            queued_outbound_local_operation_ids,
+            owned_agent_slugs,
+            owned_agent_sync_key_seen,
+            agent_participation_visibility,
+            agent_participation_sync_key_seen,
+            poll_cards,
+            typing_actors,
+            presence_states,
+            presence_labels,
+            presence_status_messages,
+            presence_sync_key_seen,
+            presence_announce_key_seen,
+            promoted_targets,
+            blocked_show_anyway,
+            account_display_name,
+            eligible_circle_scopes,
+            eligible_circle_scope_request_key_seen,
+            member_handle_fetching
+        );
+        set!(new_channel_create_card, false);
+        set!(create_dialog_open, false);
+        set!(strand_watch_level, WatchLevel::All);
+        set!(strand_watch_current, None);
+        set!(strand_watch_pending, false);
+        set!(strand_watch_queued, false);
+        set!(strand_watch_refresh, WatchRefreshQueue::default());
+        set!(watch_level_menu_open, false);
+        set!(is_online, navigator_online());
+        set!(initial_sync_requested, false);
+        set!(initial_sync_finished, false);
+        set!(typing_next_expires_at_ms, None);
+        set!(
+            promote_discussion_draft,
+            crate::messaging::discussion_promote::PromoteDiscussionDraft::default()
+        );
+        set!(track_filter, "discussion_only".to_owned());
+        set!(left_panel_open, true);
+        set!(eligible_circle_scope_request_in_flight, false);
+        set!(new_channel_scope, crate::circle::CircleScope::default());
+        set!(sidecar_send_pending, false);
+        let _ = self
+            .selection_revision
+            .try_revise(|value| *value = value.wrapping_add(1));
+        let _ = self
+            .strand_watch_request
+            .try_revise(|value| *value = value.wrapping_add(1));
+        let _ = self
+            .presence_heartbeat_tick
+            .try_revise(|value| *value = value.wrapping_add(1));
+        self.typing_throttle.retire_session();
+    }
+
+    pub(super) fn for_strand(
+        mut self,
+        context: &Rc<crate::presentation::InksonContext>,
+        authority: &arkret_sdk::AccountId,
+        device: &arkret_sdk::DeviceId,
+        realm: &str,
+        strand: &str,
+    ) -> glory::ui::Result<Self> {
+        let composer = composer_state(
+            context,
+            ComposerTarget {
+                authority: authority.clone(),
+                device_id: device.clone(),
+                realm_id: realm.to_owned(),
+                strand_id: strand.to_owned(),
+            },
+        )?;
+        self.draft = composer.draft;
+        self.draft_storage = composer.draft_storage;
+        self.draft_saved = composer.draft_saved;
+        self.pending_drafts = composer.pending_drafts;
+        self.reply_to_message = composer.reply_to_message;
+        self.editing_message = composer.editing_message;
+        self.edit_draft = composer.edit_draft;
+        self.compose_dragover = composer.compose_dragover;
+        self.compose_upload_status = composer.compose_upload_status;
+        self.attachments = composer.attachments;
+        self.attachment_target_key = composer.attachment_target_key;
+        self.attachment_target_revision = composer.attachment_target_revision;
+        self.attachment_upload_revision = composer.attachment_upload_revision;
+        self.message_context_menu = composer.message_context_menu;
+        self.moderation_report_draft = composer.moderation_report_draft;
+        self.moderation_report_pending = composer.moderation_report_pending;
+        self.status_msg = composer.status_msg;
+        self.redact_confirm = composer.redact_confirm;
+        self.reaction_picker = composer.reaction_picker;
+        self.mention_picker_state = composer.mention_picker_state;
+        self.attachment_menu_open = composer.attachment_menu_open;
+        self.poll_draft = composer.poll_draft;
+        self.latest_read_cursor = composer.latest_read_cursor;
+        Ok(self)
+    }
+
+    pub fn select_channel(self, strand_id: String) {
+        if self.selected_channel.get_untracked() != strand_id {
+            let next = self.selection_revision.get_untracked().wrapping_add(1);
+            {
+                let next_value = next;
+                self.selection_revision.revise(|value| *value = next_value);
+            };
+        }
+        {
+            let next_value = strand_id;
+            self.selected_channel.revise(|value| *value = next_value);
+        };
+        {
+            let next_value = None;
+            self.message_context_menu
+                .revise(|value| *value = next_value);
+        };
+        {
+            let next_value = None;
+            self.reaction_picker.revise(|value| *value = next_value);
+        };
     }
 
     pub fn draft_storage_status(self) -> &'static str {
-        let status = (self.draft_storage)();
-        let draft = (self.draft)();
+        let status = self.draft_storage.get();
+        let draft = self.draft.get();
         if status == "saved"
-            && ((self.draft_saved)() != draft
-                || (draft.is_empty() && !(self.pending_drafts)().is_empty()))
+            && (self.draft_saved.get() != draft
+                || (draft.is_empty() && !self.pending_drafts.get().is_empty()))
         {
             "saving"
         } else {
@@ -438,106 +702,182 @@ impl ChatController {
         }
     }
 
-    pub fn update_draft(mut self, draft: String) {
-        if *self.draft.peek() != draft {
-            let next = self.attachment_target_revision.peek().wrapping_add(1);
-            self.attachment_target_revision.set(next);
+    pub fn update_draft(self, draft: String) {
+        if self.draft.get_untracked() != draft {
+            let next = self
+                .attachment_target_revision
+                .get_untracked()
+                .wrapping_add(1);
+            {
+                let next_value = next;
+                self.attachment_target_revision
+                    .revise(|value| *value = next_value);
+            };
         }
-        self.draft.set(draft);
+        {
+            let next_value = draft;
+            self.draft.revise(|value| *value = next_value);
+        };
     }
 
-    pub fn begin_reply(mut self, message_id: String) {
-        self.reply_to_message.set(Some(message_id));
-        self.editing_message.set(None);
-        self.edit_draft.set(String::new());
-        self.message_context_menu.set(None);
+    pub fn begin_reply(self, message_id: String) {
+        {
+            let next_value = Some(message_id);
+            self.reply_to_message.revise(|value| *value = next_value);
+        };
+        {
+            let next_value = None;
+            self.editing_message.revise(|value| *value = next_value);
+        };
+        {
+            let next_value = String::new();
+            self.edit_draft.revise(|value| *value = next_value);
+        };
+        {
+            let next_value = None;
+            self.message_context_menu
+                .revise(|value| *value = next_value);
+        };
     }
 
-    pub fn begin_edit(mut self, message_id: String, body: String) {
-        self.editing_message.set(Some(message_id));
-        self.edit_draft.set(body);
-        self.reply_to_message.set(None);
-        self.message_context_menu.set(None);
+    pub fn begin_edit(self, message_id: String, body: String) {
+        {
+            let next_value = Some(message_id);
+            self.editing_message.revise(|value| *value = next_value);
+        };
+        {
+            let next_value = body;
+            self.edit_draft.revise(|value| *value = next_value);
+        };
+        {
+            let next_value = None;
+            self.reply_to_message.revise(|value| *value = next_value);
+        };
+        {
+            let next_value = None;
+            self.message_context_menu
+                .revise(|value| *value = next_value);
+        };
     }
 
-    pub fn toggle_reaction_picker(mut self, message_id: String) {
-        let next = (self.reaction_picker)()
+    pub fn toggle_reaction_picker(self, message_id: String) {
+        let next = self
+            .reaction_picker
+            .get()
             .filter(|current| current != &message_id)
             .map(|_| message_id.clone())
             .or(Some(message_id));
-        if (self.reaction_picker)() == next {
-            self.reaction_picker.set(None);
+        if self.reaction_picker.get() == next {
+            {
+                let next_value = None;
+                self.reaction_picker.revise(|value| *value = next_value);
+            };
         } else {
-            self.reaction_picker.set(next);
+            {
+                let next_value = next;
+                self.reaction_picker.revise(|value| *value = next_value);
+            };
         }
     }
 
-    pub fn confirm_redaction(mut self, message_id: String) {
-        self.redact_confirm.set(Some(message_id));
+    pub fn confirm_redaction(self, message_id: String) {
+        {
+            let next_value = Some(message_id);
+            self.redact_confirm.revise(|value| *value = next_value);
+        };
     }
 
-    pub fn toggle_message_menu(mut self, message_id: String) {
-        let next = ((self.message_context_menu)().as_deref() != Some(message_id.as_str()))
+    pub fn toggle_message_menu(self, message_id: String) {
+        let next = (self.message_context_menu.get().as_deref() != Some(message_id.as_str()))
             .then_some(message_id);
-        self.message_context_menu.set(next);
+        {
+            let next_value = next;
+            self.message_context_menu
+                .revise(|value| *value = next_value);
+        };
     }
 
-    pub fn close_message_menu(mut self) {
-        self.message_context_menu.set(None);
+    pub fn close_message_menu(self) {
+        {
+            let next_value = None;
+            self.message_context_menu
+                .revise(|value| *value = next_value);
+        };
     }
 
     pub fn begin_moderation_report(
-        mut self,
+        self,
         realm_id: String,
         effective_scope: arkret_sdk::ScopeRef,
         target_ref: String,
     ) {
-        self.moderation_report_draft
-            .set(Some(ModerationReportDraft {
+        {
+            let next_value = Some(ModerationReportDraft {
                 realm_id,
                 effective_scope,
                 target_ref,
                 reason: "spam".to_owned(),
                 description: String::new(),
-            }));
-        self.message_context_menu.set(None);
+            });
+            self.moderation_report_draft
+                .revise(|value| *value = next_value);
+        };
+        {
+            let next_value = None;
+            self.message_context_menu
+                .revise(|value| *value = next_value);
+        };
     }
 
-    pub fn update_moderation_report_reason(mut self, reason: String) {
-        if let Some(draft) = self.moderation_report_draft.write().as_mut() {
-            draft.reason = reason;
+    pub fn update_moderation_report_reason(self, reason: String) {
+        self.moderation_report_draft.revise(|values| {
+            if let Some(draft) = values.as_mut() {
+                draft.reason = reason;
+            }
+        });
+    }
+
+    pub fn update_moderation_report_description(self, description: String) {
+        self.moderation_report_draft.revise(|values| {
+            if let Some(draft) = values.as_mut() {
+                draft.description = description;
+            }
+        });
+    }
+
+    pub fn cancel_moderation_report(self) {
+        if !self.moderation_report_pending.get() {
+            {
+                let next_value = None;
+                self.moderation_report_draft
+                    .revise(|value| *value = next_value);
+            };
         }
     }
 
-    pub fn update_moderation_report_description(mut self, description: String) {
-        if let Some(draft) = self.moderation_report_draft.write().as_mut() {
-            draft.description = description;
-        }
-    }
-
-    pub fn cancel_moderation_report(mut self) {
-        if !(self.moderation_report_pending)() {
-            self.moderation_report_draft.set(None);
-        }
-    }
-
-    pub fn submit_moderation_report(mut self, context: ChatCommandContext) {
-        let Some(draft) = (self.moderation_report_draft)() else {
+    pub fn submit_moderation_report(self, context: ChatCommandContext) {
+        let Some(draft) = self.moderation_report_draft.get() else {
             return;
         };
-        if (self.moderation_report_pending)() {
+        if self.moderation_report_pending.get() {
             return;
         }
         if draft.reason == "other" && draft.description.trim().is_empty() {
-            self.status_msg
-                .set(crate::i18n::tr("moderation.report.other_required"));
+            {
+                let next_value = crate::i18n::tr("moderation.report.other_required");
+                self.status_msg.revise(|value| *value = next_value);
+            };
             return;
         }
-        self.moderation_report_pending.set(true);
+        {
+            let next_value = true;
+            self.moderation_report_pending
+                .revise(|value| *value = next_value);
+        };
         let base_url = context.base_url;
-        let session_credential = (context.token)();
+        let session_credential = context.token.get();
         let principal_id = context.principal_id;
-        spawn(async move {
+        super::task::dispatch(async move {
             let result = crate::transport::auth::with_event_submitter(
                 &base_url,
                 session_credential,
@@ -555,65 +895,101 @@ impl ChatController {
                 },
             )
             .await;
-            self.moderation_report_pending.set(false);
+            {
+                let next_value = false;
+                self.moderation_report_pending
+                    .revise(|value| *value = next_value);
+            };
             match result {
                 Ok(_) => {
-                    self.moderation_report_draft.set(None);
-                    self.status_msg
-                        .set(crate::i18n::tr("moderation.report.submitted"));
+                    {
+                        let next_value = None;
+                        self.moderation_report_draft
+                            .revise(|value| *value = next_value);
+                    };
+                    {
+                        let next_value = crate::i18n::tr("moderation.report.submitted");
+                        self.status_msg.revise(|value| *value = next_value);
+                    };
                 }
-                Err(error) => self.status_msg.set(format!(
-                    "{}: {}",
-                    crate::i18n::tr("moderation.report.failed"),
-                    error.display()
-                )),
+                Err(error) => {
+                    let next_value = format!(
+                        "{}: {}",
+                        crate::i18n::tr("moderation.report.failed"),
+                        error.display()
+                    );
+                    self.status_msg.revise(|value| *value = next_value);
+                }
             }
         });
     }
 
-    pub fn show_blocked_message(mut self, message_id: String) {
-        self.blocked_show_anyway.write().insert(message_id);
+    pub fn show_blocked_message(self, message_id: String) {
+        self.blocked_show_anyway
+            .revise(|value| value.insert(message_id));
     }
 
-    pub fn close_poll(mut self, message_id: String) {
-        if let Some(card) = self
-            .poll_cards
-            .write()
-            .iter_mut()
-            .find(|card| card.message_id == message_id)
+    pub fn close_poll(self, message_id: String) {
+        self.poll_cards.revise(|values| {
+            if let Some(card) = values.iter_mut().find(|card| card.message_id == message_id) {
+                card.closed = true;
+            }
+        });
         {
-            card.closed = true;
-        }
-        self.status_msg.set("Poll closed in this view".to_owned());
+            let next_value = "Poll closed in this view".to_owned();
+            self.status_msg.revise(|value| *value = next_value);
+        };
     }
 
-    pub fn update_edit_draft(mut self, content: String) {
-        self.edit_draft.set(content);
+    pub fn update_edit_draft(self, content: String) {
+        {
+            let next_value = content;
+            self.edit_draft.revise(|value| *value = next_value);
+        };
     }
 
-    pub fn cancel_edit(mut self) {
-        self.editing_message.set(None);
+    pub fn cancel_edit(self) {
+        {
+            let next_value = None;
+            self.editing_message.revise(|value| *value = next_value);
+        };
     }
 
-    pub fn cancel_redaction(mut self) {
-        self.redact_confirm.set(None);
+    pub fn cancel_redaction(self) {
+        {
+            let next_value = None;
+            self.redact_confirm.revise(|value| *value = next_value);
+        };
     }
 
-    pub fn open_create_dialog(mut self) {
-        self.create_dialog_open.set(true);
+    pub fn open_create_dialog(self) {
+        {
+            let next_value = true;
+            self.create_dialog_open.revise(|value| *value = next_value);
+        };
     }
 
-    pub fn save_message_private(mut self, context: ChatCommandContext, target_ref: String) {
-        if (self.private_saved_targets)().contains(&target_ref) {
-            self.message_context_menu.set(None);
+    pub fn save_message_private(self, context: ChatCommandContext, target_ref: String) {
+        if self.private_saved_targets.get().contains(&target_ref) {
+            {
+                let next_value = None;
+                self.message_context_menu
+                    .revise(|value| *value = next_value);
+            };
             return;
         }
         let namespace_key = match load_chat_productivity_namespace_key(&context.authority) {
             Ok(key) => key,
             Err(error) => {
-                self.status_msg
-                    .set(format!("Private save failed: {error:#}"));
-                self.message_context_menu.set(None);
+                {
+                    let next_value = format!("Private save failed: {error:#}");
+                    self.status_msg.revise(|value| *value = next_value);
+                };
+                {
+                    let next_value = None;
+                    self.message_context_menu
+                        .revise(|value| *value = next_value);
+                };
                 return;
             }
         };
@@ -623,18 +999,30 @@ impl ChatController {
         ) {
             Ok(hlc) => hlc,
             Err(error) => {
-                self.status_msg
-                    .set(format!("Private save failed: {error:#}"));
-                self.message_context_menu.set(None);
+                {
+                    let next_value = format!("Private save failed: {error:#}");
+                    self.status_msg.revise(|value| *value = next_value);
+                };
+                {
+                    let next_value = None;
+                    self.message_context_menu
+                        .revise(|value| *value = next_value);
+                };
                 return;
             }
         };
         let item = match chat_saved_account_data_item(&namespace_key, &target_ref, hlc.as_str()) {
             Ok(item) => item,
             Err(error) => {
-                self.status_msg
-                    .set(format!("Private save failed: {error:#}"));
-                self.message_context_menu.set(None);
+                {
+                    let next_value = format!("Private save failed: {error:#}");
+                    self.status_msg.revise(|value| *value = next_value);
+                };
+                {
+                    let next_value = None;
+                    self.message_context_menu
+                        .revise(|value| *value = next_value);
+                };
                 return;
             }
         };
@@ -642,35 +1030,54 @@ impl ChatController {
             match crate::account_data::saved_item_account_data_value(&item.value) {
                 Ok(value) => value,
                 Err(error) => {
-                    self.status_msg
-                        .set(format!("Private save failed: {error:#}"));
-                    self.message_context_menu.set(None);
+                    {
+                        let next_value = format!("Private save failed: {error:#}");
+                        self.status_msg.revise(|value| *value = next_value);
+                    };
+                    {
+                        let next_value = None;
+                        self.message_context_menu
+                            .revise(|value| *value = next_value);
+                    };
                     return;
                 }
             };
-        let mut state_store = consume_context::<crate::app::SessionContext>().state_store;
-        if let Err(error) = state_store.write().stage_saved_account_data_item(&item) {
-            self.status_msg
-                .set(format!("Private save failed: {error:#}"));
-            self.message_context_menu.set(None);
+        let Some(state_store) = self.command_store() else {
+            return;
+        };
+        if let Err(error) = state_store.write(|store| store.stage_saved_account_data_item(&item)) {
+            {
+                let next_value = format!("Private save failed: {error:#}");
+                self.status_msg.revise(|value| *value = next_value);
+            };
+            {
+                let next_value = None;
+                self.message_context_menu
+                    .revise(|value| *value = next_value);
+            };
             return;
         }
         self.private_saved_targets
-            .write()
-            .insert(target_ref.clone());
-        self.private_saved_account_data
-            .write()
-            .insert(item.account_data_key.clone(), account_data_value.clone());
-        self.message_context_menu.set(None);
-        self.status_msg
-            .set(crate::i18n::tr("message.private_saved"));
+            .revise(|value| value.insert(target_ref.clone()));
+        self.private_saved_account_data.revise(|value| {
+            value.insert(item.account_data_key.clone(), account_data_value.clone())
+        });
+        {
+            let next_value = None;
+            self.message_context_menu
+                .revise(|value| *value = next_value);
+        };
+        {
+            let next_value = crate::i18n::tr("message.private_saved");
+            self.status_msg.revise(|value| *value = next_value);
+        };
 
         let base_url = context.base_url;
-        let api_token = (context.token)();
+        let api_token = context.token.get();
         let wait_for = None;
         let key = item.account_data_key;
-        let mut status_msg = self.status_msg;
-        spawn(async move {
+        let status_msg = self.status_msg;
+        super::task::dispatch(async move {
             let result = match authed_api_with_sync(&base_url, api_token, wait_for)
                 .and_then(|api| api.event_submitter())
             {
@@ -685,23 +1092,28 @@ impl ChatController {
                 Err(error) => Err(error),
             };
             if let Err(error) = result {
-                status_msg.set(format!(
-                    "Private save stayed local: {}",
-                    crate::api_error::display_user_facing(&error)
-                ));
+                {
+                    let next_value = format!(
+                        "Private save stayed local: {}",
+                        crate::api_error::display_user_facing(&error)
+                    );
+                    status_msg.revise(|value| *value = next_value);
+                };
             }
         });
     }
 
     pub fn toggle_shared_pin(
-        mut self,
+        self,
         context: ChatCommandContext,
         realm_id: String,
         strand_id: String,
         target_ref: String,
     ) {
         let pin_scope = shared_pin_scope_for_message(&realm_id, &strand_id);
-        let existing = (self.shared_pins)()
+        let existing = self
+            .shared_pins
+            .get()
             .into_iter()
             .find(|pin| pin.matches_scope(&pin_scope) && pin.target_ref == target_ref);
         let removing = existing.is_some();
@@ -728,46 +1140,67 @@ impl ChatController {
         let operation = match operation {
             Ok(operation) => operation,
             Err(error) => {
-                self.status_msg.set(format!("Shared pin failed: {error:#}"));
-                self.message_context_menu.set(None);
+                {
+                    let next_value = format!("Shared pin failed: {error:#}");
+                    self.status_msg.revise(|value| *value = next_value);
+                };
+                {
+                    let next_value = None;
+                    self.message_context_menu
+                        .revise(|value| *value = next_value);
+                };
                 return;
             }
         };
         let body = match shared_pin_operation_body(&operation) {
             Ok(body) => body,
             Err(error) => {
-                self.status_msg.set(format!("Shared pin failed: {error:#}"));
-                self.message_context_menu.set(None);
+                {
+                    let next_value = format!("Shared pin failed: {error:#}");
+                    self.status_msg.revise(|value| *value = next_value);
+                };
+                {
+                    let next_value = None;
+                    self.message_context_menu
+                        .revise(|value| *value = next_value);
+                };
                 return;
             }
         };
         if removing {
-            self.shared_pins
-                .write()
-                .retain(|pin| !(pin.matches_scope(&pin_scope) && pin.target_ref == target_ref));
+            self.shared_pins.revise(|value| {
+                value.retain(|pin| !(pin.matches_scope(&pin_scope) && pin.target_ref == target_ref))
+            });
         } else {
-            self.shared_pins.write().push(SharedMessagePin::new(
-                &pin_scope,
-                target_ref.clone(),
-                rank,
-            ));
+            self.shared_pins.revise(|value| {
+                value.push(SharedMessagePin::new(&pin_scope, target_ref.clone(), rank))
+            });
         }
-        self.message_context_menu.set(None);
-        self.status_msg.set(if removing {
-            crate::i18n::tr("message.shared_unpin_pending")
-        } else {
-            crate::i18n::tr("message.shared_pin_pending")
-        });
+        {
+            let next_value = None;
+            self.message_context_menu
+                .revise(|value| *value = next_value);
+        };
+        {
+            let next_value = if removing {
+                crate::i18n::tr("message.shared_unpin_pending")
+            } else {
+                crate::i18n::tr("message.shared_pin_pending")
+            };
+            self.status_msg.revise(|value| *value = next_value);
+        };
 
-        let mut state_store = consume_context::<crate::app::SessionContext>().state_store;
+        let Some(state_store) = self.command_store() else {
+            return;
+        };
         let base_url = context.base_url;
-        let api_token = (context.token)();
+        let api_token = context.token.get();
         let wait_for = None;
-        let mut frontier_state = context.frontier_state;
-        let mut shared_pins = self.shared_pins;
-        let mut status_msg = self.status_msg;
+        let frontier_state = context.frontier_state;
+        let shared_pins = self.shared_pins;
+        let status_msg = self.status_msg;
         let rollback = existing;
-        spawn(async move {
+        super::task::dispatch(async move {
             let result = match authed_api_with_sync(&base_url, api_token, wait_for) {
                 Ok(api) => match api.event_submitter() {
                     Ok(submitter) => submitter.submit_sdk_event(&operation).await,
@@ -784,67 +1217,83 @@ impl ChatController {
                     }) {
                         Ok(record) => record,
                         Err(error) => {
-                            status_msg.set(format!("Shared pin failed: {error}"));
+                            {
+                                let next_value = format!("Shared pin failed: {error}");
+                                status_msg.revise(|value| *value = next_value);
+                            };
                             return;
                         }
                     };
-                    state_store.write().append_raw_operation(
-                        operation.local_operation_id().to_string(),
-                        Some(realm_id),
-                        record,
-                    );
-                    frontier_state.set(submitted.event_id);
-                    status_msg.set(if removing {
-                        crate::i18n::tr("message.shared_unpinned")
-                    } else {
-                        crate::i18n::tr("message.shared_pinned")
+                    state_store.write(|value| {
+                        value.append_raw_operation(
+                            operation.local_operation_id().to_string(),
+                            Some(realm_id),
+                            record,
+                        )
                     });
+                    {
+                        let next_value = submitted.event_id;
+                        frontier_state.revise(|value| *value = next_value);
+                    };
+                    {
+                        let next_value = if removing {
+                            crate::i18n::tr("message.shared_unpinned")
+                        } else {
+                            crate::i18n::tr("message.shared_pinned")
+                        };
+                        status_msg.revise(|value| *value = next_value);
+                    };
                 }
                 Err(error) => {
                     if let Some(pin) = rollback {
-                        shared_pins.write().push(pin);
+                        shared_pins.revise(|value| value.push(pin));
                     } else {
-                        shared_pins.write().retain(|pin| {
-                            !(pin.matches_scope(&pin_scope) && pin.target_ref == target_ref)
+                        shared_pins.revise(|value| {
+                            value.retain(|pin| {
+                                !(pin.matches_scope(&pin_scope) && pin.target_ref == target_ref)
+                            })
                         });
                     }
-                    status_msg.set(format!(
-                        "Shared pin failed: {}",
-                        crate::api_error::display_user_facing(&error)
-                    ));
+                    {
+                        let next_value = format!(
+                            "Shared pin failed: {}",
+                            crate::api_error::display_user_facing(&error)
+                        );
+                        status_msg.revise(|value| *value = next_value);
+                    };
                 }
             }
         });
     }
 
     pub fn add_reaction(
-        mut self,
+        self,
         context: ChatCommandContext,
         message_id: String,
         target_ref: String,
         emoji: String,
     ) {
-        if let Some(message) = self
-            .messages
-            .write()
-            .iter_mut()
-            .find(|message| message.id == message_id)
-        {
-            if let Some((_, senders)) = message.reactions.iter_mut().find(|(key, _)| key == &emoji)
-            {
-                if !senders
-                    .iter()
-                    .any(|sender| sender == context.principal_id.as_str())
+        self.messages.revise(|values| {
+            if let Some(message) = values.iter_mut().find(|message| message.id == message_id) {
+                if let Some((_, senders)) =
+                    message.reactions.iter_mut().find(|(key, _)| key == &emoji)
                 {
-                    senders.push(context.principal_id.to_string());
+                    if !senders
+                        .iter()
+                        .any(|sender| sender == context.principal_id.as_str())
+                    {
+                        senders.push(context.principal_id.to_string());
+                    }
+                } else {
+                    message
+                        .reactions
+                        .push((emoji.clone(), vec![context.principal_id.to_string()]));
                 }
-            } else {
-                message
-                    .reactions
-                    .push((emoji.clone(), vec![context.principal_id.to_string()]));
             }
-        }
-        let state_store = consume_context::<crate::app::SessionContext>().state_store;
+        });
+        let Some(state_store) = self.command_store() else {
+            return;
+        };
         let operation = match build_chat_reaction_add_operation(
             state_store,
             &context.selected_realm_id,
@@ -857,37 +1306,55 @@ impl ChatController {
         ) {
             Ok(Some(operation)) => operation,
             Ok(None) => {
-                self.status_msg.set(
-                    "Reaction skipped: MLS state not ready for this encrypted channel".to_owned(),
-                );
-                self.reaction_picker.set(None);
+                {
+                    let next_value =
+                        "Reaction skipped: MLS state not ready for this encrypted channel"
+                            .to_owned();
+                    self.status_msg.revise(|value| *value = next_value);
+                };
+                {
+                    let next_value = None;
+                    self.reaction_picker.revise(|value| *value = next_value);
+                };
                 return;
             }
             Err(error) => {
-                self.status_msg.set(format!("Reaction skipped: {error:#}"));
-                self.reaction_picker.set(None);
+                {
+                    let next_value = format!("Reaction skipped: {error:#}");
+                    self.status_msg.revise(|value| *value = next_value);
+                };
+                {
+                    let next_value = None;
+                    self.reaction_picker.revise(|value| *value = next_value);
+                };
                 return;
             }
         };
-        self.reaction_picker.set(None);
+        {
+            let next_value = None;
+            self.reaction_picker.revise(|value| *value = next_value);
+        };
         let base_url = context.base_url;
-        let api_token = (context.token)();
+        let api_token = context.token.get();
         let wait_for = None;
-        let mut status_msg = self.status_msg;
-        spawn(async move {
+        let status_msg = self.status_msg;
+        super::task::dispatch(async move {
             let result =
                 with_authed_api_with_sync(&base_url, api_token, wait_for, |api| async move {
                     api.event_submitter()?.submit_sdk_event(&operation).await
                 })
                 .await;
             if let Err(error) = result {
-                status_msg.set(format!("Reaction failed: {}", error.display()));
+                {
+                    let next_value = format!("Reaction failed: {}", error.display());
+                    status_msg.revise(|value| *value = next_value);
+                };
             }
         });
     }
 
     pub fn revise_message(
-        mut self,
+        self,
         context: ChatCommandContext,
         message_id: String,
         target_ref: String,
@@ -895,43 +1362,58 @@ impl ChatController {
     ) {
         let content = content.trim().to_owned();
         if content.is_empty() {
-            self.status_msg
-                .set("Edit skipped: body is empty".to_owned());
-            self.editing_message.set(None);
+            {
+                let next_value = "Edit skipped: body is empty".to_owned();
+                self.status_msg.revise(|value| *value = next_value);
+            };
+            {
+                let next_value = None;
+                self.editing_message.revise(|value| *value = next_value);
+            };
             return;
         }
-        if let Some(message) = self
+        if self
             .messages
-            .write()
-            .iter_mut()
-            .find(|message| message.id == message_id)
+            .get_untracked()
+            .iter()
+            .any(|message| message.id == message_id && message.pending)
         {
-            if message.pending {
-                self.status_msg.set(
-                    "Wait for the current message write to settle before editing again".to_owned(),
-                );
-                self.editing_message.set(None);
-                return;
-            }
-            message.revisions.push(message.body.clone());
-            message.body = content.clone();
-            message.content_format = Some(arkret_sdk::TextFormat::Markdown);
-            message.edited = true;
-            message.pending = true;
-            message.failed = false;
-            message.error = None;
+            {
+                let next_value =
+                    "Wait for the current message write to settle before editing again".to_owned();
+                self.status_msg.revise(|value| *value = next_value);
+            };
+            {
+                let next_value = None;
+                self.editing_message.revise(|value| *value = next_value);
+            };
+            return;
         }
-        self.editing_message.set(None);
+        self.messages.revise(|values| {
+            if let Some(message) = values.iter_mut().find(|message| message.id == message_id) {
+                message.revisions.push(message.body.clone());
+                message.body = content.clone();
+                message.content_format = Some(arkret_sdk::TextFormat::Markdown);
+                message.edited = true;
+                message.pending = true;
+                message.failed = false;
+                message.error = None;
+            }
+        });
+        {
+            let next_value = None;
+            self.editing_message.revise(|value| *value = next_value);
+        };
         let base_url = context.base_url;
         let realm_id = context.selected_realm_id;
         let actor = context.principal_id;
-        let api_token = (context.token)();
+        let api_token = context.token.get();
         let wait_for = None;
         let mut messages = self.messages;
-        let mut status_msg = self.status_msg;
+        let status_msg = self.status_msg;
         // Closing the edit composer unmounts its Save Button. Keep the
         // accepted-result handler with the controller that owns the message.
-        crate::runtime_helpers::spawn_owned(messages.origin_scope(), async move {
+        super::task::dispatch(async move {
             let result = match chat_content_block_for_body_with_upload(
                 &base_url,
                 api_token.clone(),
@@ -963,10 +1445,13 @@ impl ChatController {
                                 crate::api_error::display_user_facing(&error)
                             ),
                         );
-                        status_msg.set(format!(
-                            "Message update failed: {}",
-                            crate::api_error::display_user_facing(&error)
-                        ));
+                        {
+                            let next_value = format!(
+                                "Message update failed: {}",
+                                crate::api_error::display_user_facing(&error)
+                            );
+                            status_msg.revise(|value| *value = next_value);
+                        };
                         return;
                     }
                 },
@@ -979,25 +1464,31 @@ impl ChatController {
                             crate::api_error::display_user_facing(&error)
                         ),
                     );
-                    status_msg.set(format!(
-                        "Message update failed: {}",
-                        crate::api_error::display_user_facing(&error)
-                    ));
+                    {
+                        let next_value = format!(
+                            "Message update failed: {}",
+                            crate::api_error::display_user_facing(&error)
+                        );
+                        status_msg.revise(|value| *value = next_value);
+                    };
                     return;
                 }
             };
             match result {
                 Ok(response) => {
-                    if let Ok(event_id) = arkret_sdk::EventId::new(response.event_id.clone())
-                        && let Some(message) = messages
-                            .write()
-                            .iter_mut()
-                            .find(|message| message.id == message_id)
-                    {
-                        message.revision_source = Some(event_id.event_digest());
-                    }
+                    messages.revise(|values| {
+                        if let Ok(event_id) = arkret_sdk::EventId::new(response.event_id.clone())
+                            && let Some(message) =
+                                values.iter_mut().find(|message| message.id == message_id)
+                        {
+                            message.revision_source = Some(event_id.event_digest());
+                        }
+                    });
                     mark_message_command_succeeded(&mut messages, &message_id);
-                    status_msg.set("Message updated".to_owned());
+                    {
+                        let next_value = "Message updated".to_owned();
+                        status_msg.revise(|value| *value = next_value);
+                    };
                 }
                 Err(error) => {
                     mark_message_command_failed(
@@ -1008,42 +1499,50 @@ impl ChatController {
                             crate::api_error::display_user_facing(&error)
                         ),
                     );
-                    status_msg.set(format!(
-                        "Message update failed: {}",
-                        crate::api_error::display_user_facing(&error)
-                    ));
+                    {
+                        let next_value = format!(
+                            "Message update failed: {}",
+                            crate::api_error::display_user_facing(&error)
+                        );
+                        status_msg.revise(|value| *value = next_value);
+                    };
                 }
             }
         });
     }
 
-    pub fn redact_message(mut self, context: ChatCommandContext, message: ChatMessage) {
+    pub fn redact_message(self, context: ChatCommandContext, message: ChatMessage) {
         let message_id = message.id.clone();
         let target_ref = message.mutation_target_ref().to_owned();
-        if let Some(found) = self
-            .messages
-            .write()
-            .iter_mut()
-            .find(|candidate| candidate.id == message_id)
+        self.messages.revise(|values| {
+            if let Some(found) = values
+                .iter_mut()
+                .find(|candidate| candidate.id == message_id)
+            {
+                found.redacted = true;
+                found.body.clear();
+                found.content_format = None;
+                found.pending = true;
+                found.failed = false;
+                found.error = None;
+            }
+        });
         {
-            found.redacted = true;
-            found.body.clear();
-            found.content_format = None;
-            found.pending = true;
-            found.failed = false;
-            found.error = None;
-        }
-        self.redact_confirm.set(None);
+            let next_value = None;
+            self.redact_confirm.revise(|value| *value = next_value);
+        };
         let base_url = context.base_url;
         let realm_id = context.selected_realm_id;
         let actor = context.principal_id;
-        let api_token = (context.token)();
+        let api_token = context.token.get();
         let wait_for = None;
-        let mut frontier_state = context.frontier_state;
-        let mut state_store = consume_context::<crate::app::SessionContext>().state_store;
+        let frontier_state = context.frontier_state;
+        let Some(state_store) = self.command_store() else {
+            return;
+        };
         let mut messages = self.messages;
-        let mut status_msg = self.status_msg;
-        spawn(async move {
+        let status_msg = self.status_msg;
+        super::task::dispatch(async move {
             let operation = match chat_message_redact_operation(
                 &realm_id,
                 actor.as_str(),
@@ -1057,7 +1556,10 @@ impl ChatController {
                         &message_id,
                         format!("Message removal failed: {error:#}"),
                     );
-                    status_msg.set(format!("Message removal failed: {error:#}"));
+                    {
+                        let next_value = format!("Message removal failed: {error:#}");
+                        status_msg.revise(|value| *value = next_value);
+                    };
                     return;
                 }
             };
@@ -1077,15 +1579,23 @@ impl ChatController {
                     // is folded immediately; the realm stream later upserts the
                     // same event id with its server-signed envelope.
                     if let Ok(payload) = serde_json::to_value(operation.intent()) {
-                        state_store.write().upsert_raw_operation(
-                            submitted.event_id.clone(),
-                            Some(realm_id),
-                            payload,
-                        );
+                        state_store.write(|value| {
+                            value.upsert_raw_operation(
+                                submitted.event_id.clone(),
+                                Some(realm_id),
+                                payload,
+                            )
+                        });
                     }
-                    frontier_state.set(submitted.event_id);
+                    {
+                        let next_value = submitted.event_id;
+                        frontier_state.revise(|value| *value = next_value);
+                    };
                     mark_message_command_succeeded(&mut messages, &message_id);
-                    status_msg.set("Message removed".to_owned());
+                    {
+                        let next_value = "Message removed".to_owned();
+                        status_msg.revise(|value| *value = next_value);
+                    };
                 }
                 Err(error) => {
                     mark_message_command_failed(
@@ -1096,23 +1606,31 @@ impl ChatController {
                             crate::api_error::display_user_facing(&error)
                         ),
                     );
-                    status_msg.set(format!(
-                        "Message removal failed: {}",
-                        crate::api_error::display_user_facing(&error)
-                    ));
+                    {
+                        let next_value = format!(
+                            "Message removal failed: {}",
+                            crate::api_error::display_user_facing(&error)
+                        );
+                        status_msg.revise(|value| *value = next_value);
+                    };
                 }
             }
         });
     }
 
-    pub fn retry_message(mut self, context: ChatCommandContext, message: ChatMessage) {
+    pub fn retry_message(self, context: ChatCommandContext, message: ChatMessage) {
         let Some(original_scope) = message.local_scope.clone() else {
-            self.status_msg.set("Original send scope is unavailable. Reopen the original private conversation to compose a request.".to_owned());
+            {
+                let next_value = "Original send scope is unavailable. Reopen the original private conversation to compose a request.".to_owned();
+                self.status_msg.revise(|value| *value = next_value);
+            };
             return;
         };
         if matches!(original_scope, arkret_sdk::ScopeRef::Sidecar { .. }) {
-            self.status_msg
-                .set("Retry this request from its private Sidecar composer.".to_owned());
+            {
+                let next_value = "Retry this request from its private Sidecar composer.".to_owned();
+                self.status_msg.revise(|value| *value = next_value);
+            };
             return;
         }
         let shared_agent_targets = if context.private_agent_scope {
@@ -1128,34 +1646,43 @@ impl ChatController {
         };
         let local_id = message.id;
         let retry_message_id = message_id_or_new_local_id(&local_id);
-        if let Some(found) = self
-            .messages
-            .write()
-            .iter_mut()
-            .find(|candidate| candidate.matches_id_or_protocol(&local_id))
+        self.messages.revise(|values| {
+            if let Some(found) = values
+                .iter_mut()
+                .find(|candidate| candidate.matches_id_or_protocol(&local_id))
+            {
+                found.id = retry_message_id.clone();
+                found.protocol_message_id = Some(retry_message_id.clone());
+                found.pending = true;
+                found.failed = false;
+                found.error = None;
+            }
+        });
         {
-            found.id = retry_message_id.clone();
-            found.protocol_message_id = Some(retry_message_id.clone());
-            found.pending = true;
-            found.failed = false;
-            found.error = None;
-        }
-        self.status_msg.set("Retrying message".to_owned());
-        let state_store = consume_context::<crate::app::SessionContext>().state_store;
+            let next_value = "Retrying message".to_owned();
+            self.status_msg.revise(|value| *value = next_value);
+        };
+        let Ok(application) = crate::presentation::require_current_context() else {
+            let _ = self
+                .status_msg
+                .try_revise(|status| *status = "The chat window is unavailable.".into());
+            return;
+        };
+        let state_store = application.state_store.clone();
         let mention_values = mention_nodes_to_values(&message.mentions);
         let base_url = context.base_url;
         let authority = context.authority;
         let actor = context.principal_id;
         let device_id = context.device_id;
         let encrypted = context.selected_channel_security_encrypted;
-        let api_token = (context.token)();
+        let api_token = context.token.get();
         let wait_for = None;
-        let mut frontier_state = context.frontier_state;
-        let mut state_store = state_store;
+        let frontier_state = context.frontier_state;
+        let state_store = state_store;
         let mut messages = self.messages;
         let mut status_msg = self.status_msg;
         let message_id_for_lookup = retry_message_id.clone();
-        spawn(async move {
+        super::task::dispatch(async move {
             if let Err(error) = crate::transport::agent_interaction::require_public_targets(
                 &base_url,
                 api_token.clone(),
@@ -1169,7 +1696,10 @@ impl ChatController {
                     &message_id_for_lookup,
                     format!("Retry blocked: {error:#}"),
                 );
-                status_msg.set(format!("Retry blocked: {error:#}"));
+                {
+                    let next_value = format!("Retry blocked: {error:#}");
+                    status_msg.revise(|value| *value = next_value);
+                };
                 return;
             }
 
@@ -1189,7 +1719,10 @@ impl ChatController {
                         &message_id_for_lookup,
                         format!("send failed: {error:#}"),
                     );
-                    status_msg.set(format!("send failed: {error:#}"));
+                    {
+                        let next_value = format!("send failed: {error:#}");
+                        status_msg.revise(|value| *value = next_value);
+                    };
                     return;
                 }
             };
@@ -1205,7 +1738,10 @@ impl ChatController {
                             &message_id_for_lookup,
                             format!("send failed: {error:#}"),
                         );
-                        status_msg.set(format!("send failed: {error:#}"));
+                        {
+                            let next_value = format!("send failed: {error:#}");
+                            status_msg.revise(|value| *value = next_value);
+                        };
                         return;
                     }
                 };
@@ -1217,7 +1753,10 @@ impl ChatController {
                             &message_id_for_lookup,
                             format!("send failed: {error}"),
                         );
-                        status_msg.set(format!("send failed: {error}"));
+                        {
+                            let next_value = format!("send failed: {error}");
+                            status_msg.revise(|value| *value = next_value);
+                        };
                         return;
                     }
                 };
@@ -1229,13 +1768,16 @@ impl ChatController {
                             &message_id_for_lookup,
                             format!("send failed: {error}"),
                         );
-                        status_msg.set(format!("Message send failed: {error}"));
+                        {
+                            let next_value = format!("Message send failed: {error}");
+                            status_msg.revise(|value| *value = next_value);
+                        };
                         return;
                     }
                 };
                 let build = match crate::views::secure_send::build_secure_send(
                     &api,
-                    state_store,
+                    &state_store.handle(),
                     &message.realm_id,
                     &authority,
                     actor.as_str(),
@@ -1260,14 +1802,18 @@ impl ChatController {
                             &message_id_for_lookup,
                             error.clone(),
                         );
-                        status_msg.set(format!("Message send failed: {error}"));
+                        {
+                            let next_value = format!("Message send failed: {error}");
+                            status_msg.revise(|value| *value = next_value);
+                        };
                         return;
                     }
                 };
                 let local_operation_id = build.message_local_operation_id.to_string();
                 let outcome = crate::views::secure_send::submit_secure_send(
+                    application.clone(),
                     &api,
-                    state_store,
+                    &state_store.handle(),
                     build,
                     &message.realm_id,
                     None,
@@ -1275,53 +1821,67 @@ impl ChatController {
                 .await;
                 match outcome {
                     crate::views::secure_send::SecureSendOutcome::Sent { event_id, status } => {
-                        state_store.write().mark_message_retry_replacement(
-                            &message.realm_id,
-                            &local_id,
-                            &event_id,
-                        );
+                        state_store.write(|value| {
+                            value.mark_message_retry_replacement(
+                                &message.realm_id,
+                                &local_id,
+                                &event_id,
+                            )
+                        });
                         let protocol_message_id = arkret_sdk::EventId::new(event_id.clone())
                             .ok()
                             .map(|event_id| {
                                 arkret_sdk::MessageId::from_event_id(&event_id).to_string()
                             })
                             .unwrap_or_else(|| retry_message_id.clone());
-                        state_store.write().append_raw_operation(
-                            local_operation_id,
-                            Some(message.realm_id.clone()),
-                            json!({
-                                "event_id": event_id.clone(),
-                                "kind": event_kind_str::MESSAGE_CREATE,
-                                "actor_id": actor,
-                                "strand_id": message.strand_id.clone(),
-                                "message_id": protocol_message_id.clone(),
-                                "encrypted_content": true,
-                                "status": status,
-                            }),
-                        );
-                        state_store.write().save_private_plaintext(
-                            &message.realm_id,
-                            &message.strand_id,
-                            &format!("message:{protocol_message_id}"),
-                            &message.body,
-                        );
-                        if let Some(found) = messages.write().iter_mut().find(|candidate| {
-                            candidate.matches_id_or_protocol(&message_id_for_lookup)
-                        }) {
-                            found.id = event_id.clone();
-                            found.protocol_message_id = Some(protocol_message_id);
-                            found.pending = status != "committed";
-                            found.failed = false;
-                            found.error = None;
-                        }
-                        if status == "committed" {
-                            frontier_state.set(event_id);
-                        }
-                        status_msg.set(if status == "committed" {
-                            "Message sent".to_owned()
-                        } else {
-                            "Message queued; waiting for server confirmation".to_owned()
+                        state_store.write(|value| {
+                            value.append_raw_operation(
+                                local_operation_id,
+                                Some(message.realm_id.clone()),
+                                json!({
+                                    "event_id": event_id.clone(),
+                                    "kind": event_kind_str::MESSAGE_CREATE,
+                                    "actor_id": actor,
+                                    "strand_id": message.strand_id.clone(),
+                                    "message_id": protocol_message_id.clone(),
+                                    "encrypted_content": true,
+                                    "status": status,
+                                }),
+                            )
                         });
+                        state_store.write(|value| {
+                            value.save_private_plaintext(
+                                &message.realm_id,
+                                &message.strand_id,
+                                &format!("message:{protocol_message_id}"),
+                                &message.body,
+                            )
+                        });
+                        messages.revise(|values| {
+                            if let Some(found) = values.iter_mut().find(|candidate| {
+                                candidate.matches_id_or_protocol(&message_id_for_lookup)
+                            }) {
+                                found.id = event_id.clone();
+                                found.protocol_message_id = Some(protocol_message_id);
+                                found.pending = status != "committed";
+                                found.failed = false;
+                                found.error = None;
+                            }
+                        });
+                        if status == "committed" {
+                            {
+                                let next_value = event_id;
+                                frontier_state.revise(|value| *value = next_value);
+                            };
+                        }
+                        {
+                            let next_value = if status == "committed" {
+                                "Message sent".to_owned()
+                            } else {
+                                "Message queued; waiting for server confirmation".to_owned()
+                            };
+                            status_msg.revise(|value| *value = next_value);
+                        };
                     }
                     crate::views::secure_send::SecureSendOutcome::MessageFailed { message } => {
                         mark_message_command_failed(
@@ -1329,7 +1889,10 @@ impl ChatController {
                             &message_id_for_lookup,
                             message.clone(),
                         );
-                        status_msg.set(format!("Message send failed: {message}"));
+                        {
+                            let next_value = format!("Message send failed: {message}");
+                            status_msg.revise(|value| *value = next_value);
+                        };
                     }
                     crate::views::secure_send::SecureSendOutcome::MessageAuthoringFailed {
                         failure,
@@ -1353,7 +1916,10 @@ impl ChatController {
                             &message_id_for_lookup,
                             format!("send failed: {error:#}"),
                         );
-                        status_msg.set(format!("send failed: {error:#}"));
+                        {
+                            let next_value = format!("send failed: {error:#}");
+                            status_msg.revise(|value| *value = next_value);
+                        };
                         return;
                     }
                 };
@@ -1372,14 +1938,17 @@ impl ChatController {
                         &message_id_for_lookup,
                         format!("send failed: {error:#}"),
                     );
-                    status_msg.set(format!("send failed: {error:#}"));
+                    {
+                        let next_value = format!("send failed: {error:#}");
+                        status_msg.revise(|value| *value = next_value);
+                    };
                     return;
                 }
             };
             let scope = original_scope;
             match send_ordinary_chat_message(
                 &api,
-                crate::app::runtime_adapter::state_store_handle(state_store),
+                state_store.handle(),
                 &message.realm_id,
                 scope,
                 &message.strand_id,
@@ -1393,11 +1962,13 @@ impl ChatController {
             .await
             {
                 Ok(submitted) => {
-                    state_store.write().mark_message_retry_replacement(
-                        &message.realm_id,
-                        &local_id,
-                        &submitted.event_id,
-                    );
+                    state_store.write(|value| {
+                        value.mark_message_retry_replacement(
+                            &message.realm_id,
+                            &local_id,
+                            &submitted.event_id,
+                        )
+                    });
                     match serde_json::to_value(AcceptedChatMessageOperation {
                         event_id: &submitted.event_id,
                         kind: event_kind_str::MESSAGE_CREATE,
@@ -1410,46 +1981,57 @@ impl ChatController {
                         reply_to: message.reply_to.as_deref(),
                         status: &submitted.status,
                     }) {
-                        Ok(raw_operation) => state_store.write().append_raw_operation(
-                            local_operation_id.clone(),
-                            Some(message.realm_id.clone()),
-                            raw_operation,
-                        ),
+                        Ok(raw_operation) => state_store.write(|value| {
+                            value.append_raw_operation(
+                                local_operation_id.clone(),
+                                Some(message.realm_id.clone()),
+                                raw_operation,
+                            )
+                        }),
                         Err(error) => tracing::error!(
                             %error,
                             event_id = %submitted.event_id,
                             "accepted retried chat operation could not be cached"
                         ),
                     }
-                    if let Some(found) = messages
-                        .write()
-                        .iter_mut()
-                        .find(|candidate| candidate.matches_id_or_protocol(&message_id_for_lookup))
-                    {
-                        found.id = submitted.event_id.clone();
-                        found.pending = submitted.status != garth::SendQueueStatus::Committed;
-                        found.failed = false;
-                        found.error = None;
-                    }
+                    messages.revise(|values| {
+                        if let Some(found) = values.iter_mut().find(|candidate| {
+                            candidate.matches_id_or_protocol(&message_id_for_lookup)
+                        }) {
+                            found.id = submitted.event_id.clone();
+                            found.pending = submitted.status != garth::SendQueueStatus::Committed;
+                            found.failed = false;
+                            found.error = None;
+                        }
+                    });
                     if submitted.status == garth::SendQueueStatus::Committed {
-                        frontier_state.set(submitted.event_id);
-                        let barrier = state_store.read().begin_durable_flush();
+                        {
+                            let next_value = submitted.event_id;
+                            frontier_state.revise(|value| *value = next_value);
+                        };
+                        let barrier = state_store.read(|value| value.begin_durable_flush());
                         let persisted = match barrier {
                             Ok(barrier) => barrier.wait().await,
                             Err(error) => Err(error),
                         };
                         if let Err(error) = persisted {
-                            status_msg.set(format!(
-                                "Message committed, but this device could not save its history: {error}"
-                            ));
+                            {
+                                let next_value = format!(
+                                    "Message committed, but this device could not save its history: {error}"
+                                );
+                                status_msg.revise(|value| *value = next_value);
+                            };
                             return;
                         }
                     }
-                    status_msg.set(if submitted.status == garth::SendQueueStatus::Committed {
-                        "Message sent".to_owned()
-                    } else {
-                        "Message queued; waiting for server confirmation".to_owned()
-                    });
+                    {
+                        let next_value = if submitted.status == garth::SendQueueStatus::Committed {
+                            "Message sent".to_owned()
+                        } else {
+                            "Message queued; waiting for server confirmation".to_owned()
+                        };
+                        status_msg.revise(|value| *value = next_value);
+                    };
                 }
                 Err(failure) => {
                     present_retry_send_failure(
@@ -1464,24 +2046,27 @@ impl ChatController {
     }
 
     pub fn vote_poll(
-        mut self,
+        self,
         context: ChatCommandContext,
         message_id: String,
         poll_ref: arkret_sdk::MessageId,
         option_id: String,
     ) {
-        self.status_msg.set("Preparing poll vote".to_owned());
+        {
+            let next_value = "Preparing poll vote".to_owned();
+            self.status_msg.revise(|value| *value = next_value);
+        };
         let actor = arkret_sdk::ActorId::account(context.authority.clone());
         let selected_circle = self
             .channels
-            .read()
+            .get()
             .iter()
             .find(|channel| channel.strand_id == context.selected_channel_id)
             .and_then(|channel| channel.scope_circle.as_ref())
             .map(|scope| scope.circle_id.clone());
         let vote_check = self
             .poll_cards
-            .read()
+            .get()
             .iter()
             .find(|card| card.message_id == message_id)
             .ok_or_else(|| anyhow::anyhow!("poll projection is unavailable"))
@@ -1503,43 +2088,48 @@ impl ChatController {
         let response_heads = match vote_check {
             Ok(heads) => heads,
             Err(error) => {
-                self.status_msg.set(format!("Poll vote refused: {error}"));
+                {
+                    let next_value = format!("Poll vote refused: {error}");
+                    self.status_msg.revise(|value| *value = next_value);
+                };
                 return;
             }
         };
-        if let Some(message) = self
-            .messages
-            .write()
-            .iter_mut()
-            .find(|message| message.id == message_id)
-        {
-            message.pending = true;
-            message.failed = false;
-            message.error = None;
-        }
+        self.messages.revise(|values| {
+            if let Some(message) = values.iter_mut().find(|message| message.id == message_id) {
+                message.pending = true;
+                message.failed = false;
+                message.error = None;
+            }
+        });
         let protection = super::poll_submission::PollSubmissionContext {
             authority: context.authority.clone(),
             device_id: context.device_id.clone(),
             circle_id: self
                 .channels
-                .read()
+                .get()
                 .iter()
                 .find(|channel| channel.strand_id == context.selected_channel_id)
                 .and_then(|channel| channel.scope_circle.as_ref())
                 .map(|scope| scope.circle_id.clone()),
         };
-        let state_store = consume_context::<crate::app::SessionContext>().state_store;
+        let Some(state_store) = self.command_store() else {
+            return;
+        };
         let base_url = context.base_url;
         let realm_id = context.selected_realm_id;
         let strand_id = context.selected_channel_id;
         let actor = context.principal_id;
-        let api_token = (context.token)();
+        let api_token = context.token.get();
         let mut messages = self.messages;
-        let mut status_msg = self.status_msg;
+        let status_msg = self.status_msg;
         // The option Button can unmount when pending/projection state changes.
         // Keep the command with the chat controller that owns these signals.
-        crate::runtime_helpers::spawn_owned(messages.origin_scope(), async move {
-            status_msg.set("Submitting poll vote".to_owned());
+        super::task::dispatch(async move {
+            {
+                let next_value = "Submitting poll vote".to_owned();
+                status_msg.revise(|value| *value = next_value);
+            };
             let result =
                 crate::transport::auth::with_authed_api(&base_url, api_token, |api| async move {
                     let operation = crate::messaging::polls::build_poll_vote_op_with_heads_scoped(
@@ -1566,7 +2156,10 @@ impl ChatController {
             match result {
                 Ok(_) => {
                     mark_message_command_succeeded(&mut messages, &message_id);
-                    status_msg.set("Poll vote sent".to_owned());
+                    {
+                        let next_value = "Poll vote sent".to_owned();
+                        status_msg.revise(|value| *value = next_value);
+                    };
                 }
                 Err(error) => {
                     let error = error.display();
@@ -1575,7 +2168,10 @@ impl ChatController {
                         &message_id,
                         format!("Poll vote failed: {error}"),
                     );
-                    status_msg.set(format!("Poll vote failed: {error}"));
+                    {
+                        let next_value = format!("Poll vote failed: {error}");
+                        status_msg.revise(|value| *value = next_value);
+                    };
                 }
             }
         });
@@ -1588,7 +2184,7 @@ impl ChatController {
     /// that Event is accepted; until then the write is known by its
     /// holder-local operation id.
     pub fn create_strand(
-        mut self,
+        self,
         base_url: String,
         api_token: String,
         wait_for: Option<String>,
@@ -1596,13 +2192,18 @@ impl ChatController {
         operation: crate::operation::LocalOperation,
         draft: StrandCreateDraft,
     ) {
-        let mut state_store = consume_context::<crate::app::SessionContext>().state_store;
-        let mut frontier_state = draft.frontier_state;
-        spawn(async move {
+        let Some(state_store) = self.command_store() else {
+            return;
+        };
+        let frontier_state = draft.frontier_state;
+        super::task::dispatch(async move {
             let api = match authed_api_with_sync(&base_url, api_token, wait_for) {
                 Ok(api) => api,
                 Err(error) => {
-                    self.status_msg.set(format!("Invalid server URL: {error}"));
+                    {
+                        let next_value = format!("Invalid server URL: {error}");
+                        self.status_msg.revise(|value| *value = next_value);
+                    };
                     return;
                 }
             };
@@ -1613,36 +2214,44 @@ impl ChatController {
             let submitted = match submitted {
                 Ok(submitted) => submitted,
                 Err(error) => {
-                    self.status_msg
-                        .set(format!("Strand create failed: {error}"));
+                    {
+                        let next_value = format!("Strand create failed: {error}");
+                        self.status_msg.revise(|value| *value = next_value);
+                    };
                     return;
                 }
             };
             let strand_id = match arkret_sdk::EventId::new(submitted.event_id.clone()) {
                 Ok(event_id) => arkret_sdk::StrandId::from_event_id(&event_id).into_string(),
                 Err(error) => {
-                    self.status_msg.set(format!(
-                        "Strand created but its accepted id is invalid: {error}"
-                    ));
+                    {
+                        let next_value =
+                            format!("Strand created but its accepted id is invalid: {error}");
+                        self.status_msg.revise(|value| *value = next_value);
+                    };
                     return;
                 }
             };
-            self.channels.write().push(ChannelEntity {
-                strand_id: strand_id.clone(),
-                name: draft.title.clone(),
-                kind: "discussion".to_owned(),
-                category: draft.category.clone(),
-                topic: draft.topic.clone(),
-                unread: 0,
-                is_default: false,
-                is_private_sidecar: false,
-                security_encrypted: None,
-                scope_circle: draft.scope_circle,
+            self.channels.revise(|value| {
+                value.push(ChannelEntity {
+                    strand_id: strand_id.clone(),
+                    name: draft.title.clone(),
+                    kind: "discussion".to_owned(),
+                    category: draft.category.clone(),
+                    topic: draft.topic.clone(),
+                    unread: 0,
+                    is_default: false,
+                    is_private_sidecar: false,
+                    security_encrypted: None,
+                    scope_circle: draft.scope_circle,
+                })
             });
             self.select_channel(strand_id.clone());
-            frontier_state.set(submitted.event_id.clone());
             {
-                let mut store = state_store.write();
+                let next_value = submitted.event_id.clone();
+                frontier_state.revise(|value| *value = next_value);
+            };
+            state_store.write(|store| {
                 // Keep POST /events sync_token out of the persisted
                 // account-subscribe cursor; the background sync loop must
                 // resume only from /account/subscribe cursors.
@@ -1660,21 +2269,50 @@ impl ChatController {
                         "event_id": submitted.event_id,
                     }),
                 );
-            }
-            self.status_msg.set("Strand created".to_owned());
-            self.new_channel_name.set(String::new());
-            self.new_channel_topic.set(String::new());
-            self.new_channel_create_card.set(false);
-            self.new_channel_scope
-                .set(crate::circle::CircleScope::Realm);
-            self.create_dialog_open.set(false);
+            });
+            {
+                let next_value = "Strand created".to_owned();
+                self.status_msg.revise(|value| *value = next_value);
+            };
+            {
+                let next_value = String::new();
+                self.new_channel_name.revise(|value| *value = next_value);
+            };
+            {
+                let next_value = String::new();
+                self.new_channel_topic.revise(|value| *value = next_value);
+            };
+            {
+                let next_value = false;
+                self.new_channel_create_card
+                    .revise(|value| *value = next_value);
+            };
+            {
+                let next_value = crate::circle::CircleScope::Realm;
+                self.new_channel_scope.revise(|value| *value = next_value);
+            };
+            {
+                let next_value = false;
+                self.create_dialog_open.revise(|value| *value = next_value);
+            };
         });
     }
 
     fn invalidate_strand_watch_observation(&mut self, queued: bool) {
-        self.strand_watch_current.set(None);
-        self.strand_watch_queued.set(queued);
-        self.watch_level_menu_open.set(false);
+        {
+            let next_value = None;
+            self.strand_watch_current
+                .revise(|value| *value = next_value);
+        };
+        {
+            let next_value = queued;
+            self.strand_watch_queued.revise(|value| *value = next_value);
+        };
+        {
+            let next_value = false;
+            self.watch_level_menu_open
+                .revise(|value| *value = next_value);
+        };
     }
 
     fn clear_strand_watch_observation(&mut self) {
@@ -1682,11 +2320,11 @@ impl ChatController {
     }
 
     pub fn strand_watch_write_pending(&self) -> bool {
-        self.strand_watch_refresh.read().write.is_some()
+        self.strand_watch_refresh.get().write.is_some()
     }
 
     pub fn strand_watch_read_running(&self) -> bool {
-        self.strand_watch_refresh.read().running
+        self.strand_watch_refresh.get().running
     }
 
     pub fn strand_watch_target_is_current(
@@ -1696,7 +2334,7 @@ impl ChatController {
         request: &arkret_sdk::StrandWatchCurrentRequestBody,
     ) -> bool {
         self.strand_watch_refresh
-            .read()
+            .get()
             .latest
             .as_ref()
             .is_some_and(|(_, target)| {
@@ -1715,33 +2353,46 @@ impl ChatController {
         api_token: String,
         request: Option<arkret_sdk::StrandWatchCurrentRequestBody>,
     ) {
-        let sequence = self.strand_watch_request.peek().wrapping_add(1);
+        let sequence = self.strand_watch_request.get_untracked().wrapping_add(1);
         let target =
             request.and_then(|request| WatchRefreshTarget::capture(base_url, api_token, request));
-        let mut queue = self.strand_watch_refresh.peek().clone();
+        let mut queue = self.strand_watch_refresh.get_untracked().clone();
         let valid_display = target.as_ref().is_some_and(|target| {
             self.strand_watch_current
-                .peek()
+                .get_untracked()
                 .as_ref()
                 .is_some_and(|current| current.validate_for_request(&target.request).is_ok())
         });
-        let queued = *self.strand_watch_queued.peek() && self.strand_watch_current.peek().is_none();
+        let queued = self.strand_watch_queued.get_untracked()
+            && self.strand_watch_current.get_untracked().is_none();
         if !queue.may_retain_presentation(target.as_ref(), valid_display, queued) {
             self.clear_strand_watch_observation();
         }
-        self.strand_watch_request.set(sequence);
+        {
+            let next_value = sequence;
+            self.strand_watch_request
+                .revise(|value| *value = next_value);
+        };
         let start = queue.enqueue(target.map(|target| (sequence, target)));
-        self.strand_watch_pending.set(queue.pending(
-            self.strand_watch_current.peek().is_some(),
-            *self.strand_watch_queued.peek(),
-        ));
-        self.strand_watch_refresh.set(queue);
+        {
+            let next_value = queue.pending(
+                self.strand_watch_current.get_untracked().is_some(),
+                self.strand_watch_queued.get_untracked(),
+            );
+            self.strand_watch_pending
+                .revise(|value| *value = next_value);
+        };
+        {
+            let next_value = queue;
+            self.strand_watch_refresh
+                .revise(|value| *value = next_value);
+        };
         if !start {
             return;
         }
         // One owner-scoped worker drains the latest read. Its publication fence
         // is invalidated before a write; it never settles the write's ticket.
-        crate::runtime_helpers::spawn_owned(self.messages.origin_scope(), async move {
+        super::task::dispatch(async move {
             let mut attempted_target = None;
             let mut attempts = 0u32;
             let mut backoff = garth::RetrySchedule::new(
@@ -1749,7 +2400,7 @@ impl ChatController {
                 std::time::Duration::from_secs(4),
             );
             loop {
-                let queue = self.strand_watch_refresh.peek().clone();
+                let queue = self.strand_watch_refresh.get_untracked().clone();
                 if queue.write.is_some() {
                     break;
                 }
@@ -1777,7 +2428,7 @@ impl ChatController {
                         },
                     )
                     .await;
-                let queue = self.strand_watch_refresh.peek().clone();
+                let queue = self.strand_watch_refresh.get_untracked().clone();
                 if !queue.may_publish(sequence, publication, &target) {
                     // A newer benign read does not erase a known failure for
                     // this same session/cell. A pre-write or retired-target
@@ -1797,11 +2448,21 @@ impl ChatController {
                 }
                 match result {
                     Ok(current) if current.validate_for_request(&target.request).is_ok() => {
-                        self.strand_watch_queued.set(false);
-                        self.strand_watch_level.set(super::watch_level_from_wire(
-                            crate::transport::strand_watch::current_level(&current),
-                        ));
-                        self.strand_watch_current.set(Some(current));
+                        {
+                            let next_value = false;
+                            self.strand_watch_queued.revise(|value| *value = next_value);
+                        };
+                        {
+                            let next_value = super::watch_level_from_wire(
+                                crate::transport::strand_watch::current_level(&current),
+                            );
+                            self.strand_watch_level.revise(|value| *value = next_value);
+                        };
+                        {
+                            let next_value = Some(current);
+                            self.strand_watch_current
+                                .revise(|value| *value = next_value);
+                        };
                         break;
                     }
                     Ok(_) => {
@@ -1813,8 +2474,10 @@ impl ChatController {
                         let queued = crate::event_submit::is_durably_queued_error(error.inner());
                         self.invalidate_strand_watch_observation(queued);
                         if queued {
-                            self.status_msg
-                                .set(crate::i18n::tr("chat.watch_level.queued"));
+                            {
+                                let next_value = crate::i18n::tr("chat.watch_level.queued");
+                                self.status_msg.revise(|value| *value = next_value);
+                            };
                         }
                         tracing::warn!(error = %error.display_diagnostic(), attempt = attempts,
                             "self watch current observation failed");
@@ -1827,9 +2490,17 @@ impl ChatController {
                     }
                 }
             }
-            let mut queue = self.strand_watch_refresh.peek().clone();
-            self.strand_watch_pending.set(queue.finish_read());
-            self.strand_watch_refresh.set(queue);
+            let mut queue = self.strand_watch_refresh.get_untracked().clone();
+            {
+                let next_value = queue.finish_read();
+                self.strand_watch_pending
+                    .revise(|value| *value = next_value);
+            };
+            {
+                let next_value = queue;
+                self.strand_watch_refresh
+                    .revise(|value| *value = next_value);
+            };
         });
     }
 
@@ -1841,10 +2512,10 @@ impl ChatController {
         request: arkret_sdk::StrandWatchCurrentRequestBody,
         level: Option<arkret_sdk::StrandWatchLevel>,
     ) {
-        if *self.strand_watch_pending.peek()
+        if self.strand_watch_pending.get_untracked()
             || self
                 .strand_watch_current
-                .peek()
+                .get_untracked()
                 .as_ref()
                 .is_none_or(|current| current.validate_for_request(&request).is_err())
         {
@@ -1856,14 +2527,26 @@ impl ChatController {
             self.clear_strand_watch_observation();
             return;
         };
-        let mut queue = self.strand_watch_refresh.peek().clone();
+        let mut queue = self.strand_watch_refresh.get_untracked().clone();
         let Some(ticket) = queue.begin_write(&target) else {
             return;
         };
-        self.strand_watch_refresh.set(queue);
-        self.strand_watch_pending.set(true);
-        self.watch_level_menu_open.set(false);
-        spawn(async move {
+        {
+            let next_value = queue;
+            self.strand_watch_refresh
+                .revise(|value| *value = next_value);
+        };
+        {
+            let next_value = true;
+            self.strand_watch_pending
+                .revise(|value| *value = next_value);
+        };
+        {
+            let next_value = false;
+            self.watch_level_menu_open
+                .revise(|value| *value = next_value);
+        };
+        super::task::dispatch(async move {
             let result =
                 crate::transport::auth::with_authed_sdk_client(
                     &base_url,
@@ -1884,41 +2567,64 @@ impl ChatController {
         mut self,
         ticket: u64,
         target: WatchRefreshTarget,
-        result: Result<
+        result: std::result::Result<
             arkret_sdk::StrandWatchCurrentResponseBody,
             crate::transport::auth::ApiCallError,
         >,
     ) {
-        let mut queue = self.strand_watch_refresh.peek().clone();
+        let mut queue = self.strand_watch_refresh.get_untracked().clone();
         if !queue.finish_write(ticket, &target) {
             return;
         }
-        self.strand_watch_refresh.set(queue);
-        self.strand_watch_pending.set(false);
+        {
+            let next_value = queue;
+            self.strand_watch_refresh
+                .revise(|value| *value = next_value);
+        };
+        {
+            let next_value = false;
+            self.strand_watch_pending
+                .revise(|value| *value = next_value);
+        };
         if target.session.check_session_identity().is_err() {
             self.clear_strand_watch_observation();
             return;
         }
         match result {
             Ok(current) if current.validate_for_request(&target.request).is_ok() => {
-                self.strand_watch_queued.set(false);
-                self.strand_watch_level.set(super::watch_level_from_wire(
-                    crate::transport::strand_watch::current_level(&current),
-                ));
-                self.strand_watch_current.set(Some(current));
-                self.status_msg
-                    .set(crate::i18n::tr("chat.watch_level.saved"));
+                {
+                    let next_value = false;
+                    self.strand_watch_queued.revise(|value| *value = next_value);
+                };
+                {
+                    let next_value = super::watch_level_from_wire(
+                        crate::transport::strand_watch::current_level(&current),
+                    );
+                    self.strand_watch_level.revise(|value| *value = next_value);
+                };
+                {
+                    let next_value = Some(current);
+                    self.strand_watch_current
+                        .revise(|value| *value = next_value);
+                };
+                {
+                    let next_value = crate::i18n::tr("chat.watch_level.saved");
+                    self.status_msg.revise(|value| *value = next_value);
+                };
             }
             result => {
                 let queued = result.as_ref().err().is_some_and(|error| {
                     crate::event_submit::is_durably_queued_error(error.inner())
                 });
                 self.invalidate_strand_watch_observation(queued);
-                self.status_msg.set(crate::i18n::tr(if queued {
-                    "chat.watch_level.queued"
-                } else {
-                    "chat.watch_level.failed"
-                }));
+                {
+                    let next_value = crate::i18n::tr(if queued {
+                        "chat.watch_level.queued"
+                    } else {
+                        "chat.watch_level.failed"
+                    });
+                    self.status_msg.revise(|value| *value = next_value);
+                };
                 if !queued {
                     self.refresh_strand_watch(
                         target.base_url,
@@ -1938,7 +2644,7 @@ impl ChatController {
         credential: String,
         request: arkret_sdk::StrandWatchCurrentRequestBody,
     ) {
-        if *self.strand_watch_pending.peek() || !*self.strand_watch_queued.peek() {
+        if self.strand_watch_pending.get_untracked() || !self.strand_watch_queued.get_untracked() {
             return;
         }
         let Some(target) =
@@ -1947,14 +2653,26 @@ impl ChatController {
             self.clear_strand_watch_observation();
             return;
         };
-        let mut queue = self.strand_watch_refresh.peek().clone();
+        let mut queue = self.strand_watch_refresh.get_untracked().clone();
         let Some(ticket) = queue.begin_write(&target) else {
             return;
         };
-        self.strand_watch_refresh.set(queue);
-        self.strand_watch_pending.set(true);
-        self.watch_level_menu_open.set(false);
-        spawn(async move {
+        {
+            let next_value = queue;
+            self.strand_watch_refresh
+                .revise(|value| *value = next_value);
+        };
+        {
+            let next_value = true;
+            self.strand_watch_pending
+                .revise(|value| *value = next_value);
+        };
+        {
+            let next_value = false;
+            self.watch_level_menu_open
+                .revise(|value| *value = next_value);
+        };
+        super::task::dispatch(async move {
             let result = crate::transport::auth::with_authed_sdk_client(
                 &base_url,
                 credential,
@@ -1977,13 +2695,13 @@ impl ChatController {
     /// indicator is only set once the whole unit lands; a half-applied promote
     /// rolls the indicator back rather than presenting itself as success.
     pub fn promote_private_discussion(
-        mut self,
+        self,
         base_url: String,
         api_token: String,
         source_id: String,
         steps: Vec<crate::event_submit::EventUnitStep>,
     ) {
-        spawn(async move {
+        super::task::dispatch(async move {
             let outcome =
                 crate::transport::auth::with_authed_api(&base_url, api_token, |api| async move {
                     let submitter = api.event_submitter()?;
@@ -1998,32 +2716,34 @@ impl ChatController {
             match outcome {
                 Ok(ids) => {
                     self.promoted_targets
-                        .write()
-                        .insert(source_id, ids.discussion_strand_id);
+                        .revise(|value| value.insert(source_id, ids.discussion_strand_id));
                 }
                 Err(err) => {
                     tracing::warn!("discussion promote failed: {}", err.display());
-                    self.promoted_targets.write().remove(&source_id);
-                    self.status_msg.set(format!(
-                        "Private discussion creation failed: {}",
-                        err.display()
-                    ));
+                    self.promoted_targets
+                        .revise(|value| value.remove(&source_id));
+                    {
+                        let next_value =
+                            format!("Private discussion creation failed: {}", err.display());
+                        self.status_msg.revise(|value| *value = next_value);
+                    };
                 }
             }
         });
     }
 }
 
-fn mark_message_command_succeeded(messages: &mut Signal<Vec<ChatMessage>>, message_id: &str) {
-    if let Some(message) = messages
-        .write()
-        .iter_mut()
-        .find(|message| message.matches_id_or_protocol(message_id))
-    {
-        message.pending = false;
-        message.failed = false;
-        message.error = None;
-    }
+fn mark_message_command_succeeded(messages: &mut Cage<Vec<ChatMessage>>, message_id: &str) {
+    messages.revise(|values| {
+        if let Some(message) = values
+            .iter_mut()
+            .find(|message| message.matches_id_or_protocol(message_id))
+        {
+            message.pending = false;
+            message.failed = false;
+            message.error = None;
+        }
+    });
 }
 
 /// Show the exact reason a retried message did not land.
@@ -2032,8 +2752,8 @@ fn mark_message_command_succeeded(messages: &mut Signal<Vec<ChatMessage>>, messa
 /// bytes are durable, and inviting another retry would risk a duplicate of a
 /// message that may already be accepted.
 fn present_retry_send_failure(
-    messages: &mut Signal<Vec<ChatMessage>>,
-    status_msg: &mut Signal<String>,
+    messages: &mut Cage<Vec<ChatMessage>>,
+    status_msg: &mut Cage<String>,
     message_id: &str,
     failure: &garth::MessageAuthoringFailure,
 ) {
@@ -2044,23 +2764,27 @@ fn present_retry_send_failure(
     ) {
         mark_message_command_failed(messages, message_id, message.clone());
     }
-    status_msg.set(message);
+    {
+        let next_value = message;
+        status_msg.revise(|value| *value = next_value);
+    };
 }
 
 fn mark_message_command_failed(
-    messages: &mut Signal<Vec<ChatMessage>>,
+    messages: &mut Cage<Vec<ChatMessage>>,
     message_id: &str,
     error: String,
 ) {
-    if let Some(message) = messages
-        .write()
-        .iter_mut()
-        .find(|message| message.matches_id_or_protocol(message_id))
-    {
-        message.pending = false;
-        message.failed = true;
-        message.error = Some(error);
-    }
+    messages.revise(|values| {
+        if let Some(message) = values
+            .iter_mut()
+            .find(|message| message.matches_id_or_protocol(message_id))
+        {
+            message.pending = false;
+            message.failed = true;
+            message.error = Some(error);
+        }
+    });
 }
 
 /// What a Strand create still needs once the server has named the Strand.
@@ -2070,41 +2794,41 @@ pub(super) struct StrandCreateDraft {
     pub topic: Option<String>,
     pub create_card: bool,
     pub scope_circle: Option<StrandScopeCircle>,
-    pub frontier_state: Signal<String>,
+    pub frontier_state: Cage<String>,
 }
 
 /// Each mounted target owns its signals for the lifetime of the panel. Async
 /// send failures and uploads retain the original target's signals after a switch.
-#[derive(Clone, Copy, PartialEq)]
-struct ComposerState {
-    session_generation: u64,
-    draft: Signal<String>,
-    draft_storage: Signal<&'static str>,
-    draft_saved: Signal<String>,
-    pending_drafts: Signal<std::collections::BTreeMap<String, String>>,
-    reply_to_message: Signal<Option<String>>,
-    editing_message: Signal<Option<String>>,
-    edit_draft: Signal<String>,
-    compose_dragover: Signal<bool>,
-    compose_upload_status: Signal<String>,
-    attachments: Signal<Vec<crate::attachments::DraftAttachment>>,
-    attachment_target_key: Signal<String>,
-    attachment_target_revision: Signal<u64>,
-    attachment_upload_revision: Signal<u64>,
-    message_context_menu: Signal<Option<String>>,
-    moderation_report_draft: Signal<Option<ModerationReportDraft>>,
-    moderation_report_pending: Signal<bool>,
-    status_msg: Signal<String>,
-    redact_confirm: Signal<Option<String>>,
-    reaction_picker: Signal<Option<String>>,
-    mention_picker_state: Signal<crate::messaging::mentions::MentionPickerState>,
-    attachment_menu_open: Signal<bool>,
-    poll_draft: Signal<Option<crate::messaging::polls::PollDraft>>,
-    latest_read_cursor: Signal<String>,
+#[derive(Clone, Copy)]
+pub(super) struct ComposerState {
+    pub(super) session_generation: u64,
+    pub(super) draft: Cage<String>,
+    pub(super) draft_storage: Cage<&'static str>,
+    pub(super) draft_saved: Cage<String>,
+    pub(super) pending_drafts: Cage<std::collections::BTreeMap<String, String>>,
+    pub(super) reply_to_message: Cage<Option<String>>,
+    pub(super) editing_message: Cage<Option<String>>,
+    pub(super) edit_draft: Cage<String>,
+    pub(super) compose_dragover: Cage<bool>,
+    pub(super) compose_upload_status: Cage<String>,
+    pub(super) attachments: Cage<Vec<crate::attachments::DraftAttachment>>,
+    pub(super) attachment_target_key: Cage<String>,
+    pub(super) attachment_target_revision: Cage<u64>,
+    pub(super) attachment_upload_revision: Cage<u64>,
+    pub(super) message_context_menu: Cage<Option<String>>,
+    pub(super) moderation_report_draft: Cage<Option<ModerationReportDraft>>,
+    pub(super) moderation_report_pending: Cage<bool>,
+    pub(super) status_msg: Cage<String>,
+    pub(super) redact_confirm: Cage<Option<String>>,
+    pub(super) reaction_picker: Cage<Option<String>>,
+    pub(super) mention_picker_state: Cage<crate::messaging::mentions::MentionPickerState>,
+    pub(super) attachment_menu_open: Cage<bool>,
+    pub(super) poll_draft: Cage<Option<crate::messaging::polls::PollDraft>>,
+    pub(super) latest_read_cursor: Cage<String>,
 }
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct ComposerTarget {
+pub(super) struct ComposerTarget {
     authority: arkret_sdk::AccountId,
     device_id: arkret_sdk::DeviceId,
     realm_id: String,
@@ -2112,56 +2836,50 @@ struct ComposerTarget {
 }
 
 fn composer_session_matches(
-    session: crate::app::SessionContext,
+    context: &crate::presentation::InksonContext,
     target: &ComposerTarget,
     generation: u64,
 ) -> bool {
-    *session.session_generation.peek() == generation
-        && session
+    context.session_generation.get_untracked() == generation
+        && context
             .active_account
-            .peek()
+            .get_untracked()
             .as_ref()
             .is_some_and(|account| {
                 account.authority == target.authority && account.device_id == target.device_id
             })
 }
 
-fn use_composer_state(target: ComposerTarget) -> ComposerState {
-    let session = try_consume_context::<crate::app::SessionContext>();
-    let mut targets = use_signal(std::collections::BTreeMap::<ComposerTarget, ComposerState>::new);
-    let mut last_seen =
-        use_signal(std::collections::BTreeMap::<ComposerTarget, (u64, String)>::new);
-    let mut pending = use_signal(
-        std::collections::BTreeMap::<
-            ComposerTarget,
-            (u64, String, crate::state::E2eeCacheWriteIntent),
-        >::new,
-    );
-    let mut running = use_signal(|| false);
-    let mut previous_session = use_signal(|| None::<u64>);
-    if let Some(session) = session {
-        let generation = *session.session_generation.peek();
-        if *previous_session.peek() != Some(generation) {
-            targets.write().clear();
-            last_seen.write().clear();
-            pending.write().clear();
-            previous_session.set(Some(generation));
+fn composer_state(
+    context: &Rc<crate::presentation::InksonContext>,
+    target: ComposerTarget,
+) -> glory::ui::Result<ComposerState> {
+    let scope = context.state_scope().ok_or(glory::ui::Error::Gone)?;
+    context.chat_state.install(context);
+    let generation = context.session_generation.get_untracked();
+    if let Some(mut state) = context
+        .chat_state
+        .drafts
+        .get_untracked()
+        .get(&target)
+        .copied()
+    {
+        if state.session_generation != generation {
+            state.session_generation = generation;
+            context.chat_state.drafts.revise(|drafts| {
+                drafts.insert(target, state);
+            });
         }
+        return Ok(state);
     }
-    let existing = targets.peek().get(&target).copied();
-    let state =
-        existing.unwrap_or_else(|| {
-            let restored = session.and_then(|mut session| {
-                let generation = *session.session_generation.peek();
-                if !composer_session_matches(session, &target, generation) {
-                    return None;
-                }
-                #[cfg(target_arch = "wasm32")]
-                if !crate::secure_key_store::wasm_secure_store_ready() {
-                    return None;
-                }
-                let secure = crate::secure_key_store::default_secure_key_store("inkson");
-                let mut store = session.state_store.write();
+    let restored = if composer_session_matches(context, &target, generation) {
+        #[cfg(target_arch = "wasm32")]
+        let ready = crate::secure_key_store::wasm_secure_store_ready();
+        #[cfg(not(target_arch = "wasm32"))]
+        let ready = true;
+        if ready {
+            let secure = crate::secure_key_store::default_secure_key_store("inkson");
+            context.state_store.write(|store| {
                 if store.active_authority().as_ref() != Some(&target.authority) {
                     return None;
                 }
@@ -2172,116 +2890,117 @@ fn use_composer_state(target: ComposerTarget) -> ComposerState {
                     return None;
                 }
                 Some(store.composer_draft(&target.device_id, &target.realm_id, &target.strand_id))
-            });
-            let state = ComposerState {
-                session_generation: session
-                    .map(|session| *session.session_generation.peek())
-                    .unwrap_or_default(),
-                draft: Signal::new(restored.clone().unwrap_or_default()),
-                draft_storage: Signal::new(if restored.is_some() {
-                    "saved"
-                } else {
-                    "memory"
-                }),
-                draft_saved: Signal::new(restored.unwrap_or_default()),
-                pending_drafts: Signal::new(std::collections::BTreeMap::new()),
-                reply_to_message: Signal::new(None),
-                editing_message: Signal::new(None),
-                edit_draft: Signal::new(String::new()),
-                compose_dragover: Signal::new(false),
-                compose_upload_status: Signal::new(String::new()),
-                attachments: Signal::new(Vec::new()),
-                attachment_target_key: Signal::new(String::new()),
-                attachment_target_revision: Signal::new(0),
-                attachment_upload_revision: Signal::new(0),
-                message_context_menu: Signal::new(None),
-                moderation_report_draft: Signal::new(None),
-                moderation_report_pending: Signal::new(false),
-                status_msg: Signal::new(String::new()),
-                redact_confirm: Signal::new(None),
-                reaction_picker: Signal::new(None),
-                mention_picker_state: Signal::new(
-                    crate::messaging::mentions::MentionPickerState::new(),
-                ),
-                attachment_menu_open: Signal::new(false),
-                poll_draft: Signal::new(None),
-                latest_read_cursor: Signal::new(String::new()),
-            };
-            // Mounting is not an authored empty-string tombstone. In particular,
-            // a pending cache clear can temporarily hide another Chat's draft;
-            // only a later edit or committed send may replace that saved value.
-            last_seen.write().insert(
-                target.clone(),
-                (state.session_generation, state.draft.peek().clone()),
-            );
-            targets.write().insert(target.clone(), state);
-            state
-        });
-    // Always allocate this hook, including when switching to an existing target.
-    // One drain serializes exact encrypted snapshots; typing during a write
-    // replaces only the pending value and can never mark stale text as saved.
-    use_effect(move || {
-        let Some(mut session) = session else {
+            })
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    let state = ComposerState {
+        session_generation: context.session_generation.get_untracked(),
+        draft: scope.cage(restored.clone().unwrap_or_default()),
+        draft_storage: scope.cage(if restored.is_some() {
+            "saved"
+        } else {
+            "memory"
+        }),
+        draft_saved: scope.cage(restored.unwrap_or_default()),
+        pending_drafts: scope.cage(std::collections::BTreeMap::new()),
+        reply_to_message: scope.cage(None),
+        editing_message: scope.cage(None),
+        edit_draft: scope.cage(String::new()),
+        compose_dragover: scope.cage(false),
+        compose_upload_status: scope.cage(String::new()),
+        attachments: scope.cage(Vec::new()),
+        attachment_target_key: scope.cage(String::new()),
+        attachment_target_revision: scope.cage(0),
+        attachment_upload_revision: scope.cage(0),
+        message_context_menu: scope.cage(None),
+        moderation_report_draft: scope.cage(None),
+        moderation_report_pending: scope.cage(false),
+        status_msg: scope.cage(String::new()),
+        redact_confirm: scope.cage(None),
+        reaction_picker: scope.cage(None),
+        mention_picker_state: scope.cage(crate::messaging::mentions::MentionPickerState::new()),
+        attachment_menu_open: scope.cage(false),
+        poll_draft: scope.cage(None),
+        latest_read_cursor: scope.cage(String::new()),
+    };
+
+    context.chat_state.last_seen.revise(|seen| {
+        seen.insert(target.clone(), (generation, state.draft.get_untracked()));
+    });
+    context.chat_state.drafts.revise(|drafts| {
+        drafts.insert(target, state);
+    });
+    Ok(state)
+}
+
+pub(super) fn install_composer_persistence(
+    scope: &Scope,
+    weak: std::rc::Weak<crate::presentation::InksonContext>,
+) {
+    scope.effect(move || {
+        let Some(context) = weak.upgrade() else {
             return;
         };
-        let generation = (session.session_generation)();
-        let account = (session.active_account)();
-        for (target, mut state) in targets
-            .read()
-            .iter()
-            .map(|(target, state)| (target.clone(), *state))
-        {
-            if state.session_generation != generation {
+        let pool = &context.chat_state;
+        let generation = context.session_generation.get();
+        let account = context.active_account.get();
+        for (target, state) in pool.drafts.get() {
+            if state.session_generation != generation
+                || !account.as_ref().is_some_and(|account| {
+                    account.authority == target.authority && account.device_id == target.device_id
+                })
+            {
                 continue;
             }
-            let draft = (state.draft)();
-            let inflight = (state.pending_drafts)();
-            if !account.as_ref().is_some_and(|account| {
-                account.authority == target.authority && account.device_id == target.device_id
-            }) {
-                continue;
-            }
-            let durable_draft = if draft.is_empty() {
+            let draft = state.draft.get();
+            let inflight = state.pending_drafts.get();
+            let durable = if draft.is_empty() {
                 inflight.values().next_back().cloned().unwrap_or_default()
             } else {
                 draft
             };
-            let value = (generation, durable_draft);
-            if last_seen.peek().get(&target) == Some(&value) {
+            let value = (generation, durable);
+            if pool.last_seen.get_untracked().get(&target) == Some(&value) {
                 continue;
             }
-            state.draft_storage.set("saving");
-            last_seen.write().insert(target.clone(), value.clone());
-            let intent = session
+            state.draft_storage.revise(|status| *status = "saving");
+            pool.last_seen.revise(|seen| {
+                seen.insert(target.clone(), value.clone());
+            });
+            match context
                 .state_store
-                .read()
-                .capture_e2ee_cache_write_intent(&target.realm_id);
-            match intent {
+                .read(|store| store.capture_e2ee_cache_write_intent(&target.realm_id))
+            {
                 Ok(intent) => {
-                    pending.write().insert(target, (value.0, value.1, intent));
+                    pool.pending.revise(|pending| {
+                        pending.insert(target, (value.0, value.1, intent));
+                    });
                 }
                 Err(error) => {
                     tracing::warn!(?error, "composer intent provenance unavailable");
-                    state.draft_storage.set("error");
+                    state.draft_storage.revise(|status| *status = "error");
                 }
             }
         }
-        if *running.peek() || pending.peek().is_empty() {
+        if pool.running.get_untracked() || pool.pending.get_untracked().is_empty() {
             return;
         }
-        running.set(true);
-        spawn(async move {
+        pool.running.revise(|running| *running = true);
+        let worker = context.clone();
+        super::task::chat_task(context, async move {
             loop {
-                let next = {
-                    let target = pending.peek().keys().next().cloned();
-                    target.and_then(|target| {
-                        pending.write().remove(&target).map(|value| (target, value))
-                    })
-                };
+                let next = worker
+                    .chat_state
+                    .pending
+                    .revise(|pending| pending.pop_first());
                 let Some((target, (generation, draft, intent))) = next else {
                     break;
                 };
-                if !composer_session_matches(session, &target, generation) {
+                if !composer_session_matches(&worker, &target, generation) {
                     continue;
                 }
                 let result: anyhow::Result<()> = async {
@@ -2291,13 +3010,8 @@ fn use_composer_state(target: ComposerTarget) -> ComposerState {
                         "encrypted storage is unavailable"
                     );
                     let secure = crate::secure_key_store::default_secure_key_store("inkson");
-                    let write = {
-                        let mut store = session.state_store.write();
-                        // Validate before hydration or preparation. Input queued
-                        // behind another await cannot survive a same-session clear.
+                    let write = worker.state_store.write(|store| -> anyhow::Result<_> {
                         store.validate_e2ee_cache_write_intent(&intent, &target.realm_id)?;
-                        // Do not overwrite an unread secure entry after a failed
-                        // initialization, and never route an old session to a new account.
                         store.hydrate_e2ee_plaintext_cache_with_secure_store(secure.as_ref())?;
                         store.prepare_composer_draft_write_captured(
                             &target.authority,
@@ -2305,8 +3019,8 @@ fn use_composer_state(target: ComposerTarget) -> ComposerState {
                             &target.realm_id,
                             &target.strand_id,
                             draft.clone(),
-                        )?
-                    };
+                        )
+                    })?;
                     crate::state::LocalStateStore::persist_captured_e2ee_cache_write_durable(
                         secure.as_ref(),
                         write,
@@ -2314,42 +3028,50 @@ fn use_composer_state(target: ComposerTarget) -> ComposerState {
                     .await
                 }
                 .await;
-                if !composer_session_matches(session, &target, generation) {
+                if !composer_session_matches(&worker, &target, generation)
+                    || worker.chat_state.last_seen.get_untracked().get(&target)
+                        != Some(&(generation, draft.clone()))
+                {
                     continue;
                 }
-                if last_seen.peek().get(&target) != Some(&(generation, draft.clone())) {
-                    continue;
-                }
-                let state = targets.peek().get(&target).copied();
-                if let Some(mut state) = state {
+                if let Some(state) = worker
+                    .chat_state
+                    .drafts
+                    .get_untracked()
+                    .get(&target)
+                    .copied()
+                {
                     match result {
                         Ok(()) => {
-                            state.draft_saved.set(draft);
-                            state.draft_storage.set("saved");
+                            state.draft_saved.revise(|value| *value = draft);
+                            state.draft_storage.revise(|status| *status = "saved");
                         }
                         Err(error) => {
                             tracing::warn!(?error, "composer draft durable write failed");
-                            state.draft_storage.set("error");
+                            state.draft_storage.revise(|status| *status = "error");
                         }
                     }
                 }
             }
-            running.set(false);
+            worker.chat_state.running.revise(|running| *running = false);
         });
     });
-    state
 }
 
 #[cfg(test)]
 #[path = "controller_context_tests.rs"]
 mod controller_context_tests;
 
-pub(super) fn use_chat_controller(
+pub(super) fn chat_controller(
+    _scope: &Scope,
+    context: Rc<crate::presentation::InksonContext>,
     selected_realm_id: &str,
     initial_strand_id: &str,
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
-) -> ChatController {
+) -> glory::ui::Result<ChatController> {
+    let root_scope = context.state_scope().ok_or(glory::ui::Error::Gone)?;
+    let scope = &root_scope;
     let initial_default_channel = (!selected_realm_id.trim().is_empty())
         .then(|| discussion_channel_for_strand(initial_strand_id))
         .flatten();
@@ -2361,33 +3083,69 @@ pub(super) fn use_chat_controller(
         .clone()
         .into_iter()
         .collect::<Vec<_>>();
-    let selected_channel = use_signal(move || initial_selected_channel);
-    let mut selection_key = use_signal(String::new);
-    let mut selection_revision = use_signal(|| 0_u64);
+    let target = CommonTarget::new(authority, device_id, selected_realm_id, initial_strand_id);
+    let revision = context.chat_state.revision();
+    let cached = context
+        .chat_state
+        .controllers
+        .borrow()
+        .get(&target)
+        .copied();
+    if let Some(mut cached) = cached {
+        if cached.revision != revision {
+            cached
+                .controller
+                .selected_channel
+                .revise(|value| *value = initial_selected_channel);
+            cached
+                .controller
+                .channels
+                .revise(|value| *value = initial_channels);
+            cached.revision = revision;
+            context
+                .chat_state
+                .controllers
+                .borrow_mut()
+                .insert(target, cached);
+        }
+        return Ok(cached.controller);
+    }
+    let selected_channel = scope.cage(initial_selected_channel);
+    let selection_key = scope.cage((String::new)());
+    let selection_revision = scope.cage(0_u64);
     let key = format!(
         "{authority:?}|{device_id}|{selected_realm_id}|{}",
-        selected_channel()
+        selected_channel.get()
     );
-    if *selection_key.peek() != key {
-        selection_key.set(key);
-        let revision = selection_revision.peek().wrapping_add(1);
-        selection_revision.set(revision);
+    if selection_key.get_untracked() != key {
+        {
+            let next_value = key;
+            selection_key.revise(|value| *value = next_value);
+        };
+        let revision = selection_revision.get_untracked().wrapping_add(1);
+        {
+            let next_value = revision;
+            selection_revision.revise(|value| *value = next_value);
+        };
     }
-    let composer = use_composer_state(ComposerTarget {
-        authority: authority.clone(),
-        device_id: device_id.clone(),
-        realm_id: selected_realm_id.to_owned(),
-        strand_id: selected_channel(),
-    });
-    ChatController {
-        channels: use_signal(move || initial_channels),
+    let composer = composer_state(
+        &context,
+        ComposerTarget {
+            authority: authority.clone(),
+            device_id: device_id.clone(),
+            realm_id: selected_realm_id.to_owned(),
+            strand_id: selected_channel.get(),
+        },
+    )?;
+    let controller = ChatController {
+        channels: scope.cage(initial_channels),
         selected_channel,
-        messages: use_signal(Vec::<ChatMessage>::new),
+        messages: scope.cage((Vec::<ChatMessage>::new)()),
         draft: composer.draft,
         draft_storage: composer.draft_storage,
         draft_saved: composer.draft_saved,
         pending_drafts: composer.pending_drafts,
-        typing_throttle: crate::perf::use_typing_throttle(3_000, 4_000),
+        typing_throttle: crate::perf::typing_throttle(scope, 3_000, 4_000),
         compose_dragover: composer.compose_dragover,
         compose_upload_status: composer.compose_upload_status,
         attachments: composer.attachments,
@@ -2395,74 +3153,79 @@ pub(super) fn use_chat_controller(
         attachment_target_revision: composer.attachment_target_revision,
         attachment_upload_revision: composer.attachment_upload_revision,
         selection_revision,
-        shared_pins: use_signal(Vec::<SharedMessagePin>::new),
-        private_saved_targets: use_signal(std::collections::BTreeSet::<String>::new),
-        private_saved_account_data: use_signal(
-            std::collections::BTreeMap::<String, serde_json::Value>::new,
-        ),
+        shared_pins: scope.cage((Vec::<SharedMessagePin>::new)()),
+        private_saved_targets: scope.cage((std::collections::BTreeSet::<String>::new)()),
+        private_saved_account_data: scope
+            .cage((std::collections::BTreeMap::<String, serde_json::Value>::new)()),
         message_context_menu: composer.message_context_menu,
         moderation_report_draft: composer.moderation_report_draft,
         moderation_report_pending: composer.moderation_report_pending,
-        new_channel_name: use_signal(String::new),
-        new_channel_topic: use_signal(String::new),
-        new_channel_create_card: use_signal(|| false),
-        create_dialog_open: use_signal(|| false),
-        strand_watch_level: use_signal(|| WatchLevel::All),
-        strand_watch_current: use_signal(|| None),
-        strand_watch_pending: use_signal(|| false),
-        strand_watch_queued: use_signal(|| false),
-        strand_watch_request: use_signal(|| 0),
-        strand_watch_refresh: use_signal(WatchRefreshQueue::default),
-        watch_level_menu_open: use_signal(|| false),
+        new_channel_name: scope.cage((String::new)()),
+        new_channel_topic: scope.cage((String::new)()),
+        new_channel_create_card: scope.cage(false),
+        create_dialog_open: scope.cage(false),
+        strand_watch_level: scope.cage(WatchLevel::All),
+        strand_watch_current: scope.cage(None),
+        strand_watch_pending: scope.cage(false),
+        strand_watch_queued: scope.cage(false),
+        strand_watch_request: scope.cage(0),
+        strand_watch_refresh: scope.cage((WatchRefreshQueue::default)()),
+        watch_level_menu_open: scope.cage(false),
         status_msg: composer.status_msg,
-        queued_outbound_local_operation_ids: use_signal(std::collections::BTreeSet::<String>::new),
-        is_online: use_signal(navigator_online),
+        queued_outbound_local_operation_ids: scope
+            .cage((std::collections::BTreeSet::<String>::new)()),
+        is_online: scope.cage((navigator_online)()),
         reply_to_message: composer.reply_to_message,
         editing_message: composer.editing_message,
         edit_draft: composer.edit_draft,
         redact_confirm: composer.redact_confirm,
         reaction_picker: composer.reaction_picker,
-        initial_sync_requested: use_signal(|| false),
-        initial_sync_finished: use_signal(|| false),
+        initial_sync_requested: scope.cage(false),
+        initial_sync_finished: scope.cage(false),
         mention_picker_state: composer.mention_picker_state,
-        owned_agent_slugs: use_signal(std::collections::BTreeMap::<String, String>::new),
-        owned_agent_sync_key_seen: use_signal(String::new),
-        agent_participation_visibility: use_signal(std::collections::BTreeMap::<String, bool>::new),
-        agent_participation_sync_key_seen: use_signal(String::new),
+        owned_agent_slugs: scope.cage((std::collections::BTreeMap::<String, String>::new)()),
+        owned_agent_sync_key_seen: scope.cage((String::new)()),
+        agent_participation_visibility: scope
+            .cage((std::collections::BTreeMap::<String, bool>::new)()),
+        agent_participation_sync_key_seen: scope.cage((String::new)()),
         attachment_menu_open: composer.attachment_menu_open,
         poll_draft: composer.poll_draft,
-        poll_cards: use_signal(Vec::<crate::messaging::polls::PollCard>::new),
-        typing_actors: use_signal(Vec::<String>::new),
-        typing_next_expires_at_ms: use_signal(|| None),
-        presence_states: use_signal(std::collections::BTreeMap::<String, String>::new),
-        presence_labels: use_signal(std::collections::BTreeMap::<String, String>::new),
-        presence_status_messages: use_signal(std::collections::BTreeMap::<String, String>::new),
-        presence_sync_key_seen: use_signal(String::new),
-        presence_announce_key_seen: use_signal(String::new),
-        presence_heartbeat_tick: use_signal(|| 0),
-        promote_discussion_draft: use_signal(
-            crate::messaging::discussion_promote::PromoteDiscussionDraft::default,
-        ),
-        promoted_targets: use_signal(std::collections::BTreeMap::<String, String>::new),
+        poll_cards: scope.cage((Vec::<crate::messaging::polls::PollCard>::new)()),
+        typing_actors: scope.cage((Vec::<String>::new)()),
+        typing_next_expires_at_ms: scope.cage(None),
+        presence_states: scope.cage((std::collections::BTreeMap::<String, String>::new)()),
+        presence_labels: scope.cage((std::collections::BTreeMap::<String, String>::new)()),
+        presence_status_messages: scope.cage((std::collections::BTreeMap::<String, String>::new)()),
+        presence_sync_key_seen: scope.cage((String::new)()),
+        presence_announce_key_seen: scope.cage((String::new)()),
+        presence_heartbeat_tick: scope.cage(0),
+        promote_discussion_draft: scope
+            .cage((crate::messaging::discussion_promote::PromoteDiscussionDraft::default)()),
+        promoted_targets: scope.cage((std::collections::BTreeMap::<String, String>::new)()),
         latest_read_cursor: composer.latest_read_cursor,
-        blocked_show_anyway: use_signal(std::collections::BTreeSet::<String>::new),
-        account_display_name: use_signal(String::new),
-        track_filter: use_signal(|| "discussion_only".to_owned()),
-        left_panel_open: use_signal(|| true),
-        eligible_circle_scopes: use_signal(Vec::new),
-        eligible_circle_scope_request_key_seen: use_signal(String::new),
-        eligible_circle_scope_request_in_flight: use_signal(|| false),
-        new_channel_scope: use_signal(crate::circle::CircleScope::default),
-        sidecar_send_pending: use_signal(|| false),
-        member_handle_fetching: use_signal(std::collections::BTreeSet::new),
-    }
+        blocked_show_anyway: scope.cage((std::collections::BTreeSet::<String>::new)()),
+        account_display_name: scope.cage((String::new)()),
+        track_filter: scope.cage("discussion_only".to_owned()),
+        left_panel_open: scope.cage(true),
+        eligible_circle_scopes: scope.cage((Vec::new)()),
+        eligible_circle_scope_request_key_seen: scope.cage((String::new)()),
+        eligible_circle_scope_request_in_flight: scope.cage(false),
+        new_channel_scope: scope.cage((crate::circle::CircleScope::default)()),
+        sidecar_send_pending: scope.cage(false),
+        member_handle_fetching: scope.cage((std::collections::BTreeSet::new)()),
+    };
+    context.chat_state.controllers.borrow_mut().insert(
+        target,
+        CachedChatController {
+            controller,
+            revision,
+        },
+    );
+    Ok(controller)
 }
 
 #[cfg(test)]
 mod composer_target_tests {
-    use std::cell::RefCell;
-    use std::rc::Rc;
-
     use super::*;
 
     #[test]
@@ -2675,15 +3438,6 @@ mod composer_target_tests {
         );
     }
 
-    type Control = Rc<RefCell<Option<(Signal<ComposerTarget>, ComposerState)>>>;
-
-    fn harness(control: Control) -> Element {
-        let target = use_signal(|| target("a"));
-        let composer = use_composer_state(target());
-        *control.borrow_mut() = Some((target, composer));
-        rsx! { input { value: (composer.draft)() } }
-    }
-
     fn target(strand: &str) -> ComposerTarget {
         ComposerTarget {
             authority: crate::test_support::authority("ak:did_core:web:alice.example"),
@@ -2693,26 +3447,12 @@ mod composer_target_tests {
             strand_id: strand.into(),
         }
     }
-
-    type HistoryControl = Rc<RefCell<Option<(Signal<bool>, ComposerState)>>>;
-
-    fn history_harness(control: HistoryControl) -> Element {
-        let private_history_visible = use_signal(|| false);
-        let composer = use_composer_state(target("a"));
-        *control.borrow_mut() = Some((private_history_visible, composer));
-        rsx! {
-            div { "data-private-history": private_history_visible().to_string(),
-                input { value: (composer.draft)() }
-            }
-        }
-    }
-
     #[test]
     fn hosted_history_activation_preserves_current_draft_and_structured_binding() {
-        let control = Rc::new(RefCell::new(None));
-        let mut dom = VirtualDom::new_with_props(history_harness, control.clone());
-        dom.rebuild_to_vec();
-        let (mut visible, mut original) = control.borrow().unwrap();
+        let app = glory::ui::App::memory();
+        let dir = tempfile::tempdir().unwrap();
+        let context = super::controller_context_tests::context(app.scope(), dir.path());
+        let original = composer_state(&context, target("a")).unwrap();
         let candidate = crate::messaging::mentions::MentionCandidate {
             subject_account_id: crate::test_support::authority("ak:did_core:web:agent.example"),
             display_name: "aa".into(),
@@ -2724,81 +3464,84 @@ mod composer_target_tests {
             controller_handle_at_time: String::new(),
             agent_slug_at_time: String::new(),
         };
-        dom.in_runtime(|| {
-            let draft = original
-                .mention_picker_state
-                .write()
-                .select(candidate, "@", Some((0, 1)));
-            original.draft.set(draft);
-            original.reply_to_message.set(Some("source-reply".into()));
-        });
-        dom.render_immediate_to_vec();
-        for value in [true, false, true] {
-            dom.in_runtime(|| visible.set(value));
-            dom.render_immediate_to_vec();
-            let current = control.borrow().unwrap().1;
-            dom.in_runtime(|| {
-                assert_eq!(current.draft, original.draft);
-                assert_eq!((current.draft)(), "@me/aa ");
-                assert_eq!(
-                    current
-                        .mention_picker_state
-                        .read()
-                        .bound_candidates(&(current.draft)())
-                        .len(),
-                    1
-                );
-                assert_eq!(
-                    (current.reply_to_message)().as_deref(),
-                    Some("source-reply")
-                );
-            });
+        let draft = original
+            .mention_picker_state
+            .revise(|picker| picker.select(candidate, "@", Some((0, 1))));
+        original.draft.revise(|value| *value = draft);
+        original
+            .reply_to_message
+            .revise(|value| *value = Some("source-reply".into()));
+        for _ in 0..3 {
+            let child = app.scope().child().unwrap();
+            child.dispose();
+            let current = composer_state(&context, target("a")).unwrap();
+            current
+                .draft
+                .revise(|value| *value = "retained identity probe".to_owned());
+            assert_eq!(original.draft.get_untracked(), "retained identity probe");
+            original.draft.revise(|value| *value = "@me/aa ".to_owned());
+            assert_eq!(current.draft.get_untracked(), "@me/aa ");
+            assert_eq!(
+                current
+                    .mention_picker_state
+                    .get_untracked()
+                    .bound_candidates(&current.draft.get_untracked())
+                    .len(),
+                1
+            );
+            assert_eq!(
+                current.reply_to_message.get_untracked().as_deref(),
+                Some("source-reply")
+            );
         }
     }
-
     #[test]
     fn composer_switch_keeps_draft_reply_edit_and_late_results_on_original_chat() {
-        let control = Rc::new(RefCell::new(None));
-        let mut dom = VirtualDom::new_with_props(harness, control.clone());
-        dom.rebuild_to_vec();
-        let (mut selected, mut a) = control.borrow().unwrap();
-        dom.in_runtime(|| {
-            a.draft.set("draft a".into());
-            a.reply_to_message.set(Some("message a".into()));
-            a.editing_message.set(Some("edit a".into()));
-            a.edit_draft.set("edited a".into());
-            selected.set(target("b"));
-        });
-        dom.render_immediate_to_vec();
-        let (_, mut b) = control.borrow().unwrap();
-        dom.in_runtime(|| {
-            assert!((b.draft)().is_empty());
-            assert!((b.reply_to_message)().is_none());
-            assert!((b.editing_message)().is_none());
-            b.draft.set("draft b".into());
-            // The old async operation retains these signals after navigation.
-            a.draft.set("restored a with attachment".into());
-            a.compose_upload_status.set("Upload complete".into());
-            assert_eq!((b.draft)(), "draft b");
-            assert!((b.compose_upload_status)().is_empty());
-            selected.set(target("a"));
-        });
-        dom.render_immediate_to_vec();
-        let (_, restored) = control.borrow().unwrap();
-        dom.in_runtime(|| {
-            assert_eq!((restored.draft)(), "restored a with attachment");
-            assert_eq!((restored.reply_to_message)().as_deref(), Some("message a"));
-            assert_eq!((restored.edit_draft)(), "edited a");
-        });
+        let app = glory::ui::App::memory();
+        let dir = tempfile::tempdir().unwrap();
+        let context = super::controller_context_tests::context(app.scope(), dir.path());
+        let a = composer_state(&context, target("a")).unwrap();
+        a.draft.revise(|value| *value = "draft a".into());
+        a.reply_to_message
+            .revise(|value| *value = Some("message a".into()));
+        a.edit_draft.revise(|value| *value = "edited a".into());
+        let b = composer_state(&context, target("b")).unwrap();
+        assert!(b.draft.get_untracked().is_empty());
+        b.draft.revise(|value| *value = "draft b".into());
+        a.draft
+            .revise(|value| *value = "restored a with attachment".into());
+        a.compose_upload_status
+            .revise(|value| *value = "Upload complete".into());
+        assert_eq!(b.draft.get_untracked(), "draft b");
+        assert!(b.compose_upload_status.get_untracked().is_empty());
+        let restored = composer_state(&context, target("a")).unwrap();
+        assert_eq!(restored.draft.get_untracked(), "restored a with attachment");
+        assert_eq!(
+            restored.reply_to_message.get_untracked().as_deref(),
+            Some("message a")
+        );
+        assert_eq!(restored.edit_draft.get_untracked(), "edited a");
         let mut isolated = vec![target("a"); 3];
         isolated[0].authority = crate::test_support::authority("ak:did_core:web:bob.example");
         isolated[1].device_id =
             arkret_sdk::DeviceId::new("ak:device:0196419b-0000-7000-8000-0000000000f2").unwrap();
         isolated[2].realm_id = "other realm".into();
         for target in isolated {
-            dom.in_runtime(|| selected.set(target));
-            dom.render_immediate_to_vec();
-            dom.in_runtime(|| assert!((control.borrow().unwrap().1.draft)().is_empty()));
+            assert!(
+                composer_state(&context, target)
+                    .unwrap()
+                    .draft
+                    .get_untracked()
+                    .is_empty()
+            );
         }
+        context.chat_state.retire_session();
+        assert_eq!(
+            composer_state(&context, target("a"))
+                .unwrap()
+                .draft
+                .get_untracked(),
+            "restored a with attachment"
+        );
     }
 }

@@ -49,13 +49,13 @@ pub(crate) fn local_created_card(
 }
 
 pub(crate) fn sync_selected_card_from_columns(
-    mut selected_card: Signal<Option<KanbanCard>>,
+    selected_card: Cage<Option<KanbanCard>>,
     columns: &[KanbanColumn],
     raw_operations: &[RawOperationRecord],
     preserve_edit_basis: bool,
     refreshing_content: bool,
 ) {
-    let Some(current) = selected_card.read().clone() else {
+    let Some(current) = selected_card.get_untracked() else {
         return;
     };
     if let Some(mut next) =
@@ -66,7 +66,7 @@ pub(crate) fn sync_selected_card_from_columns(
         }
         // Retaining presentation can erase the original projection difference.
         if next != current {
-            selected_card.set(Some(next));
+            selected_card.revise(|value| *value = Some(next));
         }
     }
 }
@@ -903,6 +903,7 @@ pub(crate) fn local_card_create_from_raw_operation(
 /// A holder-local pending create may display its authored content ID before
 /// current exists. This is display evidence only, never an editable source or
 /// an accepted alias. Bind the exact local operation and intended Board/List.
+#[cfg(test)]
 pub(crate) fn holder_local_pending_card_create(
     card: &KanbanCard,
     board_space_id: &str,

@@ -1,11 +1,8 @@
 pub use arkret_sdk::MentionNode;
-use dioxus::prelude::*;
-// Single source in yoface (the projection layer needs
-// this label formatter without importing a views module). Re-exported so all
-// existing `views::helpers::short_protocol_id` call sites keep resolving.
-pub use yoface::utils::text::short_protocol_id;
+use glory::Cage;
 
 pub(crate) use super::member_display::{account_display_label, actor_display_label};
+pub use crate::display_id::short_protocol_id;
 
 /// Display label for one Contact peer.
 ///
@@ -42,13 +39,14 @@ use crate::config::{ClientConfig, LocalConfigStore};
 /// checked against the typed context and never used to manufacture identity or
 /// resolution coordinates.
 pub fn persist_config(
-    mut config_store: Signal<LocalConfigStore>,
+    config_store: Cage<LocalConfigStore>,
+    active_account: &Option<crate::config::ActiveAccountContext>,
     server_url: String,
     principal_id: Option<arkret_sdk::DidCoreId>,
     device_id: String,
     session_credential: String,
 ) {
-    let Some(account) = (crate::app::SessionContext::get().active_account)() else {
+    let Some(account) = active_account.clone() else {
         tracing::warn!("authenticated config persist skipped without accepted account context");
         return;
     };
@@ -62,8 +60,7 @@ pub fn persist_config(
         return;
     }
     config_store
-        .write()
-        .save(ClientConfig::authenticated(account, session_credential));
+        .revise(|store| store.save(ClientConfig::authenticated(account, session_credential)));
 }
 
 fn normalize_inline_token(token: &str) -> &str {

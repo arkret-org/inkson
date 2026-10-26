@@ -1,693 +1,1005 @@
-//! The `RecoveryPanel` Dioxus component.
+//! Custody-first recovery material enrollment and server ciphertext inventory.
+use std::rc::Rc;
 
-use dioxus::prelude::*;
-use dioxus_router::hooks::use_navigator;
+use glory::{Cage, Scope};
 
 use super::backup_summary::{
     BackupInventoryStatus, backup_inventory_status, fmt_backup_timestamp, parse_backup_list,
     sorted_backups_latest_first,
 };
 use super::helpers::copy_recovery_text_to_clipboard;
-use super::state::{fmt_relative, load_state, save_generated_recovery_key_metadata};
+use super::state::{fmt_relative, load_state, save_generated_recovery_key_metadata_in_store};
 use super::types::BackupSummaryRow;
 use super::upload::{RecoveryKeyBackupOutcome, upload_recovery_key_account_backup};
-use crate::components::HelpTip;
-// SyncBadge / SyncBadgeState are shared in `crate::components::sync_badge`.
-// The Recovery view renders the Recovery Key backup state through the shared
-// component, overriding the "Local" label via `recovery.panel.badge_*` — the
-// badge semantics stay global, only this view's copy changes. See C1.
-use crate::components::SyncBadgeState as SyncBadge;
-use crate::i18n::{substitute_args, tr, tr_args};
+use crate::presentation::{InksonContext, View};
 use crate::recovery_crypto::{
     RecoveryKeyConfirmationDiff, generate_recovery_key, recovery_key_confirmation_diff,
 };
 use crate::transport::auth::with_authed_api;
-use crate::ui::button::{Button, ButtonVariant};
-use crate::ui::label::Label;
-use crate::ui::textarea::Textarea;
-
+use crate::views::settings::widgets::*;
 const RESTORE_BACKUP_TIME_LIMIT: usize = 5;
-
-/// Custody-first recovery-material phases. The plaintext exists only in
-/// memory while the user transcribes it and while the confirmed material is
-/// being published.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum EnrollPhase {
-    /// No enrollment in flight.
     Idle,
-    /// Words are on screen and must be re-entered before any server write.
     CustodyConfirmation,
-    /// Custody is confirmed; policy and first backup are being published.
     Publishing,
 }
-
-#[component]
-pub fn RecoveryPanel(token: Signal<String>, device_id: Signal<String>) -> Element {
-    // A4 — base_url / state_store from session context instead of props.
-    let session_context = crate::app::SessionContext::get();
-    let base_url = crate::app::SessionContext::base_url_string();
-    let state_store = session_context.state_store;
-    let Some(account) = session_context.active_account() else {
-        return rsx! {};
-    };
-    let initial = load_state(&state_store);
-
-    // Recovery key state — plaintext only in memory after Generate.
-    let mut live_recovery_key = use_signal(String::new);
-    let mut recovery_key_fp = use_signal(|| initial.recovery_key_fingerprint.clone());
-    let mut backup_hpke_public_key_multibase =
-        use_signal(|| initial.backup_hpke_public_key_multibase.clone());
-    let mut recovery_key_rotated_at = use_signal(|| initial.recovery_key_rotated_at.clone());
-    let mut recovery_key_status = use_signal(String::new);
-    let mut recovery_key_confirm_input = use_signal(String::new);
-    let mut enroll_phase = use_signal(|| EnrollPhase::Idle);
-    let mut confirm_attempts = use_signal(|| 0u32);
-    let mut copied_feedback = use_signal(|| false);
-    let mut device_unauthorized = use_signal(|| false);
-    let navigator = use_navigator();
-
-    // Backup history state — the panel shows server-side ciphertext inventory
-    // only by time, without exposing raw backup IDs or destructive row actions.
-    let mut restore_status = use_signal(String::new);
-    let mut restore_loading = use_signal(|| false);
-    let mut restore_loaded_once = use_signal(|| false);
-    let mut backup_rows = use_signal(Vec::<BackupSummaryRow>::new);
-    let mut backup_next_cursor = use_signal(|| None::<arkret_wire::Cursor>);
-
-    // Server-side Recovery-Key backup marker (written by the upload paths via
-    // `mark_mls_recovery_backup_configured`). Drives the section sync badge.
-    let recovery_key_backed_up =
-        crate::components::mls_recovery_backup_configured(&state_store.read());
-    let recovery_material_established = !recovery_key_fp().is_empty() || recovery_key_backed_up;
-
-    {
-        use_effect(move || {
-            let next = load_state(&state_store);
-            if recovery_key_fp() != next.recovery_key_fingerprint {
-                recovery_key_fp.set(next.recovery_key_fingerprint);
-            }
-            if backup_hpke_public_key_multibase() != next.backup_hpke_public_key_multibase {
-                backup_hpke_public_key_multibase.set(next.backup_hpke_public_key_multibase);
-            }
-            if recovery_key_rotated_at() != next.recovery_key_rotated_at {
-                recovery_key_rotated_at.set(next.recovery_key_rotated_at);
-            }
-        });
+#[derive(Clone)]
+struct RecoveryPage {
+    context: Rc<InksonContext>,
+    owner: glory::ui::WeakScope,
+    live: Cage<String>,
+    fingerprint: Cage<String>,
+    rotated: Cage<String>,
+    status: Cage<String>,
+    confirmation: Cage<String>,
+    phase: Cage<EnrollPhase>,
+    attempts: Cage<u32>,
+    copied: Cage<bool>,
+    unauthorized: Cage<bool>,
+    inventory_status: Cage<String>,
+    inventory_busy: Cage<bool>,
+    inventory_loaded: Cage<bool>,
+    rows: Cage<Vec<BackupSummaryRow>>,
+    cursor: Cage<Option<arkret_wire::Cursor>>,
+}
+impl RecoveryPage {
+    fn material_established(&self) -> bool {
+        !self.fingerprint.get().is_empty()
+            || self
+                .context
+                .state_store
+                .read(crate::components::mls_recovery_backup_configured)
     }
-
-    rsx! {
-        div { class: "timeline recovery-panel", "data-testid": "recovery-panel", role: "region", "aria-label": tr("recovery.panel.aria_label"),
-            div { class: "event",
-                div { class: "event-head",
-                    span { {tr("recovery.panel.options")} }
-                    span { {tr("recovery.recovery_key_section")} }
-                    HelpTip { text: tr("recovery.panel.overview_help") }
-                }
-                div { class: "metric-grid", "data-testid": "recovery-overview",
-                    div { class: "metric", "data-testid": "recovery-status-card",
-                        strong { {tr("recovery.recovery_key_section")} }
-                        span {
-                            {
-                                match enroll_phase() {
-                                    EnrollPhase::Publishing => tr("recovery.panel.status.publishing"),
-                                    EnrollPhase::CustodyConfirmation => tr("recovery.panel.status.write_down"),
-                                    EnrollPhase::Idle => {
-                                        if !recovery_key_fp().is_empty() {
-                                            tr("recovery.panel.status.accepted")
-                                        } else if recovery_key_backed_up {
-                                            tr("recovery.panel.status.unconfirmed")
-                                        } else {
-                                            tr("recovery.panel.status.not_set")
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        div { class: "muted",
-                            {
-                                match enroll_phase() {
-                                    EnrollPhase::Publishing => tr("recovery.panel.detail.publishing"),
-                                    EnrollPhase::CustodyConfirmation => tr("recovery.panel.detail.custody"),
-                                    EnrollPhase::Idle => {
-                                        if !recovery_key_fp().is_empty() {
-                                            if recovery_key_rotated_at().is_empty() {
-                                                tr("recovery.panel.detail.confirmed")
-                                            } else {
-                                                tr_args(
-                                                    "recovery.panel.detail.accepted_at",
-                                                    &[("when", fmt_relative(&recovery_key_rotated_at()))],
-                                                )
-                                            }
-                                        } else if recovery_key_backed_up {
-                                            tr("recovery.panel.detail.material_elsewhere")
-                                        } else {
-                                            tr("recovery.panel.detail.generate_cta")
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    div { class: "metric",
-                        strong { {tr("recovery.panel.protects_title")} }
-                        span { {tr("recovery.panel.protects_value")} }
-                        div { class: "muted", {tr("recovery.panel.protects_hint")} }
-                    }
-                }
+    fn generate(&self) {
+        if self.phase.get_untracked() == EnrollPhase::Publishing
+            || (self.material_established() && self.phase.get_untracked() == EnrollPhase::Idle)
+        {
+            return;
+        }
+        match generate_recovery_key() {
+            Ok(key) => {
+                self.live.revise(|value| *value = key);
+                self.confirmation.revise(|value| value.clear());
+                self.attempts.revise(|value| *value = 0);
+                self.copied.revise(|value| *value = false);
+                self.unauthorized.revise(|value| *value = false);
+                self.phase
+                    .revise(|value| *value = EnrollPhase::CustodyConfirmation);
+                self.status
+                    .revise(|value| *value = self.context.tr("recovery.panel.generated_status"));
             }
-
-            // Recovery key — the only user-visible recovery credential
-            div { class: "event", "data-testid": "recovery-key-section",
-                div { class: "event-head",
-                    span { {tr("recovery.recovery_key_section")} }
-                    span { {tr("recovery.panel.keep_offline")} }
-                    crate::components::SyncBadge {
-                        state: if recovery_key_backed_up { SyncBadge::Synced } else { SyncBadge::Local },
-                        local_label: Some(tr("recovery.panel.badge_not_backed_up")),
-                        synced_label: Some(tr("recovery.panel.badge_backed_up")),
-                        test_id: Some("recovery-key-sync-badge".to_owned()),
+            Err(error) => self.status.revise(|value| {
+                *value = crate::i18n::tr_args(
+                    "recovery.panel.generate_failed",
+                    &[("error", error.to_string())],
+                )
+            }),
+        }
+    }
+    fn confirm(&self) {
+        if self.phase.get_untracked() != EnrollPhase::CustodyConfirmation {
+            return;
+        }
+        let key = self.live.get();
+        if key.is_empty() {
+            return;
+        }
+        match recovery_key_confirmation_diff(&key, &self.confirmation.get()) {
+            RecoveryKeyConfirmationDiff::Match => {
+                let Some(account) = self.context.active_account.get() else {
+                    return;
+                };
+                self.phase.revise(|value| *value = EnrollPhase::Publishing);
+                self.status
+                    .revise(|value| *value = self.context.tr("recovery.panel.custody_confirmed"));
+                let accepted_key = zeroize::Zeroizing::new(key.clone());
+                let state = self.clone();
+                let owner = self.owner.clone();
+                let outcome = Rc::new(move |outcome| {
+                    if owner.upgrade().is_none() {
+                        return;
                     }
-                    HelpTip { text: tr("recovery.panel.key_help") }
-                }
-
-                // The key itself — promoted to a full-width hero so it reads as
-                // the single most important value on the panel, not one metric
-                // cell among equals.
-                div { class: "recovery-key-hero",
-                    if enroll_phase() == EnrollPhase::Publishing {
-                        div { class: "recovery-key-empty", "data-testid": "recovery-key-pending",
-                            strong { {tr("recovery.panel.publishing_title")} }
-                            span { class: "muted",
-                                {tr("recovery.panel.publishing_hint")}
-                            }
-                        }
-                    } else if !live_recovery_key().is_empty() {
-                        {
-                            let words: Vec<String> = live_recovery_key()
-                                .split_whitespace()
-                                .map(|word| word.to_owned())
-                                .collect();
-                            // The `data-testid` element's text content must stay
-                            // exactly the 24 whitespace-separated words (the index
-                            // is a CSS counter, not text), so the e2e word-count
-                            // assertion keeps holding.
-                            rsx! {
-                                ol { class: "recovery-key-grid", "data-testid": "recovery-key-current",
-                                    for word in words {
-                                        li { class: "rk-word", "{word}", " " }
-                                    }
-                                }
-                            }
-                        }
-                    } else if !recovery_key_fp().is_empty() {
-                        div { class: "recovery-key-masked", "data-testid": "recovery-key-current",
-                            "•••• •••• •••• •••• •••• •••• •••• ••••"
-                        }
-                    } else {
-                        div { class: "recovery-key-empty", "data-testid": "recovery-key-current",
-                            strong { {tr("recovery.panel.not_generated")} }
-                            span { class: "muted", {tr("recovery.panel.not_generated_hint")} }
-                        }
-                    }
-                }
-
-                if !live_recovery_key().is_empty() {
-                    div { class: "callout warn", "data-testid": "recovery-key-live-warning",
-                        div { class: "body",
-                            strong { {tr("recovery.panel.write_down_title")} }
-                            " "
-                            {tr("recovery.panel.write_down_body")}
-                        }
-                    }
-                    div { class: "workflow-form", "data-testid": "recovery-key-confirm-form",
-                        Label { html_for: "recovery-key-confirm-input", {tr("recovery.panel.confirm_label")} }
-                        Textarea {
-                            id: "recovery-key-confirm-input",
-                            "data-testid": "recovery-key-confirm-input",
-                            rows: "3",
-                            value: "{recovery_key_confirm_input}",
-                            placeholder: tr("recovery.panel.confirm_placeholder"),
-                            oninput: move |event: FormEvent| recovery_key_confirm_input.set(event.value()),
-                        }
-                        div { class: "muted", "data-testid": "recovery-key-confirm-hint",
-                            {tr("recovery.panel.confirm_hint")}
-                        }
-                    }
-                } else if !recovery_key_fp().is_empty() {
-                    div { class: "muted", {tr("recovery.panel.plaintext_cleared")} }
-                }
-
-                if recovery_material_established && enroll_phase() == EnrollPhase::Idle {
-                    div { class: "callout warn", "data-testid": "recovery-key-rotation-guard",
-                        div { class: "body",
-                            strong { {tr("recovery.panel.rotation_guard_title")} }
-                            " "
-                            {tr("recovery.panel.rotation_guard_body")}
-                        }
-                    }
-                }
-
-                // Supporting metadata — deliberately quieter than the key above.
-                div { class: "recovery-key-meta",
-                    div {
-                        span { class: "lbl", {tr("recovery.panel.last_accepted")} }
-                        span { class: "val", "data-testid": "recovery-key-rotated-at", "{fmt_relative(&recovery_key_rotated_at())}" }
-                        span { class: "muted", {tr("recovery.panel.rotate_hint")} }
-                    }
-                    div {
-                        span { class: "lbl", {tr("recovery.panel.fingerprint")} }
-                        span { class: "val", "data-testid": "recovery-key-fp",
-                            if recovery_key_fp().is_empty() { "—" } else {
-                                {
-                                    let fp = recovery_key_fp();
-                                    let suffix = fp.split(':').nth(1).unwrap_or("");
-                                    if suffix.len() >= 12 {
-                                        format!("sha256:{}…", &suffix[..12])
-                                    } else {
-                                        fp
-                                    }
-                                }
-                            }
-                        }
-                        span { class: "muted", {tr("recovery.panel.fingerprint_hint")} }
-                    }
-                }
-
-                if !recovery_key_status().is_empty() {
-                    div { class: "muted", "data-testid": "recovery-key-status", "{recovery_key_status}" }
-                }
-                if device_unauthorized() {
-                    div { class: "actions",
-                        Button {
-                            variant: ButtonVariant::Secondary,
-                            "data-testid": "recovery-key-goto-devices",
-                            title: tr("recovery.panel.goto_devices_title"),
-                            onclick: move |_| {
-                                navigator.push(crate::routes::Route::SettingsDevices);
-                            },
-                            {tr("recovery.panel.goto_devices")}
-                        }
-                    }
-                }
-                div { class: "actions",
-                    Button {
-                        variant: if enroll_phase() == EnrollPhase::CustodyConfirmation {
-                            ButtonVariant::Secondary
-                        } else {
-                            ButtonVariant::Primary
-                        },
-                        "data-testid": "recovery-key-regenerate",
-                        disabled: enroll_phase() == EnrollPhase::Publishing || (recovery_material_established && enroll_phase() == EnrollPhase::Idle),
-                        title: if enroll_phase() == EnrollPhase::CustodyConfirmation {
-                            tr("recovery.panel.regenerate_title_fresh")
-                        } else if recovery_material_established {
-                            tr("recovery.panel.regenerate_title_guard")
-                        } else {
-                            tr("recovery.panel.regenerate_title_default")
-                        },
-                        onclick: move |_| {
-                            if enroll_phase() == EnrollPhase::Publishing
-                                || (recovery_material_established
-                                    && enroll_phase() == EnrollPhase::Idle)
-                            {
-                                return;
-                            }
-                            match generate_recovery_key() {
-                                Ok(key) => {
-                                    live_recovery_key.set(key);
-                                    recovery_key_confirm_input.set(String::new());
-                                    confirm_attempts.set(0);
-                                    copied_feedback.set(false);
-                                    device_unauthorized.set(false);
-                                    enroll_phase.set(EnrollPhase::CustodyConfirmation);
-                                    recovery_key_status.set(tr("recovery.panel.generated_status"));
-                                }
-                                Err(err) => {
-                                    recovery_key_status.set(substitute_args(
-                                        tr("recovery.panel.generate_failed"),
-                                        &[("error", err.to_string())],
-                                    ));
-                                }
-                            }
-                        },
-                        if enroll_phase() == EnrollPhase::Publishing {
-                            {tr("recovery.panel.publishing_button")}
-                        } else if enroll_phase() == EnrollPhase::CustodyConfirmation {
-                            {tr("recovery.panel.start_over")}
-                        } else if recovery_key_fp().is_empty() {
-                            {tr("recovery.panel.generate")}
-                        } else {
-                            {tr("recovery.panel.handoff_required")}
-                        }
-                    }
-                    Button {
-                        variant: ButtonVariant::Secondary,
-                        "data-testid": "recovery-key-copy",
-                        disabled: live_recovery_key().is_empty(),
-                        title: tr("recovery.panel.copy_title"),
-                        onclick: move |_| {
-                            copy_recovery_text_to_clipboard(&live_recovery_key());
-                            // In-place feedback instead of a status-line string;
-                            // reverts after a moment so repeat copies read clearly.
-                            copied_feedback.set(true);
-                            spawn(async move {
-                                crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(
-                                    2_000,
-                                ))
-                                .await;
-                                copied_feedback.set(false);
+                    match outcome {
+                        RecoveryKeyBackupOutcome::Established => {
+                            let saved = state.context.state_store.write(|store| {
+                                save_generated_recovery_key_metadata_in_store(store, &accepted_key)
                             });
-                        },
-                        if copied_feedback() {
-                            {tr("recovery.panel.copied")}
-                        } else {
-                            {tr("recovery.panel.copy")}
-                        }
-                    }
-                    Button {
-                        variant: ButtonVariant::Secondary,
-                        "data-testid": "recovery-key-confirm-retry",
-                        disabled: live_recovery_key().is_empty() || recovery_key_confirm_input().is_empty(),
-                        title: tr("recovery.panel.retry_title"),
-                        onclick: move |_| {
-                            recovery_key_confirm_input.set(String::new());
-                        },
-                        {tr("recovery.panel.retry")}
-                    }
-                    Button {
-                        variant: ButtonVariant::Secondary,
-                        "data-testid": "recovery-key-clear-live",
-                        disabled: live_recovery_key().is_empty(),
-                        title: tr("recovery.panel.clear_live_title"),
-                        onclick: {
-                            let store = state_store;
-                            move |_| {
-                                let current_key = live_recovery_key();
-                                // The on_outcome handler runs inside the upload
-                                // task's spawn, where tr() has no Dioxus context
-                                // (see `upload_recovery_key_account_backup`) —
-                                // resolve the status strings here and move them
-                                // across the boundary.
-                                let status_custody_confirmed = tr("recovery.panel.custody_confirmed");
-                                let status_metadata_save_failed =
-                                    tr("recovery.panel.metadata_save_failed");
-                                let status_accepted_done = tr("recovery.panel.accepted_done");
-                                match recovery_key_confirmation_diff(
-                                    &current_key,
-                                    &recovery_key_confirm_input(),
-                                ) {
-                                    RecoveryKeyConfirmationDiff::Match => {
-                                        enroll_phase.set(EnrollPhase::Publishing);
-                                        recovery_key_status.set(status_custody_confirmed.clone());
-                                        let accepted_key = current_key.clone();
-                                        let on_outcome = EventHandler::new(
-                                            move |outcome: RecoveryKeyBackupOutcome| match outcome {
-                                                RecoveryKeyBackupOutcome::Established => {
-                                                    let mut accepted_store = store;
-                                                    let Some((fingerprint, rotated_at)) =
-                                                        save_generated_recovery_key_metadata(
-                                                            &mut accepted_store,
-                                                            &accepted_key,
-                                                        )
-                                                    else {
-                                                        enroll_phase.set(
-                                                            EnrollPhase::CustodyConfirmation,
-                                                        );
-                                                        recovery_key_status.set(
-                                                            status_metadata_save_failed.clone(),
-                                                        );
-                                                        return;
-                                                    };
-                                                    recovery_key_fp.set(fingerprint);
-                                                    recovery_key_rotated_at.set(rotated_at);
-                                                    live_recovery_key.set(String::new());
-                                                    recovery_key_confirm_input.set(String::new());
-                                                    confirm_attempts.set(0);
-                                                    enroll_phase.set(EnrollPhase::Idle);
-                                                    recovery_key_status.set(
-                                                        status_accepted_done.clone(),
-                                                    );
-                                                }
-                                                RecoveryKeyBackupOutcome::DeviceUnauthorized => {
-                                                    enroll_phase.set(
-                                                        EnrollPhase::CustodyConfirmation,
-                                                    );
-                                                    device_unauthorized.set(true);
-                                                }
-                                                RecoveryKeyBackupOutcome::Transient => {
-                                                    enroll_phase.set(
-                                                        EnrollPhase::CustodyConfirmation,
-                                                    );
-                                                }
-                                            },
-                                        );
-                                        upload_recovery_key_account_backup(
-                                            token,
-                                            device_id,
-                                            account.clone(),
-                                            state_store,
-                                            current_key,
-                                            recovery_key_status,
-                                            None,
-                                            Some(on_outcome),
-                                        );
-                                    }
-                                    RecoveryKeyConfirmationDiff::WordCount { entered } => {
-                                        let attempts = confirm_attempts() + 1;
-                                        confirm_attempts.set(attempts);
-                                        let extra = if attempts >= 3 {
-                                            tr("recovery.panel.retry_extra")
-                                        } else {
-                                            String::new()
-                                        };
-                                        recovery_key_status.set(substitute_args(
-                                            tr("recovery.panel.word_count"),
-                                            &[
-                                                ("entered", entered.to_string()),
-                                                ("extra", extra),
-                                            ],
-                                        ));
-                                    }
-                                    RecoveryKeyConfirmationDiff::MismatchAt { index } => {
-                                        let attempts = confirm_attempts() + 1;
-                                        confirm_attempts.set(attempts);
-                                        let extra = if attempts >= 3 {
-                                            tr("recovery.panel.retry_extra")
-                                        } else {
-                                            String::new()
-                                        };
-                                        recovery_key_status.set(substitute_args(
-                                            tr("recovery.panel.word_mismatch"),
-                                            &[("index", index.to_string()), ("extra", extra)],
-                                        ));
-                                    }
-                                }
-                            }
-                        },
-                        {tr("recovery.panel.confirm_publish")}
-                    }
-                }
-            }
-
-            // Backup history — key-management.md §7.3 + device-lifecycle.md §6
-            //
-            // Lists only backup creation times. Detailed envelope identifiers,
-            // per-backup decrypt controls, and destructive delete controls stay
-            // out of this user-facing panel.
-            details { class: "event", "data-testid": "restore-section",
-                summary { class: "event-head",
-                    span { {tr("recovery.panel.history_title")} }
-                    span { class: "muted", {tr("recovery.panel.history_subtitle")} }
-                    HelpTip { text: tr("recovery.panel.history_help") }
-                }
-                div { class: "actions",
-                    Button {
-                        variant: ButtonVariant::Primary,
-                        "data-testid": "restore-list-button",
-                        disabled: restore_loading(),
-                        onclick: {
-                            let base = base_url.clone();
-                            // Written from inside the spawned task below, where
-                            // tr() has no Dioxus context — resolve the status
-                            // templates here and move them across the boundary.
-                            let status_inventory_empty = tr("recovery.panel.inventory_empty");
-                            let status_inventory_loaded_tpl =
-                                tr("recovery.panel.inventory_loaded");
-                            let status_fetch_failed_tpl = tr("recovery.panel.fetch_failed");
-                            move |_| {
-                                restore_status.set(tr("recovery.panel.fetching"));
-                                restore_loading.set(true);
-                                let base = base.clone();
-                                let api_token = token();
-                                let cursor = backup_next_cursor();
-                                let status_inventory_empty = status_inventory_empty.clone();
-                                let status_inventory_loaded_tpl =
-                                    status_inventory_loaded_tpl.clone();
-                                let status_fetch_failed_tpl = status_fetch_failed_tpl.clone();
-                                spawn(async move {
-                                    let expected_token = api_token.clone();
-                                    let outcome = with_authed_api(&base, api_token, |api| async move {
-                                        api.list_key_backups_page(&arkret_sdk::KeyBackupsListQuery {
-                                            series_id: None, backup_kind: None, cursor, limit: Some(50),
-                                        }).await
-                                    })
-                                    .await;
-                                    if token() != expected_token { return; }
-                                    match outcome {
-                                        Ok(payload) => {
-                                            backup_next_cursor.set(payload.next_cursor.clone());
-                                            let payload =
-                                                serde_json::to_value(&payload).unwrap_or_default();
-                                            let rows = parse_backup_list(&payload);
-                                            let status = match backup_inventory_status(&rows) {
-                                                BackupInventoryStatus::Empty => {
-                                                    status_inventory_empty.clone()
-                                                }
-                                                BackupInventoryStatus::Loaded { count, latest } => {
-                                                    substitute_args(
-                                                        status_inventory_loaded_tpl.clone(),
-                                                        &[
-                                                            ("count", count.to_string()),
-                                                            ("latest", latest),
-                                                        ],
-                                                    )
-                                                }
-                                            };
-                                            backup_rows.set(rows);
-                                            restore_loaded_once.set(true);
-                                            restore_status.set(status);
-                                        }
-                                        Err(err) => restore_status.set(substitute_args(
-                                            status_fetch_failed_tpl.clone(),
-                                            &[("error", err.display().to_string())],
-                                        )),
-                                    }
-                                    restore_loading.set(false);
+                            let Some((fingerprint, rotated)) = saved else {
+                                state
+                                    .phase
+                                    .revise(|value| *value = EnrollPhase::CustodyConfirmation);
+                                state.status.revise(|value| {
+                                    *value = state.context.tr("recovery.panel.metadata_save_failed")
                                 });
-                            }
-                        },
-                        if restore_loading() {
-                            {tr("recovery.panel.loading")}
-                        } else if backup_next_cursor().is_some() {
-                            {tr("recovery.panel.next_page")}
-                        } else {
-                            {tr("recovery.panel.refresh")}
+                                return;
+                            };
+                            state.fingerprint.revise(|value| *value = fingerprint);
+                            state.rotated.revise(|value| *value = rotated);
+                            state.live.revise(|value| value.clear());
+                            state.confirmation.revise(|value| value.clear());
+                            state.attempts.revise(|value| *value = 0);
+                            state.phase.revise(|value| *value = EnrollPhase::Idle);
+                            state.status.revise(|value| {
+                                *value = state.context.tr("recovery.panel.accepted_done")
+                            });
                         }
-                    }
-                    Button {
-                        variant: ButtonVariant::Secondary,
-                        "data-testid": "restore-clear-button",
-                        title: tr("recovery.panel.clear_title"),
-                        disabled: restore_loading() || backup_rows().is_empty(),
-                        onclick: move |_| {
-                            backup_rows.set(Vec::new());
-                            backup_next_cursor.set(None);
-                            restore_loaded_once.set(false);
-                            restore_status.set(tr("recovery.panel.cleared"));
-                        },
-                        {tr("recovery.panel.clear")}
-                    }
-                }
-                if backup_next_cursor().is_some() {
-                    p { class: "muted", {tr("recovery.panel.partial_page")} }
-                }
-                if !restore_status().is_empty() {
-                    div { class: "muted", "data-testid": "restore-status", "{restore_status}" }
-                }
-                if backup_rows().is_empty() {
-                    div { class: "muted", "data-testid": "restore-empty",
-                        if restore_loaded_once() {
-                            {tr("recovery.panel.no_backups")}
-                        } else {
-                            {tr("recovery.panel.not_loaded")}
+                        RecoveryKeyBackupOutcome::DeviceUnauthorized => {
+                            state
+                                .phase
+                                .revise(|value| *value = EnrollPhase::CustodyConfirmation);
+                            state.unauthorized.revise(|value| *value = true);
                         }
+                        RecoveryKeyBackupOutcome::Transient => state
+                            .phase
+                            .revise(|value| *value = EnrollPhase::CustodyConfirmation),
                     }
-                } else {
-                    {
-                        let rows = sorted_backups_latest_first(&backup_rows());
-                        let total_backups = rows.len();
-                        let latest = rows.first().cloned();
-                        let latest_id = latest
-                            .as_ref()
-                            .map(|row| row.backup_id.clone())
-                            .unwrap_or_default();
-                        let latest_created_at = latest
-                            .as_ref()
-                            .map(|row| row.created_at.clone())
-                            .unwrap_or_default();
-                        let latest_relative = fmt_relative(&latest_created_at);
-                        let latest_timestamp = fmt_backup_timestamp(&latest_created_at);
-                        let visible_rows: Vec<BackupSummaryRow> = rows
-                            .iter()
-                            .take(RESTORE_BACKUP_TIME_LIMIT)
-                            .cloned()
-                            .collect();
-                        let older_count = total_backups.saturating_sub(visible_rows.len());
-
-                        rsx! {
-                            div { class: "restore-backup-overview", "data-testid": "restore-summary",
-                                div { class: "restore-latest-backup", "data-testid": "restore-latest-backup",
-                                    span { class: "lbl", {tr("recovery.panel.last_backup")} }
-                                    strong { "data-testid": "restore-latest-backup-relative", "{latest_relative}" }
-                                    span { class: "muted", "data-testid": "restore-latest-backup-time", "{latest_timestamp}" }
-                                }
-                                div { class: "restore-backup-count", "data-testid": "restore-backup-count",
-                                    span { class: "lbl", {tr("recovery.panel.backups_found")} }
-                                    strong { "{total_backups}" }
-                                    span { class: "muted", {tr("recovery.panel.snapshots")} }
-                                }
-                            }
-                            div { class: "restore-time-list", "data-testid": "restore-backup-times",
-                                div { class: "restore-time-list-head",
-                                    span { {tr("recovery.panel.backup_times")} }
-                                    span { class: "muted",
-                                        {tr_args("recovery.panel.total", &[("total", total_backups.to_string())])}
-                                    }
-                                }
-                                ul { class: "restore-time-items",
-                                    for row in visible_rows {
-                                        {
-                                            let is_latest = row.backup_id == latest_id;
-                                            let relative = fmt_relative(&row.created_at);
-                                            let timestamp = fmt_backup_timestamp(&row.created_at);
-                                            rsx! {
-                                                li {
-                                                    class: if is_latest { "restore-time-item latest" } else { "restore-time-item" },
-                                                    "data-testid": "restore-backup-time",
-                                                    span { class: "restore-time-dot" }
-                                                    div { class: "restore-time-copy",
-                                                        span { class: "restore-time-primary", "{relative}" }
-                                                        span { class: "restore-time-secondary", "{timestamp}" }
-                                                    }
-                                                    if is_latest {
-                                                        span { class: "badge green restore-time-badge", {tr("recovery.panel.latest")} }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                if older_count > 0 {
-                                    div { class: "restore-time-more muted", "data-testid": "restore-backup-older-count",
-                                        {tr_args("recovery.panel.older_hidden", &[("count", older_count.to_string())])}
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+                });
+                upload_recovery_key_account_backup(
+                    self.context.clone(),
+                    self.context.token,
+                    self.context.device_id,
+                    account,
+                    self.context.state_store.handle(),
+                    key,
+                    self.status,
+                    None,
+                    Some(outcome),
+                );
             }
-
-            // Recovery write path
-            details { class: "event", "data-testid": "recovery-writeback-explainer",
-                summary { class: "event-head",
-                    span { {tr("recovery.panel.writeback_title")} }
-                    span { {tr("recovery.panel.writeback_subtitle")} }
-                }
-                div { class: "muted",
-                    {tr("recovery.panel.writeback_body")}
-                }
+            diff => {
+                let attempts = self.attempts.get() + 1;
+                self.attempts.revise(|value| *value = attempts);
+                let extra = if attempts >= 3 {
+                    self.context.tr("recovery.panel.retry_extra")
+                } else {
+                    String::new()
+                };
+                let message = match diff {
+                    RecoveryKeyConfirmationDiff::WordCount { entered } => crate::i18n::tr_args(
+                        "recovery.panel.word_count",
+                        &[("entered", entered.to_string()), ("extra", extra)],
+                    ),
+                    RecoveryKeyConfirmationDiff::MismatchAt { index } => crate::i18n::tr_args(
+                        "recovery.panel.word_mismatch",
+                        &[("index", index.to_string()), ("extra", extra)],
+                    ),
+                    RecoveryKeyConfirmationDiff::Match => return,
+                };
+                self.status.revise(|value| *value = message);
             }
         }
     }
+    fn inventory(&self) {
+        if self.inventory_busy.get_untracked() {
+            return;
+        }
+        let context = self.context.clone();
+        let generation = context.session_generation.get();
+        let session = context.active_account.get();
+        let base = context.base_url.get();
+        let token = context.token.get();
+        let cursor = self.cursor.get();
+        let state = self.clone();
+        let Some(scope) = self.owner.upgrade() else {
+            return;
+        };
+        self.inventory_busy.revise(|value| *value = true);
+        self.inventory_status
+            .revise(|value| *value = context.tr("recovery.panel.fetching"));
+        spawn(&scope, async move {
+            let result = with_authed_api(&base, token, |api| async move {
+                api.list_key_backups_page(&arkret_sdk::KeyBackupsListQuery {
+                    series_id: None,
+                    backup_kind: None,
+                    cursor,
+                    limit: Some(50),
+                })
+                .await
+            })
+            .await;
+            if !context.session_matches(generation, &session) {
+                return;
+            }
+            match result {
+                Ok(payload) => {
+                    state
+                        .cursor
+                        .revise(|value| *value = payload.next_cursor.clone());
+                    let rows =
+                        parse_backup_list(&serde_json::to_value(&payload).unwrap_or_default());
+                    let message = match backup_inventory_status(&rows) {
+                        BackupInventoryStatus::Empty => {
+                            context.tr("recovery.panel.inventory_empty")
+                        }
+                        BackupInventoryStatus::Loaded { count, latest } => crate::i18n::tr_args(
+                            "recovery.panel.inventory_loaded",
+                            &[("count", count.to_string()), ("latest", latest)],
+                        ),
+                    };
+                    state.rows.revise(|value| *value = rows);
+                    state.inventory_loaded.revise(|value| *value = true);
+                    state.inventory_status.revise(|value| *value = message);
+                }
+                Err(error) => state.inventory_status.revise(|value| {
+                    *value = crate::i18n::tr_args(
+                        "recovery.panel.fetch_failed",
+                        &[("error", error.display())],
+                    )
+                }),
+            }
+            state.inventory_busy.revise(|value| *value = false);
+        });
+    }
+}
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[path = "panel_surface_tests.rs"]
+mod surface_tests;
+
+fn recovery_label(value: impl Into<glory::Lotus<String>>) -> View {
+    use glory::prelude::*;
+    Box::new(text().class("recovery-strong-label").content(value))
+}
+
+fn recovery_warning(
+    scope: &Scope,
+    context: Rc<InksonContext>,
+    class: &str,
+    title: &str,
+    body: &str,
+) -> View {
+    stack(
+        format!("callout warn {class}"),
+        vec![stack(
+            "body",
+            vec![
+                recovery_label(context.translated(scope, title)),
+                plain(" "),
+                plain(context.translated(scope, body)),
+            ],
+        )],
+    )
+}
+
+fn recovery_fold(
+    scope: &Scope,
+    context: Rc<InksonContext>,
+    key: &str,
+    title: &str,
+    subtitle: &str,
+    help: Option<&str>,
+    content: Vec<View>,
+) -> View {
+    use glory::prelude::*;
+    let label = context.translated(scope, title);
+    let subtitle = context.translated(scope, subtitle);
+    let mut content = Some(content);
+    let fold = Box::new(
+        sapid::collapsible(key)
+            .unstyled()
+            .class("recovery-fold")
+            .default_open(false)
+            .label(label)
+            .trigger_content(move || {
+                Box::new(group().fill(vec![plain(label), plain(subtitle)])) as View
+            })
+            .content_policy(sapid::ContentPolicy::KeepMounted)
+            .content(move || Box::new(group().fill(content.take().unwrap_or_default())) as View),
+    ) as View;
+    let mut children = vec![fold];
+    if let Some(help) = help {
+        children.push(stack(
+            "recovery-fold-help",
+            vec![crate::components::help_tip(
+                scope,
+                context.clone(),
+                crate::components::HelpTipProps {
+                    text: context.tr(help),
+                },
+            )],
+        ));
+    }
+    stack(
+        format!(
+            "event recovery-fold-card {key}{}",
+            if help.is_some() { " has-help" } else { "" }
+        ),
+        children,
+    )
+}
+
+pub fn page(scope: &Scope, context: Rc<InksonContext>, _route: crate::routes::Route) -> View {
+    let initial = load_state(&context.state_store);
+    let state = RecoveryPage {
+        context: context.clone(),
+        owner: scope.downgrade(),
+        live: scope.cage(String::new()),
+        fingerprint: scope.cage(initial.recovery_key_fingerprint),
+        rotated: scope.cage(initial.recovery_key_rotated_at),
+        status: scope.cage(String::new()),
+        confirmation: scope.cage(String::new()),
+        phase: scope.cage(EnrollPhase::Idle),
+        attempts: scope.cage(0),
+        copied: scope.cage(false),
+        unauthorized: scope.cage(false),
+        inventory_status: scope.cage(String::new()),
+        inventory_busy: scope.cage(false),
+        inventory_loaded: scope.cage(false),
+        rows: scope.cage(Vec::new()),
+        cursor: scope.cage(None),
+    };
+    {
+        let state = state.clone();
+        let seen = scope.cage((
+            context.session_generation.get_untracked(),
+            context
+                .active_account
+                .get_untracked()
+                .map(|account| (account.authority, account.device_id)),
+        ));
+        let context = context.clone();
+        scope.effect(move || {
+            let next = (
+                context.session_generation.get(),
+                context
+                    .active_account
+                    .get()
+                    .map(|account| (account.authority, account.device_id)),
+            );
+            if seen.get_untracked() != next {
+                seen.revise(|value| *value = next);
+                use zeroize::Zeroize;
+                state.live.revise(Zeroize::zeroize);
+                state.confirmation.revise(Zeroize::zeroize);
+                state.phase.revise(|value| *value = EnrollPhase::Idle);
+                state.attempts.revise(|value| *value = 0);
+                state.status.revise(String::clear);
+                state.rows.revise(Vec::clear);
+                state.cursor.revise(|value| *value = None);
+                state.inventory_busy.revise(|value| *value = false);
+                state.inventory_loaded.revise(|value| *value = false);
+            }
+        });
+    }
+    {
+        let live = state.live;
+        let confirmation = state.confirmation;
+        let _ = scope.on_cleanup(move || {
+            use zeroize::Zeroize;
+            let _ = live.try_revise(Zeroize::zeroize);
+            let _ = confirmation.try_revise(Zeroize::zeroize);
+        });
+    }
+    let live = state.live;
+    let phase = state.phase;
+    let fingerprint = state.fingerprint;
+    let rotated = state.rotated;
+    let confirmed = state.confirmation;
+    let revision = context.state_revision;
+    let sync = state.clone();
+    scope.effect(move || {
+        let _ = revision.get();
+        let next = load_state(&sync.context.state_store);
+        sync.fingerprint
+            .revise(|value| *value = next.recovery_key_fingerprint);
+        sync.rotated
+            .revise(|value| *value = next.recovery_key_rotated_at);
+    });
+    let backup_context = context.clone();
+    let backed_up = scope.bond(move || {
+        let _ = backup_context.state_revision.get();
+        backup_context
+            .state_store
+            .read(crate::components::mls_recovery_backup_configured)
+    });
+    let hero_context = context.clone();
+    let hero = reactive(
+        scope.bond(move || (live.get(), phase.get(), fingerprint.get())),
+        move |scope, (key, phase, fingerprint)| {
+            let context = hero_context.clone();
+            if phase == EnrollPhase::Publishing {
+                return stack(
+                    "recovery-key-empty recovery-key-pending",
+                    vec![
+                        recovery_label(
+                            context.translated(scope, "recovery.panel.publishing_title"),
+                        ),
+                        paragraph(
+                            "muted",
+                            context.translated(scope, "recovery.panel.publishing_hint"),
+                        ),
+                    ],
+                );
+            }
+            if !key.is_empty() {
+                let words = key
+                    .split_whitespace()
+                    .map(|word| paragraph("rk-word", format!("{word} ")))
+                    .collect();
+                return stack("recovery-key-grid recovery-key-current", words);
+            }
+            if !fingerprint.is_empty() {
+                paragraph(
+                    "recovery-key-masked recovery-key-current",
+                    "•••• •••• •••• •••• •••• •••• •••• ••••",
+                )
+            } else {
+                stack(
+                    "recovery-key-empty recovery-key-current",
+                    vec![
+                        recovery_label(context.translated(scope, "recovery.panel.not_generated")),
+                        paragraph(
+                            "muted",
+                            context.translated(scope, "recovery.panel.not_generated_hint"),
+                        ),
+                    ],
+                )
+            }
+        },
+    );
+    let form_context = context.clone();
+    let form = reactive(live, move |scope, key| {
+        if key.is_empty() {
+            return empty();
+        }
+        let context = form_context.clone();
+        stack(
+            "workflow-form recovery-key-confirm-form",
+            vec![
+                recovery_warning(
+                    scope,
+                    context.clone(),
+                    "recovery-key-live-warning",
+                    "recovery.panel.write_down_title",
+                    "recovery.panel.write_down_body",
+                ),
+                field(
+                    scope,
+                    context.clone(),
+                    "recovery-key-confirm-input",
+                    "recovery.panel.confirm_label",
+                    confirmed,
+                    true,
+                    true,
+                    move |next| confirmed.revise(|value| *value = next),
+                ),
+                paragraph(
+                    "muted",
+                    context.translated(scope, "recovery.panel.confirm_hint"),
+                ),
+            ],
+        )
+    });
+    let generate = state.clone();
+    let publish = state.clone();
+    let copy_state = state.clone();
+    let copy_owner = scope.downgrade();
+    let retry = state.confirmation;
+    let material = context.clone();
+    let generate_enabled = scope.bond(move || {
+        phase.get() != EnrollPhase::Publishing
+            && !(phase.get() == EnrollPhase::Idle
+                && (!fingerprint.get().is_empty()
+                    || material
+                        .state_store
+                        .read(crate::components::mls_recovery_backup_configured)))
+    });
+    let live_enabled =
+        scope.bond(move || !live.get().is_empty() && phase.get() != EnrollPhase::Publishing);
+    let recovery_status = state.status;
+    let unauthorized = state.unauthorized;
+    let nav = context.clone();
+    let unauthorized_link = reactive(unauthorized, move |scope, show| {
+        if show {
+            let nav = nav.clone();
+            action(
+                scope,
+                nav.clone(),
+                "recovery-key-goto-devices",
+                "recovery.panel.goto_devices",
+                "secondary",
+                true,
+                move || nav.navigate(crate::routes::Route::SettingsDevices),
+            )
+        } else {
+            empty()
+        }
+    });
+    let inventory = state.clone();
+    let clear = state.clone();
+    let rows = state.rows;
+    let loading = state.inventory_busy;
+    let rows_context = context.clone();
+    let inventory_loaded = state.inventory_loaded;
+    let history = reactive(rows, move |scope, rows| {
+        let context = rows_context.clone();
+        let rows = sorted_backups_latest_first(&rows);
+        let total = rows.len();
+        let mut children = Vec::new();
+        if rows.is_empty() {
+            return paragraph(
+                "muted restore-empty",
+                context.translated(
+                    scope,
+                    if inventory_loaded.get() {
+                        "recovery.panel.no_backups"
+                    } else {
+                        "recovery.panel.not_loaded"
+                    },
+                ),
+            );
+        }
+        let latest = &rows[0];
+        children.push(line(
+            "restore-backup-overview",
+            vec![
+                card(
+                    scope,
+                    context.clone(),
+                    "recovery.panel.last_backup",
+                    vec![
+                        plain(fmt_relative(&latest.created_at)),
+                        paragraph("muted", fmt_backup_timestamp(&latest.created_at)),
+                    ],
+                ),
+                card(
+                    scope,
+                    context.clone(),
+                    "recovery.panel.backups_found",
+                    vec![
+                        plain(total.to_string()),
+                        paragraph(
+                            "muted",
+                            context.translated(scope, "recovery.panel.snapshots"),
+                        ),
+                    ],
+                ),
+            ],
+        ));
+        let mut times = Vec::new();
+        for (index, row) in rows.iter().take(RESTORE_BACKUP_TIME_LIMIT).enumerate() {
+            let mut details = vec![stack(
+                "restore-time-copy",
+                vec![
+                    plain(fmt_relative(&row.created_at)),
+                    paragraph(
+                        "restore-time-secondary",
+                        fmt_backup_timestamp(&row.created_at),
+                    ),
+                ],
+            )];
+            if index == 0 {
+                details.push(paragraph(
+                    "badge green",
+                    context.translated(scope, "recovery.panel.latest"),
+                ));
+            }
+            times.push(line(
+                if index == 0 {
+                    "restore-time-item latest"
+                } else {
+                    "restore-time-item"
+                },
+                details,
+            ));
+        }
+        children.push(stack("restore-time-items", times));
+        if total > RESTORE_BACKUP_TIME_LIMIT {
+            children.push(paragraph(
+                "restore-time-more muted",
+                crate::i18n::tr_args(
+                    "recovery.panel.older_hidden",
+                    &[("count", (total - RESTORE_BACKUP_TIME_LIMIT).to_string())],
+                ),
+            ));
+        }
+        stack("restore-time-list", children)
+    });
+    stack(
+        "timeline recovery-panel",
+        vec![
+            stack(
+                "event recovery-options",
+                vec![
+                    line(
+                        "event-head",
+                        vec![
+                            plain(context.translated(scope, "recovery.panel.options")),
+                            plain(context.translated(scope, "recovery.recovery_key_section")),
+                            crate::components::help_tip(
+                                scope,
+                                context.clone(),
+                                crate::components::HelpTipProps {
+                                    text: context.tr("recovery.panel.overview_help"),
+                                },
+                            ),
+                        ],
+                    ),
+                    stack(
+                        "metric-grid recovery-overview",
+                        vec![
+                            stack(
+                                "metric recovery-status-card",
+                                vec![
+                                    recovery_label(
+                                        context.translated(scope, "recovery.recovery_key_section"),
+                                    ),
+                                    plain(scope.bond(move || {
+                                        crate::i18n::tr(match phase.get() {
+                                            EnrollPhase::Publishing => {
+                                                "recovery.panel.status.publishing"
+                                            }
+                                            EnrollPhase::CustodyConfirmation => {
+                                                "recovery.panel.status.write_down"
+                                            }
+                                            EnrollPhase::Idle => {
+                                                if !fingerprint.get().is_empty() {
+                                                    "recovery.panel.status.accepted"
+                                                } else if backed_up.get() {
+                                                    "recovery.panel.status.unconfirmed"
+                                                } else {
+                                                    "recovery.panel.status.not_set"
+                                                }
+                                            }
+                                        })
+                                    })),
+                                    stack(
+                                        "muted",
+                                        vec![plain(scope.bond(move || match phase.get() {
+                                            EnrollPhase::Publishing => {
+                                                crate::i18n::tr("recovery.panel.detail.publishing")
+                                            }
+                                            EnrollPhase::CustodyConfirmation => {
+                                                crate::i18n::tr("recovery.panel.detail.custody")
+                                            }
+                                            EnrollPhase::Idle => {
+                                                if !fingerprint.get().is_empty() {
+                                                    if rotated.get().is_empty() {
+                                                        crate::i18n::tr(
+                                                            "recovery.panel.detail.confirmed",
+                                                        )
+                                                    } else {
+                                                        crate::i18n::tr_args(
+                                                            "recovery.panel.detail.accepted_at",
+                                                            &[(
+                                                                "when",
+                                                                fmt_relative(&rotated.get()),
+                                                            )],
+                                                        )
+                                                    }
+                                                } else if backed_up.get() {
+                                                    crate::i18n::tr(
+                                                        "recovery.panel.detail.material_elsewhere",
+                                                    )
+                                                } else {
+                                                    crate::i18n::tr(
+                                                        "recovery.panel.detail.generate_cta",
+                                                    )
+                                                }
+                                            }
+                                        }))],
+                                    ),
+                                ],
+                            ),
+                            stack(
+                                "metric",
+                                vec![
+                                    recovery_label(
+                                        context.translated(scope, "recovery.panel.protects_title"),
+                                    ),
+                                    plain(
+                                        context.translated(scope, "recovery.panel.protects_value"),
+                                    ),
+                                    stack(
+                                        "muted",
+                                        vec![plain(
+                                            context
+                                                .translated(scope, "recovery.panel.protects_hint"),
+                                        )],
+                                    ),
+                                ],
+                            ),
+                        ],
+                    ),
+                ],
+            ),
+            stack(
+                "event recovery-key-section",
+                vec![
+                    line(
+                        "event-head",
+                        vec![
+                            plain(context.translated(scope, "recovery.recovery_key_section")),
+                            plain(context.translated(scope, "recovery.panel.keep_offline")),
+                            reactive(backed_up, {
+                                let context = context.clone();
+                                move |scope, backed| {
+                                    crate::components::sync_badge(
+                                        scope,
+                                        context.clone(),
+                                        crate::components::SyncBadgeProps {
+                                            state: if backed {
+                                                crate::components::SyncBadgeState::Synced
+                                            } else {
+                                                crate::components::SyncBadgeState::Local
+                                            },
+                                            local_label: Some(
+                                                context.tr("recovery.panel.badge_not_backed_up"),
+                                            ),
+                                            synced_label: Some(
+                                                context.tr("recovery.panel.badge_backed_up"),
+                                            ),
+                                            pending_label: None,
+                                            failed_label: None,
+                                            test_id: Some("recovery-key-sync-badge".into()),
+                                        },
+                                    )
+                                }
+                            }),
+                            crate::components::help_tip(
+                                scope,
+                                context.clone(),
+                                crate::components::HelpTipProps {
+                                    text: context.tr("recovery.panel.key_help"),
+                                },
+                            ),
+                        ],
+                    ),
+                    stack("recovery-key-hero", vec![hero]),
+                    form,
+                    reactive(
+                        scope.bond(move || (live.get().is_empty(), fingerprint.get().is_empty())),
+                        {
+                            let context = context.clone();
+                            move |scope, (no_live, no_fingerprint)| {
+                                if no_live && !no_fingerprint {
+                                    paragraph(
+                                        "muted",
+                                        context
+                                            .translated(scope, "recovery.panel.plaintext_cleared"),
+                                    )
+                                } else {
+                                    empty()
+                                }
+                            }
+                        },
+                    ),
+                    reactive(
+                        scope.bond(move || {
+                            (backed_up.get() || !fingerprint.get().is_empty())
+                                && phase.get() == EnrollPhase::Idle
+                        }),
+                        {
+                            let context = context.clone();
+                            move |scope, show| {
+                                if show {
+                                    recovery_warning(
+                                        scope,
+                                        context.clone(),
+                                        "recovery-key-rotation-guard",
+                                        "recovery.panel.rotation_guard_title",
+                                        "recovery.panel.rotation_guard_body",
+                                    )
+                                } else {
+                                    empty()
+                                }
+                            }
+                        },
+                    ),
+                    line(
+                        "recovery-key-meta",
+                        vec![
+                            stack(
+                                "recovery-key-accepted-meta",
+                                vec![
+                                    Box::new(glory::prelude::text().class("lbl").content(
+                                        context.translated(scope, "recovery.panel.last_accepted"),
+                                    )),
+                                    Box::new(
+                                        glory::prelude::text()
+                                            .class("val recovery-key-rotated-at")
+                                            .content(
+                                                scope.bond(move || fmt_relative(&rotated.get())),
+                                            ),
+                                    ),
+                                    paragraph(
+                                        "muted",
+                                        context.translated(scope, "recovery.panel.rotate_hint"),
+                                    ),
+                                ],
+                            ),
+                            stack(
+                                "recovery-key-fingerprint-meta",
+                                vec![
+                                    Box::new(glory::prelude::text().class("lbl").content(
+                                        context.translated(scope, "recovery.panel.fingerprint"),
+                                    )),
+                                    Box::new(
+                                        glory::prelude::text()
+                                            .class("val recovery-key-fp")
+                                            .content(scope.bond(move || {
+                                                let fp = fingerprint.get();
+                                                if fp.is_empty() {
+                                                    "—".to_owned()
+                                                } else {
+                                                    let suffix = fp.split(':').nth(1).unwrap_or("");
+                                                    if suffix.len() >= 12 {
+                                                        format!(
+                                                            "sha256:{}…",
+                                                            suffix
+                                                                .chars()
+                                                                .take(12)
+                                                                .collect::<String>()
+                                                        )
+                                                    } else {
+                                                        fp
+                                                    }
+                                                }
+                                            })),
+                                    ),
+                                    paragraph(
+                                        "muted",
+                                        context
+                                            .translated(scope, "recovery.panel.fingerprint_hint"),
+                                    ),
+                                ],
+                            ),
+                        ],
+                    ),
+                    status(recovery_status),
+                    unauthorized_link,
+                    line(
+                        "actions",
+                        vec![
+                            Box::new(
+                                sapid::button()
+                                    .unstyled()
+                                    .class(scope.bond(move || {
+                                        format!(
+                                            "recovery-key-regenerate {}",
+                                            if phase.get() == EnrollPhase::CustodyConfirmation {
+                                                "secondary"
+                                            } else {
+                                                "primary"
+                                            }
+                                        )
+                                    }))
+                                    .label(scope.bond(move || {
+                                        crate::i18n::tr(if phase.get() == EnrollPhase::Publishing {
+                                            "recovery.panel.publishing_button"
+                                        } else if phase.get() == EnrollPhase::CustodyConfirmation {
+                                            "recovery.panel.start_over"
+                                        } else if fingerprint.get().is_empty() {
+                                            "recovery.panel.generate"
+                                        } else {
+                                            "recovery.panel.handoff_required"
+                                        })
+                                    }))
+                                    .enabled(generate_enabled)
+                                    .on_press(move || generate.generate()),
+                            ),
+                            action(
+                                scope,
+                                context.clone(),
+                                "recovery-key-copy",
+                                "recovery.panel.copy",
+                                "secondary",
+                                live_enabled,
+                                move || {
+                                    copy_recovery_text_to_clipboard(&copy_state.live.get());
+                                    copy_state.copied.revise(|value| *value = true);
+                                    let copied = copy_state.copied;
+                                    if let Some(scope) = copy_owner.upgrade() {
+                                        spawn(&scope, async move {
+                                            crate::runtime_helpers::sleep_for(
+                                                std::time::Duration::from_secs(2),
+                                            )
+                                            .await;
+                                            copied.revise(|value| *value = false);
+                                        });
+                                    }
+                                },
+                            ),
+                            action(
+                                scope,
+                                context.clone(),
+                                "recovery-key-confirm-retry",
+                                "recovery.panel.retry",
+                                "secondary",
+                                live_enabled,
+                                move || retry.revise(|value| value.clear()),
+                            ),
+                            action(
+                                scope,
+                                context.clone(),
+                                "recovery-key-clear-live",
+                                "recovery.panel.confirm_publish",
+                                "secondary",
+                                live_enabled,
+                                move || publish.confirm(),
+                            ),
+                        ],
+                    ),
+                ],
+            ),
+            recovery_fold(
+                scope,
+                context.clone(),
+                "restore-section",
+                "recovery.panel.history_title",
+                "recovery.panel.history_subtitle",
+                Some("recovery.panel.history_help"),
+                vec![
+                    line(
+                        "actions",
+                        vec![
+                            {
+                                let cursor = state.cursor;
+                                let label_context = context.clone();
+                                Box::new(
+                                    sapid::button()
+                                        .unstyled()
+                                        .class("btn primary restore-list-button")
+                                        .label(scope.bond(move || {
+                                            label_context.tr(if loading.get() {
+                                                "recovery.panel.loading"
+                                            } else if cursor.get().is_some() {
+                                                "recovery.panel.next_page"
+                                            } else {
+                                                "recovery.panel.refresh"
+                                            })
+                                        }))
+                                        .enabled(scope.bond(move || !loading.get()))
+                                        .on_press(move || inventory.inventory()),
+                                ) as View
+                            },
+                            action(
+                                scope,
+                                context.clone(),
+                                "restore-clear-button",
+                                "recovery.panel.clear",
+                                "secondary",
+                                scope.bond(move || !loading.get() && !rows.get().is_empty()),
+                                move || {
+                                    clear.rows.revise(|value| value.clear());
+                                    clear.cursor.revise(|value| *value = None);
+                                    clear.inventory_loaded.revise(|value| *value = false);
+                                    clear.inventory_status.revise(|value| {
+                                        *value = clear.context.tr("recovery.panel.cleared")
+                                    });
+                                },
+                            ),
+                        ],
+                    ),
+                    status(state.inventory_status),
+                    reactive(state.cursor, {
+                        let context = context.clone();
+                        move |scope, cursor| {
+                            if cursor.is_some() {
+                                paragraph(
+                                    "muted restore-partial-page",
+                                    context.translated(scope, "recovery.panel.partial_page"),
+                                )
+                            } else {
+                                empty()
+                            }
+                        }
+                    }),
+                    history,
+                ],
+            ),
+            recovery_fold(
+                scope,
+                context.clone(),
+                "recovery-writeback-explainer",
+                "recovery.panel.writeback_title",
+                "recovery.panel.writeback_subtitle",
+                None,
+                vec![paragraph(
+                    "muted",
+                    context.translated(scope, "recovery.panel.writeback_body"),
+                )],
+            ),
+        ],
+    )
 }

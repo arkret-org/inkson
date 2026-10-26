@@ -1,0 +1,8 @@
+/* The public Layer computes viewport coordinates; retain the original palette
+   appearance without its old absolute containing-block offsets. */
+.topbar-command-search .command-palette[data-gly-layer="anchor"] {
+  top: var(--gly-layer-y);
+  left: var(--gly-layer-x);
+  right: auto;
+  bottom: auto;
+}

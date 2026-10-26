@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type JSHandle, type Locator, type Page } from "@playwright/test";
 import {
   CURRENT_STATION_ID,
   CURRENT_PRINCIPAL_DID,
@@ -164,11 +164,56 @@ export function testLocalConfig(
 
 const defaultLocalConfig = testLocalConfig();
 
-export function latestTestId(
-  page: import("@playwright/test").Page,
-  testId: string,
-) {
-  return page.getByTestId(testId).last();
+export function byClass(root: Page | Locator, className: string): Locator {
+  if (!/^[A-Za-z0-9_-]+$/.test(className)) throw new Error(`Invalid semantic class token: ${className}`);
+  return root.locator(`[class~="${className}"]`);
+}
+
+export function latestByClass(page: Page, className: string): Locator {
+  return byClass(page, className).last();
+}
+
+export async function svgDrawingMarkup(svg: Locator): Promise<string> {
+  return svg.evaluate(element => {
+    // Host node IDs identify mounted instances, not the avatar's drawing.
+    const copy = element.cloneNode(true) as Element;
+    for (const child of copy.querySelectorAll("[data-gly-node]")) child.removeAttribute("data-gly-node");
+    return copy.innerHTML;
+  });
+}
+
+type RecoveryDiscoveryOwner = {
+  document: Document;
+  shell: Element | null;
+  owner: string | null;
+};
+const recoveryDiscoveryOwners = new WeakMap<Page, JSHandle<RecoveryDiscoveryOwner>>();
+
+async function recoveryOwnerWasObserved(page: Page): Promise<boolean> {
+  const previous = recoveryDiscoveryOwners.get(page);
+  if (!previous) return false;
+  return previous.evaluate(previous => {
+    const shells = document.querySelectorAll(".shell.app");
+    return previous.document === document
+      && previous.shell === shells.item(shells.length - 1)
+      && previous.owner === document.documentElement.getAttribute("data-inkson-app-shell");
+  }).catch(() => false);
+}
+
+async function rememberRecoveryOwner(page: Page) {
+  // Capture after discovery: the authenticated shell can mount during the
+  // first wait. A JSHandle records real identity without changing the DOM.
+  const current = await page.evaluateHandle(() => {
+    const shells = document.querySelectorAll(".shell.app");
+    return {
+      document,
+      shell: shells.item(shells.length - 1),
+      owner: document.documentElement.getAttribute("data-inkson-app-shell"),
+    };
+  });
+  const previous = recoveryDiscoveryOwners.get(page);
+  recoveryDiscoveryOwners.set(page, current);
+  await previous?.dispose().catch(() => {});
 }
 
 export async function dismissBlockingRecoveryModal(
@@ -179,20 +224,25 @@ export async function dismissBlockingRecoveryModal(
   // (account_health::should_auto_prompt_recovery_setup); both expose a
   // "Dismiss"/"Not now" button. Re-query each iteration and don't assert a
   // specific modal hidden — a freshly spawned modal must not fail the helper.
+  const observed = await recoveryOwnerWasObserved(page);
   for (let i = 0; i < 8; i += 1) {
     const modal = page.getByRole("dialog").last();
-    const timeout = i === 0 ? 8_000 : 800;
-    const visible = await modal
-      .waitFor({ state: "visible", timeout })
-      .then(() => true)
-      .catch(() => false);
+    let visible = await modal.isVisible().catch(() => false);
+    // Retain the original first-owner discovery window and real follow-up
+    // prompt chain. Repeated calls still inspect actual late-visible modals.
+    if (!visible && (i > 0 || !observed)) {
+      visible = await modal
+        .waitFor({ state: "visible", timeout: i === 0 ? 8_000 : 800 })
+        .then(() => true)
+        .catch(() => false);
+    }
     if (!visible) {
       break;
     }
-    const recoverySetup = page.getByTestId("recovery-key-setup-modal").last();
+    const recoverySetup = page.locator("[class~=\"recovery-key-setup-modal\"]").last();
     if (await recoverySetup.isVisible().catch(() => false)) {
-      const dismissSetup = recoverySetup.getByTestId(
-        "recovery-key-setup-dismiss",
+      const dismissSetup = recoverySetup.locator(
+        "[class~=\"recovery-key-setup-dismiss\"]",
       );
       if (await dismissSetup.isVisible().catch(() => false)) {
         await dismissSetup.click();
@@ -217,24 +267,25 @@ export async function dismissBlockingRecoveryModal(
   if (await authorizeLater.isVisible().catch(() => false)) {
     await authorizeLater.click();
   }
+  await rememberRecoveryOwner(page);
 }
 
 export async function openServerSwitcher(
   page: import("@playwright/test").Page,
 ) {
   await dismissBlockingRecoveryModal(page);
-  const menu = latestTestId(page, "server-switch-menu");
+  const menu = latestByClass(page, "server-switch-menu");
   if (await menu.isVisible()) {
     return;
   }
-  await latestTestId(page, "server-switch-button").click();
+  await latestByClass(page, "server-switch-button").click();
   await expect(menu).toBeVisible();
 }
 
 export async function refreshServer(page: import("@playwright/test").Page) {
   await openServerSwitcher(page);
   await page
-    .getByTestId("server-option")
+    .locator("[class~=\"server-option\"]")
     .filter({ hasText: "https://local.host" })
     .click();
 }
@@ -251,7 +302,7 @@ export async function gotoAndDismissRecovery(
 export async function dismissHistoryRecoveryModal(
   page: import("@playwright/test").Page,
 ) {
-  const modal = page.getByTestId("mls-recovery-missing-modal").last();
+  const modal = page.locator("[class~=\"mls-recovery-missing-modal\"]").last();
   const appeared = await modal
     .waitFor({ state: "visible", timeout: 5_000 })
     .then(() => true)
@@ -259,7 +310,7 @@ export async function dismissHistoryRecoveryModal(
   if (!appeared) {
     return;
   }
-  await modal.getByTestId("mls-recovery-missing-dismiss").click();
+  await modal.locator("[class~=\"mls-recovery-missing-dismiss\"]").click();
   await expect(modal).toBeHidden({ timeout: 8_000 });
 }
 
@@ -270,7 +321,7 @@ export async function dismissHistoryRecoveryModal(
 export async function dismissRecoveryMissingModal(
   page: import("@playwright/test").Page,
 ) {
-  const modal = page.getByTestId("mls-recovery-missing-modal").last();
+  const modal = page.locator("[class~=\"mls-recovery-missing-modal\"]").last();
   const appeared = await modal
     .waitFor({ state: "visible", timeout: 8_000 })
     .then(() => true)
@@ -284,16 +335,16 @@ export async function dismissRecoveryMissingModal(
 
 export async function openSettings(page: import("@playwright/test").Page) {
   await dismissBlockingRecoveryModal(page);
-  await latestTestId(page, "account-menu-button").click();
-  await latestTestId(page, "account-menu-settings").click();
+  await latestByClass(page, "account-menu-button").click();
+  await page.locator(".account-menu__qr").click();
 }
 
 export async function openDiscussion(page: import("@playwright/test").Page) {
   await openKanban(page);
-  await page.getByTestId("kanban-card").first().click();
-  await expect(page.getByTestId("card-detail-modal")).toBeVisible();
-  await page.getByTestId("card-detail-tab-discussion").click();
-  await expect(page.getByTestId("chat-panel")).toBeVisible();
+  await page.locator("[class~=\"kanban-card\"]").first().click();
+  await expect(page.locator("[class~=\"card-detail-modal\"]")).toBeVisible();
+  await page.locator("[class~=\"card-detail-tab-discussion\"]").click();
+  await expect(page.locator("[class~=\"chat-panel\"]")).toBeVisible();
 }
 
 export async function openKanban(page: import("@playwright/test").Page) {
@@ -301,13 +352,13 @@ export async function openKanban(page: import("@playwright/test").Page) {
   await assertRealmTreeSeeded(page);
   const realmId = scenarioRealms.get(page)?.demoRealm ?? DEMO_REALM;
   await page.goto(`/kanban/${realmId}`, { waitUntil: "domcontentloaded" });
-  await expect(page.getByTestId("kanban-panel")).toBeVisible();
+  await expect(page.locator("[class~=\"kanban-panel\"]")).toBeVisible();
   await dismissHistoryRecoveryModal(page);
   await dismissBlockingRecoveryModal(page);
   if (scenarioRealms.get(page)?.hasSeededCards) {
     // A visible shell or seeded columns do not mean the signed card cut has
     // finished loading. Keep product assertions behind that real seed boundary.
-    await page.getByTestId("kanban-card").first().waitFor({ state: "visible", timeout: 120_000 });
+    await page.locator("[class~=\"kanban-card\"]").first().waitFor({ state: "visible", timeout: 120_000 });
   }
 }
 
@@ -316,7 +367,7 @@ export async function assertRealmTreeSeeded(
 ) {
   await dismissBlockingRecoveryModal(page);
   const seededRealm = page
-    .getByTestId("realm-tree-node-button")
+    .locator(".realm-tree-list .sidebar-row-main")
     .filter({ hasText: "Arkret Demo Realm" })
     .first();
   try {
@@ -325,11 +376,11 @@ export async function assertRealmTreeSeeded(
     const diagnostics = {
       url: page.url(),
       emptyState: await page
-        .getByTestId("realm-tree-empty-state")
+        .locator("[class~=\"realm-tree-empty-state\"]")
         .allTextContents()
         .catch(() => []),
       selectedRealm: await page
-        .getByTestId("selected-realm-id")
+        .locator("[class~=\"selected-realm-id\"]")
         .allTextContents()
         .catch(() => []),
       accountSubscribe: (apiObservations.get(page) ?? []).filter((entry) =>
@@ -351,7 +402,7 @@ export async function createDiscussion(
   name = "Test Discussion",
 ) {
   void name;
-  await expect(page.getByTestId("chat-panel")).toBeVisible();
+  await expect(page.locator("[class~=\"chat-panel\"]")).toBeVisible();
 }
 
 export async function writeLocalConfig(
@@ -524,7 +575,7 @@ export async function seedLocalRecoveryKeyMetadata(
     localStorage.setItem(injectionKey, JSON.stringify(injection));
   });
   await page.reload({ waitUntil: "domcontentloaded" });
-  await expect(latestTestId(page, "client-shell")).toBeVisible({
+  await expect(page.locator(".shell.app").last()).toBeVisible({
     timeout: 120_000,
   });
 }
@@ -535,13 +586,13 @@ export async function seedLocalRecoveryKeyMetadata(
 export async function dismissMlsBackupModal(
   page: import("@playwright/test").Page,
 ) {
-  const modal = page.getByTestId("mls-backup-modal").last();
+  const modal = page.locator("[class~=\"mls-backup-modal\"]").last();
   const appeared = await modal
     .waitFor({ state: "visible", timeout: 4_000 })
     .then(() => true)
     .catch(() => false);
   if (appeared) {
-    await page.getByTestId("mls-backup-dismiss").last().click();
+    await page.locator("[class~=\"mls-backup-dismiss\"]").last().click();
     await expect(modal).toBeHidden({ timeout: 8_000 });
   }
 }
@@ -771,7 +822,7 @@ export function registerStrandsBeforeEach(apiOptions: Parameters<typeof mockArkr
     );
     await page.goto("/", { waitUntil: "domcontentloaded", timeout: 120_000 });
     try {
-      await expect(latestTestId(page, "client-shell")).toBeVisible({
+      await expect(page.locator(".shell.app").last()).toBeVisible({
         timeout: 120_000,
       });
     } catch (error) {
@@ -818,26 +869,26 @@ export function registerStrandsBeforeEach(apiOptions: Parameters<typeof mockArkr
           {
             url: page.url(),
             connection: await settleWithin(
-              page.getByTestId("connection-status").allTextContents(), [],
+              page.locator("[class~=\"connection-status\"]").allTextContents(), [],
             ),
             syncCursor: await settleWithin(
-              page.getByTestId("sync-cursor").allTextContents(), [],
+              page.locator("[class~=\"sync-cursor\"]").allTextContents(), [],
             ),
             realms: await settleWithin(
-              page.getByTestId("realm-tree-node-button").allTextContents(), [],
+              page.locator(".realm-tree-list .sidebar-row-main").allTextContents(), [],
             ),
             selectedRealm: await settleWithin(
-              page.getByTestId("selected-realm-id").allTextContents(),
+              page.locator("[class~=\"selected-realm-id\"]").allTextContents(),
               [],
             ),
             sidecarMode: await settleWithin(
               page
-                .locator("[data-testid^='sidecar-mode-'].active")
+                .locator("[class*='sidecar-mode-'].active")
                 .allTextContents(),
               [],
             ),
             draft: await settleWithin(
-              page.getByTestId("chat-input").last().inputValue(),
+              page.locator("[class~=\"chat-input\"]").last().inputValue(),
               null,
             ),
           },

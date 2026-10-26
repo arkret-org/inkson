@@ -541,22 +541,6 @@ fn selected_card_refresh_does_not_publish_an_unchanged_retained_presentation() {
     use std::cell::{Cell, RefCell};
     use std::rc::Rc;
 
-    #[derive(Clone)]
-    struct Harness {
-        initial: KanbanCard,
-        selected: Rc<RefCell<Option<Signal<Option<KanbanCard>>>>>,
-        renders: Rc<Cell<usize>>,
-        observed: Rc<RefCell<Option<KanbanCard>>>,
-    }
-
-    fn harness(props: Harness) -> Element {
-        let selected = use_signal(|| Some(props.initial.clone()));
-        *props.selected.borrow_mut() = Some(selected);
-        props.renders.set(props.renders.get() + 1);
-        *props.observed.borrow_mut() = selected();
-        rsx! { div {} }
-    }
-
     let mut current = test_card(DEMO_STRAND_LEGAL_REVIEW_ID, "U");
     current.description_body = "saved description".to_owned();
     current.synthesis = "saved synthesis".to_owned();
@@ -567,27 +551,32 @@ fn selected_card_refresh_does_not_publish_an_unchanged_retained_presentation() {
     replacement.description_body.clear();
     replacement.synthesis.clear();
     columns[0].cards = vec![replacement.clone()];
-    let props = Harness {
-        initial: current.clone(),
-        selected: Rc::new(RefCell::new(None)),
-        renders: Rc::new(Cell::new(0)),
-        observed: Rc::new(RefCell::new(None)),
-    };
-    let mut dom = VirtualDom::new_with_props(harness, props.clone());
-    dom.rebuild_in_place();
-    let selected = props.selected.borrow().unwrap();
+    let app = glory::ui::App::memory();
+    let scope = app.scope();
+    let selected = scope.cage(Some(current.clone()));
+    let renders = Rc::new(Cell::new(0));
+    let observed = Rc::new(RefCell::new(None));
+    {
+        let renders = renders.clone();
+        let observed = observed.clone();
+        scope.effect(move || {
+            *observed.borrow_mut() = selected.get();
+            renders.set(renders.get() + 1);
+        });
+    }
+    app.flush().unwrap();
     for _ in 0..4 {
-        dom.in_runtime(|| sync_selected_card_from_columns(selected, &columns, &[], false, true));
-        dom.render_immediate_to_vec();
+        sync_selected_card_from_columns(selected, &columns, &[], false, true);
+        app.flush().unwrap();
     }
     assert_eq!(
-        props.renders.get(),
+        renders.get(),
         1,
         "retaining identical presentation must not wake its subscribed reconciliation effect"
     );
-    assert_eq!(props.observed.borrow().as_ref(), Some(&current));
+    assert_eq!(observed.borrow().as_ref(), Some(&current));
     assert!(!card_detail_write_ready(
-        props.observed.borrow().as_ref().unwrap()
+        observed.borrow().as_ref().unwrap()
     ));
 
     // A genuinely new complete accepted basis still publishes and replaces old content.
@@ -597,11 +586,76 @@ fn selected_card_refresh_does_not_publish_an_unchanged_retained_presentation() {
         stream_position: 3,
     });
     columns[0].cards = vec![replacement.clone()];
-    dom.in_runtime(|| sync_selected_card_from_columns(selected, &columns, &[], false, true));
-    dom.render_immediate_to_vec();
-    assert_eq!(props.renders.get(), 2);
-    assert_eq!(props.observed.borrow().as_ref(), Some(&replacement));
-    assert!(card_detail_write_ready(
-        props.observed.borrow().as_ref().unwrap()
-    ));
+    sync_selected_card_from_columns(selected, &columns, &[], false, true);
+    app.flush().unwrap();
+    assert_eq!(renders.get(), 2);
+    assert_eq!(observed.borrow().as_ref(), Some(&replacement));
+    assert!(card_detail_write_ready(observed.borrow().as_ref().unwrap()));
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn live_route_tab_updates_same_page_node_without_another_store_revision() {
+    use glory::render::Props;
+    let app = glory::App::memory();
+    let directory = tempfile::Builder::new()
+        .prefix("kanban-tab-route-")
+        .tempdir_in("D:/BuildCache/inkson-glory/tmp")
+        .unwrap();
+    let context = crate::presentation::InksonContext::new(
+        app.scope(),
+        crate::presentation::BootState {
+            config_store: crate::config::LocalConfigStore::with_path(
+                directory.path().join("config.json"),
+            ),
+            config: crate::config::ClientConfig::default(),
+            state_store: crate::presentation::SharedStateStore::new(
+                crate::state::LocalStateStore::with_path(directory.path().join("state.json")),
+            ),
+            initial_credential: String::new(),
+            realm_tree_nodes: vec![],
+        },
+        Route::KanbanTask {
+            realm_id: TEST_REALM_ID.into(),
+            task_id: "ak:strand:AVFSR4O2uTcP6zGsyewp0OdaGeDZBXQAUZ9VIEKLSXYo".into(),
+            tab: "description".into(),
+        },
+        |_| Box::pin(std::future::pending()),
+    );
+    let selected = app.scope().cage(CardDetailContentTab::Description);
+    app.scope().effect({
+        let context = context.clone();
+        move || {
+            let tab = card_detail_tab_from_current_route(&context);
+            if selected.get_untracked() != tab {
+                selected.revise(|value| *value = tab);
+            }
+        }
+    });
+    app.mount(
+        glory::ui::text().content(
+            app.scope()
+                .bond(move || card_detail_tab_slug(selected.get()).to_owned()),
+        ),
+    )
+    .unwrap();
+    app.flush().unwrap();
+    let node = app.tree().roots()[0];
+    let owners = app.stats().owners;
+    for expected in [
+        CardDetailContentTab::Synthesis,
+        CardDetailContentTab::Discussion,
+        CardDetailContentTab::Description,
+    ] {
+        context
+            .route
+            .revise(|route| *route = card_task_route_with_tab(route, expected).unwrap());
+        app.flush().unwrap();
+        assert_eq!(selected.get_untracked(), expected);
+        assert_eq!(app.tree().roots(), &[node]);
+        assert_eq!(app.stats().owners, owners);
+        assert!(
+            matches!(app.tree().node(node).unwrap().descriptor.view().props, Props::Text(text) if text.content == card_detail_tab_slug(expected))
+        );
+    }
 }

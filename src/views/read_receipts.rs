@@ -20,7 +20,7 @@
 
 use std::collections::BTreeMap;
 
-use dioxus::prelude::*;
+use glory::{Cage, Scope};
 
 // Integration tests exercise the admitted product boundary using its existing
 // host carriers, without exposing a second decoder or a verification bypass.
@@ -128,18 +128,19 @@ impl ReadReceiptProjection {
 /// App-tree handle to the read-receipt projection.
 #[derive(Clone, Copy)]
 pub struct ReadReceiptHub {
-    projection: Signal<ReadReceiptProjection>,
+    projection: Cage<ReadReceiptProjection>,
 }
 
 impl ReadReceiptHub {
-    pub fn new() -> Self {
+    pub fn new(scope: &Scope) -> Self {
         Self {
-            projection: Signal::new(ReadReceiptProjection::default()),
+            projection: scope.cage(ReadReceiptProjection::default()),
         }
     }
 
-    pub fn try_use() -> Option<Self> {
-        try_consume_context::<Self>()
+    pub fn reset(&self) {
+        self.projection
+            .revise(|projection| *projection = ReadReceiptProjection::default());
     }
 
     /// Apply one decrypted `ak.receipt.read` plaintext.
@@ -198,13 +199,15 @@ impl ReadReceiptHub {
             state.current_generation,
             state.current_reset_required,
         );
-        self.projection.write().apply(
-            key,
-            message_id,
-            receipt.payload_sequence,
-            local_actor.clone(),
-            target.actor_id.clone(),
-        )
+        self.projection.revise(|projection| {
+            projection.apply(
+                key,
+                message_id,
+                receipt.payload_sequence,
+                local_actor.clone(),
+                target.actor_id.clone(),
+            )
+        })
     }
 
     /// A new account/current cut never revives hints retained at an older cut.
@@ -215,11 +218,19 @@ impl ReadReceiptHub {
         reset: bool,
     ) {
         let next = viewer.map(|viewer| (viewer.clone(), generation));
-        let changed = self.projection.peek().generation != next;
-        if changed || (reset && !self.projection.peek().positions.is_empty()) {
-            let mut projection = self.projection.write();
-            projection.positions.clear();
-            projection.generation = next;
+        let changed = self
+            .projection
+            .with_untracked(|projection| projection.generation != next);
+        if changed
+            || (reset
+                && self
+                    .projection
+                    .with_untracked(|projection| !projection.positions.is_empty()))
+        {
+            self.projection.revise(|projection| {
+                projection.positions.clear();
+                projection.generation = next;
+            });
         }
     }
 
@@ -229,17 +240,17 @@ impl ReadReceiptHub {
                 && key.scope_ref == strand
                 && message.is_none_or(|message| position.message_id == message)
         };
-        if self
-            .projection
-            .peek()
-            .positions
-            .iter()
-            .any(|((_, key), position)| remove(key, position))
-        {
-            self.projection
-                .write()
+        if self.projection.with_untracked(|projection| {
+            projection
                 .positions
-                .retain(|(_, key), position| !remove(key, position));
+                .iter()
+                .any(|((_, key), position)| remove(key, position))
+        }) {
+            self.projection.revise(|projection| {
+                projection
+                    .positions
+                    .retain(|(_, key), position| !remove(key, position))
+            });
         }
     }
 
@@ -257,15 +268,9 @@ impl ReadReceiptHub {
         viewer: &arkret_sdk::ActorId,
         target_author: &arkret_sdk::ActorId,
     ) -> Vec<arkret_sdk::ActorId> {
-        self.projection
-            .read()
-            .readers_of(realm_id, strand_id, message_id, viewer, target_author)
-    }
-}
-
-impl Default for ReadReceiptHub {
-    fn default() -> Self {
-        Self::new()
+        self.projection.with(|projection| {
+            projection.readers_of(realm_id, strand_id, message_id, viewer, target_author)
+        })
     }
 }
 
@@ -321,60 +326,84 @@ fn strand_read_position(
 
 /// The timeline's receipt row. Both the current viewer and locally visible
 /// Message author must still match the evidence accepted with the receipt.
-#[component]
-pub fn ReadReceiptIndicator(
-    realm_id: String,
-    strand_id: String,
-    message_id: Option<String>,
-    target_author: Option<arkret_sdk::ActorId>,
-    viewer: arkret_sdk::ActorId,
-    display: bool,
-    policy: Option<arkret_sdk::ReadReceiptPolicy>,
-) -> Element {
-    let hub = ReadReceiptHub::try_use();
-    let allowed = display
-        && target_author.as_ref().is_some_and(|author| {
-            policy
+#[derive(Clone)]
+pub struct ReadReceiptIndicatorProps {
+    pub realm_id: String,
+    pub strand_id: String,
+    pub message_id: Option<String>,
+    pub target_author: Option<arkret_sdk::ActorId>,
+    pub viewer: arkret_sdk::ActorId,
+    pub display: bool,
+    pub policy: Option<arkret_sdk::ReadReceiptPolicy>,
+}
+
+pub fn read_receipt_indicator(
+    scope: &Scope,
+    context: std::rc::Rc<crate::presentation::InksonContext>,
+    props: ReadReceiptIndicatorProps,
+) -> crate::presentation::View {
+    use glory::ui::row;
+
+    use crate::presentation::widgets::{empty, reactive};
+    let mut hub = context.read_receipt_hub;
+    let allowed = props.display
+        && props.target_author.as_ref().is_some_and(|author| {
+            props
+                .policy
                 .as_ref()
-                .is_some_and(|policy| read_receipt_is_displayable(policy, &viewer, author))
+                .is_some_and(|policy| read_receipt_is_displayable(policy, &props.viewer, author))
         });
-    let retract_realm = realm_id.clone();
-    let retract_strand = strand_id.clone();
-    let retract_message = message_id.clone();
-    use_effect(use_reactive(
-        (&allowed, &retract_realm, &retract_strand, &retract_message),
-        move |(allowed, realm, strand, message)| {
-            if !allowed && let Some(mut hub) = hub {
-                hub.retract_target(&realm, &strand, message.as_deref());
-            }
-        },
-    ));
-    let readers = match (ReadReceiptHub::try_use(), message_id, target_author, policy) {
-        (Some(hub), Some(message), Some(author), Some(policy))
-            if display && read_receipt_is_displayable(&policy, &viewer, &author) =>
+    if !allowed {
+        hub.retract_target(
+            &props.realm_id,
+            &props.strand_id,
+            props.message_id.as_deref(),
+        );
+        return empty();
+    }
+    let active_account = context.active_account;
+    let readers = scope.bond(move || {
+        if active_account
+            .get()
+            .map(|account| arkret_sdk::ActorId::account(account.authority))
+            .as_ref()
+            != Some(&props.viewer)
         {
-            hub.readers_of(&realm_id, &strand_id, &message, &viewer, &author)
+            return Vec::new();
         }
-        _ => Vec::new(),
-    };
-    if readers.is_empty() {
-        return rsx! {};
-    }
-    let attr = serde_json::to_string(&readers).unwrap_or_default();
-    rsx! {
-        div {
-            class: "read-receipt-indicator",
-            "data-testid": "read-receipt-indicator",
-            "data-readers": "{attr}",
-            for actor in &readers {
-                crate::components::IdentityAvatar {
-                    seed: actor.signing_principal_id().to_string(),
-                    alt_text: actor.to_string(),
-                    class: "read-receipt-avatar avatar-img".to_owned(),
-                }
-            }
+        match (&props.message_id, &props.target_author) {
+            (Some(message), Some(author)) => hub.readers_of(
+                &props.realm_id,
+                &props.strand_id,
+                message,
+                &props.viewer,
+                author,
+            ),
+            _ => Vec::new(),
         }
-    }
+    });
+    reactive(readers, move |scope, readers| {
+        if readers.is_empty() {
+            return empty();
+        }
+        let avatars = readers
+            .into_iter()
+            .map(|actor| {
+                crate::components::identity_avatar(
+                    scope,
+                    context.clone(),
+                    crate::components::IdentityAvatarProps {
+                        seed: actor.signing_principal_id().to_string(),
+                        alt_text: actor.to_string(),
+                        blob_ref: None,
+                        class: "read-receipt-avatar avatar-img".into(),
+                        test_id: None,
+                    },
+                )
+            })
+            .collect::<Vec<_>>();
+        Box::new(row().class("read-receipt-indicator").fill(avatars))
+    })
 }
 
 #[cfg(test)]

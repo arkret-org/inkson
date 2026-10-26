@@ -20,7 +20,7 @@ Web deployments must satisfy all of the following:
 - Discovery returns the Station, coauth, and push-gateway endpoints.
 - TLS is valid for the browser origin used by the client.
 - The UI is served from the web image or a static host that preserves the
-  Dioxus generated asset paths.
+  generated JavaScript, WASM, CSS, and media asset paths.
 
 ## Push gateway wiring
 
@@ -53,7 +53,7 @@ Privacy requirements:
 Build locally:
 
 ```powershell
-cargo build --release --features desktop
+python scripts/build_desktop.py --release
 powershell -ExecutionPolicy Bypass -File scripts/signing-dry-run.ps1
 ```
 
@@ -120,16 +120,15 @@ report-uri /csp-report;
 
 Notes:
 
-- `wasm-unsafe-eval` is required — Dioxus loads the WebAssembly bundle.
-- `style-src 'unsafe-inline'` is required by Dioxus's runtime `style="..."`
-  prop interpolation. **TODO(P5-impl)**: migrate to scoped style tags so we
-  can drop `unsafe-inline`.
+- `wasm-unsafe-eval` permits the generated bootstrap to instantiate WebAssembly.
+- Glory and Sapid apply dynamic layout styles. Preserve the shipped style policy
+  when deploying the generated CSS and JavaScript bundle.
 - Enumerate the coland + chime origins explicitly in `connect-src`. Do
   **not** ship `connect-src *`.
 - `frame-ancestors 'none'` prevents click-jacking. inkson is a top-level
   app, not an embed.
-- `dangerous_inner_html` is permanently disabled at the source level — see
-  `crate::content` and `pulldown-cmark` configuration.
+- Sanitized message content is rendered through semantic widgets; see
+  `crate::content` for the sanitizer and Markdown configuration.
 
 ### CORS
 
@@ -179,8 +178,9 @@ For pre-prod cohorts:
 - Ship a manual "Check for updates" UI surface that pulls the manifest
   and warns when the local artifact sha differs.
 
-The web build naturally rolls forward on next page load; cache-bust by
-versioning the asset path (Dioxus does this by default).
+The web build rolls forward on the next page load. The supplied nginx setup
+serves the entry point without a persistent cache; deploy each generated bundle
+atomically so JavaScript, WASM, CSS and `ui-build-info.json` stay in sync.
 
 ## macOS notarization gate (no version bump)
 

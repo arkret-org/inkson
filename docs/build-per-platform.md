@@ -12,7 +12,7 @@
 | Rust | `1.98` (matches `Cargo.toml::rust-version`) |
 | `cargo` | bundled with the rustup toolchain |
 | `wasm32-unknown-unknown` target | `rustup target add wasm32-unknown-unknown` |
-| `dx` (Dioxus CLI) | `cargo install dioxus-cli@0.7` |
+| Python / wasm-bindgen | Python 3; `.ci/install-wasm-bindgen.py` installs the locked CLI |
 | Node | `>= 18` (Playwright + image assets) |
 | Docker | `>= 24` (web image only) |
 
@@ -31,7 +31,7 @@ The `justfile` mirrors the same build plan for local use:
 
 | Task | Purpose |
 | --- | --- |
-| `just web-build` | Dioxus web/WASM release build. |
+| `just web-build` | Glory/Sapid web/WASM release build. |
 | `just desktop-build` | Native desktop release build for the current host. |
 | `just package-windows` | Local unsigned MSI wrapper around `scripts/windows-msi-local.ps1`. |
 | `just package-macos` | Local unsigned `.app` bundle wrapper around `scripts/macos-bundle-local.ps1`. |
@@ -44,7 +44,7 @@ The `justfile` mirrors the same build plan for local use:
 ## 1. macOS desktop
 
 ```bash
-cargo build --release --features desktop
+python scripts/build_desktop.py --release
 ./scripts/codesign-dryrun.sh
 ```
 
@@ -65,7 +65,7 @@ certificate; the dry-run script is **NOT for production use**.
 ## 2. Windows desktop
 
 ```powershell
-cargo build --release --features desktop
+python scripts/build_desktop.py --release
 powershell -ExecutionPolicy Bypass -File scripts/codesign-dryrun.ps1
 ```
 
@@ -89,7 +89,7 @@ The MSI build uses WiX 4 and lands at `dist/inkson-windows.msi`. It is
 
 ```bash
 cargo deny --locked --features desktop check advisories
-cargo build --locked --release --features desktop
+python scripts/build_desktop.py --release
 pwsh -NoProfile -File scripts/signing-dry-run.ps1 -NoBuild
 ```
 
@@ -122,14 +122,17 @@ Successful macOS native or Web tests do not replace these Linux checks.
 
 ---
 
-## 4. Web build (Dioxus → WebAssembly)
+## 4. Web build (Glory → WebAssembly)
 
 ```bash
-dx build --platform web --features web --release
+python scripts/build_web.py --release --out-dir dist/web
 ```
 
-Outputs land under `target/dx/inkson/release/web/`. Serve with any static
-host that preserves the Dioxus asset paths.
+Outputs land in the requested `dist/web/` directory, including `ui-build-info.json`.
+Serve the complete directory with an SPA fallback for application routes; missing
+assets must remain HTTP 404. Cargo targets must be on D: on Windows, and
+`cargo metadata --no-deps --format-version 1` reports the actual target directory.
+The native helper also stages `assets/` beside the executable.
 
 The web build uses the same in-tree OpenMLS patch as native builds for
 persisted MLS snapshots and encrypted-history restore. It still relies on
@@ -164,9 +167,8 @@ base-uri 'self';
 form-action 'self';
 ```
 
-`dangerous_inner_html` is **never** enabled in the Dioxus tree. The
-`pulldown-cmark` markdown renderer keeps its `html` feature pass-through
-disabled, so untrusted message bodies cannot inject arbitrary tags.
+Message content passes through the existing Markdown/HTML sanitizers and
+becomes semantic Glory widgets. Raw message HTML is not inserted into the host DOM.
 
 For evidence generation:
 
@@ -211,7 +213,7 @@ Gitea CI mirrors this shape in `.gitea/workflows/smoke.yml`: web/WASM
 and Linux checks are required, while Windows, macOS, iOS, and Android
 target checks are marked best-effort until dedicated runners/toolchains
 exist. A separate responsive viewport job runs
-`tests/e2e/viewport.spec.ts` against the Dioxus web build.
+`tests/e2e/viewport.spec.ts` against the Glory web build.
 
 ---
 
@@ -220,7 +222,7 @@ exist. A separate responsive viewport job runs
 After any build:
 
 ```bash
-cargo fmt --check
+cargo +nightly fmt --check
 cargo clippy --all-targets -- -D warnings
 cargo check --workspace --all-features
 cargo test --workspace --lib

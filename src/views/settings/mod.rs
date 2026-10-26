@@ -22,34 +22,27 @@ mod model;
 mod profile_helpers;
 pub mod realm_picker;
 mod sections;
-mod widgets;
+pub(crate) mod widgets;
+
+use std::rc::Rc;
 
 use account_data::*;
 use arkret_wire::AccountDataKey;
 use base64::Engine as _;
-use dioxus::prelude::*;
-use dioxus_primitives::checkbox::CheckboxState;
-use dioxus_router::Link;
-use dioxus_router::hooks::use_route;
+use glory::Scope;
+use glory::prelude::Widget;
 use invite_locator::*;
 use profile_helpers::*;
-use realm_picker::{RealmPreferencePicker, preference_realm_options, selected_realm_id};
+use realm_picker::{preference_realm_options, selected_realm_id};
 use sections::*;
 use serde_json::{Map, Value, json};
 use widgets::*;
 
-use crate::components::{HelpTip, UiIcon};
-use crate::config::LocalConfigStore;
 use crate::i18n::UiLocale;
 use crate::notification_rules::WatchLevel;
+use crate::presentation::{InksonContext, SharedStateStore, View};
 use crate::routes::Route;
 use crate::transport::auth::{with_authed_sdk_client, with_event_submitter};
-use crate::ui::button::{Button, ButtonSize, ButtonVariant};
-use crate::ui::checkbox::Checkbox;
-use crate::ui::dialog::Dialog;
-use crate::ui::input::Input;
-use crate::ui::label::Label;
-use crate::ui::select::{Select, SelectOption};
 use crate::views::helpers::{actor_display_label, short_protocol_id};
 
 /// Resolve the relative expiry picker choice into a typed UTC `clears_at`
@@ -77,11 +70,13 @@ pub(crate) fn presence_expiry_to_clears_at(choice: &str) -> Option<chrono::DateT
 /// we never re-read it from the store here because the Signal copy from
 /// the caller is the freshest one.
 pub(crate) fn push_client_ui_account_data(
+    context: Rc<InksonContext>,
     base_url: String,
     api_token: String,
     local_theme: String,
 ) {
     push_client_ui_account_data_patches(
+        context.clone(),
         base_url,
         api_token,
         vec![crate::account_data::ClientUiStatePatch::Theme(local_theme)],
@@ -106,19 +101,22 @@ fn locale_display_name(locale: UiLocale) -> &'static str {
 ///    what the OIDC `ui_locales` parameter is built from, so coauth follows on the next sign-in;
 /// 3. the `language` field of the `ak.client.ui_state` account-data entry (spec
 ///    `discovery/client-preferences.md` §3.4), which is how the user's other devices find out.
-fn select_locale(
-    choice: UiLocale,
-    mut locale: Signal<UiLocale>,
-    mut state_store: SyncSignal<crate::state::LocalStateStore>,
-    base_url: String,
-    api_token: String,
-) {
-    if locale() == choice {
+fn select_locale(context: Rc<InksonContext>, choice: UiLocale) {
+    if context.locale.get() == choice {
         return;
     }
-    locale.set(choice);
-    state_store.write().set_device_pref("locale", choice.code());
-    push_client_language_account_data(base_url, api_token, choice);
+    context.locale.revise(|value| {
+        *value = choice;
+    });
+    context
+        .state_store
+        .write(|store| store.set_device_pref("locale", choice.code()));
+    push_client_language_account_data(
+        context.clone(),
+        context.base_url.get(),
+        context.token.get(),
+        choice,
+    );
 }
 
 /// Best-effort cross-device sync of the language choice.
@@ -136,11 +134,13 @@ fn select_locale(
 /// user can see the language changed, and telling them the sync failed gives
 /// them nothing to act on.
 pub(crate) fn push_client_language_account_data(
+    context: Rc<InksonContext>,
     base_url: String,
     api_token: String,
     locale: UiLocale,
 ) {
     push_client_ui_account_data_patches(
+        context.clone(),
         base_url,
         api_token,
         vec![crate::account_data::ClientUiStatePatch::Language(locale)],
@@ -151,6 +151,7 @@ pub(crate) fn push_client_language_account_data(
 /// All writers share the account-data CAS read/merge/write loop so retries
 /// always reapply the patch to the latest server snapshot.
 fn push_client_ui_account_data_patches(
+    context: Rc<InksonContext>,
     base_url: String,
     api_token: String,
     patches: Vec<crate::account_data::ClientUiStatePatch>,
@@ -163,38 +164,44 @@ fn push_client_ui_account_data_patches(
     else {
         return;
     };
-    spawn(async move {
-        if let Err(err) = with_event_submitter(&base_url, api_token, |sub| async move {
-            crate::transport::account::update_account_data_with_merge(
-                &sub,
-                AccountDataKey::CLIENT_UI_STATE,
-                |snapshot| {
-                    let mut plaintext = match snapshot.entry.as_ref() {
-                        Some(entry) => crate::account_data::decrypt_account_data_entry(
+    {
+        let task_owner = context.clone();
+        let _ = task_owner.spawn(async move {
+            if let Err(err) = with_event_submitter(&base_url, api_token, |sub| async move {
+                crate::transport::account::update_account_data_with_merge(
+                    &sub,
+                    AccountDataKey::CLIENT_UI_STATE,
+                    |snapshot| {
+                        let mut plaintext = match snapshot.entry.as_ref() {
+                            Some(entry) => crate::account_data::decrypt_account_data_entry(
+                                &authority,
+                                AccountDataKey::CLIENT_UI_STATE,
+                                entry,
+                            )?,
+                            None => serde_json::json!({}),
+                        };
+                        crate::account_data::apply_client_ui_state_patches(
+                            &mut plaintext,
+                            &patches,
+                        );
+                        crate::account_data::encrypt_account_data_value(
                             &authority,
                             AccountDataKey::CLIENT_UI_STATE,
-                            entry,
-                        )?,
-                        None => serde_json::json!({}),
-                    };
-                    crate::account_data::apply_client_ui_state_patches(&mut plaintext, &patches);
-                    crate::account_data::encrypt_account_data_value(
-                        &authority,
-                        AccountDataKey::CLIENT_UI_STATE,
-                        &plaintext,
-                    )
-                },
-            )
+                            &plaintext,
+                        )
+                    },
+                )
+                .await
+            })
             .await
-        })
-        .await
-        {
-            tracing::warn!(
-                "ak.account_data.set for ak.client.ui_state failed: {}",
-                err.display()
-            );
-        }
-    });
+            {
+                tracing::warn!(
+                    "ak.account_data.set for ak.client.ui_state failed: {}",
+                    err.display()
+                );
+            }
+        });
+    };
 }
 
 /// A4b — variant of [`push_client_ui_account_data`] that also carries
@@ -208,6 +215,7 @@ fn push_client_ui_account_data_patches(
 /// `Some("")` to tombstone the cached ref so other devices fall back to
 /// the public profile when the avatar is cleared.
 pub(crate) fn push_client_ui_account_data_with_avatar(
+    context: Rc<InksonContext>,
     base_url: String,
     api_token: String,
     local_theme: String,
@@ -219,7 +227,7 @@ pub(crate) fn push_client_ui_account_data_with_avatar(
             avatar_blob_ref,
         ));
     }
-    push_client_ui_account_data_patches(base_url, api_token, patches);
+    push_client_ui_account_data_patches(context.clone(), base_url, api_token, patches);
 }
 
 /// Build the canonical `content` body for a read-receipt preferences
@@ -270,10 +278,11 @@ pub(crate) fn build_read_receipt_preferences_body(
 /// authoritative; network errors are logged only so privacy controls keep
 /// working offline.
 pub(crate) fn push_blocklist_account_data(
+    context: Rc<InksonContext>,
     base_url: String,
     api_token: String,
     principal_id: String,
-    state_store: SyncSignal<crate::state::LocalStateStore>,
+    state_store: SharedStateStore,
     entries: Vec<arkret_models_collaboration::objects::productivity::AccountBlocklistEntry>,
 ) {
     if api_token.trim().is_empty() {
@@ -289,22 +298,25 @@ pub(crate) fn push_blocklist_account_data(
         tracing::warn!("blocklist upload skipped: active authority does not match the account");
         return;
     }
-    let store = crate::app::runtime_adapter::state_store_handle(state_store);
-    spawn(async move {
-        match with_event_submitter(&base_url, api_token, |sub| async move {
-            crate::transport::account::persist_personal_block_saga(
-                &sub, &authority, &store, &entries,
-            )
+    let store = state_store.handle();
+    {
+        let task_owner = context.clone();
+        let _ = task_owner.spawn(async move {
+            match with_event_submitter(&base_url, api_token, |sub| async move {
+                crate::transport::account::persist_personal_block_saga(
+                    &sub, &authority, &store, &entries,
+                )
+                .await
+            })
             .await
-        })
-        .await
-        {
-            Ok(_) => {}
-            Err(err) => {
-                tracing::debug!("personal blocklist saga deferred: {}", err.display());
+            {
+                Ok(_) => {}
+                Err(err) => {
+                    tracing::debug!("personal blocklist saga deferred: {}", err.display());
+                }
             }
-        }
-    });
+        });
+    };
 }
 
 /// Client-side DNS-domain sanity check for the blocklist `domain` target
@@ -346,23 +358,39 @@ pub(crate) fn is_likely_valid_domain(input: &str) -> bool {
 /// server write is best-effort. `remark.is_empty()` triggers a DELETE so the
 /// row tombstones cleanly across devices.
 pub(crate) fn push_realm_remark_account_data(
+    context: Rc<InksonContext>,
     base_url: String,
     api_token: String,
     realm_id: String,
     remark: crate::account_data::RealmRemark,
 ) {
-    push_realm_remark_account_data_impl(base_url, api_token, realm_id, remark, false);
+    push_realm_remark_account_data_impl(
+        context.clone(),
+        base_url,
+        api_token,
+        realm_id,
+        remark,
+        false,
+    );
 }
 
 /// Variant of [`push_realm_remark_account_data`] that surfaces sync failures
 /// to the user via an error toast (`realm.pin_failed`).
 pub(crate) fn push_realm_remark_account_data_with_failure_toast(
+    context: Rc<InksonContext>,
     base_url: String,
     api_token: String,
     realm_id: String,
     remark: crate::account_data::RealmRemark,
 ) {
-    push_realm_remark_account_data_impl(base_url, api_token, realm_id, remark, true);
+    push_realm_remark_account_data_impl(
+        context.clone(),
+        base_url,
+        api_token,
+        realm_id,
+        remark,
+        true,
+    );
 }
 
 /// Apply one holder-authored Contact remark edit through the account-data
@@ -374,6 +402,7 @@ pub(crate) fn push_realm_remark_account_data_with_failure_toast(
 /// tags, pin and confirmation baseline instead of being overwritten by whatever
 /// this device had rendered (`client-preferences.md` section 3.6).
 pub(crate) fn push_contact_remark_edit(
+    context: Rc<InksonContext>,
     base_url: String,
     api_token: String,
     principal_id: arkret_sdk::DidCoreId,
@@ -385,13 +414,16 @@ pub(crate) fn push_contact_remark_edit(
         tracing::warn!("contact remark upload skipped: active account scope is unavailable");
         return;
     };
-    spawn(async move {
+    {
+        let task_owner = context.clone();
+        let _ = task_owner.spawn(async move {
         if let Err(error) =
             save_contact_remark_edit(base_url, api_token, authority, principal_id, edit).await
         {
             tracing::warn!(error = %error.display(), "contact remark account_data write failed");
         }
     });
+    };
 }
 
 /// Return the authoritative merged remark only after the service accepted it.
@@ -451,2316 +483,622 @@ pub(crate) async fn save_contact_remark_edit(
     .await
 }
 
-// Invariant assertions: each `expect` message names the check that
-// establishes it a few lines earlier. Rewriting them as `?` would add
-// error paths no caller can reach.
-#[allow(clippy::expect_used)]
-#[component]
-pub fn SettingsPanel(
-    token: Signal<String>,
-    account_primary_handle: String,
-    personal_handles: Vec<String>,
-    personal_handles_status: String,
-    config_store: Signal<LocalConfigStore>,
-    push_state: Signal<String>,
-    mut locale: Signal<UiLocale>,
-    mut theme: Signal<String>,
-) -> Element {
-    let session = crate::app::SessionContext::get();
-    let mut state_store = session.state_store;
-    let Some(active_account) = session.active_account() else {
-        return rsx! {};
-    };
-    let active_server_url = active_account.server_url.to_string();
-    let active_principal = active_account.principal_id().clone();
-    let active_principal_id = active_account.principal_id().to_string();
-    let active_device_id = active_account.device_id.to_string();
-    let active_authority = active_account.authority.clone();
-    let base_url = use_signal(move || active_server_url.clone());
-    let principal_id = use_signal(move || active_principal_id.clone());
-    let device_id = use_signal(move || active_device_id.clone());
-    let account_authority = use_signal(move || active_authority.clone());
-    let backup_trigger_signal = crate::components::try_needs_mls_backup_signal();
-    let route = use_route::<Route>();
+mod preferences;
+mod profile;
+
+pub fn page(scope: &Scope, context: Rc<InksonContext>, route: Route) -> View {
     let active_section = SettingsSection::from_slug(route.settings_section());
-    // Settings-nav filter: matches section labels in the active locale so the
-    // sidebar collapses to the sections whose (localised) name contains the
-    // query. Empty query shows every group (design/settings-ia-reorg.md §3.4).
-    let mut settings_nav_filter = use_signal(String::new);
-    let mut presence_visibility_choice = use_signal(|| {
-        state_store
-            .read()
-            .presence_visibility()
-            .as_wire()
-            .to_owned()
-    });
-    let presence_visibility_selected = use_memo(move || Some(presence_visibility_choice()));
-    // Manual presence preference editor state (profiles-presence.md
-    // §3.6). Hydrated from persisted local state; the expiry picker is
-    // relative so it always starts at "never".
-    let model::PresenceEditorSeed {
-        manual_state: initial_presence_manual_state,
-        status_message: initial_presence_status_message,
-    } = model::presence_editor_seed(
-        &state_store.read().presence_preference(),
-        chrono::Utc::now(),
-    );
-    let mut presence_manual_state = use_signal(move || initial_presence_manual_state);
-    let presence_manual_state_selected = use_memo(move || Some(presence_manual_state()));
-    let mut presence_status_message = use_signal(move || initial_presence_status_message);
-    let mut presence_expiry_choice = use_signal(|| "never".to_owned());
-    let presence_expiry_selected = use_memo(move || Some(presence_expiry_choice()));
-    let mut presence_status_feedback = use_signal(String::new);
-    // Hydrate DND from the persisted local snapshot so the toggle reflects
-    // the last-saved state instead of always rendering "off" (the saved body
-    // only carries a full-day period when the user picked "now").
-    let model::DndEditorSeed {
-        enabled: initial_dnd_enabled,
-        mode: initial_dnd_mode,
-    } = model::dnd_editor_seed(state_store.read().notification_dnd_settings().as_ref());
-    let mut dnd_enabled = use_signal(move || initial_dnd_enabled);
-    let mut dnd_mode = use_signal(move || initial_dnd_mode);
-    let dnd_mode_selected = use_memo(move || Some(dnd_mode()));
-    let mut notification_settings_status = use_signal(String::new);
-    let mut notification_sound_enabled =
-        use_signal(|| crate::notification_sound::notification_sound_enabled(&state_store.read()));
-    // Per-realm override editor state (spec push-notifications.md §4.3.2).
-    // `new_override_realm` holds the realm id picked in the "add" row;
-    // `new_override_level` is the watch level to apply. New overrides default
-    // to `Muted` since silencing a noisy realm is the common case.
-    let mut new_override_realm = use_signal(String::new);
-    let mut new_override_level = use_signal(|| WatchLevel::Muted.as_wire().to_owned());
-    let new_override_realm_selected = use_memo(move || Some(new_override_realm()));
-    let new_override_level_selected = use_memo(move || Some(new_override_level()));
-    // Read receipt preferences (spec discovery/client-preferences.md §3.6).
-    // Hydrated from persisted local state; mutations write back through
-    // `state_store.set_read_receipt_*` so message readers can resolve
-    // (strand → realm → default) before sending `ak.receipt.read`.
-    let mut read_receipt_default_send =
-        use_signal(|| state_store.read().read_receipt_default_send());
-    let mut read_receipt_default_display =
-        use_signal(|| state_store.read().read_receipt_default_display());
-    let mut read_receipt_realm_overrides =
-        use_signal(|| state_store.read().read_receipt_realm_overrides());
-    let mut read_receipt_override_input = use_signal(String::new);
-    // Realm remarks editor state (spec client-preferences.md §3.7).
-    // `realm_remarks_snapshot` is the resolved BTreeMap rendered for the
-    // list; `realm_remark_inputs` keeps unsaved text edits keyed by
-    // realm_id so users can type without round-tripping through coland.
-    // The add row retains an exact Realm selection separately from its label.
-    let mut realm_remarks_snapshot = use_signal(|| state_store.read().realm_remarks());
-    let mut realm_remark_inputs = use_signal(|| {
-        state_store
-            .read()
-            .realm_remarks()
-            .into_iter()
-            .map(|(id, r)| (id, r.local_name))
-            .collect::<std::collections::BTreeMap<String, String>>()
-    });
-    let mut new_realm_remark_id = use_signal(String::new);
-    let mut new_realm_remark_name = use_signal(String::new);
-    let contact_remarks_snapshot = use_signal(|| state_store.read().contact_remarks());
-    // A4b — profile (display_name / biography / avatar) state.
-    // `avatar_blob_ref` mirrors the most-recently uploaded avatar via
-    // `ak.account_data.set("ak.client.ui_state", { avatar_blob_ref })` and is also
-    // published through the spec profile endpoint so directory projections can index it.
-    let initial_avatar_blob_ref = state_store
-        .read()
-        .load_plain_local_data("avatar_blob_ref")
-        .unwrap_or_default();
-    let mut profile_avatar_blob_ref = use_signal(|| initial_avatar_blob_ref.clone());
-    let mut avatar_upload_status = use_signal(String::new);
-    let mut avatar_uploading = use_signal(|| false);
-    let mut avatar_cache_status = use_signal(String::new);
-    let mut avatar_removing = use_signal(|| false);
-    let avatar_reading = use_signal(|| false);
-    let avatar_selection_epoch = use_signal(AvatarSelectionEpoch::default);
-    let pending_avatar_crop = use_signal(|| None::<PendingAvatarCrop>);
-    let avatar_crop_zoom = use_signal(|| 125_i32);
-    let avatar_crop_x = use_signal(|| 0_i32);
-    let avatar_crop_y = use_signal(|| 0_i32);
-    let mut avatar_refresh_nonce = use_signal(|| 0_u64);
-    let mut profile_display_name = use_signal(|| account_primary_handle.clone());
-    let mut profile_bio = use_signal(String::new);
-    let profile_text_status = use_signal(String::new);
-    let profile_text_saving = use_signal(|| false);
-    let mut profile_hydration_subject = use_signal(String::new);
-    let mimi_directory = use_signal(|| crate::i18n::tr("settings.mimi.not_loaded"));
-    let mimi_receipt = use_signal(|| crate::i18n::tr("settings.mimi.no_receipt"));
-    let mimi_directory_loading = use_signal(|| false);
-    let mimi_query_loading = use_signal(|| false);
-    let mimi_submit_loading = use_signal(|| false);
-    let mimi_proxy_loading = use_signal(|| false);
-    let mimi_submit_receipt = use_signal(|| crate::i18n::tr("settings.mimi.no_receipt"));
-    let mimi_proxy_receipt = use_signal(|| crate::i18n::tr("settings.mimi.no_receipt"));
-    let realm_watch_overrides = state_store.read().realm_watch_levels();
-    let known_realms = known_realm_options(&state_store.read());
-    let preference_realms = preference_realm_options(&state_store.read());
-    let active_locale = locale();
-    let active_direction = active_locale.direction().as_str();
-    let push_registration = state_store.read().push_registration();
-    let push_label = crate::push::push_status_label(push_registration.as_ref());
-    let has_session = !token().trim().is_empty();
-    let invite_locator = use_signal(InviteLocatorState::default);
-    // One bundle for every write below, so the rsx decides only when a
-    // command runs — never how it is issued or where its outcome lands.
-    let controller = controller::SettingsController {
-        invite_locator,
-        profile_avatar_blob_ref,
-        avatar_upload_status,
-        avatar_uploading,
-        avatar_cache_status,
-        avatar_removing,
-        avatar_reading,
-        settings_session: controller::SettingsSessionSignals {
-            active_account: session.active_account,
-            base_url: session.base_url,
-            token,
-            generation: session.session_generation,
+    let nav_filter = scope.cage(String::new());
+    let nav_context = context.clone();
+    let locale = context.locale;
+    let nav = reactive(
+        scope.bond(move || (nav_filter.get(), locale.get())),
+        move |scope, (filter, _)| {
+            let context = nav_context.clone();
+            let groups = model::visible_nav_groups(&filter.trim().to_lowercase());
+            let mut clusters = Vec::new();
+            if groups.is_empty() {
+                clusters.push(paragraph(
+                    "settings-nav-empty muted",
+                    context.translated(scope, "search.no_results"),
+                ));
+            }
+            let group_count = groups.len();
+            for (group_index, group) in groups.into_iter().enumerate() {
+                let mut items = vec![paragraph(
+                    "settings-nav-group-label",
+                    context.translated(scope, group.label_key),
+                )];
+                for section in group.sections {
+                    let navigate = context.clone();
+                    let label = context.translated(scope, section.label_key());
+                    items.push(Box::new(
+                        crate::presentation::widgets::internal_link()
+                            .class(format!(
+                                "settings-nav-item settings-nav-item-{}{}",
+                                section.slug(),
+                                if section == active_section {
+                                    " active"
+                                } else {
+                                    ""
+                                }
+                            ))
+                            .semantics(Some(Box::new(glory::render::Semantics {
+                                current: (section == active_section)
+                                    .then_some(glory::render::Current::Page),
+                                ..Default::default()
+                            })))
+                            .name(label)
+                            .target(section.route().to_string())
+                            .fill(
+                                glory::ui::text()
+                                    .class("settings-nav-item-title")
+                                    .content(label),
+                            )
+                            .on(glory::render::EventKind::Activate, move |_| {
+                                navigate.navigate(section.route())
+                            }),
+                    ) as View);
+                }
+                clusters.push(stack("settings-nav-cluster", items));
+                if group_index + 1 < group_count {
+                    clusters.push(stack("settings-nav-divider", Vec::new()));
+                }
+            }
+            stack("settings-nav-list", clusters)
         },
-        avatar_selection_epoch,
-        pending_avatar_crop,
-        avatar_crop_zoom,
-        avatar_crop_x,
-        avatar_crop_y,
-        avatar_refresh_nonce,
-        profile_display_name,
-        profile_bio,
-        profile_text_status,
-        profile_text_saving,
-        mimi_directory,
-        mimi_receipt,
-        mimi_directory_loading,
-        mimi_query_loading,
-        mimi_submit_loading,
-        mimi_proxy_loading,
-        mimi_submit_receipt,
-        mimi_proxy_receipt,
-        push_state,
-        theme,
-        state_store,
-    };
-    controller::use_avatar_selection_boundary(controller);
-    use_effect(move || {
-        let current = controller.settings_session.capture();
-        let mut state = controller.invite_locator;
-        if state.peek().session.as_ref() != Some(&current) {
-            state.set(InviteLocatorState {
-                session: Some(current),
-                ..Default::default()
-            });
-        }
-    });
-    {
-        let current_account = principal_id();
-        let current_token = token();
-        let current_base_url = base_url();
-        use_effect(move || {
-            if current_account.trim().is_empty() || current_token.trim().is_empty() {
-                profile_hydration_subject.set(String::new());
-                return;
-            }
-            if current_account == profile_hydration_subject() {
-                return;
-            }
-            profile_hydration_subject.set(current_account.clone());
-            let base = current_base_url.clone();
-            let api_token = current_token.clone();
-            spawn(async move {
-                match with_authed_sdk_client(&base, api_token, |http| async move {
-                    crate::transport::account::account_viewer(&http).await
-                })
-                .await
-                {
-                    Ok(viewer) => {
-                        if let Some(profile) = viewer.profile {
-                            let profile = profile.into_inner();
-                            profile_display_name.set(profile.display_name);
-                            profile_bio.set(
-                                profile
-                                    .profile_fields
-                                    .get("biography")
-                                    .and_then(serde_json::Value::as_str)
-                                    .unwrap_or_default()
-                                    .to_owned(),
-                            );
-                        }
-                    }
-                    Err(error) => tracing::warn!(
-                        ?error,
-                        "account profile viewer could not hydrate settings editor"
-                    ),
-                }
-            });
-        });
-    }
-    let locator_state = invite_locator();
-    let locator_current =
-        locator_state.session.as_ref() == Some(&controller.settings_session.capture());
-    let invite_locator_url = if has_session && locator_current && !locator_state.token.is_empty() {
-        build_invite_locator_url(&base_url(), &locator_state.token)
-    } else {
-        String::new()
-    };
-    let model::SessionIdentityLabels {
-        principal: principal_label,
-        device: device_label,
-        handles_label: account_handles_label,
-        handles_title: account_handles_title,
-    } = model::session_identity_labels(
-        has_session,
-        &principal_id(),
-        &device_id(),
-        &personal_handles,
-        &personal_handles_status,
     );
-    let device_short_label = short_protocol_id(&device_label);
-    {
-        use_effect(move || {
-            let hydrated = state_store
-                .read()
-                .load_plain_local_data("avatar_blob_ref")
-                .unwrap_or_default();
-            if hydrated != profile_avatar_blob_ref() {
-                profile_avatar_blob_ref.set(hydrated.clone());
-                avatar_refresh_nonce.set(avatar_refresh_nonce() + 1);
-                avatar_cache_status.set(if hydrated.trim().is_empty() {
-                    crate::i18n::tr("settings.avatar.cleared_synced")
+    let content = match active_section {
+        SettingsSection::Account => profile::page(scope, context.clone()),
+        SettingsSection::Devices => devices::page(
+            scope,
+            context.clone(),
+            matches!(route, Route::SettingsDevicesPair),
+        ),
+        SettingsSection::Consent => consent::page(scope, context.clone()),
+        SettingsSection::InvitePolicy => invite_policy::page(scope, context.clone()),
+        SettingsSection::Capabilities => capabilities::page(scope, context.clone()),
+        SettingsSection::Blocklist => blocklist::page(scope, context.clone()),
+        SettingsSection::Storage => storage::settings(scope, context.clone()),
+        SettingsSection::Encryption => stack(
+            "settings-content-stack",
+            vec![
+                mls_recovery::page(scope, context.clone()),
+                key_backup_guidance(scope, context.clone()),
+            ],
+        ),
+        SettingsSection::Notifications => preferences::notifications(scope, context.clone()),
+        SettingsSection::Privacy => preferences::privacy(scope, context.clone()),
+        SettingsSection::Theme => theme_page(scope, context.clone()),
+        SettingsSection::Mimi => mimi_page(scope, context.clone()),
+        SettingsSection::Agents => {
+            crate::views::agents::page(scope, context.clone(), route.clone())
+        }
+        SettingsSection::Recovery => {
+            crate::views::recovery::page(scope, context.clone(), Route::SettingsRecovery)
+        }
+        SettingsSection::Contacts => {
+            crate::views::contacts::contacts_panel(scope, context.clone(), true)
+        }
+        SettingsSection::Audit => crate::views::audit::page(scope, context.clone(), Route::Audit),
+        SettingsSection::Developer => {
+            crate::views::developer::page(scope, context.clone(), Route::Developer)
+        }
+        SettingsSection::Release => release_page(scope, context.clone()),
+        SettingsSection::Server => {
+            let push = context.state_store.read(|store| store.push_registration());
+            let metric = |title: &str, value: View| {
+                stack(
+                    "metric",
+                    vec![
+                        paragraph(
+                            "settings-server-metric-label",
+                            context.translated(scope, title),
+                        ),
+                        value,
+                    ],
+                )
+            };
+            stack(
+                "settings-card-grid",
+                vec![stack(
+                    "event settings-card-span-2 transport-invariant",
+                    vec![
+                        line(
+                            "event-head",
+                            vec![plain(context.translated(scope, "settings.server.context"))],
+                        ),
+                        line(
+                            "metric-grid",
+                            vec![
+                                metric("settings.server.station", plain(context.base_url)),
+                                metric(
+                                    "settings.server.session",
+                                    plain(context.translated(
+                                        scope,
+                                        if context.token.get().trim().is_empty() {
+                                            "account.not_signed_in"
+                                        } else {
+                                            "settings.server.session_authenticated"
+                                        },
+                                    )),
+                                ),
+                                metric(
+                                    "settings.server.push",
+                                    plain(crate::push::push_status_label(push.as_ref())),
+                                ),
+                            ],
+                        ),
+                    ],
+                )],
+            )
+        }
+    };
+    stack(
+        "settings settings-page",
+        vec![stack(
+            "settings-shell",
+            vec![
+                stack(
+                    "settings-sidebar-column",
+                    vec![
+                        stack(
+                            "settings-nav-search",
+                            vec![widgets::input_prompt(
+                                scope,
+                                context
+                                    .translated(scope, "settings.search.placeholder")
+                                    .into(),
+                                nav_filter,
+                                Box::new(
+                                    sapid::text_field()
+                                        .unstyled()
+                                        .class(
+                                            "input settings-nav-search-input settings-nav-search",
+                                        )
+                                        .name(
+                                            context
+                                                .translated(scope, "settings.search.placeholder"),
+                                        )
+                                        .value(nav_filter)
+                                        .on_value_change(move |next| {
+                                            nav_filter.revise(|value| *value = next)
+                                        }),
+                                ),
+                            )],
+                        ),
+                        nav,
+                    ],
+                ),
+                stack(
+                    "settings-content-column",
+                    vec![
+                        stack(
+                            "event settings-content-hero",
+                            vec![heading(
+                                2,
+                                "settings-content-title",
+                                context.translated(scope, active_section.label_key()),
+                            )],
+                        ),
+                        content,
+                    ],
+                ),
+            ],
+        )],
+    )
+}
+
+fn key_backup_guidance(scope: &Scope, context: Rc<InksonContext>) -> View {
+    let title = context.translated(scope, "settings.key_backup.title");
+    let badge = context.translated(scope, "settings.key_backup.badge");
+    Box::new(
+        sapid::collapsible("key-backup-guidance")
+            .unstyled()
+            .class("event key-backup-guidance")
+            .label(title)
+            .default_open(false)
+            .content_policy(sapid::ContentPolicy::KeepMounted)
+            .trigger_content(move || {
+                glory::ui::group().fill(vec![
+                    plain(title),
+                    Box::new(glory::ui::text().class("badge amber").content(badge)) as View,
+                ])
+            })
+            .content(move || {
+                let context = context.clone();
+                glory::ui::widget(move |scope| {
+                    let navigate_context = context.clone();
+                    let recovery_label =
+                        context.translated(scope, "settings.key_backup.open_recovery");
+                    glory::ui::group()
+                        .fill(vec![
+                            paragraph(
+                                "muted",
+                                context.translated(scope, "settings.key_backup.body"),
+                            ),
+                            paragraph(
+                                "muted",
+                                context.translated(scope, "settings.key_backup.open_recovery_hint"),
+                            ),
+                            line(
+                                "actions",
+                                vec![Box::new(
+                                    crate::presentation::widgets::internal_link()
+                                        .class("primary key-backup-open-recovery")
+                                        .name(recovery_label)
+                                        .target(Route::SettingsRecovery.to_string())
+                                        .fill(glory::ui::group().fill(vec![
+                                            crate::components::ui_icon("key"),
+                                            plain(recovery_label),
+                                        ]))
+                                        .on(glory::render::EventKind::Activate, move |_| {
+                                            navigate_context.navigate(Route::SettingsRecovery);
+                                        }),
+                                ) as View],
+                            ),
+                            paragraph(
+                                "muted",
+                                context.translated(scope, "settings.key_backup.contract"),
+                            ),
+                        ])
+                        .build(scope)
+                })
+            }),
+    )
+}
+
+fn theme_page(scope: &Scope, context: Rc<InksonContext>) -> View {
+    let persist_context = context.clone();
+    let persist: Rc<dyn Fn(String)> = Rc::new(move |next| {
+        persist_context
+            .state_store
+            .write(|store| store.save_plain_local_data("theme", next.clone()));
+        push_client_ui_account_data(
+            persist_context.clone(),
+            persist_context.base_url.get(),
+            persist_context.token.get(),
+            next,
+        );
+    });
+    let theme = context.theme;
+    let locale_state = context.locale;
+    let mut icons = Vec::new();
+    for (value, label, icon) in [
+        ("light", "settings.theme.light", "sun"),
+        ("night", "settings.theme.night", "moon"),
+        ("system", "settings.theme.system", "monitor"),
+    ] {
+        let commit = persist.clone();
+        let selected = scope.bond(move || theme.get() == value);
+        let classes = scope.bond(move || {
+            format!(
+                "btn icon sm settings-theme-{value} settings-theme-choice {}",
+                if selected.get() { "primary" } else { "ghost" }
+            )
+        });
+        let semantics = scope.bond(move || {
+            Some(Box::new(glory::render::Semantics {
+                pressed: Some(selected.get()),
+                ..Default::default()
+            }))
+        });
+        icons.push(Box::new(
+            glory::prelude::button()
+                .class(classes)
+                .name(context.translated(scope, label))
+                .semantics(semantics)
+                .fill(crate::components::ui_icon(icon))
+                .on(glory::render::EventKind::Activate, move |_| {
+                    theme.revise(|theme| *theme = value.to_owned());
+                    commit(value.to_owned());
+                }),
+        ) as View);
+    }
+    let mut languages = Vec::new();
+    for locale in [UiLocale::En, UiLocale::Zh] {
+        let change = context.clone();
+        let class = scope.bond(move || {
+            format!(
+                "button settings-language-choice {}",
+                if locale_state.get() == locale {
+                    "primary"
                 } else {
-                    crate::i18n::tr("settings.avatar.restored_synced")
-                });
+                    "secondary"
+                }
+            )
+        });
+        languages.push(Box::new(
+            sapid::button()
+                .unstyled()
+                .class(class)
+                .label(locale_display_name(locale))
+                .on_press(move || select_locale(change.clone(), locale)),
+        ) as View);
+    }
+    stack(
+        "settings-card-grid",
+        vec![
+            stack(
+                "event theme-settings",
+                vec![
+                    line(
+                        "event-head",
+                        vec![
+                            plain(context.translated(scope, "theme.switcher_aria_label")),
+                            plain(context.translated(scope, "settings.theme.badge")),
+                        ],
+                    ),
+                    line("actions", icons),
+                    paragraph(
+                        "muted",
+                        scope.bond(move || {
+                            crate::i18n::tr_args(
+                                "settings.theme.current",
+                                &[("theme", theme.get())],
+                            )
+                        }),
+                    ),
+                    crate::components::theme_switcher(
+                        scope,
+                        context.clone(),
+                        crate::components::ThemeSwitcherProps {
+                            theme,
+                            on_persist: persist,
+                        },
+                    ),
+                ],
+            ),
+            stack(
+                "event language-settings",
+                vec![
+                    line(
+                        "event-head",
+                        vec![
+                            plain(context.translated(scope, "settings.language.title")),
+                            Box::new(glory::prelude::text().class("text-direction").content(
+                                scope.bond(move || {
+                                    locale_state.get().direction().as_str().to_owned()
+                                }),
+                            )),
+                        ],
+                    ),
+                    line("actions", languages),
+                ],
+            ),
+        ],
+    )
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) mod restored_surface_tests;
+
+fn mimi_page(scope: &Scope, context: Rc<InksonContext>) -> View {
+    let controller = controller::SettingsController::new(scope, context.clone());
+    controller::avatar_selection_boundary(scope, controller.clone());
+    fn probe_action(
+        scope: &Scope,
+        context: Rc<InksonContext>,
+        class: &str,
+        label: &str,
+        busy: glory::Cage<bool>,
+        handler: impl FnMut() + 'static,
+    ) -> View {
+        Box::new(
+            sapid::button()
+                .unstyled()
+                .class(format!("secondary {class}"))
+                .label(context.translated(scope, label))
+                .enabled(scope.bond(move || !busy.get()))
+                .loading(busy)
+                .on_press(handler),
+        )
+    }
+    fn output(
+        scope: &Scope,
+        context: Rc<InksonContext>,
+        class: &str,
+        value: glory::Cage<String>,
+        placeholder: &'static str,
+    ) -> View {
+        let display = scope.bond(move || {
+            let current = value.get();
+            if current.is_empty() {
+                let _ = context.locale.get();
+                context.tr(placeholder)
+            } else {
+                current
             }
         });
+        Box::new(
+            glory::ui::text()
+                .kind(glory::render::TextKind::Code)
+                .class(format!("mimi-result-text {class}"))
+                .content(display),
+        )
     }
-    rsx! {
-        div { class: "settings settings-page", "data-testid": "settings-panel",
-            div { class: "settings-shell",
-                aside { class: "settings-sidebar-column",
-                    {
-                        let query = settings_nav_filter().trim().to_lowercase();
-                        rsx! {
-                            div { class: "settings-nav-search",
-                                input {
-                                    r#type: "search",
-                                    class: "settings-nav-search-input",
-                                    "data-testid": "settings-nav-search",
-                                    placeholder: crate::i18n::tr("settings.search.placeholder"),
-                                    "aria-label": crate::i18n::tr("settings.search.placeholder"),
-                                    value: "{settings_nav_filter}",
-                                    oninput: move |event: FormEvent| settings_nav_filter.set(event.value()),
-                                }
-                            }
-                            div { class: "settings-nav-list",
-                            {
-                                let visible_groups = model::visible_nav_groups(&query);
-                                let group_count = visible_groups.len();
-                                rsx! {
-                                    if group_count == 0 {
-                                        div {
-                                            class: "settings-nav-empty muted",
-                                            "data-testid": "settings-nav-empty",
-                                            "{crate::i18n::tr(\"settings.search.no_results\")}"
-                                        }
-                                    }
-                                    for (group_index, group) in visible_groups.into_iter().enumerate() {
-                                        div { class: "settings-nav-cluster",
-                                            div { class: "settings-nav-group-label", "{crate::i18n::tr(group.label_key)}" }
-                                            for section in group.sections.into_iter() {
-                                                Link {
-                                                    class: if active_section == section { "settings-nav-item active" } else { "settings-nav-item" },
-                                                    "data-testid": "settings-nav-item-{section.slug()}",
-                                                    "aria-current": if active_section == section { "page" } else { "false" },
-                                                    to: section.route(),
-                                                    strong { "{section.label()}" }
-                                                }
-                                            }
-                                        }
-                                        if group_index + 1 < group_count {
-                                            div { class: "settings-nav-divider", "aria-hidden": "true" }
-                                        }
-                                    }
-                                }
-                            }
-                            }
-                        }
-                }
-                }
-                section { class: "settings-content-column",
-                    div { class: "event settings-content-hero",
-                        div { class: "settings-content-title-row",
-                            h2 { class: "settings-content-title", "{active_section.label()}" }
-                        }
-                    }
-
-                    // ── Server / Account settings ────────────────────────
-                    if active_section == SettingsSection::Server {
-                        div { class: "settings-card-grid",
-                            div { class: "event settings-card-span-2", "data-testid": "transport-invariant",
-                                div { class: "event-head",
-                                    span { {crate::i18n::tr("settings.server.context")} }
-                                }
-                                div { class: "metric-grid",
-                                    div { class: "metric",
-                                        strong { {crate::i18n::tr("settings.server.station")} }
-                                        span { "{base_url}" }
-                                    }
-                                    div { class: "metric",
-                                        strong { {crate::i18n::tr("settings.server.session")} }
-                                        span {
-                                            if has_session {
-                                                {crate::i18n::tr("settings.server.session_authenticated")}
-                                            } else {
-                                                {crate::i18n::tr("account.not_signed_in")}
-                                            }
-                                        }
-                                    }
-                                    div { class: "metric",
-                                        strong { {crate::i18n::tr("settings.server.push")} }
-                                        span { "{push_label}" }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // ── Account information ──────────────────────────────
-                    if active_section == SettingsSection::Account {
-                        div { class: "settings-card-grid",
-                            // A4b — Profile / avatar card. Renders the
-                            // current avatar (resolved via the blob URL
-                            // helper when a blob_ref is present), an
-                            // upload control, and a clear button. The
-                            // avatar is also published to coland's
-                            // `ak.self.account.command.update_profile.v1` so the
-                            // directory + member lists pick it up.
-                            div { class: "event settings-card-span-2 settings-avatar-card", "data-testid": "settings-avatar-card",
-                                div { class: "event-head",
-                                    span { {crate::i18n::tr("settings.account.identity")} }
-                                }
-                                div { class: "settings-profile-fields", "data-testid": "settings-profile-fields",
-                                    label { class: "form-field",
-                                        span { {crate::i18n::tr("settings.profile.display_name")} }
-                                        input {
-                                            r#type: "text",
-                                            "data-testid": "settings-profile-display-name",
-                                            maxlength: "128",
-                                            value: "{profile_display_name}",
-                                            disabled: profile_text_saving(),
-                                            oninput: move |event: FormEvent| profile_display_name.set(event.value()),
-                                        }
-                                    }
-                                    label { class: "form-field",
-                                        span { {crate::i18n::tr("settings.profile.biography")} }
-                                        textarea {
-                                            "data-testid": "settings-profile-biography",
-                                            value: "{profile_bio}",
-                                            disabled: profile_text_saving(),
-                                            oninput: move |event: FormEvent| profile_bio.set(event.value()),
-                                        }
-                                    }
-                                    div { class: "actions",
-                                        Button {
-                                            variant: ButtonVariant::Primary,
-                                            "data-testid": "settings-profile-save",
-                                            disabled: profile_text_saving(),
-                                            onclick: {
-                                                let base = base_url();
-                                                let api_token = token();
-                                                let first_profile_display_name = account_primary_handle.clone();
-                                                move |_| controller.save_profile_text(
-                                                    base.clone(),
-                                                    api_token.clone(),
-                                                    first_profile_display_name.clone(),
-                                                )
-                                            },
-                                            if profile_text_saving() {
-                                                {crate::i18n::tr("settings.profile.saving")}
-                                            } else {
-                                                {crate::i18n::tr("settings.profile.save")}
-                                            }
-                                        }
-                                    }
-                                    if !profile_text_status().is_empty() {
-                                        div { class: "muted", "data-testid": "settings-profile-status", "{profile_text_status}" }
-                                    }
-                                }
-                                div { class: "settings-avatar-actions",
-                                    {
-                                        let blob_ref = profile_avatar_blob_ref();
-                                        rsx! {
-                                            crate::components::IdentityAvatar {
-                                                key: "{blob_ref}:{avatar_refresh_nonce()}",
-                                                seed: principal_id(),
-                                                alt_text: crate::i18n::tr("settings.avatar.account_alt"),
-                                                blob_ref: Some(blob_ref),
-                                                class: "avatar-img lg".to_owned(),
-                                                test_id: Some("settings-avatar-preview".to_owned()),
-                                            }
-                                        }
-                                    }
-                                    div { class: "settings-avatar-controls",
-                                        input {
-                                            id: "settings-avatar-input",
-                                            "data-testid": "settings-avatar-input",
-                                            r#type: "file",
-                                            accept: "image/*",
-                                            class: "settings-avatar-file-input",
-                                            disabled: avatar_uploading() || avatar_removing(),
-                                            // A4b — Dioxus 0.7 `HasFileData::files()`
-                                            // surfaces the dropped / picked file
-                                            // list. Read bytes async then upload
-                                            // via the blob endpoint + publish the
-                                            // resulting blob URL to the profile.
-                                            onchange: {
-                                                move |evt: Event<FormData>| {
-                                                    if avatar_uploading() || avatar_removing() {
-                                                        return;
-                                                    }
-                                                    let Some(file) = evt.files().into_iter().next() else {
-                                                        // A dismissed file picker keeps the current crop.
-                                                        return;
-                                                    };
-                                                    let content_type = file
-                                                        .content_type()
-                                                        .unwrap_or_else(|| "application/octet-stream".to_owned());
-                                                    avatar_upload_status.set(
-                                                        crate::i18n::tr("settings.avatar.processing"),
-                                                    );
-                                                    avatar_uploading.set(false);
-                                                    controller.stage_avatar_crop(file, content_type);
-                                                }
-                                            },
-                                        }
-                                        if avatar_uploading() || avatar_removing() {
-                                            Button {
-                                                variant: ButtonVariant::Secondary,
-                                                r#type: "button",
-                                                disabled: true,
-                                                span { class: "spinner-inline", "aria-hidden": "true" }
-                                                {crate::i18n::tr(if avatar_removing() { "settings.avatar.removing" } else { "settings.avatar.uploading" })}
-                                            }
-                                        } else {
-                                            Label {
-                                                html_for: "settings-avatar-input",
-                                                class: "avatar-upload-button",
-                                                "data-testid": "settings-avatar-upload-label",
-                                                UiIcon { name: "image" }
-                                                {crate::i18n::tr("settings.avatar.upload")}
-                                            }
-                                        }
-                                        if let Some(selection) = pending_avatar_crop.read().clone() {
-                                            Dialog {
-                                                open: true,
-                                                on_open_change: move |open: bool| {
-                                                    if !open {
-                                                        if avatar_uploading() || avatar_removing() {
-                                                            return;
-                                                        }
-                                                        controller.cancel_avatar_crop();
-                                                    }
-                                                },
-                                                "data-testid": "settings-avatar-crop-editor",
-                                                "aria-label": crate::i18n::tr("settings.avatar.edit_dialog"),
-                                                div {
-                                                class: "settings-avatar-crop-dialog",
-                                                div {
-                                                    "data-testid": "settings-avatar-crop-stage",
-                                                    class: "settings-avatar-crop-stage",
-                                                    img {
-                                                        src: "{selection.preview_data_url}",
-                                                        alt: crate::i18n::tr("settings.avatar.selected_alt"),
-                                                        class: "settings-avatar-crop-image",
-                                                        style: format!(
-                                                            "transform: translate({}% , {}%) scale({});",
-                                                            avatar_crop_x() / 4,
-                                                            avatar_crop_y() / 4,
-                                                            avatar_crop_zoom() as f32 / 100.0,
-                                                        ),
-                                                    }
-                                                }
-                                                div { class: "settings-avatar-crop-controls",
-                                                    div { class: "muted", "data-testid": "settings-avatar-source-size",
-                                                        {format!("{} x {} / {}", selection.dimensions.0, selection.dimensions.1, selection.media_type)}
-                                                    }
-                                                    AvatarCropSlider {
-                                                        label_key: "settings.avatar.zoom",
-                                                        test_id: "settings-avatar-crop-zoom",
-                                                        value: avatar_crop_zoom,
-                                                        min: 100,
-                                                        max: 300,
-                                                        disabled: avatar_uploading() || avatar_removing() || avatar_reading(),
-                                                    }
-                                                    AvatarCropSlider {
-                                                        label_key: "settings.avatar.pan_x",
-                                                        test_id: "settings-avatar-crop-x",
-                                                        value: avatar_crop_x,
-                                                        min: -100,
-                                                        max: 100,
-                                                        disabled: avatar_uploading() || avatar_removing() || avatar_reading(),
-                                                    }
-                                                    AvatarCropSlider {
-                                                        label_key: "settings.avatar.pan_y",
-                                                        test_id: "settings-avatar-crop-y",
-                                                        value: avatar_crop_y,
-                                                        min: -100,
-                                                        max: 100,
-                                                        disabled: avatar_uploading() || avatar_removing() || avatar_reading(),
-                                                    }
-                                                    div { class: "actions",
-                                                        Button {
-                                                            variant: ButtonVariant::Secondary,
-                                                            "data-testid": "settings-avatar-upload-cropped",
-                                                            disabled: avatar_uploading() || avatar_removing() || avatar_reading(),
-                                                            onclick: {
-                                                                let base = base_url();
-                                                                let api_token = token();
-                                                                let first_profile_display_name = account_primary_handle.clone();
-                                                                move |_| {
-                                                                    if avatar_uploading() || avatar_removing() || avatar_reading() {
-                                                                        return;
-                                                                    }
-                                                                    let Some(selection) = pending_avatar_crop.read().clone() else {
-                                                                        avatar_upload_status.set(crate::i18n::tr("settings.avatar.error"));
-                                                                        return;
-                                                                    };
-                                                                    let crop = crate::avatar_crop::AvatarCrop {
-                                                                        zoom: avatar_crop_zoom() as f32 / 100.0,
-                                                                        pan_x: avatar_crop_x() as f32 / 100.0,
-                                                                        pan_y: avatar_crop_y() as f32 / 100.0,
-                                                                    };
-                                                                    let base = base.clone();
-                                                                    let api_token = api_token.clone();
-                                                                    let first_profile_display_name = first_profile_display_name.clone();
-                                                                    avatar_uploading.set(true);
-                                                                    avatar_upload_status.set(crate::i18n::tr("settings.avatar.uploading"));
-                                                                    controller.upload_cropped_avatar(base, api_token, first_profile_display_name, selection, crop);
-                                                                }
-                                                            },
-                                                            if avatar_uploading() || avatar_removing() || avatar_reading() {
-                                                                span { class: "spinner-inline", "aria-hidden": "true" }
-                                                                {crate::i18n::tr("settings.avatar.uploading")}
-                                                            } else {
-                                                                {crate::i18n::tr("settings.avatar.upload_cropped")}
-                                                            }
-                                                        }
-                                                        Button {
-                                                            variant: ButtonVariant::Secondary,
-                                                            "data-testid": "settings-avatar-crop-cancel",
-                                                            disabled: avatar_uploading() || avatar_removing(),
-                                                            onclick: move |_| {
-                                                                if avatar_uploading() || avatar_removing() {
-                                                                    return;
-                                                                }
-                                                                controller.cancel_avatar_crop();
-                                                            },
-                                                            {crate::i18n::tr("settings.avatar.cancel_crop")}
-                                                        }
-                                                    }
-                                                }
-                                                }
-                                            }
-                                        }
-                                        if avatar_reading() && pending_avatar_crop.read().is_none() {
-                                            Button {
-                                                variant: ButtonVariant::Secondary,
-                                                "data-testid": "settings-avatar-read-cancel",
-                                                onclick: move |_| controller.cancel_avatar_crop(),
-                                                {crate::i18n::tr("settings.avatar.cancel_crop")}
-                                            }
-                                        }
-                                        if !profile_avatar_blob_ref().trim().is_empty() {
-                                            Button {
-                                                variant: ButtonVariant::Secondary,
-                                                "data-testid": "settings-avatar-clear",
-                                                disabled: avatar_uploading() || avatar_removing(),
-                                                onclick: {
-                                                    let base = base_url();
-                                                    let api_token = token();
-                                                    let first_profile_display_name = account_primary_handle.clone();
-                                                    move |_| {
-                                                        let base = base.clone();
-                                                        let api_token = api_token.clone();
-                                                        let first_profile_display_name = first_profile_display_name.clone();
-                                                        if avatar_uploading() || avatar_removing() {
-                                                            return;
-                                                        }
-                                                        avatar_removing.set(true);
-                                                        controller.cancel_avatar_crop();
-                                                        avatar_cache_status.set(
-                                                            crate::i18n::tr("settings.avatar.removing"),
-                                                        );
-                                                        // Publish the public tombstone before the
-                                                        // actor-private mirror. Both Events share
-                                                        // one stream head; authoring them in the
-                                                        // opposite order lets the mirror advance the
-                                                        // frontier after the profile Event was built.
-                                                        controller.remove_avatar(base, api_token, first_profile_display_name);
-                                                    }
-                                                },
-                                                {crate::i18n::tr("settings.avatar.clear")}
-                                            }
-                                        }
-                                        if !avatar_upload_status().is_empty() {
-                                            div {
-                                                class: "muted",
-                                                "data-testid": "settings-avatar-upload-progress",
-                                                "{avatar_upload_status}"
-                                            }
-                                        }
-                                        if !avatar_cache_status().is_empty() {
-                                            div {
-                                                class: "muted",
-                                                "data-testid": "settings-avatar-cache-status",
-                                                "{avatar_cache_status}"
-                                            }
-                                        }
-                                    }
-                                }
-                                div { class: "metric-grid settings-account-identity-grid",
-                                    div { class: "metric settings-identity-row",
-                                        strong { {crate::i18n::tr("app.account.did")} }
-                                        div { class: "settings-identity-value",
-                                            span {
-                                                class: "mono",
-                                                "data-testid": "settings-account-did",
-                                                title: "{principal_label}",
-                                                "{principal_label}"
-                                            }
-                                            Button {
-                                                variant: ButtonVariant::Ghost,
-                                                size: ButtonSize::IconSm,
-                                                class: "btn icon settings-identity-copy",
-                                                "data-testid": "settings-account-copy-did",
-                                                title: crate::i18n::tr("settings.account.copy_did"),
-                                                "aria-label": crate::i18n::tr("settings.account.copy_did"),
-                                                onclick: {
-                                                    let value = principal_label.clone();
-                                                    move |_| {
-                                                        copy_text_to_clipboard(&value);
-                                                        crate::components::feedback::toast_success("feedback.copied_did", vec![]);
-                                                    }
-                                                },
-                                                UiIcon { name: "copy" }
-                                            }
-                                        }
-                                    }
-                                    div { class: "metric settings-identity-row",
-                                        strong { {crate::i18n::tr("settings.account.handles")} }
-                                        div { class: "settings-identity-value",
-                                            span {
-                                                class: "mono",
-                                                "data-testid": "settings-account-handles",
-                                                title: "{account_handles_title}",
-                                                "{account_handles_label}"
-                                            }
-                                            Button {
-                                                variant: ButtonVariant::Ghost,
-                                                size: ButtonSize::IconSm,
-                                                class: "btn icon settings-identity-copy",
-                                                "data-testid": "settings-account-copy-handles",
-                                                title: crate::i18n::tr("settings.account.copy_handles"),
-                                                "aria-label": crate::i18n::tr("settings.account.copy_handles"),
-                                                onclick: {
-                                                    let value = account_handles_title.clone();
-                                                    move |_| {
-                                                        copy_text_to_clipboard(&value);
-                                                        crate::components::feedback::toast_success("feedback.copied_handles", vec![]);
-                                                    }
-                                                },
-                                                UiIcon { name: "copy" }
-                                            }
-                                        }
-                                    }
-                                    div { class: "metric settings-identity-row",
-                                        strong { {crate::i18n::tr("settings.account.current_device")} }
-                                        div { class: "settings-identity-value",
-                                            span {
-                                                class: "mono",
-                                                "data-testid": "settings-account-device",
-                                                title: "{device_label}",
-                                                "{device_short_label}"
-                                            }
-                                            Button {
-                                                variant: ButtonVariant::Ghost,
-                                                size: ButtonSize::IconSm,
-                                                class: "btn icon settings-identity-copy",
-                                                "data-testid": "settings-account-copy-device",
-                                                title: crate::i18n::tr("settings.account.copy_device_id"),
-                                                "aria-label": crate::i18n::tr("settings.account.copy_device_id"),
-                                                onclick: {
-                                                    let value = device_label.clone();
-                                                    move |_| {
-                                                        copy_text_to_clipboard(&value);
-                                                        crate::components::feedback::toast_success("feedback.copied_device_id", vec![]);
-                                                    }
-                                                },
-                                                UiIcon { name: "copy" }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-
-                            invite_locator::InviteLocatorCard {
-                                has_session,
-                                url: invite_locator_url,
-                                status: if locator_current { locator_state.status.clone() } else { String::new() },
-                                busy: locator_current && locator_state.busy,
-                                has_locator: locator_current && !locator_state.id.is_empty(),
-                                onrefresh: move |_| controller.change_invite_locator(false),
-                                onrevoke: move |_| controller.change_invite_locator(true),
-                            }
-
-                        }
-                    }
-
-                    // ── My Agents ──────
-                    if active_section == SettingsSection::Agents {
-                        crate::views::agents::AgentAdminPanel {
-                            token,
-                            controller_principal_id: active_principal.clone(),
-                        }
-                    }
-
-                    if active_section == SettingsSection::Devices {
-                        crate::views::settings::devices::SettingsDevicesPanel {
-                            device_id,
-                            token,
-                        }
-                    }
-
-                    if active_section == SettingsSection::Consent {
-                        crate::views::settings::consent::ConsentSettingsPanel {
-                            principal_id,
-                            token,
-                        }
-                    }
-
-                    if active_section == SettingsSection::Recovery {
-                        crate::views::recovery::RecoveryPanel {
-                            token,
-                            device_id,
-                        }
-                    }
-
-                    // ── Storage section ──────────────────────────────────
-                    if active_section == SettingsSection::Storage {
-                        div { class: "settings-card-grid",
-                            div { class: "event", "data-testid": "storage-table",
-                    div { class: "event-head",
-                        span { {crate::i18n::tr("settings.local_stores.title")} }
-                        span { {crate::i18n::tr("settings.local_stores.badge")} }
-                    }
-                    div { class: "metric-grid",
-                        div { class: "metric",
-                            strong { {crate::i18n::tr("settings.local_stores.config_store")} }
-                            span { {crate::i18n::tr("settings.local_stores.active")} }
-                        }
-                        div { class: "metric",
-                            strong { {crate::i18n::tr("settings.local_stores.config_size")} }
-                            span {
-                                {crate::i18n::tr_args(
-                                    "settings.local_stores.approx_bytes",
-                                    &[(
-                                        "bytes",
-                                        config_store
-                                            .read()
-                                            .load()
-                                            .server_url()
-                                            .map(|url| url.as_str().len())
-                                            .unwrap_or(0)
-                                            .to_string(),
-                                    )],
-                                )}
-                            }
-                        }
-                        div { class: "metric",
-                            strong { {crate::i18n::tr("settings.local_stores.state_store")} }
-                            span { {crate::i18n::tr("settings.local_stores.active")} }
-                        }
-                        div { class: "metric",
-                            strong { {crate::i18n::tr("settings.local_stores.platform")} }
-                            span {
-                                if cfg!(target_arch = "wasm32") {
-                                    {crate::i18n::tr("settings.local_stores.platform_web")}
-                                } else {
-                                    {crate::i18n::tr("settings.local_stores.platform_native")}
-                                }
-                            }
-                        }
-                    }
-                }
-
-                            storage::E2eeStorageManagement {
-                                principal_id: principal_id,
-                                device_id: device_id,
-                            }
-
-                            details { class: "event", "data-testid": "storage-risks",
-                    summary { class: "event-head",
-                        span { {crate::i18n::tr("settings.storage_risks.title")} }
-                        span { {crate::i18n::tr("settings.group.advanced")} }
-                    }
-                    if cfg!(target_arch = "wasm32") {
-                        div { class: "metric",
-                            strong {
-                                {crate::i18n::tr("settings.storage_risks.bounded_projection")}
-                                HelpTip { text: crate::i18n::tr("settings.storage_risks.bounded_projection_hint") }
-                            }
-                            span { class: "badge badge-info", "data-testid": "risk-badge",
-                                {crate::i18n::tr("settings.storage_risks.badge_bounded")}
-                            }
-                        }
-                        div { class: "metric",
-                            strong {
-                                {crate::i18n::tr("settings.storage_risks.protected_e2ee")}
-                                HelpTip { text: crate::i18n::tr("settings.storage_risks.protected_e2ee_hint") }
-                            }
-                            span { class: "badge badge-success",
-                                {crate::i18n::tr("manage.row_encrypted")}
-                            }
-                        }
-                        div { class: "metric",
-                            strong {
-                                {crate::i18n::tr("settings.storage_risks.single_tab")}
-                                HelpTip { text: crate::i18n::tr("settings.storage_risks.single_tab_hint") }
-                            }
-                            span { class: "badge badge-info",
-                                {crate::i18n::tr("settings.storage_risks.badge_info")}
-                            }
-                        }
-                    } else {
-                        div { class: "metric",
-                            strong {
-                                {crate::i18n::tr("settings.storage_risks.filesystem")}
-                                HelpTip { text: crate::i18n::tr("settings.storage_risks.filesystem_hint") }
-                            }
-                            span { class: "badge badge-success",
-                                {crate::i18n::tr("settings.storage_risks.badge_ok")}
-                            }
-                        }
-                    }
-                }
-                        }
-                    }
-
-                    // ── Encryption settings ──────────────────────────────
-                    if active_section == SettingsSection::Encryption {
-                        div { class: "settings-content-stack",
-                            div { class: "event", "data-testid": "encryption-settings",
-                                div { class: "event-head",
-                                    span { {crate::i18n::tr("setup.axis.encryption")} }
-                                    span { {crate::i18n::tr("settings.encryption.badge")} }
-                                }
-                                div { class: "muted",
-                                    {crate::i18n::tr("settings.encryption.always_on")}
-                                }
-                            }
-                            // X11.1 — persistent MLS recovery-key entry.
-                            // Always reachable from this encryption section,
-                            // shows live backup status, and lets the user
-                            // generate/replace the recovery key regardless of the
-                            // boot detection effect timing. NOT gated on
-                            // `needs_mls_backup`.
-                            mls_recovery::SettingsMlsRecoveryPanel {
-                                token,
-                                principal_id,
-                                device_id,
-                                account_primary_handle: account_primary_handle.clone(),
-                            }
-                            details { class: "event", "data-testid": "key-backup-guidance",
-                                summary { class: "event-head",
-                                    span { {crate::i18n::tr("settings.key_backup.title")} }
-                                    span { class: "badge amber", {crate::i18n::tr("settings.key_backup.badge")} }
-                                }
-                                div { class: "muted",
-                                    {crate::i18n::tr("settings.key_backup.body")}
-                                }
-                                div { class: "muted",
-                                    {crate::i18n::tr("settings.key_backup.open_recovery_hint")}
-                                }
-                                div { class: "actions",
-                                    Link {
-                                        class: "primary",
-                                        "data-testid": "key-backup-open-recovery",
-                                        to: Route::SettingsRecovery,
-                                        UiIcon { name: "key" }
-                                        {crate::i18n::tr("settings.key_backup.open_recovery")}
-                                    }
-                                }
-                                div { class: "muted",
-                                    {crate::i18n::tr("settings.key_backup.contract")}
-                                }
-                            }
-                        }
-                    }
-
-                    // ── MIMI interop facade ──────────────────────────────
-                    if active_section == SettingsSection::Mimi {
-                        div { class: "settings-content-stack",
-                            div { class: "event", "data-testid": "mimi-interop-panel",
-                    div { class: "event-head",
-                        span { {crate::i18n::tr("settings.mimi.title")} }
-                        span { {crate::i18n::tr("settings.group.advanced")} }
-                    }
-                    div { class: "actions",
-                        Button {
-                            variant: ButtonVariant::Secondary,
-                            "data-testid": "mimi-refresh-directory",
-                            disabled: mimi_directory_loading(),
-                            "aria-busy": mimi_directory_loading(),
-                            onclick: {
-                                move |_| {
-                                    let base = base_url();
-                                    let api_token = token();
-                                    controller.refresh_mimi_directory(base, api_token);
-                                }
+    let directory = controller.clone();
+    let directory_context = context.clone();
+    let query = controller.clone();
+    let query_context = context.clone();
+    let submit = controller.clone();
+    let submit_context = context.clone();
+    let proxy = controller.clone();
+    let proxy_context = context.clone();
+    stack(
+        "settings-content-stack",
+        vec![stack(
+            "event mimi-interop-panel",
+            vec![
+                line(
+                    "event-head",
+                    vec![
+                        plain(context.translated(scope, "settings.mimi.title")),
+                        plain(context.translated(scope, "settings.group.advanced")),
+                    ],
+                ),
+                line(
+                    "actions",
+                    vec![
+                        probe_action(
+                            scope,
+                            context.clone(),
+                            "mimi-refresh-directory mimi-directory-refresh",
+                            "settings.mimi.refresh_directory",
+                            controller.mimi_directory_loading,
+                            move || {
+                                directory.clone().refresh_mimi_directory(
+                                    directory_context.base_url.get(),
+                                    directory_context.token.get(),
+                                )
                             },
-                            {crate::i18n::tr("settings.mimi.refresh_directory")}
-                        }
-                        Button {
-                            variant: ButtonVariant::Secondary,
-                            "data-testid": "mimi-identifier-query",
-                            disabled: mimi_query_loading(),
-                            "aria-busy": mimi_query_loading(),
-                            onclick: {
-                                move |_| {
-                                    let base = base_url();
-                                    let api_token = token();
-                                    controller.query_mimi_identifiers(base, api_token);
-                                }
+                        ),
+                        probe_action(
+                            scope,
+                            context.clone(),
+                            "mimi-identifier-query mimi-query-submit",
+                            "settings.mimi.identifier_query",
+                            controller.mimi_query_loading,
+                            move || {
+                                query.clone().query_mimi_identifiers(
+                                    query_context.base_url.get(),
+                                    query_context.token.get(),
+                                )
                             },
-                            {crate::i18n::tr("settings.mimi.identifier_query")}
-                        }
-                        Button {
-                            variant: ButtonVariant::Secondary,
-                            "data-testid": "mimi-submit-message",
-                            disabled: mimi_submit_loading(),
-                            "aria-busy": mimi_submit_loading(),
-                            onclick: {
-                                move |_| {
-                                    let base = base_url();
-                                    let api_token = token();
-                                    let actor = arkret_sdk::ActorId::account(account_authority());
-                                    let device = device_id();
-                                    controller.submit_mimi_message(base, api_token, actor, device);
-                                }
-                            },
-                            {crate::i18n::tr("settings.mimi.submit_message")}
-                        }
-                        Button {
-                            variant: ButtonVariant::Secondary,
-                            "data-testid": "mimi-proxy-download",
-                            disabled: mimi_proxy_loading(),
-                            "aria-busy": mimi_proxy_loading(),
-                            onclick: {
-                                move |_| {
-                                    let base = base_url();
-                                    let api_token = token();
-                                    let actor = principal_id();
-                                    controller.proxy_download_mimi_asset(base, api_token, actor);
-                                }
-                            },
-                            {crate::i18n::tr("settings.mimi.proxy_download")}
-                        }
-                    }
-                    div { class: "event", "data-testid": "mimi-directory-result",
-                        div { class: "event-head",
-                            span { {crate::i18n::tr("nav.directory")} }
-                            span { {crate::i18n::tr("settings.mimi.directory_badge")} }
-                        }
-                        pre { "{mimi_directory}" }
-                    }
-                    div { class: "event", "data-testid": "mimi-action-receipt",
-                        div { class: "event-head",
-                            span { {crate::i18n::tr("settings.mimi.receipt_title")} }
-                            span { {crate::i18n::tr("settings.mimi.receipt_badge")} }
-                        }
-                        pre { "data-testid": "mimi-query-receipt", "{mimi_receipt}" }
-                        pre { "data-testid": "mimi-submit-receipt", "{mimi_submit_receipt}" }
-                        pre { "data-testid": "mimi-proxy-receipt", "{mimi_proxy_receipt}" }
-                    }
-                }
-                        }
-                    }
-
-                    // ── Notification settings ────────────────────────────
-                    if active_section == SettingsSection::Notifications {
-                        div { class: "settings-content-stack",
-                            div { class: "event", "data-testid": "notification-settings-panel",
-                                div { class: "event-head",
-                                    span { {crate::i18n::tr("settings.notifications.defaults_title")} }
-                                    span { {crate::i18n::tr("settings.notifications.defaults_badge")} }
-                                }
-                                div { class: "muted",
-                                    {crate::i18n::tr("settings.notifications.defaults_body")}
-                                }
-                                div { class: "metric-grid",
-                                    {render_notification_kind_toggle("mention", "settings.notifications.kind_mention", state_store)}
-                                    {render_notification_kind_toggle("reaction", "settings.notifications.kind_reaction", state_store)}
-                                    {render_notification_kind_toggle("invite", "settings.notifications.kind_invite", state_store)}
-                                    {render_notification_kind_toggle("message", "settings.notifications.kind_message", state_store)}
-                                }
-                                div { class: "actions",
-                                    label {
-                                        Checkbox {
-                                            "data-testid": "settings-notification-sound-toggle",
-                                            checked: if notification_sound_enabled() {
-                                                CheckboxState::Checked
-                                            } else {
-                                                CheckboxState::Unchecked
-                                            },
-                                            on_checked_change: move |state: CheckboxState| {
-                                                let enabled = bool::from(state);
-                                                notification_sound_enabled.set(enabled);
-                                                crate::notification_sound::set_notification_sound_enabled(
-                                                    &mut state_store.write(),
-                                                    enabled,
-                                                );
-                                                if enabled {
-                                                    crate::notification_sound::initialize_notification_audio();
-                                                }
-                                                notification_settings_status.set(if enabled {
-                                                    crate::i18n::tr("settings.notifications.sound_enabled")
-                                                } else {
-                                                    crate::i18n::tr("settings.notifications.sound_disabled")
-                                                });
-                                            },
-                                        }
-                                        if notification_sound_enabled() {
-                                            {crate::i18n::tr("settings.notifications.sound_on")}
-                                        } else {
-                                            {crate::i18n::tr("settings.notifications.sound_off")}
-                                        }
-                                    }
-                                    Button {
-                                        variant: ButtonVariant::Secondary,
-                                        "data-testid": "settings-notification-sound-test",
-                                        disabled: !notification_sound_enabled(),
-                                        onclick: move |_| {
-                                            if notification_sound_enabled() {
-                                                crate::notification_sound::initialize_notification_audio();
-                                                crate::notification_sound::play_notification_sound();
-                                                notification_settings_status.set(crate::i18n::tr("settings.notifications.sound_test_played"));
-                                            } else {
-                                                notification_settings_status.set(crate::i18n::tr("settings.notifications.sound_test_blocked"));
-                                            }
-                                        },
-                                        {crate::i18n::tr("settings.notifications.sound_test")}
-                                    }
-                                }
-                                div { class: "actions",
-                                    label {
-                                        Checkbox {
-                                            "data-testid": "dnd-enabled-toggle",
-                                            checked: if dnd_enabled() { CheckboxState::Checked } else { CheckboxState::Unchecked },
-                                            on_checked_change: move |state: CheckboxState| dnd_enabled.set(bool::from(state)),
-                                        }
-                                        {crate::i18n::tr("settings.notifications.dnd")}
-                                    }
-                                    Select::<String> {
-                                        "data-testid": "dnd-mode-select",
-                                        value: Some(dnd_mode_selected.into()),
-                                        on_value_change: move |v: Option<String>| { if let Some(v) = v { dnd_mode.set(v); } },
-                                        SelectOption::<String> {
-                                            index: 0usize,
-                                            value: "off".to_string(),
-                                            text_value: crate::i18n::tr("settings.notifications.dnd_off"),
-                                            {crate::i18n::tr("settings.notifications.dnd_off")}
-                                        }
-                                        SelectOption::<String> {
-                                            index: 1usize,
-                                            value: "now".to_string(),
-                                            text_value: crate::i18n::tr("settings.notifications.dnd_now"),
-                                            {crate::i18n::tr("settings.notifications.dnd_now")}
-                                        }
-                                    }
-                                    Button {
-                                        variant: ButtonVariant::Primary,
-                                        "data-testid": "save-notification-settings-button",
-                                        onclick: move |_| {
-                                            push_dnd_account_data(
-                                                base_url(),
-                                                token(),
-                                                account_authority(),
-                                                principal_id(),
-                                                device_id(),
-                                                dnd_enabled(),
-                                                dnd_mode(),
-                                                state_store,
-                                                backup_trigger_signal,
-                                                notification_settings_status,
-                                            );
-                                            push_notification_rules_account_data(
-                                                base_url(),
-                                                token(),
-                                                state_store.read().realm_watch_levels(),
-                                            );
-                                        },
-                                        {crate::i18n::tr("common.save")}
-                                    }
-                                }
-                                div { class: "muted", "data-testid": "notification-settings-status", "{notification_settings_status}" }
-                            }
-                            // (2) Per-realm overrides — choose how much a specific Realm notifies.
-                            div { class: "event", "data-testid": "per-realm-overrides",
-                                div { class: "event-head",
-                                    span { {crate::i18n::tr("settings.notifications.overrides_title")} }
-                                    span { {crate::i18n::tr_args("settings.notifications.configured_count", &[("count", realm_watch_overrides.len().to_string())])} }
-                                }
-                                div { class: "muted",
-                                    {crate::i18n::tr("settings.notifications.overrides_body")}
-                                }
-                                div { class: "actions",
-                                    // Each picker lives in its own `label.field` wrapper — never a raw
-                                    // id box, and never two bare-adjacent Selects. Isolating each
-                                    // Select keeps the VNode tree stable so opening one doesn't remount
-                                    // (and snap shut) its neighbour.
-                                    label { class: "field",
-                                        span { class: "field-label", {crate::i18n::tr("friendly.realm")} }
-                                        Select::<String> {
-                                            class: "select",
-                                            "data-testid": "realm-override-realm-select",
-                                            disabled: known_realms.is_empty(),
-                                            value: Some(new_override_realm_selected.into()),
-                                            on_value_change: move |v: Option<String>| { if let Some(v) = v { new_override_realm.set(v); } },
-                                            SelectOption::<String> {
-                                                index: 0usize,
-                                                value: String::new(),
-                                                text_value: if known_realms.is_empty() {
-                                                    crate::i18n::tr("settings.notifications.no_realms")
-                                                } else {
-                                                    crate::i18n::tr("settings.notifications.select_realm")
-                                                },
-                                                if known_realms.is_empty() {
-                                                    {crate::i18n::tr("settings.notifications.no_realms")}
-                                                } else {
-                                                    {crate::i18n::tr("settings.notifications.select_realm")}
-                                                }
-                                            }
-                                            for (index , (realm_id , label)) in known_realms.iter().enumerate() {
-                                                SelectOption::<String> {
-                                                    key: "{realm_id}",
-                                                    index: index + 1,
-                                                    value: realm_id.clone(),
-                                                    text_value: "{label}",
-                                                    "{label}"
-                                                }
-                                            }
-                                        }
-                                    }
-                                    label { class: "field",
-                                        span { class: "field-label", {crate::i18n::tr("settings.notifications.notify_label")} }
-                                        Select::<String> {
-                                            class: "select",
-                                            "data-testid": "realm-override-level-select",
-                                            value: Some(new_override_level_selected.into()),
-                                            on_value_change: move |v: Option<String>| { if let Some(v) = v { new_override_level.set(v); } },
-                                            SelectOption::<String> {
-                                                index: 0usize,
-                                                value: "all".to_string(),
-                                                text_value: crate::i18n::tr("settings.notifications.level_all"),
-                                                {crate::i18n::tr("settings.notifications.level_all")}
-                                            }
-                                            SelectOption::<String> {
-                                                index: 1usize,
-                                                value: "participating".to_string(),
-                                                text_value: crate::i18n::tr("chat.watch_level.participating"),
-                                                {crate::i18n::tr("chat.watch_level.participating")}
-                                            }
-                                            SelectOption::<String> {
-                                                index: 2usize,
-                                                value: "mentions_only".to_string(),
-                                                text_value: crate::i18n::tr("chat.watch_level.mentions_only"),
-                                                {crate::i18n::tr("chat.watch_level.mentions_only")}
-                                            }
-                                            SelectOption::<String> {
-                                                index: 3usize,
-                                                value: "muted".to_string(),
-                                                text_value: crate::i18n::tr("chat.watch_level.muted"),
-                                                {crate::i18n::tr("chat.watch_level.muted")}
-                                            }
-                                        }
-                                    }
-                                    Button {
-                                        variant: ButtonVariant::Primary,
-                                        "data-testid": "realm-override-add",
-                                        onclick: move |_| {
-                                            let realm_id = new_override_realm().trim().to_owned();
-                                            if realm_id.is_empty() {
-                                                crate::components::feedback::toast_info("feedback.override_pick_realm", vec![]);
-                                                return;
-                                            }
-                                            let level = WatchLevel::from_wire(&new_override_level())
-                                                .unwrap_or_default();
-                                            state_store.write().set_realm_watch_level(realm_id.clone(), level);
-                                            push_notification_rules_account_data(
-                                                base_url(),
-                                                token(),
-                                                state_store.read().realm_watch_levels(),
-                                            );
-                                            crate::components::feedback::toast_success(
-                                                "feedback.watch_level_set",
-                                                vec![
-                                                    ("realm", short_protocol_id(&realm_id)),
-                                                    ("level", watch_level_label(level)),
-                                                ],
-                                            );
-                                            new_override_realm.set(String::new());
-                                        },
-                                        {crate::i18n::tr("settings.notifications.add_override")}
-                                    }
-                                }
-                                if realm_watch_overrides.is_empty() {
-                                    div { class: "muted", "data-testid": "per-realm-overrides-empty",
-                                        {crate::i18n::tr("settings.notifications.overrides_empty")}
-                                    }
-                                } else {
-                                    for realm_id in realm_watch_overrides.keys() {
-                                        {
-                                            let label = known_realms
-                                                .iter()
-                                                .find(|(id, _)| id == realm_id)
-                                                .map(|(_, label)| label.clone())
-                                                .unwrap_or_else(|| short_protocol_id(realm_id));
-                                            rsx! {
-                                                RealmOverrideRow {
-                                                    key: "{realm_id}",
-                                                    realm_id: realm_id.clone(),
-                                                    label,
-                                                    token,
-                                                }
-                                            }
-                                        }
-                                    }
-                                    Button {
-                                        variant: ButtonVariant::Secondary,
-                                        "data-testid": "notifications-settings-clear-muted-realms",
-                                        onclick: move |_| {
-                                            let ids: Vec<String> = state_store
-                                                .read()
-                                                .realm_watch_levels()
-                                                .into_keys()
-                                                .collect();
-                                            for id in ids {
-                                                state_store
-                                                    .write()
-                                                    .set_realm_watch_level(id, WatchLevel::default());
-                                            }
-                                            push_notification_rules_account_data(
-                                                base_url(),
-                                                token(),
-                                                state_store.read().realm_watch_levels(),
-                                            );
-                                            crate::components::feedback::toast_success("feedback.overrides_cleared", vec![]);
-                                        },
-                                        {crate::i18n::tr("settings.notifications.clear_overrides")}
-                                    }
-                                }
-                            }
-                div { class: "event", "data-testid": "push-settings",
-                    div { class: "event-head",
-                        span { {crate::i18n::tr("settings.push.title")} }
-                        span { {crate::i18n::tr("settings.push.badge")} }
-                    }
-                    div { class: "muted", {crate::i18n::tr("settings.push.body")} }
-                    div { class: "muted", "data-testid": "push-registration-state",
-                        {crate::i18n::tr_args("settings.push.current", &[("state", push_label.clone())])}
-                    }
-                    div { class: "actions",
-                        Button {
-                            variant: ButtonVariant::Secondary,
-                            "data-testid": "push-register-button",
-                            onclick: {
-                                move |_| {
-                                    let base = base_url();
-                                    let api_token = token();
-                                    let dev = device_id();
-                                    let push_account_id = account_authority();
-                                    let persisted_grant = state_store.read().session_grant();
-                                    controller.register_push(base, api_token, dev, push_account_id, persisted_grant);
-                                }
-                            },
-                            {crate::i18n::tr("settings.register_push")}
-                        }
-                        Button {
-                            variant: ButtonVariant::Secondary,
-                            "data-testid": "push-unregister-button",
-                            onclick: {
-                                move |_| {
-                                    let base = base_url();
-                                    let api_token = token();
-                                    let dev = device_id();
-                                    let persisted_grant = state_store.read().session_grant();
-                                    let registration = state_store.read().push_registration();
-                                    controller.unregister_push(base, api_token, dev, persisted_grant, registration);
-                                }
-                            },
-                            {crate::i18n::tr("settings.unregister_push")}
-                        }
-                    }
-                }
-                        }
-                    }
-
-                    // ── Privacy settings ─────────────────────────────────
-                    if active_section == SettingsSection::Privacy {
-                        div { class: "settings-content-stack",
-                            div { class: "event", "data-testid": "privacy-settings",
-                    div { class: "event-head",
-                        span { {crate::i18n::tr("settings.group.privacy")} }
-                        span { {crate::i18n::tr("settings.privacy.badge")} }
-                    }
-                    // Presence visibility — the full three-tier policy
-                    // (profiles-presence.md §3.4), not a binary toggle.
-                    div { class: "actions",
-                        span { {crate::i18n::tr("settings.privacy.presence_visibility")} }
-                        Select::<String> {
-                            "data-testid": "presence-visibility-select",
-                            value: Some(presence_visibility_selected.into()),
-                            on_value_change: move |v: Option<String>| {
-                                let Some(v) = v else { return; };
-                                let visibility = match crate::state::PresenceVisibility::parse_wire(&v) {
-                                    Some(visibility) => visibility,
-                                    None => return,
-                                };
-                                presence_visibility_choice.set(v);
-                                state_store.write().set_presence_visibility(visibility);
-                                crate::components::feedback::toast_success(
-                                    "feedback.presence_visibility_set",
-                                    vec![("visibility", visibility.as_wire().to_owned())],
-                                );
-                                push_presence_visibility_account_data(
-                                    base_url(),
-                                    token(),
-                                    state_store,
-                                );
-                            },
-                            SelectOption::<String> {
-                                index: 0usize,
-                                value: "public".to_string(),
-                                text_value: crate::i18n::tr("settings.privacy.presence_visibility.public"),
-                                {crate::i18n::tr("settings.privacy.presence_visibility.public")}
-                            }
-                            SelectOption::<String> {
-                                index: 1usize,
-                                value: "contacts_only".to_string(),
-                                text_value: crate::i18n::tr("settings.privacy.presence_visibility.contacts_only"),
-                                {crate::i18n::tr("settings.privacy.presence_visibility.contacts_only")}
-                            }
-                            SelectOption::<String> {
-                                index: 2usize,
-                                value: "consent_only".to_string(),
-                                text_value: crate::i18n::tr("settings.privacy.presence_visibility.consent_only"),
-                                {crate::i18n::tr("settings.privacy.presence_visibility.consent_only")}
-                            }
-                            SelectOption::<String> {
-                                index: 3usize,
-                                value: "nobody".to_string(),
-                                text_value: crate::i18n::tr("settings.privacy.presence_visibility.nobody"),
-                                {crate::i18n::tr("settings.privacy.presence_visibility.nobody")}
-                            }
-                        }
-                    }
-                    // My status — manual presence preference
-                    // (profiles-presence.md §3.6): pinned state, transient
-                    // status message and relative expiry, applied by every
-                    // device of this account at send time.
-                    div { class: "event-head",
-                        span { {crate::i18n::tr("settings.privacy.status_title")} }
-                        span { {crate::i18n::tr("settings.privacy.status_badge")} }
-                    }
-                    div { class: "actions",
-                        Select::<String> {
-                            "data-testid": "presence-manual-state-select",
-                            value: Some(presence_manual_state_selected.into()),
-                            on_value_change: move |v: Option<String>| { if let Some(v) = v { presence_manual_state.set(v); } },
-                            SelectOption::<String> {
-                                index: 0usize,
-                                value: "auto".to_string(),
-                                text_value: crate::i18n::tr("settings.privacy.presence_state.auto"),
-                                {crate::i18n::tr("settings.privacy.presence_state.auto")}
-                            }
-                            SelectOption::<String> {
-                                index: 1usize,
-                                value: "online".to_string(),
-                                text_value: crate::i18n::tr("settings.privacy.presence_state.online"),
-                                {crate::i18n::tr("settings.privacy.presence_state.online")}
-                            }
-                            SelectOption::<String> {
-                                index: 2usize,
-                                value: "idle".to_string(),
-                                text_value: crate::i18n::tr("settings.privacy.presence_state.idle"),
-                                {crate::i18n::tr("settings.privacy.presence_state.idle")}
-                            }
-                            SelectOption::<String> {
-                                index: 3usize,
-                                value: "dnd".to_string(),
-                                text_value: crate::i18n::tr("settings.privacy.presence_state.dnd"),
-                                {crate::i18n::tr("settings.privacy.presence_state.dnd")}
-                            }
-                        }
-                        Input {
-                            r#type: "text",
-                            "data-testid": "presence-status-message-input",
-                            placeholder: crate::i18n::tr("settings.privacy.status_message_placeholder"),
-                            value: "{presence_status_message()}",
-                            oninput: move |event: FormEvent| presence_status_message.set(event.value()),
-                        }
-                        Select::<String> {
-                            "data-testid": "presence-status-expiry-select",
-                            value: Some(presence_expiry_selected.into()),
-                            on_value_change: move |v: Option<String>| { if let Some(v) = v { presence_expiry_choice.set(v); } },
-                            SelectOption::<String> {
-                                index: 0usize,
-                                value: "never".to_string(),
-                                text_value: crate::i18n::tr("settings.privacy.status_expiry.never"),
-                                {crate::i18n::tr("settings.privacy.status_expiry.never")}
-                            }
-                            SelectOption::<String> {
-                                index: 1usize,
-                                value: "30m".to_string(),
-                                text_value: crate::i18n::tr("settings.privacy.status_expiry.30m"),
-                                {crate::i18n::tr("settings.privacy.status_expiry.30m")}
-                            }
-                            SelectOption::<String> {
-                                index: 2usize,
-                                value: "1h".to_string(),
-                                text_value: crate::i18n::tr("settings.privacy.status_expiry.1h"),
-                                {crate::i18n::tr("settings.privacy.status_expiry.1h")}
-                            }
-                            SelectOption::<String> {
-                                index: 3usize,
-                                value: "today".to_string(),
-                                text_value: crate::i18n::tr("settings.privacy.status_expiry.today"),
-                                {crate::i18n::tr("settings.privacy.status_expiry.today")}
-                            }
-                        }
-                        Button {
-                            variant: ButtonVariant::Primary,
-                            "data-testid": "presence-status-save-button",
-                            onclick: move |_| {
-                                let manual_state = presence_manual_state();
-                                let message = arkret_sdk::canonical::to_nfc(
-                                    presence_status_message().trim(),
-                                );
-                                if let Err(error) = arkret_sdk::validate_status_message(&message) {
-                                    presence_status_feedback.set(
-                                        crate::i18n::tr_args(
-                                            "settings.privacy.status_invalid",
-                                            &[("error", error.to_string())],
-                                        ),
-                                    );
-                                    return;
-                                }
-                                let typed_manual_state = match manual_state.as_str() {
-                                    "auto" => None,
-                                    "online" => Some(arkret_sdk::ManualPresenceState::Online),
-                                    "idle" => Some(arkret_sdk::ManualPresenceState::Idle),
-                                    "dnd" => Some(arkret_sdk::ManualPresenceState::Dnd),
-                                    _ => {
-                                        presence_status_feedback.set(
-                                            crate::i18n::tr("settings.privacy.status_state_unknown"),
-                                        );
-                                        return;
-                                    }
-                                };
-                                let has_preference = typed_manual_state.is_some() || !message.is_empty();
-                                let preference = crate::state::PresencePreference {
-                                    manual_state: typed_manual_state,
-                                    status_message: (!message.is_empty()).then_some(message),
-                                    clears_at: has_preference
-                                        .then(|| {
-                                            presence_expiry_to_clears_at(&presence_expiry_choice())
-                                        })
-                                        .flatten(),
-                                };
-                                let cleared = preference.is_empty();
-                                state_store.write().set_presence_preference(preference);
-                                presence_status_feedback.set(if cleared {
-                                    crate::i18n::tr("settings.privacy.status_cleared")
-                                } else {
-                                    crate::i18n::tr("settings.privacy.status_saved")
-                                });
-                                push_presence_preference_account_data(
-                                    base_url(),
-                                    token(),
-                                    state_store,
-                                );
-                            },
-                            {crate::i18n::tr("settings.privacy.status_save")}
-                        }
-                        Button {
-                            variant: ButtonVariant::Secondary,
-                            "data-testid": "presence-status-clear-button",
-                            onclick: move |_| {
-                                presence_manual_state.set("auto".to_owned());
-                                presence_status_message.set(String::new());
-                                presence_expiry_choice.set("never".to_owned());
-                                state_store.write().set_presence_preference(
-                                    crate::state::PresencePreference::default(),
-                                );
-                                presence_status_feedback.set(crate::i18n::tr("settings.privacy.status_cleared"));
-                                push_presence_preference_account_data(
-                                    base_url(),
-                                    token(),
-                                    state_store,
-                                );
-                            },
-                            {crate::i18n::tr("settings.privacy.status_clear")}
-                        }
-                    }
-                    div { class: "muted", "data-testid": "presence-status-feedback", "{presence_status_feedback}" }
-                    div { class: "event-head",
-                        span { {crate::i18n::tr("chat.settings.read_receipts")} }
-                        span { {crate::i18n::tr("settings.read_receipts.default_badge")} }
-                    }
-                    label {
-                        Checkbox {
-                            "data-testid": "read-receipts-default-toggle",
-                            checked: if read_receipt_default_send() { CheckboxState::Checked } else { CheckboxState::Unchecked },
-                            on_checked_change: move |state: CheckboxState| {
-                                let send = bool::from(state);
-                                read_receipt_default_send.set(send);
-                                state_store.write().set_read_receipt_default_send(send);
-                                crate::components::feedback::toast_success(
-                                    if send {
-                                        "feedback.read_receipt_default_send_on"
-                                    } else {
-                                        "feedback.read_receipt_default_send_off"
-                                    },
-                                    vec![],
-                                );
-                                // Also push to coland's ak.account_data.set
-                                // so other devices pick up the change.
-                                // Endpoint may 404/501 — we swallow and keep
-                                // local authoritative.
-                                push_read_receipt_account_data(
-                                    base_url(),
-                                    token(),
-                                    state_store,
-                                );
-                            },
-                        }
-                        {crate::i18n::tr("settings.read_receipts.send_default")}
-                    }
-                    label {
-                        Checkbox {
-                            "data-testid": "read-receipts-display-default-toggle",
-                            checked: if read_receipt_default_display() { CheckboxState::Checked } else { CheckboxState::Unchecked },
-                            on_checked_change: move |state: CheckboxState| {
-                                let display = bool::from(state);
-                                read_receipt_default_display.set(display);
-                                state_store.write().set_read_receipt_default_display(display);
-                                crate::components::feedback::toast_success(
-                                    if display {
-                                        "feedback.read_receipt_default_display_on"
-                                    } else {
-                                        "feedback.read_receipt_default_display_off"
-                                    },
-                                    vec![],
-                                );
-                                push_read_receipt_account_data(
-                                    base_url(),
-                                    token(),
-                                    state_store,
-                                );
-                            },
-                        }
-                        {crate::i18n::tr("settings.read_receipts.display_default")}
-                    }
-                    div { class: "event-head",
-                        span { {crate::i18n::tr("settings.read_receipts.realm_exceptions")} }
-                        span { "{read_receipt_realm_overrides().len()} configured" }
-                    }
-                    for (realm_id, send) in read_receipt_realm_overrides() {
-                            // Show the exact Realm-scope current lock when verified.
-                            {
-                                let policy = state_store
-                                    .read()
-                                    .read_receipt_policy_for_realm(&realm_id);
-                                let locked = policy
-                                    .as_ref()
-                                    .is_some_and(|p| p.disclosure != arkret_sdk::ReadReceiptDisclosure::Optional);
-                                let lock_reason = policy
-                                    .as_ref()
-                                    .map(|p| match p.disclosure { arkret_sdk::ReadReceiptDisclosure::Required => "Read receipts are required in this scope.".to_owned(), arkret_sdk::ReadReceiptDisclosure::Disabled => "Read receipts are disabled in this scope.".to_owned(), _ => String::new() })
-                                    .unwrap_or_default();
-                                let realm_id_label = short_protocol_id(&realm_id);
-                                rsx! {
-                                    div { class: "actions", "data-testid": "read-receipt-override-row",
-                                        span { title: "{realm_id}", "{realm_id_label}" }
-                                        span { class: "badge",
-                                            {if send {
-                                                crate::i18n::tr("settings.read_receipts.badge_sending")
-                                            } else {
-                                                crate::i18n::tr("settings.read_receipts.badge_skipping")
-                                            }}
-                                        }
-                                        if locked {
-                                            span {
-                                                class: "badge red",
-                                                "data-testid": "read-receipt-override-locked",
-                                                {crate::i18n::tr("settings.read_receipts.locked")}
-                                            }
-                                        }
-                                        Button {
-                                            variant: ButtonVariant::Secondary,
-                                            "data-testid": "read-receipt-override-toggle",
-                                            disabled: locked,
-                                            onclick: {
-                                                let realm_id = realm_id.clone();
-                                                move |_| {
-                                                    if locked {
-                                                        return;
-                                                    }
-                                                    let next = !send;
-                                                    state_store.write().set_read_receipt_realm_override(
-                                                        realm_id.clone(),
-                                                        Some(next),
-                                                    );
-                                                    read_receipt_realm_overrides.set(
-                                                        state_store.read().read_receipt_realm_overrides(),
-                                                    );
-                                                    crate::components::feedback::toast_success(
-                                                        if next {
-                                                            "feedback.read_receipt_override_send"
-                                                        } else {
-                                                            "feedback.read_receipt_override_skip"
-                                                        },
-                                                        vec![("realm", short_protocol_id(&realm_id))],
-                                                    );
-                                                    push_read_receipt_account_data(
-                                                        base_url(),
-                                                        token(),
-                                                        state_store,
-                                                    );
-                                                }
-                                            },
-                                            {if send {
-                                                crate::i18n::tr("settings.read_receipts.switch_to_skip")
-                                            } else {
-                                                crate::i18n::tr("settings.read_receipts.switch_to_send")
-                                            }}
-                                        }
-                                        Button {
-                                            variant: ButtonVariant::Secondary,
-                                            "data-testid": "read-receipt-override-clear",
-                                            disabled: locked,
-                                            onclick: {
-                                                let realm_id = realm_id.clone();
-                                                move |_| {
-                                                    if locked {
-                                                        return;
-                                                    }
-                                                    state_store.write().set_read_receipt_realm_override(
-                                                        realm_id.clone(),
-                                                        None,
-                                                    );
-                                                    read_receipt_realm_overrides.set(
-                                                        state_store.read().read_receipt_realm_overrides(),
-                                                    );
-                                                    crate::components::feedback::toast_success(
-                                                        "feedback.read_receipt_override_inherit",
-                                                        vec![("realm", short_protocol_id(&realm_id))],
-                                                    );
-                                                    push_read_receipt_account_data(
-                                                        base_url(),
-                                                        token(),
-                                                        state_store,
-                                                    );
-                                                }
-                                            },
-                                            {crate::i18n::tr("settings.read_receipts.inherit_default")}
-                                        }
-                                    }
-                                    if locked {
-                                        div { class: "muted",
-                                            "data-testid": "read-receipt-override-lock-reason",
-                                            "{lock_reason}"
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    div { class: "actions", "data-testid": "read-receipt-add-override",
-                        RealmPreferencePicker {
-                            options: preference_realms.clone(),
-                            selected: read_receipt_override_input,
-                            test_id: "read-receipt-realm-select",
-                        }
-                        Button {
-                            variant: ButtonVariant::Secondary,
-                            "data-testid": "read-receipt-add-override-skip",
-                            disabled: selected_realm_id(&preference_realms, &read_receipt_override_input()).is_none(),
-                            onclick: move |_| {
-                                let Some(realm_id) = selected_realm_id(&preference_realm_options(&state_store.read()), &read_receipt_override_input()) else {
-                                    crate::components::feedback::toast_info("settings.notifications.select_realm", vec![]);
+                        ),
+                        probe_action(
+                            scope,
+                            context.clone(),
+                            "mimi-submit-message",
+                            "settings.mimi.submit_message",
+                            controller.mimi_submit_loading,
+                            move || {
+                                let Some(account) = submit_context.active_account.get() else {
                                     return;
                                 };
-                                let realm_id = realm_id.to_string();
-                                state_store.write().set_read_receipt_realm_override(
-                                    realm_id.clone(),
-                                    Some(false),
-                                );
-                                read_receipt_realm_overrides.set(
-                                    state_store.read().read_receipt_realm_overrides(),
-                                );
-                                read_receipt_override_input.set(String::new());
-                                crate::components::feedback::toast_success(
-                                    "feedback.read_receipt_override_skip",
-                                    vec![("realm", short_protocol_id(&realm_id))],
-                                );
-                                push_read_receipt_account_data(
-                                    base_url(),
-                                    token(),
-                                    state_store,
+                                submit.clone().submit_mimi_message(
+                                    submit_context.base_url.get(),
+                                    submit_context.token.get(),
+                                    arkret_sdk::ActorId::account(account.authority),
+                                    account.device_id.to_string(),
                                 );
                             },
-                            {crate::i18n::tr("settings.read_receipts.add_skip")}
-                        }
-                        Button {
-                            variant: ButtonVariant::Secondary,
-                            "data-testid": "read-receipt-add-override-send",
-                            disabled: selected_realm_id(&preference_realms, &read_receipt_override_input()).is_none(),
-                            onclick: move |_| {
-                                let Some(realm_id) = selected_realm_id(&preference_realm_options(&state_store.read()), &read_receipt_override_input()) else {
-                                    crate::components::feedback::toast_info("settings.notifications.select_realm", vec![]);
+                        ),
+                        probe_action(
+                            scope,
+                            context.clone(),
+                            "mimi-proxy-download",
+                            "settings.mimi.proxy_download",
+                            controller.mimi_proxy_loading,
+                            move || {
+                                let Some(account) = proxy_context.active_account.get() else {
                                     return;
                                 };
-                                let realm_id = realm_id.to_string();
-                                state_store.write().set_read_receipt_realm_override(
-                                    realm_id.clone(),
-                                    Some(true),
-                                );
-                                read_receipt_realm_overrides.set(
-                                    state_store.read().read_receipt_realm_overrides(),
-                                );
-                                read_receipt_override_input.set(String::new());
-                                crate::components::feedback::toast_success(
-                                    "feedback.read_receipt_override_send",
-                                    vec![("realm", short_protocol_id(&realm_id))],
-                                );
-                                push_read_receipt_account_data(
-                                    base_url(),
-                                    token(),
-                                    state_store,
+                                proxy.clone().proxy_download_mimi_asset(
+                                    proxy_context.base_url.get(),
+                                    proxy_context.token.get(),
+                                    account.principal_id().to_string(),
                                 );
                             },
-                            {crate::i18n::tr("settings.read_receipts.add_send")}
-                        }
-                    }
-                }
-
-                // ── Realm remarks (spec discovery/client-preferences.md §3.7) ─
-                // Actor-private local alias / note / pin for each Realm the
-                // user has joined. Lets users disambiguate duplicate-titled
-                // Realms without leaking the remark beyond this account.
-                // Pushed to coland via `ak.account_data.set` under
-                // `ak.contacts.realm.<realm_id>`; coland echoes the same
-                // entries back on the next `/sync` so other devices pick
-                // them up.
-                div { class: "event", "data-testid": "realm-remarks-editor",
-                    div { class: "event-head",
-                        span { {crate::i18n::tr("settings.realm_remarks.title")} }
-                        span { {crate::i18n::tr("settings.remarks.badge_private")} }
-                    }
-                    {
-                        let remarks = realm_remarks_snapshot();
-                        if remarks.is_empty() {
-                            rsx! {
-                                div {
-                                    class: "muted",
-                                    "data-testid": "realm-remarks-empty",
-                                    {crate::i18n::tr("settings.realm_remarks.empty")}
-                                }
-                            }
-                        } else {
-                            rsx! {
-                                for (realm_id, remark) in remarks {
-                                    {
-                                        let realm_id_label = short_protocol_id(&realm_id);
-                                        rsx! {
-                                            div {
-                                                class: "actions",
-                                                "data-testid": "realm-remark-row",
-                                                "data-realm-id": "{realm_id}",
-                                                span { class: "mono", title: "{realm_id}", "{realm_id_label}" }
-                                                Input {
-                                                    r#type: "text",
-                                                    "data-testid": "realm-remark-input",
-                                                    placeholder: crate::i18n::tr("settings.realm_remarks.local_name_private"),
-                                                    value: "{realm_remark_inputs().get(&realm_id).cloned().unwrap_or_else(|| remark.local_name.clone())}",
-                                                    oninput: {
-                                                        let id = realm_id.clone();
-                                                        move |event: FormEvent| {
-                                                            let mut current = realm_remark_inputs();
-                                                            current.insert(id.clone(), event.value());
-                                                            realm_remark_inputs.set(current);
-                                                        }
-                                                    },
-                                                }
-                                                Button {
-                                                    variant: ButtonVariant::Secondary,
-                                                    class: if remark.pinned { "active" } else { "" },
-                                                    "data-testid": "realm-remark-pin-toggle",
-                                                    title: if remark.pinned { crate::i18n::tr("realm.unpin") } else { crate::i18n::tr("realm.pin") },
-                                                    "aria-pressed": if remark.pinned { "true" } else { "false" },
-                                                    onclick: {
-                                                        let id = realm_id.clone();
-                                                        let existing = remark.clone();
-                                                        let next_pinned = !remark.pinned;
-                                                        move |_| {
-                                                            let id = id.clone();
-                                                            let Ok(typed_realm_id) = arkret_sdk::RealmId::new(id.clone()) else {
-                                                                return;
-                                                            };
-                                                            let next = crate::account_data::RealmRemark::with_pinned_preserving_fields(
-                                                                typed_realm_id,
-                                                                Some(&existing),
-                                                                next_pinned,
-                                                                chrono::Utc::now(),
-                                                            );
-                                                            state_store
-                                                                .write()
-                                                                .set_realm_remark(id.clone(), next.clone());
-                                                            realm_remarks_snapshot.set(
-                                                                state_store.read().realm_remarks(),
-                                                            );
-                                                            crate::components::feedback::toast_success(
-                                                                if next_pinned { "realm.pinned" } else { "realm.unpinned" },
-                                                                vec![],
-                                                            );
-                                                            push_realm_remark_account_data_with_failure_toast(
-                                                                base_url(),
-                                                                token(),
-                                                                id,
-                                                                next,
-                                                            );
-                                                        }
-                                                    },
-                                                    UiIcon { name: "pin" }
-                                                    span { {if remark.pinned { crate::i18n::tr("realm.pinned") } else { crate::i18n::tr("realm.pin") }} }
-                                                }
-                                                Button {
-                                                    variant: ButtonVariant::Secondary,
-                                                    "data-testid": "realm-remark-save",
-                                                    onclick: {
-                                                        let id = realm_id.clone();
-                                                        let existing = remark.clone();
-                                                        move |_| {
-                                                            let id = id.clone();
-                                                            let next_name = realm_remark_inputs()
-                                                                .get(&id)
-                                                                .cloned()
-                                                                .unwrap_or_default();
-                                                            let mut next = existing.clone();
-                                                            next.local_name = next_name.trim().to_owned();
-                                                            next.updated_at = Some(chrono::Utc::now());
-                                                            state_store
-                                                                .write()
-                                                                .set_realm_remark(id.clone(), next.clone());
-                                                            realm_remarks_snapshot.set(
-                                                                state_store.read().realm_remarks(),
-                                                            );
-                                                            if next.is_empty() {
-                                                                crate::components::feedback::toast_success(
-                                                                    "feedback.realm_remark_cleared",
-                                                                    vec![("realm", short_protocol_id(&id))],
-                                                                );
-                                                            } else {
-                                                                crate::components::feedback::toast_success(
-                                                                    "feedback.realm_remark_saved",
-                                                                    vec![
-                                                                        ("realm", short_protocol_id(&id)),
-                                                                        ("name", next.local_name.clone()),
-                                                                    ],
-                                                                );
-                                                            }
-                                                            push_realm_remark_account_data(
-                                                                base_url(),
-                                                                token(),
-                                                                id,
-                                                                next,
-                                                            );
-                                                        }
-                                                    },
-                                                    {crate::i18n::tr("common.save")}
-                                                }
-                                                Button {
-                                                    variant: ButtonVariant::Secondary,
-                                                    "data-testid": "realm-remark-delete",
-                                                    onclick: {
-                                                        let id = realm_id.clone();
-                                                        move |_| {
-                                                            let id = id.clone();
-                                                            state_store.write().remove_realm_remark(&id);
-                                                            let mut inputs = realm_remark_inputs();
-                                                            inputs.remove(&id);
-                                                            realm_remark_inputs.set(inputs);
-                                                            realm_remarks_snapshot.set(
-                                                                state_store.read().realm_remarks(),
-                                                            );
-                                                            let Ok(realm_id) =
-                                                                arkret_sdk::RealmId::new(id.clone())
-                                                            else {
-                                                                crate::components::feedback::toast_error(
-                                                                    "feedback.invalid_realm_id",
-                                                                    vec![],
-                                                                    None,
-                                                                );
-                                                                return;
-                                                            };
-                                                            crate::components::feedback::toast_success(
-                                                                "feedback.realm_remark_cleared",
-                                                                vec![("realm", short_protocol_id(&id))],
-                                                            );
-                                                            push_realm_remark_account_data(
-                                                                base_url(),
-                                                                token(),
-                                                                id.clone(),
-                                                                crate::account_data::RealmRemark::new(
-                                                                    realm_id,
-                                                                    chrono::Utc::now(),
-                                                                ),
-                                                            );
-                                                        }
-                                                    },
-                                                    {crate::i18n::tr("common.delete")}
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    div { class: "actions", "data-testid": "realm-remark-add-row",
-                        RealmPreferencePicker {
-                            options: preference_realms.clone(),
-                            selected: new_realm_remark_id,
-                            test_id: "realm-remark-realm-select",
-                        }
-                        Input {
-                            r#type: "text",
-                            "data-testid": "realm-remark-add-name",
-                            placeholder: crate::i18n::tr("settings.realm_remarks.local_name"),
-                            value: "{new_realm_remark_name()}",
-                            oninput: move |event: FormEvent| new_realm_remark_name.set(event.value()),
-                        }
-                        Button {
-                            variant: ButtonVariant::Secondary,
-                            "data-testid": "realm-remark-add-save",
-                            disabled: selected_realm_id(&preference_realms, &new_realm_remark_id()).is_none() || new_realm_remark_name().trim().is_empty(),
-                            onclick: move |_| {
-                                let Some(typed_realm_id) = selected_realm_id(&preference_realm_options(&state_store.read()), &new_realm_remark_id()) else {
-                                    crate::components::feedback::toast_info("settings.notifications.select_realm", vec![]);
-                                    return;
-                                };
-                                let realm_id = typed_realm_id.to_string();
-                                let local_name = new_realm_remark_name().trim().to_owned();
-                                if realm_id.is_empty() || local_name.is_empty() {
-                                    crate::components::feedback::toast_info("feedback.enter_realm_and_name", vec![]);
-                                    return;
-                                }
-                                let now = chrono::Utc::now();
-                                let mut remark = crate::account_data::RealmRemark::new(
-                                    typed_realm_id,
-                                    now,
-                                );
-                                remark.local_name = local_name.clone();
-                                remark.updated_at = Some(now);
-                                state_store
-                                    .write()
-                                    .set_realm_remark(realm_id.clone(), remark.clone());
-                                realm_remarks_snapshot.set(state_store.read().realm_remarks());
-                                new_realm_remark_id.set(String::new());
-                                new_realm_remark_name.set(String::new());
-                                crate::components::feedback::toast_success(
-                                    "feedback.realm_remark_saved",
-                                    vec![
-                                        ("realm", short_protocol_id(&realm_id)),
-                                        ("name", local_name.clone()),
-                                    ],
-                                );
-                                push_realm_remark_account_data(
-                                    base_url(),
-                                    token(),
-                                    realm_id,
-                                    remark,
-                                );
-                            },
-                            {crate::i18n::tr("settings.realm_remarks.add")}
-                        }
-                    }
-                }
-
-                div { class: "event", "data-testid": "contact-remarks-editor",
-                    div { class: "event-head",
-                        span { {crate::i18n::tr("settings.contact_petnames.title")} }
-                        span { {crate::i18n::tr("settings.remarks.badge_private")} }
-                    }
-                    div { class: "muted",
-                        {crate::i18n::tr("settings.contact_petnames.body")}
-                    }
-                    {
-                        let remarks = contact_remarks_snapshot();
-                        if remarks.is_empty() {
-                            rsx! {
-                                div {
-                                    class: "muted",
-                                    "data-testid": "contact-remarks-empty",
-                                    {crate::i18n::tr("settings.contact_petnames.empty")}
-                                }
-                            }
-                        } else {
-                            rsx! {
-                                for (actor_id, remark) in remarks {
-                                    {
-                                        let actor_id_label =
-                                            actor_display_label(&state_store.read(), &actor_id);
-                                        rsx! {
-                                            div {
-                                                class: "actions",
-                                                "data-testid": "contact-remark-row",
-                                                "data-actor-id": "{actor_id}",
-                                                span { title: "{actor_id}", "{actor_id_label}" }
-                                                span { class: "pill", {crate::i18n::tr("contacts.petname.badge")} }
-                                                span { "{remark.petname}" }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // ── YG-HC-1 — Handle management (issuer-managed) ─────
-                // Per spec §3.2.3 / §3.4 inkson MUST NOT set or override
-                // handles via ak.profile.update / ak.member.identity.update.
-                // Handles come from signed ak.schema.handle_claim.v1
-                // evidence issued by the org's coauth issuer. So instead
-                // of an "edit your handle" affordance we show a managed
-                // notice + a link out to the issuer flow.
-                            div { class: "event", "data-testid": "handle-managed-by-org",
-                    div { class: "event-head",
-                        span { {crate::i18n::tr("settings.handle.title")} }
-                        span { {crate::i18n::tr("settings.handle.managed_badge")} }
-                    }
-                    div { class: "muted",
-                        {crate::i18n::tr("settings.handle.managed_body")}
-                    }
-                    div { class: "actions",
-                        if let Some(href) = crate::identity::account_auth::issuer_handle_management_url(&base_url()) {
-                            a {
-                                class: "btn secondary",
-                                "data-testid": "handle-issuer-link",
-                                href: "{href}",
-                                target: "_blank",
-                                rel: "noopener noreferrer",
-                                {crate::i18n::tr("settings.handle.issuer_link")}
-                            }
-                        } else {
-                            Button {
-                                variant: ButtonVariant::Secondary,
-                                "data-testid": "handle-issuer-link-disabled",
-                                disabled: true,
-                                {crate::i18n::tr("settings.handle.issuer_link_unavailable")}
-                            }
-                        }
-                    }
-                    }
-                }
-
-
-                        }
-
-                    // ── U4 invite_receive_policy ─────────────────────────
-                    if active_section == SettingsSection::Contacts {
-                        crate::views::contacts::ContactsPanel { token, advanced: true }
-                    }
-                    if active_section == SettingsSection::InvitePolicy {
-                        div { class: "settings-content-stack",
-                            crate::views::settings::invite_policy::InvitePolicySettingsCard {
-                                token,
-                            }
-                        }
-                    }
-
-                    // ── G3.Y3 personal blocklist ─────────────────────────
-                    if active_section == SettingsSection::Blocklist {
-                        div { class: "settings-content-stack",
-                            crate::views::settings::blocklist::BlocklistSettingsCard {
-                                principal_id,
-                                token,
-                            }
-                        }
-                    }
-
-                    // ── G3.Y3 capability viewer ──────────────────────────
-                    if active_section == SettingsSection::Capabilities {
-                        div { class: "settings-content-stack",
-                            crate::views::settings::capabilities::CapabilitiesSettingsCard {
-                                principal_id,
-                                token,
-                            }
-                        }
-                    }
-
-                    // ── Theme selector ───────────────────────────────────
-                    if active_section == SettingsSection::Theme {
-                        div { class: "settings-card-grid",
-                            div { class: "event", "data-testid": "theme-settings",
-                    div { class: "event-head",
-                        span { {crate::i18n::tr("theme.switcher_aria_label")} }
-                        span { {crate::i18n::tr("settings.theme.badge")} }
-                    }
-                    div { class: "actions",
-                        Button {
-                            variant: if theme() == "light" { ButtonVariant::Primary } else { ButtonVariant::Ghost },
-                            size: ButtonSize::Sm,
-                            class: "btn icon",
-                            "data-testid": "theme-light",
-                            title: crate::i18n::tr("settings.theme.light"),
-                            "aria-label": crate::i18n::tr("settings.theme.light"),
-                            onclick: move |_| {
-                                theme.set("light".to_owned());
-                                state_store.write().save_plain_local_data("theme", "light");
-                                push_client_ui_account_data(base_url(), token(), "light".to_owned());
-                            },
-                            UiIcon { name: "sun" }
-                        }
-                        Button {
-                            variant: if theme() == "night" { ButtonVariant::Primary } else { ButtonVariant::Ghost },
-                            size: ButtonSize::Sm,
-                            class: "btn icon",
-                            "data-testid": "theme-night",
-                            title: crate::i18n::tr("settings.theme.night"),
-                            "aria-label": crate::i18n::tr("settings.theme.night"),
-                            onclick: move |_| {
-                                theme.set("night".to_owned());
-                                state_store.write().save_plain_local_data("theme", "night");
-                                push_client_ui_account_data(base_url(), token(), "night".to_owned());
-                            },
-                            UiIcon { name: "moon" }
-                        }
-                        Button {
-                            variant: if theme() == "system" { ButtonVariant::Primary } else { ButtonVariant::Ghost },
-                            size: ButtonSize::Sm,
-                            class: "btn icon",
-                            "data-testid": "theme-system",
-                            title: crate::i18n::tr("settings.theme.system"),
-                            "aria-label": crate::i18n::tr("settings.theme.system"),
-                            onclick: move |_| {
-                                theme.set("system".to_owned());
-                                state_store.write().save_plain_local_data("theme", "system");
-                                push_client_ui_account_data(base_url(), token(), "system".to_owned());
-                            },
-                            UiIcon { name: "monitor" }
-                        }
-                    }
-                    div { class: "muted",
-                        {crate::i18n::tr_args("settings.theme.current", &[("theme", theme())])}
-                    }
-                    // P5 — radiogroup-flavoured three-mode switcher
-                    // alongside the existing icon-button trio. Same
-                    // persistence path; adds ARIA semantics + a label
-                    // surface for keyboard / screen-reader users.
-                    crate::components::ThemeSwitcher {
-                        theme: theme,
-                        on_persist: {
-                            let base = base_url();
-                            let api_token = token();
-                            EventHandler::new(move |next: String| {
-                                state_store.write().save_plain_local_data("theme", next.clone());
-                                push_client_ui_account_data(base.clone(), api_token.clone(), next);
-                            })
-                        },
-                    }
-                }
-                            div { class: "event", "data-testid": "language-settings",
-                    div { class: "event-head",
-                        span { {crate::i18n::tr("settings.language.title")} }
-                        span { "data-testid": "text-direction", "{active_direction}" }
-                    }
-                    div { class: "actions",
-                        for choice in arkret_locale::SUPPORTED {
-                            Button {
-                                variant: if active_locale == choice { ButtonVariant::Primary } else { ButtonVariant::Secondary },
-                                "data-testid": "language-{choice.code()}",
-                                onclick: move |_| select_locale(
-                                    choice,
-                                    locale,
-                                    state_store,
-                                    base_url(),
-                                    token(),
-                                ),
-                                {locale_display_name(choice)}
-                            }
-                        }
-                    }
-                }
-                        }
-                    }
-
-                    // ── CI / Release gate status ─────────────────────────
-                    if active_section == SettingsSection::Release {
-                        div { class: "settings-content-stack",
-                            div { class: "event", "data-testid": "settings-session-diagnostics",
-                                div { class: "event-head",
-                                    span { {crate::i18n::tr("settings.session_diagnostics.title")} }
-                                    span { {crate::i18n::tr("settings.group.advanced")} }
-                                }
-                                div { class: "metric-grid",
-                                    div { class: "metric", "data-testid": "settings-proof-mode",
-                                        strong { {crate::i18n::tr("settings.proof_mode.label")} }
-                                        span { {crate::operation::current_proof_mode().label_en()} }
-                                    }
-                                    {
-                                        let status = crate::event_signer::signer_status();
-                                        let signer_did = status
-                                            .as_ref()
-                                            .map(|s| s.signer_did.clone())
-                                            .unwrap_or_else(|| "—".to_owned());
-                                        let signer_did_label = short_protocol_id(&signer_did);
-                                        rsx! {
-                                            div {
-                                                class: "metric",
-                                                "data-testid": "settings-signer-info",
-                                                strong { {crate::i18n::tr("settings.signer.label")} }
-                                                span {
-                                                    "data-testid": "settings-signer-did",
-                                                    title: "{signer_did}",
-                                                    "{signer_did_label}"
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // ── Audit log (promoted from the Release sub-tab) ─────
-                    if active_section == SettingsSection::Audit {
-                        div { class: "settings-content-stack",
-                            crate::views::audit::AuditPanel {}
-                        }
-                    }
-
-                    // ── Developer tools (promoted from the Release sub-tab) ──
-                    if active_section == SettingsSection::Developer {
-                        div { class: "settings-content-stack",
-                            crate::views::developer::DeveloperToolsPanel {}
-                        }
-                    }
-
-                }
-            }
-        }
-    }
+                        ),
+                    ],
+                ),
+                stack(
+                    "event mimi-directory-result",
+                    vec![
+                        line(
+                            "event-head",
+                            vec![
+                                plain(context.translated(scope, "nav.directory")),
+                                plain(context.translated(scope, "settings.mimi.directory_badge")),
+                            ],
+                        ),
+                        output(
+                            scope,
+                            context.clone(),
+                            "mimi-directory-content",
+                            controller.mimi_directory,
+                            "settings.mimi.not_loaded",
+                        ),
+                    ],
+                ),
+                stack(
+                    "event mimi-action-receipt",
+                    vec![
+                        line(
+                            "event-head",
+                            vec![
+                                plain(context.translated(scope, "settings.mimi.receipt_title")),
+                                plain(context.translated(scope, "settings.mimi.receipt_badge")),
+                            ],
+                        ),
+                        output(
+                            scope,
+                            context.clone(),
+                            "mimi-query-receipt",
+                            controller.mimi_receipt,
+                            "settings.mimi.no_receipt",
+                        ),
+                        output(
+                            scope,
+                            context.clone(),
+                            "mimi-submit-receipt",
+                            controller.mimi_submit_receipt,
+                            "settings.mimi.no_receipt",
+                        ),
+                        output(
+                            scope,
+                            context.clone(),
+                            "mimi-proxy-receipt",
+                            controller.mimi_proxy_receipt,
+                            "settings.mimi.no_receipt",
+                        ),
+                    ],
+                ),
+            ],
+        )],
+    )
 }
 
 #[cfg(test)]
 mod tests;
+
+fn release_page(scope: &Scope, context: Rc<InksonContext>) -> View {
+    let signer = crate::event_signer::signer_status()
+        .map(|status| status.signer_did)
+        .unwrap_or_else(|| "—".into());
+    stack(
+        "settings-content-stack",
+        vec![stack(
+            "event settings-session-diagnostics",
+            vec![
+                line(
+                    "event-head",
+                    vec![
+                        plain(context.translated(scope, "settings.session_diagnostics.title")),
+                        plain(context.translated(scope, "settings.group.advanced")),
+                    ],
+                ),
+                stack(
+                    "metric-grid",
+                    vec![
+                        stack(
+                            "metric settings-proof-mode",
+                            vec![
+                                plain(context.translated(scope, "settings.proof_mode.label")),
+                                plain(crate::operation::current_proof_mode().label_en()),
+                            ],
+                        ),
+                        stack(
+                            "metric settings-signer-info",
+                            vec![
+                                plain(context.translated(scope, "settings.signer.label")),
+                                paragraph("settings-signer-did", short_protocol_id(&signer)),
+                            ],
+                        ),
+                    ],
+                ),
+            ],
+        )],
+    )
+}

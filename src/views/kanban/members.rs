@@ -7,9 +7,7 @@ use super::model::*;
 use crate::operation::trim_realm_id;
 use crate::state::{LocalStateStore, RawOperationRecord};
 use crate::views::helpers::actor_display_label;
-pub(super) use crate::views::member_display::{
-    RealmMemberRow, owned_agent_slug, realm_member_roster,
-};
+pub(super) use crate::views::member_display::{RealmMemberRow, realm_member_roster};
 
 pub(super) fn card_member_is_current_account(row: &RealmMemberRow, principal_id: &str) -> bool {
     crate::mls_api_helpers::local_account_actor_id(principal_id)

@@ -1,4 +1,9 @@
+use std::rc::Rc;
+
+use glory::prelude::*;
+
 use super::*;
+use crate::presentation::InksonContext;
 
 fn recovery_state_retry_delay(attempt: u8) -> std::time::Duration {
     let exponent = u32::from(attempt.saturating_sub(1).min(5));
@@ -80,100 +85,110 @@ fn clear_completed_recovery_request_for_retry(
     }
 }
 
-struct SignalRecoveryCompletionState {
-    account_recovery_configured: Signal<Option<bool>>,
-    account_recovery_detection_key_seen: Signal<Option<String>>,
-    account_recovery_retry_attempt: Signal<u8>,
+struct OwnedRecoveryCompletionState {
+    account_recovery_configured: Cage<Option<bool>>,
+    account_recovery_detection_key_seen: Cage<Option<String>>,
+    account_recovery_retry_attempt: Cage<u8>,
 }
 
-impl RecoveryCompletionState for SignalRecoveryCompletionState {
+impl RecoveryCompletionState for OwnedRecoveryCompletionState {
     fn set_configured(&mut self, configured: Option<bool>) {
-        self.account_recovery_configured.set(configured);
+        {
+            let next_value = configured;
+            self.account_recovery_configured
+                .revise(|current| *current = next_value)
+        };
     }
 
     fn detection_key(&self) -> Option<String> {
-        (self.account_recovery_detection_key_seen)()
+        self.account_recovery_detection_key_seen.get()
     }
 
     fn set_detection_key(&mut self, detection_key: Option<String>) {
-        self.account_recovery_detection_key_seen.set(detection_key);
+        {
+            let next_value = detection_key;
+            self.account_recovery_detection_key_seen
+                .revise(|current| *current = next_value)
+        };
     }
 
     fn retry_attempt(&self) -> u8 {
-        (self.account_recovery_retry_attempt)()
+        self.account_recovery_retry_attempt.get()
     }
 
     fn set_retry_attempt(&mut self, attempt: u8) {
-        self.account_recovery_retry_attempt.set(attempt);
+        {
+            let next_value = attempt;
+            self.account_recovery_retry_attempt
+                .revise(|current| *current = next_value)
+        };
     }
 }
 
 /// Tracks whether the authenticated account has a server-side recovery path.
 /// The result feeds account-health reminders; transport and session invalidation
 /// stay owned by the mounted session shell instead of route rendering.
-#[component]
-pub(super) fn AccountRecoveryEffects(
-    mut account_recovery_configured: Signal<Option<bool>>,
-    mut account_recovery_detection_key_seen: Signal<Option<String>>,
-    mut account_recovery_retry_attempt: Signal<u8>,
-    mut last_error: Signal<Option<String>>,
-    token: Signal<String>,
-    principal_id: Signal<Option<arkret_sdk::DidCoreId>>,
-    device_id: Signal<String>,
-    sync_generation: Signal<u64>,
-    session_boot_state: Signal<SessionBootState>,
-    on_onboarding_route: bool,
-) -> Element {
-    let SessionContext {
-        active_account,
-        state_store,
-        base_url,
-        session_generation,
-        ..
-    } = SessionContext::get();
-    let runtime_services = use_context::<crate::runtime::services::RuntimeServices>();
-    let session_coordinator = runtime_services.session.clone();
+pub(super) fn install(scope: &Scope, context: Rc<InksonContext>) {
+    let account_recovery_configured = context.account_recovery_configured;
+    let account_recovery_detection_key_seen = scope.cage(None::<String>);
+    let account_recovery_retry_attempt = scope.cage(0_u8);
+    let last_error = context.last_error;
+    let token = context.token;
+    let principal_id = context.principal_id;
+    let device_id = context.device_id;
+    let sync_generation = context.sync_generation;
+    let session_boot_state = context.session_boot_state;
+    let active_account = context.active_account;
+    let base_url = context.base_url;
+    let session_generation = context.session_generation;
+    let route = context.route;
+    let state_revision = context.state_revision;
+    let session_coordinator = context.services.session.clone();
+    let task_scope = scope.clone();
+    scope.effect(move || {
+        let _ = state_revision.get();
+        let state_store = context.state_store.clone();
+        let on_onboarding_route = matches!(route.get(), crate::routes::Route::Onboarding);
 
-    use_effect(move || {
         if on_onboarding_route {
             // The onboarding flow owns recovery publication and its progress
             // UI. Probing the same backup collection here races that flow and
             // turns its final transition into redundant network traffic.
-            account_recovery_configured.set(None);
-            account_recovery_detection_key_seen.set(None);
-            account_recovery_retry_attempt.set(0);
+            { let next_value = None; account_recovery_configured.revise(|current| *current = next_value) };
+            { let next_value = None; account_recovery_detection_key_seen.revise(|current| *current = next_value) };
+            { let next_value = 0; account_recovery_retry_attempt.revise(|current| *current = next_value) };
             return;
         }
-        let base = base_url();
-        let credential = token();
-        let actor = principal_id();
+        let base = base_url.get();
+        let credential = token.get();
+        let actor = principal_id.get();
         let Some(actor_id) = actor.clone() else {
-            account_recovery_configured.set(None);
-            account_recovery_detection_key_seen.set(None);
-            account_recovery_retry_attempt.set(0);
+            { let next_value = None; account_recovery_configured.revise(|current| *current = next_value) };
+            { let next_value = None; account_recovery_detection_key_seen.revise(|current| *current = next_value) };
+            { let next_value = 0; account_recovery_retry_attempt.revise(|current| *current = next_value) };
             return;
         };
-        let Some(account) = active_account() else {
-            account_recovery_configured.set(None);
-            account_recovery_detection_key_seen.set(None);
-            account_recovery_retry_attempt.set(0);
+        let Some(account) = active_account.get() else {
+            { let next_value = None; account_recovery_configured.revise(|current| *current = next_value) };
+            { let next_value = None; account_recovery_detection_key_seen.revise(|current| *current = next_value) };
+            { let next_value = 0; account_recovery_retry_attempt.revise(|current| *current = next_value) };
             return;
         };
-        let generation = sync_generation();
-        let ui_session_generation = session_generation();
+        let generation = sync_generation.get();
+        let ui_session_generation = session_generation.get();
         let coordinator_generation = session_coordinator.generation();
-        if !matches!(session_boot_state(), SessionBootState::Authenticated)
+        if !matches!(session_boot_state.get(), SessionBootState::Authenticated)
             || base.trim().is_empty()
             || credential.trim().is_empty()
         {
-            account_recovery_configured.set(None);
-            account_recovery_detection_key_seen.set(None);
-            account_recovery_retry_attempt.set(0);
+            { let next_value = None; account_recovery_configured.revise(|current| *current = next_value) };
+            { let next_value = None; account_recovery_detection_key_seen.revise(|current| *current = next_value) };
+            { let next_value = 0; account_recovery_retry_attempt.revise(|current| *current = next_value) };
             return;
         }
-        let recovery_material_evidence = state_store.read().recovery_material_evidence();
+        let recovery_material_evidence = state_store.read(|store| store.recovery_material_evidence());
         let gate_authority = account.authority.clone();
-        let gate_device = device_id();
+        let gate_device = device_id.get();
         let evidence_fingerprint = recovery_material_evidence
             .as_ref()
             .and_then(|evidence| arkret_sdk::canonical::canonical_json_bytes(evidence).ok())
@@ -183,15 +198,15 @@ pub(super) fn AccountRecoveryEffects(
             "{ui_session_generation}|{generation}|{base}|{actor_id}|{}|{gate_device}|{evidence_fingerprint}",
             gate_authority.station_id,
         );
-        if account_recovery_detection_key_seen().as_deref() == Some(detection_key.as_str()) {
+        if account_recovery_detection_key_seen.get().as_deref() == Some(detection_key.as_str()) {
             return;
         }
-        account_recovery_detection_key_seen.set(Some(detection_key.clone()));
+        { let next_value = Some(detection_key.clone()); account_recovery_detection_key_seen.revise(|current| *current = next_value) };
         tracing::debug!(target: "recovery_diag", key = %detection_key, "recovery_state re-fetch (authoritative recovery policy)");
         let remember_authority = gate_authority.clone();
         let remember_device = gate_device.clone();
         let session_coordinator = session_coordinator.clone();
-        spawn(async move {
+        if let Err(error) = crate::runtime_helpers::spawn_owned(&task_scope, async move {
             let result =
                 crate::transport::auth::with_authed_api(&base, credential, |api| async move {
                     let policy = api.get_recovery_policy().await?;
@@ -212,7 +227,7 @@ pub(super) fn AccountRecoveryEffects(
                     Ok::<_, anyhow::Error>((policy, gate_verification))
                 })
                 .await;
-            let mut completion_state = SignalRecoveryCompletionState {
+            let mut completion_state = OwnedRecoveryCompletionState {
                 account_recovery_configured,
                 account_recovery_detection_key_seen,
                 account_recovery_retry_attempt,
@@ -268,7 +283,7 @@ pub(super) fn AccountRecoveryEffects(
                         );
                     }
                     if let Some(error) = gate_error {
-                        last_error.set(Some(error));
+                        { let next_value = Some(error); last_error.revise(|current| *current = next_value) };
                     }
                     match action {
                         RecoveryCompletionAction::Retry { attempt } => {
@@ -313,7 +328,7 @@ pub(super) fn AccountRecoveryEffects(
                             RecoveryRequestCompletion::Failure,
                         )
                     {
-                        last_error.set(Some(format!("recovery_state: {}", error.display())));
+                        { let next_value = Some(format!("recovery_state: {}", error.display())); last_error.revise(|current| *current = next_value) };
                         crate::runtime_helpers::sleep_for(recovery_state_retry_delay(attempt))
                             .await;
                         clear_completed_recovery_request_for_retry(
@@ -323,10 +338,8 @@ pub(super) fn AccountRecoveryEffects(
                     }
                 }
             }
-        });
+        }) { task_scope.report_error(error); }
     });
-
-    rsx! {}
 }
 
 #[cfg(test)]

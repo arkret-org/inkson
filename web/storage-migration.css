@@ -1,0 +1,67 @@
+/* Match the original Storage strong labels without changing global text rules. */
+.metric > .storage-metric-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-2);
+  margin-bottom: 4px;
+}
+.callout .body > .storage-warning-title { font-weight: 600; }
+.storage-risks > .sapid-collapsible-trigger {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--ak-muted);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: inherit;
+  text-align: start;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+  width: 100%;
+  cursor: pointer;
+}
+.storage-risks > .sapid-collapsible-panel { display: grid; gap: 6px; }
+.storage-risks > .sapid-collapsible-panel[hidden] { display: none; }
+.storage-action {
+  --storage-secondary-bg: var(--primary-color-5, #223129);
+  --storage-secondary-ink: var(--secondary-color-1, #e7efe9);
+  --storage-error: var(--primary-error-color, #f87171);
+  --storage-error-contrast: var(--contrast-error-color, #0d1411);
+}
+.inkson-theme-light .storage-action {
+  --storage-secondary-bg: var(--primary-color-5, #ebf0eb);
+  --storage-secondary-ink: var(--secondary-color-1, #19211c);
+  --storage-error: var(--primary-error-color, #b91c1c);
+  --storage-error-contrast: var(--contrast-error-color, #ffffff);
+}
+.storage-action {
+  box-sizing: border-box;
+  cursor: default;
+  white-space: nowrap;
+  border: none;
+  border-radius: 8px;
+  outline: none;
+  flex-shrink: 0;
+  justify-content: center;
+  align-items: center;
+  display: inline-flex;
+  gap: 8px;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  transition-property: all;
+  transition-duration: .15s;
+  transition-timing-function: cubic-bezier(.4,0,.2,1);
+}
+.storage-action-sm { height: 32px; padding: 0 12px; gap: 6px; }
+.storage-action-default { height: 36px; padding: 8px 16px; }
+.storage-action-secondary { background-color: var(--storage-secondary-bg); color: var(--storage-secondary-ink); }
+.storage-action-secondary:not(:disabled):hover { background-color: color-mix(in oklab, var(--storage-secondary-bg) 80%, transparent); }
+.storage-action-destructive { background-color: color-mix(in oklab, var(--storage-error) 60%, transparent); color: var(--storage-error-contrast); }
+.storage-action-destructive:not(:disabled):hover { background-color: color-mix(in oklab, var(--storage-error) 90%, transparent); }
+.inkson-theme-light .storage-action-destructive { background-color: var(--storage-error); }
+.storage-action:focus-visible { box-shadow: var(--ring); }

@@ -1,7 +1,7 @@
 import { expect, type Page, type Route } from "@playwright/test";
 import { spawnSync } from "node:child_process";
 import { Buffer } from "node:buffer";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, createPublicKey, randomUUID, verify } from "node:crypto";
 import { closeSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -460,6 +460,88 @@ const DEMO_STRAND_SECURITY_SIGNOFF = DEMO_REALM_FIXTURE.ids.security;
 const DEMO_STRAND_SECONDARY_CARD = DEMO_REALM_FIXTURE.ids.secondary;
 const INVITED_REALM_FIXTURE: RealmGenesisFixture = { realm_id: String(INVITED_NATIVE_FIXTURE.snapshot.realm_id), accepted_events: INVITED_NATIVE_FIXTURE.committed_events.map(full => full.event) };
 
+export function nativeSignerRecipientMatches(
+  fixture: Pick<NativeRealmFixture, "identity" | "invite_recipient">,
+  recipient: unknown,
+): boolean {
+  const expected = fixture.invite_recipient?.identity.account_id ?? fixture.identity.account_id;
+  return recipient !== undefined && canonicalJson(recipient) === canonicalJson(expected);
+}
+
+
+export const GATE_LOGOUT_FIXTURE = Object.freeze({
+  operation: "ak.gate.account.command.logout.v1",
+  url: "https://auth.local.host/_arkret/gate/account/logout",
+  grant: "sx:e2e-token",
+  // The session harness's zero-seed DPoP holder differs from its event signer.
+  publicKey: "O2onvM62pC1io6jQKm8Nc2UyFXcd4kOmOsBIoYtZ2ik",
+});
+
+export const PRESEEDED_BACKUP_UNLOCK_FIXTURE = Object.freeze({
+  operation: "ak.self.keys.backups.command.issue_unlock_challenge.v1",
+  url: "https://local.host/_arkret/self/keys/backups/ak:backup:019a6aa0-0000-7000-8000-000000000002/unlock-challenge",
+  backupId: "ak:backup:019a6aa0-0000-7000-8000-000000000002",
+  requestSchema: "schemas/keys-operations.schema.json#/$defs/keys_backups_issue_unlock_challenge_request_body",
+});
+
+export const ACTOR_PROFILE_UNAVAILABLE_FIXTURE = Object.freeze({
+  operation: "ak.self.actor_profile.read.resolve.v1",
+  url: "https://local.host/_arkret/self/actor-profiles/query",
+  requestSchema: "schemas/actor-profile-operations.schema.json#/$defs/resolve_request_body",
+});
+
+function validateFixtureDpopRequest(route: Route, fixture: { operation: string; url: string }): unknown {
+  const request = route.request();
+  const headers = request.headers();
+  function require(condition: unknown, reason: string): asserts condition {
+    if (!condition) throw new Error(`mock DPoP fixture rejects ${reason}`);
+  }
+  require(request.method() === "POST", "method");
+  require(request.url() === fixture.url, "authority URL");
+  require(headers["arkret-operation"] === fixture.operation, "operation selector");
+  require(headers.authorization === `DPoP ${GATE_LOGOUT_FIXTURE.grant}`, "grant");
+  require(headers["content-type"]?.split(";", 1)[0].trim().toLowerCase() === "application/json", "request media type");
+  const rawBody = request.postData();
+  require(rawBody !== null, "missing request body");
+  const body: unknown = JSON.parse(rawBody);
+  const parts = (headers.dpop ?? "").split(".");
+  require(parts.length === 3, "compact DPoP proof");
+  const decode = (part: string) => {
+    require(/^[A-Za-z0-9_-]+$/.test(part), "base64url proof segment");
+    const bytes = Buffer.from(part, "base64url");
+    require(bytes.toString("base64url") === part, "noncanonical base64url proof segment");
+    return bytes;
+  };
+  const object = (part: string): Record<string, unknown> => {
+    const value: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(decode(part)));
+    require(value !== null && typeof value === "object" && !Array.isArray(value), "proof JSON object");
+    return value as Record<string, unknown>;
+  };
+  const header = object(parts[0]);
+  require(Object.keys(header).sort().join(",") === "alg,jwk,typ", "protected header fields");
+  require(header.typ === "dpop+jwt" && header.alg === "Ed25519", "protected header algorithm/type");
+  require(header.jwk !== null && typeof header.jwk === "object" && !Array.isArray(header.jwk), "public JWK");
+  const jwk = header.jwk as Record<string, unknown>;
+  require(Object.keys(jwk).sort().join(",") === "crv,kty,x", "public JWK fields");
+  require(jwk.kty === "OKP" && jwk.crv === "Ed25519" && jwk.x === GATE_LOGOUT_FIXTURE.publicKey, "registered DPoP holder");
+  const signature = decode(parts[2]);
+  require(signature.length === 64, "Ed25519 signature length");
+  require(verify(null, Buffer.from(`${parts[0]}.${parts[1]}`), createPublicKey({ key: jwk, format: "jwk" }), signature), "Ed25519 signature");
+  const claims = object(parts[1]);
+  require(Object.keys(claims).sort().join(",") === "ath,htm,htu,iat,jti", "proof claims");
+  require(claims.htm === "POST" && claims.htu === fixture.url, "proof method/target");
+  require(claims.ath === createHash("sha256").update(GATE_LOGOUT_FIXTURE.grant).digest("base64url"), "proof token hash");
+  require(typeof claims.iat === "number" && Number.isSafeInteger(claims.iat) && Math.abs(Date.now() / 1000 - claims.iat) < 60, "proof freshness");
+  require(typeof claims.jti === "string" && claims.jti.trim().length > 0, "proof identifier");
+  return body;
+}
+
+function validateGateLogoutRequest(route: Route) {
+  const body = validateFixtureDpopRequest(route, GATE_LOGOUT_FIXTURE);
+  if (body === null || typeof body !== "object" || Array.isArray(body) || Object.keys(body).length !== 0) {
+    throw new Error("mock account logout rejects nonempty or missing request object");
+  }
+}
 
 function canonicalJson(value: unknown): string {
   assertJsonTransportable(value, "$");
@@ -2315,6 +2397,12 @@ export async function mockArkretApi(
       });
     }
 
+    if (url.pathname === "/_arkret/gate/account/logout") {
+      validateGateLogoutRequest(route);
+      // This models the signed browser transport, not the authority's ledger.
+      return json(route, { revoked: true });
+    }
+
     if (
       url.pathname === "/_arkret/gate/account/session-grants/revoke" &&
       route.request().method() === "POST"
@@ -2901,7 +2989,7 @@ export async function mockArkretApi(
       const request = await route.request().postDataJSON();
       const fixture = nativeFixtures.get(request.realm_id);
       if (!fixture || !nativeReadable(fixture)) return mockProblem(route, "not_found", "not found");
-      if (request.recipient_account_id !== undefined && canonicalJson(request.recipient_account_id) !== canonicalJson(fixture.identity.account_id)) {
+      if (request.recipient_account_id !== undefined && !nativeSignerRecipientMatches(fixture, request.recipient_account_id)) {
         return mockProblem(route, "capability_denied", "Signer key query is not authorized for this recipient");
       }
       // Cache only identical source facts and query bindings. Request IDs are
@@ -4043,6 +4131,14 @@ export async function mockArkretApi(
       }
     }
 
+    if (options.preseedRecoveryMaterial === true && url.pathname === new URL(PRESEEDED_BACKUP_UNLOCK_FIXTURE.url).pathname) {
+      const body = validateFixtureDpopRequest(route, PRESEEDED_BACKUP_UNLOCK_FIXTURE);
+      validateMockSchema(PRESEEDED_BACKUP_UNLOCK_FIXTURE.requestSchema, body);
+      if (!keyBackups.has(PRESEEDED_BACKUP_UNLOCK_FIXTURE.backupId)) throw new Error("mock backup unlock requires the explicitly preseeded backup");
+      // A closed service-unavailable result is not an unlock challenge or proof.
+      return mockProblem(route, "temporarily_unavailable", "The explicitly preseeded backup unlock service is temporarily unavailable in this fixture.");
+    }
+
     const keyBackupMatch = url.pathname.match(
       /^\/_arkret\/self\/keys\/backups\/([^/]+)$/,
     );
@@ -4103,6 +4199,24 @@ export async function mockArkretApi(
         return mockProblem(route, "not_found", "resource not found");
       }
       return json(route, inksonWire("service-resolution", {}));
+    }
+
+    if (url.pathname === new URL(ACTOR_PROFILE_UNAVAILABLE_FIXTURE.url).pathname) {
+      const body = validateFixtureDpopRequest(route, ACTOR_PROFILE_UNAVAILABLE_FIXTURE) as {
+        realm_id: string; actor_ids: unknown[];
+      };
+      validateMockSchema(ACTOR_PROFILE_UNAVAILABLE_FIXTURE.requestSchema, body);
+      const fixture = nativeFixtures.get(body.realm_id);
+      // A display-only Direct summary is not native joined-membership evidence.
+      if (!fixture || !nativeReadable(fixture) || body.realm_id === PRINCIPAL_CONTROL_REALM
+          || !nativeSignerRecipientMatches(fixture, accountId)) {
+        return mockProblem(route, "not_found", "Shared Collaboration Realm is not available to this fixture holder.");
+      }
+      // No live accepted Profile Event/Commit closure is authored by this mock.
+      return json(route, {
+        profiles: [],
+        failures: body.actor_ids.map(actor_id => ({ actor_id, reason: "profile_unavailable" })),
+      });
     }
 
     if (await remaining(route, url)) return;

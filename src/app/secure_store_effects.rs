@@ -1,4 +1,7 @@
+#[cfg(target_arch = "wasm32")]
 use super::*;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+use crate::state::PersistedSessionGrant;
 
 #[cfg(target_arch = "wasm32")]
 fn trace_secure_store_bootstrap_stage(stage: &'static str) {
@@ -11,35 +14,32 @@ fn trace_secure_store_bootstrap_stage(stage: &'static str) {
     tracing::info!(target: "secure_store", stage, "secure-store app bootstrap stage");
 }
 
-#[derive(Clone, Copy, PartialEq)]
-pub(super) struct SecureStoreEffectState {
-    pub config_store: Signal<LocalConfigStore>,
-    pub principal_id: Signal<Option<arkret_sdk::DidCoreId>>,
-    pub device_id: Signal<String>,
-    pub secure_store_bootstrap_ready: Signal<bool>,
-    pub token: Signal<String>,
-}
-
-#[component]
-pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
+pub(super) fn install(
+    scope: &glory::Scope,
+    context: std::rc::Rc<crate::presentation::InksonContext>,
+) {
     #[cfg(not(target_arch = "wasm32"))]
-    let _ = state;
+    let _ = (scope, context);
     #[cfg(target_arch = "wasm32")]
-    let SecureStoreEffectState {
+    let (
         config_store,
         principal_id,
         device_id,
         secure_store_bootstrap_ready,
         token,
-    } = state;
-    #[cfg(target_arch = "wasm32")]
-    let SessionContext {
         state_store,
         base_url,
         active_account,
-        ..
-    } = SessionContext::get();
-
+    ) = (
+        context.config_store,
+        context.principal_id,
+        context.device_id,
+        context.secure_store_bootstrap_ready,
+        context.token,
+        context.state_store.clone(),
+        context.base_url,
+        context.active_account,
+    );
     #[cfg(target_arch = "wasm32")]
     {
         let config_store_for_secure_upgrade = config_store;
@@ -47,23 +47,19 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
         let principal_id_for_secure_upgrade = principal_id;
         let device_id_for_secure_upgrade = device_id;
         let mut state_store_for_secure_upgrade = state_store;
-        let mut secure_store_ready_for_upgrade = secure_store_bootstrap_ready;
-        let mut token_for_secure_upgrade = token;
-        use_future(move || async move {
+        let secure_store_ready_for_upgrade = secure_store_bootstrap_ready;
+        let token_for_secure_upgrade = token;
+        if let Err(error) = scope.spawn(async move {
             crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(1)).await;
             trace_secure_store_bootstrap_stage("start backend initialization");
             match crate::secure_key_store::initialize_wasm_secure_key_store_async("inkson").await {
                 Ok(Some(secure_store)) => {
                     trace_secure_store_bootstrap_stage("backend initialized");
-                    let account_scopes = state_store_for_secure_upgrade
-                        .read()
-                        .account_record_scopes_for_boot();
+                    let account_scopes = state_store_for_secure_upgrade.read(|store| store.account_record_scopes_for_boot());
                     if let Err(error) =
                         LocalStateStore::prepare_account_records(account_scopes).await
                     {
-                        state_store_for_secure_upgrade
-                            .read()
-                            .account_records_boot_failed(&error);
+                        state_store_for_secure_upgrade.read(|store| store.account_records_boot_failed(&error));
                         tracing::error!(%error,"account records could not be restored; readiness withheld");
                         return;
                     }
@@ -74,24 +70,20 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                     // cache hydration (which merges plaintext INTO the account
                     // state) and before `secure_store_bootstrap_ready` is published
                     // so the account state is authoritative before session/connect.
-                    state_store_for_secure_upgrade
-                        .write()
-                        .hydrate_active_account_state_from_secure_store(secure_store.as_ref());
+                    state_store_for_secure_upgrade.write(|store| store.hydrate_active_account_state_from_secure_store(secure_store.as_ref()));
                     trace_secure_store_bootstrap_stage("active account state hydrated");
-                    let hydrated = state_store_for_secure_upgrade
-                        .write()
-                        .hydrate_e2ee_plaintext_cache_with_secure_store(secure_store.as_ref());
+                    let hydrated = state_store_for_secure_upgrade.write(|store| store.hydrate_e2ee_plaintext_cache_with_secure_store(secure_store.as_ref()));
                     if let Err(error) = hydrated {
                         tracing::warn!(?error, "IndexedDB E2EE plaintext cache hydration failed",);
                     } else {
                         trace_secure_store_bootstrap_stage("E2EE cache hydrated");
-                        let secure_write = state_store_for_secure_upgrade
-                            .read()
-                            .capture_e2ee_plaintext_cache_secure_write();
-                        match secure_write {
-                            Ok(Some(write)) if write.json.is_some() => {
+                        let secure_write = state_store_for_secure_upgrade.read(|store| store.capture_e2ee_plaintext_cache_secure_write());
+                        match secure_write.map(|write| write.map(|write| {
+                            let json = write.json.clone();
+                            (write, json)
+                        })) {
+                            Ok(Some((write, Some(json)))) => {
                                 let key = write.key.clone();
-                                let json = write.json.clone().expect("nonempty secure cache");
                                 // Commit the recovered combined snapshot before
                                 // publishing readiness. Running this write in the
                                 // background lets an older repair overwrite a newer
@@ -106,12 +98,10 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                                         // Clear pre-decrypt recovery checkpoints only
                                         // after the exact combined snapshot + plaintext
                                         // entry has durably committed.
-                                        match state_store_for_secure_upgrade
-                                            .write()
-                                            .clear_mls_receive_recovery_checkpoints_if_cache_unchanged(
+                                        match state_store_for_secure_upgrade.write(|store| store.clear_mls_receive_recovery_checkpoints_if_cache_unchanged(
                                                 &key,
                                                 &json,
-                                            ) {
+                                            )) {
                                             Ok(true) => {}
                                             Ok(false) => tracing::warn!(
                                                 target: "secure_store",
@@ -131,7 +121,7 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                                     }
                                 }
                             }
-                            Ok(Some(write)) => {
+                            Ok(Some((write, None))) => {
                                 if let Err(error) = crate::state::LocalStateStore::persist_captured_e2ee_cache_write_durable(
                                     secure_store.as_ref(),
                                     write,
@@ -155,24 +145,24 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                         // otherwise the asynchronous IndexedDB writer can race
                         // hydration and lose a resumable registration checkpoint.
                         let injected = inject_test_session_grant(
-                            &mut state_store_for_secure_upgrade,
+                            &state_store_for_secure_upgrade,
                             config_store_for_secure_upgrade,
-                            &base_url_for_secure_upgrade(),
-                            active_account.peek().clone(),
-                            &device_id_for_secure_upgrade(),
+                            &base_url_for_secure_upgrade.get(),
+                            active_account.get_untracked().clone(),
+                            &device_id_for_secure_upgrade.get(),
                             secure_store.as_ref(),
                         )
                         .await
                         .or_else(|| {
                             inject_test_session_credential(
                                 config_store_for_secure_upgrade,
-                                &base_url_for_secure_upgrade(),
-                                principal_id_for_secure_upgrade(),
-                                &device_id_for_secure_upgrade(),
+                                &base_url_for_secure_upgrade.get(),
+                                principal_id_for_secure_upgrade.get(),
+                                &device_id_for_secure_upgrade.get(),
                             )
                         });
                         if let Some(credential) = injected {
-                            token_for_secure_upgrade.set(credential);
+                            token_for_secure_upgrade.revise(|current| *current = credential);
                         }
                         apply_test_session_grant_expiry_override(
                             &mut state_store_for_secure_upgrade,
@@ -180,36 +170,30 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                         )
                         .await;
                     }
-                    let loaded_config = config_store_for_secure_upgrade
-                        .read()
-                        .load_with_secure_store(secure_store.as_ref());
-                    let held_token = token_for_secure_upgrade.peek().trim().to_owned();
+                    let loaded_config = config_store_for_secure_upgrade.with(|store| store.load_with_secure_store(secure_store.as_ref()));
+                    let held_token = token_for_secure_upgrade.get_untracked().trim().to_owned();
                     // The session grant is an account-scoped secure-store
                     // secret, not part of the synchronously hydrated local
                     // snapshot. Restore it before classifying the remaining
                     // credential as an impossible token-only session.
-                    let restored_grant = active_account.peek().as_ref().and_then(|account| {
+                    let restored_grant = active_account.get_untracked().as_ref().and_then(|account| {
                         crate::identity::session_refresh::load_account_session_grant_with_secure_store(
                             account,
                             secure_store.as_ref(),
                         )
                         .ok()
                     });
-                    if state_store_for_secure_upgrade
-                        .read()
-                        .session_grant()
+                    if state_store_for_secure_upgrade.read(|store| store.session_grant())
                         .is_none()
                         && let Some(grant) = restored_grant
                     {
-                        state_store_for_secure_upgrade
-                            .write()
-                            .set_session_grant(Some(grant));
+                        state_store_for_secure_upgrade.write(|store| store.set_session_grant(Some(grant)));
                     }
                     let restored_active_grant =
-                        state_store_for_secure_upgrade.read().session_grant();
+                        state_store_for_secure_upgrade.read(|store| store.session_grant());
                     let restored_grant_present = restored_active_grant.is_some();
                     let active_grant = restored_active_grant.filter(|grant| {
-                        active_account.peek().as_ref().is_some_and(|account| {
+                        active_account.get_untracked().as_ref().is_some_and(|account| {
                             session_grant_boot_usable(
                                 grant,
                                 account,
@@ -223,9 +207,7 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                             target: "secure_store",
                             "discarding expired or account-mismatched session grant after secure-store bootstrap"
                         );
-                        state_store_for_secure_upgrade
-                            .write()
-                            .set_session_grant(None);
+                        state_store_for_secure_upgrade.write(|store| store.set_session_grant(None));
                     }
                     tracing::debug!(
                         target: "secure_store",
@@ -247,13 +229,14 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                                 held_token_empty = held_token.is_empty(),
                                 "normalizing session credential to the restored account-bound grant"
                             );
-                            token_for_secure_upgrade.set(authoritative_token.clone());
+                            token_for_secure_upgrade.revise(|current| *current = authoritative_token.clone());
                         }
                         persist_config(
                             config_store_for_secure_upgrade,
-                            base_url_for_secure_upgrade(),
-                            principal_id_for_secure_upgrade(),
-                            device_id_for_secure_upgrade(),
+                            &active_account.get_untracked(),
+                            base_url_for_secure_upgrade.get(),
+                            principal_id_for_secure_upgrade.get(),
+                            device_id_for_secure_upgrade.get(),
                             authoritative_token,
                         );
                     } else if !held_token.is_empty()
@@ -272,17 +255,18 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                             "discarding token-only session after secure-store bootstrap"
                         );
                         if !held_token.is_empty() {
-                            token_for_secure_upgrade.set(String::new());
+                            token_for_secure_upgrade.revise(|current| *current = String::new());
                         }
                         persist_config(
                             config_store_for_secure_upgrade,
-                            base_url_for_secure_upgrade(),
-                            principal_id_for_secure_upgrade(),
-                            device_id_for_secure_upgrade(),
+                            &active_account.get_untracked(),
+                            base_url_for_secure_upgrade.get(),
+                            principal_id_for_secure_upgrade.get(),
+                            device_id_for_secure_upgrade.get(),
                             String::new(),
                         );
                     }
-                    let account = active_account.peek().clone();
+                    let account = active_account.get_untracked().clone();
                     trace_secure_store_bootstrap_stage("session material classified");
                     let user_store = account.as_ref().and_then(|account| {
                         match crate::secure_key_store::UserLocalStore::new(
@@ -298,18 +282,13 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                     });
                     if let Some(user_store) = user_store.as_ref() {
                         user_store.activate();
-                        let dpop_record = {
-                            let store = state_store_for_secure_upgrade.read();
-                            store.load_dpop_device_key_with_secure_store(secure_store.as_ref())
-                        };
+                        let dpop_record = state_store_for_secure_upgrade.read(|store| store.load_dpop_device_key_with_secure_store(secure_store.as_ref()));
                         match dpop_record {
                             Ok(Some(record)) => {
-                                if let Err(error) = state_store_for_secure_upgrade
-                                    .write()
-                                    .set_dpop_device_key_with_secure_store(
+                                if let Err(error) = state_store_for_secure_upgrade.write(|store| store.set_dpop_device_key_with_secure_store(
                                         Some(record),
                                         secure_store.as_ref(),
-                                    )
+                                    ))
                                 {
                                     tracing::warn!(
                                         ?error,
@@ -367,7 +346,7 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                             }
                         }
                     });
-                    let active_signer_account = active_account.peek().clone();
+                    let active_signer_account = active_account.get_untracked().clone();
                     if let (Some(user_store), Some(stable_device_id), Some(active_signer_account)) = (
                         user_store.as_ref(),
                         stable_device_id_for_signer,
@@ -399,25 +378,24 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                             Err(error) => {
                                 crate::event_signer::clear_active_device_signer();
                                 if active_grant.is_some()
-                                    || !token_for_secure_upgrade.peek().trim().is_empty()
+                                    || !token_for_secure_upgrade.get_untracked().trim().is_empty()
                                     || !loaded_config.session_credential.trim().is_empty()
                                 {
                                     // Identity binding is part of the session transaction,
                                     // not a best-effort repair. Never publish secure-store
                                     // readiness with a grant that cannot be signed by this
                                     // account/device tuple; require a fresh sign-in instead.
-                                    state_store_for_secure_upgrade
-                                        .write()
-                                        .set_session_grant(None);
-                                    token_for_secure_upgrade.set(String::new());
+                                    state_store_for_secure_upgrade.write(|store| store.set_session_grant(None));
+                                    token_for_secure_upgrade.revise(|current| *current = String::new());
                                     if let Some(account) =
-                                        SessionContext::get().active_account.peek().as_ref()
+                                        active_account.get_untracked().as_ref()
                                     {
                                         crate::config::clear_session_credential_secret(account);
                                     }
                                     persist_config(
                                         config_store_for_secure_upgrade,
-                                        base_url_for_secure_upgrade(),
+                                        &active_account.get_untracked(),
+                                        base_url_for_secure_upgrade.get(),
                                         Some(active_signer_account.principal_id().clone()),
                                         stable_device_id.clone(),
                                         String::new(),
@@ -463,10 +441,9 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                 }
             }
             trace_secure_store_bootstrap_stage("publishing ready signal");
-            secure_store_ready_for_upgrade.set(true);
-        });
+            secure_store_ready_for_upgrade.revise(|current| *current = true);
+        }) { scope.report_error(error); }
     }
-    rsx! {}
 }
 
 /// A durable signing seed identifies a key, not the account identity that
@@ -611,7 +588,7 @@ const TEST_SESSION_GRANT_EXPIRY_OVERRIDE_KEY: &str = "inkson.test.session_grant_
 
 #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
 async fn apply_test_session_grant_expiry_override(
-    state_store: &mut SyncSignal<LocalStateStore>,
+    state_store: &mut crate::presentation::SharedStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
 ) {
     let Some(window) = web_sys::window() else {
@@ -680,7 +657,7 @@ async fn apply_test_session_grant_expiry_override(
         {
             return false;
         }
-        state_store.write().set_session_grant(Some(grant));
+        state_store.write(|store| store.set_session_grant(Some(grant)));
         // The session transport provider caches the grant state that was
         // loaded before this test-only expiry override ran. Drop that cached
         // provider so the next authenticated request restores the overridden

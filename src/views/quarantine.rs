@@ -20,12 +20,15 @@
 //! Until the complete replacement authoring flow is connected the panel stays
 //! read-only and does not invent an approval action.
 
-use arkret_models_collaboration::governance::holder_quarantine::{
-    HolderQuarantine, HolderQuarantineEntry, HolderQuarantineSurfaceKind,
-};
-use dioxus::prelude::*;
+use std::rc::Rc;
 
-use crate::i18n::tr;
+use arkret_models_collaboration::governance::holder_quarantine::{
+    HolderQuarantine, HolderQuarantineSurfaceKind,
+};
+use glory::Scope;
+
+use crate::presentation::{InksonContext, View};
+use crate::views::settings::widgets::*;
 
 /// Decode the restored Station-CAS row into the closed cell shape.
 ///
@@ -38,102 +41,95 @@ pub(crate) fn decode_holder_quarantine(
     serde_json::from_value(content?.clone()).ok()
 }
 
-#[component]
-pub fn QuarantinePanel() -> Element {
-    let state_store = crate::app::SessionContext::get().state_store;
-    let local_state = state_store.read().load();
-    let cell = decode_holder_quarantine(
-        local_state
-            .station_cas_account_data
-            .get(arkret_wire::AccountDataKey::ACCOUNT_HOLDER_QUARANTINE)
-            .map(|row| &row.content),
-    );
-    let mut invite_deliveries: Vec<HolderQuarantineEntry> = Vec::new();
-    let mut consent_requests: Vec<HolderQuarantineEntry> = Vec::new();
-    if let Some(record) = cell.as_ref() {
-        // Holder review is per surface: the two branches share this record but
-        // not their terminal semantics, so they are never merged into one list.
-        invite_deliveries = record
-            .entries_for(HolderQuarantineSurfaceKind::InviteDelivery)
-            .cloned()
-            .collect();
-        consent_requests = record
-            .entries_for(HolderQuarantineSurfaceKind::ConsentRequest)
-            .cloned()
-            .collect();
-    }
-    let is_empty = invite_deliveries.is_empty() && consent_requests.is_empty();
-
-    rsx! {
-        div { class: "timeline", "data-testid": "quarantine-panel",
-            div { class: "event", "data-testid": "quarantine-header",
-                div { class: "event-head",
-                    span { {tr("quarantine.title")} }
+pub fn page(_scope: &Scope, context: Rc<InksonContext>, _route: crate::routes::Route) -> View {
+    let revision = context.state_revision;
+    let render = context.clone();
+    reactive(revision, move |scope, _| {
+        let context = render.clone();
+        let state = context.snapshot();
+        let cell = decode_holder_quarantine(
+            state
+                .station_cas_account_data
+                .get(arkret_wire::AccountDataKey::ACCOUNT_HOLDER_QUARANTINE)
+                .map(|row| &row.content),
+        );
+        let mut children = vec![card(
+            scope,
+            context.clone(),
+            "quarantine.title",
+            vec![paragraph(
+                "muted",
+                context.translated(scope, "quarantine.status"),
+            )],
+        )];
+        let mut total = 0_usize;
+        if let Some(cell) = cell {
+            for (surface, title, hint, key) in [
+                (
+                    HolderQuarantineSurfaceKind::InviteDelivery,
+                    "quarantine.invite_delivery_title",
+                    "quarantine.invite_delivery_hint",
+                    "quarantine-invite-delivery",
+                ),
+                (
+                    HolderQuarantineSurfaceKind::ConsentRequest,
+                    "quarantine.consent_request_title",
+                    "quarantine.consent_request_hint",
+                    "quarantine-consent-request",
+                ),
+            ] {
+                let entries: Vec<_> = cell.entries_for(surface).collect();
+                if entries.is_empty() {
+                    continue;
                 }
-                div { class: "muted", "data-testid": "quarantine-status",
-                    {tr("quarantine.status")}
+                total += entries.len();
+                let mut rows = vec![paragraph("muted", context.translated(scope, hint))];
+                for entry in entries {
+                    rows.push(line(
+                        "event-row",
+                        vec![
+                            paragraph(
+                                "mono",
+                                serde_json::to_string(&entry.source_peer_actor_id)
+                                    .unwrap_or_default(),
+                            ),
+                            paragraph(
+                                "muted",
+                                format!(
+                                    "{} {}",
+                                    context.tr("quarantine.scope_label"),
+                                    entry.consent_scope()
+                                ),
+                            ),
+                            paragraph(
+                                "muted",
+                                format!(
+                                    "{} {}",
+                                    context.tr("quarantine.expires_label"),
+                                    entry.expires_at.format("%Y-%m-%d")
+                                ),
+                            ),
+                        ],
+                    ));
                 }
-            }
-            if is_empty {
-                div { class: "event", "data-testid": "quarantine-empty",
-                    div { class: "muted", {tr("quarantine.empty")} }
-                }
-            } else {
-                QuarantineSurfaceSection {
-                    testid: "quarantine-invite-delivery".to_owned(),
-                    title_key: "quarantine.invite_delivery_title".to_owned(),
-                    hint_key: "quarantine.invite_delivery_hint".to_owned(),
-                    entries: invite_deliveries,
-                }
-                QuarantineSurfaceSection {
-                    testid: "quarantine-consent-request".to_owned(),
-                    title_key: "quarantine.consent_request_title".to_owned(),
-                    hint_key: "quarantine.consent_request_hint".to_owned(),
-                    entries: consent_requests,
-                }
-            }
-        }
-    }
-}
-
-#[component]
-fn QuarantineSurfaceSection(
-    testid: String,
-    title_key: String,
-    hint_key: String,
-    entries: Vec<HolderQuarantineEntry>,
-) -> Element {
-    if entries.is_empty() {
-        return rsx! {};
-    }
-    rsx! {
-        div { class: "event", "data-testid": "{testid}",
-            div { class: "event-head",
-                span { {tr(&title_key)} }
-                span { class: "badge", "{entries.len()}" }
-            }
-            div { class: "muted", {tr(&hint_key)} }
-            for entry in entries.iter() {
-                div { class: "event-row", "data-testid": "{testid}-row",
-                    span { class: "mono",
-                        {serde_json::to_string(&entry.source_peer_actor_id).unwrap_or_default()}
-                    }
-                    span { class: "muted",
-                        {format!("{} {}", tr("quarantine.scope_label"), entry.consent_scope())}
-                    }
-                    span { class: "muted",
-                        {format!(
-                            "{} {}",
-                            tr("quarantine.expires_label"),
-                            entry.expires_at.format("%Y-%m-%d"),
-                        )}
-                    }
-                }
+                children.push(stack(
+                    format!("event {key}"),
+                    vec![
+                        heading(3, "event-head", context.translated(scope, title)),
+                        stack("quarantine-entries", rows),
+                    ],
+                ));
             }
         }
-    }
+        if total == 0 {
+            children.push(paragraph(
+                "event quarantine-empty",
+                context.translated(scope, "quarantine.empty"),
+            ));
+        }
+        stack("timeline quarantine-panel", children)
+    })
 }
-
 #[cfg(test)]
 mod tests {
     use arkret_models_collaboration::governance::holder_quarantine::HolderQuarantineSurface;

@@ -12,16 +12,16 @@
 //! mirrors `MlsBackupPrompt` exactly (account-secret upload + best-effort
 //! sidecar upload).
 
-use dioxus::prelude::*;
+use std::rc::Rc;
 
+use glory::prelude::*;
+
+use super::widgets::*;
+use crate::presentation::{InksonContext, View};
 use crate::recovery_crypto::{
     generate_recovery_key, normalize_recovery_key_input, recovery_key_confirmation_matches,
 };
-use crate::state::LocalStateStore;
 use crate::transport::auth::with_authed_api;
-use crate::ui::button::{Button, ButtonVariant};
-use crate::ui::label::Label;
-use crate::ui::textarea::Textarea;
 
 /// Resolved backup status for the section header / status line.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -39,6 +39,15 @@ enum MlsRecoveryStatus {
 }
 
 impl MlsRecoveryStatus {
+    fn badge_label_key(self) -> &'static str {
+        match self {
+            Self::Loading => "settings.mls_recovery.badge.loading",
+            Self::NoLocalSecret => "settings.mls_recovery.badge.no_local_secret",
+            Self::BackedUp => "settings.mls_recovery.badge.backed_up",
+            Self::NotBackedUp => "settings.mls_recovery.badge.not_backed_up",
+        }
+    }
+
     /// i18n key for the human-readable status line.
     fn i18n_key(self) -> &'static str {
         match self {
@@ -58,6 +67,22 @@ impl MlsRecoveryStatus {
             Self::NotBackedUp => "not-backed-up",
         }
     }
+}
+
+fn recovery_form(scope: &Scope, status: Cage<MlsRecoveryStatus>, children: Vec<View>) -> View {
+    Box::new(
+        view()
+            .class("settings-mls-recovery-form")
+            .semantics(scope.bond(move || {
+                let hidden = status.get() == MlsRecoveryStatus::NoLocalSecret;
+                Some(Box::new(glory::render::Semantics {
+                    hidden,
+                    inert: hidden,
+                    ..Default::default()
+                }))
+            }))
+            .fill(children),
+    )
 }
 
 /// Local feedback keeps its translation key until render. Server-provided
@@ -111,70 +136,83 @@ fn resolve_status(server_backup: bool, local_secret: bool) -> MlsRecoveryStatus 
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn start_recovery_key_generation(
-    token: Signal<String>,
+    scope: &Scope,
+    context: Rc<InksonContext>,
     account: crate::config::ActiveAccountContext,
-    mut state_store: SyncSignal<LocalStateStore>,
-    mut generated_recovery_key: Signal<String>,
-    mut generated_recovery_key_confirm: Signal<String>,
-    mut action_status: Signal<RecoveryFeedback>,
-    mut busy: Signal<bool>,
-    mut copied: Signal<bool>,
-    mut status: Signal<MlsRecoveryStatus>,
+    generated_recovery_key: Cage<String>,
+    generated_recovery_key_confirm: Cage<String>,
+    action_status: Cage<RecoveryFeedback>,
+    busy: Cage<bool>,
+    copied: Cage<bool>,
+    status: Cage<MlsRecoveryStatus>,
 ) {
-    if busy() {
+    let token = context.token;
+    let state_store = context.state_store.clone();
+    if busy.get() {
         return;
     }
     let recovery_key = match generate_recovery_key() {
         Ok(key) => key,
         Err(err) => {
-            action_status.set(RecoveryFeedback::with_detail(
-                "mls_backup.status.generate_failed",
-                err.to_string(),
-            ));
+            action_status.revise(|value| {
+                *value = RecoveryFeedback::with_detail(
+                    "mls_backup.status.generate_failed",
+                    err.to_string(),
+                )
+            });
             return;
         }
     };
     let Some(recovery_secret) = normalize_recovery_key_input(&recovery_key) else {
-        action_status.set(RecoveryFeedback::message(
-            "mls_backup.status.generate_failed",
-        ));
+        action_status.revise(|value| {
+            *value = RecoveryFeedback::message("mls_backup.status.generate_failed")
+        });
         return;
     };
     let base = account.server_url.to_string();
     let authority = account.authority.clone();
-    let session = token();
+    let session = token.get();
     let actor = account.principal_id().to_string();
     let device = account.device_id.to_string();
-    let Some(recovery_material_evidence) = state_store.read().recovery_material_evidence() else {
-        action_status.set(RecoveryFeedback::message(
-            "settings.mls_recovery.authority_missing",
-        ));
+    let Some(recovery_material_evidence) =
+        state_store.read(|store| store.recovery_material_evidence())
+    else {
+        action_status.revise(|value| {
+            *value = RecoveryFeedback::message("settings.mls_recovery.authority_missing")
+        });
         return;
     };
     if recovery_material_evidence.account_id != account.authority
         || recovery_material_evidence.principal_did != *account.did()
         || recovery_material_evidence.device_id != account.device_id
     {
-        action_status.set(RecoveryFeedback::message(
-            "settings.mls_recovery.authority_mismatch",
-        ));
+        action_status.revise(|value| {
+            *value = RecoveryFeedback::message("settings.mls_recovery.authority_mismatch")
+        });
         return;
     }
     let principal_control_realm_id = recovery_material_evidence
         .principal_control_realm_id
         .clone();
-    let sidecar_json = if state_store.read().private_plaintext_is_empty() {
+    let sidecar_json = if state_store.read(|store| store.private_plaintext_is_empty()) {
         None
     } else {
-        Some(state_store.read().private_plaintext_snapshot_json())
+        Some(state_store.read(|store| store.private_plaintext_snapshot_json()))
     };
-    busy.set(true);
-    copied.set(false);
-    generated_recovery_key_confirm.set(String::new());
-    action_status.set(RecoveryFeedback::message("mls_backup.status.uploading"));
-    spawn(async move {
+    busy.revise(|value| {
+        *value = true;
+    });
+    copied.revise(|value| {
+        *value = false;
+    });
+    generated_recovery_key_confirm.revise(|value| {
+        *value = String::new();
+    });
+    action_status.revise(|value| {
+        *value = RecoveryFeedback::message("mls_backup.status.uploading");
+    });
+    super::widgets::spawn(scope, async move {
         let recovery_key_for_display = recovery_key.clone();
         let actor_for_sidecar = actor.clone();
         let authority_for_sidecar = authority.clone();
@@ -201,13 +239,14 @@ fn start_recovery_key_generation(
             .await
         })
         .await;
-        busy.set(false);
+        busy.revise(|value| {
+            *value = false;
+        });
         match result {
             Ok(backup_id) => {
-                crate::components::mark_mls_recovery_backup_configured(
-                    &mut state_store.write(),
-                    &backup_id,
-                );
+                state_store.write(|store| {
+                    crate::components::mark_mls_recovery_backup_configured(store, &backup_id)
+                });
                 if let Some(sidecar_json) = sidecar_json {
                     let actor = actor_for_sidecar;
                     let device = device_for_sidecar;
@@ -229,402 +268,431 @@ fn start_recovery_key_generation(
                         .await;
                     let _ = outcome;
                 }
-                generated_recovery_key.set(recovery_key_for_display);
-                generated_recovery_key_confirm.set(String::new());
-                action_status.set(RecoveryFeedback::message("mls_backup.status.created"));
-                status.set(MlsRecoveryStatus::BackedUp);
+                generated_recovery_key.revise(|value| {
+                    *value = recovery_key_for_display;
+                });
+                generated_recovery_key_confirm.revise(|value| {
+                    *value = String::new();
+                });
+                action_status.revise(|value| {
+                    *value = RecoveryFeedback::message("mls_backup.status.created")
+                });
+                status.revise(|value| {
+                    *value = MlsRecoveryStatus::BackedUp;
+                });
             }
             Err(err) => {
-                action_status.set(RecoveryFeedback::External(err.display()));
+                action_status.revise(|value| {
+                    *value = RecoveryFeedback::External(err.display());
+                });
             }
         }
     });
 }
 
-#[component]
-pub fn SettingsMlsRecoveryPanel(
-    token: Signal<String>,
-    principal_id: Signal<String>,
-    device_id: Signal<String>,
-    /// Primary account handle claim, used only to name the recovery-key download file readably.
-    account_primary_handle: String,
-) -> Element {
-    let session = crate::app::SessionContext::get();
-    let mut state_store = session.state_store;
-    let Some(account) = session.active_account() else {
-        return rsx! {};
+pub(super) fn page(scope: &Scope, context: Rc<InksonContext>) -> View {
+    let Some(account) = context.active_account.get() else {
+        return empty();
     };
-    let mut status = use_signal(|| MlsRecoveryStatus::Loading);
-    let mut generated_recovery_key = use_signal(String::new);
-    let mut generated_recovery_key_confirm = use_signal(String::new);
-    let mut action_status = use_signal(RecoveryFeedback::default);
-    let busy = use_signal(|| false);
-    let mut refill_busy = use_signal(|| false);
-    let mut refill_status = use_signal(RecoveryFeedback::default);
-    let mut copied = use_signal(|| false);
-
-    let has_session = !token().trim().is_empty();
-
-    // On mount (and whenever session/actor change): fetch the server backup
-    // list and recompute status. Independent of `needs_mls_backup`.
-    {
-        let account_for_status = account.clone();
-        use_resource(move || {
-            let account = account_for_status.clone();
-            async move {
-                let base = account.server_url.to_string();
-                let session = token();
-                let actor = account.principal_id().to_string();
-                let authority = account.authority.clone();
-                if base.trim().is_empty() || session.trim().is_empty() || actor.trim().is_empty() {
-                    status.set(MlsRecoveryStatus::NoLocalSecret);
-                    return;
-                }
-                let local_secret = {
-                    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-                    crate::mls::runtime::load_account_mls_secret(secure_store.as_ref(), &authority)
-                        .ok()
-                        .flatten()
-                        .is_some()
-                };
-                let actor_for_fetch = actor.clone();
-                let device_for_fetch = account.device_id.to_string();
-                match with_authed_api(&base, session, |api| async move {
-                    crate::mls::account_recovery::fetch_mls_restore_payload_with_unlock_proof(
-                        &api,
-                        &actor_for_fetch,
-                        &device_for_fetch,
-                    )
-                    .await
-                })
-                .await
-                {
-                    Ok(payload) => {
-                        let server_backup_body =
-                        crate::mls::account_recovery::select_preferred_mls_account_secret_backup(
-                            &payload,
-                        );
-                        if let Some(backup_id) = server_backup_body
-                            .as_ref()
-                            .and_then(|body| body.get("backup_id"))
-                            .and_then(serde_json::Value::as_str)
-                        {
-                            crate::components::mark_mls_recovery_backup_configured(
-                                &mut state_store.write(),
-                                backup_id,
-                            );
-                        }
-                        let server_backup = server_backup_body.is_some();
-                        status.set(resolve_status(server_backup, local_secret));
-                    }
-                    Err(err) => {
-                        // Couldn't reach the server — fall back to the local-only
-                        // signal so the user still gets an actionable view.
-                        action_status.set(RecoveryFeedback::External(err.display()));
-                        status.set(if local_secret {
-                            MlsRecoveryStatus::NotBackedUp
-                        } else {
-                            MlsRecoveryStatus::NoLocalSecret
-                        });
-                    }
-                }
-            }
-        });
-    }
-
-    let can_submit = has_session && !busy() && generated_recovery_key().trim().is_empty();
-
-    let current_status = status();
-
-    // Submit: mirror `MlsBackupPrompt` — upload the account secret, then
-    // best-effort upload the encrypted private-plaintext sidecar.
-    let account_for_submit = account.clone();
-    let on_submit = move |_| {
-        start_recovery_key_generation(
-            token,
-            account_for_submit.clone(),
-            state_store,
-            generated_recovery_key,
-            generated_recovery_key_confirm,
-            action_status,
-            busy,
-            copied,
-            status,
-        );
-    };
-
-    let account_for_regenerate = account.clone();
-    let on_regenerate = move |_| {
-        start_recovery_key_generation(
-            token,
-            account_for_regenerate.clone(),
-            state_store,
-            generated_recovery_key,
-            generated_recovery_key_confirm,
-            action_status,
-            busy,
-            copied,
-            status,
-        );
-    };
-
-    let generated_now = generated_recovery_key();
-    let generated_confirm_now = generated_recovery_key_confirm();
-    let account_for_refill = account.clone();
-    let on_refill = move |_| {
-        if refill_busy() {
+    let backup_status = scope.cage(MlsRecoveryStatus::Loading);
+    let generated = scope.cage(String::new());
+    let confirmed = scope.cage(String::new());
+    let feedback = scope.cage(RecoveryFeedback::default());
+    let busy = scope.cage(false);
+    let copied = scope.cage(false);
+    let refill_busy = scope.cage(false);
+    let refill_status = scope.cage(RecoveryFeedback::default());
+    let status_context = context.clone();
+    let status_account = account.clone();
+    let status_store = context.state_store.clone();
+    let token = context.token;
+    let generation = context.session_generation.get();
+    let session = Some(account.clone());
+    spawn(scope, async move {
+        let account = status_account;
+        let state_store = status_store;
+        let status = backup_status;
+        let action_status = feedback;
+        let context = status_context;
+        let base = account.server_url.to_string();
+        let api_token = token.get();
+        let actor = account.principal_id().to_string();
+        let authority = account.authority.clone();
+        let local_secret = {
+            let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+            crate::mls::runtime::load_account_mls_secret(secure_store.as_ref(), &authority)
+                .ok()
+                .flatten()
+                .is_some()
+        };
+        let device = account.device_id.to_string();
+        let result = with_authed_api(&base, api_token, |api| async move {
+            crate::mls::account_recovery::fetch_mls_restore_payload_with_unlock_proof(
+                &api, &actor, &device,
+            )
+            .await
+        })
+        .await;
+        if !context.session_matches(generation, &session) {
             return;
         }
-        let base = account_for_refill.server_url.to_string();
-        let session = token();
-        let authority = account_for_refill.authority.clone();
-        let device = account_for_refill.device_id.clone();
-        let has_session = state_store.read().session_grant().is_some();
-        refill_busy.set(true);
-        refill_status.set(RecoveryFeedback::message(
-            "settings.mls_keypackages.refill_busy",
-        ));
-        spawn(async move {
-            let result = match has_session {
-                true => {
-                    crate::app::manual_refill_local_mls_key_packages(
-                        base, session, authority, device,
-                    )
-                    .await
+        match result {
+            Ok(payload) => {
+                let body = crate::mls::account_recovery::select_preferred_mls_account_secret_backup(
+                    &payload,
+                );
+                if let Some(id) = body
+                    .as_ref()
+                    .and_then(|body| body.get("backup_id"))
+                    .and_then(serde_json::Value::as_str)
+                {
+                    state_store.write(|store| {
+                        crate::components::mark_mls_recovery_backup_configured(store, id)
+                    });
                 }
-                false => Err("active session is missing".to_owned()),
-            };
-            match result {
-                Ok(count) => refill_status.set(RecoveryFeedback::with_detail(
-                    "settings.mls_keypackages.refill_done",
-                    count.to_string(),
-                )),
-                Err(error) => refill_status.set(if has_session {
-                    RecoveryFeedback::with_detail("settings.mls_keypackages.refill_failed", error)
-                } else {
-                    RecoveryFeedback::message("settings.mls_recovery.session_missing")
-                }),
+                status.revise(|value| {
+                    *value = resolve_status(body.is_some(), local_secret);
+                });
             }
-            refill_busy.set(false);
-        });
-    };
-
-    rsx! {
-        div { class: "event", "data-testid": "settings-mls-recovery",
-            div { class: "event-head",
-                span { {crate::i18n::tr("settings.mls_recovery.title")} }
-                span {
-                    "data-testid": "settings-mls-recovery-status-badge",
-                    "data-status": current_status.badge(),
-                    {crate::i18n::tr(match current_status {
-                        MlsRecoveryStatus::Loading => "settings.mls_recovery.badge.loading",
-                        MlsRecoveryStatus::NoLocalSecret => "settings.mls_recovery.badge.no_local_secret",
-                        MlsRecoveryStatus::BackedUp => "settings.mls_recovery.badge.backed_up",
-                        MlsRecoveryStatus::NotBackedUp => "settings.mls_recovery.badge.not_backed_up",
-                    })}
-                }
-            }
-            div { class: "muted", "data-testid": "settings-mls-recovery-status",
-                {crate::i18n::tr(current_status.i18n_key())}
-            }
-            div { class: "muted", "data-testid": "settings-mls-recovery-warning",
-                {crate::i18n::tr("mls_backup.warning.passphrase_loss")}
-            }
-
-            // Hide the set/replace form when there's nothing to back up yet —
-            // the account secret only exists after the first encrypted write.
-            if current_status != MlsRecoveryStatus::NoLocalSecret {
-                if !generated_now.trim().is_empty() {
-                    div { class: "workflow-form",
-                        Label { html_for: "settings-mls-recovery-generated-key",
-                            {crate::i18n::tr("mls_backup.generated_key_label")}
-                        }
-                        Textarea {
-                            id: "settings-mls-recovery-generated-key",
-                            "data-testid": "settings-mls-recovery-generated-key",
-                            rows: "3",
-                            readonly: true,
-                            value: "{generated_now}",
-                        }
-                        // Mirror `MlsBackupPrompt`: Copy / Download .txt so the
-                        // user captures all 24 words instead of hand-selecting
-                        // the textarea (a partial selection silently drops words).
-                        div { class: "mls-backup-key-actions",
-                            Button {
-                                variant: ButtonVariant::Secondary,
-                                "data-testid": "settings-mls-recovery-copy-key",
-                                onclick: {
-                                    let key = generated_now.clone();
-                                    move |_| {
-                                        crate::components::mls_backup_prompt::copy_text_to_clipboard(&key);
-                                        copied.set(true);
-                                    }
-                                },
-                                if copied() {
-                                    {crate::i18n::tr("mls_backup.copy_key_done")}
-                                } else {
-                                    {crate::i18n::tr("mls_backup.copy_key")}
-                                }
-                            }
-                            Button {
-                                variant: ButtonVariant::Secondary,
-                                "data-testid": "settings-mls-recovery-download-key",
-                                onclick: {
-                                    let key = generated_now.clone();
-                                    let primary_handle = account_primary_handle.clone();
-                                    move |_| {
-                                        let fname =
-                                            crate::components::mls_backup_prompt::recovery_key_filename_from_handles(
-                                                std::slice::from_ref(&primary_handle),
-                                            );
-                                        crate::components::mls_backup_prompt::download_text_as_file(&fname, &key);
-                                    }
-                                },
-                                {crate::i18n::tr("mls_backup.download_key")}
-                            }
-                        }
-                        div { class: "form-hint-warn", "data-testid": "settings-mls-recovery-generated-key-warning",
-                            {crate::i18n::tr("mls_backup.generated_key_warning")}
-                        }
-                        Label { html_for: "settings-mls-recovery-confirm-key",
-                            {crate::i18n::tr("mls_backup.confirm_key_label")}
-                        }
-                        Textarea {
-                            id: "settings-mls-recovery-confirm-key",
-                            "data-testid": "settings-mls-recovery-confirm-key",
-                            rows: "3",
-                            value: "{generated_confirm_now}",
-                            placeholder: crate::i18n::tr("mls_backup.confirm_key_placeholder"),
-                            oninput: move |event: FormEvent| generated_recovery_key_confirm.set(event.value()),
-                        }
-                        div { class: "muted", "data-testid": "settings-mls-recovery-confirm-key-hint",
-                            {crate::i18n::tr("mls_backup.confirm_key_hint")}
-                        }
-                    }
-                }
-                div { class: "workflow-form",
-                    div { class: "actions",
-                        if !generated_now.trim().is_empty() {
-                            Button {
-                                variant: ButtonVariant::Secondary,
-                                "data-testid": "settings-mls-recovery-regenerate",
-                                disabled: busy(),
-                                onclick: on_regenerate,
-                                {crate::i18n::tr("mls_backup.button_regenerate")}
-                            }
-                            Button {
-                                variant: ButtonVariant::Primary,
-                                "data-testid": "settings-mls-recovery-saved",
-                                disabled: generated_confirm_now.trim().is_empty(),
-                                onclick: move |_| {
-                                    if !recovery_key_confirmation_matches(
-                                        &generated_recovery_key(),
-                                        &generated_recovery_key_confirm(),
-                                    ) {
-                                        action_status.set(
-                                            RecoveryFeedback::message("mls_backup.status.confirm_mismatch"),
-                                        );
-                                        return;
-                                    }
-                                    generated_recovery_key.set(String::new());
-                                    generated_recovery_key_confirm.set(String::new());
-                                    action_status.set(RecoveryFeedback::Empty);
-                                    copied.set(false);
-                                },
-                                {crate::i18n::tr("mls_backup.button_confirm_saved")}
-                            }
-                        } else {
-                            Button {
-                                variant: ButtonVariant::Primary,
-                                "data-testid": "settings-mls-recovery-submit",
-                                disabled: !can_submit,
-                                onclick: on_submit,
-                                if busy() {
-                                    {crate::i18n::tr("mls_backup.button_busy")}
-                                } else {
-                                    {crate::i18n::tr("settings.mls_recovery.submit")}
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            if !action_status().text().is_empty() {
-                div { class: "muted", "data-testid": "settings-mls-recovery-action-status",
-                    {action_status().text()}
-                }
-            }
-            div { class: "workflow-form", "data-testid": "settings-mls-keypackages-refill",
-                div { class: "muted",
-                    {crate::i18n::tr("settings.mls_keypackages.refill_description")}
-                }
-                div { class: "actions",
-                    Button {
-                        variant: ButtonVariant::Secondary,
-                        "data-testid": "settings-mls-keypackages-refill-button",
-                        disabled: !has_session || refill_busy(),
-                        onclick: on_refill,
-                        {crate::i18n::tr("settings.mls_keypackages.refill_button")}
-                    }
-                }
-                if !refill_status().text().is_empty() {
-                    div { class: "muted", "data-testid": "settings-mls-keypackages-refill-status",
-                        {refill_status().text()}
-                    }
-                }
+            Err(error) => {
+                action_status.revise(|value| {
+                    *value = RecoveryFeedback::External(error.display());
+                });
+                status.revise(|value| {
+                    *value = resolve_status(false, local_secret);
+                });
             }
         }
-    }
+    });
+    let enabled = scope.bond(move || !busy.get());
+    let generate_context = context.clone();
+    let generate_owner = scope.downgrade();
+    let generate_account = account.clone();
+    let generate_button = action(
+        scope,
+        context.clone(),
+        "settings-mls-recovery-submit",
+        "settings.mls_recovery.submit",
+        "primary",
+        scope.bond(move || {
+            !busy.get()
+                && generated.get().trim().is_empty()
+                && backup_status.get() != MlsRecoveryStatus::NoLocalSecret
+        }),
+        move || {
+            if let Some(scope) = generate_owner.upgrade() {
+                start_recovery_key_generation(
+                    &scope,
+                    generate_context.clone(),
+                    generate_account.clone(),
+                    generated,
+                    confirmed,
+                    feedback,
+                    busy,
+                    copied,
+                    backup_status,
+                );
+            }
+        },
+    );
+    let key_context = context.clone();
+    let key_editor = reactive(generated, move |scope, key| {
+        if key.trim().is_empty() {
+            return empty();
+        }
+        let context = key_context.clone();
+        let copy_key = key.clone();
+        let download_key = key.clone();
+        let download_context = context.clone();
+        let regenerate_context = context.clone();
+        let regenerate_owner = scope.downgrade();
+        let regenerate_account = regenerate_context.active_account.get();
+        stack(
+            "workflow-form",
+            vec![
+                Box::new(
+                    sapid::field("settings-mls-recovery-generated-key")
+                        .unstyled()
+                        .class("field")
+                        .label(context.translated(scope, "mls_backup.generated_key_label"))
+                        .control(move |field| {
+                            sapid::text_field()
+                                .unstyled()
+                                .field(field)
+                                .multiline(true)
+                                .readonly(true)
+                                .value(key.clone())
+                        }),
+                ),
+                line(
+                    "mls-backup-key-actions",
+                    vec![
+                        action(
+                            scope,
+                            context.clone(),
+                            "settings-mls-recovery-copy-key",
+                            "mls_backup.copy_key",
+                            "secondary",
+                            true,
+                            move || {
+                                crate::components::mls_backup_prompt::copy_text_to_clipboard(
+                                    &copy_key,
+                                );
+                                copied.revise(|value| {
+                                    *value = true;
+                                });
+                            },
+                        ),
+                        action(
+                            scope,
+                            context.clone(),
+                            "settings-mls-recovery-download-key",
+                            "mls_backup.download_key",
+                            "secondary",
+                            true,
+                            move || {
+                                let filename=crate::components::mls_backup_prompt::recovery_key_filename_from_handles(&[download_context.account_primary_handle.get()]);
+                                crate::components::mls_backup_prompt::download_text_as_file(
+                                    &filename,
+                                    &download_key,
+                                );
+                            },
+                        ),
+                    ],
+                ),
+                paragraph(
+                    "form-hint-warn",
+                    context.translated(scope, "mls_backup.generated_key_warning"),
+                ),
+                field(
+                    scope,
+                    context.clone(),
+                    "settings-mls-recovery-confirm-key",
+                    "mls_backup.confirm_key_label",
+                    confirmed,
+                    enabled,
+                    true,
+                    move |next| {
+                        confirmed.revise(|value| {
+                            *value = next;
+                        })
+                    },
+                ),
+                paragraph(
+                    "muted",
+                    context.translated(scope, "mls_backup.confirm_key_hint"),
+                ),
+                line(
+                    "actions",
+                    vec![
+                        action(
+                            scope,
+                            context.clone(),
+                            "settings-mls-recovery-regenerate",
+                            "mls_backup.button_regenerate",
+                            "secondary",
+                            enabled,
+                            move || {
+                                if let (Some(scope), Some(account)) =
+                                    (regenerate_owner.upgrade(), regenerate_account.clone())
+                                {
+                                    start_recovery_key_generation(
+                                        &scope,
+                                        regenerate_context.clone(),
+                                        account,
+                                        generated,
+                                        confirmed,
+                                        feedback,
+                                        busy,
+                                        copied,
+                                        backup_status,
+                                    );
+                                }
+                            },
+                        ),
+                        action(
+                            scope,
+                            context.clone(),
+                            "settings-mls-recovery-saved",
+                            "mls_backup.button_confirm_saved",
+                            "primary",
+                            scope.bond(move || !confirmed.get().trim().is_empty()),
+                            move || {
+                                if !recovery_key_confirmation_matches(
+                                    &generated.get(),
+                                    &confirmed.get(),
+                                ) {
+                                    feedback.revise(|value| {
+                                        *value = RecoveryFeedback::message(
+                                            "mls_backup.status.confirm_mismatch",
+                                        )
+                                    });
+                                    return;
+                                }
+                                generated.revise(|value| value.clear());
+                                confirmed.revise(|value| value.clear());
+                                feedback.revise(|value| {
+                                    *value = RecoveryFeedback::Empty;
+                                });
+                                copied.revise(|value| {
+                                    *value = false;
+                                });
+                            },
+                        ),
+                    ],
+                ),
+            ],
+        )
+    });
+    let refill_context = context.clone();
+    let refill_owner = scope.downgrade();
+    let refill = action(
+        scope,
+        context.clone(),
+        "settings-mls-keypackages-refill-button",
+        "settings.mls_keypackages.refill_button",
+        "secondary",
+        scope.bond(move || !refill_busy.get()),
+        move || {
+            if refill_busy.get_untracked() {
+                return;
+            }
+            let context = refill_context.clone();
+            let Some(account) = context.active_account.get() else {
+                return;
+            };
+            let base = account.server_url.to_string();
+            let token = context.token.get();
+            let has_session = context
+                .state_store
+                .read(|store| store.session_grant().is_some());
+            let generation = context.session_generation.get();
+            let session = Some(account.clone());
+            refill_busy.revise(|value| {
+                *value = true;
+            });
+            refill_status.revise(|value| {
+                *value = RecoveryFeedback::message("settings.mls_keypackages.refill_busy")
+            });
+            let Some(scope) = refill_owner.upgrade() else {
+                return;
+            };
+            spawn(&scope, async move {
+                let result = if has_session {
+                    crate::app::manual_refill_local_mls_key_packages(
+                        base,
+                        token,
+                        account.authority,
+                        account.device_id,
+                    )
+                    .await
+                } else {
+                    Err("active session is missing".to_owned())
+                };
+                if !context.session_matches(generation, &session) {
+                    return;
+                }
+                refill_status.revise(|value| {
+                    *value = match result {
+                        Ok(count) => RecoveryFeedback::with_detail(
+                            "settings.mls_keypackages.refill_done",
+                            count.to_string(),
+                        ),
+                        Err(error) => {
+                            if has_session {
+                                RecoveryFeedback::with_detail(
+                                    "settings.mls_keypackages.refill_failed",
+                                    error,
+                                )
+                            } else {
+                                RecoveryFeedback::message("settings.mls_recovery.session_missing")
+                            }
+                        }
+                    }
+                });
+                refill_busy.revise(|value| {
+                    *value = false;
+                });
+            });
+        },
+    );
+    let status_context = context.clone();
+    let guidance_context = context.clone();
+    stack(
+        "event settings-mls-recovery",
+        vec![
+            line(
+                "event-head",
+                vec![
+                    plain(context.translated(scope, "settings.mls_recovery.title")),
+                    reactive(backup_status, move |scope, status| {
+                        Box::new(text().class(format!(
+                                "badge settings-mls-recovery-status-badge settings-mls-recovery-status--{}",
+                                status.badge()
+                            )).content(status_context.translated(scope, status.badge_label_key())))
+                    }),
+                ],
+            ),
+            reactive(backup_status, move |scope, status| {
+                paragraph(
+                    "muted settings-mls-recovery-status",
+                    guidance_context.translated(scope, status.i18n_key()),
+                )
+            }),
+            paragraph(
+                "muted settings-mls-recovery-warning",
+                context.translated(scope, "mls_backup.warning.passphrase_loss"),
+            ),
+            recovery_form(scope, backup_status, vec![key_editor, generate_button]),
+            status(scope.bond(move || feedback.get().text())),
+            stack(
+                "workflow-form",
+                vec![
+                    paragraph(
+                        "muted",
+                        context.translated(scope, "settings.mls_keypackages.refill_description"),
+                    ),
+                    refill,
+                    status(scope.bond(move || refill_status.get().text())),
+                ],
+            ),
+        ],
+    )
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn local_feedback_retranslates_existing_message_and_preserves_external_details() {
-        use std::cell::RefCell;
-        use std::rc::Rc;
-
-        use crate::i18n::{I18nSignal, UiLocale, init_i18n_with_locale, set_locale};
-
-        fn harness(capture: Rc<RefCell<Option<I18nSignal>>>) -> Element {
-            let i18n = use_context_provider(|| init_i18n_with_locale(UiLocale::En));
-            *capture.borrow_mut() = Some(i18n);
-            rsx! { div {} }
-        }
-
-        let capture = Rc::new(RefCell::new(None));
-        let mut dom = VirtualDom::new_with_props(harness, capture.clone());
-        dom.rebuild_in_place();
-        let mut i18n = capture.borrow().unwrap();
-        dom.in_scope(i18n.origin_scope(), || {
-            let feedback = RecoveryFeedback::message("settings.mls_recovery.authority_missing");
+        use crate::i18n::{UiLocale, with_test_locale};
+        let feedback = RecoveryFeedback::message("settings.mls_recovery.authority_missing");
+        let detailed =
+            RecoveryFeedback::with_detail("settings.mls_keypackages.refill_done", "3".into());
+        with_test_locale(UiLocale::En, || {
             assert!(
                 feedback
                     .text()
                     .starts_with("Account recovery details are unavailable.")
             );
-            let detailed = RecoveryFeedback::with_detail(
-                "settings.mls_keypackages.refill_done",
-                "3".to_owned(),
-            );
             assert!(detailed.text().ends_with("3"));
-            set_locale(&mut i18n, UiLocale::Zh);
+        });
+        with_test_locale(UiLocale::Zh, || {
             assert_eq!(feedback.text(), "账号恢复信息暂不可用。请刷新账号后重试。");
             assert!(detailed.text().contains("3"));
             assert!(!detailed.text().contains("KeyPackage maintenance complete"));
             assert_eq!(
-                RecoveryFeedback::External("server detail".to_owned()).text(),
+                RecoveryFeedback::External("server detail".into()).text(),
                 "server detail"
             );
             assert!(RecoveryFeedback::Empty.text().is_empty());
-            set_locale(&mut i18n, UiLocale::En);
+        });
+        with_test_locale(UiLocale::En, || {
             assert!(
                 feedback
                     .text()
                     .starts_with("Account recovery details are unavailable.")
-            );
+            )
         });
     }
 

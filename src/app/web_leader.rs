@@ -1,15 +1,7 @@
-//! Browser single-leader gate.
-//!
-//! Every browser tab has its own Rust/WASM memory but shares the origin's
-//! IndexedDB, device keys and account state. Mounting [`super::AppBootstrap`]
-//! in two tabs would therefore start two sync/MLS/to-device writers over the
-//! same durable state. This component sits outside the router and only mounts
-//! it after the tab owns the origin-wide leader lock.
+//! Only the browser tab holding the origin lock may start encrypted writers.
+use glory::Scope;
 
-use dioxus::prelude::*;
-use dioxus_router::Router;
-
-use crate::routes::Route;
+use crate::presentation::View;
 
 #[cfg(target_arch = "wasm32")]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -20,99 +12,80 @@ enum LeaderState {
     Unavailable,
 }
 
-#[component]
-pub(super) fn WebLeaderGate() -> Element {
-    let state_store = use_context::<super::session_context::AppStateStore>().0;
+pub(super) fn gate(scope: &Scope) -> View {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        return rsx! { super::account_switch::SessionRoot { state_store, Router::<Route> {} } };
+        super::glory_root::bootstrap(scope)
     }
-
     #[cfg(target_arch = "wasm32")]
     {
-        let mut state = use_signal(|| LeaderState::Pending);
-        use_effect(move || {
-            spawn(async move {
-                match browser::acquire_leadership().await {
-                    Ok(browser::Leadership::WebLock) => state.set(LeaderState::Leader),
-                    Ok(browser::Leadership::Follower) => state.set(LeaderState::Follower),
-                    Err(error) => {
-                        tracing::error!(%error, "browser single-leader gate unavailable");
-                        state.set(LeaderState::Unavailable);
-                    }
+        let state = scope.cage(LeaderState::Pending);
+        if let Err(error) = scope.spawn(async move {
+            let next = match browser::acquire_leadership().await {
+                Ok(browser::Leadership::WebLock) => LeaderState::Leader,
+                Ok(browser::Leadership::Follower) => LeaderState::Follower,
+                Err(error) => {
+                    tracing::error!(%error, "browser single-leader gate unavailable");
+                    LeaderState::Unavailable
                 }
-            });
-        });
-
-        match state() {
-            LeaderState::Leader => {
-                rsx! { super::account_switch::SessionRoot { state_store, Router::<Route> {} } }
-            }
-            LeaderState::Pending => rsx! {
-                LeaderGatePage {
-                    test_id: "web-leader-pending",
-                    title: "Opening Inkson securely",
-                    message: "Checking whether another Inkson tab is already active…",
-                    retry: false,
-                }
-            },
-            LeaderState::Follower => rsx! {
-                LeaderGatePage {
-                    test_id: "web-leader-follower",
-                    title: "Inkson is already open",
-                    message: "Another tab owns this browser profile. To protect encrypted state, this tab will not start synchronization.",
-                    retry: true,
-                }
-            },
-            LeaderState::Unavailable => rsx! {
-                LeaderGatePage {
-                    test_id: "web-leader-unavailable",
-                    title: "Inkson could not start safely",
-                    message: "This browser cannot guarantee a single encrypted-state writer. Close other Inkson tabs, then retry.",
-                    retry: true,
-                }
-            },
+            };
+            state.revise(|value| *value = next);
+        }) {
+            scope.report_error(error);
         }
+        crate::presentation::widgets::reactive_distinct(state, |scope, state| match state {
+            LeaderState::Leader => super::glory_root::bootstrap(scope),
+            LeaderState::Pending => gate_page(
+                "Opening Inkson securely",
+                "Checking whether another Inkson tab is already active…",
+                false,
+            ),
+            LeaderState::Follower => gate_page(
+                "Inkson is already open",
+                "Another tab owns this browser profile. To protect encrypted state, this tab will not start synchronization.",
+                true,
+            ),
+            LeaderState::Unavailable => gate_page(
+                "Inkson could not start safely",
+                "This browser cannot guarantee a single encrypted-state writer. Close other Inkson tabs, then retry.",
+                true,
+            ),
+        })
     }
 }
 
 #[cfg(target_arch = "wasm32")]
-#[component]
-fn LeaderGatePage(
-    test_id: &'static str,
-    title: &'static str,
-    message: &'static str,
-    retry: bool,
-) -> Element {
-    rsx! {
-        main {
-            class: "auth-page",
-            "data-testid": test_id,
-            section {
-                class: "auth-card",
-                role: "status",
-                aria_live: "polite",
-                h1 { "{title}" }
-                p { "{message}" }
-                if retry {
-                    button {
-                        class: "btn btn-primary",
-                        r#type: "button",
-                        "data-testid": "web-leader-retry",
-                        onclick: move |_| reload_page(),
-                        "Retry"
-                    }
-                }
-            }
-        }
-    }
-}
+fn gate_page(title: &str, message: &str, retry: bool) -> View {
+    use glory::ui::view;
 
-#[cfg(target_arch = "wasm32")]
-fn reload_page() {
-    if let Some(window) = web_sys::window() {
-        let _ = window.location().reload();
+    use crate::presentation::widgets::{heading, paragraph};
+    let mut children = vec![
+        heading(1, "", title.to_owned()),
+        paragraph("muted", message.to_owned()),
+    ];
+    if retry {
+        children.push(Box::new(
+            sapid::button()
+                .unstyled()
+                .class("btn btn-primary")
+                .label("Try again")
+                .on_press(|| {
+                    if let Some(window) = web_sys::window()
+                        && let Err(error) = window.location().reload()
+                    {
+                        tracing::warn!(?error, "leader retry reload failed");
+                    }
+                }),
+        ));
     }
+    Box::new(
+        view().class("auth-shell").fill(Box::new(
+            glory::ui::view()
+                .class("auth-card auth-panel")
+                .role(glory::render::Role::Status)
+                .fill(children),
+        ) as View),
+    )
 }
 
 #[cfg(target_arch = "wasm32")]

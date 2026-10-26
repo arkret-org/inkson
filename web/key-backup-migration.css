@@ -1,0 +1,2 @@
+/* The public Collapsible trigger replaces the original event-head summary. */
+.key-backup-guidance > .sapid-collapsible-trigger { display: flex; justify-content: space-between; align-items: center; gap: 12px; width: 100%; color: var(--text-3); font-size: 11px; font-weight: 650; letter-spacing: .05em; }

@@ -23,6 +23,8 @@ export const UNIMPLEMENTED_OPERATIONS = new Set<string>(
   "ak.gate.account.command.request_erasure.v1",
   "ak.gate.account.command.abandon_identity_creation.v1",
   "ak.gate.account.command.issue_identity_binding_challenge.v1",
+  // Retained in the original review scope; the signed transport producer below
+  // removes it from this set without claiming native authority ledger coverage.
   "ak.gate.account.command.logout.v1",
   "ak.gate.account.read.onboarding.v1",
   "ak.gate.account.command.issue_recovery_completion_grant.v1",

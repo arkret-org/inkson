@@ -5,15 +5,15 @@
 //! left to do. Collecting that inventory, reissuing the accepted session and
 //! restoring the runtime it implies are all reads and network calls, not view
 //! concerns.
+use anyhow::Context as _;
 
 use super::*;
-
 pub(super) async fn recover_bound_principal_device(
     handoff: &crate::state::PendingAccountHandoff,
     principal_did: &arkret_sdk::Did,
     replacement_device_id: &str,
     recovery_words: &str,
-    state_store: SyncSignal<crate::state::LocalStateStore>,
+    state_store: crate::presentation::SharedStateStore,
 ) -> anyhow::Result<(
     crate::mls::account_recovery::CompletedFreshDeviceRecovery,
     CompletedIdentityCreation,
@@ -40,15 +40,18 @@ pub(super) async fn recover_bound_principal_device(
             &expected_device,
         )?
     {
-        let account =
-            issue_recovery_completion_grant(handoff, &completed.transaction_id, state_store)
-                .await?;
+        let account = issue_recovery_completion_grant(
+            handoff,
+            &completed.transaction_id,
+            state_store.clone(),
+        )
+        .await?;
         completed.standard_grant_installed = true;
         return Ok((completed, account));
     }
     let (api, recovery_grant_id, recovery_grant_jkt) =
-        issue_recovery_session_transport(handoff, state_store).await?;
-    let store_handle = crate::app::runtime_adapter::state_store_handle(state_store);
+        issue_recovery_session_transport(handoff, state_store.clone()).await?;
+    let store_handle = state_store.handle();
     if let Some(mut completed) = crate::mls::account_recovery::resume_pending_pcr_policy_recovery(
         &api,
         &store_handle,
@@ -58,9 +61,12 @@ pub(super) async fn recover_bound_principal_device(
     )
     .await?
     {
-        let account =
-            issue_recovery_completion_grant(handoff, &completed.transaction_id, state_store)
-                .await?;
+        let account = issue_recovery_completion_grant(
+            handoff,
+            &completed.transaction_id,
+            state_store.clone(),
+        )
+        .await?;
         completed.standard_grant_installed = true;
         return Ok((completed, account));
     }
@@ -143,32 +149,31 @@ pub(super) async fn recover_bound_principal_device(
     )
     .await?;
     let account =
-        issue_recovery_completion_grant(handoff, &completed.transaction_id, state_store).await?;
+        issue_recovery_completion_grant(handoff, &completed.transaction_id, state_store.clone())
+            .await?;
     completed.standard_grant_installed = true;
     Ok((completed, account))
 }
-
 pub(super) async fn issue_recovery_session_transport(
     handoff: &crate::state::PendingAccountHandoff,
-    mut state_store: SyncSignal<crate::state::LocalStateStore>,
+    state_store: crate::presentation::SharedStateStore,
 ) -> anyhow::Result<(
     crate::transport::TransportClient,
     arkret_wire::SessionGrantId,
     String,
 )> {
-    let holder = {
+    let holder = state_store.write(|store| -> anyhow::Result<_> {Ok({
         let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
         let pending_store = crate::secure_key_store::PendingLocalStore::new(
             arkret_sdk::DeviceId::new(handoff.device_id.clone())?,
         );
-        let mut store = state_store.write();
         crate::identity::account_auth::grant_dpop::load_or_recover_pending_device_key_with_secure_store(
-            &mut store,
+            store,
             secure_store.as_ref(),
             &pending_store,
         )?
         .ok_or_else(|| anyhow::anyhow!("recovery handoff holder key is unavailable"))?
-    };
+    })})?;
     if holder.jkt() != handoff.holder_jkt {
         anyhow::bail!("account handoff holder key changed before recovery grant issuance");
     }
@@ -220,7 +225,6 @@ pub(super) async fn issue_recovery_session_transport(
         .with_session_grant_dpop(outcome.session_grant, holder)?;
     Ok((api, grant_id, jkt))
 }
-
 pub(super) async fn activate_recovery_replacement_signer(
     handoff: &crate::state::PendingAccountHandoff,
 ) -> anyhow::Result<()> {
@@ -261,25 +265,23 @@ pub(super) async fn activate_recovery_replacement_signer(
     )?;
     Ok(())
 }
-
 pub(super) async fn issue_recovery_completion_grant(
     handoff: &crate::state::PendingAccountHandoff,
     transaction_id: &arkret_sdk::TransactionId,
-    mut state_store: SyncSignal<crate::state::LocalStateStore>,
+    state_store: crate::presentation::SharedStateStore,
 ) -> anyhow::Result<CompletedIdentityCreation> {
-    let holder = {
+    let holder = state_store.write(|store| -> anyhow::Result<_> {Ok({
         let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
         let pending_store = crate::secure_key_store::PendingLocalStore::new(
             arkret_sdk::DeviceId::new(handoff.device_id.clone())?,
         );
-        let mut store = state_store.write();
         crate::identity::account_auth::grant_dpop::load_or_recover_pending_device_key_with_secure_store(
-            &mut store,
+            store,
             secure_store.as_ref(),
             &pending_store,
         )?
         .ok_or_else(|| anyhow::anyhow!("recovery handoff holder key is unavailable"))?
-    };
+    })})?;
     if handoff.holder_jkt != holder.jkt() {
         anyhow::bail!("account handoff holder key changed during recovery");
     }
@@ -352,7 +354,7 @@ pub(super) async fn issue_recovery_completion_grant(
         handoff,
         &principal_did,
         persisted.device_id.clone(),
-        state_store,
+        state_store.clone(),
         Some((persisted.grant_jwt.clone(), holder.clone())),
     )
     .await?;
@@ -376,14 +378,17 @@ pub(super) async fn issue_recovery_completion_grant(
             &persisted,
         )
         .await?;
-        crate::views::login::commit_completed_login_dpop_key(
-            &mut state_store.write(),
-            secure_store.as_ref(),
-            &account,
-            &dpop_record,
-            prepared_keys,
-        )
-        .map_err(anyhow::Error::msg)?;
+        state_store
+            .write(|store| {
+                crate::views::login::commit_completed_login_dpop_key(
+                    store,
+                    secure_store.as_ref(),
+                    &account,
+                    &dpop_record,
+                    prepared_keys,
+                )
+            })
+            .map_err(anyhow::Error::msg)?;
     }
     Ok(CompletedIdentityCreation {
         account,
@@ -393,12 +398,10 @@ pub(super) async fn issue_recovery_completion_grant(
         initial_mls_backup_id: None,
     })
 }
-
 pub(super) struct RestoredAcceptedAccountRuntime {
     pub(super) persisted_grant: crate::state::PersistedSessionGrant,
     pub(super) dpop_device_key: crate::state::DpopDeviceKeyRecord,
 }
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum ResumeTerminalKind {
     HydrationFailed,
@@ -407,28 +410,23 @@ pub(super) enum ResumeTerminalKind {
     StrandedIdentity,
     Contradiction,
 }
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct ResumeTerminal {
     pub(super) kind: ResumeTerminalKind,
     pub(super) reason: String,
     pub(super) inventory: Vec<String>,
 }
-
 pub(super) enum IdentityCreationCommandOutcome {
     Completed(Box<CompletedIdentityCreation>),
     Terminal(ResumeTerminal),
 }
-
 pub(super) struct BoundCompletionResumeInventory {
     pub(super) facts: garth::BoundCompletionResumeFacts,
     pub(super) read_errors: Vec<String>,
 }
-
 impl BoundCompletionResumeInventory {
     pub(super) fn checklist(&self) -> Vec<String> {
         use garth::BoundCompletionMaterialState as State;
-
         fn line(label: &str, state: State) -> String {
             let value = match state {
                 State::Present => "present",
@@ -449,7 +447,6 @@ impl BoundCompletionResumeInventory {
         ]
     }
 }
-
 pub(super) fn observe_resume_material<T, E: std::fmt::Display>(
     label: &str,
     result: Result<Option<T>, E>,
@@ -464,7 +461,6 @@ pub(super) fn observe_resume_material<T, E: std::fmt::Display>(
         }
     }
 }
-
 pub(super) fn accepted_account_session_client(
     account: &crate::config::ActiveAccountContext,
     expected_holder_jkt: &str,
@@ -490,7 +486,6 @@ pub(super) fn accepted_account_session_client(
     )?
     .with_dpop_device(dpop.clone())
 }
-
 pub(super) fn accepted_account_session_client_from_secure_store(
     account: &crate::config::ActiveAccountContext,
     expected_holder_jkt: &str,
@@ -508,12 +503,11 @@ pub(super) fn accepted_account_session_client_from_secure_store(
     .context("accepted onboarding account has no durable grant-binding key")?;
     accepted_account_session_client(account, expected_holder_jkt, grant, &dpop)
 }
-
 pub(super) async fn collect_bound_completion_resume_inventory(
     handoff: &crate::state::PendingAccountHandoff,
     checkpoint: &crate::state::PendingPrincipalRegistration,
     account: &crate::config::ActiveAccountContext,
-    state_store: SyncSignal<crate::state::LocalStateStore>,
+    state_store: crate::presentation::SharedStateStore,
 ) -> BoundCompletionResumeInventory {
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let mut read_errors = Vec::new();
@@ -527,7 +521,6 @@ pub(super) async fn collect_bound_completion_resume_inventory(
             None
         }
     };
-
     let (device_id_state, stored_device_id) = observe_resume_material(
         "device id",
         user_store.as_ref().map_or_else(
@@ -597,7 +590,7 @@ pub(super) async fn collect_bound_completion_resume_inventory(
         ),
         &mut read_errors,
     );
-    let recovery_evidence = state_store.peek().recovery_material_evidence();
+    let recovery_evidence = state_store.read(|store| store.recovery_material_evidence());
     let recovery_evidence_state = if recovery_evidence.is_some() {
         garth::BoundCompletionMaterialState::Present
     } else {
@@ -684,19 +677,17 @@ pub(super) async fn collect_bound_completion_resume_inventory(
         read_errors,
     }
 }
-
 #[derive(Debug)]
 pub(super) enum AcceptedSessionReissueError {
     Retryable(anyhow::Error),
     ReauthRequired(anyhow::Error),
     Contradiction(anyhow::Error),
 }
-
 pub(super) fn load_bound_handoff_holder_key(
     handoff: &crate::state::PendingAccountHandoff,
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
-    mut state_store: SyncSignal<crate::state::LocalStateStore>,
+    state_store: crate::presentation::SharedStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
 ) -> Result<crate::identity::account_auth::grant_dpop::DpopHandle, AcceptedSessionReissueError> {
     let pending_device = arkret_sdk::DeviceId::new(handoff.device_id.clone()).map_err(|error| {
@@ -707,11 +698,11 @@ pub(super) fn load_bound_handoff_holder_key(
     })?;
     let pending_store = crate::secure_key_store::PendingLocalStore::new(pending_device);
     let pending =
-        crate::identity::account_auth::grant_dpop::load_or_recover_pending_device_key_with_secure_store(
-            &mut state_store.write(),
+        state_store.write(|store|crate::identity::account_auth::grant_dpop::load_or_recover_pending_device_key_with_secure_store(
+            store,
             secure_store,
             &pending_store,
-        )
+        ))
         .map_err(|error| {
             AcceptedSessionReissueError::Retryable(
                 anyhow::anyhow!(error).context("read the retained account handoff holder key"),
@@ -769,18 +760,17 @@ pub(super) fn load_bound_handoff_holder_key(
     }
     Ok(holder)
 }
-
 pub(super) async fn reissue_accepted_onboarding_session(
     handoff: &crate::state::PendingAccountHandoff,
     account: &crate::config::ActiveAccountContext,
-    mut state_store: SyncSignal<crate::state::LocalStateStore>,
+    state_store: crate::presentation::SharedStateStore,
 ) -> Result<CompletedIdentityCreation, AcceptedSessionReissueError> {
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let holder = load_bound_handoff_holder_key(
         handoff,
         &account.authority,
         &account.device_id,
-        state_store,
+        state_store.clone(),
         secure_store.as_ref(),
     )?;
     let handoff_grant = crate::identity::account_auth::load_account_handoff_grant(handoff)
@@ -864,21 +854,21 @@ pub(super) async fn reissue_accepted_onboarding_session(
     )
     .await
     .map_err(|error| AcceptedSessionReissueError::Retryable(anyhow::anyhow!(error)))?;
-    {
-        let mut store = state_store.write();
-        crate::views::login::commit_completed_login_dpop_key(
-            &mut store,
-            secure_store.as_ref(),
-            account,
-            &issued.dpop_device_key,
-            prepared_keys,
-        )
+    state_store
+        .write(|store| {
+            crate::views::login::commit_completed_login_dpop_key(
+                store,
+                secure_store.as_ref(),
+                account,
+                &issued.dpop_device_key,
+                prepared_keys,
+            )
+        })
         .map_err(|error| {
             AcceptedSessionReissueError::Retryable(
                 anyhow::Error::msg(error).context("commit the accepted account DPoP key"),
             )
         })?;
-    }
     Ok(CompletedIdentityCreation {
         account: account.clone(),
         persisted_grant: issued.session_grant,
@@ -888,7 +878,6 @@ pub(super) async fn reissue_accepted_onboarding_session(
         initial_mls_backup_id: None,
     })
 }
-
 pub(super) fn restore_accepted_account_runtime(
     account: &crate::config::ActiveAccountContext,
     expected_holder_jkt: &str,
@@ -900,7 +889,6 @@ pub(super) fn restore_accepted_account_runtime(
         secure_store.as_ref(),
     )
 }
-
 pub(super) fn restore_accepted_account_runtime_with_secure_store(
     account: &crate::config::ActiveAccountContext,
     expected_holder_jkt: &str,
@@ -935,7 +923,6 @@ pub(super) fn restore_accepted_account_runtime_with_secure_store(
         account,
         secure_store,
     )?;
-
     // Publish the exact accepted scope only after every durable component has
     // been validated. A failed restore must not leave another account's signer
     // or a half-valid onboarding scope active.

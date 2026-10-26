@@ -345,6 +345,39 @@ pub(super) fn account_data_value(value: Value) -> Result<Value> {
     Ok(serde_json::to_value(envelope)?)
 }
 
+// Fixture-only decryption through the SDK; never emits keys or ciphertext.
+pub(super) fn open_client_ui_value(value: Value) -> Result<Value> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Input {
+        account_id: AccountId,
+        key: String,
+        account_secret: String,
+        value: arkret_sdk::account_data_crypto::AccountDataEncryptedValue,
+    }
+    let mut input: Input = serde_json::from_value(value)?;
+    ensure!(
+        input.key == "ak.client.ui_state",
+        "fixture supports only client UI values"
+    );
+    input.account_id.validate()?;
+    let encoded = zeroize::Zeroizing::new(std::mem::take(&mut input.account_secret));
+    let bytes = zeroize::Zeroizing::new(
+        arkret_sdk::base64url_decode(encoded.as_str())
+            .map_err(|_| anyhow::anyhow!("fixture account secret is not canonical base64url"))?,
+    );
+    ensure!(bytes.len() == 32, "fixture account secret must be 32 bytes");
+    let mut secret = zeroize::Zeroizing::new([0u8; 32]);
+    secret.copy_from_slice(&bytes);
+    arkret_sdk::account_data_crypto::open_account_data_value(
+        &secret,
+        &ActorId::account(input.account_id),
+        &input.key,
+        &input.value,
+    )
+    .map_err(Into::into)
+}
+
 // Private author/verifier input; all protocol values use the SDK models.
 pub(super) fn runtime_candidate(value: Value) -> Result<Value> {
     use arkret_models_collaboration::agent_operations::AgentPairingBootstrap;
@@ -419,4 +452,55 @@ pub(super) fn runtime_candidate(value: Value) -> Result<Value> {
         .build_approval_request()?
         .body,
     )?)
+}
+
+#[cfg(test)]
+mod client_ui_fixture_tests {
+    use super::*;
+
+    fn fixture() -> Value {
+        let account: AccountId = serde_json::from_value(serde_json::json!({
+            "principal_id": "ak:did_core:web:alice.example",
+            "station_id": "ak:did_core:web:station.example",
+        }))
+        .unwrap();
+        let envelope = arkret_sdk::account_data_crypto::seal_account_data_value(
+            &[18; 32],
+            &ActorId::account(account.clone()),
+            "ak.client.ui_state",
+            &serde_json::json!({ "language": "zh" }),
+        )
+        .unwrap();
+        serde_json::json!({
+            "account_id": account, "key": "ak.client.ui_state",
+            "account_secret": arkret_sdk::base64url_encode([18; 32]), "value": envelope,
+        })
+    }
+
+    #[test]
+    fn client_ui_fixture_opens_exact_sdk_language_value() {
+        assert_eq!(
+            open_client_ui_value(fixture()).unwrap(),
+            serde_json::json!({ "language": "zh" }),
+        );
+    }
+
+    #[test]
+    fn client_ui_fixture_rejects_wrong_holder_key_secret_and_ciphertext() {
+        for dimension in ["holder", "key", "secret", "ciphertext", "unknown_field"] {
+            let mut input = fixture();
+            match dimension {
+                "holder" => {
+                    input["account_id"]["station_id"] = "ak:did_core:web:other.example".into()
+                }
+                "key" => input["key"] = "ak.account.blocklist".into(),
+                "secret" => input["account_secret"] = arkret_sdk::base64url_encode([19; 32]).into(),
+                "ciphertext" => {
+                    input["value"]["ciphertext"] = arkret_sdk::base64url_encode([0; 32]).into()
+                }
+                _ => input["obsolete"] = true.into(),
+            }
+            assert!(open_client_ui_value(input).is_err());
+        }
+    }
 }

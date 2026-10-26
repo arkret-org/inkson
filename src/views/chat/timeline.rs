@@ -1,183 +1,157 @@
-//! Pure chat timeline projection and rendering components.
-
-use super::model::*;
-use crate::components::ActorIdentityLabel;
-use crate::views::helpers::{MentionNode, short_protocol_id};
+//! Semantic chat text and participant presentation.
+use super::*;
 
 pub(super) fn render_message_text_block(
-    key: String,
     text: String,
-    mentions: Vec<MentionNode>,
-    base_url: String,
-) -> Element {
-    let parts = mention_inline_parts(&text, &mentions, &base_url);
-    rsx! {
-        p {
-            key: "{key}",
-            class: "content-block-text",
-            "data-testid": "content-block-text",
-            for (idx, part) in parts.into_iter().enumerate() {
-                {
-                    let part_key = format!("{key}-part-{idx}");
-                    if let Some(label) = part.mention_label {
-                        let class = if part.is_local {
-                            "mention-token is-local"
-                        } else {
-                            "mention-token is-remote"
-                        };
-                        rsx! {
-                            span {
-                                key: "{part_key}",
-                                class: "{class}",
-                                "data-testid": "message-event-mention",
-                                title: "{label}",
-                                "{part.text}"
-                            }
-                        }
-                    } else {
-                        rsx! {
-                            span { key: "{part_key}", "{part.text}" }
-                        }
-                    }
+    mentions: &[MentionNode],
+    base_url: &str,
+) -> View {
+    let parts = mention_inline_parts(&text, mentions, base_url);
+    let children = parts
+        .into_iter()
+        .map(|part| {
+            let class = if part.mention_label.is_some() {
+                if part.is_local {
+                    "mention-token is-local message-event-mention"
+                } else {
+                    "mention-token is-remote message-event-mention"
                 }
-            }
-        }
-    }
+            } else {
+                "message-text-part"
+            };
+            Box::new(glory::ui::text().class(class).content(part.text)) as View
+        })
+        .collect::<Vec<_>>();
+    Box::new(view().class("content-block-text").fill(children))
 }
 
 pub(super) fn render_message_body(
+    scope: &Scope,
+    context: Rc<crate::presentation::InksonContext>,
     body: &str,
     format: Option<arkret_sdk::TextFormat>,
     mentions: &[MentionNode],
     base_url: &str,
-) -> Element {
+) -> View {
     let blocks = crate::content::parse_message_body_with_format(body, format);
     if mentions.is_empty() {
-        return crate::content::render_blocks(&blocks);
+        return crate::content::render_blocks(scope, context, &blocks);
     }
-
-    let owned_mentions = mentions.to_vec();
-    let base_url = base_url.to_owned();
-    rsx! {
-        div { class: "content-blocks", "data-testid": "content-blocks",
-            for (idx, block) in blocks.into_iter().enumerate() {
-                {
-                    let key = format!("content-block-{idx}");
-                    match block {
-                        crate::content::ContentBlock::Text(text) => {
-                            render_message_text_block(
-                                key,
-                                text,
-                                owned_mentions.clone(),
-                                base_url.clone(),
-                            )
-                        }
-                        other => {
-                            let single = vec![other];
-                            rsx! {
-                                div { key: "{key}",
-                                    {crate::content::render_blocks(&single)}
-                                }
-                            }
-                        }
-                    }
-                }
+    let children = blocks
+        .into_iter()
+        .map(|block| match block {
+            crate::content::ContentBlock::Text(text) => {
+                render_message_text_block(text, mentions, base_url)
             }
-        }
-    }
+            other => crate::content::render_blocks(scope, context.clone(), &[other]),
+        })
+        .collect();
+    super::native::block("content-blocks", children)
 }
 
-#[component]
-pub(super) fn DiscussionParticipantRow(
-    participant: SpaceParticipant,
-    participants: Vec<SpaceParticipant>,
-    display_label: String,
-    nested_agent: bool,
-    show_binding_details: bool,
-) -> Element {
-    let participant_id_attr = participant.roster_key();
-    let participant_id_label = short_protocol_id(participant.principal_id.as_str());
-    let owner_label = agent_controller_label(&participant, &participants);
-    let selector_label = agent_selector_label(&participant);
-    let agent_slug = participant
+pub(super) struct DiscussionParticipantRowProps {
+    pub participant: SpaceParticipant,
+    pub participants: Vec<SpaceParticipant>,
+    pub display_label: String,
+    pub nested_agent: bool,
+    pub show_binding_details: bool,
+}
+pub(super) fn discussion_participant_row(
+    scope: &Scope,
+    context: Rc<crate::presentation::InksonContext>,
+    props: DiscussionParticipantRowProps,
+) -> View {
+    use super::native::block;
+    use crate::presentation::widgets::{line, paragraph, plain};
+    let participant = props.participant;
+    let id = participant.roster_key();
+    let owner = agent_controller_label(&participant, &props.participants);
+    let selector = agent_selector_label(&participant);
+    let slug = participant
         .agent_metadata
         .as_ref()
         .map(|metadata| metadata.agent_slug.clone())
         .filter(|slug| !slug.trim().is_empty());
-    let identity_label = agent_slug.clone().unwrap_or_else(|| display_label.clone());
-    let controller_principal_id_attr = participant
-        .agent_metadata
-        .as_ref()
-        .map(|metadata| metadata.controller_principal_id.clone())
-        .unwrap_or_default();
     let row_class = if participant.is_self {
         "contact-row participant-row self"
-    } else if nested_agent {
+    } else if props.nested_agent {
         "contact-row participant-row participant-agent-row"
     } else if participant.is_agent {
         "contact-row participant-row agent"
     } else {
         "contact-row participant-row"
     };
-    rsx! {
-        div {
-            class: "{row_class}",
-            "data-testid": if nested_agent { "discussion-agent-row" } else { "discussion-user-row" },
-            "data-agent-controller-principal-id": "{controller_principal_id_attr}",
-            crate::components::IdentityAvatar {
-                seed: participant_id_attr.clone(),
-                alt_text: display_label.clone(),
-                class: "avatar-img participant-avatar".to_owned(),
-            }
-            div { class: "participant-main",
-                strong {
-                    ActorIdentityLabel {
-                        label: identity_label,
-                        title: Some(participant_id_attr.clone()),
-                        class: Some("mono participant-id".to_owned()),
-                        test_id: Some("participant".to_owned()),
-                        self_badge_test_id: Some("participant-self-badge".to_owned()),
-                        agent_badge_test_id: Some("member-badge-agent".to_owned()),
-                        is_self: participant.is_self,
-                        is_agent: participant.is_agent,
-                        agent_slug,
-                        agent_selector: None,
-                    }
-                }
-                if let Some(owner) = owner_label.as_ref() {
-                    div {
-                        class: "muted participant-agent-subline",
-                        "data-testid": "participant-agent-owner",
-                        "agent of {owner}"
-                    }
-                }
-                if let Some(selector) = selector_label.as_ref() {
-                    div {
-                        class: "mono muted participant-agent-selector",
-                        "data-testid": "participant-agent-selector",
-                        "@{selector}"
-                    }
-                }
-                div { class: "participant-badges",
-                    span {
-                        class: "badge participant-badge member",
-                        "{participant.role.label()}"
-                    }
-                }
-                if show_binding_details {
-                    details { class: "binding-context-details",
-                        summary { class: "muted", {crate::i18n::tr("chat.binding_context.details")} }
-                        div { class: "mono muted", title: "{participant_id_attr}",
-                            "{participant_id_label}"
-                        }
-                        if let Some(selector) = selector_label.clone() {
-                            div { class: "mono muted", "@{selector}" }
-                        }
-                    }
-                }
-            }
-        }
+    let avatar = crate::components::identity_avatar(
+        scope,
+        context.clone(),
+        crate::components::IdentityAvatarProps {
+            seed: id.clone(),
+            alt_text: props.display_label.clone(),
+            blob_ref: None,
+            class: "avatar-img participant-avatar".into(),
+            test_id: None,
+        },
+    );
+    let identity = crate::components::actor_identity_label(
+        scope,
+        context.clone(),
+        crate::components::ActorIdentityLabelProps {
+            label: slug.clone().unwrap_or(props.display_label),
+            title: Some(id.clone()),
+            class: Some("mono participant-id".into()),
+            is_self: participant.is_self,
+            is_agent: participant.is_agent,
+            agent_slug: slug,
+            ..Default::default()
+        },
+    );
+    let mut children = vec![identity];
+    if let Some(owner) = owner {
+        children.push(paragraph(
+            "muted participant-agent-subline participant-agent-owner",
+            format!("agent of {owner}"),
+        ));
     }
+    if let Some(selector) = selector.as_ref() {
+        children.push(paragraph(
+            "mono muted participant-agent-selector",
+            format!("@{selector}"),
+        ));
+    }
+    children.push(line(
+        "participant-badges",
+        vec![paragraph(
+            "badge participant-badge member",
+            participant.role.label().to_owned(),
+        )],
+    ));
+    if props.show_binding_details {
+        let mut details = vec![paragraph(
+            "mono muted",
+            short_protocol_id(participant.principal_id.as_str()),
+        )];
+        if let Some(selector) = selector {
+            details.push(plain(format!("@{selector}")));
+        }
+        let details = Rc::new(std::cell::RefCell::new(Some(block(
+            "binding-context-details-content",
+            details,
+        ))));
+        children.push(Box::new(
+            sapid::collapsible(format!("binding-{}", uuid_v7()))
+                .unstyled()
+                .class("binding-context-details")
+                .content_policy(sapid::ContentPolicy::KeepMounted)
+                .label(context.translated(scope, "chat.binding_context.details"))
+                .content(move || {
+                    details
+                        .borrow_mut()
+                        .take()
+                        .unwrap_or_else(crate::presentation::widgets::empty)
+                }),
+        ));
+    }
+    line(row_class, vec![avatar, block("participant-main", children)])
 }
 
 pub(super) fn mention_nodes_to_values(mentions: &[MentionNode]) -> Vec<serde_json::Value> {
@@ -185,20 +159,4 @@ pub(super) fn mention_nodes_to_values(mentions: &[MentionNode]) -> Vec<serde_jso
         .iter()
         .filter_map(|mention| serde_json::to_value(mention).ok())
         .collect()
-}
-
-pub(super) fn scroll_chat_feed_to_offset(scroll_top: f64) {
-    let script = format!(
-        r#"
-setTimeout(() => {{
-  const panels = document.querySelectorAll('[data-testid="chat-panel"]');
-  const panel = panels[panels.length - 1];
-  const feed = panel && panel.querySelector('[data-testid="message-list"]');
-  if (feed) {{
-    feed.scrollTop = {scroll_top};
-  }}
-}}, 0);
-"#
-    );
-    let _ = document::eval(&script);
 }

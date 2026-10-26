@@ -1,128 +1,96 @@
-use dioxus::prelude::*;
-use dioxus_router::Routable;
-
 use crate::views::AppView;
-
-/// All navigable routes in the application.
-/// Each variant maps to a URL path and a corresponding View.
-#[derive(Clone, Debug, PartialEq, Routable)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Route {
-    #[layout(crate::app::RouterView)]
-    #[route("/", RoutePage)]
     Dashboard,
-
-    #[route("/login", RoutePage)]
     Login,
-
-    #[route("/register", RoutePage)]
     Register,
-
-    #[route("/auth/callback", RoutePage)]
     AuthCallback,
-
-    #[route("/realms/manage", RoutePage)]
     RealmsManage,
-
-    #[route("/realms/principal-control", RoutePage)]
     PrincipalControl,
-
-    #[route("/realms/:realm_id", RealmPage)]
-    Realm { realm_id: String },
+    Realm {
+        realm_id: String,
+    },
 
     /// Optional `?message=` deep-links a single message: the ChatPanel
     /// scrolls it into view and flashes it on arrival. Empty (the common
     /// case) keeps the plain per-realm behavior. See design/route-view-ia.md
     /// §3.2.
-    #[route("/chat/:realm_id?:message", ChatRealmPage)]
-    Chat { realm_id: String, message: String },
-
-    #[route("/direct/:realm_id/:strand_id", DirectConversationPage)]
-    DirectConversation { realm_id: String, strand_id: String },
-
-    #[route("/directory", RoutePage)]
+    Chat {
+        realm_id: String,
+        message: String,
+    },
+    DirectConversation {
+        realm_id: String,
+        strand_id: String,
+    },
     Directory,
-
-    #[route("/contacts/manage", RoutePage)]
     ContactsManage,
-
-    #[route("/contacts", RoutePage)]
     Contacts,
-
-    #[route("/setup", RoutePage)]
     Setup,
-
-    #[route("/setup/:section", SetupSectionPage)]
-    SetupSection { section: String },
-
-    #[route("/settings", RoutePage)]
+    SetupSection {
+        section: String,
+    },
     Settings,
 
     /// G3.Y1 — device management (list + revoke). Static segment so
-    /// dioxus-router matches this before `/settings/:section` falls
+    /// the route parser matches this before `/settings/:section` falls
     /// through to the generic `SettingsPanel`.
-    #[route("/settings/devices", RoutePage)]
     SettingsDevices,
 
     /// G3.Y1 — QR-driven pairing for a sibling device. Live on its
     /// own URL so the e2e harness can deep-link into the pair flow
     /// without scrolling through the device list.
-    #[route("/settings/devices/pair", RoutePage)]
     SettingsDevicesPair,
 
     /// Recovery settings. Hosts the broader recovery-options aggregator
     /// under the Settings shell.
-    #[route("/settings/recovery", RoutePage)]
     SettingsRecovery,
-
-    #[route("/settings/:section?:filter", SettingsSectionPage)]
-    SettingsSection { section: String, filter: String },
-
-    #[route("/realms/:realm_id/members", RealmMembersPage)]
-    RealmMembers { realm_id: String },
-
-    #[route("/realms/:realm_id/circles", CirclesPage)]
-    Circles { realm_id: String },
-
-    #[route("/realms/:realm_id/circles/:circle_id", CircleDetailPage)]
-    CircleDetail { realm_id: String, circle_id: String },
-
-    #[route("/realms/:realm_id/settings", RealmAdminPage)]
-    RealmAdmin { realm_id: String },
-
-    #[route("/realms/:realm_id/settings/:section", RealmAdminSectionPage)]
-    RealmAdminSection { realm_id: String, section: String },
-
-    #[route("/audit", RoutePage)]
+    SettingsSection {
+        section: String,
+        filter: String,
+    },
+    RealmMembers {
+        realm_id: String,
+    },
+    Circles {
+        realm_id: String,
+    },
+    CircleDetail {
+        realm_id: String,
+        circle_id: String,
+    },
+    RealmAdmin {
+        realm_id: String,
+    },
+    RealmAdminSection {
+        realm_id: String,
+        section: String,
+    },
     Audit,
 
     /// T7.1 — Developer Tools / Diagnostics aggregator. Hosts the
     /// protocol-level details (schema ids, event kinds, raw event log,
     /// profile id, conformance) that used to leak into the main flow.
-    #[route("/developer", RoutePage)]
     Developer,
-
-    #[route("/kanban", RoutePage)]
     Kanban,
-
-    #[route("/kanban/:realm_id", KanbanRealmPage)]
-    KanbanRealm { realm_id: String },
+    KanbanRealm {
+        realm_id: String,
+    },
 
     /// AKP board-persistence — the selected Board id is part of the URL
     /// so a page refresh (or a deep link) restores the exact board the
     /// user was looking at instead of falling back to
     /// `board_options.first()`. `realm_id` is the Realm id; `board_id`
     /// is the board Space-container id.
-    #[route("/kanban/:realm_id/board/:board_id", KanbanBoardPage)]
-    KanbanBoard { realm_id: String, board_id: String },
+    KanbanBoard {
+        realm_id: String,
+        board_id: String,
+    },
 
     /// Board + card-detail deep link. Carries the board id alongside the
     /// strand id so a refresh on an open card restores the right board
     /// even when the card is a locally-queued draft the server
     /// projection does not yet know about.
-    #[route(
-        "/kanban/:realm_id/board/:board_id/task/:task_id?:tab",
-        KanbanBoardTaskPage
-    )]
     KanbanBoardTask {
         realm_id: String,
         board_id: String,
@@ -133,17 +101,12 @@ pub enum Route {
     /// Board-less card deep link. Retained for share links / global
     /// search results that only know the strand id; the board is resolved
     /// from the projection (or local queue) on arrival.
-    #[route("/kanban/:realm_id/task/:task_id?:tab", KanbanTaskPage)]
     KanbanTask {
         realm_id: String,
         task_id: String,
         tab: String,
     },
-
-    #[route("/notifications", RoutePage)]
     Notifications,
-
-    #[route("/notifications/settings", NotificationsSettingsPage)]
     NotificationsSettings,
 
     /// Live call surface. Optional query parameters deep-link an in-progress
@@ -151,7 +114,6 @@ pub enum Route {
     /// callee DID, empty for SFU group calls), `realm_id`, `video` (`1`
     /// for a video call, else audio-only), and `incoming` (`1` when this
     /// is an inbound ring being answered).
-    #[route("/call?:call_id&:peer&:realm_id&:video&:incoming", CallPage)]
     Call {
         call_id: String,
         peer: String,
@@ -159,17 +121,9 @@ pub enum Route {
         video: String,
         incoming: String,
     },
-
-    #[route("/recovery", RoutePage)]
     Recovery,
-
-    #[route("/onboarding", RoutePage)]
     Onboarding,
-
-    #[route("/quarantine", RoutePage)]
     Quarantine,
-
-    #[route("/applets", RoutePage)]
     Applets,
 
     /// A6.1 — global cross-Space message search. Triggered by Cmd+F
@@ -177,121 +131,313 @@ pub enum Route {
     /// directly navigating to `/search`. The current Arkret catalog has no
     /// spec-defined HTTP endpoint for global index search, so the panel fails
     /// closed until a catalog entry lands.
-    #[route("/search", RoutePage)]
     Search,
 }
 
-#[component]
-fn RoutePage() -> Element {
-    rsx! {}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RouteParseError;
+
+impl std::fmt::Display for RouteParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("unknown or malformed application route")
+    }
+}
+impl std::error::Error for RouteParseError {}
+
+fn encode_segment(value: &str) -> String {
+    let mut encoded = String::new();
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~' | b':') {
+            encoded.push(char::from(byte));
+        } else {
+            use std::fmt::Write;
+            let _ = write!(encoded, "%{byte:02X}");
+        }
+    }
+    encoded
 }
 
-#[component]
-fn ChatRealmPage(realm_id: String, message: String) -> Element {
-    let _ = (realm_id, message);
-    rsx! {}
+fn decode_segment(value: &str) -> Result<String, RouteParseError> {
+    let mut bytes = Vec::new();
+    let mut remaining = value.as_bytes();
+    while let Some((&byte, rest)) = remaining.split_first() {
+        if byte == b'%' {
+            if rest.len() < 2 {
+                return Err(RouteParseError);
+            }
+            let hex = std::str::from_utf8(&rest[..2]).map_err(|_| RouteParseError)?;
+            bytes.push(u8::from_str_radix(hex, 16).map_err(|_| RouteParseError)?);
+            remaining = &rest[2..];
+        } else {
+            bytes.push(byte);
+            remaining = rest;
+        }
+    }
+    String::from_utf8(bytes).map_err(|_| RouteParseError)
 }
 
-#[component]
-fn DirectConversationPage(realm_id: String, strand_id: String) -> Element {
-    let _ = (realm_id, strand_id);
-    rsx! {}
+impl std::fmt::Display for Route {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let (path, query): (String, Vec<(&str, &str)>) = match self {
+            Self::Dashboard => ("/".to_owned(), vec![]),
+            Self::Login => ("/login".to_owned(), vec![]),
+            Self::Register => ("/register".to_owned(), vec![]),
+            Self::AuthCallback => ("/auth/callback".to_owned(), vec![]),
+            Self::RealmsManage => ("/realms/manage".to_owned(), vec![]),
+            Self::PrincipalControl => ("/realms/principal-control".to_owned(), vec![]),
+            Self::Realm { realm_id } => (
+                format!("/realms/{realm_id}", realm_id = encode_segment(realm_id)),
+                vec![],
+            ),
+            Self::Chat { realm_id, message } => (
+                format!("/chat/{realm_id}", realm_id = encode_segment(realm_id)),
+                vec![("message", message.as_str())],
+            ),
+            Self::DirectConversation {
+                realm_id,
+                strand_id,
+            } => (
+                format!(
+                    "/direct/{realm_id}/{strand_id}",
+                    realm_id = encode_segment(realm_id),
+                    strand_id = encode_segment(strand_id)
+                ),
+                vec![],
+            ),
+            Self::Directory => ("/directory".to_owned(), vec![]),
+            Self::ContactsManage => ("/contacts/manage".to_owned(), vec![]),
+            Self::Contacts => ("/contacts".to_owned(), vec![]),
+            Self::Setup => ("/setup".to_owned(), vec![]),
+            Self::SetupSection { section } => (
+                format!("/setup/{section}", section = encode_segment(section)),
+                vec![],
+            ),
+            Self::Settings => ("/settings".to_owned(), vec![]),
+            Self::SettingsDevices => ("/settings/devices".to_owned(), vec![]),
+            Self::SettingsDevicesPair => ("/settings/devices/pair".to_owned(), vec![]),
+            Self::SettingsRecovery => ("/settings/recovery".to_owned(), vec![]),
+            Self::SettingsSection { section, filter } => (
+                format!("/settings/{section}", section = encode_segment(section)),
+                vec![("filter", filter.as_str())],
+            ),
+            Self::RealmMembers { realm_id } => (
+                format!(
+                    "/realms/{realm_id}/members",
+                    realm_id = encode_segment(realm_id)
+                ),
+                vec![],
+            ),
+            Self::Circles { realm_id } => (
+                format!(
+                    "/realms/{realm_id}/circles",
+                    realm_id = encode_segment(realm_id)
+                ),
+                vec![],
+            ),
+            Self::CircleDetail {
+                realm_id,
+                circle_id,
+            } => (
+                format!(
+                    "/realms/{realm_id}/circles/{circle_id}",
+                    realm_id = encode_segment(realm_id),
+                    circle_id = encode_segment(circle_id)
+                ),
+                vec![],
+            ),
+            Self::RealmAdmin { realm_id } => (
+                format!(
+                    "/realms/{realm_id}/settings",
+                    realm_id = encode_segment(realm_id)
+                ),
+                vec![],
+            ),
+            Self::RealmAdminSection { realm_id, section } => (
+                format!(
+                    "/realms/{realm_id}/settings/{section}",
+                    realm_id = encode_segment(realm_id),
+                    section = encode_segment(section)
+                ),
+                vec![],
+            ),
+            Self::Audit => ("/audit".to_owned(), vec![]),
+            Self::Developer => ("/developer".to_owned(), vec![]),
+            Self::Kanban => ("/kanban".to_owned(), vec![]),
+            Self::KanbanRealm { realm_id } => (
+                format!("/kanban/{realm_id}", realm_id = encode_segment(realm_id)),
+                vec![],
+            ),
+            Self::KanbanBoard { realm_id, board_id } => (
+                format!(
+                    "/kanban/{realm_id}/board/{board_id}",
+                    realm_id = encode_segment(realm_id),
+                    board_id = encode_segment(board_id)
+                ),
+                vec![],
+            ),
+            Self::KanbanBoardTask {
+                realm_id,
+                board_id,
+                task_id,
+                tab,
+            } => (
+                format!(
+                    "/kanban/{realm_id}/board/{board_id}/task/{task_id}",
+                    realm_id = encode_segment(realm_id),
+                    board_id = encode_segment(board_id),
+                    task_id = encode_segment(task_id)
+                ),
+                vec![("tab", tab.as_str())],
+            ),
+            Self::KanbanTask {
+                realm_id,
+                task_id,
+                tab,
+            } => (
+                format!(
+                    "/kanban/{realm_id}/task/{task_id}",
+                    realm_id = encode_segment(realm_id),
+                    task_id = encode_segment(task_id)
+                ),
+                vec![("tab", tab.as_str())],
+            ),
+            Self::Notifications => ("/notifications".to_owned(), vec![]),
+            Self::NotificationsSettings => ("/notifications/settings".to_owned(), vec![]),
+            Self::Call {
+                call_id,
+                peer,
+                realm_id,
+                video,
+                incoming,
+            } => (
+                "/call".to_owned(),
+                vec![
+                    ("call_id", call_id.as_str()),
+                    ("peer", peer.as_str()),
+                    ("realm_id", realm_id.as_str()),
+                    ("video", video.as_str()),
+                    ("incoming", incoming.as_str()),
+                ],
+            ),
+            Self::Recovery => ("/recovery".to_owned(), vec![]),
+            Self::Onboarding => ("/onboarding".to_owned(), vec![]),
+            Self::Quarantine => ("/quarantine".to_owned(), vec![]),
+            Self::Applets => ("/applets".to_owned(), vec![]),
+            Self::Search => ("/search".to_owned(), vec![]),
+        };
+        f.write_str(&path)?;
+        let mut serializer = url::form_urlencoded::Serializer::new(String::new());
+        for (name, value) in query {
+            if !value.is_empty() {
+                serializer.append_pair(name, value);
+            }
+        }
+        let query = serializer.finish();
+        if !query.is_empty() {
+            write!(f, "?{query}")?;
+        }
+        Ok(())
+    }
 }
 
-#[component]
-fn RealmPage(realm_id: String) -> Element {
-    let _ = realm_id;
-    rsx! {}
+impl std::str::FromStr for Route {
+    type Err = RouteParseError;
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let value = value.split('#').next().unwrap_or(value);
+        let (path, query) = value.split_once('?').unwrap_or((value, ""));
+        let parts = path.trim_start_matches('/').split('/').collect::<Vec<_>>();
+        let query = url::form_urlencoded::parse(query.as_bytes())
+            .into_owned()
+            .collect::<std::collections::HashMap<_, _>>();
+        match parts.as_slice() {
+            ["kanban", realm_id, "board", board_id, "task", task_id] => Ok(Self::KanbanBoardTask {
+                realm_id: decode_segment(realm_id)?,
+                board_id: decode_segment(board_id)?,
+                task_id: decode_segment(task_id)?,
+                tab: query.get("tab").cloned().unwrap_or_default(),
+            }),
+            ["realms", realm_id, "circles", circle_id] => Ok(Self::CircleDetail {
+                realm_id: decode_segment(realm_id)?,
+                circle_id: decode_segment(circle_id)?,
+            }),
+            ["realms", realm_id, "settings", section] => Ok(Self::RealmAdminSection {
+                realm_id: decode_segment(realm_id)?,
+                section: decode_segment(section)?,
+            }),
+            ["kanban", realm_id, "board", board_id] => Ok(Self::KanbanBoard {
+                realm_id: decode_segment(realm_id)?,
+                board_id: decode_segment(board_id)?,
+            }),
+            ["kanban", realm_id, "task", task_id] => Ok(Self::KanbanTask {
+                realm_id: decode_segment(realm_id)?,
+                task_id: decode_segment(task_id)?,
+                tab: query.get("tab").cloned().unwrap_or_default(),
+            }),
+            ["settings", "devices", "pair"] => Ok(Self::SettingsDevicesPair),
+            ["realms", realm_id, "members"] => Ok(Self::RealmMembers {
+                realm_id: decode_segment(realm_id)?,
+            }),
+            ["realms", realm_id, "circles"] => Ok(Self::Circles {
+                realm_id: decode_segment(realm_id)?,
+            }),
+            ["realms", realm_id, "settings"] => Ok(Self::RealmAdmin {
+                realm_id: decode_segment(realm_id)?,
+            }),
+            ["direct", realm_id, strand_id] => Ok(Self::DirectConversation {
+                realm_id: decode_segment(realm_id)?,
+                strand_id: decode_segment(strand_id)?,
+            }),
+            ["auth", "callback"] => Ok(Self::AuthCallback),
+            ["realms", "manage"] => Ok(Self::RealmsManage),
+            ["realms", "principal-control"] => Ok(Self::PrincipalControl),
+            ["contacts", "manage"] => Ok(Self::ContactsManage),
+            ["settings", "devices"] => Ok(Self::SettingsDevices),
+            ["settings", "recovery"] => Ok(Self::SettingsRecovery),
+            ["notifications", "settings"] => Ok(Self::NotificationsSettings),
+            ["realms", realm_id] => Ok(Self::Realm {
+                realm_id: decode_segment(realm_id)?,
+            }),
+            ["chat", realm_id] => Ok(Self::Chat {
+                realm_id: decode_segment(realm_id)?,
+                message: query.get("message").cloned().unwrap_or_default(),
+            }),
+            ["setup", section] => Ok(Self::SetupSection {
+                section: decode_segment(section)?,
+            }),
+            ["settings", section] => Ok(Self::SettingsSection {
+                section: decode_segment(section)?,
+                filter: query.get("filter").cloned().unwrap_or_default(),
+            }),
+            ["kanban", realm_id] => Ok(Self::KanbanRealm {
+                realm_id: decode_segment(realm_id)?,
+            }),
+            [""] => Ok(Self::Dashboard),
+            ["login"] => Ok(Self::Login),
+            ["register"] => Ok(Self::Register),
+            ["directory"] => Ok(Self::Directory),
+            ["contacts"] => Ok(Self::Contacts),
+            ["setup"] => Ok(Self::Setup),
+            ["settings"] => Ok(Self::Settings),
+            ["audit"] => Ok(Self::Audit),
+            ["developer"] => Ok(Self::Developer),
+            ["kanban"] => Ok(Self::Kanban),
+            ["notifications"] => Ok(Self::Notifications),
+            ["call"] => Ok(Self::Call {
+                call_id: query.get("call_id").cloned().unwrap_or_default(),
+                peer: query.get("peer").cloned().unwrap_or_default(),
+                realm_id: query.get("realm_id").cloned().unwrap_or_default(),
+                video: query.get("video").cloned().unwrap_or_default(),
+                incoming: query.get("incoming").cloned().unwrap_or_default(),
+            }),
+            ["recovery"] => Ok(Self::Recovery),
+            ["onboarding"] => Ok(Self::Onboarding),
+            ["quarantine"] => Ok(Self::Quarantine),
+            ["applets"] => Ok(Self::Applets),
+            ["search"] => Ok(Self::Search),
+            _ => Err(RouteParseError),
+        }
+    }
 }
-
-#[component]
-fn RealmMembersPage(realm_id: String) -> Element {
-    let _ = realm_id;
-    rsx! {}
-}
-
-#[component]
-fn CirclesPage(realm_id: String) -> Element {
-    let _ = realm_id;
-    rsx! {}
-}
-
-#[component]
-fn CircleDetailPage(realm_id: String, circle_id: String) -> Element {
-    let _ = (realm_id, circle_id);
-    rsx! {}
-}
-
-#[component]
-fn SettingsSectionPage(section: String, filter: String) -> Element {
-    let _ = (section, filter);
-    rsx! {}
-}
-
-#[component]
-fn SetupSectionPage(section: String) -> Element {
-    let _ = section;
-    rsx! {}
-}
-
-#[component]
-fn RealmAdminPage(realm_id: String) -> Element {
-    let _ = realm_id;
-    rsx! {}
-}
-
-#[component]
-fn RealmAdminSectionPage(realm_id: String, section: String) -> Element {
-    let _ = (realm_id, section);
-    rsx! {}
-}
-
-#[component]
-fn KanbanRealmPage(realm_id: String) -> Element {
-    let _ = realm_id;
-    rsx! {}
-}
-
-#[component]
-fn KanbanTaskPage(realm_id: String, task_id: String, tab: String) -> Element {
-    let _ = (realm_id, task_id, tab);
-    rsx! {}
-}
-
-#[component]
-fn KanbanBoardPage(realm_id: String, board_id: String) -> Element {
-    let _ = (realm_id, board_id);
-    rsx! {}
-}
-
-#[component]
-fn KanbanBoardTaskPage(
-    realm_id: String,
-    board_id: String,
-    task_id: String,
-    tab: String,
-) -> Element {
-    let _ = (realm_id, board_id, task_id, tab);
-    rsx! {}
-}
-
-#[component]
-fn NotificationsSettingsPage() -> Element {
-    rsx! {}
-}
-
-#[component]
-fn CallPage(
-    call_id: String,
-    peer: String,
-    realm_id: String,
-    video: String,
-    incoming: String,
-) -> Element {
-    let _ = (call_id, peer, realm_id, video, incoming);
-    rsx! {}
-}
-
 impl Route {
     /// Convert a Route to the corresponding View enum variant.
     pub fn to_view(&self) -> AppView {
@@ -427,6 +573,52 @@ impl From<AppView> for Route {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn deep_links_preserve_encoded_segments_and_query_values() {
+        let routes = [
+            Route::Chat {
+                realm_id: "ak:realm:escaped/path 中文".into(),
+                message: "ak:message:a&b+c/#".into(),
+            },
+            Route::KanbanBoardTask {
+                realm_id: "ak:realm:a".into(),
+                board_id: "ak:space:b".into(),
+                task_id: "ak:strand:c".into(),
+                tab: "discussion".into(),
+            },
+            Route::SettingsSection {
+                section: "account".into(),
+                filter: "needs review + mine".into(),
+            },
+            Route::Call {
+                call_id: "ak:call:a".into(),
+                peer: "did:web:example.org".into(),
+                realm_id: String::new(),
+                video: "1".into(),
+                incoming: "1".into(),
+            },
+        ];
+        for route in routes {
+            assert_eq!(route.to_string().parse::<Route>(), Ok(route));
+        }
+    }
+
+    #[test]
+    fn static_paths_and_malformed_identifiers_do_not_become_dynamic_routes() {
+        assert_eq!(
+            "/settings/devices/pair".parse::<Route>(),
+            Ok(Route::SettingsDevicesPair)
+        );
+        assert_eq!(
+            "/settings/recovery".parse::<Route>(),
+            Ok(Route::SettingsRecovery)
+        );
+        assert_eq!("/realms/manage".parse::<Route>(), Ok(Route::RealmsManage));
+        assert!("/chat/%GG".parse::<Route>().is_err());
+        assert!("/chat/%FF".parse::<Route>().is_err());
+        assert!("/unknown".parse::<Route>().is_err());
+    }
 
     #[test]
     fn test_route_to_view_roundtrip() {

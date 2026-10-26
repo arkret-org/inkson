@@ -1,0 +1,61 @@
+/* The original authenticated shell owns scrolling inside its viewport. */
+html[data-inkson-app-shell],
+html[data-inkson-app-shell] body,
+html[data-inkson-app-shell] #app {
+  height: 100%;
+  overflow: hidden;
+}
+
+/* Original default secondary controls, scoped to the application navigation. */
+.inkson-theme-dark .sidebar {
+  --shell-control-background: #223129;
+  --shell-control-foreground: #e7efe9;
+}
+.inkson-theme-light .sidebar {
+  --shell-control-background: #ebf0eb;
+  --shell-control-foreground: #19211c;
+}
+.sidebar .server-switch-button,
+.sidebar .scope-chip {
+  box-sizing: border-box;
+  height: 36px;
+  padding: 8px 16px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  font-family: inherit;
+  line-height: 20px;
+  white-space: nowrap;
+}
+.sidebar .server-switch-button {
+  font-size: 14px;
+  font-weight: 500;
+  background-color: var(--shell-control-background);
+  color: var(--shell-control-foreground);
+}
+.sidebar .scope-chip {
+  display: flex;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 700;
+}
+.sidebar .scope-chip:not(.active) {
+  background-color: var(--shell-control-background);
+  color: var(--shell-control-foreground);
+}
+.sidebar .server-switch-button:not(:disabled):hover,
+.sidebar .scope-chip:not(.active):not(:disabled):hover {
+  background-color: color-mix(in oklab, var(--shell-control-background) 80%, transparent);
+}
+
+.account-menu__key { color: var(--text-3); font-size: 11px; font-weight: 700; letter-spacing: 0.06em; }
+.account-menu__server { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-menu-scrim { border: 0; border-radius: 0; padding: 0; }
+
+/* The original Presence name was an inline span, with status in the same row. */
+.presence-row .presence-name { display: inline; }
+
+/* A Realm's passive security hint must not intercept the adjacent Realm link. */
+.sidebar-row:has(> a.realm-tree-item) > .sapid-tooltip[role="tooltip"] {
+  pointer-events: none;
+}

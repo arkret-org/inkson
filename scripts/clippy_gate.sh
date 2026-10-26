@@ -20,11 +20,13 @@
 #   scripts/clippy_gate.sh -p inkson       # narrow re-run, same contract
 
 set -eu
+. "$(dirname "$0")/build_env.sh"
 
-gate_dir="${INKSON_CLIPPY_GATE_DIR:-target/clippy-gate}"
-target_dir="${INKSON_CLIPPY_GATE_TARGET_DIR:-target/clippy}"
+gate_dir="${INKSON_CLIPPY_GATE_DIR:-$CARGO_TARGET_DIR/clippy-gate}"
+target_dir="${INKSON_CLIPPY_GATE_TARGET_DIR:-$CARGO_TARGET_DIR}"
 
 mkdir -p "$gate_dir"
+CARGO_TARGET_DIR="$target_dir" cargo metadata --locked --no-deps --format-version 1 > "$gate_dir/metadata.json"
 log="$gate_dir/clippy.log"
 summary="$gate_dir/summary.txt"
 status="$gate_dir/status.txt"
@@ -32,7 +34,7 @@ status="$gate_dir/status.txt"
 echo "clippy gate: target=$target_dir log=$log"
 
 set +e
-CARGO_TARGET_DIR="$target_dir" cargo clippy --locked \
+CARGO_TARGET_DIR="$target_dir" cargo clippy --locked --features app \
     --workspace --all-targets --all-features "$@" -- -D warnings > "$log" 2>&1
 code=$?
 set -e

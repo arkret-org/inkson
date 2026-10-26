@@ -1,250 +1,138 @@
+use std::rc::Rc;
+
+use glory::prelude::*;
+
 use super::*;
 use crate::api_error::is_auth_expired_error;
+use crate::presentation::InksonContext;
 
-/// Root-owned connection signals shared by bootstrap effects and explicit UI
-/// commands. This is a bundle of existing handles, not a second state store.
-#[derive(Clone, Copy, PartialEq)]
-pub(super) struct ConnectionRuntimeSignals {
-    pub(super) connection_status: Signal<String>,
-    pub(super) sync_cursor: Signal<String>,
-    pub(super) token: Signal<String>,
-    pub(super) principal_id: Signal<Option<arkret_sdk::DidCoreId>>,
-    pub(super) device_id: Signal<String>,
-    pub(super) selected_realm_id: Signal<String>,
-    pub(super) realm_tree_nodes: Signal<Vec<RealmTreeNode>>,
-    pub(super) projection_events: Signal<Vec<ProjectionEvent>>,
-    pub(super) device_queue: Signal<usize>,
-    pub(super) frontier_state: Signal<String>,
-    pub(super) crypto_state: Signal<String>,
-    pub(super) config_store: Signal<LocalConfigStore>,
-    pub(super) network_state: Signal<String>,
-    pub(super) last_error: Signal<Option<String>>,
-    pub(super) server_description: Signal<Option<ServiceDescribe>>,
-    pub(super) server_probe_status: Signal<String>,
-    pub(super) account_primary_handle: Signal<String>,
-    pub(super) personal_handles: Signal<Vec<String>>,
-    pub(super) personal_handles_status: Signal<String>,
-    pub(super) theme: Signal<String>,
-    pub(super) sync_generation: Signal<u64>,
-    pub(super) needs_device_authorization: Signal<bool>,
-    pub(super) device_authorization_check_complete: Signal<bool>,
-    pub(super) account_has_other_devices: Signal<bool>,
-    pub(super) sync_bootstrap_complete: Signal<bool>,
-    pub(super) session_boot_state: Signal<SessionBootState>,
-    pub(super) bootstrap_pending: Signal<bool>,
-    pub(super) did_resolution_health: Signal<crate::components::DidResolutionHealth>,
+pub(super) fn refresh_connection(_scope: &Scope, context: Rc<InksonContext>) {
+    refresh_connection_using(context, connect);
 }
-
-impl ConnectionRuntimeSignals {
-    pub(super) fn connect_context(
-        self,
-        session: crate::runtime::session::SessionCoordinator,
-        state_store: SyncSignal<LocalStateStore>,
-    ) -> ConnectContext {
-        ConnectContext {
-            session,
-            connection_status: self.connection_status,
-            sync_cursor: self.sync_cursor,
-            token: self.token,
-            principal_id: self.principal_id,
-            selected_realm_id: self.selected_realm_id,
-            realm_tree_nodes: self.realm_tree_nodes,
-            projection_events: self.projection_events,
-            device_queue: self.device_queue,
-            crypto_state: self.crypto_state,
-            config_store: self.config_store,
-            state_store,
-            network_state: self.network_state,
-            last_error: self.last_error,
-            server_description: self.server_description,
-            server_probe_status: self.server_probe_status,
-            account_primary_handle: self.account_primary_handle,
-            personal_handles: self.personal_handles,
-            personal_handles_status: self.personal_handles_status,
-            sync_generation: self.sync_generation,
-            needs_device_authorization: self.needs_device_authorization,
-            device_authorization_check_complete: self.device_authorization_check_complete,
-            account_has_other_devices: self.account_has_other_devices,
-            sync_bootstrap_complete: self.sync_bootstrap_complete,
-            session_boot_state: self.session_boot_state,
-            bootstrap_pending: self.bootstrap_pending,
-            did_resolution_health: self.did_resolution_health,
-        }
-    }
-}
-
-/// Explicit refresh from the mobile connection status. Keep the generation
-/// fence and bootstrap-ready reset ahead of the spawned connect attempt.
-pub(super) fn refresh_connection(
-    base: String,
-    runtime: ConnectionRuntimeSignals,
-    session: crate::runtime::session::SessionCoordinator,
-    state_store: SyncSignal<LocalStateStore>,
+pub(super) fn refresh_connection_using(
+    context: Rc<InksonContext>,
+    connector: impl FnOnce(String, Option<arkret_sdk::DidCoreId>, String, ConnectContext),
 ) {
-    let mut sync_generation = runtime.sync_generation;
-    let mut sync_bootstrap_complete = runtime.sync_bootstrap_complete;
-    sync_generation.set(sync_generation() + 1);
-    sync_bootstrap_complete.set(false);
-    connect(
-        base,
-        (runtime.principal_id)(),
-        (runtime.device_id)(),
-        runtime.connect_context(session, state_store),
-    );
-}
-
-#[derive(Clone)]
-pub(super) struct ServerSwitchHandlerContext {
-    pub(super) runtime: ConnectionRuntimeSignals,
-    pub(super) base_url: Signal<String>,
-    pub(super) state_store: SyncSignal<LocalStateStore>,
-    pub(super) personal_handles_lookup_key: Signal<String>,
-    pub(super) server_menu_open: Signal<bool>,
-    pub(super) session: crate::runtime::session::SessionCoordinator,
-}
-
-/// Refresh the current Station without discarding its durable account state.
-/// A different Station retains the cache/grant fence in `select_server`.
-pub(super) fn switch_server_and_connect(option_url: String, ctx: ServerSwitchHandlerContext) {
-    let next_url = normalize_server_url(&option_url);
-    let runtime = ctx.runtime;
-    if same_server_url(ctx.base_url.peek().as_str(), &next_url) {
-        let mut server_menu_open = ctx.server_menu_open;
-        server_menu_open.set(false);
-        refresh_connection(next_url, runtime, ctx.session, ctx.state_store);
-        return;
-    }
-    select_server(
-        next_url.clone(),
-        ServerSelectionContext {
-            base_url: ctx.base_url,
-            token: runtime.token,
-            sync_cursor: runtime.sync_cursor,
-            selected_realm_id: runtime.selected_realm_id,
-            realm_tree_nodes: runtime.realm_tree_nodes,
-            projection_events: runtime.projection_events,
-            device_queue: runtime.device_queue,
-            frontier_state: runtime.frontier_state,
-            crypto_state: runtime.crypto_state,
-            config_store: runtime.config_store,
-            state_store: ctx.state_store,
-            network_state: runtime.network_state,
-            last_error: runtime.last_error,
-            server_description: runtime.server_description,
-            server_probe_status: runtime.server_probe_status,
-            connection_status: runtime.connection_status,
-            principal_id: runtime.principal_id,
-            device_id: runtime.device_id,
-            account_primary_handle: runtime.account_primary_handle,
-            personal_handles: runtime.personal_handles,
-            personal_handles_status: runtime.personal_handles_status,
-            personal_handles_lookup_key: ctx.personal_handles_lookup_key,
-            sync_generation: runtime.sync_generation,
-        },
-    );
-    let mut server_menu_open = ctx.server_menu_open;
-    let mut sync_bootstrap_complete = runtime.sync_bootstrap_complete;
-    server_menu_open.set(false);
-    sync_bootstrap_complete.set(false);
-    connect(
-        next_url,
-        (runtime.principal_id)(),
-        (runtime.device_id)(),
-        runtime.connect_context(ctx.session, ctx.state_store),
-    );
-}
-
-#[derive(Clone)]
-pub(super) struct ManualSessionRefreshContext {
-    pub(super) session: crate::runtime::session::SessionCoordinator,
-    pub(super) token: Signal<String>,
-    pub(super) principal_id: Signal<Option<arkret_sdk::DidCoreId>>,
-    pub(super) active_account: Signal<Option<crate::config::ActiveAccountContext>>,
-    pub(super) account_session_state: Signal<String>,
-    pub(super) personal_handles_lookup_key: Signal<String>,
-    pub(super) account_identity_lookup_key: Signal<String>,
-    pub(super) account_primary_handle: Signal<String>,
-    pub(super) personal_handles: Signal<Vec<String>>,
-    pub(super) personal_handles_status: Signal<String>,
-    pub(super) last_error: Signal<Option<String>>,
-    pub(super) config_store: Signal<LocalConfigStore>,
-}
-
-/// Refresh the account viewer from a render-time base/session snapshot while
-/// reading identity signals at click time and validating the live accepted
-/// account again after the network await.
-pub(super) fn refresh_current_session(base: String, ctx: ManualSessionRefreshContext) {
-    let api_token = (ctx.token)();
-    let actor = (ctx.principal_id)();
-    let Some(active) = ctx.active_account.peek().clone() else {
-        let mut account_session_state = ctx.account_session_state;
-        account_session_state.set("Session identity is unavailable; sign in again.".to_owned());
+    let Some(owner) = context.state_scope() else {
         return;
     };
-    let mut personal_handles_lookup_key = ctx.personal_handles_lookup_key;
-    let mut account_identity_lookup_key = ctx.account_identity_lookup_key;
-    let mut account_session_state = ctx.account_session_state;
-    personal_handles_lookup_key.set(String::new());
-    account_identity_lookup_key.set(String::new());
-    account_session_state.set("Refreshing session".to_owned());
-    spawn(async move {
-        let mut principal_id = ctx.principal_id;
-        let mut last_error = ctx.last_error;
-        let mut account_primary_handle = ctx.account_primary_handle;
-        let mut personal_handles = ctx.personal_handles;
-        let mut personal_handles_status = ctx.personal_handles_status;
+    context
+        .sync_generation
+        .revise(|value| *value = value.wrapping_add(1));
+    context
+        .sync_bootstrap_complete
+        .revise(|value| *value = false);
+    connector(
+        context.base_url.get(),
+        context.principal_id.get(),
+        context.device_id.get(),
+        ConnectContext::for_application(&owner, context),
+    );
+}
+pub(super) fn switch_server_and_connect(scope: &Scope, next: String, context: Rc<InksonContext>) {
+    let next = normalize_server_url(&next);
+    if !same_server_url(&context.base_url.get(), &next) {
+        select_server(next, context.clone());
+    }
+    refresh_connection(scope, context);
+}
+#[derive(Clone)]
+pub(super) struct ManualSessionRefreshContext {
+    pub context: Rc<InksonContext>,
+    pub account_session_state: Cage<String>,
+    pub personal_handles_lookup_key: Cage<String>,
+    pub account_identity_lookup_key: Cage<String>,
+}
+fn session_refresh_feedback(state: Cage<String>, message: impl Into<String>) {
+    let message = message.into();
+    let _ = state.try_revise(|value| *value = message);
+}
+pub(super) fn refresh_current_session(
+    scope: &glory::Scope,
+    base: String,
+    ctx: ManualSessionRefreshContext,
+) {
+    let Some(window) = ctx.context.state_scope() else {
+        return;
+    };
+    let api_token = ctx.context.token.get();
+    let actor = ctx.context.principal_id.get();
+    let Some(active) = ctx.context.active_account.get() else {
+        let account_session_state = ctx.account_session_state;
+        session_refresh_feedback(
+            account_session_state,
+            "Session identity is unavailable; sign in again.",
+        );
+        return;
+    };
+    let personal_handles_lookup_key = ctx.personal_handles_lookup_key;
+    let account_identity_lookup_key = ctx.account_identity_lookup_key;
+    let account_session_state = ctx.account_session_state;
+    personal_handles_lookup_key.revise(|value| *value = String::new());
+    account_identity_lookup_key.revise(|value| *value = String::new());
+    session_refresh_feedback(account_session_state, "Refreshing session");
+    let generation = ctx.context.session_generation.get();
+    let owner = window.downgrade();
+    if let Err(error) = window.spawn(async move {
+        let principal_id = ctx.context.principal_id;
+        let last_error = ctx.context.last_error;
+        let account_primary_handle = ctx.context.account_primary_handle;
+        let personal_handles = ctx.context.personal_handles;
+        let personal_handles_status = ctx.context.personal_handles_status;
         match self_authed_api(&base, api_token.clone()) {
             Ok(api) => {
                 match async { crate::transport::account::account_me(&api.sdk_http_client()?).await }
                     .await
                 {
                     Ok(account) => {
-                        let canonical_principal = match ctx.active_account.peek().as_ref() {
+                        if owner.upgrade().is_none() || !ctx.context.session_matches(generation, &Some(active.clone())) { return; }
+                        let canonical_principal = match ctx.context.active_account.get_untracked().as_ref() {
                             Some(context) if context.principal_id() == &account.principal_id => {
                                 Some(context.principal_id().clone())
                             }
                             _ => {
-                                last_error.set(Some(
+                                last_error.revise(|value| *value = Some(
                                 "account viewer authority does not match the accepted active context"
                                     .to_owned(),
                             ));
-                                account_session_state.set(
-                                    "Session identity could not be restored; sign in again."
-                                        .to_owned(),
-                                );
+                                session_refresh_feedback(account_session_state,"Session identity could not be restored; sign in again.");
                                 return;
                             }
                         };
                         if let Some(personal_handle) =
                             personal_handle_from_account_handle(&account.handle)
                         {
-                            account_primary_handle.set(personal_handle.clone());
+                            account_primary_handle.revise(|value| *value = personal_handle.clone());
                             let handles =
-                                merge_personal_handles(&personal_handles(), [personal_handle]);
-                            personal_handles_status.set(personal_handles_status_for(&handles));
-                            personal_handles.set(handles);
+                                merge_personal_handles(&personal_handles.get(), [personal_handle]);
+                            personal_handles_status.revise(|value| *value = personal_handles_status_for(&handles));
+                            personal_handles.revise(|value| *value = handles);
                         } else {
-                            account_primary_handle.set(String::new());
-                            if personal_handles().is_empty() {
-                                personal_handles_status.set("Not published".to_owned());
+                            account_primary_handle.revise(|value| *value = String::new());
+                            if personal_handles.get().is_empty() {
+                                personal_handles_status.revise(|value| *value = "Not published".to_owned());
                             }
                         }
-                        principal_id.set(canonical_principal.clone());
+                        principal_id.revise(|value| *value = canonical_principal.clone());
                         persist_config(
-                            ctx.config_store,
+                            ctx.context.config_store,
+                            &Some(active.clone()),
                             active.server_url.to_string(),
                             Some(active.principal_id().clone()),
                             active.device_id.to_string(),
                             api_token,
                         );
-                        account_session_state.set(format!(
+                        session_refresh_feedback(account_session_state,format!(
                             "Session refresh ok: {}",
                             crate::app::principal_id_text(&canonical_principal)
                         ));
                     }
                     Err(error) => {
+                        if owner.upgrade().is_none() || !ctx.context.session_matches(generation, &Some(active.clone())) { return; }
                         if is_auth_expired_error(&error) {
-                            match ctx.session.refresh().await {
+                            let refreshed=ctx.context.services.session.refresh().await;
+                            if owner.upgrade().is_none() || !ctx.context.session_matches(generation,&Some(active.clone())) {return;}
+                            match refreshed {
                             crate::runtime::session::CurrentSessionRefresh::Credential(fresh) => {
                                 let canonical_principal = match self_authed_api(&base, fresh) {
                                     Ok(api) => async {
@@ -254,8 +142,9 @@ pub(super) fn refresh_current_session(base: String, ctx: ManualSessionRefreshCon
                                     .await
                                     .ok()
                                     .and_then(|account| {
-                                        ctx.active_account
-                                            .peek()
+                                        if owner.upgrade().is_none() || !ctx.context.session_matches(generation,&Some(active.clone())) { return None; }
+                                        ctx.context.active_account
+                                            .get_untracked()
                                             .as_ref()
                                             .filter(|context| {
                                                 context.principal_id() == &account.principal_id
@@ -263,19 +152,17 @@ pub(super) fn refresh_current_session(base: String, ctx: ManualSessionRefreshCon
                                         if let Some(personal_handle) =
                                             personal_handle_from_account_handle(&account.handle)
                                         {
-                                            account_primary_handle.set(personal_handle.clone());
+                                            account_primary_handle.revise(|value| *value = personal_handle.clone());
                                             let handles = merge_personal_handles(
-                                                &personal_handles(),
+                                                &personal_handles.get(),
                                                 [personal_handle],
                                             );
-                                            personal_handles_status
-                                                .set(personal_handles_status_for(&handles));
-                                            personal_handles.set(handles);
+                                            personal_handles_status.revise(|value|*value=personal_handles_status_for(&handles));
+                                            personal_handles.revise(|value| *value = handles);
                                         } else {
-                                            account_primary_handle.set(String::new());
-                                            if personal_handles().is_empty() {
-                                                personal_handles_status
-                                                    .set("Not published".to_owned());
+                                            account_primary_handle.revise(|value| *value = String::new());
+                                            if personal_handles.get().is_empty() {
+                                                personal_handles_status.revise(|value|*value="Not published".to_owned());
                                             }
                                         }
                                         Some(active.principal_id().clone())
@@ -283,8 +170,9 @@ pub(super) fn refresh_current_session(base: String, ctx: ManualSessionRefreshCon
                                     Err(_) => None,
                                 }
                                 .or(actor.clone());
-                                principal_id.set(canonical_principal.clone());
-                                account_session_state.set(format!(
+                                if owner.upgrade().is_none() || !ctx.context.session_matches(generation,&Some(active.clone())) {return;}
+                                principal_id.revise(|value| *value = canonical_principal.clone());
+                                session_refresh_feedback(account_session_state,format!(
                                     "Session refresh ok: {}",
                                     crate::app::principal_id_text(&canonical_principal)
                                 ));
@@ -292,31 +180,28 @@ pub(super) fn refresh_current_session(base: String, ctx: ManualSessionRefreshCon
                             crate::runtime::session::CurrentSessionRefresh::SignInRequired {
                                 reason,
                             } => {
-                                last_error.set(Some(reason));
-                                account_session_state
-                                    .set("Sign in again to refresh this session.".to_owned());
+                                last_error.revise(|value| *value = Some(reason));
+                                session_refresh_feedback(account_session_state,"Sign in again to refresh this session.");
                             }
                             crate::runtime::session::CurrentSessionRefresh::LoginRequired {
                                 reason,
                             } => {
-                                last_error.set(Some(reason));
-                                account_session_state
-                                    .set("Session expired. Sign in again.".to_owned());
+                                last_error.revise(|value| *value = Some(reason));
+                                session_refresh_feedback(account_session_state,"Session expired. Sign in again.");
                             }
                             crate::runtime::session::CurrentSessionRefresh::RetryLater {
                                 reason,
                             } => {
-                                account_session_state
-                                    .set(format!("Session refresh pending: {reason}"));
+                                session_refresh_feedback(account_session_state,format!("Session refresh pending: {reason}"));
                             }
                         }
                         } else {
-                            account_session_state.set(format!("Session refresh failed: {error}"));
+                            session_refresh_feedback(account_session_state,format!("Session refresh failed: {error}"));
                         }
                     }
                 }
             }
-            Err(error) => account_session_state.set(format!("Invalid server URL: {error}")),
+            Err(error) => session_refresh_feedback(account_session_state,format!("Invalid server URL: {error}")),
         }
-    });
+    }) { scope.report_error(error); }
 }

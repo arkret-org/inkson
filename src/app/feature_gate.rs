@@ -1,73 +1,90 @@
-use super::*;
+use std::rc::Rc;
 
-/// Explain the actual view dependency, not a client conformance profile.
-#[component]
-pub(super) fn FeatureGateNotice(
+use glory::prelude::*;
+
+use super::*;
+use crate::presentation::widgets::*;
+use crate::presentation::{InksonContext, View};
+pub(crate) fn feature_gate_notice(
+    scope: &Scope,
+    context: Rc<InksonContext>,
     feature: StationFeature,
     missing: Vec<String>,
     pending: bool,
-) -> Element {
-    let mut show_details = use_signal(|| false);
-    let title = crate::i18n::tr(if pending {
-        "feature_gate.loading"
-    } else {
-        "profile_gate.title"
-    });
-    let body = crate::i18n::tr(if pending {
-        "feature_gate.loading_body"
-    } else {
-        "profile_gate.body"
-    });
-    let toggle_label = crate::i18n::tr(if show_details() {
-        "friendly.identifier.hide_technical"
-    } else {
-        "friendly.identifier.show_technical"
-    });
-    let friendly = crate::i18n::tr(feature.label_key());
-    rsx! {
-        div { class: "timeline", "data-testid": "feature-gate-notice",
-            div { class: if pending { "event" } else { "event error-banner" },
-                div { class: "event-head",
-                    span { "{title}" }
-                    span { "{friendly}" }
-                }
-                div { class: "entity-title", "{body}" }
-                if !pending {
-                    div { class: "profile-gate-details",
-                        Button {
-                            variant: ButtonVariant::Secondary,
-                            r#type: "button",
-                            class: "link-button",
-                            "data-testid": "feature-gate-toggle-technical",
-                            onclick: move |_| show_details.toggle(),
-                            "{toggle_label}"
-                        }
-                        if show_details() {
-                            div { class: "muted profile-gate-technical", "data-testid": "feature-gate-technical",
-                                div { {crate::i18n::tr("feature_gate.missing")} }
-                                for requirement in missing {
-                                    div { code { "{requirement}" } }
-                                }
-                            }
-                        }
+) -> View {
+    let details = scope.cage(false);
+    let mut body = vec![
+        line(
+            "event-head",
+            vec![
+                plain(context.translated(
+                    scope,
+                    if pending {
+                        "feature_gate.loading"
+                    } else {
+                        "profile_gate.title"
+                    },
+                )),
+                plain(context.translated(scope, feature.label_key())),
+            ],
+        ),
+        paragraph(
+            "entity-title",
+            context.translated(
+                scope,
+                if pending {
+                    "feature_gate.loading_body"
+                } else {
+                    "profile_gate.body"
+                },
+            ),
+        ),
+    ];
+    if !pending {
+        body.push(Box::new(
+            sapid::button()
+                .unstyled()
+                .class("btn secondary link-button")
+                .label(scope.bond({
+                    let context = context.clone();
+                    move || {
+                        context.tr(if details.get() {
+                            "friendly.identifier.hide_technical"
+                        } else {
+                            "friendly.identifier.show_technical"
+                        })
                     }
-                }
+                }))
+                .on_press(move || details.revise(|value| *value = !*value)),
+        ));
+        body.push(reactive(details, move |scope, show| {
+            if show {
+                stack(
+                    "muted profile-gate-technical",
+                    std::iter::once(plain(context.translated(scope, "feature_gate.missing")))
+                        .chain(missing.iter().cloned().map(plain))
+                        .collect(),
+                )
+            } else {
+                empty()
             }
-        }
+        }));
     }
+    stack(
+        "timeline",
+        vec![stack(
+            if pending {
+                "event"
+            } else {
+                "event error-banner"
+            },
+            body,
+        )],
+    )
 }
-
-#[component]
-pub(super) fn DeferredFeatureGate(feature: &'static str) -> Element {
-    rsx! {
-        div {
-            class: "timeline",
-            "data-testid": "deferred-feature-gate",
-            "data-feature": "{feature}",
-        }
-    }
+pub(super) fn deferred_feature_gate() -> View {
+    stack("timeline", vec![])
 }
-
 /// i18n key for a route's breadcrumb label.
 ///
 /// Returns a key rather than display text so the context bar follows the

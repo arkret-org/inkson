@@ -1,0 +1,241 @@
+{
+  "family": "Inter",
+  "version": "Google Fonts v20",
+  "style": "normal",
+  "weight": "100 900",
+  "cssSource": "https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap",
+  "licenseSource": "https://raw.githubusercontent.com/rsms/inter/master/LICENSE.txt",
+  "files": [
+    {
+      "subset": "cyrillic-ext",
+      "url": "https://fonts.gstatic.com/s/inter/v20/UcC73FwrK3iLTeHuS_nVMrMxCp50SjIa2JL7SUc.woff2",
+      "file": "inter-v20-cyrillic-ext.woff2",
+      "bytes": 25960,
+      "sha256": "ca157063339ac4ad418f214f3abfed119b0798ab4d377386ce5c9e5a7a435ebd",
+      "nativeTtf": {
+        "file": "inter-v20-cyrillic-ext.ttf",
+        "bytes": 45636,
+        "sha256": "e398306d34bce2bdac2d82a9e29aed35eceeae0cb5aa39bf0f4e57e83d7647a5",
+        "derivedFrom": "inter-v20-cyrillic-ext.woff2",
+        "method": "fontTools.ttLib.TTFont; flavor=None; recalcTimestamp=False; recalcBBoxes=False",
+        "fontToolsVersion": "4.67.0",
+        "canonicalSfntTablesEqualExceptHead": true,
+        "headFieldsEqualExceptChecksumAdjustment": true,
+        "names": {
+          "1": "Inter",
+          "2": "Regular",
+          "4": "Inter Regular",
+          "6": "Inter-Regular",
+          "16": null,
+          "17": null
+        },
+        "axes": [
+          [
+            "wght",
+            100.0,
+            400.0,
+            900.0
+          ]
+        ]
+      }
+    },
+    {
+      "subset": "cyrillic",
+      "url": "https://fonts.gstatic.com/s/inter/v20/UcC73FwrK3iLTeHuS_nVMrMxCp50SjIa0ZL7SUc.woff2",
+      "file": "inter-v20-cyrillic.woff2",
+      "bytes": 18748,
+      "sha256": "71d5ee93cc1e9f1d520a3a8b66456de18c7879d8df09d57fcd2eaff75fef0075",
+      "nativeTtf": {
+        "file": "inter-v20-cyrillic.ttf",
+        "bytes": 34720,
+        "sha256": "a24ebcd28e7727f620b04ed3548b9d40cc3f08fab608ef5a61d08f4e21d8838c",
+        "derivedFrom": "inter-v20-cyrillic.woff2",
+        "method": "fontTools.ttLib.TTFont; flavor=None; recalcTimestamp=False; recalcBBoxes=False",
+        "fontToolsVersion": "4.67.0",
+        "canonicalSfntTablesEqualExceptHead": true,
+        "headFieldsEqualExceptChecksumAdjustment": true,
+        "names": {
+          "1": "Inter",
+          "2": "Regular",
+          "4": "Inter Regular",
+          "6": "Inter-Regular",
+          "16": null,
+          "17": null
+        },
+        "axes": [
+          [
+            "wght",
+            100.0,
+            400.0,
+            900.0
+          ]
+        ]
+      }
+    },
+    {
+      "subset": "greek-ext",
+      "url": "https://fonts.gstatic.com/s/inter/v20/UcC73FwrK3iLTeHuS_nVMrMxCp50SjIa2ZL7SUc.woff2",
+      "file": "inter-v20-greek-ext.woff2",
+      "bytes": 11232,
+      "sha256": "6e9e020a25f9b56d418f2c085b1d3c09725a4da23fe693a5b463064606732190",
+      "nativeTtf": {
+        "file": "inter-v20-greek-ext.ttf",
+        "bytes": 29800,
+        "sha256": "024dd9548e3fffb0d0af20acd6051db2c817ee6ae12cfb4758218cac726bc114",
+        "derivedFrom": "inter-v20-greek-ext.woff2",
+        "method": "fontTools.ttLib.TTFont; flavor=None; recalcTimestamp=False; recalcBBoxes=False",
+        "fontToolsVersion": "4.67.0",
+        "canonicalSfntTablesEqualExceptHead": true,
+        "headFieldsEqualExceptChecksumAdjustment": true,
+        "names": {
+          "1": "Inter",
+          "2": "Regular",
+          "4": "Inter Regular",
+          "6": "Inter-Regular",
+          "16": null,
+          "17": null
+        },
+        "axes": [
+          [
+            "wght",
+            100.0,
+            400.0,
+            900.0
+          ]
+        ]
+      }
+    },
+    {
+      "subset": "greek",
+      "url": "https://fonts.gstatic.com/s/inter/v20/UcC73FwrK3iLTeHuS_nVMrMxCp50SjIa1pL7SUc.woff2",
+      "file": "inter-v20-greek.woff2",
+      "bytes": 18996,
+      "sha256": "1be3448e292fbf05ffe176fe1e43f135013d50b1e7d324ad1a558f623d3bb6f6",
+      "nativeTtf": {
+        "file": "inter-v20-greek.ttf",
+        "bytes": 34600,
+        "sha256": "e321802f8bbf4df6415cf7c1d9943247eae5beefadb515e17b95c27224c7e34f",
+        "derivedFrom": "inter-v20-greek.woff2",
+        "method": "fontTools.ttLib.TTFont; flavor=None; recalcTimestamp=False; recalcBBoxes=False",
+        "fontToolsVersion": "4.67.0",
+        "canonicalSfntTablesEqualExceptHead": true,
+        "headFieldsEqualExceptChecksumAdjustment": true,
+        "names": {
+          "1": "Inter",
+          "2": "Regular",
+          "4": "Inter Regular",
+          "6": "Inter-Regular",
+          "16": null,
+          "17": null
+        },
+        "axes": [
+          [
+            "wght",
+            100.0,
+            400.0,
+            900.0
+          ]
+        ]
+      }
+    },
+    {
+      "subset": "vietnamese",
+      "url": "https://fonts.gstatic.com/s/inter/v20/UcC73FwrK3iLTeHuS_nVMrMxCp50SjIa2pL7SUc.woff2",
+      "file": "inter-v20-vietnamese.woff2",
+      "bytes": 10252,
+      "sha256": "5c66f9e07e90c6d4ac4922cc68d60de26c17b1858e677fb5e603fce3952b3ff2",
+      "nativeTtf": {
+        "file": "inter-v20-vietnamese.ttf",
+        "bytes": 24208,
+        "sha256": "93997d1b5536dae5c18786dc0b969e76916ebea6e82ef1f3fd6cb2fb51e066bf",
+        "derivedFrom": "inter-v20-vietnamese.woff2",
+        "method": "fontTools.ttLib.TTFont; flavor=None; recalcTimestamp=False; recalcBBoxes=False",
+        "fontToolsVersion": "4.67.0",
+        "canonicalSfntTablesEqualExceptHead": true,
+        "headFieldsEqualExceptChecksumAdjustment": true,
+        "names": {
+          "1": "Inter",
+          "2": "Regular",
+          "4": "Inter Regular",
+          "6": "Inter-Regular",
+          "16": null,
+          "17": null
+        },
+        "axes": [
+          [
+            "wght",
+            100.0,
+            400.0,
+            900.0
+          ]
+        ]
+      }
+    },
+    {
+      "subset": "latin-ext",
+      "url": "https://fonts.gstatic.com/s/inter/v20/UcC73FwrK3iLTeHuS_nVMrMxCp50SjIa25L7SUc.woff2",
+      "file": "inter-v20-latin-ext.woff2",
+      "bytes": 85068,
+      "sha256": "34b9c504cab7a73e37b746343a449132e56cf7b5481af2cb81dc74dcff25c956",
+      "nativeTtf": {
+        "file": "inter-v20-latin-ext.ttf",
+        "bytes": 188104,
+        "sha256": "e5b28dab16a4ef96e29696e88cddc8ef6c957c6adf513c0bb4d2c34e9ebfa016",
+        "derivedFrom": "inter-v20-latin-ext.woff2",
+        "method": "fontTools.ttLib.TTFont; flavor=None; recalcTimestamp=False; recalcBBoxes=False",
+        "fontToolsVersion": "4.67.0",
+        "canonicalSfntTablesEqualExceptHead": true,
+        "headFieldsEqualExceptChecksumAdjustment": true,
+        "names": {
+          "1": "Inter",
+          "2": "Regular",
+          "4": "Inter Regular",
+          "6": "Inter-Regular",
+          "16": null,
+          "17": null
+        },
+        "axes": [
+          [
+            "wght",
+            100.0,
+            400.0,
+            900.0
+          ]
+        ]
+      }
+    },
+    {
+      "subset": "latin",
+      "url": "https://fonts.gstatic.com/s/inter/v20/UcC73FwrK3iLTeHuS_nVMrMxCp50SjIa1ZL7.woff2",
+      "file": "inter-v20-latin.woff2",
+      "bytes": 48256,
+      "sha256": "3100e775e8616cd2611beecfa23a4263d7037586789b43f035236a2e6fbd4c62",
+      "nativeTtf": {
+        "file": "inter-v20-latin.ttf",
+        "bytes": 122932,
+        "sha256": "b017fbe1eb0972f39354fffc1021bedbb91a9dcbe95e29706814fadfec690c66",
+        "derivedFrom": "inter-v20-latin.woff2",
+        "method": "fontTools.ttLib.TTFont; flavor=None; recalcTimestamp=False; recalcBBoxes=False",
+        "fontToolsVersion": "4.67.0",
+        "canonicalSfntTablesEqualExceptHead": true,
+        "headFieldsEqualExceptChecksumAdjustment": true,
+        "names": {
+          "1": "Inter",
+          "2": "Regular",
+          "4": "Inter Regular",
+          "6": "Inter-Regular",
+          "16": null,
+          "17": null
+        },
+        "axes": [
+          [
+            "wght",
+            100.0,
+            400.0,
+            900.0
+          ]
+        ]
+      }
+    }
+  ]
+}

@@ -1,107 +1,228 @@
-use std::cell::RefCell;
-use std::rc::Rc;
-
 use super::*;
-
-type Handles = (
-    EventHandler<()>,
-    Signal<String>,
-    Signal<usize>,
-    Signal<String>,
-);
-
-#[derive(Clone)]
-struct Control {
-    path: std::path::PathBuf,
-    handles: Rc<RefCell<Option<Handles>>>,
+pub(super) fn context(
+    scope: &Scope,
+    path: &std::path::Path,
+) -> Rc<crate::presentation::InksonContext> {
+    crate::presentation::InksonContext::new(
+        scope,
+        crate::presentation::BootState {
+            config_store: crate::config::LocalConfigStore::with_path(path.join("config.json")),
+            config: crate::config::ClientConfig::default(),
+            state_store: crate::presentation::SharedStateStore::new(LocalStateStore::with_path(
+                path.join("state.json"),
+            )),
+            initial_credential: String::new(),
+            realm_tree_nodes: Vec::new(),
+        },
+        Route::Dashboard,
+        |_| {
+            Box::pin(async {
+                crate::runtime::session::CurrentSessionRefresh::retry_later("fixture")
+            })
+        },
+    )
 }
-
-fn controller_callback_harness(control: Control) -> Element {
-    let state_store = use_signal_sync(|| LocalStateStore::with_path(control.path));
-    let active_account = use_signal(|| None);
-    let base_url = use_signal(String::new);
-    let session_generation = use_signal(|| 0_u64);
-    let owned_agents_rev = use_signal(|| 0_u64);
-    use_context_provider(|| crate::app::SessionContext {
-        active_account,
-        state_store,
-        base_url,
-        session_generation,
-        owned_agents_rev,
-    });
+#[test]
+fn production_controller_callback_keeps_owned_state_without_context_hooks() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = glory::ui::App::memory();
+    let scope = app.scope();
+    let context = context(scope, dir.path());
     let authority = crate::test_support::authority("ak:did_core:web:alice.example");
     let device_id =
         arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000001").unwrap();
-    let controller = use_chat_controller("", "", &authority, &device_id);
-    let token = use_signal(String::new);
-    let sync_cursor = use_signal(String::new);
-    let frontier_state = use_signal(String::new);
-    let context = ChatCommandContext {
-        base_url: "://invalid-controller-fixture".to_owned(),
+    let controller =
+        chat_controller(scope, context.clone(), "", "", &authority, &device_id).unwrap();
+    let command = ChatCommandContext {
+        base_url: "://invalid-controller-fixture".into(),
         principal_id: authority.principal_id.clone(),
         authority,
         device_id,
-        selected_realm_id: "invalid-realm".to_owned(),
-        selected_channel_id: "invalid-strand".to_owned(),
+        selected_realm_id: "invalid-realm".into(),
+        selected_channel_id: "invalid-strand".into(),
         selected_channel_security_encrypted: true,
-        token,
-        sync_cursor,
-        frontier_state,
+        token: context.token,
+        frontier_state: context.frontier_state,
         known_agent_accounts: Default::default(),
         private_agent_scope: false,
     };
-    let mut calls = use_signal(|| 0_usize);
-    let callback = use_callback(move |()| {
-        let next = *calls.peek() + 1;
-        calls.set(next);
-        // This production method reads the context before the malformed target
-        // is refused. It cannot seal, spawn a request, or contact a server.
+    let sentinel = scope.cage("stable controller state".to_owned());
+    for _ in 0..4 {
         controller.add_reaction(
-            context.clone(),
-            "missing-message".to_owned(),
-            "invalid-event".to_owned(),
-            "👍".to_owned(),
+            command.clone(),
+            "missing-message".into(),
+            "invalid-event".into(),
+            "👍".into(),
         );
-    });
-    // A callback may run while a hook initializer holds the hook-list borrow.
-    // Context lookup in the command must not allocate another hook.
-    use_hook(move || callback.call(()));
-    let sentinel = use_signal(|| "stable hook after controller callback".to_owned());
-    *control.handles.borrow_mut() = Some((callback, sentinel, calls, controller.status_msg));
-    rsx! { div { "{calls}:{sentinel}:{controller.status_msg}" } }
+        let settled = app.settle(glory::ui::App::DEFAULT_SETTLE_PASSES).unwrap();
+        assert!(
+            !settled.pending,
+            "the invalid-target callback must settle without a loop"
+        );
+        assert_eq!(sentinel.get_untracked(), "stable controller state");
+        assert!(
+            controller
+                .status_msg
+                .get_untracked()
+                .starts_with("Reaction skipped: invalid reaction target Event id:")
+        );
+    }
+}
+
+fn message(realm: &str, strand: &str) -> ChatMessage {
+    ChatMessage {
+        protocol_content: None,
+        local_scope: None,
+        realm_id: realm.into(),
+        id: "private-row".into(),
+        protocol_message_id: None,
+        actor_id: None,
+        sender: "fixture".into(),
+        executed_by: None,
+        body: "private session projection".into(),
+        content_format: None,
+        timestamp: "00:00".into(),
+        created_at: None,
+        strand_id: strand.into(),
+        reply_to: None,
+        reactions: vec![],
+        redacted: false,
+        edited: false,
+        revisions: vec![],
+        revision_source: None,
+        pending: false,
+        failed: false,
+        error: None,
+        mentions: vec![],
+        crypto_state: MessageCryptoState::Plaintext,
+    }
 }
 
 #[test]
-fn production_controller_callback_does_not_allocate_hooks_and_survives_rerender() {
-    let dir = tempfile::tempdir().unwrap();
-    let control = Control {
-        path: dir.path().join("controller-state.json"),
-        handles: Rc::new(RefCell::new(None)),
-    };
-    let mut dom = VirtualDom::new_with_props(controller_callback_harness, control.clone());
-    dom.rebuild_in_place();
-    let (_, sentinel, ..) = control.handles.borrow().unwrap();
-    for expected_calls in 1..=4 {
-        if expected_calls > 1 {
-            let callback = control.handles.borrow().unwrap().0;
-            callback.call(());
-        }
-        for _ in 0..8 {
-            dom.render_immediate_to_vec();
-        }
-        let (_, current_sentinel, calls, status) = control.handles.borrow().unwrap();
-        assert_eq!(current_sentinel, sentinel);
-        dom.in_runtime(|| {
-            assert_eq!(*calls.peek(), expected_calls);
-            assert_eq!(
-                current_sentinel.peek().as_str(),
-                "stable hook after controller callback"
-            );
-            assert!(
-                status
-                    .peek()
-                    .starts_with("Reaction skipped: invalid reaction target Event id:")
-            );
-        });
+fn common_controller_reuse_keeps_writes_and_pool_retirement_clears_private_projections() {
+    let directory = tempfile::tempdir().unwrap();
+    let app = glory::App::memory();
+    let scope = app.scope();
+    let context = context(scope, directory.path());
+    let authority = crate::test_support::authority("ak:did_core:web:alice.example");
+    let device =
+        arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000001").unwrap();
+    let event = arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [31; 32]);
+    let realm = arkret_sdk::RealmId::from_event_id(&event).to_string();
+    let strand = arkret_sdk::StrandId::from_event_id(&arkret_sdk::EventId::from_digest(
+        arkret_sdk::DigestSuite::Sha256,
+        [32; 32],
+    ))
+    .to_string();
+    let original =
+        chat_controller(scope, context.clone(), &realm, &strand, &authority, &device).unwrap();
+    original
+        .draft
+        .revise(|draft| *draft = "retained unsent body".into());
+    original
+        .messages
+        .revise(|rows| rows.push(message(&realm, &strand)));
+    original.private_saved_account_data.revise(|values| {
+        values.insert(
+            "private-entry".into(),
+            serde_json::json!({"private":"session-only"}),
+        );
+    });
+    original
+        .strand_watch_pending
+        .revise(|pending| *pending = true);
+    original
+        .sidecar_send_pending
+        .revise(|pending| *pending = true);
+    let before = app.graph_stats().nodes;
+    for _ in 0..8 {
+        let again =
+            chat_controller(scope, context.clone(), &realm, &strand, &authority, &device).unwrap();
+        assert_eq!(again.messages.get_untracked().len(), 1);
+        assert!(
+            again.strand_watch_pending.get_untracked(),
+            "a route return cannot retire an in-flight write"
+        );
+        assert!(again.sidecar_send_pending.get_untracked());
+        assert_eq!(again.draft.get_untracked(), "retained unsent body");
+        assert_eq!(
+            app.graph_stats().nodes,
+            before,
+            "same target must reuse the root-owned graph"
+        );
     }
+    let revision = original.selection_revision.get_untracked();
+    context.chat_state.retire_session();
+    assert!(original.messages.get_untracked().is_empty());
+    assert!(
+        original
+            .private_saved_account_data
+            .get_untracked()
+            .is_empty()
+    );
+    assert!(!original.strand_watch_pending.get_untracked());
+    assert!(!original.sidecar_send_pending.get_untracked());
+    assert_ne!(original.selection_revision.get_untracked(), revision);
+    assert_eq!(original.draft.get_untracked(), "retained unsent body");
+    let returned =
+        chat_controller(scope, context.clone(), &realm, &strand, &authority, &device).unwrap();
+    assert_eq!(returned.selected_channel.get_untracked(), strand);
+    assert_eq!(
+        app.graph_stats().nodes,
+        before,
+        "retirement must reset in place rather than orphan root nodes"
+    );
+    original
+        .messages
+        .revise(|rows| rows.push(message(&realm, &strand)));
+    assert_eq!(
+        returned.messages.get_untracked().len(),
+        1,
+        "command handles remain valid after reacquiring the controller"
+    );
+}
+
+#[test]
+fn common_target_distinguishes_station_device_realm_strand_and_unselected_or_invalid_coordinates() {
+    let authority = crate::test_support::authority("ak:did_core:web:alice.example");
+    let remote = crate::test_support::authority_at_station(
+        "ak:did_core:web:alice.example",
+        "ak:did_core:web:other-station.example",
+    );
+    let device =
+        arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000001").unwrap();
+    let other_device =
+        arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000002").unwrap();
+    let event =
+        |byte| arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [byte; 32]);
+    let realm = arkret_sdk::RealmId::from_event_id(&event(41)).to_string();
+    let other_realm = arkret_sdk::RealmId::from_event_id(&event(42)).to_string();
+    let strand = arkret_sdk::StrandId::from_event_id(&event(43)).to_string();
+    let other_strand = arkret_sdk::StrandId::from_event_id(&event(44)).to_string();
+    let targets = [
+        CommonTarget::new(&authority, &device, &realm, &strand),
+        CommonTarget::new(&remote, &device, &realm, &strand),
+        CommonTarget::new(&authority, &other_device, &realm, &strand),
+        CommonTarget::new(&authority, &device, &other_realm, &strand),
+        CommonTarget::new(&authority, &device, &realm, &other_strand),
+        CommonTarget::new(&authority, &device, &realm, ""),
+        CommonTarget::new(&authority, &device, &realm, "invalid-strand"),
+    ];
+    assert_eq!(
+        targets
+            .iter()
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        targets.len()
+    );
+    assert!(matches!(targets[0].realm, CommonCoordinate::Typed(_)));
+    assert!(matches!(
+        targets[5].initial_strand,
+        CommonCoordinate::Unselected
+    ));
+    assert!(matches!(
+        targets[6].initial_strand,
+        CommonCoordinate::Invalid(_)
+    ));
 }

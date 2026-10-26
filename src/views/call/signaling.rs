@@ -1,4 +1,4 @@
-use dioxus::prelude::*;
+use glory::prelude::*;
 
 use super::media::media_error_label;
 use super::types::{CallParticipantView, CallStage, SharedTransport};
@@ -15,14 +15,20 @@ pub(super) async fn relay_local_signals(
     call_id: &str,
     actor: &str,
     device: &str,
-    mut call_seq: Signal<u64>,
+    call_seq: Cage<u64>,
     initial_invite_media: Option<arkret_sdk::CallMediaSelection>,
     state_store: &crate::runtime::input::StateStoreHandle,
 ) {
     let signals = transport.borrow_mut().drain_local_signals();
     for signal in signals {
-        let sequence = call_seq() + 1;
-        call_seq.set(sequence);
+        if !call_seq.is_alive() {
+            break;
+        }
+        let sequence = call_seq.get() + 1;
+        {
+            let next_value = sequence;
+            call_seq.revise(|value| *value = next_value);
+        };
         let signal = match signal {
             LocalSignal::Offer { sdp } => {
                 let offer = arkret_sdk::SessionDescription {
@@ -104,18 +110,18 @@ pub(super) async fn relay_local_signals(
 #[allow(clippy::too_many_arguments)]
 pub(super) fn apply_inbox_items(
     items: Vec<CallSignalInboxItem>,
-    transport: Signal<Option<SharedTransport>>,
+    transport: Cage<Option<SharedTransport>>,
     base: String,
-    token: Signal<String>,
+    token: Cage<String>,
     actor: String,
     device: String,
     realm_id: String,
     call_id: String,
-    mut call_seq: Signal<u64>,
-    mut stage: Signal<CallStage>,
-    mut status: Signal<String>,
-    mut last_error: Signal<String>,
-    mut participants: Signal<Vec<CallParticipantView>>,
+    mut call_seq: Cage<u64>,
+    stage: Cage<CallStage>,
+    status: Cage<String>,
+    last_error: Cage<String>,
+    mut participants: Cage<Vec<CallParticipantView>>,
     relay_store: crate::runtime::input::StateStoreHandle,
 ) {
     // Items that need an async relay (offer → answer) defer to a single
@@ -125,65 +131,104 @@ pub(super) fn apply_inbox_items(
     for item in items {
         match &item.signal {
             arkret_sdk::CallSignalData::Answer(data) => {
-                if let Some(t) = transport() {
+                if let Some(t) = transport.get() {
                     match t.borrow_mut().accept_answer(&data.answer.sdp) {
                         Ok(()) => {
-                            stage.set(CallStage::Active);
-                            status.set("connected".to_owned());
+                            {
+                                let next_value = CallStage::Active;
+                                stage.revise(|value| *value = next_value);
+                            };
+                            {
+                                let next_value = "connected".to_owned();
+                                status.revise(|value| *value = next_value);
+                            };
                         }
-                        Err(err) => last_error.set(media_error_label(err)),
+                        Err(err) => {
+                            let next_value = media_error_label(err);
+                            last_error.revise(|value| *value = next_value);
+                        }
                     }
                 }
             }
             arkret_sdk::CallSignalData::Renegotiate(data) => {
                 if let Some(offer) = &data.offer {
-                    if let Some(t) = transport() {
+                    if let Some(t) = transport.get() {
                         match t.borrow_mut().accept_offer(&offer.sdp) {
                             Ok(()) => {
                                 relay_after = true;
-                                stage.set(CallStage::Connecting);
-                                status.set("applying remote offer".to_owned());
+                                {
+                                    let next_value = CallStage::Connecting;
+                                    stage.revise(|value| *value = next_value);
+                                };
+                                {
+                                    let next_value = "applying remote offer".to_owned();
+                                    status.revise(|value| *value = next_value);
+                                };
                             }
-                            Err(err) => last_error.set(media_error_label(err)),
+                            Err(err) => {
+                                let next_value = media_error_label(err);
+                                last_error.revise(|value| *value = next_value);
+                            }
                         }
                     }
                 } else if let Some(answer) = &data.answer
-                    && let Some(t) = transport()
+                    && let Some(t) = transport.get()
                 {
                     match t.borrow_mut().accept_answer(&answer.sdp) {
                         Ok(()) => {
-                            stage.set(CallStage::Active);
-                            status.set("connected".to_owned());
+                            {
+                                let next_value = CallStage::Active;
+                                stage.revise(|value| *value = next_value);
+                            };
+                            {
+                                let next_value = "connected".to_owned();
+                                status.revise(|value| *value = next_value);
+                            };
                         }
-                        Err(err) => last_error.set(media_error_label(err)),
+                        Err(err) => {
+                            let next_value = media_error_label(err);
+                            last_error.revise(|value| *value = next_value);
+                        }
                     }
                 }
             }
             arkret_sdk::CallSignalData::Candidate(data) => {
-                if let Some(t) = transport() {
+                if let Some(t) = transport.get() {
                     for candidate in &data.candidates {
                         if let Err(err) = t.borrow_mut().add_remote_candidate(
                             &candidate.candidate,
                             candidate.sdp_mid.as_deref(),
                             candidate.sdp_m_line_index,
                         ) {
-                            last_error.set(media_error_label(err));
+                            {
+                                let next_value = media_error_label(err);
+                                last_error.revise(|value| *value = next_value);
+                            };
                         }
                     }
                 }
             }
             arkret_sdk::CallSignalData::Hangup(data) | arkret_sdk::CallSignalData::Reject(data) => {
-                if let Some(t) = transport() {
+                if let Some(t) = transport.get() {
                     t.borrow_mut().close();
                 }
-                stage.set(CallStage::Ended);
-                status.set(format!("call ended: {}", data.reason.as_str()));
+                {
+                    let next_value = CallStage::Ended;
+                    stage.revise(|value| *value = next_value);
+                };
+                {
+                    let next_value = format!("call ended: {}", data.reason.as_str());
+                    status.revise(|value| *value = next_value);
+                };
             }
             arkret_sdk::CallSignalData::MuteState(data) => {
                 if data.changed_by == arkret_sdk::MuteChangedBy::Moderator {
-                    last_error.set(
-                        "unsupported_feature: moderator force-mute is deferred in v1".to_owned(),
-                    );
+                    {
+                        let next_value =
+                            "unsupported_feature: moderator force-mute is deferred in v1"
+                                .to_owned();
+                        last_error.revise(|value| *value = next_value);
+                    };
                     continue;
                 }
                 apply_peer_state(&mut participants, &item);
@@ -210,16 +255,25 @@ pub(super) fn apply_inbox_items(
                     arkret_sdk::CallModerationAction::EndForAll => true,
                 };
                 if self_targeted {
-                    if let Some(t) = transport() {
+                    if let Some(t) = transport.get() {
                         t.borrow_mut().close();
                     }
-                    stage.set(CallStage::Ended);
-                    status.set(format!("removed by moderator ({:?})", data.action));
+                    {
+                        let next_value = CallStage::Ended;
+                        stage.revise(|value| *value = next_value);
+                    };
+                    {
+                        let next_value = format!("removed by moderator ({:?})", data.action);
+                        status.revise(|value| *value = next_value);
+                    };
                 } else if let Some(target) = target {
                     // A peer was kicked/banned — drop their roster tile.
-                    let mut roster = participants();
+                    let mut roster = participants.get();
                     roster.retain(|p| p.actor_id != target.to_string());
-                    participants.set(roster);
+                    {
+                        let next_value = roster;
+                        participants.revise(|value| *value = next_value);
+                    };
                 }
             }
             other => {
@@ -231,12 +285,12 @@ pub(super) fn apply_inbox_items(
         }
     }
 
-    if relay_after && let Some(t) = transport() {
-        spawn(async move {
+    if relay_after && let Some(t) = transport.get() {
+        dispatch_signal_work(async move {
             relay_local_signals(
                 &t,
                 &base,
-                &token(),
+                &token.get(),
                 &realm_id,
                 &call_id,
                 &actor,
@@ -256,12 +310,9 @@ pub(super) fn apply_inbox_items(
 
 /// Apply an inbound `mute_state` / `media_state` / `speaking` signal to the
 /// sender's roster tile. The sender's actor id is `item.sender_actor`.
-fn apply_peer_state(
-    participants: &mut Signal<Vec<CallParticipantView>>,
-    item: &CallSignalInboxItem,
-) {
+fn apply_peer_state(participants: &mut Cage<Vec<CallParticipantView>>, item: &CallSignalInboxItem) {
     let target = item.sender_actor.as_str();
-    let mut roster = participants();
+    let mut roster = participants.get();
     let mut changed = false;
     for p in &mut roster {
         if p.actor_id != target {
@@ -286,7 +337,10 @@ fn apply_peer_state(
         }
     }
     if changed {
-        participants.set(roster);
+        {
+            let next_value = roster;
+            participants.revise(|value| *value = next_value);
+        };
     }
 }
 
@@ -300,14 +354,17 @@ pub(super) fn emit_async(
     actor: &str,
     device: &str,
     signal: arkret_sdk::CallSignalData,
-    mut call_seq: Signal<u64>,
+    call_seq: Cage<u64>,
     state_store: crate::runtime::input::StateStoreHandle,
 ) {
     if call_id.trim().is_empty() || realm_id.trim().is_empty() {
         return;
     }
-    let sequence = call_seq() + 1;
-    call_seq.set(sequence);
+    let sequence = call_seq.get() + 1;
+    {
+        let next_value = sequence;
+        call_seq.revise(|value| *value = next_value);
+    };
     let (base, api_token, realm_id, call_id, actor, device) = (
         base.to_owned(),
         api_token.to_owned(),
@@ -316,7 +373,7 @@ pub(super) fn emit_async(
         actor.to_owned(),
         device.to_owned(),
     );
-    spawn(async move {
+    dispatch_signal_work(async move {
         if let Err(error) = emit_signal(
             &base,
             &api_token,
@@ -358,9 +415,11 @@ pub(super) async fn emit_signal(
     sequence: u64,
     signal: arkret_sdk::CallSignalData,
     state_store: &crate::runtime::input::StateStoreHandle,
-) -> Result<(), String> {
-    let account = crate::app::SessionContext::get()
-        .active_account()
+) -> std::result::Result<(), String> {
+    let account = crate::presentation::require_current_context()
+        .map_err(|error| error.to_string())?
+        .active_account
+        .get()
         .ok_or_else(|| "active account context is unavailable".to_owned())?;
     if account.principal_id().as_str() != actor.trim()
         || account.device_id.as_str() != device.trim()
@@ -430,7 +489,7 @@ pub(super) fn spawn_reject(
     device: String,
     state_store: crate::runtime::input::StateStoreHandle,
 ) {
-    spawn(async move {
+    dispatch_signal_work(async move {
         let Ok(reason) = arkret_sdk::NonEmptyString::new("declined") else {
             return;
         };
@@ -452,17 +511,17 @@ pub(super) fn spawn_reject(
 /// Hang up: emit `hangup`, close the transport, release media.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn end_call(
-    transport: &Signal<Option<SharedTransport>>,
+    transport: &Cage<Option<SharedTransport>>,
     base: &str,
     api_token: &str,
     realm_id: &str,
     call_id: &str,
     actor: &str,
     device: &str,
-    call_seq: Signal<u64>,
+    call_seq: Cage<u64>,
     state_store: crate::runtime::input::StateStoreHandle,
 ) {
-    if let Some(t) = transport.read().as_ref() {
+    if let Some(t) = transport.get().as_ref() {
         t.borrow_mut().close();
     }
     let Ok(reason) = arkret_sdk::NonEmptyString::new("user_hangup") else {
@@ -479,4 +538,10 @@ pub(super) fn end_call(
         call_seq,
         state_store,
     );
+}
+
+fn dispatch_signal_work(future: impl std::future::Future<Output = ()> + 'static) {
+    if let Some(context) = crate::presentation::current_context() {
+        super::task::call_task(context, None, future);
+    }
 }

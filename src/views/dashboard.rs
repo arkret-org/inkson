@@ -1,17 +1,15 @@
 use std::rc::Rc;
 
 use arkret_sdk::contact_operations::ContactScope;
-use dioxus::prelude::*;
-use dioxus_router::Link;
+use glory::{Cage, Scope};
 
-use crate::components::{HelpTip, UiIcon};
 use crate::i18n::tr;
-use crate::models::{RealmTreeNode, RealmTreeNodeKind, projection_realm_id_for_known_node};
+use crate::models::{RealmTreeNodeKind, projection_realm_id_for_known_node};
+use crate::presentation::{InksonContext, View};
 use crate::routes::Route;
 use crate::state::ClientLocalState;
-use crate::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::views::helpers::short_protocol_id;
-
+use crate::views::settings::widgets::*;
 #[derive(Clone, Debug, PartialEq)]
 struct DashboardNotificationSummary {
     id: String,
@@ -134,559 +132,894 @@ fn dashboard_notification_kind_key(kind: &arkret_sdk::NotificationKind) -> &'sta
     }
 }
 
-#[component]
-#[allow(clippy::redundant_closure)] // `|| signal()` is not equivalent to `&signal` here.
-pub fn DashboardPanel(
-    token: Signal<String>,
-    realm_tree_nodes: Signal<Vec<RealmTreeNode>>,
-    selected_realm_id: Signal<String>,
-    view: Signal<super::AppView>,
-    device_queue: usize,
-    frontier_state: String,
-    sync_cursor: String,
-) -> Element {
-    // A4 — base_url / state_store from session context instead of props.
-    let base_url = crate::app::SessionContext::base_url_string();
-    let state_store = crate::app::SessionContext::get().state_store;
-    let mut protocol_health = use_signal(Vec::<DashboardHealthCheck>::new);
-    let mut health_loading = use_signal(|| false);
-    let mut contacts_summary = use_signal(Option::<DashboardContactsSummary>::default);
-    let mut contacts_loaded_for = use_signal(String::new);
-    let mut contacts_status = use_signal(Option::<&'static str>::default);
-    let has_session = !token().trim().is_empty();
-    let sync_cursor_label = short_protocol_id(&sync_cursor);
-    let frontier_state_label = short_protocol_id(&frontier_state);
-    let raw_realm_tree_snapshot = realm_tree_nodes();
-    let pinned_realm_ids: std::collections::BTreeSet<String> = state_store
-        .read()
-        .realm_remarks()
-        .into_iter()
-        .filter_map(|(realm_id, remark)| remark.pinned.then_some(realm_id))
-        .collect();
-    let realm_tree_snapshot: Vec<RealmTreeNode> =
-        crate::realm_tree::realm_tree_items_with_pinned_realms(
-            &raw_realm_tree_snapshot,
-            &pinned_realm_ids,
-        )
-        .into_iter()
-        .map(|item| item.node)
-        .collect();
-    let has_realms = realm_tree_snapshot
-        .iter()
-        .any(|space| space.kind == RealmTreeNodeKind::Realm);
-    let has_product_spaces = realm_tree_snapshot
-        .iter()
-        .any(|node| node.kind == RealmTreeNodeKind::Space);
-    // Label helpers return i18n keys; translate once here.
-    let projection_label =
-        crate::i18n::tr(projection_collection_label(has_realms, has_product_spaces));
-    let recent_projection_label = crate::i18n::tr(recent_projection_collection_label(
-        has_realms,
-        has_product_spaces,
-    ));
-    let projection_browse_label = crate::i18n::tr(projection_collection_browse_label(
-        has_realms,
-        has_product_spaces,
-    ));
-    let projection_signin_label = crate::i18n::tr(projection_collection_signin_label(
-        has_realms,
-        has_product_spaces,
-    ));
-    let projection_empty_label = crate::i18n::tr(projection_collection_empty_label(
-        has_realms,
-        has_product_spaces,
-    ));
-    let projection_empty_help_label = crate::i18n::tr(projection_collection_empty_help_label(
-        has_realms,
-        has_product_spaces,
-    ));
-    let active_node = realm_tree_snapshot
-        .iter()
-        .find(|node| node.id == selected_realm_id())
-        .cloned()
-        .or_else(|| realm_tree_snapshot.first().cloned());
-
-    let local_state_snapshot = state_store.read().load();
-    let notification_summaries = dashboard_notification_summaries(&local_state_snapshot);
-    let unread_notifications = notification_summaries
-        .iter()
-        .filter(|notification| !notification.read)
-        .count();
-
-    let active_node_id = active_node
-        .as_ref()
-        .map(|space| space.id.clone())
-        .unwrap_or_else(|| selected_realm_id());
-    let active_projection_realm_id =
-        projection_realm_id_for_known_node(&realm_tree_snapshot, &active_node_id)
-            .unwrap_or_default();
-    if has_session {
-        let api_token = token();
-        let contacts_load_key = format!("{}|{}", base_url, api_token);
-        if contacts_loaded_for() != contacts_load_key {
-            contacts_loaded_for.set(contacts_load_key);
-            contacts_summary.set(None);
-            contacts_status.set(Some("dashboard.contacts_loading"));
-            let base = base_url.clone();
-            spawn(async move {
-                match crate::transport::auth::with_endpoint_clients(
-                    &base,
-                    api_token,
-                    None,
-                    |clients| async move { clients.account().contacts().await },
-                )
-                .await
-                {
-                    Ok(response) => {
-                        contacts_summary.set(Some(dashboard_contacts_summary(&response.contacts)));
-                        contacts_status.set(None);
-                    }
-                    Err(_) => {
-                        contacts_summary.set(None);
-                        contacts_status.set(Some("dashboard.contacts_unavailable"));
-                    }
+fn nav_view(context: Rc<InksonContext>, route: Route, class: &str, children: Vec<View>) -> View {
+    Box::new(
+        crate::presentation::widgets::internal_link()
+            .class(class)
+            .target(route.to_string())
+            .fill(children)
+            .on(glory::render::EventKind::Activate, move |_| {
+                if let Route::Realm { realm_id } | Route::KanbanRealm { realm_id } = &route {
+                    context
+                        .selected_realm_id
+                        .revise(|value| *value = realm_id.clone());
                 }
-            });
-        }
-    } else if !contacts_loaded_for().is_empty()
-        || contacts_summary().is_some()
-        || contacts_status().is_some()
-    {
-        contacts_loaded_for.set(String::new());
-        contacts_summary.set(None);
-        contacts_status.set(None);
-    }
-    // The sync-backed operation log is already the authorized source for the
-    // event-sourced Board projection. Reusing it here avoids a second
-    // visibility-sensitive request for a potentially stale selected Realm.
-    let visible_recent_strands = dashboard_recent_strands(
-        &local_state_snapshot.raw_operations,
-        &active_projection_realm_id,
+                context.navigate(route.clone());
+            }),
     )
-    .into_iter()
-    // R11: the Strand state enum is exactly {active, archived, redacted}
-    // (strand.schema.json). "Recent strands" shows only `active`; `archived`
-    // and `redacted` are hidden here. There is NO `deleted` state in the
-    // spec, so it is intentionally not referenced.
-    .filter(|strand| strand.state == arkret_sdk::ObjectState::Active)
-    .take(5)
-    .collect::<Vec<_>>();
-    let visible_notifications = notification_summaries
-        .iter()
-        .take(3)
-        .cloned()
-        .collect::<Vec<_>>();
-    let contacts_summary_snapshot = contacts_summary();
-    let contacts_metric_value = contacts_summary_snapshot
-        .as_ref()
-        .map(|summary| summary.accepted.to_string())
-        .unwrap_or_else(|| {
-            if has_session && contacts_status() == Some("dashboard.contacts_loading") {
-                "...".to_owned()
-            } else {
-                "0".to_owned()
-            }
-        });
-    let contacts_metric_delta = if !has_session {
-        tr("contacts.sign_in")
-    } else if let Some(summary) = contacts_summary_snapshot.as_ref() {
-        contact_summary_delta(summary)
-    } else if contacts_status().is_none() {
-        tr("contacts.empty")
-    } else {
-        contacts_status().map(tr).unwrap_or_default()
-    };
-    rsx! {
-        div { class: "timeline", "data-testid": "dashboard-panel",
-            div { class: "metric-grid", "data-testid": "dashboard-metrics",
-                Link {
-                    class: "metric",
-                    to: Route::Notifications,
-                    onclick: move |_| view.set(super::AppView::Notifications),
-                    div { class: "lbl", {tr("dashboard.notifications_label")} }
-                    div { class: "val", "data-testid": "dashboard-unread-notifications", "{unread_notifications}" }
-                    div { class: "delta", if has_session { {tr("dashboard.notifications_delta_unread")} } else { {tr("dashboard.notifications_delta_signin")} } }
-                }
-                Link {
-                    class: "metric",
-                    to: Route::Directory,
-                    onclick: move |_| view.set(super::AppView::Directory),
-                    div { class: "lbl", "{projection_label}" }
-                    div { class: "val", "{realm_tree_snapshot.len()}" }
-                    div { class: "delta", if has_session { "{projection_browse_label}" } else { "{projection_signin_label}" } }
-                }
-                Link {
-                    class: "metric",
-                    "data-testid": "dashboard-contacts-card",
-                    to: Route::Contacts,
-                    onclick: move |_| view.set(super::AppView::Contacts),
-                    div { class: "lbl", {tr("nav.contacts")} }
-                    div { class: "val", "data-testid": "dashboard-contacts-count", "{contacts_metric_value}" }
-                    div { class: "delta", "{contacts_metric_delta}" }
-                }
-                if let Some(space) = active_node.as_ref() {
-                    Link {
-                        class: "metric",
-                        to: Route::KanbanRealm { realm_id: space.id.clone() },
-                        onclick: {
-                            let id = space.id.clone();
-                            move |_| {
-                                selected_realm_id.set(id.clone());
-                                view.set(super::AppView::Kanban);
-                            }
-                        },
-                        div { class: "lbl", {tr("dashboard.active_strands")} }
-                        div { class: "val", "{visible_recent_strands.len()}" }
-                        div { class: "delta", {tr("dashboard.open_board_view")} }
-                    }
-                } else {
-                    Link {
-                        class: "metric",
-                        to: Route::Setup,
-                        onclick: move |_| view.set(super::AppView::Setup),
-                        div { class: "lbl", {tr("dashboard.realm_setup")} }
-                        div { class: "val", if has_session { {tr("dashboard.ready")} } else { {tr("dashboard.sign_in")} } }
-                        div { class: "delta", {tr("dashboard.setup_help")} }
-                    }
-                    Link {
-                        class: "metric",
-                        to: Route::Onboarding,
-                        onclick: move |_| view.set(super::AppView::Onboarding),
-                        div { class: "lbl", {tr("dashboard.onboarding")} }
-                        div { class: "val", {tr("dashboard.onboarding_steps")} }
-                        div { class: "delta", {tr("dashboard.onboarding_help")} }
-                    }
-                }
-            }
+}
 
-            div { class: "dashboard-two-col",
-                div { class: "stack",
-                    div { class: "surface", "data-testid": "realm-tree-summary",
-                        div { class: "row surface-head",
-                            strong { "{recent_projection_label}" }
-                            Link {
-                                class: "btn icon sm ghost ml-auto",
-                                to: Route::Directory,
-                                onclick: move |_| view.set(super::AppView::Directory),
-                                title: "{projection_browse_label}",
-                                "aria-label": "{projection_browse_label}",
-                                UiIcon { name: "search" }
-                            }
-                        }
-                        div { class: "stack-sm", style: "padding: 10px 14px 14px;",
-                            if realm_tree_snapshot.is_empty() {
-                                div {
-                                    class: "m-list-item",
-                                    "data-testid": "dashboard-realm-tree-empty",
-                                    span { class: "avatar", "0" }
-                                    span { class: "grow",
-                                        span { class: "title",
-                                            if has_session { "{projection_empty_label}" } else { "{projection_signin_label}" }
-                                        }
-                                        span { class: "sub",
-                                            if has_session { "{projection_empty_help_label}" } else { {crate::i18n::tr("dashboard.no_session_help")} }
-                                        }
-                                    }
-                                }
-                            } else {
-                                for node in realm_tree_snapshot.iter() {
-                                    {
-                                        // Spec client-preferences.md §3.7:
-                                        // prefer the actor-private Realm
-                                        // remark `local_name` over the public
-                                        // Realm title when set.
-                                        let remark = if node.kind == crate::models::RealmTreeNodeKind::Realm {
-                                            state_store.read().realm_remark(&node.id)
-                                        } else {
-                                            None
-                                        };
-                                        let display_name = remark
-                                            .as_ref()
-                                            .map(|r| r.display_name(&node.title).to_owned())
-                                            .unwrap_or_else(|| node.title.clone());
-                                        let has_remark = remark
-                                            .as_ref()
-                                            .is_some_and(|r| !r.local_name.trim().is_empty());
-                                        let snapshot_status = if node.kind == crate::models::RealmTreeNodeKind::Realm {
-                                            state_store.read().realm_state_snapshot_sync_status(&node.id)
-                                        } else {
-                                            None
-                                        };
-                                        let snapshot_badge = snapshot_status.as_ref().and_then(|status| {
-                                            match status.trust_state {
-                                                crate::realm_state_snapshot::RealmStateSnapshotTrustState::LowerTrust => Some("dashboard.snapshot_lower_trust"),
-                                                crate::realm_state_snapshot::RealmStateSnapshotTrustState::Degraded => Some("dashboard.snapshot_degraded"),
-                                                crate::realm_state_snapshot::RealmStateSnapshotTrustState::Verified => None,
-                                            }
-                                        });
-                                        let kind_label =
-                                            crate::i18n::tr(projection_kind_label(node.kind));
-                                        rsx! {
-                                        Link {
-                                            class: "m-list-item",
-                                            "data-testid": "dashboard-realm-tree-card",
-                                            title: "{node.title}",
-                                            to: Route::Realm { realm_id: node.id.clone() },
-                                            onclick: {
-                                                let id = node.id.clone();
-                                                move |_| {
-                                                    selected_realm_id.set(id.clone());
-                                                    view.set(super::AppView::Kanban);
-                                                }
-                                            },
-                                            crate::components::IdentityAvatar {
-                                                seed: node.id.clone(),
-                                                alt_text: display_name.clone(),
-                                                class: "avatar avatar-img".to_owned(),
-                                            }
-                                            span { class: "grow",
-                                                span { class: "title", "{display_name}" }
-                                                span { class: "sub",
-                                                    {dashboard_realm_description(node.description.as_deref())}
-                                                }
-                                            }
-                                            if has_remark {
-                                                span {
-                                                    class: "pill muted xs",
-                                                    "data-testid": "dashboard-realm-tree-realm-remark-badge",
-                                                    {tr("dashboard.realm_remark")}
-                                                }
-                                            }
-                                            if let Some(snapshot_badge) = snapshot_badge {
-                                                span {
-                                                    class: "pill muted xs",
-                                                    "data-testid": "dashboard-realm-tree-snapshot-badge",
-                                                    {tr(snapshot_badge)}
-                                                }
-                                            }
-                                            span { class: "pill muted xs", "{kind_label}" }
-                                        }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+fn surface_title(value: impl Into<glory::Lotus<String>>) -> View {
+    Box::new(
+        glory::ui::text()
+            .class("dashboard-section-title")
+            .style(glory::style::Style::new().font_weight(700.0))
+            .content(value),
+    )
+}
 
-                    div { class: "surface", "data-testid": "recent-boards",
-                        div { class: "row surface-head",
-                            strong { {tr("dashboard.recent_strands")} }
-                        }
-                        table { class: "tbl compact",
-                            thead {
-                                tr {
-                                    th { "" }
-                                    th { {tr("dashboard.strand_title")} }
-                                    th { {tr("dashboard.strand_space")} }
-                                    th { {tr("dashboard.strand_state")} }
-                                    th { {tr("dashboard.strand_updated")} }
-                                }
-                            }
-                            tbody {
-                                if visible_recent_strands.is_empty() {
-                                    tr {
-                                        td { class: "dim", colspan: "5",
-                                            if has_session { {tr("dashboard.strands_empty")} } else { {tr("dashboard.strands_signin")} }
-                                        }
-                                    }
-                                } else {
-                                    for strand in visible_recent_strands.iter() {
-                                        tr {
-                                            key: "{strand.strand_id}",
-                                            td { class: "dim", "" }
-                                            td { "{strand.title}" }
-                                            td { {tr("dashboard.current_board")} }
-                                            td { {tr(projection_object_state_label(&strand.state))} }
-                                            td {
-                                                {strand.fields
-                                                    .get("due_at")
-                                                    .or_else(|| strand.fields.get("due"))
-                                                    .and_then(|value| value.as_str())
-                                                    .unwrap_or("-")}
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    div { class: "surface pad", "data-testid": "activity-feed",
-                        div { class: "section-title mb-8", {tr("dashboard.recent_activity")} }
-                        div { class: "stack-sm",
-                            div { class: "m-list-item",
-                                span { class: "pill muted xs", {tr("dashboard.activity_empty")} }
-                                span { class: "grow",
-                                    span { class: "title", if has_session { {tr("dashboard.no_activity")} } else { {tr("dashboard.no_session_activity")} } }
-                                    span { class: "sub", if has_session { {tr("dashboard.activity_sync_help")} } else { {tr("dashboard.activity_signin_help")} } }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                div { class: "stack",
-                    div { class: "surface", "data-testid": "pinned-notifications",
-                        div { class: "row surface-head",
-                            strong { {tr("nav.notifications")} }
-                            Link {
-                                class: "btn icon sm ghost ml-auto",
-                                "data-testid": "pinned-notifications-open",
-                                to: Route::Notifications,
-                                onclick: move |_| view.set(super::AppView::Notifications),
-                                title: tr("dashboard.notifications_open"),
-                                "aria-label": tr("dashboard.notifications_open"),
-                                UiIcon { name: "inbox" }
-                            }
-                        }
-                        div { class: "stack-sm", style: "padding: 8px 12px 12px;",
-                            if visible_notifications.is_empty() {
-                                div { class: "m-list-item",
-                                    span { class: "avatar xs", "0" }
-                                    span { class: "grow",
-                                        span { class: "title f-13",
-                                            {crate::i18n::tr(if has_session { "dashboard.no_notifications" } else { "dashboard.notifications_signin" })}
-                                        }
-                                        span { class: "sub", {crate::i18n::tr("dashboard.notifications_empty_sub")} }
-                                    }
-                                }
-                            } else {
-                                for notification in visible_notifications.iter() {
-                                    Link {
-                                        class: "m-list-item",
-                                        "data-testid": "dashboard-notification-card",
-                                        "data-notification-id": "{notification.id}",
-                                        "data-kind": "{notification.kind}",
-                                        key: "{notification.id}",
-                                        to: Route::Notifications,
-                                        onclick: move |_| view.set(super::AppView::Notifications),
-                                        span { class: "avatar xs", if notification.read { "✓" } else { "!" } }
-                                        span { class: "grow",
-                                            span { class: "title f-13", "data-testid": "dashboard-notification-title", {notification.render_title()} }
-                                            span { class: "sub", "data-testid": "dashboard-notification-body", {notification.render_body()} }
-                                        }
-                                        span { class: "pill muted xs", "data-testid": "dashboard-notification-kind", {tr(notification.kind_label_key)} }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    div { class: "surface", "data-testid": "operations-surface",
-                        div { class: "row surface-head",
-                            strong { {tr("dashboard.client_status")} }
-                            span { class: "ml-auto",
-                                HelpTip { text: tr("dashboard.client_status_help") }
-                            }
-                        }
-                        div { class: "settings-row",
-                            div {
-                                div { class: "label f-12", {tr("dashboard.sync_frontier")} }
-                                div { class: "sub mono", title: "{sync_cursor}", "{sync_cursor_label}" }
-                            }
-                            span { class: if has_session { "pill success dot" } else { "pill muted xs" }, if has_session { {tr("dashboard.loaded")} } else { {tr("dashboard.not_connected")} } }
-                        }
-                        div { class: "settings-row",
-                            div {
-                                div { class: "label f-12", {tr("dashboard.event_frontier")} }
-                                div { class: "sub", if has_session { {tr("dashboard.station_reported")} } else { {tr("dashboard.not_loaded")} } }
-                            }
-                            span { class: "mono f-11", "data-testid": "event-frontier-card", title: "{frontier_state}", "{frontier_state_label}" }
-                        }
-                        div { class: "settings-row",
-                            div {
-                                div { class: "label f-12", {tr("dashboard.queued_writes")} }
-                                div { class: "sub", {tr("dashboard.local_replay_queue")} }
-                            }
-                            span { class: "mono f-11", "{device_queue}" }
-                        }
-                        div { class: "actions", style: "padding: 12px 16px 0;",
-                            Link {
-                                class: "secondary",
-                                to: Route::SettingsSection {
-                                    section: "release".to_owned(),
-                                    filter: String::new(),
-                                },
-                                onclick: move |_| view.set(super::AppView::Settings),
-                                UiIcon { name: "settings" }
-                                {tr("dashboard.advanced_diagnostics")}
-                            }
-                            Button {
-                                variant: ButtonVariant::Ghost,
-                                size: ButtonSize::Icon,
-                                class: "btn sm ml-auto",
-                                "data-testid": "check-health-button",
-                                title: tr(if health_loading() { "dashboard.checking_health" } else { "dashboard.run_health_checks" }),
-                                "aria-label": tr(if health_loading() { "dashboard.checking_health" } else { "dashboard.run_health_checks" }),
-                                disabled: health_loading(),
-                                onclick: {
-                                    let base = base_url.clone();
-                                    move |_| {
-                                        let base = base.clone();
-                                        let api_token = token();
-                                        health_loading.set(true);
-                                        spawn(async move {
-                                            // Fold the four sequential checks into a
-                                            // single `with_authed_api` so an Unavailable or
-                                            // AuthExpired error tags every row at once
-                                            // instead of silently returning an empty Vec.
-                                            let result = crate::transport::auth::with_authed_api(
-                                                &base,
-                                                api_token,
-                                                |api| async move {
-                                                    let mut rows = Vec::new();
-                                                    match api.describe().await {
-                                                        Ok(d) => rows.push(DashboardHealthCheck::new("dashboard.health.describe", DashboardHealthValue::Service { service: d.service_kind, version: d.protocol_version })),
-                                                        Err(e) => rows.push(DashboardHealthCheck::new("dashboard.health.describe", DashboardHealthValue::EndpointError(e.to_string()))),
-                                                    }
-                                                    match async { crate::transport::account::sync_describe(&api.sdk_http_client()?).await }.await {
-                                                        Ok(s) => rows.push(DashboardHealthCheck::new("dashboard.health.sync", DashboardHealthValue::Profiles(s.supported_profiles.len()))),
-                                                        Err(e) => rows.push(DashboardHealthCheck::new("dashboard.health.sync", DashboardHealthValue::EndpointError(e.to_string()))),
-                                                    }
-                                                    match async { crate::transport::account::identity_describe(&api.sdk_http_client()?).await }.await {
-                                                        Ok(i) => rows.push(DashboardHealthCheck::new("dashboard.health.identity", DashboardHealthValue::Service { service: i.service_kind, version: i.protocol_version })),
-                                                        Err(e) => rows.push(DashboardHealthCheck::new("dashboard.health.identity", DashboardHealthValue::EndpointError(e.to_string()))),
-                                                    }
-                                                    Ok::<_, anyhow::Error>(rows)
-                                                },
-                                            )
-                                            .await;
-                                            let checks = match result {
-                                                Ok(rows) => rows,
-                                                Err(err) => vec![DashboardHealthCheck::new(
-                                                    "dashboard.health.api",
-                                                    DashboardHealthValue::ApiError(Rc::new(err)),
-                                                )],
-                                            };
-                                            protocol_health.set(checks);
-                                            health_loading.set(false);
-                                        });
-                                    }
-                                },
-                                UiIcon { name: "refresh" }
-                            }
-                        }
-                        div { style: "padding: 12px 16px;",
-                            if protocol_health().is_empty() {
-                                div { class: "muted f-12", {tr("dashboard.health_help")} }
-                            } else {
-                                div { class: "stack-sm",
-                                    for check in protocol_health() {
-                                        div { class: "settings-row", "data-testid": "dashboard-health-row", "data-check": "{check.name_key}",
-                                            div { class: "label f-12", "data-testid": "dashboard-health-name", {tr(check.name_key)} }
-                                            span { class: "mono f-11", "data-testid": "dashboard-health-value", {check.value.render()} }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+fn notification_source_id(scope: &Scope, identity: &str) -> Option<glory::render::SemanticId> {
+    use sha2::Digest;
+    match glory::render::SemanticId::new(format!(
+        "dashboard-notification-{}",
+        hex::encode(sha2::Sha256::digest(identity.as_bytes()))
+    )) {
+        Ok(id) => Some(id),
+        Err(error) => {
+            scope.report_error(error);
+            None
         }
     }
 }
 
+fn frontier_card(scope: &Scope, context: &InksonContext) -> View {
+    let id = match glory::render::SemanticId::new("dashboard-event-frontier-source") {
+        Ok(id) => id,
+        Err(error) => {
+            scope.report_error(error);
+            return empty();
+        }
+    };
+    let frontier = context.frontier_state;
+    Box::new(
+        glory::ui::view()
+            .class("mono f-11 event-frontier-card")
+            .role(glory::render::Role::Group)
+            .name(context.translated(scope, "dashboard.event_frontier"))
+            .semantics(Some(Box::new(glory::render::Semantics {
+                described_by: Some(id.clone()),
+                ..Default::default()
+            })))
+            .fill(vec![
+                plain(scope.bond(move || short_protocol_id(frontier.get()))),
+                Box::new(
+                    glory::ui::text()
+                        .class("sr-only dashboard-frontier-provenance")
+                        .content(frontier)
+                        .semantics(Some(Box::new(glory::render::Semantics {
+                            id: Some(id),
+                            ..Default::default()
+                        }))),
+                ) as View,
+            ]),
+    )
+}
+
+fn notifications_open(scope: &Scope, context: Rc<InksonContext>) -> View {
+    let label = context.translated(scope, "dashboard.notifications_open");
+    let make_link = move || {
+        let context = context.clone();
+        crate::presentation::widgets::internal_link()
+            .class("btn icon sm ghost ml-auto pinned-notifications-open")
+            .target(Route::Notifications.to_string())
+            .name(label)
+            .fill(crate::components::ui_icon("inbox"))
+            .on(glory::render::EventKind::Activate, move |_| {
+                context.navigate(Route::Notifications)
+            })
+    };
+    #[cfg(target_arch = "wasm32")]
+    {
+        Box::new(
+            sapid::tooltip("dashboard-notifications-hint")
+                .label(label)
+                .text(label)
+                .target(move |target| target.link(make_link())),
+        )
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        Box::new(make_link())
+    }
+}
+fn dashboard_health(
+    scope: &Scope,
+    context: Rc<InksonContext>,
+    protocol_health: Cage<Vec<DashboardHealthCheck>>,
+    health_loading: Cage<bool>,
+) -> View {
+    let health_handler = {
+        let context = context.clone();
+        let token = context.token;
+        let base_url = context.base_url.get_untracked();
+        {
+            let base = base_url.clone();
+            move |_| {
+                let base = base.clone();
+                let api_token = token.get();
+                health_loading.revise(|value| {
+                    *value = true;
+                });
+                {
+                    let task_owner = context.clone();
+                    let _ = task_owner.spawn(async move {
+                        // Fold the four sequential checks into a
+                        // single `with_authed_api` so an Unavailable or
+                        // AuthExpired error tags every row at once
+                        // instead of silently returning an empty Vec.
+                        let result = crate::transport::auth::with_authed_api(
+                            &base,
+                            api_token,
+                            |api| async move {
+                                let mut rows = Vec::new();
+                                match api.describe().await {
+                                    Ok(d) => rows.push(DashboardHealthCheck::new(
+                                        "dashboard.health.describe",
+                                        DashboardHealthValue::Service {
+                                            service: d.service_kind,
+                                            version: d.protocol_version,
+                                        },
+                                    )),
+                                    Err(e) => rows.push(DashboardHealthCheck::new(
+                                        "dashboard.health.describe",
+                                        DashboardHealthValue::EndpointError(e.to_string()),
+                                    )),
+                                }
+                                match async {
+                                    crate::transport::account::sync_describe(
+                                        &api.sdk_http_client()?,
+                                    )
+                                    .await
+                                }
+                                .await
+                                {
+                                    Ok(s) => rows.push(DashboardHealthCheck::new(
+                                        "dashboard.health.sync",
+                                        DashboardHealthValue::Profiles(s.supported_profiles.len()),
+                                    )),
+                                    Err(e) => rows.push(DashboardHealthCheck::new(
+                                        "dashboard.health.sync",
+                                        DashboardHealthValue::EndpointError(e.to_string()),
+                                    )),
+                                }
+                                match async {
+                                    crate::transport::account::identity_describe(
+                                        &api.sdk_http_client()?,
+                                    )
+                                    .await
+                                }
+                                .await
+                                {
+                                    Ok(i) => rows.push(DashboardHealthCheck::new(
+                                        "dashboard.health.identity",
+                                        DashboardHealthValue::Service {
+                                            service: i.service_kind,
+                                            version: i.protocol_version,
+                                        },
+                                    )),
+                                    Err(e) => rows.push(DashboardHealthCheck::new(
+                                        "dashboard.health.identity",
+                                        DashboardHealthValue::EndpointError(e.to_string()),
+                                    )),
+                                }
+                                Ok::<_, anyhow::Error>(rows)
+                            },
+                        )
+                        .await;
+                        let checks = match result {
+                            Ok(rows) => rows,
+                            Err(err) => vec![DashboardHealthCheck::new(
+                                "dashboard.health.api",
+                                DashboardHealthValue::ApiError(Rc::new(err)),
+                            )],
+                        };
+                        protocol_health.revise(|value| {
+                            *value = checks;
+                        });
+                        health_loading.revise(|value| {
+                            *value = false;
+                        });
+                    });
+                };
+            }
+        }
+    };
+    let health = reactive(protocol_health, {
+        let ctx = context.clone();
+        move |scope, checks| {
+            if checks.is_empty() {
+                paragraph("muted f-12", ctx.translated(scope, "dashboard.health_help"))
+            } else {
+                stack(
+                    "stack-sm",
+                    checks
+                        .into_iter()
+                        .map(|check| {
+                            line(
+                                "settings-row dashboard-health-row",
+                                vec![
+                                    paragraph(
+                                        "label f-12 dashboard-health-name",
+                                        tr(check.name_key),
+                                    ),
+                                    paragraph(
+                                        "mono f-11 dashboard-health-value",
+                                        check.value.render(),
+                                    ),
+                                ],
+                            )
+                        })
+                        .collect(),
+                )
+            }
+        }
+    });
+    let health_name = {
+        let context = context.clone();
+        scope.bond(move || {
+            context.tr(if health_loading.get() {
+                "dashboard.checking_health"
+            } else {
+                "dashboard.run_health_checks"
+            })
+        })
+    };
+    let health_handler: Rc<dyn Fn(())> = Rc::new(health_handler);
+    let enabled = scope.bond(move || !health_loading.get());
+    let make_button = move || {
+        let handler = health_handler.clone();
+        glory::prelude::button()
+            .class("btn icon sm ghost ml-auto check-health-button")
+            .name(health_name)
+            .enabled(enabled)
+            .fill(crate::components::ui_icon("refresh"))
+            .on(glory::render::EventKind::Activate, move |_| handler(()))
+    };
+    #[cfg(target_arch = "wasm32")]
+    let health_button: View = Box::new(
+        sapid::tooltip("dashboard-health-hint")
+            .label(health_name)
+            .text(health_name)
+            .target(move |target| target.button(make_button())),
+    );
+    #[cfg(not(target_arch = "wasm32"))]
+    let health_button: View = Box::new(make_button());
+    stack(
+        "surface operations-surface",
+        vec![
+            line(
+                "row surface-head",
+                vec![
+                    surface_title(context.translated(scope, "dashboard.client_status")),
+                    crate::components::help_tip(
+                        scope,
+                        context.clone(),
+                        crate::components::HelpTipProps {
+                            text: tr("dashboard.client_status_help"),
+                        },
+                    ),
+                ],
+            ),
+            line(
+                "settings-row",
+                vec![
+                    stack(
+                        "",
+                        vec![
+                            paragraph(
+                                "label f-12",
+                                context.translated(scope, "dashboard.sync_frontier"),
+                            ),
+                            paragraph("sub mono", {
+                                let cage = context.sync_cursor;
+                                scope.bond(move || short_protocol_id(cage.get()))
+                            }),
+                        ],
+                    ),
+                    paragraph("pill success dot", {
+                        let token = context.token;
+                        scope.bond(move || {
+                            tr(if token.get().is_empty() {
+                                "dashboard.not_connected"
+                            } else {
+                                "dashboard.loaded"
+                            })
+                        })
+                    }),
+                ],
+            ),
+            line(
+                "settings-row",
+                vec![
+                    stack(
+                        "",
+                        vec![
+                            paragraph(
+                                "label f-12",
+                                context.translated(scope, "dashboard.event_frontier"),
+                            ),
+                            paragraph(
+                                "sub",
+                                context.translated(scope, "dashboard.station_reported"),
+                            ),
+                        ],
+                    ),
+                    frontier_card(scope, &context),
+                ],
+            ),
+            line(
+                "settings-row",
+                vec![
+                    stack(
+                        "",
+                        vec![
+                            paragraph(
+                                "label f-12",
+                                context.translated(scope, "dashboard.queued_writes"),
+                            ),
+                            paragraph(
+                                "sub",
+                                context.translated(scope, "dashboard.local_replay_queue"),
+                            ),
+                        ],
+                    ),
+                    paragraph("mono f-11", {
+                        let queue = context.device_queue;
+                        scope.bond(move || queue.get().to_string())
+                    }),
+                ],
+            ),
+            line(
+                "actions",
+                vec![
+                    nav_view(
+                        context.clone(),
+                        Route::SettingsSection {
+                            section: "release".into(),
+                            filter: String::new(),
+                        },
+                        "secondary",
+                        vec![
+                            crate::components::ui_icon("settings"),
+                            plain(context.translated(scope, "dashboard.advanced_diagnostics")),
+                        ],
+                    ),
+                    health_button,
+                ],
+            ),
+            stack("dashboard-health-results", vec![health]),
+        ],
+    )
+}
+fn recent_strands_table(rows: Vec<Vec<View>>, empty_label: String) -> View {
+    let head = sapid::table_head().row(
+        sapid::table_row("head").cells(
+            [
+                "",
+                "dashboard.strand_title",
+                "dashboard.strand_space",
+                "dashboard.strand_state",
+                "dashboard.strand_updated",
+            ]
+            .into_iter()
+            .enumerate()
+            .map(|(index, key)| sapid::table_header_cell(format!("column-{index}")).text(tr(key))),
+        ),
+    );
+    let body = if rows.is_empty() {
+        sapid::table_body().row(
+            sapid::table_row("empty").cell(
+                sapid::table_cell("message")
+                    .class("dim")
+                    .column_span(5)
+                    .text(empty_label),
+            ),
+        )
+    } else {
+        sapid::table_body().rows(rows.into_iter().enumerate().map(|(index, cells)| {
+            sapid::table_row(format!("row-{index}")).cells(cells.into_iter().enumerate().map(
+                |(column, view)| {
+                    let mut view = Some(view);
+                    sapid::table_cell(format!("column-{column}"))
+                        .content(move || view.take().unwrap_or_else(empty))
+                },
+            ))
+        }))
+    };
+    Box::new(
+        sapid::table("dashboard-recent-strands")
+            .unstyled()
+            .class("tbl compact")
+            .head(head)
+            .body(body),
+    )
+}
+
+pub fn page(scope: &Scope, context: Rc<InksonContext>, _route: Route) -> View {
+    let protocol_health = scope.cage(Vec::<DashboardHealthCheck>::new());
+    let health_loading = scope.cage(false);
+    let contacts = {
+        let ctx = context.clone();
+        crate::presentation::widgets::resource(scope, move || {
+            let base = ctx.base_url.get();
+            let token = ctx.token.get();
+            async move {
+                if token.trim().is_empty() {
+                    return Ok(None);
+                }
+                crate::transport::auth::with_endpoint_clients(
+                    &base,
+                    token,
+                    None,
+                    |clients| async move { clients.account().contacts().await },
+                )
+                .await
+                .map(|response| Some(dashboard_contacts_summary(&response.contacts)))
+                .map_err(|_| tr("dashboard.contacts_unavailable"))
+            }
+        })
+    };
+    let source = {
+        let ctx = context.clone();
+        scope.bond(move || {
+            let _ = ctx.state_revision.get();
+            let _ = ctx.locale.get();
+            let _ = ctx.selected_realm_id.get();
+            let _ = ctx.realm_tree_nodes.get();
+            let _ = ctx.token.get();
+            contacts.data.get()
+        })
+    };
+    let ctx = context.clone();
+    let panels = reactive(source, move |scope, contact_status| {
+        let snapshot = ctx.snapshot();
+        let session = !ctx.token.get_untracked().trim().is_empty();
+        let nodes = ctx.realm_tree_nodes.get_untracked();
+        let pinned = ctx.state_store.read(|store| {
+            store
+                .realm_remarks()
+                .into_iter()
+                .filter_map(|(id, remark)| remark.pinned.then_some(id))
+                .collect()
+        });
+        let nodes = crate::realm_tree::realm_tree_items_with_pinned_realms(&nodes, &pinned)
+            .into_iter()
+            .map(|item| item.node)
+            .collect::<Vec<_>>();
+        let has_realms = nodes.iter().any(|n| n.kind == RealmTreeNodeKind::Realm);
+        let has_spaces = nodes.iter().any(|n| n.kind == RealmTreeNodeKind::Space);
+        let active = nodes
+            .iter()
+            .find(|n| n.id == ctx.selected_realm_id.get_untracked())
+            .or_else(|| nodes.first());
+        let active_id = active.map(|n| n.id.clone()).unwrap_or_default();
+        let realm = projection_realm_id_for_known_node(&nodes, &active_id).unwrap_or_default();
+        let strands = dashboard_recent_strands(&snapshot.raw_operations, &realm)
+            .into_iter()
+            .filter(|s| s.state == arkret_sdk::ObjectState::Active)
+            .take(5)
+            .collect::<Vec<_>>();
+        let notices = dashboard_notification_summaries(&snapshot);
+        let unread = notices.iter().filter(|n| !n.read).count();
+        let (contact_count, contact_delta) = match &contact_status {
+            Some(Ok(Some(summary))) => {
+                (summary.accepted.to_string(), contact_summary_delta(summary))
+            }
+            Some(Err(error)) => ("0".into(), error.clone()),
+            _ if !session => ("0".into(), tr("contacts.sign_in")),
+            _ => ("...".into(), tr("dashboard.contacts_loading")),
+        };
+        let metric = |route, label: String, value: String, delta: String, class: &str| {
+            nav_view(
+                ctx.clone(),
+                route,
+                &format!(
+                    "metric {}",
+                    if class == "dashboard-unread-notifications" {
+                        ""
+                    } else {
+                        class
+                    }
+                ),
+                vec![
+                    paragraph("lbl", label),
+                    paragraph(
+                        if class == "dashboard-unread-notifications" {
+                            "val dashboard-unread-notifications"
+                        } else if class == "dashboard-contacts-card" {
+                            "val dashboard-contacts-count"
+                        } else {
+                            "val"
+                        },
+                        value,
+                    ),
+                    paragraph("delta", delta),
+                ],
+            )
+        };
+        let mut metrics = vec![
+            metric(
+                Route::Notifications,
+                tr("dashboard.notifications_label"),
+                unread.to_string(),
+                tr(if session {
+                    "dashboard.notifications_delta_unread"
+                } else {
+                    "dashboard.notifications_delta_signin"
+                }),
+                "dashboard-unread-notifications",
+            ),
+            metric(
+                Route::Directory,
+                tr(projection_collection_label(has_realms, has_spaces)),
+                nodes.len().to_string(),
+                tr(if session {
+                    projection_collection_browse_label(has_realms, has_spaces)
+                } else {
+                    projection_collection_signin_label(has_realms, has_spaces)
+                }),
+                "",
+            ),
+            metric(
+                Route::Contacts,
+                tr("nav.contacts"),
+                contact_count,
+                contact_delta,
+                "dashboard-contacts-card",
+            ),
+        ];
+        if let Some(active) = active {
+            metrics.push(metric(
+                Route::KanbanRealm {
+                    realm_id: active.id.clone(),
+                },
+                tr("dashboard.active_strands"),
+                strands.len().to_string(),
+                tr("dashboard.open_board_view"),
+                "",
+            ));
+        } else {
+            metrics.push(metric(
+                Route::Setup,
+                tr("dashboard.realm_setup"),
+                tr(if session {
+                    "dashboard.ready"
+                } else {
+                    "dashboard.sign_in"
+                }),
+                tr("dashboard.setup_help"),
+                "",
+            ));
+            metrics.push(metric(
+                Route::Onboarding,
+                tr("dashboard.onboarding"),
+                tr("dashboard.onboarding_steps"),
+                tr("dashboard.onboarding_help"),
+                "",
+            ));
+        }
+        let mut realm_rows = vec![];
+        for node in &nodes {
+            let remark = if node.kind == RealmTreeNodeKind::Realm {
+                ctx.state_store.read(|s| s.realm_remark(&node.id))
+            } else {
+                None
+            };
+            let name = remark
+                .as_ref()
+                .map(|r| r.display_name(&node.title).to_owned())
+                .unwrap_or_else(|| node.title.clone());
+            let mut children = vec![
+                crate::components::identity_avatar(
+                    scope,
+                    ctx.clone(),
+                    crate::components::IdentityAvatarProps {
+                        seed: node.id.clone(),
+                        alt_text: name.clone(),
+                        blob_ref: None,
+                        class: "avatar avatar-img".into(),
+                        test_id: None,
+                    },
+                ),
+                stack(
+                    "grow",
+                    vec![
+                        paragraph("title", name),
+                        paragraph(
+                            "sub",
+                            dashboard_realm_description(node.description.as_deref()),
+                        ),
+                    ],
+                ),
+            ];
+            if remark.is_some_and(|r| !r.local_name.trim().is_empty()) {
+                children.push(paragraph(
+                    "pill muted xs dashboard-realm-tree-realm-remark-badge",
+                    tr("dashboard.realm_remark"),
+                ));
+            }
+            if let Some(status) = ctx
+                .state_store
+                .read(|s| s.realm_state_snapshot_sync_status(&node.id))
+            {
+                use crate::realm_state_snapshot::RealmStateSnapshotTrustState;
+                let key = match status.trust_state {
+                    RealmStateSnapshotTrustState::LowerTrust => {
+                        Some("dashboard.snapshot_lower_trust")
+                    }
+                    RealmStateSnapshotTrustState::Degraded => Some("dashboard.snapshot_degraded"),
+                    _ => None,
+                };
+                if let Some(key) = key {
+                    children.push(paragraph(
+                        "pill muted xs dashboard-realm-tree-snapshot-badge",
+                        tr(key),
+                    ));
+                }
+            }
+            children.push(paragraph(
+                "pill muted xs",
+                tr(projection_kind_label(node.kind)),
+            ));
+            realm_rows.push(nav_view(
+                ctx.clone(),
+                Route::Realm {
+                    realm_id: node.id.clone(),
+                },
+                "m-list-item dashboard-realm-tree-card",
+                children,
+            ));
+        }
+        if realm_rows.is_empty() {
+            realm_rows.push(line(
+                "m-list-item dashboard-realm-tree-empty",
+                vec![
+                    paragraph("avatar", "0"),
+                    stack(
+                        "grow",
+                        vec![
+                            paragraph(
+                                "title",
+                                tr(if session {
+                                    projection_collection_empty_label(has_realms, has_spaces)
+                                } else {
+                                    projection_collection_signin_label(has_realms, has_spaces)
+                                }),
+                            ),
+                            paragraph(
+                                "sub",
+                                tr(if session {
+                                    projection_collection_empty_help_label(has_realms, has_spaces)
+                                } else {
+                                    "dashboard.no_session_help"
+                                }),
+                            ),
+                        ],
+                    ),
+                ],
+            ));
+        }
+        let realm_surface = stack(
+            "surface realm-tree-summary",
+            vec![
+                line(
+                    "row surface-head",
+                    vec![
+                        plain(tr(recent_projection_collection_label(
+                            has_realms, has_spaces,
+                        ))),
+                        nav_view(
+                            ctx.clone(),
+                            Route::Directory,
+                            "btn icon sm ghost ml-auto",
+                            vec![crate::components::ui_icon("search")],
+                        ),
+                    ],
+                ),
+                stack("stack-sm dashboard-realm-list", realm_rows),
+            ],
+        );
+        let strand_rows = strands
+            .into_iter()
+            .map(|strand| {
+                vec![
+                    empty(),
+                    plain(strand.title),
+                    plain(tr("dashboard.current_board")),
+                    plain(tr(projection_object_state_label(&strand.state))),
+                    plain(
+                        strand
+                            .fields
+                            .get("due_at")
+                            .or_else(|| strand.fields.get("due"))
+                            .and_then(|value| value.as_str())
+                            .unwrap_or("-")
+                            .to_owned(),
+                    ),
+                ]
+            })
+            .collect::<Vec<_>>();
+        let recent = stack(
+            "surface recent-boards",
+            vec![
+                line(
+                    "row surface-head",
+                    vec![surface_title(tr("dashboard.recent_strands"))],
+                ),
+                recent_strands_table(
+                    strand_rows,
+                    tr(if session {
+                        "dashboard.strands_empty"
+                    } else {
+                        "dashboard.strands_signin"
+                    }),
+                ),
+            ],
+        );
+        let activity = stack(
+            "surface pad activity-feed",
+            vec![
+                paragraph("section-title mb-8", tr("dashboard.recent_activity")),
+                line(
+                    "m-list-item",
+                    vec![
+                        paragraph("pill muted xs", tr("dashboard.activity_empty")),
+                        stack(
+                            "grow",
+                            vec![
+                                paragraph(
+                                    "title",
+                                    tr(if session {
+                                        "dashboard.no_activity"
+                                    } else {
+                                        "dashboard.no_session_activity"
+                                    }),
+                                ),
+                                paragraph(
+                                    "sub",
+                                    tr(if session {
+                                        "dashboard.activity_sync_help"
+                                    } else {
+                                        "dashboard.activity_signin_help"
+                                    }),
+                                ),
+                            ],
+                        ),
+                    ],
+                ),
+            ],
+        );
+        let mut notice_rows = notices
+            .into_iter()
+            .take(3)
+            .map(|notice| -> View {
+                let Some(identity) = notification_source_id(scope, &notice.id) else {
+                    return empty();
+                };
+                let navigate = ctx.clone();
+                Box::new(
+                    crate::presentation::widgets::internal_link()
+                        .class("m-list-item dashboard-notification-card")
+                        .target(Route::Notifications.to_string())
+                        .semantics(Some(Box::new(glory::render::Semantics {
+                            described_by: Some(identity.clone()),
+                            ..Default::default()
+                        })))
+                        .fill(vec![
+                            Box::new(
+                                glory::ui::view()
+                                    .class("sr-only dashboard-notification-provenance")
+                                    .semantics(Some(Box::new(glory::render::Semantics {
+                                        id: Some(identity),
+                                        ..Default::default()
+                                    })))
+                                    .fill((
+                                        glory::ui::text()
+                                            .class("dashboard-notification-source-id")
+                                            .content(notice.id.clone()),
+                                        glory::ui::text().content(" · "),
+                                        glory::ui::text()
+                                            .class("dashboard-notification-source-kind")
+                                            .content(notice.kind.clone()),
+                                    )),
+                            ) as View,
+                            paragraph("avatar xs", if notice.read { "✓" } else { "!" }),
+                            stack(
+                                "grow",
+                                vec![
+                                    paragraph(
+                                        "title f-13 dashboard-notification-title",
+                                        notice.render_title(),
+                                    ),
+                                    paragraph(
+                                        "sub dashboard-notification-body",
+                                        notice.render_body(),
+                                    ),
+                                ],
+                            ),
+                            paragraph(
+                                "pill muted xs dashboard-notification-kind",
+                                tr(notice.kind_label_key),
+                            ),
+                        ])
+                        .on(glory::render::EventKind::Activate, move |_| {
+                            navigate.navigate(Route::Notifications)
+                        }),
+                )
+            })
+            .collect::<Vec<_>>();
+        if notice_rows.is_empty() {
+            notice_rows.push(line(
+                "m-list-item",
+                vec![
+                    paragraph("avatar xs", "0"),
+                    stack(
+                        "grow",
+                        vec![
+                            paragraph(
+                                "title f-13",
+                                tr(if session {
+                                    "dashboard.no_notifications"
+                                } else {
+                                    "dashboard.notifications_signin"
+                                }),
+                            ),
+                            paragraph("sub", tr("dashboard.notifications_empty_sub")),
+                        ],
+                    ),
+                ],
+            ));
+        }
+        let notice_surface = stack(
+            "surface pinned-notifications",
+            vec![
+                line(
+                    "row surface-head",
+                    vec![
+                        surface_title(tr("nav.notifications")),
+                        notifications_open(scope, ctx.clone()),
+                    ],
+                ),
+                stack("stack-sm dashboard-notification-list", notice_rows),
+            ],
+        );
+        stack(
+            "dashboard-live",
+            vec![
+                stack("metric-grid dashboard-metrics", metrics),
+                stack(
+                    "dashboard-two-col",
+                    vec![
+                        stack("stack", vec![realm_surface, recent, activity]),
+                        stack(
+                            "stack dashboard-right-column",
+                            vec![
+                                notice_surface,
+                                dashboard_health(
+                                    scope,
+                                    ctx.clone(),
+                                    protocol_health,
+                                    health_loading,
+                                ),
+                            ],
+                        ),
+                    ],
+                ),
+            ],
+        )
+    });
+    stack("timeline dashboard-panel", vec![panels])
+}
 fn dashboard_notification_summaries(
     snapshot: &ClientLocalState,
 ) -> Vec<DashboardNotificationSummary> {
@@ -862,6 +1195,47 @@ mod tests {
     use crate::state::RawOperationRecord;
 
     #[test]
+    fn empty_recent_strands_keeps_real_headers_and_spanning_message() {
+        use glory::render::{DocumentPart, Props, TableMetadata};
+        crate::i18n::with_test_locale(crate::i18n::UiLocale::En, || {
+            let app = glory::App::memory();
+            app.mount(super::recent_strands_table(
+                vec![],
+                "No loaded strands".into(),
+            ))
+            .unwrap();
+            app.flush().unwrap();
+            let tree = app.tree();
+            let mut pending = tree.roots().to_vec();
+            let mut headers = 0;
+            let mut spans = Vec::new();
+            let mut messages = Vec::new();
+            while let Some(id) = pending.pop() {
+                let node = tree.node(id).unwrap();
+                pending.extend(node.children.iter().copied());
+                if let Some(semantics) = node.descriptor.view().semantics.as_ref() {
+                    if semantics.document_part == Some(DocumentPart::ColumnHeader) {
+                        headers += 1;
+                    }
+                    if let Some(TableMetadata::Cell { column_span, .. }) = semantics.table.as_ref()
+                        && *column_span > 1
+                    {
+                        spans.push(*column_span);
+                    }
+                }
+                if let Props::Text(text) = node.descriptor.view().props
+                    && text.content == "No loaded strands"
+                {
+                    messages.push(text.content.clone());
+                }
+            }
+            assert_eq!(headers, 5);
+            assert_eq!(spans, vec![5]);
+            assert_eq!(messages, vec!["No loaded strands"]);
+        });
+    }
+
+    #[test]
     fn projection_labels_follow_realm_space_kind() {
         // The helpers return i18n keys (translated at render via tr()).
         assert_eq!(
@@ -1018,8 +1392,6 @@ mod tests {
 
     #[test]
     fn dashboard_notification_previews_keep_literal_keys_and_defaults_follow_locale() {
-        use dioxus::prelude::*;
-
         use super::dashboard_notification_summaries;
         use crate::state::projection::notifications::test_event_notification;
         use crate::state::{ClientLocalState, NotificationClientState};
@@ -1084,18 +1456,12 @@ mod tests {
         let by_id = |id: &str| rows.iter().find(|row| row.id == id).unwrap();
         assert!(by_id(&literal.notification_id()).read);
         let original_snapshot = snapshot.clone();
-        let mut dom = VirtualDom::new(|| rsx! {});
-        dom.rebuild_in_place();
-        dom.in_scope(ScopeId::ROOT, || {
-            let mut locale = provide_context(crate::i18n::init_i18n_with_locale(
-                crate::i18n::UiLocale::En,
-            ));
-            for (language, title, body) in [
-                (crate::i18n::UiLocale::En, "New message", "Notification"),
-                (crate::i18n::UiLocale::Zh, "新消息", "通知"),
-                (crate::i18n::UiLocale::En, "New message", "Notification"),
-            ] {
-                crate::i18n::set_locale(&mut locale, language);
+        for (language, title, body) in [
+            (crate::i18n::UiLocale::En, "New message", "Notification"),
+            (crate::i18n::UiLocale::Zh, "新消息", "通知"),
+            (crate::i18n::UiLocale::En, "New message", "Notification"),
+        ] {
+            crate::i18n::with_test_locale(language, || {
                 assert_eq!(by_id(&defaults.notification_id()).render_title(), title);
                 assert_eq!(by_id(&defaults.notification_id()).render_body(), body);
                 assert_eq!(
@@ -1125,14 +1491,12 @@ mod tests {
                     snapshot.notification_client_state,
                     original_snapshot.notification_client_state
                 );
-            }
-        });
+            });
+        }
     }
 
     #[test]
     fn dashboard_invite_and_runtime_approval_copy_retranslates_retained_summaries() {
-        use dioxus::prelude::*;
-
         use super::dashboard_notification_summaries;
         use crate::state::projection::notifications::{
             raw_notifications_from_sources, test_invite,
@@ -1188,33 +1552,27 @@ mod tests {
             .find(|row| row.id.starts_with("ak:notification:"))
             .unwrap();
         let short_realm = crate::views::helpers::short_protocol_id(realm);
-        let mut dom = VirtualDom::new(|| rsx! {});
-        dom.rebuild_in_place();
-        dom.in_scope(ScopeId::ROOT, || {
-            let mut locale = provide_context(crate::i18n::init_i18n_with_locale(
+        for (language, invite_title, approval_title, approval_body) in [
+            (
                 crate::i18n::UiLocale::En,
-            ));
-            for (language, invite_title, approval_title, approval_body) in [
-                (
-                    crate::i18n::UiLocale::En,
-                    "Realm invite",
-                    "Agent runtime approval",
-                    "Review the pending Agent runtime key request.",
-                ),
-                (
-                    crate::i18n::UiLocale::Zh,
-                    "Realm 邀请",
-                    "Agent 运行授权审批",
-                    "审查待处理的 Agent 运行密钥请求。",
-                ),
-                (
-                    crate::i18n::UiLocale::En,
-                    "Realm invite",
-                    "Agent runtime approval",
-                    "Review the pending Agent runtime key request.",
-                ),
-            ] {
-                crate::i18n::set_locale(&mut locale, language);
+                "Realm invite",
+                "Agent runtime approval",
+                "Review the pending Agent runtime key request.",
+            ),
+            (
+                crate::i18n::UiLocale::Zh,
+                "Realm 邀请",
+                "Agent 运行授权审批",
+                "审查待处理的 Agent 运行密钥请求。",
+            ),
+            (
+                crate::i18n::UiLocale::En,
+                "Realm invite",
+                "Agent runtime approval",
+                "Review the pending Agent runtime key request.",
+            ),
+        ] {
+            crate::i18n::with_test_locale(language, || {
                 assert_eq!(invitation.render_title(), invite_title);
                 let invite_body = match language {
                     crate::i18n::UiLocale::En => format!("You were invited to join {short_realm}."),
@@ -1224,44 +1582,31 @@ mod tests {
                 assert_eq!(approval.render_title(), approval_title);
                 assert_eq!(approval.render_body(), approval_body);
                 assert_eq!(dashboard_notification_summaries(&snapshot), rows);
-            }
-        });
+            });
+        }
     }
 }
 
 #[cfg(test)]
 mod locale_regression_tests {
-    use std::cell::RefCell;
-    use std::collections::BTreeMap;
 
     use super::*;
-    use crate::i18n::{I18nSignal, UiLocale};
+    use crate::i18n::UiLocale;
     use crate::transport::auth::ApiCallError;
 
-    type LocaleHandle = Rc<RefCell<Option<I18nSignal>>>;
-
-    fn retained_dashboard_feedback(
-        (handle, checks): (LocaleHandle, Vec<DashboardHealthCheck>),
-    ) -> Element {
-        let locale = use_context_provider(|| crate::i18n::init_i18n_with_locale(UiLocale::En));
-        *handle.borrow_mut() = Some(locale);
-        // Capture the same result once. A locale change, with no new request or
-        // result assignment, must schedule real text mutations independently.
-        let retained = use_signal(move || checks);
-        let contacts = use_signal(|| DashboardContactsSummary {
+    fn feedback_values(checks: &[DashboardHealthCheck]) -> Vec<String> {
+        let contacts = DashboardContactsSummary {
             accepted: 2,
             pending_incoming: 1,
             pending_outgoing: 2,
             direct_ready: 2,
-        });
-        let contact_status = use_signal(|| {
-            [
-                "dashboard.contacts_loading",
-                "dashboard.contacts_unavailable",
-            ]
-        });
+        };
+        let contact_status = [
+            "dashboard.contacts_loading",
+            "dashboard.contacts_unavailable",
+        ];
         let mut values = vec![
-            contact_summary_delta(&contacts.read()),
+            contact_summary_delta(&contacts),
             dashboard_realm_description(None),
             dashboard_realm_description(Some("dashboard.open_board")),
             dashboard_realm_description(Some("Original {error} {version} / 原文")),
@@ -1270,7 +1615,7 @@ mod locale_regression_tests {
                 &arkret_sdk::NotificationKind::Message,
             )),
         ];
-        values.extend(contact_status.read().iter().map(|key| tr(key)));
+        values.extend(contact_status.iter().map(|key| tr(key)));
         for state in [
             arkret_sdk::ObjectState::Active,
             arkret_sdk::ObjectState::Archived,
@@ -1278,37 +1623,12 @@ mod locale_regression_tests {
         ] {
             values.push(tr(projection_object_state_label(&state)));
         }
-        for check in retained.read().iter() {
+        for check in checks.iter() {
             values.push(tr(check.name_key));
             values.push(check.value.render());
         }
-        rsx! {
-            div {
-                for (index, value) in values.into_iter().enumerate() {
-                    p { key: "{index}", "{value}" }
-                }
-            }
-        }
+        values
     }
-
-    fn apply_text_edits(
-        text: &mut BTreeMap<usize, String>,
-        edits: dioxus::core::Mutations,
-    ) -> usize {
-        let mut changed = 0;
-        for edit in edits.edits {
-            match edit {
-                dioxus::core::Mutation::CreateTextNode { id, value }
-                | dioxus::core::Mutation::SetText { id, value } => {
-                    text.insert(id.0, value);
-                    changed += 1;
-                }
-                _ => {}
-            }
-        }
-        changed
-    }
-
     #[test]
     fn cached_dashboard_health_and_contact_status_rerender_without_replacing_results() {
         let problem: arkret_sdk::Problem = serde_json::from_value(serde_json::json!({
@@ -1361,11 +1681,6 @@ mod locale_regression_tests {
                 )))),
             ),
         ];
-        let handle = Rc::new(RefCell::new(None));
-        let mut dom =
-            VirtualDom::new_with_props(retained_dashboard_feedback, (handle.clone(), checks));
-        let mut text = BTreeMap::new();
-        apply_text_edits(&mut text, dom.rebuild_to_vec());
         let expected = |language: UiLocale| {
             let mut values = if language == UiLocale::Zh {
                 vec![
@@ -1425,19 +1740,13 @@ mod locale_regression_tests {
             values.sort();
             values
         };
-        let actual = |text: &BTreeMap<usize, String>| {
-            let mut values = text.values().cloned().collect::<Vec<_>>();
-            values.sort();
-            values
-        };
-        assert_eq!(actual(&text), expected(UiLocale::En));
-        let mut locale = handle.borrow().expect("dashboard surface provides locale");
-        for language in [UiLocale::Zh, UiLocale::En] {
-            dom.in_runtime(|| crate::i18n::set_locale(&mut locale, language));
-            let changed = apply_text_edits(&mut text, dom.render_immediate_to_vec());
-            assert!(changed > 0, "locale must cause actual DOM text mutations");
-            assert_eq!(actual(&text), expected(language));
-            assert!(text.values().all(|value| !value.contains("private")));
+        for language in [UiLocale::En, UiLocale::Zh, UiLocale::En] {
+            crate::i18n::with_test_locale(language, || {
+                let mut values = feedback_values(&checks);
+                values.sort();
+                assert_eq!(values, expected(language));
+                assert!(values.iter().all(|value| !value.contains("private")));
+            });
         }
     }
 }

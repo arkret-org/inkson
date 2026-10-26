@@ -63,9 +63,9 @@ const server = createServer(async (request, response) => {
   const requestedFile =
     (await existingFile(publicDirectory, relativePath)) ??
     (fixtureDirectory ? await existingFile(fixtureDirectory, relativePath) : null);
-  const file =
-    requestedFile ??
-    (extname(pathname) ? null : await existingFile(publicDirectory, "index.html"));
+  const staticRequest = /^\/(?:assets|pkg|wasm|_arkret)(?:\/|$)/.test(pathname) ||
+    [".css", ".js", ".json", ".svg", ".wasm", ".woff", ".woff2", ".ttf", ".png", ".jpg", ".jpeg", ".ico"].includes(extname(pathname));
+  const file = requestedFile ?? (staticRequest ? null : await existingFile(publicDirectory, "index.html"));
   if (!file) {
     response.writeHead(404, { "Cache-Control": "no-store" });
     response.end();

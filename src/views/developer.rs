@@ -10,10 +10,13 @@
 //! surfaced by the dedicated "Audit log" settings section so the two
 //! operator tasks remain visually distinct.
 
-use dioxus::prelude::*;
+use std::rc::Rc;
 
-use crate::components::{EmptyState, EmptyStateKind, HelpTip};
+use glory::Scope;
+
+use crate::presentation::{InksonContext, View};
 use crate::views::helpers::short_protocol_id;
+use crate::views::settings::widgets::*;
 
 /// Default protocol version advertised by inkson — kept here so the
 /// developer panel can surface a stable label until the conformance
@@ -22,86 +25,117 @@ const PROTOCOL_VERSION: &str = "1.0";
 
 const RAW_EVENT_PREVIEW_LIMIT: usize = 50;
 
-#[component]
-pub fn DeveloperToolsPanel() -> Element {
-    let state_store = crate::app::SessionContext::get().state_store;
-    let state = state_store.read().load();
-    let raw_ops_total = state.raw_operations.len();
-    let preview_count = raw_ops_total.min(RAW_EVENT_PREVIEW_LIMIT);
-    let recent_ops: Vec<(String, String)> = state
-        .raw_operations
-        .iter()
-        .rev()
-        .take(RAW_EVENT_PREVIEW_LIMIT)
-        .map(|record| {
+pub fn page(scope: &Scope, context: Rc<InksonContext>, _route: crate::routes::Route) -> View {
+    let revision = context.state_revision;
+    let locale = context.locale;
+    let source = scope.bond(move || (revision.get(), locale.get()));
+    let render = context.clone();
+    reactive(source, move |scope, _| {
+        let context = render.clone();
+        let state = context.snapshot();
+        let total = state.raw_operations.len();
+        let count = total.min(RAW_EVENT_PREVIEW_LIMIT);
+        let mut rows = Vec::new();
+        for record in state
+            .raw_operations
+            .iter()
+            .rev()
+            .take(RAW_EVENT_PREVIEW_LIMIT)
+        {
             let kind = record
                 .payload
                 .get("kind")
-                .and_then(|v| v.as_str())
-                .or_else(|| record.payload.get("type").and_then(|v| v.as_str()))
-                .unwrap_or("(unknown)")
-                .to_owned();
-            (record.operation_id.clone(), kind)
-        })
-        .collect();
-
-    rsx! {
-        div { class: "timeline", "data-testid": "developer-tools-panel", role: "region", "aria-label": crate::i18n::tr("developer.title"),
-            div { class: "event",
-                div { class: "event-head",
-                    span { {crate::i18n::tr("developer.title")} }
-                    span { class: "muted", {crate::i18n::tr("developer.subtitle")} }
-                    HelpTip { text: crate::i18n::tr("developer.hint") }
-                }
-                div { class: "muted", {crate::i18n::tr("developer.hint")} }
-            }
-
-            // Protocol version + conformance summary.
-            div { class: "event", "data-testid": "developer-protocol-version",
-                div { class: "event-head",
-                    span { {crate::i18n::tr("developer.section.protocol_version")} }
-                    span { class: "badge", "{PROTOCOL_VERSION}" }
-                }
-                div { class: "muted", "Negotiated protocol version reported to /server/describe." }
-            }
-
-            // Raw event log preview.
-            div { class: "event", "data-testid": "developer-raw-events",
-                div { class: "event-head",
-                    span { {crate::i18n::tr("developer.section.events")} }
-                    span { class: "badge", "{raw_ops_total}" }
-                }
-                if recent_ops.is_empty() {
-                    EmptyState {
-                        title: crate::i18n::tr("developer.section.events"),
-                        kind: EmptyStateKind::Empty,
-                        message: Some("No raw operations recorded yet.".to_owned()),
-                        badge_override: None::<String>,
-                        test_id: Some("developer-raw-events-empty".to_owned()),
-                    }
-                } else {
-                    div { class: "muted",
-                        "Showing {preview_count} of {raw_ops_total} raw operations (newest first)."
-                    }
-                    for (op_id, kind) in recent_ops.iter() {
-                        {
-                            let op_id_label = short_protocol_id(op_id);
-                            rsx! {
-                                div { class: "event", "data-testid": "developer-raw-event-row",
-                                    div { class: "event-head",
-                                        span { class: "badge", "{kind}" }
-                                        span { class: "mono muted", title: "{op_id}", "{op_id_label}" }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+                .and_then(serde_json::Value::as_str)
+                .or_else(|| {
+                    record
+                        .payload
+                        .get("type")
+                        .and_then(serde_json::Value::as_str)
+                })
+                .unwrap_or("(unknown)");
+            rows.push(stack(
+                "event developer-raw-event-row",
+                vec![line(
+                    "event-head",
+                    vec![
+                        paragraph("badge", kind.to_owned()),
+                        paragraph("mono muted", short_protocol_id(&record.operation_id)),
+                    ],
+                )],
+            ));
         }
-    }
+        let mut event_children = vec![line(
+            "event-head",
+            vec![
+                plain(context.translated(scope, "developer.section.events")),
+                paragraph("badge", total.to_string()),
+            ],
+        )];
+        if rows.is_empty() {
+            event_children.push(crate::components::empty_state(
+                scope,
+                context.clone(),
+                crate::components::EmptyStateProps {
+                    title: context.tr("developer.section.events"),
+                    kind: crate::components::EmptyStateKind::Empty,
+                    message: Some("No raw operations recorded yet.".to_owned()),
+                    badge_override: None,
+                    test_id: Some("developer-raw-events-empty".to_owned()),
+                },
+            ));
+        } else {
+            event_children.push(paragraph(
+                "muted",
+                format!("Showing {count} of {total} raw operations (newest first)."),
+            ));
+            event_children.extend(rows);
+        }
+        stack(
+            "timeline developer-tools-panel",
+            vec![
+                stack(
+                    "event",
+                    vec![
+                        line(
+                            "event-head",
+                            vec![
+                                plain(context.translated(scope, "developer.title")),
+                                paragraph("muted", context.translated(scope, "developer.subtitle")),
+                                crate::components::help_tip(
+                                    scope,
+                                    context.clone(),
+                                    crate::components::HelpTipProps {
+                                        text: context.tr("developer.hint"),
+                                    },
+                                ),
+                            ],
+                        ),
+                        paragraph("muted", context.translated(scope, "developer.hint")),
+                    ],
+                ),
+                stack(
+                    "event developer-protocol-version",
+                    vec![
+                        line(
+                            "event-head",
+                            vec![
+                                plain(
+                                    context.translated(scope, "developer.section.protocol_version"),
+                                ),
+                                paragraph("badge", PROTOCOL_VERSION),
+                            ],
+                        ),
+                        paragraph(
+                            "muted",
+                            "Negotiated protocol version reported to /server/describe.",
+                        ),
+                    ],
+                ),
+                stack("event developer-raw-events", event_children),
+            ],
+        )
+    })
 }
-
 #[cfg(test)]
 mod tests {
     use super::RAW_EVENT_PREVIEW_LIMIT;

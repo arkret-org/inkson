@@ -267,7 +267,7 @@ fn verified_circle_page() -> (garth::VerifiedScanPage, Value) {
         .into_iter()
         .enumerate()
         .map(|(position, event)| {
-            let commit = FixtureStation::did_web().seal_commit(RealmCommit {
+            let sealed_commit = FixtureStation::did_web().seal_commit(RealmCommit {
                 commit_id: RealmCommitId::from_digest([0x80 + position as u8; 32]),
                 realm_id: realm.clone(),
                 stream_ref: stream.clone(),
@@ -280,8 +280,11 @@ fn verified_circle_page() -> (garth::VerifiedScanPage, Value) {
                 producer_signer_fact_digest: None,
                 signature: bundle.genesis_commit.signature.clone(),
             });
-            previous = Some(commit.commit_id.clone());
-            CommittedEventView::Full(CommittedEventFullView { commit, event })
+            previous = Some(sealed_commit.commit_id.clone());
+            CommittedEventView::Full(CommittedEventFullView {
+                commit: sealed_commit,
+                event,
+            })
         })
         .collect::<Vec<_>>();
     let floor_commit_id = rows[0].commit().commit_id.clone();

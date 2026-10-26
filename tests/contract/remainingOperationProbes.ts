@@ -1,6 +1,7 @@
 import { CURRENT_ACCOUNT_ACTOR_ID, CURRENT_ACCOUNT_ID, CURRENT_ASSISTANT_CORE_ID, CURRENT_PRINCIPAL_DID,
   DEMO_REALM, inksonWire, validateMockSchema } from "../e2e/mockArkretApi";
 import { driveOnce, type MockOperation } from "./mockShapeDriver";
+import { gateLogoutRequest } from "./gateLogoutProbe";
 
 type Handler = Parameters<typeof driveOnce>[0];
 type Request = Parameters<typeof driveOnce>[1];
@@ -11,6 +12,7 @@ export const DEVICE_ID = "ak:device:01964137-0000-7000-8000-0000000000a1";
 let fixture: any;
 export const remainingFixture = () => fixture ??= inksonWire<any>("mock-realm-fixture", { salt: 9, title: "Arkret Demo Realm", board: true });
 export const IMPLEMENTED_REMAINING_OPERATIONS = new Set([
+  "ak.gate.account.command.logout.v1",
   "ak.open.agent_pairing.read.resolve.v1", "ak.open.agent_pairing.command.submit_runtime_key_request.v1",
   "ak.open.agent_pairing.read.runtime_key_request_status.v1",
   "ak.edge.applet.read.ping.v1", "ak.edge.applet.read.describe.v1", "ak.edge.applet.read.protocol_metadata.v1",
@@ -49,6 +51,7 @@ export function readCursorRequest(position?: any): any {
 export async function additionalOperationProbe(operation: MockOperation, handler: Handler): Promise<Request | undefined> {
   const id = operation.operation_id;
   if (!IMPLEMENTED_REMAINING_OPERATIONS.has(id) && id !== "ak.self.account_data.resource.get.v1") return undefined;
+  if (id === "ak.gate.account.command.logout.v1") return gateLogoutRequest();
   const host = id.startsWith("ak.edge.applet.") ? "applet.example" : "local.host";
   const request: Request = { url: `https://${host}${operation.path_template}`, method: operation.method,
     headers: { "arkret-operation": id, authorization: "Bearer sx:e2e-token" } };

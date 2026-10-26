@@ -7,16 +7,56 @@ thread_local! {
 
 /// A local wake revision, never an authority or a persisted checkpoint. The
 /// upstream memo compares exact content/security inputs before notifying us.
-fn use_restore_basis_revision(
-    basis: Memo<super::timeline_projection::TimelineProjectionBasis>,
-) -> Memo<u64> {
-    let counter = use_hook(|| std::rc::Rc::new(std::cell::Cell::new(0_u64)));
-    use_memo(move || {
-        let _ = basis.read();
-        let next = counter.get().wrapping_add(1);
-        counter.set(next);
-        next
+fn restore_basis_revision(
+    scope: &Scope,
+
+    basis: Bond<super::timeline_projection::TimelineProjectionBasis>,
+) -> Bond<u64> {
+    let counter = std::rc::Rc::new(std::cell::Cell::new(0_u64));
+    let previous = std::rc::Rc::new(std::cell::RefCell::new(None));
+    scope.bond(move || {
+        let current = basis.get();
+        if previous.borrow().as_ref() != Some(&current) {
+            *previous.borrow_mut() = Some(current);
+            counter.set(counter.get().wrapping_add(1));
+        }
+        counter.get()
     })
+}
+
+#[derive(Clone)]
+struct RestoreTask {
+    owner: glory::ui::WeakScope,
+    task: Rc<std::cell::RefCell<Option<glory::core::TaskToken>>>,
+}
+impl RestoreTask {
+    fn new(scope: &Scope) -> Self {
+        let task = Rc::new(std::cell::RefCell::new(None::<glory::core::TaskToken>));
+        let cleanup = task.clone();
+        let _ = scope.on_cleanup(move || {
+            if let Some(task) = cleanup.borrow_mut().take() {
+                task.cancel();
+            }
+        });
+        Self {
+            owner: scope.downgrade(),
+            task,
+        }
+    }
+    fn cancel(&self) {
+        if let Some(task) = self.task.borrow_mut().take() {
+            task.cancel();
+        }
+    }
+    fn start(&self, future: impl std::future::Future<Output = ()> + 'static) {
+        self.cancel();
+        if let Some(scope) = self.owner.upgrade() {
+            match scope.owner().spawn(future) {
+                Ok(task) => *self.task.borrow_mut() = Some(task),
+                Err(error) => scope.report_error(error),
+            }
+        }
+    }
 }
 
 struct RestoreRetryEntry {
@@ -174,31 +214,31 @@ fn restore_retry_hint(error: &anyhow::Error) -> Option<Option<std::time::Duratio
 
 /// The composer can be replaced after ensure. Keep private access preparation
 /// on the chat effects scope and resume it for an already accepted source route.
-pub(super) fn use_sidecar_reconciliation(
+pub(super) fn sidecar_reconciliation(
+    scope: &Scope,
+    context: Rc<crate::presentation::InksonContext>,
+
     base_url: String,
     realm_id: String,
-    strand_id: String,
+    strand_id: Lotus<String>,
     authority: arkret_sdk::AccountId,
     device_id: arkret_sdk::DeviceId,
-    token: Signal<String>,
-    state_store: SyncSignal<LocalStateStore>,
-    mut status_msg: Signal<String>,
+    token: Cage<String>,
+    state_store: crate::presentation::SharedStateStore,
+    status_msg: Cage<String>,
 ) {
-    let mut hosted = use_context::<crate::sidecar::HostedSidecarStateContext>().0;
-    let mut seen = use_signal(String::new);
-    use_effect(use_reactive!(|(
-        base_url,
-        realm_id,
-        strand_id,
-        authority,
-        device_id,
-    )| {
-        let credential = token();
-        let Some(session) = hosted().filter(|session| {
+    let running = RestoreTask::new(scope);
+    let hosted = context.hosted_sidecar;
+    let seen = scope.cage(String::new());
+    scope.effect({let base_url=base_url.clone();let realm_id=realm_id.clone();let strand_id=strand_id.clone();let authority=authority.clone();let device_id=device_id.clone(); move || {
+        let strand_id=strand_id.get();
+        let credential = token.get();
+        let Some(session) = hosted.get().filter(|session| {
             session.controller_account_id == authority
                 && session.matches_route(&realm_id, &strand_id)
         }) else {
-            seen.set(String::new());
+            running.cancel();
+            { let next_value = String::new(); seen.revise(|value| *value = next_value); };
             return;
         };
         let key = format!(
@@ -207,25 +247,28 @@ pub(super) fn use_sidecar_reconciliation(
             session.mls_context.participant_authority_digest,
             session.membership_ready(),
         );
-        if *seen.peek() == key {
+        if seen.get_untracked() == key {
             return;
         }
-        seen.set(key.clone());
+        running.cancel();
+        { let next_value = key.clone(); seen.revise(|value| *value = next_value); };
         if credential.is_empty() || session.membership_ready() {
             return;
         }
+        let generation_stamp=context.session_generation.get_untracked();let account_stamp=context.active_account.get_untracked();
         let Ok(fence) = crate::transport::auth::AuthoringSessionFence::capture() else {
             return;
         };
-        spawn(async move {
-            let state = crate::app::runtime_adapter::state_store_handle(state_store);
+        let state_store=state_store.clone();let context=context.clone();let base_url=base_url.clone();let realm_id=realm_id.clone();let strand_id=strand_id.clone();let authority=authority.clone();let device_id=device_id.clone();
+        running.start(async move {
+            let state = state_store.handle();
             let mut prepared = false;
             let mut retry_seconds = 2;
             loop {
                 let is_current = || {
-                    *seen.peek() == key
+                    seen.is_alive() && hosted.is_alive() && context.session_matches(generation_stamp,&account_stamp) && seen.get_untracked() == key
                         && fence.check().is_ok()
-                        && hosted.peek().as_ref().is_some_and(|current| {
+                        && hosted.get_untracked().as_ref().is_some_and(|current| {
                             current.trace_id == session.trace_id
                                 && current.controller_account_id == authority
                                 && current.matches_route(&realm_id, &strand_id)
@@ -267,27 +310,27 @@ pub(super) fn use_sidecar_reconciliation(
                     Ok(view) => {
                         prepared = true;
                         retry_seconds = 2;
-                        let Some(mut open) = hosted.peek().clone() else {
+                        let Some(mut open) = hosted.get_untracked().clone() else {
                             return;
                         };
                         open.native_mls_ready =
-                            crate::sidecar::native_mls_ready_for_view(&state_store.read(), &view);
+                            state_store.read(|store|crate::sidecar::native_mls_ready_for_view(store,&view));
                         open.access_readiness = view.access_readiness;
                         open.pending_access_reconciliations = view.pending_access_reconciliations;
                         open.mls_context = view.mls_context;
                         let ready = open.membership_ready();
-                        if hosted.peek().as_ref() != Some(&open) {
-                            hosted.set(Some(open));
+                        if hosted.get_untracked().as_ref() != Some(&open) {
+                            hosted.revise(|value|*value=Some(open));
                         }
                         if ready {
-                            status_msg.set("Private AI workspace ready".to_owned());
+                            { let next_value = "Private AI workspace ready".to_owned(); status_msg.revise(|value| *value = next_value); };
                             return;
                         }
                     }
                     Err(error) => {
                         prepared = false;
                         tracing::warn!(target: "sidecar", reason = %format_args!("{error:#}"), "Sidecar access preparation will resume");
-                        status_msg.set(format!("Could not prepare private AI access: {error:#}"));
+                        { let next_value = format!("Could not prepare private AI access: {error:#}"); status_msg.revise(|value| *value = next_value); };
                         retry_seconds = (retry_seconds * 2).min(30);
                     }
                 }
@@ -295,65 +338,65 @@ pub(super) fn use_sidecar_reconciliation(
                     .await;
             }
         });
-    }));
+    }});
 }
 
 /// Opening a source Strand on another device must not require a new ensure
 /// write. Discover the accepted mapping and retain this device's own MLS gate.
-pub(super) fn use_sidecar_restore(
+pub(super) fn sidecar_restore(
+    scope: &Scope,
+    context: Rc<crate::presentation::InksonContext>,
+
     base_url: String,
     realm_id: String,
-    strand_id: String,
+    strand_id: Lotus<String>,
     authority: arkret_sdk::AccountId,
     device_id: arkret_sdk::DeviceId,
-    token: Signal<String>,
-    timeline_basis: Memo<super::timeline_projection::TimelineProjectionBasis>,
-    state_store: SyncSignal<LocalStateStore>,
+    token: Cage<String>,
+    timeline_basis: Bond<super::timeline_projection::TimelineProjectionBasis>,
+    state_store: crate::presentation::SharedStateStore,
 ) {
-    let mut hosted = use_context::<crate::sidecar::HostedSidecarStateContext>().0;
-    let mut seen = use_signal(String::new);
-    let mut generation = use_signal(|| 0_u64);
-    let basis_revision = use_restore_basis_revision(timeline_basis);
-    use_effect(use_reactive!(|(
-        base_url,
-        realm_id,
-        strand_id,
-        authority,
-        device_id,
-    )| {
-        let credential = token();
-        let revision = basis_revision();
+    let running = RestoreTask::new(scope);
+    let hosted = context.hosted_sidecar;
+    let seen = scope.cage((String::new)());
+    let generation = scope.cage(0_u64);
+    let basis_revision = restore_basis_revision(scope, timeline_basis);
+    scope.effect({let base_url=base_url.clone();let realm_id=realm_id.clone();let strand_id=strand_id.clone();let authority=authority.clone();let device_id=device_id.clone(); move || {
+        let strand_id=strand_id.get();
+        let credential = token.get();
+        let revision = basis_revision.get();
         let key = format!(
             "{base_url}|{authority}|{device_id}|{realm_id}|{strand_id}|{revision}|{}|{credential}",
             crate::identity::device_directory::session_cache_epoch(),
         );
-        if *seen.peek() == key {
+        if seen.get_untracked() == key {
             return;
         }
-        seen.set(key);
-        let next = generation.peek().wrapping_add(1);
-        generation.set(next);
+        running.cancel();
+        { let next_value = key; seen.revise(|value| *value = next_value); };
+        let next = generation.get_untracked().wrapping_add(1);
+        { let next_value = next; generation.revise(|value| *value = next_value); };
         let Ok(strand) = arkret_sdk::StrandId::new(strand_id.clone()) else {
             return;
         };
         #[cfg(test)]
         RESTORE_LOOKUPS.with(|count| count.set(count.get() + 1));
-        let candidate = state_store
-            .peek()
-            .verified_sidecar_for_source(&authority, &realm_id, &strand)
+        let candidate = state_store.read(|value| value.verified_sidecar_for_source(&authority, &realm_id, &strand))
             .ok()
             .flatten();
         let Some(candidate) = candidate else { return };
         if credential.is_empty() {
             return;
         }
+        let generation_stamp=context.session_generation.get_untracked();let account_stamp=context.active_account.get_untracked();
         let Ok(fence) = crate::transport::auth::AuthoringSessionFence::capture() else {
             return;
         };
-        spawn(async move {
+        let state_store=state_store.clone();let context=context.clone();let base_url=base_url.clone();let realm_id=realm_id.clone();let strand_id=strand_id.clone();let authority=authority.clone();let _device_id=device_id.clone();
+        running.start(async move {
             let mut retrying = false;
             loop {
-                if *generation.peek() != next || fence.check().is_err() {
+                if !generation.is_alive() || !context.session_matches(generation_stamp,&account_stamp) || generation.get_untracked() != next || fence.check().is_err() {
                     return;
                 }
                 let admission = restore_retry_book()
@@ -381,18 +424,18 @@ pub(super) fn use_sidecar_restore(
                             && view.sidecar.controller_account_id == authority,
                         "Sidecar restore read changed its controller or native identity"
                     );
-                    if *generation.peek() != next {
+                    if generation.get_untracked() != next {
                         return Ok::<(), anyhow::Error>(());
                     }
-                    let store = state_store.peek();
+                    state_store.read(|store| -> anyhow::Result<()> {
                     anyhow::ensure!(
                         store
                             .verified_sidecar_for_source(&authority, &realm_id, &strand)?
                             .is_some_and(|current| current.id == candidate.id),
                         "Sidecar source mapping changed during restore"
                     );
-                    let native_ready = crate::sidecar::native_mls_ready_for_view(&store, &view);
-                    let existing = hosted.peek().clone().filter(|session| {
+                    let native_ready = crate::sidecar::native_mls_ready_for_view(store, &view);
+                    let existing = hosted.get_untracked().clone().filter(|session| {
                         session.controller_account_id == authority
                             && session.sidecar_id == candidate.id
                             && session.matches_route(&realm_id, &strand_id)
@@ -401,7 +444,7 @@ pub(super) fn use_sidecar_restore(
                         Vec::new()
                     } else {
                         crate::sidecar::cached_sidecar_exchange_projections(
-                            &store, &authority, &realm_id,
+                            store, &authority, &realm_id,
                         )
                         .ok()
                         .and_then(|projections| {
@@ -448,11 +491,11 @@ pub(super) fn use_sidecar_restore(
                     session.pending_access_reconciliations = view.pending_access_reconciliations;
                     session.mls_context = view.mls_context;
                     session.native_mls_ready = native_ready;
-                    drop(store);
-                    if hosted.peek().as_ref() != Some(&session) {
-                        hosted.set(Some(session));
+
+                    if hosted.get_untracked().as_ref() != Some(&session) {
+                        hosted.revise(|value|*value=Some(session));
                     }
-                    Ok(())
+                    Ok(())})
                 }
                 .await;
                 let retry_hint = result.as_ref().err().and_then(restore_retry_hint);
@@ -473,7 +516,7 @@ pub(super) fn use_sidecar_restore(
                 }
             }
         });
-    }));
+    }});
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]

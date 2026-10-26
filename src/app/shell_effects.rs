@@ -1,80 +1,80 @@
+//! Owner-scoped shell projection and identity work.
+use std::rc::Rc;
+
+use glory::prelude::*;
+
+use super::shell_state::ShellState;
 use super::*;
-
-#[derive(Clone, Copy, PartialEq)]
-pub(super) struct ShellEffectState {
-    pub account_primary_handle: Signal<String>,
-    pub principal_id: Signal<Option<arkret_sdk::DidCoreId>>,
-    pub token: Signal<String>,
-    pub personal_handles: Signal<Vec<String>>,
-    pub personal_handles_status: Signal<String>,
-    pub personal_handles_lookup_key: Signal<String>,
-    pub device_id: Signal<String>,
-    pub current_account_display_name: Signal<String>,
-    pub current_account_avatar_blob_ref: Signal<String>,
-    pub current_device_display_name: Signal<String>,
-    pub account_identity_lookup_key: Signal<String>,
-    pub contact_handles_lookup_key: Signal<String>,
-    pub contact_handles_fetching: Signal<BTreeSet<String>>,
-    pub direct_contact_rows: Signal<Vec<crate::models::ContactView>>,
-    pub did_resolution_health: Signal<crate::components::DidResolutionHealth>,
+use crate::presentation::InksonContext;
+use crate::presentation::widgets::resource;
+fn set_state<T: 'static>(state: Cage<T>, value: T) {
+    let _ = state.try_revise(|current| *current = value);
 }
-
-#[component]
-pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
-    let ShellEffectState {
-        mut account_primary_handle,
-        principal_id,
-        token,
-        mut personal_handles,
-        mut personal_handles_status,
-        personal_handles_lookup_key: _,
-        device_id,
-        mut current_account_display_name,
-        mut current_account_avatar_blob_ref,
-        mut current_device_display_name,
-        mut account_identity_lookup_key,
-        contact_handles_lookup_key: _,
-        contact_handles_fetching: _,
-        mut direct_contact_rows,
-        mut did_resolution_health,
-    } = state;
-    let SessionContext {
-        mut state_store,
-        base_url,
-        active_account,
-        session_generation,
-        ..
-    } = SessionContext::get();
-    let navigator = use_navigator();
-
+pub(super) fn install(scope: &Scope, context: Rc<InksonContext>, ui: Rc<ShellState>) {
+    let base_url = context.base_url;
+    let session_generation = context.session_generation;
+    let active_account = context.active_account;
+    let token = context.token;
+    let principal_id = context.principal_id;
+    let device_id = context.device_id;
+    let account_primary_handle = context.account_primary_handle;
+    let personal_handles = context.personal_handles;
+    let personal_handles_status = context.personal_handles_status;
+    let current_account_display_name = ui.display_name;
+    let current_account_avatar_blob_ref = ui.avatar;
+    let current_device_display_name = ui.device_name;
+    let account_identity_lookup_key = ui.identity_key;
+    let direct_contact_rows = context.contact_rows;
+    let did_resolution_health = context.did_resolution_health;
+    let state_store = context.state_store.clone();
+    let identity_store = context.state_store.clone();
+    let handle_mirror_store = context.state_store.clone();
+    let sound_store = context.state_store.clone();
+    let weak_identity = scope.downgrade();
+    let identity_context = context.clone();
+    let revision = context.state_revision;
     // Recheck failed bootstrap probes independently of session refresh. A
     // successful probe clears the banner without logging out or reloading.
-    use_resource(move || async move {
-        let base = base_url();
-        let generation = session_generation();
-        loop {
-            crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(15)).await;
-            if *did_resolution_health.peek() == crate::components::DidResolutionHealth::Healthy {
-                continue;
-            }
-            let probe = async {
-                let api = crate::transport::TransportClient::unauthenticated(&base)?;
-                crate::transport::account::identity_describe(&api.sdk_http_client()?).await
-            };
-            let result = tokio::select! {
-                result = probe => result,
-                _ = crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(12)) =>
-                    Err(anyhow::anyhow!("identity describe probe timed out")),
-            };
-            if *base_url.peek() != base || *session_generation.peek() != generation {
-                return;
-            }
-            did_resolution_health.set(match result {
-                Ok(description) => {
-                    crate::components::DidResolutionHealth::from_identity_description(&description)
+    resource(scope, move || {
+        let base = base_url.get();
+        let generation = session_generation.get();
+        async move {
+            loop {
+                crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(15)).await;
+                if did_resolution_health.get_untracked()
+                    == crate::components::DidResolutionHealth::Healthy
+                {
+                    continue;
                 }
-                Err(error) => crate::components::DidResolutionHealth::from_probe_error(&error),
-            });
+                let probe = async {
+                    let api = crate::transport::TransportClient::unauthenticated(&base)?;
+                    crate::transport::account::identity_describe(&api.sdk_http_client()?).await
+                };
+                let result = tokio::select! {
+                    result = probe => result,
+                    _ = crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(12)) =>
+                        Err(anyhow::anyhow!("identity describe probe timed out")),
+                };
+                if base_url.get_untracked() != base
+                    || session_generation.get_untracked() != generation
+                {
+                    return Ok(());
+                }
+                did_resolution_health.revise(|value| {
+                    *value = match result {
+                        Ok(description) => {
+                            crate::components::DidResolutionHealth::from_identity_description(
+                                &description,
+                            )
+                        }
+                        Err(error) => {
+                            crate::components::DidResolutionHealth::from_probe_error(&error)
+                        }
+                    }
+                });
+            }
+            #[allow(unreachable_code)]
+            Ok(())
         }
     });
 
@@ -82,45 +82,50 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
     // Realm invite notification carrier. Keep this inbox live even when the
     // Contacts sidebar has never been opened. A session change cancels the
     // resource and fences responses from the previous account.
-    use_resource(move || async move {
-        let account = active_account().map(|account| account.authority);
-        let api_token = token();
-        let base = base_url();
-        let generation = session_generation();
-        direct_contact_rows.set(Vec::new());
-        if account.is_none() || api_token.trim().is_empty() {
-            return;
-        }
-        loop {
-            let result = crate::transport::auth::with_authed_sdk_client(
-                &base,
-                api_token.clone(),
-                |http| async move { crate::transport::account::contacts(&http).await },
-            )
-            .await;
-            if *session_generation.peek() != generation
-                || active_account
-                    .peek()
-                    .as_ref()
-                    .map(|account| &account.authority)
-                    != account.as_ref()
-                || *base_url.peek() != base
-                || *token.peek() != api_token
-            {
-                return;
+    resource(scope, move || {
+        let account = active_account.get().map(|account| account.authority);
+        let api_token = token.get();
+        let base = base_url.get();
+        let generation = session_generation.get();
+        let state_store = state_store.clone();
+        async move {
+            direct_contact_rows.revise(|value| *value = Vec::new());
+            if account.is_none() || api_token.trim().is_empty() {
+                return Ok(());
             }
-            match result {
-                Ok(response) => {
-                    state_store
-                        .write()
-                        .replace_accepted_human_contacts(&response.contacts);
-                    direct_contact_rows.set(response.contacts);
+            loop {
+                let result = crate::transport::auth::with_authed_sdk_client(
+                    &base,
+                    api_token.clone(),
+                    |http| async move { crate::transport::account::contacts(&http).await },
+                )
+                .await;
+                if session_generation.get_untracked() != generation
+                    || active_account
+                        .get_untracked()
+                        .as_ref()
+                        .map(|account| &account.authority)
+                        != account.as_ref()
+                    || base_url.get_untracked() != base
+                    || token.get_untracked() != api_token
+                {
+                    return Ok(());
                 }
-                Err(error) => {
-                    tracing::warn!(error = %error.display_diagnostic(), "contact inbox refresh failed")
+                match result {
+                    Ok(response) => {
+                        state_store.write(|store| {
+                            store.replace_accepted_human_contacts(&response.contacts)
+                        });
+                        direct_contact_rows.revise(|value| *value = response.contacts);
+                    }
+                    Err(error) => {
+                        tracing::warn!(error = %error.display_diagnostic(), "contact inbox refresh failed")
+                    }
                 }
+                crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(15)).await;
             }
-            crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(15)).await;
+            #[allow(unreachable_code)]
+            Ok(())
         }
     });
 
@@ -128,11 +133,11 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
     // device display_name, and signed primary handle claim. Keep those
     // user-facing labels separate from protocol IDs and from the Account
     // Authority handoff's unsigned account_handle hint.
-    use_effect(move || {
-        let lookup_base_url = base_url();
-        let lookup_actor = crate::app::principal_id_owned(principal_id());
-        let lookup_device = device_id();
-        let lookup_token = token();
+    scope.effect(move || {
+        let lookup_base_url = base_url.get();
+        let lookup_actor = crate::app::principal_id_owned(principal_id.get());
+        let lookup_device = device_id.get();
+        let lookup_token = token.get();
         let key = format!(
             "{}|{}|{}|{}",
             lookup_base_url,
@@ -140,45 +145,53 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
             lookup_device,
             !lookup_token.trim().is_empty(),
         );
-        if account_identity_lookup_key() == key {
+        if account_identity_lookup_key.get() == key {
             return;
         }
-        account_identity_lookup_key.set(key);
+        account_identity_lookup_key.revise(|value| *value = key);
         if lookup_token.trim().is_empty() || lookup_actor.trim().is_empty() {
-            current_account_display_name.set(String::new());
-            current_account_avatar_blob_ref.set(String::new());
-            current_device_display_name.set(String::new());
+            current_account_display_name.revise(|value| *value = String::new());
+            current_account_avatar_blob_ref.revise(|value| *value = String::new());
+            current_device_display_name.revise(|value| *value = String::new());
             return;
         }
 
         // Never keep the previous account's labels visible while a new
         // account/device lookup is in flight (or if that lookup fails).
-        current_account_display_name.set(String::new());
-        current_account_avatar_blob_ref.set(String::new());
-        current_device_display_name.set(String::new());
-        account_primary_handle.set(String::new());
-        personal_handles.set(Vec::new());
-        personal_handles_status.set("Loading handles".to_owned());
-        state_store
-            .write()
-            .set_primary_handle_for_principal_id(&lookup_actor, "");
+        current_account_display_name.revise(|value| *value = String::new());
+        current_account_avatar_blob_ref.revise(|value| *value = String::new());
+        current_device_display_name.revise(|value| *value = String::new());
+        account_primary_handle.revise(|value| *value = String::new());
+        personal_handles.revise(|value| *value = Vec::new());
+        personal_handles_status.revise(|value| *value = "Loading handles".to_owned());
+        identity_store.write(|store| store.set_primary_handle_for_principal_id(&lookup_actor, ""));
 
         let base = lookup_base_url;
         let actor = lookup_actor;
         let device = lookup_device;
-        let mut handle_store = state_store;
-        spawn(async move {
+        let handle_store = identity_store.clone();
+        let weak = weak_identity.clone();
+        let generation = session_generation.get_untracked();
+        let account = active_account.get_untracked();
+        let application = identity_context.clone();
+        let Some(owner) = weak.upgrade() else {
+            return;
+        };
+        let _ = owner.spawn(async move {
             let result = crate::transport::auth::with_authed_sdk_client(
                 &base,
                 lookup_token,
                 |http| async move { crate::transport::keys::list_devices(&http).await },
             )
             .await;
+            if weak.upgrade().is_none() || !application.session_matches(generation, &account) {
+                return;
+            }
             let Ok(viewer) = result else {
                 return;
             };
             // Ignore a late response from the previous account.
-            if crate::app::principal_id_text(&principal_id()) != actor.trim() {
+            if crate::app::principal_id_text(&principal_id.get()) != actor.trim() {
                 return;
             }
             let display_name = viewer
@@ -203,39 +216,43 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
                 .unwrap_or_default();
             let primary_handle = crate::transport::account::primary_handle_from_viewer(&viewer);
             handle_store
-                .write()
-                .set_primary_handle_for_principal_id(&actor, &primary_handle);
-            try_set_signal(current_account_display_name, display_name);
-            try_set_signal(current_account_avatar_blob_ref, avatar_blob_ref);
-            try_set_signal(current_device_display_name, device_display_name);
+                .write(|store| store.set_primary_handle_for_principal_id(&actor, &primary_handle));
+            set_state(current_account_display_name, display_name);
+            set_state(current_account_avatar_blob_ref, avatar_blob_ref);
+            set_state(current_device_display_name, device_display_name);
             if !primary_handle.is_empty() {
-                try_set_signal(account_primary_handle, primary_handle.clone());
-                try_set_signal(
+                set_state(account_primary_handle, primary_handle.clone());
+                set_state(
                     personal_handles_status,
                     personal_handles_status_for(std::slice::from_ref(&primary_handle)),
                 );
-                try_set_signal(personal_handles, vec![primary_handle]);
+                set_state(personal_handles, vec![primary_handle]);
             }
         });
     });
 
-    use_effect(move || {
-        let handle = account_primary_handle();
-        let account = crate::app::principal_id_owned(principal_id());
+    scope.effect(move || {
+        let handle = account_primary_handle.get();
+        let account = crate::app::principal_id_owned(principal_id.get());
         if handle.trim().is_empty() || account.trim().is_empty() {
             return;
         }
-        state_store
-            .write()
-            .set_primary_handle_for_principal_id(&account, &handle);
+        handle_mirror_store
+            .write(|store| store.set_primary_handle_for_principal_id(&account, &handle));
     });
 
-    let mut previous_unread_notification_count = use_signal(|| Option::<usize>::None);
-    use_effect(move || {
-        let store = state_store.read();
-        let unread = unread_notification_count(&store.load());
-        let sound_enabled = crate::notification_sound::notification_sound_enabled(&store);
-        let previous = *previous_unread_notification_count.peek();
+    let previous_unread_notification_count = scope.cage(Option::<usize>::None);
+    scope.effect(move || {
+        let _ = revision.get();
+        let store = sound_store.read(|store| {
+            (
+                unread_notification_count(&store.load()),
+                crate::notification_sound::notification_sound_enabled(store),
+            )
+        });
+        let unread = store.0;
+        let sound_enabled = store.1;
+        let previous = previous_unread_notification_count.get_untracked();
         if crate::notification_sound::should_play_notification_sound(
             previous,
             unread,
@@ -244,80 +261,51 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
             crate::notification_sound::play_notification_sound();
         }
         if previous != Some(unread) {
-            previous_unread_notification_count.set(Some(unread));
+            previous_unread_notification_count.revise(|value| *value = Some(unread));
         }
     });
 
-    use_effect(move || {
-        let _ = dioxus::document::eval(
-            r#"
-            (() => {
-              if (window.__inksonShortcutDispatcherInstalled) return;
-              window.__inksonShortcutDispatcherInstalled = true;
-              window.addEventListener('keydown', (event) => {
-                if (event.isComposing || event.repeat) return;
-                const target = event.target;
-                const tag = target && target.tagName ? target.tagName.toLowerCase() : '';
-                const editable = target && (
-                  target.isContentEditable ||
-                  tag === 'input' ||
-                  tag === 'textarea' ||
-                  tag === 'select' ||
-                  (target.closest && target.closest('[contenteditable="true"], [role="textbox"]'))
+    let weak = scope.downgrade();
+    scope.effect({
+        let context = context.clone();
+        let ui = ui.clone();
+        move || {
+            let _ = context.owned_agents_rev.get();
+            let base = context.base_url.get();
+            let token = context.token.get();
+            if let Some(scope) = weak.upgrade() {
+                load_own_agents_for_sidebar(
+                    &scope,
+                    context.clone(),
+                    base,
+                    token,
+                    ui.agents,
+                    ui.agents_loaded,
                 );
-                if (editable) return;
-                const chord = event.ctrlKey || event.metaKey;
-                const key = typeof event.key === 'string' ? event.key.toLowerCase() : '';
-                let targetElement = null;
-                if (key === 'escape') {
-                  targetElement =
-                    document.querySelector('[data-testid="shortcut-help-dismiss"]') ||
-                    document.querySelector('[data-testid="notifications-drawer-close"]');
-                } else if (chord && key === 'k') {
-                  targetElement = document.querySelector('[data-testid="topbar-search-button"]');
-                } else if (chord && key === 'f') {
-                  targetElement = document.querySelector('[data-testid="global-search-shortcut-target"]');
-                } else if (
-                  (chord && key === '/') ||
-                  (event.shiftKey && key === '/') ||
-                  event.key === '?'
-                ) {
-                  targetElement = document.querySelector('[data-testid="topbar-shortcuts-button"]');
-                }
-                if (!(targetElement instanceof HTMLElement)) return;
-                event.preventDefault();
-                event.stopPropagation();
-                targetElement.click();
-              }, true);
-            })();
-            "#,
-        );
-    });
-
-    let call_signal_hub = use_context::<crate::views::call_signals::CallSignalHub>();
-    let mut last_incoming_nav = use_signal(|| Option::<String>::None);
-    use_effect(move || match call_signal_hub.incoming_call.read().clone() {
-        Some(_) if !crate::views::call::media_route_adapter_available() => {}
-        Some(info) if last_incoming_nav.read().as_deref() != Some(info.call_id.as_str()) => {
-            last_incoming_nav.set(Some(info.call_id.clone()));
-            navigator.push(Route::Call {
-                call_id: info.call_id,
-                peer: info.peer_actor,
-                realm_id: info.realm_id,
-                video: if info.video { "1" } else { "0" }.to_owned(),
-                incoming: "1".to_owned(),
-            });
-        }
-        None if last_incoming_nav.read().is_some() => last_incoming_nav.set(None),
-        _ => {}
-    });
-
-    let route = use_route::<Route>();
-    use_effect(move || {
-        if matches!(route, Route::Recovery) {
-            let _ = navigator.replace(Route::SettingsRecovery);
+            }
         }
     });
-
-    rsx! {}
+    let last = scope.cage(None::<String>);
+    scope.effect(move || {
+        match context.call_signal_hub.incoming_call.get() {
+            Some(info)
+                if crate::views::call::media_route_adapter_available()
+                    && last.get_untracked().as_deref() != Some(info.call_id.as_str()) =>
+            {
+                last.revise(|value| *value = Some(info.call_id.clone()));
+                context.navigate(Route::Call {
+                    call_id: info.call_id,
+                    peer: info.peer_actor,
+                    realm_id: info.realm_id,
+                    video: if info.video { "1" } else { "0" }.into(),
+                    incoming: "1".into(),
+                });
+            }
+            None => last.revise(|value| *value = None),
+            _ => {}
+        }
+        if matches!(context.route.get(), Route::Recovery) {
+            context.replace_route(Route::SettingsRecovery);
+        }
+    });
 }

@@ -4,28 +4,35 @@ use crate::payload::strand_id_value;
 pub(crate) const CHAT_PRIVATE_SAVED_COLLECTION_TITLE: &str = "Saved";
 
 pub(crate) fn fail_optimistic_chat_send(
-    mut messages: Signal<Vec<ChatMessage>>,
-    mut chat_draft: Signal<String>,
-    mut status_msg: Signal<String>,
+    messages: Cage<Vec<ChatMessage>>,
+    chat_draft: Cage<String>,
+    status_msg: Cage<String>,
     message_id: &str,
     body_for_restore: &str,
     message: String,
 ) {
     #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
     tracing::warn!(error = %message, "encrypted message preparation failed");
-    if let Some(found) = messages
-        .write()
-        .iter_mut()
-        .find(|candidate| candidate.matches_id_or_protocol(message_id))
+    messages.revise(|messages| {
+        if let Some(found) = messages
+            .iter_mut()
+            .find(|candidate| candidate.matches_id_or_protocol(message_id))
+        {
+            found.pending = false;
+            found.failed = true;
+            found.error = Some(message.clone());
+        }
+    });
+    if chat_draft.get().trim().is_empty() {
+        {
+            let next_value = body_for_restore.to_owned();
+            chat_draft.revise(|value| *value = next_value);
+        };
+    }
     {
-        found.pending = false;
-        found.failed = true;
-        found.error = Some(message.clone());
-    }
-    if chat_draft().trim().is_empty() {
-        chat_draft.set(body_for_restore.to_owned());
-    }
-    status_msg.set(message);
+        let next_value = message;
+        status_msg.revise(|value| *value = next_value);
+    };
 }
 
 // The MLS encrypt + commit/envelope/payload build + commit→message submission
@@ -243,7 +250,7 @@ pub(crate) fn chat_reaction_add_operation_encrypted(
 /// dropped (returns `None`) rather than leaking the emoji in plaintext.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn build_chat_reaction_add_operation(
-    mut state_store: SyncSignal<LocalStateStore>,
+    state_store: crate::presentation::SharedStateStore,
     realm_id: &str,
     authority: &arkret_sdk::AccountId,
     actor: &str,
@@ -260,16 +267,18 @@ pub(crate) fn build_chat_reaction_add_operation(
         .map_err(|error| anyhow::anyhow!("invalid reaction target Event id: {error}"))?;
     let created_at = crate::clock::now_utc();
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-    let sealed = match crate::mls::runtime::encrypt_reaction_with_device_snapshot(
-        &mut state_store.write(),
-        secure_store.as_ref(),
-        &realm_id,
-        authority,
-        device_id,
-        &target_ref,
-        created_at,
-        emoji,
-    ) {
+    let sealed = match state_store.write(|store| {
+        crate::mls::runtime::encrypt_reaction_with_device_snapshot(
+            store,
+            secure_store.as_ref(),
+            &realm_id,
+            authority,
+            device_id,
+            &target_ref,
+            created_at,
+            emoji,
+        )
+    }) {
         Ok(sealed) => sealed,
         Err(_) => return Ok(None),
     };

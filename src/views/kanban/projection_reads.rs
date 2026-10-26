@@ -1,8 +1,25 @@
 //! One pending revision behind one in-flight projection read.
 
+/// One Realm inventory is shared across Board routes, with the original full
+/// account/session scope and revision gates checked again for every response.
+pub(super) type InventoryScope = (
+    String,
+    String,
+    u64,
+    Option<(
+        String,
+        arkret_sdk::AccountId,
+        arkret_sdk::DeviceId,
+        url::Url,
+    )>,
+);
+pub(super) type InventoryKey = (InventoryScope, bool, u64, u64);
+pub(super) type SharedInventoryOwner =
+    std::rc::Rc<std::cell::RefCell<ProjectionReadOwner<InventoryScope, InventoryKey>>>;
+
 pub(super) struct ProjectionReadOwner<S, K> {
     scope: Option<S>,
-    task: Option<dioxus::core::Task>,
+    task: Option<glory::core::TaskToken>,
     pub(super) queue: ProjectionReadQueue<K>,
     covered: ProjectionReadSet,
 }
@@ -48,7 +65,7 @@ impl<S: PartialEq, K> ProjectionReadOwner<S, K> {
         true
     }
 
-    pub(super) fn attach(&mut self, task: dioxus::core::Task) {
+    pub(super) fn attach(&mut self, task: glory::core::TaskToken) {
         self.task = Some(task);
     }
 
@@ -61,6 +78,13 @@ impl<S: PartialEq, K> ProjectionReadOwner<S, K> {
             task.cancel();
         }
         self.queue = ProjectionReadQueue::default();
+    }
+
+    /// Fail closed when the retained display rows are discarded. A later
+    /// readable cut must bootstrap them again rather than reuse empty coverage.
+    pub(super) fn invalidate(&mut self) {
+        self.cancel_pending();
+        self.covered = ProjectionReadSet::default();
     }
 
     pub(super) fn missing(&self) -> ProjectionReadSet {
@@ -173,6 +197,21 @@ mod tests {
     }
 
     #[test]
+    fn discarded_inventory_can_bootstrap_again_after_a_readable_cut_returns() {
+        let mut reads = ProjectionReadOwner::<&str, u64>::default();
+        reads.set_scope(Some("alice/realm-a"));
+        reads.cover(ProjectionReadSet::all());
+        assert!(!reads.missing().any());
+        reads.invalidate();
+        assert!(!reads.set_scope(Some("alice/realm-a")));
+        assert_eq!(reads.missing(), ProjectionReadSet::all());
+        assert!(reads.queue.request(2));
+        assert_eq!(reads.queue.next(), Some(2));
+        assert!(reads.cover_if_latest(&2, ProjectionReadSet::all()));
+        assert!(!reads.missing().any());
+    }
+
+    #[test]
     fn new_scope_supersedes_pending_old_scope() {
         let mut reads = ProjectionReadQueue::default();
         assert!(reads.request(("alice", 0)));
@@ -214,26 +253,24 @@ mod tests {
     fn replacing_scope_cancels_the_future_and_allows_immediate_new_work() {
         use std::cell::Cell;
         use std::rc::Rc;
-
-        use dioxus::prelude::*;
-        use futures_util::FutureExt;
-
         struct Dropped(Rc<Cell<bool>>);
         impl Drop for Dropped {
             fn drop(&mut self) {
                 self.0.set(true);
             }
         }
-        let mut dom = VirtualDom::new(|| rsx! {});
-        dom.rebuild_in_place();
+        let executor = Rc::new(glory::core::executor::Executor::new(256));
+        let app = glory::ui::App::with_host(executor.clone(), glory::render::memory::Memory::new);
         let started = Rc::new(Cell::new(false));
         let dropped = Rc::new(Cell::new(false));
         let mut reads = ProjectionReadOwner::<&str, u64>::default();
         assert!(reads.set_scope(Some("alice/realm-a")));
         assert!(reads.queue.request(1));
         assert_eq!(reads.queue.next(), Some(1));
-        let task = dom.in_scope(ScopeId::ROOT, || {
-            spawn({
+        let task = app
+            .scope()
+            .owner()
+            .spawn({
                 let started = started.clone();
                 let dropped = dropped.clone();
                 async move {
@@ -242,10 +279,11 @@ mod tests {
                     futures_util::future::pending::<()>().await;
                 }
             })
-        });
+            .unwrap();
         reads.attach(task);
         for _ in 0..4 {
-            let _ = dom.wait_for_work().now_or_never();
+            while executor.poll_one() {}
+            app.flush().unwrap();
             if started.get() {
                 break;
             }
@@ -254,9 +292,7 @@ mod tests {
         assert!(!reads.set_scope(Some("alice/realm-a")));
         assert!(!dropped.get(), "a same-scope update must keep its reader");
         assert!(!reads.queue.request(2));
-        dom.in_scope(ScopeId::ROOT, || {
-            assert!(reads.set_scope(Some("bob/realm-b")));
-        });
+        assert!(reads.set_scope(Some("bob/realm-b")));
         assert!(
             dropped.get(),
             "the pending response future must actually drop"

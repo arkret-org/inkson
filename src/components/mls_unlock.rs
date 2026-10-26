@@ -1,21 +1,21 @@
+use std::cell::RefCell;
 use std::future::Future;
+use std::rc::Rc;
 use std::time::Duration;
 
-use dioxus::prelude::*;
+use glory::prelude::*;
 
-use super::UiIcon;
+use super::mls_backup_prompt::try_set_state;
+use crate::presentation::widgets::{heading, line, paragraph, reactive, stack};
+use crate::presentation::{InksonContext, View};
 use crate::recovery_crypto::normalize_recovery_key_input;
 use crate::transport::auth::{ApiCallError, with_authed_api};
-use crate::ui::button::{Button, ButtonSize, ButtonVariant};
-use crate::ui::dialog::Dialog;
-use crate::ui::input::Input;
-use crate::ui_signal::try_set_signal;
 
 const MLS_UNLOCK_FETCH_TIMEOUT: Duration = Duration::from_secs(20);
 
-async fn mls_unlock_fetch_with_timeout<T, F>(future: F) -> Result<T, ApiCallError>
+async fn mls_unlock_fetch_with_timeout<T, F>(future: F) -> std::result::Result<T, ApiCallError>
 where
-    F: Future<Output = Result<T, ApiCallError>>,
+    F: Future<Output = std::result::Result<T, ApiCallError>>,
 {
     tokio::select! {
         result = future => result,
@@ -31,10 +31,10 @@ where
 async fn mls_unlock_fetch_with_retry<T, F, R, W, S>(
     mut fetch: F,
     mut wait: W,
-) -> Result<T, ApiCallError>
+) -> std::result::Result<T, ApiCallError>
 where
     F: FnMut() -> R,
-    R: Future<Output = Result<T, ApiCallError>>,
+    R: Future<Output = std::result::Result<T, ApiCallError>>,
     W: FnMut(Duration) -> S,
     S: Future<Output = ()>,
 {
@@ -56,94 +56,68 @@ where
     }
 }
 
-/// Account-MLS-secret auto-unlock prompt (step 3 of the recovery flow).
-///
-/// Mounted once near the app shell and rendered ONLY when `needs_mls_unlock`
-/// is `true` — which the boot-time detection in `App` sets when this device
-/// is missing usable local MLS history and the server holds an
-/// `mls_account_secret` backup. The user supplies their recovery key
-/// and we call
-/// [`crate::mls::account_recovery::restore_mls_history_with_recovery_key_from_payload`].
-#[component]
-pub fn MlsUnlockPrompt(
-    token: Signal<String>,
-    actor_id: Signal<Option<arkret_sdk::DidCoreId>>,
-    device_id: Signal<String>,
-    needs_mls_unlock: Signal<bool>,
-    restore_payload_cache: Signal<Option<serde_json::Value>>,
-) -> Element {
-    // A4 — base_url / state_store from session context instead of props.
-    let session = crate::app::SessionContext::get();
-    let base_url = session.base_url;
-    let state_store = session.state_store;
-    let Some(active_account) = session.active_account() else {
-        return rsx! {};
-    };
-    let authority = active_account.authority.clone();
-    let mut passphrase = use_signal(String::new);
-    let mut status = use_signal(String::new);
-    let mut busy = use_signal(|| false);
-    let mut unlock_task = use_signal(|| None::<dioxus::core::Task>);
-    let mut dismissed = use_signal(|| false);
-    let mut recovery_key_open = use_signal(|| false);
-    #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
-    use_drop(|| tracing::warn!(target: "mls_unlock", "MLS unlock: prompt component unmounted"));
-
-    {
-        let mut dismissed = dismissed;
-        let mut recovery_key_open = recovery_key_open;
-        use_effect(move || {
-            if !needs_mls_unlock() {
-                dismissed.set(false);
-                recovery_key_open.set(false);
-            }
-        });
+#[derive(Clone)]
+struct UnlockController {
+    context: Rc<InksonContext>,
+    owner: glory::ui::WeakScope,
+    passphrase: Cage<String>,
+    status: Cage<String>,
+    busy: Cage<bool>,
+    dismissed: Cage<bool>,
+    recovery_key_open: Cage<bool>,
+    task: Rc<RefCell<Option<glory::core::TaskToken>>>,
+}
+impl UnlockController {
+    fn dismiss(&self) {
+        if let Some(task) = self.task.borrow_mut().take() {
+            task.cancel();
+        }
+        try_set_state(self.busy, false);
+        try_set_state(self.dismissed, true);
     }
-
-    if !needs_mls_unlock() {
-        return rsx! {};
-    }
-
-    if dismissed() {
-        return rsx! {
-            Button {
-                variant: ButtonVariant::Primary,
-                size: ButtonSize::IconSm,
-                r#type: "button",
-                class: "btn mls-unlock-reopen-button",
-                "data-testid": "mls-unlock-reopen",
-                title: crate::i18n::tr("mls_unlock.reopen"),
-                "aria-label": crate::i18n::tr("mls_unlock.reopen"),
-                onclick: move |_| dismissed.set(false),
-                UiIcon { name: "unlock" }
-            }
-        };
-    }
-
-    let on_unlock = move |_| {
-        if busy() {
+    fn unlock(&self) {
+        if self.busy.get() {
             return;
         }
-        let raw_pass = passphrase();
-        if raw_pass.trim().is_empty() {
-            status.set(crate::i18n::tr("mls_unlock.status.enter_passphrase"));
-            return;
-        }
-        let Some(pass) = normalize_recovery_key_input(&raw_pass) else {
-            status.set(crate::i18n::tr("mls_unlock.status.invalid_recovery_key"));
+        let Some(scope) = self.owner.upgrade() else {
             return;
         };
-        let base = base_url();
-        let session = token();
+        let Some(active_account) = self.context.active_account.get() else {
+            return;
+        };
+        let raw = self.passphrase.get();
+        if raw.trim().is_empty() {
+            try_set_state(
+                self.status,
+                self.context.tr("mls_unlock.status.enter_passphrase"),
+            );
+            return;
+        }
+        let Some(pass) = normalize_recovery_key_input(&raw) else {
+            try_set_state(
+                self.status,
+                self.context.tr("mls_unlock.status.invalid_recovery_key"),
+            );
+            return;
+        };
+        let context = self.context.clone();
+        let generation = context.session_generation.get();
+        let active = context.active_account.get();
+        let owner = self.owner.clone();
+        let base = context.base_url.get();
+        let session = context.token.get();
         let actor = active_account.principal_id().to_string();
-        let device = device_id();
-        let mut state_store = state_store;
-        let needs_mls_unlock = needs_mls_unlock;
-        let restore_payload_cache = restore_payload_cache;
-        let authority = authority.clone();
-        busy.set(true);
-        status.set(crate::i18n::tr("mls_unlock.status.fetching"));
-        let task = crate::runtime_helpers::spawn_owned(busy.origin_scope(), async move {
+        let device = context.device_id.get();
+        let authority = active_account.authority.clone();
+        let state_store = context.state_store.handle();
+        let status = self.status;
+        let busy = self.busy;
+        let restore_payload_cache = context.restore_payload_cache;
+        let passphrase = self.passphrase;
+        let needs_mls_unlock = context.needs_mls_unlock;
+        try_set_state(busy, true);
+        try_set_state(status, context.tr("mls_unlock.status.fetching"));
+        match scope.owner().spawn(async move {
             tracing::warn!(
                 target: "mls_unlock",
                 %actor,
@@ -168,10 +142,11 @@ pub fn MlsUnlockPrompt(
                     })
                 },
                 |delay| {
-                    try_set_signal(status, crate::i18n::tr("error.rate_limited"));
+                    try_set_state(status, crate::i18n::tr("error.rate_limited"));
                     crate::runtime_helpers::sleep_for(delay)
                 },
             ).await;
+            if owner.upgrade().is_none()||!context.session_matches(generation,&active){return}
             let result = match payload_result {
                 Ok((payload, active_policy)) => {
                     // The restorable set is the account's own key-backup
@@ -181,14 +156,14 @@ pub fn MlsUnlockPrompt(
                     // history-backup count to report any more.
                     let history_count =
                         crate::mls::runtime::all_secret_storage_backups(&payload).len();
-                    try_set_signal(restore_payload_cache, Some(payload.clone()));
+                    try_set_state(restore_payload_cache, Some(payload.clone()));
                     tracing::warn!(
                         target: "mls_unlock",
                         history_count,
                         has_active_policy = active_policy.is_some(),
                         "MLS unlock: recovery material fetched"
                     );
-                    try_set_signal(
+                    try_set_state(
                         status,
                         format!(
                             "{} {} {}",
@@ -204,13 +179,13 @@ pub fn MlsUnlockPrompt(
                     // each durable step instead of being held across the whole
                     // async restore. Probe it once first: a dropped signal
                     // still means the prompt is gone.
-                    if state_store.try_write().is_err() {
+                    if owner.upgrade().is_none()||!context.session_matches(generation,&active) {
                         Err(ApiCallError::Failed(anyhow::anyhow!(
                             "recovery prompt closed before restore completed"
                         )))
                     } else {
                         let store_handle =
-                            crate::app::runtime_adapter::state_store_handle(state_store);
+                            state_store.clone();
                         tracing::warn!(
                             target: "mls_unlock",
                             history_count,
@@ -238,6 +213,7 @@ pub fn MlsUnlockPrompt(
                             },
                             Err(error) => Err(ApiCallError::Failed(error)),
                         };
+                        if owner.upgrade().is_none()||!context.session_matches(generation,&active){return}
                         if restore_result.is_ok() {
                             store_handle.write(|store| {
                                 let account_data = store.current_account_data_events();
@@ -286,13 +262,14 @@ pub fn MlsUnlockPrompt(
                 }
                 Err(err) => Err(err),
             };
-            try_set_signal(busy, false);
+            if owner.upgrade().is_none()||!context.session_matches(generation,&active){return}
+            try_set_state(busy, false);
             match result {
                 Ok(report) => {
                     if let Some(err) = report.first_error {
                         // Some backups failed even though the call returned Ok —
                         // keep the prompt open so the user can retry.
-                        try_set_signal(
+                        try_set_state(
                             status,
                             format!(
                                 "{} {} {}; {} {}: {err}",
@@ -310,202 +287,297 @@ pub fn MlsUnlockPrompt(
                             report.restored,
                             crate::i18n::tr("mls_unlock.status.restored_suffix")
                         );
-                        try_set_signal(passphrase, String::new());
-                        try_set_signal(status, restored_status);
+                        try_set_state(passphrase, String::new());
+                        try_set_state(status, restored_status);
                         crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(750))
                             .await;
-                        try_set_signal(needs_mls_unlock, false);
+                        if owner.upgrade().is_some()&&context.session_matches(generation,&active){try_set_state(needs_mls_unlock, false);}
                     }
                 }
                 Err(err) => {
                     // Wrong passphrase / network: keep prompt open, surface reason.
-                    try_set_signal(status, err.display());
+                    try_set_state(status, err.display());
                 }
             }
-        });
-        unlock_task.set(Some(task));
-    };
 
-    rsx! {
-        Dialog {
-            open: true,
-            on_open_change: move |open: bool| {
-                if !open {
-                    if let Some(task) = unlock_task.take() { task.cancel(); }
-                    busy.set(false);
-                    dismissed.set(true);
-                }
-            },
-            "data-testid": "mls-unlock-banner",
-            "aria-labelledby": "mls-unlock-title",
-            div { class: "modal mls-recovery-modal mls-unlock-dialog",
-            div { class: "modal-head event-head",
-                div {
-                    h3 { id: "mls-unlock-title", {crate::i18n::tr("mls_unlock.title")} }
-                    span { class: "muted", {crate::i18n::tr("mls_unlock.subtitle")} }
-                }
-                Button {
-                    variant: ButtonVariant::Ghost,
-                    size: ButtonSize::IconSm,
-                    r#type: "button",
-                    class: "btn close",
-                    "data-testid": "mls-unlock-dismiss",
-                    title: crate::i18n::tr("mls_unlock.dismiss"),
-                    "aria-label": crate::i18n::tr("mls_unlock.dismiss"),
-                    onclick: move |_| {
-                        if let Some(task) = unlock_task.take() { task.cancel(); }
-                        busy.set(false);
-                        dismissed.set(true);
-                    },
-                    UiIcon { name: "x" }
-                }
-            }
-            div { class: "modal-body mls-recovery-modal-body",
-                div { class: "muted",
-                    {crate::i18n::tr("mls_unlock.description")}
-                }
-                div {
-                    class: "mls-device-authorization-details",
-                    "data-testid": "mls-device-authorization-path",
-                    div {
-                        class: "mls-device-authorization-path",
-                        div {
-                            class: "mls-device-authorization-step",
-                            strong { {crate::i18n::tr("mls_unlock.approve_step_existing_title")} }
-                            span { {crate::i18n::tr("mls_unlock.approve_step_existing_body")} }
-                        }
-                        div {
-                            class: "mls-device-authorization-step",
-                            strong { {crate::i18n::tr("mls_unlock.approve_step_new_title")} }
-                            span { {crate::i18n::tr("mls_unlock.approve_step_new_body")} }
-                        }
-                    }
-                }
-                div { class: "mls-device-authorization-limitation",
-                    UiIcon { name: "alert" }
-                    span { {crate::i18n::tr("mls_unlock.limitation")} }
-                }
-                if busy() {
-                    div {
-                        class: "muted",
-                        "data-testid": "mls-unlock-loading",
-                        role: "status",
-                        {crate::i18n::tr("mls_unlock.loading_hint")}
-                    }
-                }
-                if !status().is_empty() {
-                    div { class: "muted", "data-testid": "mls-unlock-status", "{status}" }
-                }
-                if recovery_key_open() {
-                    div { class: "actions mls-unlock-row mls-unlock-recovery-row",
-                        div { class: "muted mls-unlock-fallback-note",
-                            {crate::i18n::tr("mls_unlock.recovery_fallback_hint")}
-                        }
-                        Input {
-                            r#type: "password",
-                            "data-testid": "mls-unlock-passphrase",
-                            placeholder: crate::i18n::tr("mls_unlock.placeholder"),
-                            value: "{passphrase}",
-                            disabled: busy(),
-                            oninput: move |event: FormEvent| passphrase.set(event.value()),
-                        }
-                        Button {
-                            variant: ButtonVariant::Primary,
-                            "data-testid": "mls-unlock-submit",
-                            disabled: busy(),
-                            onclick: on_unlock,
-                            if busy() {
-                                {crate::i18n::tr("mls_unlock.button_busy")}
-                            } else {
-                                {crate::i18n::tr("mls_unlock.button_idle")}
-                            }
-                        }
-                    }
-                }
-            }
-            div { class: "modal-foot actions mls-unlock-row",
-                Button {
-                    variant: ButtonVariant::Secondary,
-                    "data-testid": "mls-unlock-show-recovery-key",
-                    disabled: busy(),
-                    onclick: move |_| recovery_key_open.set(!recovery_key_open()),
-                    if recovery_key_open() {
-                        {crate::i18n::tr("mls_unlock.hide_recovery_key")}
-                    } else {
-                        {crate::i18n::tr("mls_unlock.show_recovery_key")}
-                    }
-                }
-            }
-            }
-        }
+        }) {Ok(task)=>*self.task.borrow_mut()=Some(task),Err(error)=>{try_set_state(busy,false);try_set_state(status,error.to_string());}}
     }
 }
-
-/// Fresh-device recovery diagnostic shown when encrypted Realm/history exists
-/// but this account has no recovery-key-backed `mls_account_secret` backup on
-/// the server. In that state `MlsUnlockPrompt` cannot ask for a recovery key
-/// because there is no account-secret backup to open, so the app must tell the
-/// user to create the recovery backup from an existing unlocked device instead
-/// of silently rendering empty encrypted surfaces.
-#[component]
-pub fn MlsRecoverySetupMissingBanner(
-    mut needs_mls_recovery_setup: Signal<bool>,
-    actor_id: Signal<Option<arkret_sdk::DidCoreId>>,
-) -> Element {
-    if !needs_mls_recovery_setup() {
-        return rsx! {};
-    }
-
-    let actor = actor_id();
-    if actor.is_some() {
-        let Some(account) = crate::app::SessionContext::get().active_account() else {
-            return rsx! {};
+pub fn mls_unlock_prompt(scope: &Scope, context: Rc<InksonContext>) -> View {
+    let controller = UnlockController {
+        context: context.clone(),
+        owner: scope.downgrade(),
+        passphrase: scope.cage(String::new()),
+        status: scope.cage(String::new()),
+        busy: scope.cage(false),
+        dismissed: scope.cage(false),
+        recovery_key_open: scope.cage(false),
+        task: Rc::new(RefCell::new(None)),
+    };
+    let reset = controller.clone();
+    let needed = context.needs_mls_unlock;
+    scope.effect(move || {
+        if !needed.get() {
+            reset.dismiss();
+            try_set_state(reset.dismissed, false);
+            try_set_state(reset.recovery_key_open, false);
+            try_set_state(reset.passphrase, String::new());
+        }
+    });
+    let source = scope.bond({
+        let state = controller.clone();
+        let context = context.clone();
+        move || {
+            (
+                needed.get(),
+                state.dismissed.get(),
+                state.recovery_key_open.get(),
+                context.locale.get(),
+            )
+        }
+    });
+    reactive(
+        source,
+        move |scope, (needed, dismissed, recovery_open, _)| {
+            if !needed || context.active_account.get().is_none() {
+                return Box::new(widget(|_| Ok(())));
+            }
+            if dismissed {
+                let state = controller.clone();
+                return Box::new(
+                    sapid::button()
+                        .unstyled()
+                        .class("btn mls-unlock-reopen-button primary")
+                        .label(context.translated(scope, "mls_unlock.reopen"))
+                        .on_press(move || try_set_state(state.dismissed, false)),
+                );
+            }
+            let close = controller.clone();
+            let close_button = Box::new(
+                sapid::button()
+                    .unstyled()
+                    .class("btn close")
+                    .label(context.translated(scope, "mls_unlock.dismiss"))
+                    .on_press(move || close.dismiss()),
+            ) as View;
+            let steps = [
+                (
+                    "mls_unlock.approve_step_existing_title",
+                    "mls_unlock.approve_step_existing_body",
+                ),
+                (
+                    "mls_unlock.approve_step_new_title",
+                    "mls_unlock.approve_step_new_body",
+                ),
+            ]
+            .into_iter()
+            .map(|(title, body)| {
+                stack(
+                    "mls-device-authorization-step",
+                    vec![
+                        paragraph("", context.translated(scope, title)),
+                        paragraph("", context.translated(scope, body)),
+                    ],
+                )
+            })
+            .collect();
+            let mut body = vec![
+                paragraph("muted", context.translated(scope, "mls_unlock.description")),
+                stack(
+                    "mls-device-authorization-details",
+                    vec![stack("mls-device-authorization-path", steps)],
+                ),
+                line(
+                    "mls-device-authorization-limitation",
+                    vec![
+                        super::ui_icon("alert"),
+                        paragraph("", context.translated(scope, "mls_unlock.limitation")),
+                    ],
+                ),
+            ];
+            let busy = controller.busy;
+            let ctx = context.clone();
+            body.push(paragraph(
+                "muted mls-unlock-loading",
+                scope.bond(move || {
+                    if busy.get() {
+                        ctx.tr("mls_unlock.loading_hint")
+                    } else {
+                        String::new()
+                    }
+                }),
+            ));
+            body.push(paragraph("muted", controller.status));
+            if recovery_open {
+                let state = controller.clone();
+                let enabled = scope.bond(move || !busy.get());
+                let pass = controller.passphrase;
+                let input = Box::new(
+                    sapid::field("mls-unlock-passphrase")
+                        .unstyled()
+                        .label(context.translated(scope, "mls_unlock.placeholder"))
+                        .control(move |field| {
+                            sapid::text_field()
+                                .unstyled()
+                                .class("input")
+                                .field(field)
+                                .purpose(Purpose::Password)
+                                .value(pass)
+                                .enabled(enabled)
+                                .on_value_change(move |value| try_set_state(pass, value))
+                        }),
+                ) as View;
+                let ctx = context.clone();
+                let label = scope.bond(move || {
+                    ctx.tr(if busy.get() {
+                        "mls_unlock.button_busy"
+                    } else {
+                        "mls_unlock.button_idle"
+                    })
+                });
+                body.push(line(
+                    "actions mls-unlock-row mls-unlock-recovery-row",
+                    vec![
+                        paragraph(
+                            "muted mls-unlock-fallback-note",
+                            context.translated(scope, "mls_unlock.recovery_fallback_hint"),
+                        ),
+                        input,
+                        Box::new(
+                            sapid::button()
+                                .unstyled()
+                                .class("primary")
+                                .label(label)
+                                .enabled(enabled)
+                                .on_press(move || state.unlock()),
+                        ),
+                    ],
+                ));
+            }
+            let open = controller.recovery_key_open;
+            let toggle = Box::new(
+                sapid::button()
+                    .unstyled()
+                    .class("secondary")
+                    .label(context.translated(
+                        scope,
+                        if recovery_open {
+                            "mls_unlock.hide_recovery_key"
+                        } else {
+                            "mls_unlock.show_recovery_key"
+                        },
+                    ))
+                    .enabled(scope.bond(move || !busy.get()))
+                    .on_press(move || open.revise(|value| *value = !*value)),
+            ) as View;
+            let content = stack(
+                "modal mls-recovery-modal mls-unlock-dialog",
+                vec![
+                    line(
+                        "modal-head event-head",
+                        vec![
+                            stack(
+                                "",
+                                vec![
+                                    heading(3, "", context.translated(scope, "mls_unlock.title")),
+                                    paragraph(
+                                        "muted",
+                                        context.translated(scope, "mls_unlock.subtitle"),
+                                    ),
+                                ],
+                            ),
+                            close_button,
+                        ],
+                    ),
+                    stack("modal-body mls-recovery-modal-body", body),
+                    line("modal-foot actions mls-unlock-row", vec![toggle]),
+                ],
+            );
+            let close = controller.clone();
+            let mut content = Some(content);
+            Box::new(
+                sapid::dialog("mls-unlock")
+                    .unstyled()
+                    .name(context.translated(scope, "mls_unlock.title"))
+                    .open(true)
+                    .show_trigger(false)
+                    .show_close(false)
+                    .on_dismiss(move |_| close.dismiss())
+                    .content(move || {
+                        content
+                            .take()
+                            .unwrap_or_else(|| Box::new(widget(|_| Ok(()))))
+                    }),
+            )
+        },
+    )
+}
+pub fn mls_recovery_setup_missing_banner(_scope: &Scope, context: Rc<InksonContext>) -> View {
+    let needed = context.needs_mls_recovery_setup;
+    reactive(needed, move |scope, needed_now| {
+        if !needed_now {
+            return Box::new(widget(|_| Ok(())));
+        }
+        let Some(account) = context.active_account.get() else {
+            return Box::new(widget(|_| Ok(())));
         };
-        let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+        let secure = crate::secure_key_store::default_secure_key_store("inkson");
         if matches!(
-            crate::mls::runtime::load_account_mls_secret(secure_store.as_ref(), &account.authority,),
+            crate::mls::runtime::load_account_mls_secret(secure.as_ref(), &account.authority),
             Ok(Some(_))
         ) {
-            return rsx! {};
+            return Box::new(widget(|_| Ok(())));
         }
-    }
-
-    rsx! {
-        Dialog {
-            open: true,
-            on_open_change: move |open: bool| {
-                if !open {
-                    needs_mls_recovery_setup.set(false);
-                }
-            },
-            "data-testid": "mls-recovery-missing-modal",
-            "aria-labelledby": "mls-recovery-missing-title",
-            "aria-label": crate::i18n::tr("mls_recovery_missing.aria_label"),
-            div {
-                class: "modal event mls-recovery-modal mls-recovery-missing-banner",
-                "data-testid": "mls-recovery-missing-banner",
-                role: "dialog",
-                "aria-modal": "true",
-                div { class: "modal-head event-head",
-                    h3 { id: "mls-recovery-missing-title", {crate::i18n::tr("mls_recovery_missing.title")} }
-                    span { class: "muted", {crate::i18n::tr("mls_recovery_missing.subtitle")} }
-                }
-                div { class: "modal-body mls-recovery-modal-body",
-                    div { class: "muted",
-                        {crate::i18n::tr("mls_recovery_missing.description")}
-                    }
-                }
-                div { class: "modal-foot mls-unlock-row",
-                    Button {
-                        variant: ButtonVariant::Secondary,
-                        "data-testid": "mls-recovery-missing-dismiss",
-                        onclick: move |_| needs_mls_recovery_setup.set(false),
-                        {crate::i18n::tr("mls_recovery_missing.button_dismiss")}
-                    }
-                }
-            }
-        }
-    }
+        let close = Box::new(
+            sapid::button()
+                .unstyled()
+                .class("secondary")
+                .label(context.translated(scope, "mls_recovery_missing.button_dismiss"))
+                .on_press(move || try_set_state(needed, false)),
+        ) as View;
+        let content = stack(
+            "modal event mls-recovery-modal mls-recovery-missing-banner",
+            vec![
+                stack(
+                    "modal-head event-head",
+                    vec![
+                        heading(
+                            3,
+                            "",
+                            context.translated(scope, "mls_recovery_missing.title"),
+                        ),
+                        paragraph(
+                            "muted",
+                            context.translated(scope, "mls_recovery_missing.subtitle"),
+                        ),
+                    ],
+                ),
+                stack(
+                    "modal-body mls-recovery-modal-body",
+                    vec![paragraph(
+                        "muted",
+                        context.translated(scope, "mls_recovery_missing.description"),
+                    )],
+                ),
+                line("modal-foot mls-unlock-row", vec![close]),
+            ],
+        );
+        let mut content = Some(content);
+        Box::new(
+            sapid::dialog("mls-recovery-missing")
+                .unstyled()
+                .name(context.translated(scope, "mls_recovery_missing.aria_label"))
+                .open(true)
+                .show_trigger(false)
+                .show_close(false)
+                .on_dismiss(move |_| try_set_state(needed, false))
+                .content(move || {
+                    content
+                        .take()
+                        .unwrap_or_else(|| Box::new(widget(|_| Ok(()))))
+                }),
+        )
+    })
 }
 
 #[cfg(test)]

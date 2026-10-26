@@ -75,7 +75,8 @@ async fn join_via_api(
     // rotates with the group epoch.
     let mut join = join.clone();
     join.epoch_id = exporter.epoch();
-    let api = crate::transport::auth::authed_api(base, api_token.to_owned())
+    let api = crate::transport::auth::authed_api_ready(base, api_token.to_owned())
+        .await
         .map_err(|_| RtcClientError::FocusUnavailableForClient)?;
     let session = crate::media::rtc::join_call_media(&api, &join, &exporter).await?;
     // Retain the live MLS exporter (and the leg's static SFrame context) so the

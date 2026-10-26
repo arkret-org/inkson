@@ -17,7 +17,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-use dioxus::prelude::*;
+use glory::{Cage, Scope};
 
 use crate::runtime::projection::AdmittedSignal;
 
@@ -63,83 +63,82 @@ pub struct CallSignalHub {
     /// Set when an inbound `invite` arrives and no active call owns it.
     /// Cleared by `CallPanel` once the ring is presented / answered, or when
     /// the call ends.
-    pub incoming_call: Signal<Option<IncomingCallInfo>>,
-    pub invitation_contexts: Signal<BTreeMap<String, arkret_sdk::CallInvitationDeliveryView>>,
+    pub incoming_call: Cage<Option<IncomingCallInfo>>,
+    pub invitation_contexts: Cage<BTreeMap<String, arkret_sdk::CallInvitationDeliveryView>>,
     /// Per-call FIFO inbox of non-invite signals awaiting `CallPanel`.
-    pub inbox: Signal<BTreeMap<String, VecDeque<CallSignalInboxItem>>>,
+    pub inbox: Cage<BTreeMap<String, VecDeque<CallSignalInboxItem>>>,
     /// Processed-signal dedup set.
-    pub seen: Signal<BTreeSet<SignalDedupKey>>,
+    pub seen: Cage<BTreeSet<SignalDedupKey>>,
     /// Highest accepted sequence per `(realm, call, sender_actor, sender_device)`.
-    pub last_seq: Signal<BTreeMap<SignalSeqKey, u64>>,
+    pub last_seq: Cage<BTreeMap<SignalSeqKey, u64>>,
     /// Call ids the local client currently owns an active session for. An
     /// `invite` for a call already in this set is treated as a re-invite and
     /// does NOT raise a fresh ring.
-    pub active_calls: Signal<BTreeSet<String>>,
+    pub active_calls: Cage<BTreeSet<String>>,
 }
 
 impl CallSignalHub {
     /// Construct an empty hub. Call inside `use_context_provider`.
-    pub fn new() -> Self {
+    pub fn new(scope: &Scope) -> Self {
         Self {
-            incoming_call: Signal::new(None),
-            invitation_contexts: Signal::new(BTreeMap::new()),
-            inbox: Signal::new(BTreeMap::new()),
-            seen: Signal::new(BTreeSet::new()),
-            last_seq: Signal::new(BTreeMap::new()),
-            active_calls: Signal::new(BTreeSet::new()),
+            incoming_call: scope.cage(None),
+            invitation_contexts: scope.cage(BTreeMap::new()),
+            inbox: scope.cage(BTreeMap::new()),
+            seen: scope.cage(BTreeSet::new()),
+            last_seq: scope.cage(BTreeMap::new()),
+            active_calls: scope.cage(BTreeSet::new()),
         }
     }
 
-    /// Best-effort context read. Returns `None` when no provider is mounted
-    /// (unit tests / isolated component renders) so callers stay non-fatal.
-    pub fn try_use() -> Option<Self> {
-        try_consume_context::<CallSignalHub>()
+    pub fn reset(&self) {
+        self.incoming_call.revise(|value| *value = None);
+        self.invitation_contexts.revise(BTreeMap::clear);
+        self.inbox.revise(BTreeMap::clear);
+        self.seen.revise(BTreeSet::clear);
+        self.last_seq.revise(BTreeMap::clear);
+        self.active_calls.revise(BTreeSet::clear);
     }
 
     /// Pop every queued item for `call_id` (FIFO), leaving the inbox entry
     /// empty. Used by `CallPanel`'s drain effect.
     pub fn drain_call(&mut self, call_id: &str) -> Vec<CallSignalInboxItem> {
-        let mut inbox = self.inbox.write();
-        match inbox.get_mut(call_id) {
+        self.inbox.revise(|inbox| match inbox.get_mut(call_id) {
             Some(queue) => queue.drain(..).collect(),
             None => Vec::new(),
-        }
+        })
     }
 
     /// Mark `call_id` as locally active (answered / placed) so a re-delivered
     /// `invite` does not re-ring, and clear a matching pending `incoming_call`.
     pub fn mark_active(&mut self, call_id: &str) {
-        self.active_calls.write().insert(call_id.to_owned());
+        self.active_calls
+            .revise(|calls| calls.insert(call_id.to_owned()));
         let clear = self
             .incoming_call
-            .read()
+            .get()
             .as_ref()
             .is_some_and(|info| info.call_id == call_id);
         if clear {
-            self.incoming_call.set(None);
+            self.incoming_call.revise(|value| *value = None);
         }
     }
 
     /// Drop all per-call state (inbox + active flag) when a call ends.
     pub fn forget_call(&mut self, call_id: &str) {
-        self.inbox.write().remove(call_id);
-        self.invitation_contexts.write().remove(call_id);
-        self.active_calls.write().remove(call_id);
-        self.last_seq.write().retain(|key, _| key.1 != call_id);
+        self.inbox.revise(|inbox| inbox.remove(call_id));
+        self.invitation_contexts
+            .revise(|contexts| contexts.remove(call_id));
+        self.active_calls.revise(|calls| calls.remove(call_id));
+        self.last_seq
+            .revise(|sequences| sequences.retain(|key, _| key.1 != call_id));
         let clear = self
             .incoming_call
-            .read()
+            .get()
             .as_ref()
             .is_some_and(|info| info.call_id == call_id);
         if clear {
-            self.incoming_call.set(None);
+            self.incoming_call.revise(|value| *value = None);
         }
-    }
-}
-
-impl Default for CallSignalHub {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -226,8 +225,7 @@ pub async fn route_decrypted_call_signals(
                 continue;
             }
             hub.invitation_contexts
-                .write()
-                .insert(decoded.call_id.clone(), delivery.clone());
+                .revise(|contexts| contexts.insert(decoded.call_id.clone(), delivery.clone()));
         }
         route_verified_decoded_signal(hub, decoded, local_actor, local_device);
     }
@@ -354,15 +352,16 @@ fn advance_signal_seq(
         decoded.sender_actor.clone(),
         decoded.sender_device.clone(),
     );
-    let mut last_seq = hub.last_seq.write();
-    if last_seq
-        .get(&key)
-        .is_some_and(|prev| decoded.sequence <= *prev)
-    {
-        return false;
-    }
-    last_seq.insert(key, decoded.sequence);
-    true
+    hub.last_seq.revise(|last_seq| {
+        if last_seq
+            .get(&key)
+            .is_some_and(|prev| decoded.sequence <= *prev)
+        {
+            return false;
+        }
+        last_seq.insert(key, decoded.sequence);
+        true
+    })
 }
 
 /// Route a single decoded signal: compute the pure [`decide_route`] decision
@@ -387,13 +386,15 @@ pub fn route_decoded_signal(
     let is_duplicate = if is_self_echo {
         false
     } else {
-        !hub.seen.write().insert(key)
+        !hub.seen.revise(|seen| seen.insert(key))
     };
 
     let ring_state = {
-        let ringing = hub.incoming_call.read();
+        let ringing = hub.incoming_call.get();
         let ringing_call = ringing.as_ref().map(|info| info.call_id.clone());
-        let answered_here = hub.active_calls.read().contains(&decoded.call_id);
+        let answered_here = hub
+            .active_calls
+            .with(|calls| calls.contains(&decoded.call_id));
         RouteState {
             ringing_call,
             ringing_answered_here: answered_here,
@@ -408,15 +409,12 @@ pub fn route_decoded_signal(
         &ring_state,
     ) {
         RouteDecision::Drop => {}
-        RouteDecision::Ring(info) => hub.incoming_call.set(Some(info)),
-        RouteDecision::ClearRing => hub.incoming_call.set(None),
+        RouteDecision::Ring(info) => hub.incoming_call.revise(|value| *value = Some(info)),
+        RouteDecision::ClearRing => hub.incoming_call.revise(|value| *value = None),
         RouteDecision::Enqueue(item) => {
             let call_id = item.call_id.clone();
             hub.inbox
-                .write()
-                .entry(call_id)
-                .or_default()
-                .push_back(item);
+                .revise(|inbox| inbox.entry(call_id).or_default().push_back(item));
         }
     }
 }

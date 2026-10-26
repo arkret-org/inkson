@@ -19,7 +19,12 @@
 //! row markup differs too much to share. What does share is the
 //! placeholder shell, which is what this component covers.
 
-use dioxus::prelude::*;
+use std::rc::Rc;
+
+use glory::prelude::*;
+
+use crate::presentation::widgets::{line, paragraph, plain, stack};
+use crate::presentation::{InksonContext, View};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EmptyStateKind {
@@ -63,39 +68,34 @@ impl EmptyStateKind {
     }
 }
 
-#[component]
-pub fn EmptyState(
-    /// Title for the event-head left span (e.g. "Notifications",
-    /// "Directory"). Usually mirrors the view's section name so the
-    /// placeholder reads like a deliberate state rather than a glitch.
-    title: String,
-    kind: EmptyStateKind,
-    /// Optional explanation shown in the muted body. `None` keeps the
-    /// muted block out of the DOM entirely so callers can use the
-    /// component as a thin "section is empty" hint with no body copy.
-    message: Option<String>,
-    /// Override the default badge text from `kind.badge()`. Useful when
-    /// the caller wants a context-specific subtitle ("no policy",
-    /// "awaiting sync") while keeping the colour mapping from `kind`.
-    badge_override: Option<String>,
-    /// Data-testid for the outer wrapper. Defaults to
-    /// `"empty-state"` so e2e tests can target a stable selector.
-    test_id: Option<String>,
-) -> Element {
-    let testid = test_id.unwrap_or_else(|| "empty-state".to_owned());
-    let badge_text = badge_override.unwrap_or_else(|| kind.badge().to_owned());
-    let badge_class = kind.badge_class();
-    rsx! {
-        div { class: "event", "data-testid": "{testid}",
-            div { class: "event-head",
-                span { "{title}" }
-                span { class: "{badge_class}", "{badge_text}" }
-            }
-            if let Some(text) = message {
-                div { class: "muted", "{text}" }
-            }
-        }
+#[derive(Clone)]
+pub struct EmptyStateProps {
+    pub title: String,
+    pub kind: EmptyStateKind,
+    pub message: Option<String>,
+    pub badge_override: Option<String>,
+    pub test_id: Option<String>,
+}
+pub fn empty_state(_scope: &Scope, _context: Rc<InksonContext>, props: EmptyStateProps) -> View {
+    let mut children = vec![line(
+        "event-head",
+        vec![
+            plain(props.title),
+            paragraph(
+                props.kind.badge_class(),
+                props
+                    .badge_override
+                    .unwrap_or_else(|| props.kind.badge().to_owned()),
+            ),
+        ],
+    )];
+    if let Some(message) = props.message {
+        children.push(paragraph("muted", message));
     }
+    stack(
+        format!("event {}", props.test_id.unwrap_or_default()),
+        children,
+    )
 }
 
 #[cfg(test)]

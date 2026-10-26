@@ -71,11 +71,7 @@ pub(super) fn test_signer() -> crate::event_signer::InksonEventSigner {
 #[cfg(not(target_arch = "wasm32"))]
 #[tokio::test]
 async fn accepted_setup_policy_uses_promoted_account_before_runtime_commit() {
-    use std::cell::RefCell;
-    use std::rc::Rc;
     use std::sync::Arc;
-
-    use dioxus::prelude::*;
 
     let account = test_authority();
     let device = arkret_sdk::DeviceId::new(DEVICE).unwrap();
@@ -201,37 +197,36 @@ async fn accepted_setup_policy_uses_promoted_account_before_runtime_commit() {
         .unwrap();
         crate::event_signer::bind_active_signer_principal_device_id(&principal, device.as_str())
             .unwrap();
-        let captured = Rc::new(RefCell::new(None));
-        let target = captured.clone();
-        let state = Rc::new(RefCell::new(Some(state)));
-        let mut dom = VirtualDom::new_with_props(
-            move |_: ()| {
-                let store = use_hook(|| {
-                    SyncSignal::new_maybe_sync_in_scope(
-                        state.borrow_mut().take().unwrap(),
-                        ScopeId::ROOT,
-                    )
-                });
-                let active_account = use_signal(|| Some(previous.clone()));
-                let base_url = use_signal(|| "https://previous-station.example/".to_owned());
-                let session_generation = use_signal(|| 0);
-                let owned_agents_rev = use_signal(|| 0);
-                use_context_provider(|| crate::app::SessionContext {
-                    active_account,
-                    state_store: store,
-                    base_url,
-                    session_generation,
-                    owned_agents_rev,
-                });
-                let api = crate::transport::TransportClient::unauthenticated("http://127.0.0.1:9/")
-                    .unwrap();
-                *target.borrow_mut() = Some(api.event_submitter().unwrap());
-                rsx! {}
-            },
-            (),
+        let app = glory::ui::App::memory();
+        let configuration = crate::config::ClientConfig::authenticated(
+            previous.clone(),
+            "previous-credential".into(),
         );
-        dom.rebuild_in_place();
-        let submitter = captured.borrow_mut().take().unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let context = crate::presentation::InksonContext::new(
+            app.scope(),
+            crate::presentation::BootState {
+                config_store: crate::config::LocalConfigStore::with_path(
+                    directory.path().join("config.json"),
+                ),
+                config: configuration,
+                state_store: crate::presentation::SharedStateStore::new(state),
+                initial_credential: "previous-credential".into(),
+                realm_tree_nodes: vec![],
+            },
+            crate::routes::Route::Dashboard,
+            |_| {
+                Box::pin(async {
+                    crate::runtime::session::CurrentSessionRefresh::retry_later("test")
+                })
+            },
+        );
+        app.scope().retain(context.clone()).unwrap();
+        let submitter = app.scope().owner().enter(|| {
+            let api =
+                crate::transport::TransportClient::unauthenticated("http://127.0.0.1:9/").unwrap();
+            api.event_submitter().unwrap()
+        });
         let authored = submitter.author_for_direct_submission(&operation).await
             .expect("accepted setup must sign its recovery policy while the previous runtime account is retained");
         assert_eq!(

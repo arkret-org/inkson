@@ -11,7 +11,6 @@ version = 2
 unsound = "all"
 yanked = "warn"
 ignore = [
-    { id = "RUSTSEC-2025-0057", reason = "transitive Dioxus dependency; maintenance notice has no vulnerability" },
     { id = "RUSTSEC-2024-0436", reason = "transitive image/rav1e dependency with no compatible replacement" },
     { id = "RUSTSEC-2026-0173", reason = "transitive OpenMLS hax macro dependency with no compatible replacement" },
 ]
@@ -21,7 +20,6 @@ version = 2
 allow = [
     "MIT",
     "MIT-0",
-    # Official KSNI backend is Unlicense; retain its real source license.
     "Unlicense",
     "Apache-2.0",
     "Apache-2.0 WITH LLVM-exception",
@@ -51,16 +49,12 @@ unknown-registry = "warn"
 unknown-git = "warn"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 allow-git = [
-  "https://github.com/arkret-org/openmls",
-    # Reviewed dependency fixes live in organization forks, pinned by full revision.
-    "https://github.com/arkret-org/dioxus",
-    "https://github.com/arkret-org/ksni",
+    "https://github.com/glory-rs/glory",
+    "https://github.com/sapid-ui/sapid",
+    "https://github.com/Ranrar/wry",
+    "https://github.com/johncarmack1984/tao",
+    "https://github.com/glory-rs/blitz",
+    "https://github.com/arkret-org/openmls",
     "https://github.com/arkret-org/secret-service-rs",
-    "https://github.com/DioxusLabs/components",
-    # Official PHF 0.8 caller migration to the patched rand 0.8 registry line.
-    "https://github.com/rust-phf/rust-phf",
-    # Shared Arkret frontend component crate, consumed straight from its
-    # private repository instead of a sibling path dependency.
-    "https://github.com/arkret-org/yoface",
-    "https://github.com/openmls/openmls.git",
+    "https://github.com/glory-rs/taffy",
 ]

@@ -191,6 +191,17 @@ impl<T: Clone + Default + 'static> BackupJobScheduler<T> {
         upsert_backup_job(&mut jobs, key, digest, refresh)
     }
 
+    /// Release an owner while retaining the dedupe digest and interval history.
+    pub(crate) fn retire(&self, key: &str, clear: impl FnOnce(&mut T)) {
+        if let Some(mut jobs) = self.lock()
+            && let Some(job) = jobs.get_mut(key)
+        {
+            job.scheduled = false;
+            job.in_flight = false;
+            clear(&mut job.payload);
+        }
+    }
+
     /// Next wake-up delay for the job, or `None` if the job is gone.
     pub(crate) fn next_delay(&self, key: &str, now: DateTime<Utc>) -> Option<Duration> {
         let jobs = self.lock()?;
@@ -315,6 +326,48 @@ impl<T: Clone + Default + 'static> BackupJobScheduler<T> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn retired_owner_releases_credentials_without_losing_dedupe_or_interval() {
+        let scheduler = super::BackupJobScheduler::<String>::new(
+            "owner-retire",
+            super::BackupSchedulerConfig {
+                debounce: std::time::Duration::from_millis(1),
+                min_interval: Some(std::time::Duration::from_secs(10)),
+                retry_base: std::time::Duration::from_millis(1),
+                retry_cap: std::time::Duration::from_millis(1),
+            },
+        );
+        assert!(
+            scheduler.schedule("account", "digest".into(), |payload| *payload =
+                "credential".into())
+        );
+        scheduler.begin_attempt("account").unwrap();
+        let uploaded_at = chrono::Utc::now();
+        assert!(
+            !scheduler.finish_rerun_if_newer("account", "digest", |job| {
+                job.last_uploaded_digest = Some("digest".into());
+                job.last_upload_at = Some(uploaded_at);
+            })
+        );
+        scheduler.retire("account", String::clear);
+        scheduler
+            .with_jobs(|jobs| {
+                let job = &jobs["account"];
+                assert!(job.payload.is_empty());
+                assert!(!job.scheduled && !job.in_flight);
+                assert_eq!(job.last_uploaded_digest.as_deref(), Some("digest"));
+                assert_eq!(job.last_upload_at, Some(uploaded_at));
+            })
+            .unwrap();
+        assert!(
+            !scheduler.schedule("account", "digest".into(), |payload| *payload =
+                "new credential".into())
+        );
+        assert!(
+            scheduler.schedule("account", "new digest".into(), |payload| *payload =
+                "new credential".into())
+        );
+    }
     use super::*;
 
     #[derive(Clone, Default)]

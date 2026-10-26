@@ -3,6 +3,40 @@ use arkret_wire::event_kind_str;
 use super::*;
 
 mod commands;
+mod files;
+mod send;
+
+fn primary_send_action(
+    scope: &Scope,
+    label: impl Into<Lotus<String>>,
+    enabled: impl Into<Lotus<bool>>,
+    busy: impl Into<Lotus<bool>>,
+    mut send: impl FnMut() + 'static,
+) -> View {
+    let busy = busy.into();
+    Box::new(
+        glory::ui::button()
+            .label(label)
+            .enabled(enabled)
+            .class(scope.bond({
+                let busy = busy.clone();
+                move || {
+                    if busy.get() {
+                        "primary send-chat-button send-readiness-checking".to_owned()
+                    } else {
+                        "primary send-chat-button".to_owned()
+                    }
+                }
+            }))
+            .semantics(scope.bond(move || {
+                Some(Box::new(glory::render::Semantics {
+                    busy: Some(busy.get()),
+                    ..Default::default()
+                }))
+            }))
+            .on(glory::render::EventKind::Activate, move |_| send()),
+    )
+}
 
 #[cfg(test)]
 mod tests;
@@ -21,10 +55,9 @@ fn ordinary_composer_scope(realm: &str, channel: &ChannelEntity) -> Option<arkre
     })
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone)]
 pub(super) struct ChatComposerContext {
-    pub sidecar_route_pending: Signal<bool>,
-    pub embedded: bool,
+    pub sidecar_route_pending: Cage<bool>,
     pub selected_channel_info: Option<ChannelEntity>,
     pub circle_display: Option<arkret_sdk::CircleDisplay>,
     pub circle_encrypted: Option<bool>,
@@ -44,11 +77,10 @@ pub(super) struct ChatComposerContext {
     pub public_agent_ids: std::collections::BTreeSet<String>,
     pub interaction_modes:
         std::collections::BTreeMap<arkret_sdk::AccountId, arkret_sdk::AgentInteractionMode>,
-    pub mention_insert_request: Option<Signal<Option<MentionInsertRequest>>>,
+    pub mention_insert_request: Option<Cage<Option<MentionInsertRequest>>>,
     pub mentions_enabled: bool,
-    pub token: Signal<String>,
-    pub sync_cursor: Signal<String>,
-    pub frontier_state: Signal<String>,
+    pub token: Cage<String>,
+    pub frontier_state: Cage<String>,
 }
 
 pub(super) fn chat_mentions_enabled(direct_mode: bool) -> bool {
@@ -85,127 +117,6 @@ fn composer_scope_label(
     crate::i18n::tr_args(key, &[("strand", strand.to_owned())])
 }
 
-#[cfg(test)]
-mod composer_locale_tests {
-    use std::cell::RefCell;
-    use std::collections::BTreeMap;
-    use std::rc::Rc;
-
-    use super::*;
-    use crate::i18n::{I18nSignal, UiLocale};
-
-    type LocaleHandle = Rc<RefCell<(Option<I18nSignal>, usize)>>;
-
-    fn retained_composer_labels(handle: LocaleHandle) -> Element {
-        let locale = use_context_provider(|| crate::i18n::init_i18n_with_locale(UiLocale::En));
-        handle.borrow_mut().0 = Some(locale);
-        let original = use_signal(move || {
-            handle.borrow_mut().1 += 1;
-            "chat.composer.sending {strand} {member} 原文".to_owned()
-        });
-        let raw = original();
-        // Exercise production presentation helpers and the real send-button
-        // component, without mounting session-dependent authoring lifecycle.
-        rsx! {
-            div {
-                p { {chat_composer_placeholder(true)} }
-                p { {chat_composer_placeholder(false)} }
-                for scope in [arkret_sdk::AgentMentionComposerScope::Realm, arkret_sdk::AgentMentionComposerScope::Circle, arkret_sdk::AgentMentionComposerScope::Direct] {
-                    p { {composer_scope_label(arkret_sdk::AgentMentionRoute::Shared, scope, &raw)} }
-                }
-                p { {composer_scope_label(arkret_sdk::AgentMentionRoute::Sidecar, arkret_sdk::AgentMentionComposerScope::Realm, &raw)} }
-                p { "{raw}" }
-                OrdinarySendActions {
-                    plaintext: false,
-                    plaintext_disabled: true,
-                    secure_disabled: true,
-                    mls_binding_pending: true,
-                    creator_bootstrap_pending: false,
-                    secure_title: raw.to_string(),
-                    opening: false,
-                    sending: true,
-                    on_plaintext: move |_| {},
-                    on_secure: move |_| {},
-                }
-                OrdinarySendActions {
-                    plaintext: false,
-                    plaintext_disabled: true,
-                    secure_disabled: true,
-                    mls_binding_pending: true,
-                    creator_bootstrap_pending: false,
-                    secure_title: raw.to_string(),
-                    opening: true,
-                    on_plaintext: move |_| {},
-                    on_secure: move |_| {},
-                }
-            }
-        }
-    }
-
-    fn apply_text_edits(
-        text: &mut BTreeMap<usize, String>,
-        edits: dioxus::core::Mutations,
-    ) -> usize {
-        let mut changed = 0;
-        for edit in edits.edits {
-            match edit {
-                dioxus::core::Mutation::CreateTextNode { id, value }
-                | dioxus::core::Mutation::SetText { id, value } => {
-                    text.insert(id.0, value);
-                    changed += 1;
-                }
-                _ => {}
-            }
-        }
-        changed
-    }
-
-    #[test]
-    fn retained_composer_labels_rerender_without_translating_original_draft_or_identifiers() {
-        let handle = Rc::new(RefCell::new((None, 0)));
-        let mut dom = VirtualDom::new_with_props(retained_composer_labels, handle.clone());
-        let mut text = BTreeMap::new();
-        apply_text_edits(&mut text, dom.rebuild_to_vec());
-        let english = text.clone();
-        let raw = "chat.composer.sending {strand} {member} 原文";
-        assert!(text.values().any(|value| value == "Sending…"));
-        assert!(text.values().any(|value| value == "Opening…"));
-        assert!(text.values().any(|value| value
-            == &format!("Original Strand: {raw}. Members authorized to read this scope.")));
-        let mut locale = handle.borrow().0.expect("composer labels provide locale");
-        for language in [UiLocale::Zh, UiLocale::En] {
-            dom.in_runtime(|| crate::i18n::set_locale(&mut locale, language));
-            assert!(apply_text_edits(&mut text, dom.render_immediate_to_vec()) > 0);
-            assert!(text.values().any(|value| value == raw));
-            assert_eq!(
-                handle.borrow().1,
-                1,
-                "locale changes must retain the original signal"
-            );
-            if language == UiLocale::Zh {
-                for expected in [
-                    "发送中…".to_owned(),
-                    "打开中…".to_owned(),
-                    format!("原始 Strand：{raw}。仅限获授权读取此范围的成员。"),
-                    format!("Circle 讨论：{raw}。仅限获授权读取此 Circle 的成员。"),
-                    format!("直接对话：{raw}。仅限两位对话参与者。"),
-                    "私密对话：仅你与当前获授权的 Agent。群组成员不会收到这条消息。".to_owned(),
-                    "在此讨论中发送消息。用 @alice:example.com 提及成员，或用 #task-123 链接卡片。"
-                        .to_owned(),
-                    "在此讨论中发送消息。用 #task-123 链接卡片。".to_owned(),
-                ] {
-                    assert!(
-                        text.values().any(|value| value == &expected),
-                        "missing label: {expected}"
-                    );
-                }
-            } else {
-                assert_eq!(text, english);
-            }
-        }
-    }
-}
-
 pub(super) fn active_composer_mention_token(
     mentions_enabled: bool,
     value: &str,
@@ -217,6 +128,7 @@ pub(super) fn active_composer_mention_token(
 
 /// Match desktop chat conventions while leaving Shift+Enter to the textarea.
 /// Ctrl/Cmd+Enter remain send aliases because those modifiers are not blockers.
+#[cfg(test)]
 pub(super) fn chat_composer_should_send_key(
     key: &str,
     shift: bool,
@@ -309,1423 +221,1231 @@ fn installed_sidecar_send_blocked(
             || !matches!(gate, Some(crate::mls::send_gate::MlsSendGate::Encrypted(_))))
 }
 
-#[component]
-fn OrdinarySendActions(
+#[derive(Clone, PartialEq)]
+struct Preview {
+    route: arkret_sdk::AgentMentionRoute,
+    scope: arkret_sdk::AgentMentionComposerScope,
+    upload_scope: Option<arkret_sdk::ScopeRef>,
     plaintext: bool,
-    plaintext_disabled: bool,
-    secure_disabled: bool,
-    mls_binding_pending: bool,
-    creator_bootstrap_pending: bool,
-    secure_title: String,
-    opening: bool,
-    #[props(default)] sending: bool,
-    #[props(default)] readiness_checking: bool,
-    #[props(default)] blocker_diagnostic: Option<String>,
-    on_plaintext: Callback<MouseEvent>,
-    on_secure: Callback<MouseEvent>,
-) -> Element {
-    // Keep the primary button mounted while a fresh scope probe is pending.
-    // Its identity and visibility must not depend on the encryption result.
-    rsx! {
-        Button {
-            variant: ButtonVariant::Primary,
-            "data-testid": "send-chat-button",
-            "data-mls-binding-pending": mls_binding_pending.to_string(),
-            "data-creator-bootstrap-pending": creator_bootstrap_pending.to_string(),
-            "data-readiness-checking": readiness_checking.to_string(),
-            "data-send-blockers": blocker_diagnostic,
-            "aria-busy": (readiness_checking || sending).to_string(),
-            title: if plaintext { String::new() } else { secure_title.clone() },
-            disabled: if plaintext { plaintext_disabled } else { secure_disabled },
-            onclick: move |event| {
-                if plaintext {
-                    on_plaintext.call(event);
-                } else {
-                    on_secure.call(event);
-                }
-            },
-            if sending {
-                {crate::i18n::tr("chat.composer.sending")}
-            } else if opening {
-                {crate::i18n::tr("chat.composer.opening")}
-            } else {
-                {crate::i18n::tr("chat.send")}
-            }
-        }
-        if plaintext {
-            Button {
-                variant: ButtonVariant::Secondary,
-                "data-testid": "send-e2ee-move-button",
-                "data-mls-binding-pending": mls_binding_pending.to_string(),
-                "data-creator-bootstrap-pending": creator_bootstrap_pending.to_string(),
-                title: secure_title,
-                disabled: secure_disabled,
-                onclick: on_secure,
-                if opening {
-                    {crate::i18n::tr("chat.composer.opening")}
-                } else {
-                    {crate::i18n::tr("chat.send_secure")}
-                }
-            }
-        }
-    }
+    plain_enabled: bool,
+    secure_enabled: bool,
+    polls_available: bool,
+    polls_enabled: bool,
+    schedule_available: bool,
+    pending: bool,
+    title: String,
 }
 
-#[component]
-pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerContext) -> Element {
-    let ChatComposerContext {
-        mut sidecar_route_pending,
-        embedded: _,
-        selected_channel_info,
-        circle_display,
-        circle_encrypted,
-        authority: sidecar_authority,
-        did: sidecar_did,
-        principal_id,
-        account_display_label,
-        participants: participants_for_messages,
-        selected_realm_id,
-        device_id,
-        selected_channel_security_encrypted,
-        selected_realm_pending_mls_binding,
-        selected_realm_pending_mls_binding_reason,
-        send_readiness_checking,
-        active_sidecar_session,
-        sidecar_send_block_reason,
-        public_agent_ids,
-        interaction_modes,
-        mention_insert_request,
-        mentions_enabled,
-        token,
-        sync_cursor: _,
-        frontier_state,
-    } = context;
-    // The component boundary retains the validated identifier type. The view
-    // helpers below only render or forward its canonical text.
-    let principal_id = principal_id.as_str().to_owned();
-    let base_url = crate::app::SessionContext::base_url_string();
-    let sidecar_session = use_context::<crate::sidecar::HostedSidecarStateContext>().0;
-    let state_store = crate::app::SessionContext::get().state_store;
-    let messages_snapshot = (controller.messages)();
-    let messages_for_composer_lookup = &messages_snapshot;
-    let selected_channel_value = (controller.selected_channel)();
-    let selected_channel_is_circle_scoped = selected_channel_info
-        .as_ref()
-        .is_some_and(|channel| channel.scope_circle.is_some());
-    let channels = controller.channels;
-    let selected_channel = controller.selected_channel;
-    let mut reply_to_message = controller.reply_to_message;
-    let chat_draft = controller.draft;
-    let mut compose_dragover = controller.compose_dragover;
-    let mut compose_upload_status = controller.compose_upload_status;
-    let mut mention_picker_state = controller.mention_picker_state;
-    let mut attachment_menu_open = controller.attachment_menu_open;
-    let mut poll_draft = controller.poll_draft;
-    let mut poll_cards = controller.poll_cards;
-    let mut messages = controller.messages;
-    let mut is_online = controller.is_online;
-    let mut status_msg = controller.status_msg;
-    let sidecar_send_pending = controller.sidecar_send_pending;
-    let composer_scope = if !mentions_enabled {
+fn draft_route(
+    controller: ChatController,
+    context: &ChatComposerContext,
+) -> (
+    arkret_sdk::AgentMentionComposerScope,
+    arkret_sdk::AgentMentionRoute,
+) {
+    let scope = if !context.mentions_enabled {
         arkret_sdk::AgentMentionComposerScope::Direct
-    } else if selected_channel_is_circle_scoped {
+    } else if context
+        .selected_channel_info
+        .as_ref()
+        .is_some_and(|channel| channel.scope_circle.is_some())
+    {
         arkret_sdk::AgentMentionComposerScope::Circle
     } else {
         arkret_sdk::AgentMentionComposerScope::Realm
     };
-    let preview_candidates = mention_picker_state.read().bound_candidates(&chat_draft());
-    let preview_mentions = composer_mention_nodes(
-        mentions_enabled,
-        &chat_draft(),
-        &preview_candidates,
-        &principal_id,
+    let text = controller.draft.get();
+    let candidates = controller
+        .mention_picker_state
+        .get()
+        .bound_candidates(&text);
+    let mentions = composer_mention_nodes(
+        context.mentions_enabled,
+        &text,
+        &candidates,
+        context.principal_id.as_str(),
     );
-    let preview_route = composer_agent_mode_route(
-        composer_scope,
-        &preview_mentions,
-        &participants_for_messages,
-        &sidecar_authority,
-        &preview_candidates,
-        &interaction_modes,
+    let route = composer_agent_mode_route(
+        scope,
+        &mentions,
+        &context.participants,
+        &context.authority,
+        &candidates,
+        &context.interaction_modes,
     );
-    let has_bound_mentions = !preview_candidates.is_empty();
-    let mut scheduled_send_panel_open = use_signal(|| false);
-    let mut mention_insert_request_seen = use_signal(String::new);
-    let typing_throttle = controller.typing_throttle;
-    let composer_class = "discussion-composer";
-    let visible_channels_empty = channels.read().is_empty();
-    let selected_channel_unavailable = selected_channel_info
-        .as_ref()
-        .is_none_or(|channel| channel.strand_id != selected_channel())
-        || !channels()
-            .iter()
-            .any(|channel| channel.strand_id == selected_channel());
-    let private_draft = preview_route == arkret_sdk::AgentMentionRoute::Sidecar;
-    let mixed_draft = preview_route == arkret_sdk::AgentMentionRoute::BlockedMixedPrivateTargets;
-    let private_scope = sidecar_session_for_draft(preview_route, active_sidecar_session.as_ref())
+    (scope, route)
+}
+
+fn preview(
+    app: &crate::presentation::InksonContext,
+    controller: ChatController,
+    context: &ChatComposerContext,
+    probe: &crate::views::secure_send::ScopeSendProbe,
+) -> Preview {
+    let (scope, route) = draft_route(controller, context);
+    let private = route == arkret_sdk::AgentMentionRoute::Sidecar;
+    let mixed = route == arkret_sdk::AgentMentionRoute::BlockedMixedPrivateTargets;
+    let private_scope = sidecar_session_for_draft(route, context.active_sidecar_session.as_ref())
         .and_then(|session| {
             Some(arkret_sdk::ScopeRef::Sidecar {
                 realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).ok()?,
                 sidecar_id: session.sidecar_id.clone(),
             })
         });
-    let private_probe = crate::views::secure_send::use_scope_send_probe(
-        state_store,
-        private_scope.clone(),
-        device_id.clone(),
-    );
-    let upload_scope = if private_draft {
+    let upload_scope = if private {
         private_scope
-    } else if mixed_draft {
+    } else if mixed {
         None
     } else {
-        selected_channel_info
+        context
+            .selected_channel_info
             .as_ref()
-            .and_then(|channel| ordinary_composer_scope(&selected_realm_id, channel))
+            .and_then(|channel| ordinary_composer_scope(&context.selected_realm_id, channel))
     };
-    let target_key = format!(
-        "{upload_scope:?}|{preview_route:?}|{interaction_modes:?}|{selected_channel_security_encrypted}"
+    let unavailable = context
+        .selected_channel_info
+        .as_ref()
+        .is_none_or(|channel| channel.strand_id != controller.selected_channel.get())
+        || !controller
+            .channels
+            .get()
+            .iter()
+            .any(|channel| channel.strand_id == controller.selected_channel.get());
+    let sidecar_blocked = installed_sidecar_send_blocked(
+        private,
+        context.active_sidecar_session.is_some(),
+        context.sidecar_send_block_reason.is_some(),
+        probe.gate.as_ref(),
     );
-    let mut attachment_target_key = controller.attachment_target_key;
-    let mut attachment_target_revision = controller.attachment_target_revision;
-    if *attachment_target_key.peek() != target_key {
-        attachment_target_key.set(target_key.clone());
-        let revision = attachment_target_revision.peek().wrapping_add(1);
-        attachment_target_revision.set(revision);
+    let text = controller.draft.get();
+    let candidates = controller
+        .mention_picker_state
+        .get()
+        .bound_candidates(&text);
+    let mentions = composer_mention_nodes(
+        context.mentions_enabled,
+        &text,
+        &candidates,
+        context.principal_id.as_str(),
+    );
+    let target_missing = private
+        && sidecar_request_targets(
+            context.mentions_enabled,
+            &mentions,
+            &context.participants,
+            context.principal_id.as_str(),
+        )
+        .is_empty();
+    let creator_reason = if context.selected_channel_security_encrypted && !private {
+        context
+            .selected_channel_info
+            .as_ref()
+            .and_then(|channel| channel.effective_scope(&context.selected_realm_id))
+            .map_or(
+                Some("Waiting for the conversation's encryption scope."),
+                |scope| {
+                    app.state_store.read(|store| {
+                        crate::mls::creator_bootstrap::creator_scope_mls_bootstrap_pending_reason(
+                            store, &scope,
+                        )
+                    })
+                },
+            )
+    } else {
+        None
+    };
+    let awaiting = controller
+        .attachments
+        .get()
+        .iter()
+        .any(|attachment| attachment.pending)
+        || unavailable;
+    let private_blocked = sidecar_blocked
+        || context.sidecar_route_pending.get()
+        || controller.sidecar_send_pending.get();
+    let plain_enabled = !awaiting
+        && !draft_scope_send_blocked(
+            route,
+            context.selected_realm_pending_mls_binding,
+            private_blocked,
+        );
+    let secure_enabled = !awaiting
+        && !draft_scope_send_blocked(
+            route,
+            context.selected_realm_pending_mls_binding || creator_reason.is_some(),
+            private_blocked || target_missing,
+        );
+    let title = if target_missing {
+        app.tr("chat.composer.private_target_missing")
+    } else if private && context.active_sidecar_session.is_none() {
+        app.tr("chat.sidecar.open_and_send")
+    } else if private {
+        context
+            .sidecar_send_block_reason
+            .clone()
+            .unwrap_or_else(|| app.tr("chat.composer.private_state_pending"))
+    } else {
+        context
+            .selected_realm_pending_mls_binding_reason
+            .clone()
+            .unwrap_or_else(|| creator_reason.unwrap_or_default().to_owned())
+    };
+    Preview {
+        route,
+        scope,
+        upload_scope,
+        plaintext: !context.selected_channel_security_encrypted && !private,
+        plain_enabled,
+        secure_enabled,
+        polls_available: !context.selected_channel_security_encrypted && !private && !mixed,
+        polls_enabled: !unavailable && !context.selected_realm_pending_mls_binding,
+        schedule_available: !context.selected_channel_security_encrypted
+            && !private
+            && !mixed
+            && candidates.is_empty(),
+        pending: private
+            && (controller.sidecar_send_pending.get() || context.sidecar_route_pending.get()),
+        title,
     }
+}
+
+pub(super) fn scheduled_send_surface(
+    open: Cage<bool>,
+    render: impl Fn(&Scope) -> View + 'static,
+) -> View {
+    crate::presentation::widgets::reactive_distinct(open, move |scope, open| {
+        if open {
+            render(scope)
+        } else {
+            crate::presentation::widgets::empty()
+        }
+    })
+}
+
+pub(super) fn chat_composer(
+    scope: &Scope,
+    app: Rc<crate::presentation::InksonContext>,
+    controller: ChatController,
+    context: Bond<ChatComposerContext>,
+    _available: Cage<bool>,
+) -> View {
+    use super::native::{block, button};
+    use crate::presentation::widgets::{empty, line, paragraph, plain, reactive_distinct};
+    let private_scope = scope.bond(move || {
+        let context = context.get();
+        let (_, route) = draft_route(controller, &context);
+        sidecar_session_for_draft(route, context.active_sidecar_session.as_ref()).and_then(
+            |session| {
+                Some(arkret_sdk::ScopeRef::Sidecar {
+                    realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).ok()?,
+                    sidecar_id: session.sidecar_id.clone(),
+                })
+            },
+        )
+    });
+    let device = scope.bond(move || context.get().device_id);
+    let private_probe = crate::views::secure_send::scope_send_probe(
+        scope,
+        app.clone(),
+        private_scope.into(),
+        device.into(),
+    );
+    let preview_app = app.clone();
+    let preview = scope.bond(move || {
+        preview(
+            &preview_app,
+            controller,
+            &context.get(),
+            &private_probe.get(),
+        )
+    });
+    let upload_app = app.clone();
+    scope.effect(move || {
+        let preview = preview.get();
+        let context = context.get();
+        let key = format!(
+            "{:?}|{:?}|{:?}|{}",
+            preview.upload_scope,
+            preview.route,
+            context.interaction_modes,
+            context.selected_channel_security_encrypted
+        );
+        if controller.attachment_target_key.get_untracked() != key {
+            controller
+                .attachment_target_key
+                .revise(|value| *value = key);
+            controller
+                .attachment_target_revision
+                .revise(|value| *value = value.wrapping_add(1));
+            if preview.upload_scope.is_some() {
+                commands::upload_dropped_attachments(
+                    controller,
+                    upload_app.base_url.get_untracked(),
+                    context.token.get_untracked(),
+                    preview.upload_scope,
+                    Vec::new(),
+                );
+            }
+        }
+    });
+    let request_seen = scope.cage(String::new());
+    let input_node = scope.cage(None);
+    let request_owner = scope.downgrade();
+    scope.effect(move || {
+        let context = context.get();
+        let Some(request_signal) = context.mention_insert_request else {
+            return;
+        };
+        if !context.mentions_enabled {
+            request_signal.revise(|value| *value = None);
+            controller
+                .mention_picker_state
+                .revise(|picker| picker.clear());
+            return;
+        }
+        let Some(request) = request_signal.get() else {
+            return;
+        };
+        if request_seen.get_untracked() == request.request_id {
+            return;
+        }
+        let Some(candidate) = request.resolve_candidate(
+            &context.participants,
+            context.principal_id.as_str(),
+            &context.public_agent_ids,
+        ) else {
+            return;
+        };
+        request_seen.revise(|value| *value = request.request_id);
+        request_signal.revise(|value| *value = None);
+        let text = controller.draft.get_untracked();
+        let updated = controller.mention_picker_state.revise(|picker| {
+            let updated = picker.select(candidate, &text, None);
+            picker.close();
+            updated
+        });
+        controller.update_draft(updated);
+        if let Some(owner) = request_owner.upgrade()
+            && let Some(node) = input_node.get_untracked()
+        {
+            let _ = owner.action(glory::render::Action::Focus(node));
+        }
+    });
+    let send_app = app.clone();
+    let send: Rc<dyn Fn(bool)> = Rc::new(move |secure| {
+        let current = preview.get_untracked();
+        if secure {
+            if current.secure_enabled {
+                send::secure(send_app.clone(), controller, context.get_untracked());
+            }
+        } else if current.plain_enabled {
+            send::plaintext(send_app.clone(), controller, context.get_untracked());
+        }
+    });
+    let keyboard_send = send.clone();
+    let change_app = app.clone();
+    let input = Box::new(
+        sapid::text_field()
+            .unstyled()
+            .name("Message")
+            .class("chat-input")
+            .multiline(true)
+            .node_ref(input_node)
+            .value(controller.draft)
+            .on_value_change(move |value| {
+                edit_draft(
+                    change_app.clone(),
+                    controller,
+                    &context.get_untracked(),
+                    value,
+                )
+            })
+            .on(glory::render::EventKind::Keyboard, move |event| {
+                if matches!(
+                    event,
+                    glory::render::Event::Keyboard {
+                        command: glory::render::KeyboardCommand::Submit,
+                        ..
+                    }
+                ) {
+                    keyboard_send(!preview.get_untracked().plaintext);
+                }
+            }),
+    ) as View;
+    let hint_context = context;
+    let hint = reactive_distinct(
+        scope.bond(move || controller.draft.get().is_empty()),
+        move |scope, visible| {
+            if !visible {
+                return empty();
+            };
+            paragraph(
+                "chat-input-hint",
+                scope.bond(move || chat_composer_placeholder(hint_context.get().mentions_enabled)),
+            )
+        },
+    );
+    let input = block("chat-input-host", vec![input, hint]);
+    let scheduled = scope.cage(false);
+    let mention_app = app.clone();
+    let mention_tool = reactive_distinct(
+        scope.bond(move || context.get().mentions_enabled),
+        move |scope, visible| {
+            if !visible {
+                return empty();
+            }
+            super::native::icon_button(
+                "at-sign",
+                mention_app.translated(scope, "chat.composer.mention_member"),
+                "secondary composer-tool-button mention-trigger-button",
+                true,
+                move || {
+                    controller.mention_picker_state.revise(|picker| {
+                        if picker.open {
+                            picker.close()
+                        } else {
+                            picker.open()
+                        }
+                    })
+                },
+            )
+        },
+    );
+    let mut tools = vec![
+        mention_tool,
+        super::native::icon_button(
+            "plus",
+            app.translated(scope, "chat.composer.add_attachment"),
+            "secondary composer-tool-button attachment-menu-button",
+            true,
+            move || {
+                controller
+                    .attachment_menu_open
+                    .revise(|value| *value = !*value)
+            },
+        ),
+    ];
+    let menu_app = app.clone();
+    let mut menu_items = vec![reactive_distinct(
+        scope.bond(move || preview.get().polls_available),
+        move |scope, visible| {
+            if !visible {
+                return empty();
+            }
+            button(
+                menu_app.translated(scope, "chat.composer.create_poll"),
+                "secondary attachment-menu-item attachment-menu-poll",
+                scope.bond(move || {
+                    controller.attachment_menu_open.get() && preview.get().polls_enabled
+                }),
+                move || {
+                    controller
+                        .attachment_menu_open
+                        .revise(|value| *value = false);
+                    controller
+                        .poll_draft
+                        .revise(|draft| *draft = Some(crate::messaging::polls::PollDraft::new()));
+                },
+            )
+        },
+    )];
+    #[cfg(target_arch = "wasm32")]
     {
-        let base = base_url.clone();
-        let scope = upload_scope.clone();
-        let strand = selected_channel();
-        use_effect(use_reactive(
-            (&scope, &strand, &device_id, &target_key),
-            move |(scope, ..)| {
-                if scope.is_some() {
+        let file_control = scope.cage(None::<sapid::FileController>);
+        let selected_leases = scope.cage(0usize);
+        let owner = scope.downgrade();
+        let upload_app = app.clone();
+        menu_items.push(Box::new(
+            sapid::file_button()
+                .unstyled()
+                .label(app.translated(scope, "chat.composer.add_attachment"))
+                .class("secondary attachment-menu-item attachment-file-picker")
+                .name(app.translated(scope, "chat.composer.add_attachment"))
+                .configuration(glory::render::FileConfig {
+                    multiple: true,
+                    drop: true,
+                    max_files: 32,
+                    max_file_bytes: 64 * 1024 * 1024,
+                    max_total_bytes: 64 * 1024 * 1024,
+                    ..Default::default()
+                })
+                .controller_ref(file_control)
+                .enabled(scope.bond(move || {
+                    controller.attachment_menu_open.get() && preview.get().upload_scope.is_some()
+                        || selected_leases.get() > 0
+                }))
+                .on_files(move |selected| {
+                    let Some(owner) = owner.upgrade() else { return };
+                    let Some(control) = file_control.get_untracked() else {
+                        return;
+                    };
+                    let files = selected
+                        .into_iter()
+                        .map(|file| {
+                            files::AttachmentFile::selected(
+                                &owner,
+                                control.clone(),
+                                file,
+                                selected_leases,
+                                _available,
+                            )
+                        })
+                        .collect();
+                    controller
+                        .attachment_menu_open
+                        .revise(|value| *value = false);
                     commands::upload_dropped_attachments(
                         controller,
-                        base.clone(),
-                        token(),
-                        scope,
-                        Vec::new(),
+                        upload_app.base_url.get_untracked(),
+                        context.get_untracked().token.get_untracked(),
+                        preview.get_untracked().upload_scope,
+                        files,
                     );
-                }
-            },
+                }),
         ));
     }
-    let sidecar_send_blocked = installed_sidecar_send_blocked(
-        private_draft,
-        active_sidecar_session.is_some(),
-        sidecar_send_block_reason.is_some(),
-        private_probe.gate.as_ref(),
-    );
-    let preview_sidecar_targets = sidecar_request_targets(
-        mentions_enabled,
-        &preview_mentions,
-        &participants_for_messages,
-        &principal_id,
-    );
-    let sidecar_target_missing = private_draft && preview_sidecar_targets.is_empty();
-    #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
-    let send_blocker_diagnostic = Some(format!(
-        "mixed_private_targets={},mode_count={},channel_unavailable={},private_gate={},target_missing={},route_pending={},send_pending={},private_draft={},mls_binding_pending={},binding_current_pending={},binding_local_keys_pending={},binding_roster_pending={},binding_authority_pending={},binding_send_probe_pending={}",
-        mixed_draft,
-        interaction_modes.len(),
-        selected_channel_unavailable,
-        sidecar_send_blocked,
-        sidecar_target_missing,
-        sidecar_route_pending(),
-        sidecar_send_pending(),
-        private_draft,
-        selected_realm_pending_mls_binding,
-        selected_realm_pending_mls_binding_reason.as_deref().is_some_and(|reason| reason.starts_with("encryption_policy_pending:")),
-        selected_realm_pending_mls_binding_reason.as_deref().is_some_and(|reason| reason.starts_with("Waiting for this device's encryption keys.")),
-        selected_realm_pending_mls_binding_reason.as_deref().is_some_and(|reason| reason == "encryption_transition_pending: synced roster differs from the verified MLS group"),
-        selected_realm_pending_mls_binding_reason.as_deref().is_some_and(|reason| reason == "Waiting for verified conversation authority and encryption keys."),
-        selected_realm_pending_mls_binding_reason.as_deref().is_some_and(|reason| reason == "Waiting for this scope's verified send state and this device's local encryption keys."),
-    ));
-    #[cfg(not(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test")))]
-    let send_blocker_diagnostic: Option<String> = None;
-    // content-types section 4.9 permits formal polls only in plaintext scopes.
-    let polls_available = !selected_channel_security_encrypted && !private_draft && !mixed_draft;
-    // Realm creation exposes the discussion surface as soon as the Genesis
-    // Event is accepted, while the background verifier may still be advancing
-    // the locally pinned governance checkpoint to the Seal that covers it.
-    // Keep encrypted send disabled during that convergence window; the
-    // state-store Signal rerenders this component when bootstrap completes.
-    let creator_mls_bootstrap_pending_reason =
-        if selected_channel_security_encrypted && !private_draft {
-            selected_channel_info
-                .as_ref()
-                .and_then(|channel| channel.effective_scope(&selected_realm_id))
-                .map_or(
-                    Some("Waiting for the conversation's encryption scope."),
-                    |scope| {
-                        crate::mls::creator_bootstrap::creator_scope_mls_bootstrap_pending_reason(
-                            &state_store.read(),
-                            &scope,
-                        )
-                    },
-                )
-        } else {
-            None
-        };
-    let creator_mls_bootstrap_pending = creator_mls_bootstrap_pending_reason.is_some();
-    let plaintext_modes = interaction_modes.clone();
-    let encrypted_modes = interaction_modes.clone();
-    let participants_for_plaintext_sidecar = participants_for_messages.clone();
-    let participants_for_encrypted_sidecar = participants_for_messages.clone();
-    let composer_placeholder = chat_composer_placeholder(mentions_enabled);
-
+    #[cfg(not(target_arch = "wasm32"))]
     {
-        use_effect(use_reactive(
-            (&mentions_enabled,),
-            move |(mentions_enabled,)| {
-                if !mentions_enabled {
-                    mention_picker_state.write().clear();
-                }
-            },
-        ));
-    }
-
-    {
-        let mut request_signal = mention_insert_request;
-        let request_participants = participants_for_messages.clone();
-        let request_principal_id = principal_id.clone();
-        let request_public_agent_ids = public_agent_ids.clone();
-        use_effect(use_reactive(
-            (
-                &mentions_enabled,
-                &request_participants,
-                &request_principal_id,
-                &request_public_agent_ids,
-            ),
-            move |(
-                mentions_enabled,
-                request_participants,
-                request_principal_id,
-                request_public_agent_ids,
-            )| {
-                if !mentions_enabled {
-                    if let Some(request_signal) = request_signal.as_mut()
-                        && request_signal.peek().is_some()
-                    {
-                        request_signal.set(None);
-                    }
-                    return;
-                }
-                let Some(request_signal) = request_signal.as_mut() else {
-                    return;
-                };
-                let Some(request) = request_signal() else {
-                    return;
-                };
-                if mention_insert_request_seen.peek().as_str() == request.request_id {
-                    return;
-                }
-                let candidate = request.resolve_candidate(
-                    &request_participants,
-                    &request_principal_id,
-                    &request_public_agent_ids,
-                );
-                let Some(candidate) = candidate else {
-                    return;
-                };
-                mention_insert_request_seen.set(request.request_id);
-                request_signal.set(None);
-                let current = chat_draft();
-                let updated = mention_picker_state
-                    .write()
-                    .select(candidate, &current, None);
-                controller.update_draft(updated);
-                mention_picker_state.write().close();
-                let _ = dioxus::document::eval(
-                    r#"
-                requestAnimationFrame(() => {
-                  const input = document.querySelector('[data-testid="card-discussion-panel"] [data-testid="chat-input"]');
-                  if (input instanceof HTMLElement) input.focus();
-                });
-                "#,
-                );
-            },
-        ));
-    }
-
-    let typing_authority = sidecar_authority.clone();
-    let scheduled_send_authority = sidecar_authority.clone();
-    let plaintext_sidecar_authority = sidecar_authority.clone();
-    let plaintext_sidecar_did = sidecar_did.clone();
-    let secure_sidecar_authority = sidecar_authority.clone();
-    let secure_sidecar_did = sidecar_did;
-    let plaintext_send = use_callback::<MouseEvent, ()>({
-        let base = base_url.clone();
-        let realm = selected_realm_id.clone();
-        let actor = principal_id.clone();
-        let sidecar_device_id = device_id.clone();
-        move |_| {
-            let authority_for_sidecar = plaintext_sidecar_authority.clone();
-            let did_for_sidecar = plaintext_sidecar_did.clone();
-            let device_id_for_sidecar = sidecar_device_id.clone();
-            let body = chat_draft().trim().to_owned();
-            if body.is_empty() && controller.attachments.peek().is_empty() {
-                return;
-            }
-            let inserted_candidates = mention_picker_state.read().bound_candidates(&chat_draft());
-            let mentions =
-                composer_mention_nodes(mentions_enabled, &body, &inserted_candidates, &actor);
-            let channel = channels()
-                .iter()
-                .find(|candidate| candidate.strand_id == selected_channel())
-                .cloned();
-            let Some(channel) = channel else {
-                status_msg.set("select a discussion first".to_owned());
-                return;
-            };
-            let route = composer_agent_mode_route(
-                composer_scope,
-                &mentions,
-                &participants_for_plaintext_sidecar,
-                &authority_for_sidecar,
-                &inserted_candidates,
-                &plaintext_modes,
-            );
-            if route == arkret_sdk::AgentMentionRoute::BlockedMixedPrivateTargets {
-                status_msg.set("Agent modes are unknown or these targets cannot share a scope. Keep the draft and edit the mentions; private Circle requests require a separate Realm draft.".to_owned());
-                return;
-            }
-            let targets_owned_agent = route == arkret_sdk::AgentMentionRoute::Sidecar;
-            if targets_owned_agent {
-                sidecar_route_pending.set(true);
-                status_msg.set("Activating Private Sidecar…".to_owned());
-                let trace_id = uuid_v7();
-                tracing::info!(
-                    target: "sidecar",
-                    event = "sidecar.route.requested",
-                    trace_id = %trace_id,
-                    source_realm_id = %realm,
-                    source_strand_id = %channel.strand_id,
-                );
-                commands::route_to_owned_agent_sidecar(
-                    controller,
-                    sidecar_session,
-                    sidecar_route_pending,
-                    commands::OwnedAgentSidecarRoute {
-                        base_url: base.clone(),
-                        api_token: token(),
-                        trace_id,
-                        realm_id: realm.clone(),
-                        strand_id: channel.strand_id.clone(),
-                        actor: actor.clone(),
-                        authority: authority_for_sidecar.clone(),
-                        controller_did: did_for_sidecar.clone(),
-                        device_id: device_id_for_sidecar.clone(),
-                        mentions_enabled,
-                        mentions,
-                        body: body.clone(),
-                        draft_at_send: chat_draft(),
-                        participants: participants_for_plaintext_sidecar.clone(),
-                    },
-                );
-                return;
-            }
-            let local_id = new_chat_local_id();
-            messages.write().push(ChatMessage {
-                protocol_content: None,
-                local_scope: ordinary_composer_scope(&realm, &channel),
-                realm_id: realm.clone(),
-                id: local_id.clone(),
-                protocol_message_id: Some(local_id.clone()),
-                actor_id: crate::mls_api_helpers::local_account_actor_id(&actor).ok(),
-                sender: actor.clone(),
-                executed_by: None,
-                body: body.clone(),
-                content_format: Some(arkret_sdk::TextFormat::Markdown),
-                timestamp: chrono::Utc::now().format("%H:%M").to_string(),
-                created_at: Some(chrono::Utc::now()),
-                strand_id: channel.strand_id.clone(),
-                reply_to: reply_to_message(),
-                reactions: Vec::new(),
-                redacted: false,
-                edited: false,
-                revisions: Vec::new(),
-                revision_source: None,
-                pending: true,
-                failed: false,
-                error: None,
-                mentions: mentions.clone(),
-                // Local-only sends start plaintext;
-                // the Send Secure flow may upgrade
-                // them via a separate `messages.write()`
-                // patch after `encrypt_payload`.
-                crypto_state: MessageCryptoState::Plaintext,
-            });
-
-            // Continue into the ordinary submit path while
-            // offline: EventSubmitter persists the stable SDK
-            // Event in Garth before its first network attempt.
-            // Queue status and replay both come from that one
-            // durable source.
-            let offline_now = !is_online() || !navigator_online();
-            if offline_now {
-                if *is_online.peek() {
-                    is_online.set(false);
-                }
-                status_msg.set(crate::i18n::tr("chat.outbox.queued_offline"));
-            }
-
-            let base = base.clone();
-            let realm = realm.clone();
-            let api_token = token();
-            let actor = actor.clone();
-            let strand_id = channel.strand_id.clone();
-            let reply_to = reply_to_message();
-            // Clear the picker chip list now that
-            // we've folded the mentions into the
-            // pending send state.
-            mention_picker_state.write().clear();
-            let wait_for = None;
-            commands::send_plaintext_message(
-                controller,
-                frontier_state,
-                commands::PlaintextSendRequest {
-                    base_url: base,
-                    api_token,
-                    wait_for,
-                    realm_id: realm,
-                    circle_id: channel
-                        .scope_circle
-                        .as_ref()
-                        .map(|circle| circle.circle_id.clone()),
-                    strand_id,
-                    actor,
-                    local_id,
-                    body,
-                    reply_to,
-                    shared_agent_targets: composer_shared_agent_targets(
-                        composer_scope,
-                        &mentions,
-                        &participants_for_plaintext_sidecar,
-                        &inserted_candidates,
-                    ),
-                    mentions,
-                },
-            );
-            controller.update_draft(String::new());
-            reply_to_message.set(None);
-        }
-    });
-    let secure_send = use_callback::<MouseEvent, ()>({
-        let device_id = device_id.clone();
-        let active_sidecar_session = active_sidecar_session.clone();
-        let base = base_url.clone();
-        let realm = selected_realm_id.clone();
-        let actor = principal_id.clone();
-        let selected_strand = selected_channel_value.clone();
-        let selected_circle = selected_channel_info
-            .as_ref()
-            .and_then(|channel| channel.scope_circle.as_ref())
-            .map(|circle| circle.circle_id.clone());
-        let pending_mls_binding = selected_realm_pending_mls_binding;
-        let sidecar_device_id = device_id.clone();
-        let pending_mls_binding_reason = selected_realm_pending_mls_binding_reason.clone();
-        move |_| {
-            let authority_for_sidecar = secure_sidecar_authority.clone();
-            let did_for_sidecar = secure_sidecar_did.clone();
-            let device_id_for_sidecar = sidecar_device_id.clone();
-            let body = chat_draft().trim().to_owned();
-            if body.is_empty() && controller.attachments.peek().is_empty() {
-                status_msg.set("Type a message before secure send".to_owned());
-                return;
-            }
-            let inserted_candidates = mention_picker_state.read().bound_candidates(&chat_draft());
-            let mentions =
-                composer_mention_nodes(mentions_enabled, &body, &inserted_candidates, &actor);
-            let realm = realm.clone();
-            let actor = actor.clone();
-            if selected_strand.trim().is_empty() {
-                status_msg.set(
-                    "Default Strand is unavailable until its accepted projection arrives"
-                        .to_owned(),
-                );
-                return;
-            }
-            let strand_id = selected_strand.clone();
-            let route = composer_agent_mode_route(
-                composer_scope,
-                &mentions,
-                &participants_for_encrypted_sidecar,
-                &authority_for_sidecar,
-                &inserted_candidates,
-                &encrypted_modes,
-            );
-            if route == arkret_sdk::AgentMentionRoute::BlockedMixedPrivateTargets {
-                status_msg.set("Agent modes are unknown or these targets cannot share a scope. Keep the draft and edit the mentions; private Circle requests require a separate Realm draft.".to_owned());
-                return;
-            }
-            let active_sidecar_for_send =
-                sidecar_session_for_draft(route, active_sidecar_session.as_ref()).cloned();
-            let targets_owned_agent = route == arkret_sdk::AgentMentionRoute::Sidecar
-                && active_sidecar_for_send.is_none();
-            if targets_owned_agent {
-                sidecar_route_pending.set(true);
-                status_msg.set("Activating Private Sidecar…".to_owned());
-                let trace_id = uuid_v7();
-                tracing::info!(
-                    target: "sidecar",
-                    event = "sidecar.route.requested",
-                    trace_id = %trace_id,
-                    source_realm_id = %realm,
-                    source_strand_id = %strand_id,
-                );
-                commands::route_to_owned_agent_sidecar(
-                    controller,
-                    sidecar_session,
-                    sidecar_route_pending,
-                    commands::OwnedAgentSidecarRoute {
-                        base_url: base.clone(),
-                        api_token: token(),
-                        trace_id,
-                        realm_id: realm.clone(),
-                        strand_id: strand_id.clone(),
-                        actor: actor.clone(),
-                        authority: authority_for_sidecar.clone(),
-                        controller_did: did_for_sidecar.clone(),
-                        device_id: device_id_for_sidecar.clone(),
-                        mentions_enabled,
-                        mentions,
-                        body: body.clone(),
-                        draft_at_send: chat_draft(),
-                        participants: participants_for_encrypted_sidecar.clone(),
-                    },
-                );
-                return;
-            }
-            if let Some(session) = active_sidecar_for_send {
-                if sidecar_send_pending() {
-                    return;
-                }
-                if !session.membership_ready() {
-                    status_msg.set("Private Sidecar MLS access is not ready".to_owned());
-                    return;
-                }
-                let addressed_agent_ids = sidecar_request_targets(
-                    mentions_enabled,
-                    &mentions,
-                    &participants_for_encrypted_sidecar,
-                    &actor,
-                );
-                if addressed_agent_ids.is_empty() {
-                    status_msg.set(
-                        "Select an Agent with @ before sending this private message".to_owned(),
-                    );
-                    return;
-                }
-                let local_id = new_chat_local_id();
-                let source_strand_id = session.source_strand_id.clone();
-                let base = base.clone();
-                let api_token = token();
-                let source_event_id = latest_source_event_anchor(
-                    &messages.read(),
-                    &session.source_realm_id,
-                    &session.source_strand_id,
-                );
-                commands::send_sidecar_message(
-                    controller,
-                    commands::SidecarSendRequest {
-                        base_url: base,
-                        api_token,
-                        session,
-                        addressed_agent_ids,
-                        draft_at_send: chat_draft(),
-                        sidecar_strand_id: source_strand_id,
-                        source_event_id,
-                        actor,
-                        authority: authority_for_sidecar,
-                        device_id: device_id_for_sidecar,
-                        local_id,
-                        body,
-                        mentions,
-                    },
-                );
-                return;
-            }
-            if pending_mls_binding {
-                status_msg.set(pending_mls_binding_reason.clone().unwrap_or_else(|| {
-                    "epoch_update_required: membership frontier changed; MLS commit required"
-                        .to_owned()
-                }));
-                return;
-            }
-            // P2: preserve the composer's reply target on the
-            // encrypted path (it was silently dropped before).
-            let reply_to = reply_to_message().filter(|value| !value.trim().is_empty());
-            let message_id = new_chat_local_id();
-            messages.write().push(ChatMessage {
-                protocol_content: None,
-                local_scope: channels()
-                    .iter()
-                    .find(|channel| channel.strand_id == strand_id)
-                    .and_then(|channel| ordinary_composer_scope(&realm, channel)),
-                realm_id: realm.clone(),
-                id: message_id.clone(),
-                protocol_message_id: Some(message_id.clone()),
-                actor_id: crate::mls_api_helpers::local_account_actor_id(&actor).ok(),
-                sender: actor.clone(),
-                executed_by: None,
-                body: body.clone(),
-                content_format: Some(arkret_sdk::TextFormat::Markdown),
-                timestamp: chrono::Utc::now().format("%H:%M").to_string(),
-                created_at: Some(chrono::Utc::now()),
-                strand_id: strand_id.clone(),
-                reply_to: reply_to.clone(),
-                reactions: Vec::new(),
-                redacted: false,
-                edited: false,
-                revisions: Vec::new(),
-                revision_source: None,
-                pending: true,
-                failed: false,
-                error: None,
-                mentions: mentions.clone(),
-                crypto_state: MessageCryptoState::Plaintext,
-            });
-            mention_picker_state.write().clear();
-            controller.update_draft(String::new());
-            reply_to_message.set(None);
-            let base = base.clone();
-            let realm = realm.clone();
-            let actor = actor.clone();
-            let did = device_id.clone();
-            let api_token = token();
-            let wait_for = None;
-            let backup_trigger_signal = crate::components::try_needs_mls_backup_signal();
-            commands::send_encrypted_message(
-                controller,
-                frontier_state,
-                commands::EncryptedSendRequest {
-                    base_url: base,
-                    api_token,
-                    wait_for,
-                    realm_id: realm,
-                    circle_id: selected_circle.clone(),
-                    strand_id,
-                    actor,
-                    authority: authority_for_sidecar,
-                    device_id: did,
-                    message_id,
-                    body,
-                    reply_to,
-                    shared_agent_targets: composer_shared_agent_targets(
-                        composer_scope,
-                        &mentions,
-                        &participants_for_encrypted_sidecar,
-                        &inserted_candidates,
-                    ),
-                    mentions,
-                    backup_trigger_signal,
-                },
-            );
-        }
-    });
-    rsx! {
-            if !visible_channels_empty {
-            div { class: "{composer_class}", "data-testid": "chat-composer",
-                div { class: "composer-send-scope", "data-testid": "composer-send-scope",
-                    "data-send-route": format!("{:?}", preview_route),
-                    span { {composer_scope_label(preview_route, composer_scope, &selected_channel_value)} }
-                    if preview_route == arkret_sdk::AgentMentionRoute::BlockedMixedPrivateTargets {
-                        span { role: "alert", {crate::i18n::tr("chat.composer.mixed_targets")} }
-                    }
-                }
-                if private_draft && sidecar_send_blocked {
-                    div { class: "event warning-banner", "data-testid": "sidecar-readiness-gate", role: "alert",
-                        strong { {crate::i18n::tr("chat.composer.private_not_ready")} }
-                        span { {sidecar_send_block_reason.clone().unwrap_or_else(|| crate::i18n::tr("chat.composer.private_keys_pending"))} }
-                    }
-                }
-                // P3B.2.3 — Circle composer banner. Rendered
-                // at the top of the composer surface when the active
-                // Strand carries a `scope_circle_id`. The component is
-                // pure: `CircleScope::Realm` renders nothing, so the
-                // surface stays quiet during normal Realm-scoped
-                // writes.
-                {
-                    let scope = selected_channel_info
-                        .as_ref()
-                        .and_then(|channel| channel.scope_circle.clone())
-                        .map(|circle| crate::circle::CircleScope::Circle {
-                            circle_id: circle.circle_id,
-                            title: circle.title,
-                            member_count: circle.member_count,
-                        })
-                        .unwrap_or(crate::circle::CircleScope::Realm);
-                    rsx! {
-                        crate::components::CircleComposerBanner { scope, display: circle_display.clone(), encrypted: circle_encrypted }
-                    }
-                }
-                if let Some(reply_id) = reply_to_message() {
-                    div { class: "chat-reply-quote-banner", "data-testid": "chat-reply-banner",
-                        if let Some((quoted_name, quoted_body)) = chat_reply_quote_preview(
-                            messages_for_composer_lookup,
-                            &reply_id,
-                            &principal_id,
-                            &account_display_label,
-                            &participants_for_messages,
-                        ) {
-                            div { class: "chat-reply-quote",
-                                span { class: "chat-reply-quote-name", "{quoted_name}" }
-                                div { class: "chat-reply-quote-body", "{quoted_body}" }
-                            }
-                        } else {
-                            div { class: "chat-reply-quote chat-reply-quote-missing",
-                                {crate::i18n::tr("chat.composer.reply_missing")}
-                            }
-                        }
-                        Button {
-                            variant: ButtonVariant::Secondary,
-                            onclick: move |_| reply_to_message.set(None),
-                            {crate::i18n::tr("common.cancel")}
-                        }
-                    }
-                }
-                // Freeze structured attachment objects before network upload.
-                div {
-                    class: if compose_dragover() {
-                        "compose-drop-zone is-dragover"
-                    } else {
-                        "compose-drop-zone"
-                    },
-                    "data-testid": "compose-drop-zone",
-                    ondragover: move |evt| {
-                        evt.prevent_default();
-                        if !compose_dragover() { compose_dragover.set(true); }
-                    },
-                    ondragleave: move |_| compose_dragover.set(false),
-                    ondrop: {
-                        let base = base_url.clone();
-                        let scope = upload_scope.clone();
-                        move |evt| {
-                            evt.prevent_default();
-                            compose_dragover.set(false);
-                            let files = evt.files();
-                            if files.is_empty() {
-                                // Some platforms (notably the desktop
-                                // web embedder) deliver drops without
-                                // file payloads — surface that rather
-                                // than silently no-op.
-                                compose_upload_status.set(
-                                    crate::i18n::tr("compose.upload_error"),
-                                );
-                                return;
-                            }
-                            let api_token = token();
-                            let base = base.clone();
-                            let scope = scope.clone();
-                            compose_upload_status.set(
-                                crate::i18n::tr("compose.upload_progress"),
-                            );
-                            commands::upload_dropped_attachments(controller, base, api_token, scope, files);
-                        }
-                    },
-                    if (controller.draft_storage)() == "error" {
-                        p { role: "alert", "data-testid": "draft-storage-error",
-                            {crate::i18n::tr("compose.draft_storage_error")}
-                        }
-                    }
-                    Textarea {
-                        "data-testid": "chat-input",
-                        "data-draft-storage": controller.draft_storage_status(),
-                        value: "{chat_draft}",
-                        placeholder: "{composer_placeholder}",
-                        onkeydown: move |event: KeyboardEvent| {
-                            let key = event.key().to_string();
-                            let modifiers = event.modifiers();
-                            if chat_composer_should_send_key(
-                                &key,
-                                modifiers.shift(),
-                                modifiers.alt(),
-                                event.is_composing(),
-                                event.is_auto_repeating(),
-                            ) {
-                                event.prevent_default();
-                                event.stop_propagation();
-                                let _ = dioxus::document::eval(
-                                    r#"
-                                    (() => {
-                                      const target = document.activeElement;
-                                      const composer =
-                                        target instanceof HTMLElement ? target.closest('[data-testid="chat-composer"]') : null;
-                                      const button = composer && composer.querySelector('[data-testid="send-chat-button"]');
-                                      if (button instanceof HTMLElement) button.click();
-                                    })();
-                                    "#,
-                                );
-                            }
-                        },
-                        oninput: {
-                            let base = base_url.clone();
-                            let realm = selected_realm_id.clone();
-                            let typing_device_id = device_id.clone();
-                            let selected_strand = selected_channel_value.clone();
-                            let typing_participants = participants_for_messages.clone();
-                            let typing_modes = interaction_modes.clone();
-                            let typing_principal = principal_id.clone();
-                            move |event: FormEvent| {
-                                let value = event.value();
-                                mention_picker_state.write().edit(&chat_draft(), &value);
-                                controller.update_draft(value.clone());
-                                // G3.Y2 — auto-open the mention picker
-                                // when the user types an `@`. The
-                                // composer reads `mention_picker_state.open`
-                                // to know whether to render the
-                                // `mention-picker` element.
-                                if let Some((query, start, end)) =
-                                    active_composer_mention_token(mentions_enabled, &value)
-                                {
-                                    mention_picker_state
-                                        .write()
-                                        .set_active_token(query, start, end);
-                                } else if mention_picker_state.read().open {
-                                    mention_picker_state.write().close();
-                                }
-                                let candidates = mention_picker_state.read().bound_candidates(&value);
-                                let mentions = composer_mention_nodes(mentions_enabled, &value, &candidates, &typing_principal);
-                                let route = composer_agent_mode_route(composer_scope, &mentions, &typing_participants, &typing_authority, &candidates, &typing_modes);
-                                if matches!(route, arkret_sdk::AgentMentionRoute::Sidecar | arkret_sdk::AgentMentionRoute::BlockedMixedPrivateTargets) {
-                                    return;
-                                }
-                                // G3.Y2 — typing signal, fire-and-forget so the
-                                // composer never blocks; failures fall back
-                                // silently per the spec. Perf (P0): the throttle
-                                // emits `typing=true` on the leading edge (≤ once
-                                // / 3s) and `typing=false` after the user stops,
-                                // instead of one POST per keystroke. The
-                                // receiving side TTL-expires stale entries.
-                                // Typing follows a visibility policy at
-                                // least as strict as presence
-                                // (profiles-presence.md §3.5): with
-                                // `presence_visibility="nobody"` the
-                                // client MUST NOT send `ak.typing`,
-                                // symmetric with the presence send gate.
-                                if !state_store
-                                    .read()
-                                    .presence_visibility()
-                                    .allows_presence_send()
-                                {
-                                    return;
-                                }
-                                let base = base.clone();
-                                let realm = realm.clone();
-                                let authority = typing_authority.clone();
-                                let device = typing_device_id.clone();
-                                if selected_strand.trim().is_empty() {
-                                    return;
-                                }
-                                let strand_id = selected_strand.clone();
-                                // Signal key material comes from the scope's
-                                // accepted MLS state. No material means the
-                                // Signal capability is withdrawn for this
-                                // scope; v1 has no plaintext branch to fall
-                                // back to, so simply do not send.
-                                let Ok(material) = crate::signal::key_material_for_scope(
-                                    &state_store.read(),
-                                    &realm,
-                                    None,
-                                ) else {
-                                    return;
-                                };
-                                let typing_store =
-                                    crate::app::runtime_adapter::state_store_handle(state_store);
-                                let typing_target = commands::TypingSignalTarget {
-                                    base_url: base.clone(),
-                                    realm_id: realm.clone(),
-                                    strand_id: strand_id.clone(),
-                                    authority: authority.clone(),
-                                    device_id: device.clone(),
-                                    material,
-                                    store: typing_store,
-                                };
-                                typing_throttle.on_keystroke(move |is_typing| {
-                                    commands::send_typing_signal(typing_target.clone(), token(), is_typing);
-                                });
-                            }
-                        },
-                    }
-                    if mentions_enabled && mention_picker_state.read().open {
-                        div { class: "mention-picker",
-                            "data-testid": "mention-picker",
-                            div { class: "mention-picker-head",
-                                Input {
-                                    r#type: "text",
-                                    class: "mention-picker-query",
-                                    placeholder: crate::i18n::tr("chat.composer.search_members"),
-                                    value: "{mention_picker_state.read().query}",
-                                    oninput: move |event: FormEvent| {
-                                        mention_picker_state.write().set_query(event.value());
-                                    },
-                                }
-                                Button {
-                                    variant: ButtonVariant::Secondary,
-                                    r#type: "button",
-                                    "data-testid": "mention-picker-close-button",
-                                    onclick: move |_| mention_picker_state.write().close(),
-                                    {crate::i18n::tr("common.close")}
-                                }
-                            }
-                            {
-                                let mut candidates: Vec<crate::messaging::mentions::MentionCandidate> =
-                                    participants_for_messages
-                                        .iter()
-                                        .filter(|p| agent_candidate_is_visible(p, &public_agent_ids, &principal_id))
-                                        .filter_map(|p| mention_candidate_for_participant(
-                                            p,
-                                            &participants_for_messages,
-                                            &principal_id,
-                                        ))
-                                        .collect();
-                                candidates.sort_by_key(|candidate| {
-                                    if candidate.subject_account_id.principal_id.as_str()
-                                        == principal_id.trim()
-                                    {
-                                        0u8
-                                    } else if candidate.is_agent
-                                        && candidate
-                                            .controller_subject_account_id
-                                            .as_ref()
-                                            .is_some_and(|controller| {
-                                                controller.principal_id.as_str()
-                                                    == principal_id.trim()
-                                            })
-                                    {
-                                        1u8
-                                    } else {
-                                        2u8
-                                    }
-                                });
-                                // `filter` borrows from `candidates`, not from the
-                                // picker state, so we run it under the read guard and
-                                // only clone the matched candidates we actually render
-                                // instead of cloning the whole picker state first.
-                                let matches: Vec<crate::messaging::mentions::MentionCandidate> =
-                                    mention_picker_state
-                                        .read()
-                                        .filter(&candidates)
-                                        .into_iter()
-                                        .cloned()
-                                        .collect();
-                                rsx! {
-                                    div { class: "mention-suggestions",
-                                        if matches.is_empty() {
-                                            div { class: "muted", {crate::i18n::tr("chat.composer.no_matches")} }
-                                        } else {
-                                            for candidate in matches {
-                                                {
-                                                    let candidate_label =
-                                                        format!("@{}", candidate.insert_label());
-                                                    let candidate_is_self =
-                                                        candidate.subject_account_id.principal_id.as_str()
-                                                            == principal_id.trim();
-                                                    let candidate_agent_slug = candidate
-                                                        .is_agent
-                                                        .then(|| candidate.agent_slug_at_time.clone());
-                                                    rsx! {
-                                                        Button {
-                                                            variant: ButtonVariant::Secondary,
-                                                            key: "{candidate.subject_account_id.principal_id}@{candidate.subject_account_id.station_id}",
-                                                            r#type: "button",
-                                                            class: "mention-suggestion",
-                                                            "data-testid": "mention-suggestion",
-                                                            // Both components are exposed separately: the
-                                                            // subject identity is the pair, never one of them.
-                                                            "data-mention-principal-id": "{candidate.subject_account_id.principal_id}",
-                                                            "data-mention-station-id": "{candidate.subject_account_id.station_id}",
-                                                            title: format!("@{} — {}", candidate.insert_label(), candidate.subject_account_id),
-                                                            onclick: {
-                                                                let candidate = candidate.clone();
-                                                                move |_| {
-                                                                    let current = chat_draft();
-                                                                    let range = mention_picker_state.read().active_range;
-                                                                    let updated = mention_picker_state.write().select(candidate.clone(), &current, range);
-                                                                    controller.update_draft(updated);
-                                                                                                                        mention_picker_state.write().close();
-                                                                }
-                                                            },
-                                                            ActorIdentityLabel {
-                                                                label: candidate_label,
-                                                                title: Some(format!("@{}", candidate.insert_label())),
-                                                                class: Some("mention-suggestion-name".to_owned()),
-                                                                test_id: Some("mention-suggestion".to_owned()),
-                                                                self_badge_test_id: None,
-                                                                agent_badge_test_id: Some("mention-suggestion-agent-badge".to_owned()),
-                                                                is_self: candidate_is_self,
-                                                                is_agent: candidate.is_agent,
-                                                                agent_slug: candidate_agent_slug,
-                                                                agent_selector: None,
-                                                            }
-                                                            if !candidate.subtitle.is_empty() {
-                                                                span { class: "mention-suggestion-subtitle",
-                                                                    "{candidate.subtitle}"
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    // G3.Y2 — mention chip row. The picker renders directly
-                    // below the textarea; this row keeps the explicit trigger
-                    // button for cotest while production users open the picker
-                    // by typing `@`.
-                    div { class: "mention-chip-row",
-                        if mentions_enabled {
-                            Button {
-                                variant: ButtonVariant::Secondary,
-                                r#type: "button",
-                                class: "composer-tool-button",
-                                "data-testid": "mention-trigger-button",
-                                title: crate::i18n::tr("chat.composer.mention_member"),
-                                "aria-label": crate::i18n::tr("chat.composer.mention_member"),
-                                onclick: move |_| {
-                                    let mut state = mention_picker_state.write();
-                                    if state.open {
-                                        state.close();
-                                    } else {
-                                        state.open();
-                                    }
-                                },
-                                UiIcon { name: "at-sign" }
-                            }
-                        }
-                        Button {
-                            variant: ButtonVariant::Secondary,
-                            r#type: "button",
-                            class: "composer-tool-button",
-                            "data-testid": "attachment-menu-button",
-                            title: crate::i18n::tr("chat.composer.add_attachment"),
-                            "aria-label": crate::i18n::tr("chat.composer.add_attachment"),
-                            onclick: move |_| {
-                                let current = attachment_menu_open();
-                                attachment_menu_open.set(!current);
-                            },
-                            UiIcon { name: "plus" }
-                        }
-                        if polls_available {
-                            Button {
-                                variant: ButtonVariant::Secondary,
-                                r#type: "button",
-                                class: "composer-tool-button",
-                                "data-testid": "open-poll-composer-button",
-                                disabled: selected_channel_unavailable || selected_realm_pending_mls_binding,
-                                title: crate::i18n::tr("chat.composer.create_poll"),
-                                "aria-label": crate::i18n::tr("chat.composer.create_poll"),
-                                onclick: move |_| {
-                                    attachment_menu_open.set(false);
-                                    poll_draft.set(Some(
-                                        crate::messaging::polls::PollDraft::new(),
-                                    ));
-                                },
-                                {crate::i18n::tr("chat.composer.poll")}
-                            }
-                        }
-                        // Scheduled send (spec personal-productivity.md §4) is
-                        // offered on the plaintext composer path only: the
-                        // plan stores the future `ak.message.create` payload,
-                        // and the MLS-encrypted send path would need
-                        // dispatch-time encryption, which v1 does not wire.
-                        if !selected_channel_security_encrypted && !private_draft && !mixed_draft && !has_bound_mentions {
-                            Button {
-                                variant: ButtonVariant::Secondary,
-                                r#type: "button",
-                                class: "composer-tool-button",
-                                "data-testid": "open-scheduled-send-panel-button",
-                                title: crate::i18n::tr("chat.composer.schedule_message"),
-                                "aria-label": crate::i18n::tr("chat.composer.schedule_message"),
-                                onclick: move |_| {
-                                    let open = scheduled_send_panel_open();
-                                    scheduled_send_panel_open.set(!open);
-                                },
-                                UiIcon { name: "calendar" }
-                            }
-                        }
-                        if attachment_menu_open() {
-                            div { class: "attachment-menu",
-                                if polls_available {
-                                    Button {
-                                        variant: ButtonVariant::Secondary,
-                                        r#type: "button",
-                                        class: "attachment-menu-item",
-                                        "data-testid": "attachment-menu-poll",
-                                        disabled: selected_channel_unavailable || selected_realm_pending_mls_binding,
-                                        onclick: move |_| {
-                                            attachment_menu_open.set(false);
-                                            poll_draft.set(Some(
-                                                crate::messaging::polls::PollDraft::new(),
-                                            ));
-                                        },
-                                        {crate::i18n::tr("chat.composer.create_poll")}
-                                    }
-                                }
-                            }
-                        }
-                        if mentions_enabled {
-                            for chip in mention_picker_state.read().inserted.clone() {
-                                div {
-                                    class: "mention-chip",
-                                    "data-testid": "mention-chip",
-                                    "data-mention-principal-id": "{chip.subject_account_id.principal_id}",
-                                    "data-mention-station-id": "{chip.subject_account_id.station_id}",
-                                    span { class: "mention-chip-label", "@{chip.insert_label()}" }
-                                    if !chip.subtitle.is_empty() {
-                                        span { class: "mention-chip-subtitle", "{chip.subtitle}" }
-                                    }
-                                    button {
-                                        class: "mention-chip-remove",
-                                        r#type: "button",
-                                        "aria-label": crate::i18n::tr_args("chat.composer.remove_mention", &[("member", chip.insert_label().to_owned())]),
-                                        onclick: {
-                                            let subject_account_id = chip.subject_account_id.clone();
-                                            move |_| {
-                                                mention_picker_state.write().remove(&subject_account_id);
-                                                                            }
-                                        },
-                                        "\u{00d7}"
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    if compose_dragover() {
-                        div {
-                            class: "compose-drop-zone-hint",
-                            "data-testid": "compose-drop-hint",
-                            {crate::i18n::tr("compose.drop_zone.hint")}
-                        }
-                    }
-                }
-                if !compose_upload_status().is_empty() {
-                    div {
-                        class: "compose-upload-progress",
-                        "data-testid": "compose-upload-progress",
-                        "{compose_upload_status}"
-                        button { r#type: "button", "data-testid": "retry-attachment-upload",
-                            onclick: {
-                                let scope = upload_scope.clone();
-                                let base = base_url.clone();
-                                move |_| commands::upload_dropped_attachments(controller, base.clone(), token(), scope.clone(), Vec::new())
-                            },
-                            "Retry attachments"
-                        }
-                    }
-                }
-                for attachment in (controller.attachments)() {
-                    div { "data-testid": "compose-attachment", "data-attachment-id": attachment.id.clone(),
-                        "{attachment.content.body}"
-                        button { r#type: "button", "data-testid": "remove-compose-attachment",
-                            onclick: move |_| commands::discard_draft_attachment(controller, attachment.id.clone()),
-                            "Remove"
-                        }
-                    }
-                }
-                if polls_available {
-                if let Some(draft) = poll_draft.read().clone() {
-                    div { class: "poll-composer",
-                        "data-testid": "poll-composer",
-                        Input {
-                            r#type: "text",
-                            "data-testid": "poll-question-input",
-                            placeholder: crate::i18n::tr("chat.composer.poll_question"),
-                            value: "{draft.question}",
-                            oninput: move |event: FormEvent| {
-                                if let Some(current) = poll_draft.write().as_mut() {
-                                    current.set_question(event.value());
-                                }
-                            },
-                        }
-                        for (idx, option) in draft.options.iter().enumerate() {
-                            Input {
-                                r#type: "text",
-                                "data-testid": "poll-option-input",
-                                "data-option-index": "{idx as i64}",
-                                placeholder: crate::i18n::tr_args("chat.composer.poll_option", &[("number", (idx + 1).to_string())]),
-                                value: "{option}",
-                                oninput: move |event: FormEvent| {
-                                    if let Some(current) = poll_draft.write().as_mut() {
-                                        current.set_option(idx, event.value());
-                                    }
-                                },
-                            }
-                        }
-                        div { class: "actions",
-                            Button {
-                                variant: ButtonVariant::Secondary,
-                                r#type: "button",
-                                "data-testid": "poll-add-option-button",
-                                onclick: move |_| {
-                                    if let Some(current) = poll_draft.write().as_mut() {
-                                        current.add_option();
-                                    }
-                                },
-                                {crate::i18n::tr("chat.composer.add_option")}
-                            }
-                            Button {
-                                variant: ButtonVariant::Primary,
-                                r#type: "button",
-                                "data-testid": "send-poll-button",
-                                disabled: !draft.is_sendable() || selected_channel_unavailable || selected_realm_pending_mls_binding,
-                                onclick: {
-                                    let base = base_url.clone();
-                                    let realm = selected_realm_id.clone();
-                                    let actor = principal_id.clone();
-                                    let selected_strand = selected_channel_value.clone();
-                                    let protection = super::poll_submission::PollSubmissionContext {
-                                        authority: sidecar_authority.clone(),
-                                        device_id: device_id.clone(),
-                                        circle_id: selected_channel_info.as_ref()
-                                            .and_then(|channel| channel.scope_circle.as_ref())
-                                            .map(|scope| scope.circle_id.clone()),
-                                    };
-                                    move |_| {
-                                        let Some(draft_snapshot) = poll_draft.read().clone() else {
-                                            return;
-                                        };
-                                        if !draft_snapshot.is_sendable() {
-                                            return;
-                                        }
-                                        let poll_id = crate::messaging::polls::new_poll_id();
-                                        // Build the content draft; the accepted Event receipt
-                                        // will supply the Message identity used by responses.
-                                        let op = match crate::messaging::polls::build_poll_create_op_scoped(
-                                            &realm,
-                                            &actor,
-                                            &selected_strand,
-                                            protection.circle_id.as_deref(),
-                                            &draft_snapshot,
-                                        ) {
-                                            Ok(op) => op.with_local_operation_id(
-                                                crate::operation::LocalOperationId::from_holder_key(
-                                                    poll_id.clone(),
-                                                ),
-                                            ),
-                                            Err(error) => {
-                                                status_msg.set(format!("Poll send failed: {error}"));
-                                                return;
-                                            }
-                                        };
-                                        // The Message id is `retype(event_id)`, so it exists
-                                        // only once the poll Event is accepted. The optimistic
-                                        // card is keyed by the holder-local operation id until
-                                        // then, and the author-owned plaintext sidecar is keyed
-                                        // by the accepted id inside the submit arm below.
-                                        let card = crate::messaging::polls::PollCard::from_draft(
-                                            poll_id.clone(), &draft_snapshot,
-                                        );
-                                        // Optimistic UI: surface the
-                                        // poll card immediately, then push
-                                        // a synthetic ChatMessage so chat
-                                        // renders it in place.
-                                        poll_cards.write().push(card);
-                                        messages.write().push(ChatMessage {
-                                            protocol_content: None,
-                                            local_scope: Some(op.intent().scope_ref().clone()),
-                                            realm_id: realm.clone(),
-                                            id: poll_id.clone(),
-                                            protocol_message_id: None,
-                                            actor_id: crate::mls_api_helpers::local_account_actor_id(&actor).ok(),
-                                            sender: actor.clone(),
-                                            executed_by: None,
-                                            body: format!("[poll] {}", draft_snapshot.question),
-                                            content_format: None,
-                                            timestamp: chrono::Utc::now().format("%H:%M").to_string(),
-                                            created_at: Some(chrono::Utc::now()),
-                                            strand_id: selected_strand.clone(),
-                                            reply_to: None,
-                                            reactions: Vec::new(),
-                                            redacted: false,
-                                            edited: false,
-                                            revisions: Vec::new(),
-                                            revision_source: None,
-                                            pending: true,
-                                            failed: false,
-                                            error: None,
-                                            mentions: Vec::new(),
-                                            crypto_state: MessageCryptoState::Plaintext,
-                                        });
-                                        poll_draft.set(None);
-
-                                        commands::send_poll(
-                                            controller,
-                                            base.clone(),
-                                            token(),
-                                            op,
-                                            protection.clone(),
-                                            poll_id.clone(),
-                                            realm.clone(),
-                                            selected_strand.clone(),
-                                        );
-                                    }
-                                },
-                                {crate::i18n::tr("chat.composer.send_poll")}
-                            }
-                            Button {
-                                variant: ButtonVariant::Secondary,
-                                r#type: "button",
-                                onclick: move |_| poll_draft.set(None),
-                                {crate::i18n::tr("common.cancel")}
-                            }
-                        }
-                    }
-                }
-                }
-                if scheduled_send_panel_open()
-                    && !selected_channel_security_encrypted
-                    && !private_draft && !mixed_draft
-                    && !has_bound_mentions
-                {
-                    super::scheduled_send_panel::ScheduledSendPanel {
-                        context: super::scheduled_send_panel::ScheduledSendPanelContext {
-                            realm_id: selected_realm_id.clone(),
-                            strand_id: selected_channel(),
-                            authority: scheduled_send_authority.clone(),
-                            device_id: device_id.clone(),
-                            token,
-                            draft: chat_draft,
-                            status_msg,
-                        }
-                    }
-                }
-                div { class: "actions",
-                    OrdinarySendActions {
-                        plaintext: !selected_channel_security_encrypted && !private_draft,
-                        plaintext_disabled: (controller.attachments)().iter().any(|a|a.pending) || selected_channel_unavailable || draft_scope_send_blocked(preview_route, selected_realm_pending_mls_binding, sidecar_send_blocked || sidecar_route_pending() || sidecar_send_pending()),
-                        secure_disabled: (controller.attachments)().iter().any(|a|a.pending) || selected_channel_unavailable || draft_scope_send_blocked(
-                            preview_route,
-                            selected_realm_pending_mls_binding || creator_mls_bootstrap_pending,
-                            sidecar_send_blocked || sidecar_route_pending() || sidecar_send_pending() || sidecar_target_missing,
+        let upload_app = app.clone();
+        menu_items.push(button(
+            app.translated(scope, "chat.composer.add_attachment"),
+            "secondary attachment-menu-item attachment-file-picker",
+            scope.bond(move || {
+                controller.attachment_menu_open.get() && preview.get().upload_scope.is_some()
+            }),
+            move || {
+                controller
+                    .attachment_menu_open
+                    .revise(|value| *value = false);
+                let app = upload_app.clone();
+                let target = preview.get_untracked().upload_scope;
+                let context = context.get_untracked();
+                super::task::chat_task(app.clone(), async move {
+                    match files::choose_files().await {
+                        Ok(files) => commands::upload_dropped_attachments(
+                            controller,
+                            app.base_url.get_untracked(),
+                            context.token.get_untracked(),
+                            target,
+                            files,
                         ),
-                        mls_binding_pending: !private_draft && selected_realm_pending_mls_binding,
-                        creator_bootstrap_pending: !private_draft && creator_mls_bootstrap_pending,
-                        secure_title: if sidecar_target_missing {
-                            crate::i18n::tr("chat.composer.private_target_missing")
-                        } else if private_draft && active_sidecar_session.is_none() {
-                            crate::i18n::tr("chat.sidecar.open_and_send")
-                        } else if private_draft { sidecar_send_block_reason.clone().unwrap_or_else(|| {
-                            crate::i18n::tr("chat.composer.private_state_pending")
-                        }) } else { selected_realm_pending_mls_binding_reason.clone().unwrap_or_else(|| {
-                            creator_mls_bootstrap_pending_reason.unwrap_or_default().to_owned()
-                        }) },
-                        opening: private_draft && sidecar_route_pending(),
-                        sending: private_draft && sidecar_send_pending(),
-                        readiness_checking: if private_draft { private_probe.checking } else { send_readiness_checking },
-                        blocker_diagnostic: send_blocker_diagnostic,
-                        on_plaintext: plaintext_send,
-                        on_secure: secure_send,
+                        Err(error) => controller
+                            .compose_upload_status
+                            .revise(|value| *value = error.to_string()),
                     }
-                }
-            }
-            }
+                });
+            },
+        ));
     }
+    let poll_app = app.clone();
+    tools.push(reactive_distinct(
+        scope.bond(move || preview.get().polls_available),
+        move |scope, visible| {
+            if !visible {
+                return empty();
+            }
+            Box::new(
+                sapid::button()
+                    .unstyled()
+                    .label(poll_app.translated(scope, "chat.composer.poll"))
+                    .name(poll_app.translated(scope, "chat.composer.create_poll"))
+                    .class("secondary composer-tool-button open-poll-composer-button")
+                    .enabled(scope.bond(move || preview.get().polls_enabled))
+                    .on_press(move || {
+                        controller
+                            .attachment_menu_open
+                            .revise(|value| *value = false);
+                        controller.poll_draft.revise(|draft| {
+                            *draft = Some(crate::messaging::polls::PollDraft::new())
+                        });
+                    }),
+            ) as View
+        },
+    ));
+    let schedule_app = app.clone();
+    tools.push(reactive_distinct(
+        scope.bond(move || preview.get().schedule_available),
+        move |scope, visible| {
+            if !visible {
+                return empty();
+            }
+            super::native::icon_button(
+                "calendar",
+                schedule_app.translated(scope, "chat.composer.schedule_message"),
+                "secondary composer-tool-button open-scheduled-send-panel-button",
+                true,
+                move || scheduled.revise(|value| *value = !*value),
+            )
+        },
+    ));
+    // Keep the official file control alive after the popup closes: active reads
+    // use its accepted grant. CSS removes the popup from layout and focus.
+    tools.push(Box::new(
+        view()
+            .class(scope.bond(move || {
+                if controller.attachment_menu_open.get() {
+                    "attachment-menu".to_owned()
+                } else {
+                    "attachment-menu attachment-menu-hidden".to_owned()
+                }
+            }))
+            .fill(menu_items),
+    ));
+    let scope_label = scope.bond(move || {
+        let preview = preview.get();
+        composer_scope_label(
+            preview.route,
+            preview.scope,
+            &controller.selected_channel.get(),
+        )
+    });
+    let reply_app = app.clone();
+    let reply_source = scope.bond(move || {
+        let current = context.get();
+        controller.reply_to_message.get().map(|reply| {
+            chat_reply_quote_preview(
+                &controller.messages.get(),
+                &reply,
+                current.principal_id.as_str(),
+                &current.account_display_label,
+                &current.participants,
+            )
+        })
+    });
+    let reply = reactive_distinct(reply_source, move |scope, reply| {
+        let Some(reply) = reply else { return empty() };
+        let quote = match reply {
+            Some((name, body)) => block(
+                "chat-reply-quote",
+                vec![
+                    paragraph("chat-reply-quote-name", name),
+                    paragraph("chat-reply-quote-body", body),
+                ],
+            ),
+            None => paragraph(
+                "chat-reply-quote chat-reply-quote-missing",
+                reply_app.translated(scope, "chat.composer.reply_missing"),
+            ),
+        };
+        line(
+            "chat-reply-quote-banner chat-reply-banner",
+            vec![
+                quote,
+                button(
+                    reply_app.translated(scope, "common.cancel"),
+                    "secondary reply-cancel-button",
+                    true,
+                    move || controller.reply_to_message.revise(|value| *value = None),
+                ),
+            ],
+        )
+    });
+    let circle_app = app.clone();
+    let circle_source = scope.bond(move || {
+        let current = context.get();
+        let scope = current
+            .selected_channel_info
+            .and_then(|channel| channel.scope_circle)
+            .map(|circle| crate::circle::CircleScope::Circle {
+                circle_id: circle.circle_id,
+                title: circle.title,
+                member_count: circle.member_count,
+            })
+            .unwrap_or(crate::circle::CircleScope::Realm);
+        (scope, current.circle_display, current.circle_encrypted)
+    });
+    let circle_banner =
+        reactive_distinct(circle_source, move |scope, (circle, display, encrypted)| {
+            crate::components::circle_composer_banner(
+                scope,
+                circle_app.clone(),
+                crate::components::CircleComposerBannerProps {
+                    scope: circle,
+                    display,
+                    encrypted,
+                },
+            )
+        });
+    let mention_context = context;
+    let mentions = mention_picker(scope, app.clone(), controller, mention_context);
+    let chip_source = scope.bond(move || controller.mention_picker_state.get().inserted);
+    let chip_app = app.clone();
+    let chips = reactive_distinct(chip_source, move |scope, chips| {
+        if chips.is_empty() {
+            return empty();
+        }
+        line(
+            "mention-chip-row",
+            chips
+                .into_iter()
+                .map(|chip| {
+                    let label = format!("@{}", chip.insert_label());
+                    let member = chip.insert_label().to_owned();
+                    let remove_label = chip_app.translated_args(
+                        scope,
+                        "chat.composer.remove_mention",
+                        move || vec![("member", member.clone())],
+                    );
+                    let mut children: Vec<View> =
+                        vec![Box::new(text().class("mention-chip-label").content(label))];
+                    if !chip.subtitle.is_empty() {
+                        children.push(Box::new(
+                            text().class("mention-chip-subtitle").content(chip.subtitle),
+                        ));
+                    }
+                    let id = chip.subject_account_id;
+                    let identity = format!(
+                        "Principal: {} · Station: {}",
+                        id.principal_id, id.station_id
+                    );
+                    use sha2::Digest;
+                    let identity_id = match glory::render::SemanticId::new(format!(
+                        "mention-recipient-{}",
+                        hex::encode(sha2::Sha256::digest(id.to_string().as_bytes()))
+                    )) {
+                        Ok(id) => id,
+                        Err(error) => {
+                            scope.report_error(error);
+                            return empty();
+                        }
+                    };
+                    let described_by = identity_id.clone();
+                    children.push(Box::new(
+                        text()
+                            .class("sr-only mention-chip-identity")
+                            .content(identity)
+                            .semantics(Some(Box::new(glory::render::Semantics {
+                                id: Some(identity_id),
+                                ..Default::default()
+                            }))),
+                    ));
+                    children.push(Box::new(
+                        glory::ui::button()
+                            .name(remove_label)
+                            .class("mention-chip-remove")
+                            .fill(text().content("×"))
+                            .on(glory::render::EventKind::Activate, move |_| {
+                                controller
+                                    .mention_picker_state
+                                    .revise(|picker| picker.remove(&id))
+                            }),
+                    ));
+                    Box::new(
+                        view()
+                            .role(glory::render::Role::Group)
+                            .class("mention-chip")
+                            .semantics(Some(Box::new(glory::render::Semantics {
+                                described_by: Some(described_by),
+                                ..Default::default()
+                            })))
+                            .fill(children),
+                    ) as View
+                })
+                .collect(),
+        )
+    });
+    let attachments = reactive_distinct(controller.attachments, move |_, attachments| {
+        if attachments.is_empty() {
+            return empty();
+        }
+        block(
+            "compose-attachments",
+            attachments
+                .into_iter()
+                .map(|attachment| {
+                    let id = attachment.id;
+                    line(
+                        "compose-attachment",
+                        vec![
+                            plain(attachment.content.body),
+                            button(
+                                "Remove",
+                                "secondary remove-compose-attachment",
+                                true,
+                                move || commands::discard_draft_attachment(controller, id.clone()),
+                            ),
+                        ],
+                    )
+                })
+                .collect(),
+        )
+    });
+    let retry_app = app.clone();
+    let retry: View = Box::new(
+        glory::ui::button()
+            .label("Retry attachments")
+            .class("retry-attachment-upload")
+            .on(glory::render::EventKind::Activate, move |_| {
+                commands::upload_dropped_attachments(
+                    controller,
+                    retry_app.base_url.get_untracked(),
+                    context.get_untracked().token.get_untracked(),
+                    preview.get_untracked().upload_scope,
+                    Vec::new(),
+                )
+            }),
+    );
+    let upload_status = line(
+        "compose-upload-progress",
+        vec![
+            Box::new(text().content(controller.compose_upload_status)),
+            retry,
+        ],
+    );
+    let poll = poll_composer(scope, app.clone(), controller, context, preview);
+    let scheduled_context = context;
+    let scheduled_app = app.clone();
+    let scheduled_panel = scheduled_send_surface(scheduled, move |scope| {
+        let context = scheduled_context.get_untracked();
+        let generation = scheduled_app.session_generation.get_untracked();
+        let account = scheduled_app.active_account.get_untracked();
+        let realm_id = context.selected_realm_id.clone();
+        let strand_id = controller.selected_channel.get_untracked();
+        let authority = context.authority.clone();
+        let device_id = context.device_id.clone();
+        let current_app = scheduled_app.clone();
+        let writable = scope.bond(move || {
+            let _ = current_app.session_generation.get();
+            let _ = current_app.active_account.get();
+            let current = scheduled_context.get();
+            let available = preview.get();
+            available.schedule_available
+                && available.plain_enabled
+                && current.selected_realm_id == realm_id
+                && controller.selected_channel.get() == strand_id
+                && current.authority == authority
+                && current.device_id == device_id
+                && current_app.session_matches(generation, &account)
+        });
+        super::scheduled_send_panel::scheduled_send_panel(
+            scope,
+            scheduled_app.clone(),
+            super::scheduled_send_panel::ScheduledSendPanelContext {
+                realm_id: context.selected_realm_id,
+                strand_id: controller.selected_channel.get_untracked(),
+                authority: context.authority,
+                device_id: context.device_id,
+                token: context.token,
+                draft: controller.draft,
+                status_msg: controller.status_msg,
+                writable: writable.into(),
+            },
+        )
+    });
+    let primary_send = send.clone();
+    let secure_send = send;
+    let label_app = app.clone();
+    let label = scope.bond(move || {
+        let preview = preview.get();
+        label_app.tr(
+            if controller.sidecar_send_pending.get() && preview.pending {
+                "chat.composer.sending"
+            } else if preview.pending {
+                "chat.composer.opening"
+            } else {
+                "chat.send"
+            },
+        )
+    });
+    let primary = primary_send_action(
+        scope,
+        label,
+        scope.bond(move || {
+            let preview = preview.get();
+            if preview.plaintext {
+                preview.plain_enabled
+            } else {
+                preview.secure_enabled
+            }
+        }),
+        scope.bond(move || {
+            let current = context.get();
+            let preview = preview.get();
+            preview.pending
+                || if matches!(preview.route, arkret_sdk::AgentMentionRoute::Sidecar) {
+                    private_probe.get().checking
+                } else {
+                    current.send_readiness_checking
+                }
+        }),
+        move || primary_send(!preview.get_untracked().plaintext),
+    );
+    let secure = reactive_distinct(
+        scope.bond(move || preview.get().plaintext),
+        move |scope, visible| {
+            if visible {
+                let send = secure_send.clone();
+                button(
+                    "Send secure",
+                    "secondary send-e2ee-move-button",
+                    scope.bond(move || preview.get().secure_enabled),
+                    move || send(true),
+                )
+            } else {
+                empty()
+            }
+        },
+    );
+    let storage_app = app.clone();
+    let storage_error =
+        reactive_distinct(
+            scope.bond(move || controller.draft_storage_status() == "error"),
+            move |scope, failed| {
+                if failed {
+                    Box::new(
+                        view()
+                            .class("draft-storage-error")
+                            .role(glory::render::Role::Alert)
+                            .fill(text().content(
+                                storage_app.translated(scope, "compose.draft_storage_error"),
+                            )),
+                    )
+                } else {
+                    empty()
+                }
+            },
+        );
+    block(
+        "discussion-composer chat-composer",
+        vec![
+            paragraph("composer-send-scope", scope_label),
+            paragraph(
+                "muted composer-send-diagnostic",
+                scope.bond(move || preview.get().title),
+            ),
+            circle_banner,
+            reply,
+            block(
+                "compose-drop-zone",
+                vec![
+                    storage_error,
+                    input,
+                    mentions,
+                    chips,
+                    line("mention-chip-row", tools),
+                ],
+            ),
+            upload_status,
+            attachments,
+            poll,
+            scheduled_panel,
+            line("actions", vec![primary, secure]),
+        ],
+    )
+}
+
+fn edit_draft(
+    app: Rc<crate::presentation::InksonContext>,
+    controller: ChatController,
+    context: &ChatComposerContext,
+    value: String,
+) {
+    let previous = controller.draft.get_untracked();
+    controller
+        .mention_picker_state
+        .revise(|picker| picker.edit(&previous, &value));
+    controller.update_draft(value.clone());
+    controller.mention_picker_state.revise(|picker| {
+        if let Some((query, start, end)) =
+            active_composer_mention_token(context.mentions_enabled, &value)
+        {
+            picker.set_active_token(query, start, end);
+        } else if picker.open {
+            picker.close();
+        }
+    });
+    let (_, route) = draft_route(controller, context);
+    if matches!(
+        route,
+        arkret_sdk::AgentMentionRoute::Sidecar
+            | arkret_sdk::AgentMentionRoute::BlockedMixedPrivateTargets
+    ) {
+        return;
+    }
+    if !app
+        .state_store
+        .read(|store| store.presence_visibility().allows_presence_send())
+    {
+        return;
+    }
+    let strand = controller.selected_channel.get_untracked();
+    if strand.trim().is_empty() {
+        return;
+    }
+    let Ok(material) = app.state_store.read(|store| {
+        crate::signal::key_material_for_scope(store, &context.selected_realm_id, None)
+    }) else {
+        return;
+    };
+    let target = commands::TypingSignalTarget {
+        base_url: app.base_url.get_untracked(),
+        realm_id: context.selected_realm_id.clone(),
+        strand_id: strand,
+        authority: context.authority.clone(),
+        device_id: context.device_id.clone(),
+        material,
+        store: app.state_store.handle(),
+    };
+    let generation = app.session_generation.get_untracked();
+    let account = app.active_account.get_untracked();
+    let token = context.token;
+    controller.typing_throttle.on_keystroke(move |typing| {
+        if app.session_matches(generation, &account) {
+            commands::send_typing_signal(target.clone(), token.get_untracked(), typing);
+        }
+    });
+}
+
+fn mention_picker(
+    scope: &Scope,
+    app: Rc<crate::presentation::InksonContext>,
+    controller: ChatController,
+    context: Bond<ChatComposerContext>,
+) -> View {
+    use super::native::{block, button, field};
+    use crate::presentation::widgets::{empty, line, paragraph, reactive_distinct};
+    let open = scope
+        .bond(move || context.get().mentions_enabled && controller.mention_picker_state.get().open);
+    reactive_distinct(open, move |scope, open| {
+        if !open {
+            return empty();
+        }
+        let query = scope.bond(move || controller.mention_picker_state.get().query);
+        let matches = scope.bond(move || {
+            let context = context.get();
+            let principal = context.principal_id.as_str();
+            let mut candidates = context
+                .participants
+                .iter()
+                .filter(|participant| {
+                    agent_candidate_is_visible(participant, &context.public_agent_ids, principal)
+                })
+                .filter_map(|participant| {
+                    mention_candidate_for_participant(participant, &context.participants, principal)
+                })
+                .collect::<Vec<_>>();
+            candidates.sort_by_key(|candidate| {
+                if candidate.subject_account_id.principal_id.as_str() == principal.trim() {
+                    0u8
+                } else if candidate.is_agent
+                    && candidate
+                        .controller_subject_account_id
+                        .as_ref()
+                        .is_some_and(|account| account.principal_id.as_str() == principal.trim())
+                {
+                    1u8
+                } else {
+                    2u8
+                }
+            });
+            controller
+                .mention_picker_state
+                .get()
+                .filter(&candidates)
+                .into_iter()
+                .cloned()
+                .collect::<Vec<_>>()
+        });
+        let empty_app = app.clone();
+        let suggestions = reactive_distinct(matches, move |scope, matches| {
+            if matches.is_empty() {
+                return paragraph(
+                    "muted",
+                    empty_app.translated(scope, "chat.composer.no_matches"),
+                );
+            }
+            block(
+                "mention-suggestions",
+                matches
+                    .into_iter()
+                    .map(|candidate| {
+                        let label = format!(
+                            "@{} — {}",
+                            candidate.insert_label(),
+                            candidate.subject_account_id
+                        );
+                        let mut children: Vec<View> = vec![Box::new(
+                            text()
+                                .class("actor-identity-primary mention-suggestion-name")
+                                .content(format!("@{}", candidate.insert_label())),
+                        )];
+                        if candidate.subject_account_id.principal_id
+                            == context.get().principal_id
+                        {
+                            children.push(crate::components::self_attribution_badge_inline(
+                                scope,
+                                empty_app.clone(),
+                                crate::components::SelfAttributionBadgeProps {
+                                    class: Some("actor-identity-self-badge".into()),
+                                    ..Default::default()
+                                },
+                            ));
+                        }
+                        if candidate.is_agent {
+                            children.push(Box::new(text().class("badge member-badge member-badge-agent actor-identity-agent-badge mention-suggestion-agent-badge").content("Agent")));
+                        }
+                        if !candidate.subtitle.is_empty() {
+                            children.push(Box::new(text().class("mention-suggestion-subtitle").content(candidate.subtitle.clone())));
+                        }
+                        Box::new(
+                            glory::ui::button()
+                                .name(label)
+                                .class("secondary mention-suggestion")
+                                .fill(group().fill(children))
+                                .on(glory::render::EventKind::Activate, move |_| {
+                                    let current = controller.draft.get_untracked();
+                                    let updated = controller.mention_picker_state.revise(|picker| {
+                                        let result = picker.select(candidate.clone(), &current, picker.active_range);
+                                        picker.close();
+                                        result
+                                    });
+                                    controller.update_draft(updated);
+                                }),
+                        ) as View
+                    })
+                    .collect(),
+            )
+        });
+        block(
+            "mention-picker",
+            vec![
+                line(
+                    "mention-picker-head",
+                    vec![
+                        field(
+                            app.translated(scope, "chat.composer.search_members"),
+                            "mention-picker-query",
+                            query,
+                            false,
+                            move |value| {
+                                controller
+                                    .mention_picker_state
+                                    .revise(|picker| picker.set_query(value))
+                            },
+                        ),
+                        button(
+                            app.translated(scope, "common.close"),
+                            "secondary mention-picker-close-button",
+                            true,
+                            move || {
+                                controller
+                                    .mention_picker_state
+                                    .revise(|picker| picker.close())
+                            },
+                        ),
+                    ],
+                ),
+                suggestions,
+            ],
+        )
+    })
+}
+
+fn poll_composer(
+    scope: &Scope,
+    app: Rc<crate::presentation::InksonContext>,
+    controller: ChatController,
+    context: Bond<ChatComposerContext>,
+    preview: Bond<Preview>,
+) -> View {
+    use super::native::{block, button, field};
+    use crate::presentation::widgets::{empty, line, reactive_distinct};
+    let phase = scope.bond(move || {
+        (
+            preview.get().polls_available,
+            controller.poll_draft.get().map(|draft| draft.options.len()),
+        )
+    });
+    reactive_distinct(phase, move |scope, (available, count)| {
+        let Some(count) = count.filter(|_| available) else {
+            return empty();
+        };
+        let question = scope.bond(move || {
+            controller
+                .poll_draft
+                .get()
+                .map(|draft| draft.question)
+                .unwrap_or_default()
+        });
+        let mut children = vec![field(
+            app.translated(scope, "chat.composer.poll_question"),
+            "poll-question-input",
+            question,
+            false,
+            move |value| {
+                controller.poll_draft.revise(|draft| {
+                    if let Some(draft) = draft {
+                        draft.set_question(value)
+                    }
+                })
+            },
+        )];
+        for index in 0..count {
+            let value = scope.bond(move || {
+                controller
+                    .poll_draft
+                    .get()
+                    .and_then(|draft| draft.options.get(index).cloned())
+                    .unwrap_or_default()
+            });
+            children.push(field(
+                app.translated_args(scope, "chat.composer.poll_option", move || {
+                    vec![("number", (index + 1).to_string())]
+                }),
+                "poll-option-input",
+                value,
+                false,
+                move |value| {
+                    controller.poll_draft.revise(|draft| {
+                        if let Some(draft) = draft {
+                            draft.set_option(index, value)
+                        }
+                    })
+                },
+            ));
+        }
+        let send_app = app.clone();
+        children.push(line(
+            "actions",
+            vec![
+                button(
+                    app.translated(scope, "chat.composer.add_option"),
+                    "secondary poll-add-option-button",
+                    true,
+                    move || {
+                        controller.poll_draft.revise(|draft| {
+                            if let Some(draft) = draft {
+                                draft.add_option()
+                            }
+                        })
+                    },
+                ),
+                button(
+                    app.translated(scope, "chat.composer.send_poll"),
+                    "primary send-poll-button",
+                    scope.bond(move || {
+                        preview.get().plain_enabled
+                            && controller
+                                .poll_draft
+                                .get()
+                                .is_some_and(|draft| draft.is_sendable())
+                    }),
+                    move || {
+                        if preview.get_untracked().polls_available
+                            && preview.get_untracked().plain_enabled
+                        {
+                            send::poll(send_app.clone(), controller, context.get_untracked());
+                        }
+                    },
+                ),
+                button(
+                    app.translated(scope, "common.cancel"),
+                    "secondary poll-cancel-button",
+                    true,
+                    move || controller.poll_draft.revise(|draft| *draft = None),
+                ),
+            ],
+        ));
+        block("poll-composer", children)
+    })
 }

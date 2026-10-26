@@ -27,7 +27,7 @@ use std::collections::HashMap;
 pub use arkret_locale::{TextDirection, UiLocale};
 #[cfg(test)]
 use chrono::{DateTime, Utc};
-use dioxus::prelude::*;
+use glory::Cage;
 use serde::{Deserialize, Serialize};
 
 /// Where this device's UI locale came from, resolved once at boot.
@@ -88,17 +88,43 @@ impl TranslationDict {
     }
 }
 
-/// Global i18n state managed as a Dioxus signal.
-pub type I18nSignal = Signal<(UiLocale, HashMap<String, TranslationDict>)>;
+thread_local! {
+    static APPLICATION_LOCALE: std::cell::Cell<Option<Cage<UiLocale>>> = const { std::cell::Cell::new(None) };
+    static SCOPED_LOCALE: std::cell::Cell<Option<UiLocale>> = const { std::cell::Cell::new(None) };
+}
 
-/// Get a translated string by key. Falls back to English, then to the key itself.
-pub fn t(signal: &I18nSignal, key: &str) -> String {
-    // Borrow on read and clone only the matched translation; avoids deep-copying
-    // the whole (UiLocale, HashMap<String, TranslationDict>) dictionary on every
-    // call (t() is invoked heavily per frame).
-    let guard = signal.read();
-    let (locale, dicts) = &*guard;
-    translate(*locale, dicts, key)
+pub(crate) fn bind_application_locale(locale: Cage<UiLocale>) {
+    APPLICATION_LOCALE.with(|active| active.set(Some(locale)));
+}
+
+/// Pure view models may choose a locale without requiring a mounted renderer.
+pub fn tr_for_locale(locale: UiLocale, key: &str) -> String {
+    static DICTIONARIES: std::sync::OnceLock<HashMap<String, TranslationDict>> =
+        std::sync::OnceLock::new();
+    let dictionaries = DICTIONARIES.get_or_init(|| {
+        HashMap::from([
+            (UiLocale::En.code().to_owned(), english_translations()),
+            (UiLocale::Zh.code().to_owned(), chinese_translations()),
+        ])
+    });
+    translate(locale, dictionaries, key)
+}
+
+pub fn with_locale<T>(locale: UiLocale, run: impl FnOnce() -> T) -> T {
+    struct Restore(Option<UiLocale>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            SCOPED_LOCALE.with(|active| active.set(self.0));
+        }
+    }
+    let previous = SCOPED_LOCALE.with(|active| active.replace(Some(locale)));
+    let _restore = Restore(previous);
+    run()
+}
+
+#[cfg(test)]
+pub fn with_test_locale<T>(locale: UiLocale, run: impl FnOnce() -> T) -> T {
+    with_locale(locale, run)
 }
 
 /// Lookup a translated string without requiring a Dioxus runtime.
@@ -261,57 +287,16 @@ mod tests;
 pub use en::english_translations;
 pub use zh::chinese_translations;
 
-/// Initialize i18n preloaded with a specific locale.
-///
-/// One dictionary per shipped locale, keyed by [`UiLocale::code`]. There used to
-/// be four more slots (`ar` / `es` / `ja` / `fr`) holding deliberately partial
-/// catalogues, but no code path could ever select them — the shell clamped the
-/// active locale to English or Chinese before this ran — so every one of their
-/// keys resolved through the English fallback anyway.
-pub fn init_i18n_with_locale(locale: UiLocale) -> I18nSignal {
-    let mut dicts = HashMap::new();
-    dicts.insert(UiLocale::En.code().to_owned(), english_translations());
-    dicts.insert(UiLocale::Zh.code().to_owned(), chinese_translations());
-    Signal::new((locale, dicts))
-}
-
-/// Switch the active locale on an existing signal without rebuilding the
-/// translation tables. Call this from the Settings language picker.
-pub fn set_locale(signal: &mut I18nSignal, locale: UiLocale) {
-    if signal.read().0 == locale {
-        return;
-    }
-    let dicts = signal.read().1.clone();
-    signal.set((locale, dicts));
-}
-
-/// Convenience: pull the current i18n signal from Dioxus context and
-/// translate `key`. Views call this once they have been wrapped in a
-/// `provide_context(init_i18n_with_locale(...))` ancestor — currently
-/// `RealmView`.
-///
-/// Outside a Dioxus runtime — a unit test on a pure view model, a detached
-/// task — there is no context to consume, and `try_consume_context` panics
-/// there rather than returning `None`. Check the runtime first, then answer
-/// from the shipped English dictionary: readable default copy is a better
-/// fallback than rendering a raw dotted key, and it keeps every pure
-/// derivation that produces copy testable without mounting a component.
+/// Convenience for existing pure view models. Reading the live Cage records
+/// the same locale dependency as an explicit translated binding.
 pub fn tr(key: &str) -> String {
-    let signal =
-        dioxus::core::Runtime::try_current().and_then(|_| try_consume_context::<I18nSignal>());
-    match signal {
-        Some(signal) => t(&signal, key),
-        None => default_locale_translations()
-            .get(key)
-            .map(ToOwned::to_owned)
-            .unwrap_or_else(|| key.to_owned()),
-    }
-}
-
-/// The English dictionary, built once, for the runtime-free fallback above.
-fn default_locale_translations() -> &'static TranslationDict {
-    static DEFAULT: std::sync::OnceLock<TranslationDict> = std::sync::OnceLock::new();
-    DEFAULT.get_or_init(english_translations)
+    let locale = SCOPED_LOCALE
+        .with(std::cell::Cell::get)
+        .or_else(|| {
+            APPLICATION_LOCALE.with(|active| active.get().and_then(|locale| locale.try_get().ok()))
+        })
+        .unwrap_or(UiLocale::En);
+    tr_for_locale(locale, key)
 }
 
 /// Substitute `{placeholder}` args into an already-localized string.

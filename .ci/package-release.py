@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Stage Cargo/Dioxus outputs and create a checksummed release archive."""
+"""Stage Cargo and Glory/Sapid outputs and create a checksummed release archive."""
 
 import argparse
 import hashlib
 import json
 import os
+import plistlib
 from pathlib import Path
 import re
 import shutil
@@ -12,6 +13,9 @@ import subprocess
 import tarfile
 import tempfile
 import zipfile
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+from ui_dependencies import cargo_metadata, ui_provenance, verify_web_provenance
 
 
 def run(*args):
@@ -33,18 +37,26 @@ def main():
     parser.add_argument('--target', required=True)
     parser.add_argument('--binary', action='append', default=[])
     parser.add_argument('--resource', action='append', default=[])
-    parser.add_argument('--dx', choices=['web', 'linux', 'windows', 'macos'])
-    parser.add_argument('--app')
+    parser.add_argument('--web-dir', type=Path)
+    parser.add_argument('--desktop-platform', choices=['linux','windows','macos'])
+    parser.add_argument('--app', default='inkson')
     parser.add_argument('--crates', action='store_true')
     args = parser.parse_args()
+    if os.name == "nt":
+        cache = Path("D:/BuildCache/inkson-glory/tmp")
+        cache.mkdir(parents=True, exist_ok=True)
+        tempfile.tempdir = str(cache)
+        os.environ["TEMP"] = os.environ["TMP"] = str(cache)
     root = Path.cwd()
     project = root.name
     tag = os.environ.get('GITHUB_REF_NAME', 'verification')
     tag = re.sub(r'[^A-Za-z0-9._-]', '-', tag)
     name = f'{project}-{tag}-{args.target}'
-    metadata = json.loads(run('cargo', 'metadata', '--locked', '--no-deps',
-                              '--format-version', '1'))
-    target = Path(metadata['target_directory'])
+    metadata = cargo_metadata(root)
+    ui_sources = ui_provenance(metadata)
+    target = Path(metadata['target_directory']).resolve()
+    if os.name == "nt" and target.drive.lower() != "d:":
+        raise RuntimeError(f"Cargo build output must be on D: {target}")
     output = root / 'release-assets'
     output.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='release-') as temporary:
@@ -56,31 +68,26 @@ def main():
             destination = destination or source
             copy(target / args.target / 'release' / (source + suffix),
                  stage / (destination + suffix))
-        if args.dx:
-            if not args.app:
-                parser.error('--dx requires --app')
-            base = target / 'dx' / args.app / 'release' / args.dx
-            if args.dx == 'web':
-                source = base / 'public'
-                if not (source / 'index.html').is_file():
-                    raise FileNotFoundError(source / 'index.html')
-                if not list(source.rglob('*.wasm')):
-                    raise RuntimeError('The web bundle contains no WASM module')
-                copy(source, stage)
-            elif args.dx == 'macos':
-                apps = list(base.glob('*.app'))
-                if len(apps) != 1:
-                    raise RuntimeError(f'Expected one macOS app in {base}, got {apps}')
-                if not (apps[0] / 'Contents' / 'MacOS' / args.app).is_file():
-                    raise FileNotFoundError('The macOS app has no executable')
-                copy(apps[0], stage / apps[0].name)
+        if args.web_dir:
+            source = args.web_dir.resolve()
+            for required in ['index.html', 'bootstrap.js', 'assets/app.css', 'assets/sapid.css',
+                             'assets/pkg/inkson.js', 'assets/pkg/inkson_bg.wasm']:
+                if not (source / required).is_file():
+                    raise FileNotFoundError(source / required)
+            verify_web_provenance(source, metadata)
+            copy(source, stage)
+        if args.desktop_platform:
+            executable=target/args.target/'release'/(args.app+suffix)
+            if not executable.is_file():raise FileNotFoundError(executable)
+            if args.desktop_platform=='macos':
+                app=stage/(args.app+'.app');contents=app/'Contents';binary=contents/'MacOS'/args.app
+                copy(executable,binary);binary.chmod(0o755)
+                copy(root/'assets',contents/'Resources'/'assets')
+                version=next(p['version'] for p in metadata['packages'] if p['name']==args.app)
+                info={'CFBundleExecutable':args.app,'CFBundleIdentifier':'com.arkret.'+args.app,'CFBundleName':args.app,'CFBundleVersion':version,'CFBundleShortVersionString':version,'LSMinimumSystemVersion':'11.0','NSHighResolutionCapable':True,'NSCameraUsageDescription':'Inkson uses the camera for video calls.','NSMicrophoneUsageDescription':'Inkson uses the microphone for calls.'}
+                (contents/'Info.plist').write_bytes(plistlib.dumps(info))
             else:
-                source = base / 'app'
-                if not (source / (args.app + suffix)).is_file():
-                    raise FileNotFoundError(source / (args.app + suffix))
-                if not (source / 'assets').is_dir():
-                    raise FileNotFoundError(source / 'assets')
-                copy(source, stage)
+                copy(executable,stage/(args.app+suffix));copy(root/'assets',stage/'assets')
         if args.crates:
             packages = [package for package in metadata['packages']
                         if package['id'] in metadata['workspace_members']
@@ -90,7 +97,7 @@ def main():
             for package in packages:
                 crate = target / 'package' / f"{package['name']}-{package['version']}.crate"
                 copy(crate, stage / crate.name)
-        if not (args.binary or args.dx or args.crates):
+        if not (args.binary or args.web_dir or args.desktop_platform or args.crates):
             parser.error('At least one build output is required')
         for resource in args.resource:
             source, _, destination = resource.partition('=')
@@ -100,12 +107,15 @@ def main():
                 if path.is_file():
                     copy(path, stage / path.name)
         repositories = {}
-        # Include sibling path dependencies and the adjacent Savfox workspace.
-        for directory in [root, *root.parent.iterdir(), root.parent.parent / 'savfox-ai' / 'savfox']:
-            if (directory / '.git').exists():
-                repositories[directory.name] = run('git', '-C', str(directory), 'rev-parse', 'HEAD')
+        local_roots = {root, *(Path(package['manifest_path']).parent for package in metadata['packages'] if package.get('source') is None)}
+        for directory in sorted(local_roots):
+            resolved = subprocess.run(['git', '-C', str(directory), 'rev-parse', '--show-toplevel'],
+                                      capture_output=True, text=True)
+            if resolved.returncode == 0:
+                repository = Path(resolved.stdout.strip())
+                repositories[repository.name] = run('git', '-C', str(repository), 'rev-parse', 'HEAD')
         provenance = {'repository': project, 'ref': os.environ.get('GITHUB_REF'),
-                      'target': args.target, 'commits': repositories,
+                      'target': args.target, 'commits': repositories, 'ui_dependencies': ui_sources,
                       'lock_sha256': hashlib.sha256((root / 'Cargo.lock').read_bytes()).hexdigest()}
         (stage / 'build-info.json').write_text(json.dumps(provenance, indent=2) + '\n')
         if 'windows' in args.target:

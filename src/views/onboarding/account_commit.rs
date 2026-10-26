@@ -5,6 +5,8 @@
 //! active account, persisting the account config, and the single commit that
 //! activates it. All of it is durable state, none of it is view state.
 
+use anyhow::Context as _;
+
 use super::*;
 
 pub(super) fn load_valid_retained_recovery_key(
@@ -115,7 +117,7 @@ pub(super) async fn resolve_handoff_active_account(
     handoff: &crate::state::PendingAccountHandoff,
     did: &arkret_sdk::Did,
     device_id: arkret_sdk::DeviceId,
-    mut state_store: SyncSignal<crate::state::LocalStateStore>,
+    state_store: crate::presentation::SharedStateStore,
     issued_session: Option<(
         String,
         crate::identity::account_auth::grant_dpop::DpopHandle,
@@ -125,7 +127,7 @@ pub(super) async fn resolve_handoff_active_account(
         arkret_sdk::project_did_to_core_id(did)?,
         handoff.audience_id.clone(),
     );
-    let profile_id = profile_id_for_authority(&state_store.read(), &authority);
+    let profile_id = state_store.read(|store| profile_id_for_authority(store, &authority));
     let server_url = url::Url::parse(&crate::config::normalize_server_url(&handoff.station_url))?;
     let secure = crate::secure_key_store::default_secure_key_store("inkson");
     let (credential, holder) = if let Some(session) = issued_session {
@@ -137,7 +139,7 @@ pub(super) async fn resolve_handoff_active_account(
             handoff,
             &authority,
             &device_id,
-            state_store,
+            state_store.clone(),
             secure.as_ref(),
         )
         .map_err(|error| anyhow::anyhow!("restore onboarding holder: {error:?}"))?;
@@ -186,7 +188,8 @@ pub(super) async fn resolve_handoff_active_account(
                 issued.account.authority == authority && issued.account.device_id == device_id,
                 "reissued onboarding session changed its Account or device"
             );
-            check_handoff_current_principal(&state_store.read(), handoff, &issued.account)?;
+            state_store
+                .read(|store| check_handoff_current_principal(store, handoff, &issued.account))?;
             let prepared = crate::views::login::prepare_completed_login_dpop_key(
                 secure.as_ref(),
                 &issued.account,
@@ -201,18 +204,18 @@ pub(super) async fn resolve_handoff_active_account(
                 &issued.session_grant,
             )
             .await?;
-            {
-                let mut store = state_store.write();
-                check_handoff_current_principal(&store, handoff, &issued.account)?;
+            state_store.write(|store| -> anyhow::Result<_> {
+                check_handoff_current_principal(store, handoff, &issued.account)?;
                 crate::views::login::commit_completed_login_dpop_key(
-                    &mut store,
+                    store,
                     secure.as_ref(),
                     &issued.account,
                     &issued.dpop_device_key,
                     prepared,
                 )
                 .map_err(anyhow::Error::msg)?;
-            }
+                Ok(())
+            })?;
             return Ok(issued.account);
         }
     };
@@ -227,17 +230,17 @@ pub(super) async fn resolve_handoff_active_account(
         &http, profile_id, authority, device_id, server_url,
     )
     .await?;
-    check_handoff_current_principal(&state_store.read(), handoff, &account)?;
+    state_store.read(|store| check_handoff_current_principal(store, handoff, &account))?;
     Ok(account)
 }
 
 pub(super) fn persist_completed_account_config(
-    mut config_store: Signal<crate::config::LocalConfigStore>,
+    config_store: Cage<crate::config::LocalConfigStore>,
     account: &crate::config::ActiveAccountContext,
     session_credential: &str,
     display_handle: &str,
 ) -> anyhow::Result<()> {
-    let mut profiles = config_store.read().load_profiles();
+    let mut profiles = config_store.get_untracked().load_profiles();
     let mut profile =
         crate::config::AccountProfile::new(account.clone(), session_credential.to_owned());
     profile.label =
@@ -246,7 +249,7 @@ pub(super) fn persist_completed_account_config(
     if profile_id != account.profile_id {
         anyhow::bail!("completed account profile id does not match the active state namespace");
     }
-    let mut store = config_store.write();
+    let mut store = config_store.get_untracked();
     store.save(crate::config::ClientConfig::authenticated(
         account.clone(),
         session_credential.to_owned(),
@@ -309,21 +312,20 @@ pub(super) fn activate_accepted_account_setup_storage(
 pub(super) async fn commit_completed_account(
     completed: &CompletedIdentityCreation,
     recovery_key: &str,
-    mut state_store: SyncSignal<crate::state::LocalStateStore>,
-    config_store: Signal<crate::config::LocalConfigStore>,
-    mut active_account: Signal<Option<crate::config::ActiveAccountContext>>,
-    token: Signal<String>,
+    state_store: crate::presentation::SharedStateStore,
+    config_store: Cage<crate::config::LocalConfigStore>,
+    active_account: Cage<Option<crate::config::ActiveAccountContext>>,
+    token: Cage<String>,
     session: &crate::runtime::session::SessionCoordinator,
-    session_generation: Signal<u64>,
-    mut principal_id: Signal<Option<arkret_sdk::DidCoreId>>,
-    mut device_id: Signal<String>,
-    mut needs_device_authorization: Signal<bool>,
-    mut device_authorization_check_complete: Signal<bool>,
+    session_generation: Cage<u64>,
+    principal_id: Cage<Option<arkret_sdk::DidCoreId>>,
+    device_id: Cage<String>,
+    needs_device_authorization: Cage<bool>,
+    device_authorization_check_complete: Cage<bool>,
     recovery_pending: Option<&crate::security_transaction::PendingFreshDeviceRecovery>,
 ) -> anyhow::Result<()> {
     let correlation = state_store
-        .peek()
-        .pending_account_handoff()
+        .read(|store| store.pending_account_handoff())
         .as_ref()
         .map(crate::identity::account_auth::transition::LoginCorrelation::for_handoff)
         .unwrap_or_default()
@@ -370,8 +372,7 @@ pub(super) async fn commit_completed_account(
         // authority. Keep it with the accepted profile before publishing UI;
         // normal bootstrap replaces it with the authenticated viewer handle.
         let display_handle = state_store
-            .read()
-            .pending_account_handoff()
+            .read(|store| store.pending_account_handoff())
             .filter(|handoff| handoff.audience_id == completed.account.authority.station_id)
             .map(|handoff| handoff.account_handle)
             .unwrap_or_default();
@@ -381,21 +382,23 @@ pub(super) async fn commit_completed_account(
             completed.session_credential(),
             &display_handle,
         )?;
-        let barrier = {
-            let mut store = state_store.write();
-            store.set_session_grant(Some(completed.persisted_grant.clone()));
-            activate_account_and_save_recovery_metadata(
-                &mut store,
-                &completed.account,
-                recovery_key,
-            )?;
-            if let Some(backup_id) = completed.initial_mls_backup_id.as_deref() {
-                crate::components::mark_mls_recovery_backup_configured(&mut store, backup_id);
-            }
-            store.begin_durable_flush()?
-        };
+        let barrier = state_store.write(|store| -> anyhow::Result<_> {
+            Ok({
+                store.set_session_grant(Some(completed.persisted_grant.clone()));
+                activate_account_and_save_recovery_metadata(
+                    store,
+                    &completed.account,
+                    recovery_key,
+                )?;
+                if let Some(backup_id) = completed.initial_mls_backup_id.as_deref() {
+                    crate::components::mark_mls_recovery_backup_configured(store, backup_id);
+                }
+                store.begin_durable_flush()?
+            })
+        })?;
         barrier.wait().await?;
-        crate::views::recovery::local_recovery_public_key_result(&state_store.read())
+        state_store
+            .read(crate::views::recovery::local_recovery_public_key_result)
             .context("verify Recovery Key metadata in the accepted account scope")?;
         crate::event_submit::remember_verified_recovery_gate(
             &completed.account.authority,
@@ -412,17 +415,27 @@ pub(super) async fn commit_completed_account(
             pending.clear(secure_store.as_ref())?;
         }
 
-        active_account.set(Some(completed.account.clone()));
-        principal_id.set(Some(completed.account.principal_id().clone()));
-        device_id.set(completed.account.device_id.to_string());
+        active_account.revise(|value| {
+            *value = Some(completed.account.clone());
+        });
+        principal_id.revise(|value| {
+            *value = Some(completed.account.principal_id().clone());
+        });
+        device_id.revise(|value| {
+            *value = completed.account.device_id.to_string();
+        });
         crate::app::accept_authenticated_session(
             session,
             session_generation,
             token,
             completed.session_credential().to_owned(),
         );
-        needs_device_authorization.set(false);
-        device_authorization_check_complete.set(true);
+        needs_device_authorization.revise(|value| {
+            *value = false;
+        });
+        device_authorization_check_complete.revise(|value| {
+            *value = true;
+        });
         Ok(())
     }
     .await;

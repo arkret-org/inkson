@@ -41,6 +41,7 @@ pub mod config;
 pub mod conformance;
 pub mod content;
 pub(crate) mod current_projection;
+pub mod display_id;
 pub(crate) mod ephemeral;
 pub mod event_builders;
 pub mod event_signer;
@@ -94,6 +95,7 @@ pub mod pending_logout;
 /// Input-path perf helpers — draft-save debounce + typing throttle for the
 /// composer hot paths. See [`perf`] for the rationale.
 pub mod perf;
+pub mod presentation;
 pub mod security_transaction;
 // Presence/typing receive-side helpers formerly lived in `presence_rx`;
 // after refactor a37e1b9 routed ephemeral signals through the coland sync
@@ -163,7 +165,6 @@ pub mod telemetry;
 #[cfg(test)]
 pub(crate) mod test_support;
 pub(crate) mod transport;
-pub(crate) mod ui_signal;
 pub use transport::realm_write::{
     relinquish_capability, reset_realm_authority, transfer_realm_owner,
 };
@@ -174,17 +175,9 @@ pub use transport::realm_write::{
 /// conformance suite drives a real handshake against a live service — while the
 /// rest of `transport` stays crate-internal.
 pub use transport::websocket;
-pub mod wire_helpers;
-/// C3: shared UI component layer. The former local `src/ui/` moved unchanged
-/// into the `yoface` crate (13 `#[css_module]` wrappers plus background utility
-/// controls); this re-export keeps existing `crate::ui::button::Button`-style
-/// paths working across the repo. Component colors use first-layer semantic
-/// tokens (`--primary/--background/...`) provided by `yoface::TOKENS_CSS` (the
-/// green palette injected in `app.rs`).
-pub use yoface::ui;
 pub mod views;
 pub mod webrtc;
 pub mod websocket_rail_engine;
+pub mod wire_helpers;
 
-pub use app::App;
 pub(crate) mod attachments;

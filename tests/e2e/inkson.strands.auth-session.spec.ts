@@ -1,11 +1,12 @@
-import { chromium, expect, test } from "@playwright/test";
+import { byClass } from "./strandsHarness";
+import { chromium, expect, test, type Locator, type Page } from "@playwright/test";
 import {
   registerStrandsBeforeEach,
   CURRENT_PRINCIPAL_CORE_ID,
   CURRENT_PRINCIPAL_DID,
   CURRENT_ACCOUNT_ID,
   CURRENT_ACCOUNT_RESOLUTION,
-  latestTestId,
+
   refreshServer,
   writeLocalConfigAndReload,
   reloadWithUnacceptedDevice,
@@ -17,79 +18,112 @@ import { mockArkretApi } from "./mockArkretApi";
 
 registerStrandsBeforeEach();
 
+function loginPanel(page: Page) {
+  return page.locator(".auth-panel").filter({ has: page.locator(".auth-station-field") });
+}
+
+function leaderPanel(page: Page, title = "Inkson is already open") {
+  return page.getByRole("status").filter({
+    has: page.getByRole("heading", { name: title, exact: true }),
+  });
+}
+
+function accountValue(page: Page, label: string) {
+  return page.locator(".account-menu__row").filter({
+    has: page.locator(".account-menu__key").and(page.getByText(label, { exact: true })),
+  }).locator(".account-menu__value > .mono");
+}
+
+async function expectCompleteDescription(page: Page, value: Locator, expected: string) {
+  await expect(value).toHaveAttribute("aria-describedby", /^\S+$/);
+  const id = await value.getAttribute("aria-describedby");
+  await expect(page.locator(`[id=${JSON.stringify(id)}]`)).toHaveText(expected);
+}
+
+async function expectIdentityTooltip(page: Page, action: string, expected: string) {
+  const button = page.locator(".account-menu").getByRole("button", { name: action, exact: true });
+  await button.hover();
+  await expect(button).toHaveAttribute("aria-describedby", /^\S+$/);
+  const id = await button.getAttribute("aria-describedby");
+  const hint = page.locator(`[id=${JSON.stringify(id)}]`);
+  await expect(hint).toHaveRole("tooltip");
+  await expect(hint).toBeVisible();
+  await expect(hint).toHaveText(expected);
+}
+
+async function expectRealmSecurity(page: Page, row: Locator, encrypted: boolean) {
+  await row.locator(".sidebar-nav-icon").hover();
+  await expect(row).toHaveAttribute("aria-describedby", /^\S+$/);
+  const id = await row.getAttribute("aria-describedby");
+  const hint = page.locator(`[id=${JSON.stringify(id)}]`);
+  await expect(hint).toHaveRole("tooltip");
+  await expect(hint).toBeVisible();
+  await expect(hint).toHaveText(encrypted ? "Encrypted Realm" : "Unencrypted Realm");
+}
+
 test("bootstrap login and sync shows the connected realm", async ({ page }) => {
   await refreshServer(page);
 
-  await expect(page.getByTestId("status-label")).toContainText("Online");
-  await expect(page.getByTestId("sync-cursor")).toContainText(
+  await expect(byClass(page, "status-label")).toContainText("Online");
+  await expect(byClass(page, "sync-cursor")).toContainText(
     "ak:cursor:e2e-2",
   );
-  await expect(page.getByTestId("realm-tree-list")).toContainText(
+  await expect(byClass(page, "realm-tree-list")).toContainText(
     "Arkret Demo Realm",
   );
-  await expect(page.getByTestId("realm-tree-list")).toContainText(
+  await expect(byClass(page, "realm-tree-list")).toContainText(
     "Launch Realm",
   );
   // Realm summaries do not include encryption authority: load each detail
   // through its real demand subscription before checking its verified marker.
-  await page.getByTestId("realm-tree-node-button")
+  await byClass(page, "realm-tree-item")
     .filter({ hasText: "Arkret Demo Realm" }).click();
-  await expect(page.getByTestId("kanban-panel")).toBeVisible();
-  await expect(
-    page
-      .getByTestId("realm-tree-node-button")
-      .filter({ hasText: "Arkret Demo Realm" })
-      .locator(".sidebar-nav-icon"),
-  ).toHaveAttribute("title", "Encrypted Realm");
-  await page.getByTestId("realm-tree-node-button")
+  await expect(byClass(page, "kanban-panel")).toBeVisible();
+  await expectRealmSecurity(page, byClass(page, "realm-tree-item")
+    .filter({ hasText: "Arkret Demo Realm" }), true);
+  await byClass(page, "realm-tree-item")
     .filter({ hasText: "Launch Realm" }).click();
-  await expect(page.getByTestId("kanban-panel")).toBeVisible();
-  await expect(
-    page
-      .getByTestId("realm-tree-node-button")
-      .filter({ hasText: "Launch Realm" })
-      .locator(".sidebar-nav-icon"),
-  ).toHaveAttribute("title", "Unencrypted Realm");
-  await page.locator('[data-testid="sidebar"] a.sidebar-nav-item[href="/"]').click();
-  await expect(page.getByTestId("dashboard-panel")).toBeVisible();
-  await page.getByTestId("account-menu-button").click();
-  await expect(page.getByTestId("account-menu-display-name")).toHaveText(
+  await expect(byClass(page, "kanban-panel")).toBeVisible();
+  await expectRealmSecurity(page, byClass(page, "realm-tree-item")
+    .filter({ hasText: "Launch Realm" }), false);
+  await page.locator('[class~="sidebar"] a.sidebar-nav-item[href="/"]').click();
+  await expect(byClass(page, "dashboard-panel")).toBeVisible();
+  await byClass(page, "account-menu-button").click();
+  await expect(page.locator(".account-menu .who")).toHaveText(
     "inkson",
   );
-  await expect(page.getByTestId("account-menu-account-detail")).toContainText(
+  await expect(page.locator(".account-menu__head .handle")).toContainText(
     "alice:local.host · Current device",
   );
-  await expect(page.getByTestId("account-menu-device-name")).toHaveText(
+  await expect(byClass(page, "account-menu__device-name")).toHaveText(
     "Current device",
   );
-  await expect(page.getByTestId("account-menu-frontier")).toHaveCount(0);
-  await expect(page.getByTestId("account-menu-push")).toHaveCount(0);
-  await expect(page.getByTestId("account-menu-queue")).toHaveCount(0);
-  await expect(page.getByTestId("account-menu-crypto")).toHaveCount(0);
+  await expect(byClass(page, "account-menu-frontier")).toHaveCount(0);
+  await expect(byClass(page, "account-menu-push")).toHaveCount(0);
+  await expect(byClass(page, "account-menu-queue")).toHaveCount(0);
+  await expect(byClass(page, "account-menu-crypto")).toHaveCount(0);
   await page.keyboard.press("Escape");
-  await expect(page.getByTestId("dashboard-panel")).toBeVisible();
-  await expect(page.getByTestId("realm-tree-summary")).toContainText(
+  await expect(byClass(page, "dashboard-panel")).toBeVisible();
+  await expect(byClass(page, "realm-tree-summary")).toContainText(
     "Recent Realms",
   );
   await expect(
-    page
-      .getByTestId("dashboard-realm-tree-card")
+    byClass(page, "dashboard-realm-tree-card")
       .filter({ hasText: "Arkret Demo Realm" })
       .locator(".pill.muted.xs"),
   ).toHaveText("Realm");
   await expect(
-    page
-      .getByTestId("dashboard-realm-tree-card")
+    byClass(page, "dashboard-realm-tree-card")
       .filter({ hasText: "Launch Realm" })
       .locator(".pill.muted.xs"),
   ).toHaveText("Realm");
 
-  await page.getByTestId("realm-tree-node-button").first().click();
-  await expect(page.getByTestId("kanban-panel")).toBeVisible();
-  await expect(page.getByTestId("current-realm-surface")).toContainText(
+  await byClass(page, "realm-tree-item").first().click();
+  await expect(byClass(page, "kanban-panel")).toBeVisible();
+  await expect(byClass(page, "topbar-current-surface")).toContainText(
     "Board",
   );
-  await expect(page.getByTestId("realm-context-menu-button")).toBeVisible();
+  await expect(byClass(page, "realm-nav-menu-button")).toBeVisible();
 });
 
 test("a second browser tab is blocked until the active Inkson tab closes", async ({
@@ -100,17 +134,17 @@ test("a second browser tab is blocked until the active Inkson tab closes", async
   await addSessionGrantInjection(follower);
   await follower.goto("/", { waitUntil: "domcontentloaded" });
 
-  await expect(follower.getByTestId("web-leader-follower")).toBeVisible();
-  await expect(follower.getByTestId("client-shell")).toHaveCount(0);
+  await expect(leaderPanel(follower)).toBeVisible();
+  await expect(follower.locator(".shell.app")).toHaveCount(0);
   await expect(follower.getByText("Inkson is already open")).toBeVisible();
 
   await page.close();
-  await follower.getByTestId("web-leader-retry").click();
+  await leaderPanel(follower).getByRole("button", { name: "Try again", exact: true }).click();
 
-  await expect(latestTestId(follower, "client-shell")).toBeVisible({
+  await expect(follower.locator(".shell.app").last()).toBeVisible({
     timeout: 120_000,
   });
-  await expect(follower.getByTestId("web-leader-follower")).toHaveCount(0);
+  await expect(leaderPanel(follower)).toHaveCount(0);
 });
 
 test("exactly one follower takes over after the leader closes", async ({
@@ -124,8 +158,8 @@ test("exactly one follower takes over after the leader closes", async ({
     await mockArkretApi(follower);
     await addSessionGrantInjection(follower);
     await follower.goto("/", { waitUntil: "domcontentloaded" });
-    await expect(follower.getByTestId("web-leader-follower")).toBeVisible();
-    await expect(follower.getByTestId("client-shell")).toHaveCount(0);
+    await expect(leaderPanel(follower)).toBeVisible();
+    await expect(follower.locator(".shell.app")).toHaveCount(0);
   }
 
   await page.close();
@@ -140,8 +174,8 @@ test("exactly one follower takes over after the leader closes", async ({
       async () => {
         const states = await Promise.all(
           followers.map(async (follower) => ({
-            leader: await follower.getByTestId("client-shell").count(),
-            follower: await follower.getByTestId("web-leader-follower").count(),
+            leader: await follower.locator(".shell.app").count(),
+            follower: await leaderPanel(follower).count(),
           })),
         );
         return states;
@@ -180,11 +214,11 @@ test("a follower takes over after the leader renderer crashes", async ({
     }
 
     await leader.goto(baseURL ?? "/", { waitUntil: "domcontentloaded" });
-    await expect(latestTestId(leader, "client-shell")).toBeVisible({
+    await expect(leader.locator(".shell.app").last()).toBeVisible({
       timeout: 120_000,
     });
     await follower.goto(baseURL ?? "/", { waitUntil: "domcontentloaded" });
-    await expect(follower.getByTestId("web-leader-follower")).toBeVisible();
+    await expect(leaderPanel(follower)).toBeVisible();
 
     // Match Playwright's Chromium crash fixture with a real renderer fault.
     const crashed = leader.waitForEvent("crash", { timeout: 10_000 });
@@ -202,12 +236,12 @@ test("a follower takes over after the leader renderer crashes", async ({
     await expect(leader.evaluate(() => document.title)).rejects.toThrow(
       /(?:Page|Target) crashed/i,
     );
-    await follower.getByTestId("web-leader-retry").click();
+    await leaderPanel(follower).getByRole("button", { name: "Try again", exact: true }).click();
 
-    await expect(latestTestId(follower, "client-shell")).toBeVisible({
+    await expect(follower.locator(".shell.app").last()).toBeVisible({
       timeout: 120_000,
     });
-    await expect(follower.getByTestId("web-leader-follower")).toHaveCount(0);
+    await expect(leaderPanel(follower)).toHaveCount(0);
   } finally {
     await isolatedBrowser.close();
   }
@@ -228,8 +262,8 @@ test("a browser without Web Locks fails closed before mounting writers", async (
   await addSessionGrantInjection(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
 
-  await expect(page.getByTestId("web-leader-unavailable")).toBeVisible();
-  await expect(page.getByTestId("client-shell")).toHaveCount(0);
+  await expect(leaderPanel(page, "Inkson could not start safely")).toBeVisible();
+  await expect(page.locator(".shell.app")).toHaveCount(0);
   await expect
     .poll(() =>
       page.evaluate(() => localStorage.getItem("inkson.web_writer_lease.v1")),
@@ -243,34 +277,27 @@ test("selected Realm security badge matches its encrypted sidebar marker", async
 }) => {
   await refreshServer(page);
 
-  const realmButton = page
-    .getByTestId("realm-tree-node-button")
+  const realmButton = byClass(page, "realm-tree-item")
     .filter({ hasText: "Arkret Demo Realm" });
   await realmButton.click();
-  await expect(page.getByTestId("kanban-panel")).toBeVisible();
-  await expect(realmButton.locator(".sidebar-nav-icon")).toHaveAttribute(
-    "title",
-    "Encrypted Realm",
-  );
-  await expect(page.getByTestId("realm-security-state")).toHaveText(
+  await expect(byClass(page, "kanban-panel")).toBeVisible();
+  await expectRealmSecurity(page, realmButton, true);
+  await expect(page.locator(".topbar-context .security-state-badge-label")).toHaveText(
     "Encrypted",
   );
 });
 
 test("authenticated login session refresh returns to the realm", async ({ page }) => {
   await page.goto("/login", { waitUntil: "domcontentloaded" });
-  await expect(page.getByTestId("login-panel")).toBeVisible();
-  await expect(page.getByTestId("session-status")).toHaveAttribute(
-    "data-status",
-    "signed-in",
-  );
-  await page.getByTestId("refresh-now-button").click();
+  await expect(loginPanel(page)).toBeVisible();
+  await expect(page.locator(".auth-session-state .session-status")).toHaveText("signed-in");
+  await page.locator(".auth-session-state").getByRole("button", { name: "Refresh now", exact: true }).click();
 
-  await expect(latestTestId(page, "client-shell")).toBeVisible({
+  await expect(page.locator(".shell.app").last()).toBeVisible({
     timeout: 120_000,
   });
-  await expect(page.getByTestId("login-panel")).toHaveCount(0);
-  await expect(page.getByTestId("dashboard-panel")).toBeVisible();
+  await expect(loginPanel(page)).toHaveCount(0);
+  await expect(byClass(page, "dashboard-panel")).toBeVisible();
   await expect(page).toHaveURL(/\/$/);
 });
 
@@ -278,13 +305,13 @@ test("login page delegates account lifecycle to coauth OIDC", async ({
   page,
 }) => {
   await page.goto("/login", { waitUntil: "domcontentloaded" });
-  await expect(page.getByTestId("login-panel")).toBeVisible();
-  await expect(page.getByTestId("login-server-url")).toHaveValue(
+  await expect(loginPanel(page)).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "Sign-in server URL", exact: true })).toHaveValue(
     "https://local.host/",
   );
   // Neutral client: the station field is a free-text URL input with a
   // custom-styled preset dropdown (no native <datalist>, no browser autofill).
-  await expect(page.getByTestId("login-server-url")).not.toHaveAttribute(
+  await expect(page.getByRole("textbox", { name: "Sign-in server URL", exact: true })).not.toHaveAttribute(
     "list",
     /.*/,
   );
@@ -293,28 +320,31 @@ test("login page delegates account lifecycle to coauth OIDC", async ({
   ).toHaveCount(0);
   // The preset list is collapsed until the toggle is clicked, then offers the
   // configured presets as one-click choices.
-  await expect(page.getByTestId("login-server-options")).toHaveCount(0);
-  await page.getByTestId("login-server-options-toggle").click();
-  await expect(page.getByTestId("login-server-options")).toBeVisible();
-  await expect(page.getByTestId("login-server-option").first()).toContainText(
+  await expect(byClass(page, "auth-combobox-menu")).toHaveCount(0);
+  await byClass(page, "auth-combobox-toggle").click();
+  await expect(byClass(page, "auth-combobox-menu")).toBeVisible();
+  await expect(byClass(page, "auth-combobox-option").first()).toContainText(
     "https://local.host",
   );
-  await page.getByTestId("login-server-options-toggle").click();
-  await expect(page.getByTestId("login-server-options")).toHaveCount(0);
+  await byClass(page, "auth-combobox-toggle").click();
+  await expect(byClass(page, "auth-combobox-menu")).toHaveCount(0);
   // Account lifecycle is delegated to coauth OIDC: a single Continue action,
   // no in-app account selection.
-  await expect(page.getByTestId("login-account-hint")).toHaveCount(0);
-  await expect(page.getByTestId("use-different-account-button")).toHaveCount(0);
-  await expect(page.getByTestId("start-server-login-button")).toBeVisible();
+  await expect(byClass(page, "login-account-hint")).toHaveCount(0);
+  await expect(byClass(page, "use-different-account-button")).toHaveCount(0);
+  await expect(loginPanel(page).locator(".account-picker")).toHaveCount(0);
+  await expect(loginPanel(page).getByRole("button", { name: "Sign in to this server", exact: true })).toBeVisible();
 
-  await expect(page.getByTestId("create-account-link")).toHaveCount(0);
-  await expect(page.getByTestId("forgot-account-link")).toHaveCount(0);
+  await expect(byClass(page, "create-account-link")).toHaveCount(0);
+  await expect(byClass(page, "forgot-account-link")).toHaveCount(0);
+  await expect(loginPanel(page).getByRole("link", { name: "Create account", exact: true })).toHaveCount(0);
+  await expect(loginPanel(page).getByRole("link", { name: "Lost password or account", exact: true })).toHaveCount(0);
 
   await Promise.all([
     page.waitForURL(/https:\/\/auth\.local\.host\/authorize.*/, {
       waitUntil: "domcontentloaded",
     }),
-    page.getByTestId("start-server-login-button").click(),
+    loginPanel(page).getByRole("button", { name: "Sign in to this server", exact: true }).click(),
   ]);
   const authorizeUrl = new URL(page.url());
   expect(authorizeUrl.searchParams.get("client_id")).toBe(
@@ -339,35 +369,33 @@ test("connect refresh canonicalizes a stale locator while retaining the accepted
   const scid = CURRENT_PRINCIPAL_DID.split(":")[2];
   const staleDid = `did:webvh:${scid}:auth.local.host:users:01KCANONICAL`;
   const canonicalDeviceId = "ak:device:01964137-0000-7000-8000-0000000000a1";
-  await expect(latestTestId(page, "status-label")).toContainText("Online");
+  await expect(byClass(page, "status-label").last()).toContainText("Online");
   await writeLocalConfigAndReload(page, {
     did: staleDid,
     device_id: canonicalDeviceId,
   });
-  await expect(latestTestId(page, "client-shell")).toBeVisible({
+  await expect(page.locator(".shell.app").last()).toBeVisible({
     timeout: 120_000,
   });
 
   await refreshServer(page);
 
-  await latestTestId(page, "account-menu-button").click();
-  await expect(latestTestId(page, "account-menu-display-name")).toHaveText(
+  await byClass(page, "account-menu-button").last().click();
+  await expect(page.locator(".account-menu .who").last()).toHaveText(
     "inkson",
   );
-  await expect(latestTestId(page, "account-menu-handles")).toContainText(
+  await expect(accountValue(page, "Handles").last()).toContainText(
     "alice:local.host",
   );
-  await expect(latestTestId(page, "account-menu-did")).toHaveAttribute(
-    "title",
-    CURRENT_PRINCIPAL_CORE_ID,
-  );
-  await expect(latestTestId(page, "account-menu-did")).toHaveText(
+  await expectCompleteDescription(page, accountValue(page, "DID").last(), CURRENT_PRINCIPAL_CORE_ID);
+  await expectCompleteDescription(page, accountValue(page, "Handles").last(), "alice:local.host");
+  await expectIdentityTooltip(page, "Copy DID", CURRENT_PRINCIPAL_CORE_ID);
+  await expectIdentityTooltip(page, "Copy handles", "alice:local.host");
+  await expect(accountValue(page, "DID").last()).toHaveText(
     /^ak:did_core:webvh:.+\.\.\..+$/,
   );
-  await expect(latestTestId(page, "account-menu-device")).toHaveAttribute(
-    "title",
-    canonicalDeviceId,
-  );
+  await expectCompleteDescription(page, byClass(page, "account-menu__device-id").last(), canonicalDeviceId);
+  await expectIdentityTooltip(page, "Copy device ID", canonicalDeviceId);
   await expect
     .poll(() => readLocalConfig(page))
     .toMatchObject({
@@ -393,7 +421,7 @@ test("changing the active device requires sign-in instead of silently restoring 
       authenticatedWrites += 1;
     }
   });
-  await expect(latestTestId(page, "status-label")).toContainText("Online");
+  await expect(byClass(page, "status-label").last()).toContainText("Online");
   await reloadWithUnacceptedDevice(page, unacceptedDeviceId);
   const bootWitness = await page.evaluate(() => (
     window as unknown as {
@@ -411,24 +439,24 @@ test("changing the active device requires sign-in instead of silently restoring 
     deviceId: unacceptedDeviceId,
     injectionDisabled: true,
   });
-  await expect(latestTestId(page, "login-panel")).toBeVisible({
+  await expect(loginPanel(page).last()).toBeVisible({
     timeout: 30_000,
   });
   expect((await readLocalConfig(page)).active_account.device_id).toBe(
     unacceptedDeviceId,
   );
-  await expect(latestTestId(page, "start-server-login-button")).toBeVisible();
-  await expect(latestTestId(page, "start-server-login-button")).toBeEnabled();
-  await expect(page.getByTestId("device-authorization-modal")).toHaveCount(0);
-  await expect(page.getByTestId("recovery-setup-banner")).toHaveCount(0);
-  await expect(page.getByTestId("recovery-key-setup-modal")).toHaveCount(0);
+  await expect(loginPanel(page).getByRole("button", { name: "Sign in to this server", exact: true }).last()).toBeVisible();
+  await expect(loginPanel(page).getByRole("button", { name: "Sign in to this server", exact: true }).last()).toBeEnabled();
+  await expect(byClass(page, "device-authorization-modal")).toHaveCount(0);
+  await expect(byClass(page, "recovery-setup-banner")).toHaveCount(0);
+  await expect(byClass(page, "recovery-key-setup-modal")).toHaveCount(0);
   expect(authenticatedWrites).toBe(0);
 });
 
 test("fresh browser requires device authorization before recovery prompts", async ({
   page,
 }) => {
-  const authModal = latestTestId(page, "device-authorization-modal");
+  const authModal = byClass(page, "device-authorization-modal").last();
   await expect(authModal).toBeVisible({ timeout: 30_000 });
   await expect(authModal).toContainText("Authorize this device");
   await expect(authModal).toContainText(
@@ -439,8 +467,8 @@ test("fresh browser requires device authorization before recovery prompts", asyn
   );
   await expect(authModal).not.toContainText("Arkret v1");
   await expect(
-    latestTestId(page, "device-authorization-open-pairing"),
+    authModal.getByRole("button", { name: "Start device approval", exact: true }),
   ).toBeVisible();
-  await expect(page.getByTestId("recovery-setup-banner")).toHaveCount(0);
-  await expect(page.getByTestId("recovery-key-setup-modal")).toHaveCount(0);
+  await expect(byClass(page, "recovery-setup-banner")).toHaveCount(0);
+  await expect(byClass(page, "recovery-key-setup-modal")).toHaveCount(0);
 });

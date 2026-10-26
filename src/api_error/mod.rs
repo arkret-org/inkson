@@ -106,16 +106,11 @@ pub fn display_user_facing(error: &anyhow::Error) -> String {
     }
 }
 
-/// Localize an `error.*` key for the current locale. Falls back to the
-/// English dictionary when no Dioxus runtime / i18n context is installed
-/// (unit tests, non-view threads — `tr()` panics without a runtime) so the
-/// result never surfaces as a raw key.
+/// Use the current app-owned locale, with the established English fallback off the UI thread.
 pub(crate) fn localized_error_copy(key: &str) -> String {
-    if dioxus::core::Runtime::try_current().is_some() {
-        let translated = crate::i18n::tr(key);
-        if translated != key {
-            return translated;
-        }
+    let translated = crate::i18n::tr(key);
+    if translated != key {
+        return translated;
     }
     let english = crate::i18n::english_translations();
     english.get(key).unwrap_or(key).to_owned()

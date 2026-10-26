@@ -1,29 +1,9 @@
-//! P5 — three-mode theme switcher with localStorage persistence.
-//!
-//! `app.rs` already tracks a `theme: Signal<String>` carrying one of
-//! `"light"` / `"night"` / `"system"`, hydrates it from local state on
-//! boot, and exposes the raw mode on the shell's `data-theme`. The
-//! *effective* canonical theme (`light`/`dark`) is mirrored onto `<html>`
-//! by `app.rs::apply_document_root_theme`, which is what all CSS keys off.
-//! The existing topbar / mobile toggles only
-//! flip between two states (light ↔ night) via [`next_manual_theme`];
-//! this component adds a richer three-mode picker that:
-//!
-//!   * surfaces all three modes (light / dark / follow system) so users can explicitly delegate to
-//!     the OS,
-//!   * persists the choice to `localStorage` (browser) or `LocalStateStore` private-data (desktop)
-//!     via the same path the existing topbar toggle uses, and
-//!   * mirrors ARIA semantics — `role="radiogroup"` + per-mode `aria-checked` so screen-reader
-//!     users hear the active mode.
-//!
-//! The component is intentionally view-agnostic: caller passes the
-//! `theme` signal + a persistence callback. Wired into the topbar (new
-//! "Theme" group) and the Settings → Appearance card.
+//! Live three-mode theme selector.
+use std::rc::Rc;
 
-use dioxus::prelude::*;
+use glory::prelude::*;
 
-use crate::ui::button::{Button, ButtonVariant};
-
+use crate::presentation::{InksonContext, View};
 /// One of the three canonical theme modes. The string round-trip
 /// matches what `app.rs` writes into private data (`"theme"` key) so
 /// the existing hydration path keeps working unchanged.
@@ -71,64 +51,98 @@ impl ThemeMode {
     }
 }
 
-/// Props for the three-mode theme switcher.
-#[derive(Clone, PartialEq, Props)]
 pub struct ThemeSwitcherProps {
-    /// Live theme signal owned by `app.rs::RouterView`. The component
-    /// reads + writes through this signal so the existing rendering
-    /// paths (`theme_renders_as_night`, the shell `data-theme` attr,
-    /// etc.) re-run automatically.
-    pub theme: Signal<String>,
-    /// Persist callback. The caller threads the same write path the
-    /// existing topbar toggle uses (`LocalStateStore::save_plain_local_data
-    /// (&principal_id(), "theme", next)` for desktop or the LocalStorage
-    /// fallback for wasm). Keeps the component free of any direct
-    /// storage coupling.
-    pub on_persist: EventHandler<String>,
+    pub theme: Cage<String>,
+    pub on_persist: Rc<dyn Fn(String)>,
 }
-
-#[component]
-pub fn ThemeSwitcher(props: ThemeSwitcherProps) -> Element {
-    let mut theme = props.theme;
-    let active = ThemeMode::from_persisted_str(&theme.read().clone());
-
-    rsx! {
-        div {
-            class: "theme-switcher",
-            "data-testid": "theme-switcher",
-            role: "radiogroup",
-            "aria-label": crate::i18n::tr("theme.switcher_aria_label"),
-
-            for mode in [ThemeMode::Light, ThemeMode::Dark, ThemeMode::System] {
-                {
-                    let is_active = active == mode;
-                    let on_persist = props.on_persist;
-                    let mode_value = mode;
-                    rsx! {
-                        Button {
-                            variant: if is_active { ButtonVariant::Primary } else { ButtonVariant::Secondary },
-                            class: "theme-switcher-option",
-                            "data-testid": match mode_value {
-                                ThemeMode::Light => "theme-switcher-light",
-                                ThemeMode::Dark => "theme-switcher-dark",
-                                ThemeMode::System => "theme-switcher-system",
-                            },
-                            "data-active": if is_active { "true" } else { "false" },
-                            role: "radio",
-                            "aria-checked": if is_active { "true" } else { "false" },
-                            "aria-label": mode_value.label(),
-                            title: mode_value.aria_description(),
-                            onclick: move |_| {
-                                let next = mode_value.as_persisted_str().to_owned();
-                                theme.set(next.clone());
-                                on_persist.call(next);
-                            },
-                            "{mode_value.label()}"
-                        }
+pub fn theme_switcher(
+    scope: &Scope,
+    context: Rc<InksonContext>,
+    props: ThemeSwitcherProps,
+) -> View {
+    let theme = props.theme;
+    let on_persist = props.on_persist;
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let mut choices = Vec::new();
+        for mode in [ThemeMode::Light, ThemeMode::Dark, ThemeMode::System] {
+            let persist = on_persist.clone();
+            let selected = scope.bond(move || ThemeMode::from_persisted_str(&theme.get()) == mode);
+            let classes = scope.bond(move || {
+                format!(
+                    "button theme-switcher-option {}",
+                    if selected.get() {
+                        "primary"
+                    } else {
+                        "secondary"
                     }
-                }
-            }
+                )
+            });
+            let semantics = scope.bond(move || {
+                Some(Box::new(glory::render::Semantics {
+                    pressed: Some(selected.get()),
+                    ..Default::default()
+                }))
+            });
+            choices.push(Box::new(
+                button()
+                    .class(classes)
+                    .name(mode.label())
+                    .label(mode.label())
+                    .semantics(semantics)
+                    .on(glory::render::EventKind::Activate, move |_| {
+                        let next = mode.as_persisted_str().to_owned();
+                        theme.revise(|value| *value = next.clone());
+                        persist(next);
+                    }),
+            ) as View);
         }
+        Box::new(
+            view()
+                .class("theme-switcher")
+                .name(context.translated(scope, "theme.switcher_aria_label"))
+                .fill(choices),
+        )
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let selected = scope.bond(move || {
+            ThemeMode::from_persisted_str(&theme.get())
+                .as_persisted_str()
+                .to_owned()
+        });
+        Box::new(
+            sapid::radio_group("theme-switcher")
+                .unstyled()
+                .class("theme-switcher")
+                .label(context.translated(scope, "theme.switcher_aria_label"))
+                .value(selected)
+                .orientation(glory::render::Orientation::Horizontal)
+                .items(
+                    [ThemeMode::Light, ThemeMode::Dark, ThemeMode::System]
+                        .into_iter()
+                        .map(|mode| {
+                            let class = scope.bond(move || {
+                                format!(
+                                    "button theme-switcher-option {}",
+                                    if ThemeMode::from_persisted_str(&theme.get()) == mode {
+                                        "primary"
+                                    } else {
+                                        "secondary"
+                                    }
+                                )
+                            });
+                            sapid::radio(mode.as_persisted_str())
+                                .unstyled()
+                                .class(class)
+                                .label(mode.label())
+                        }),
+                )
+                .on_value_change(move |next| {
+                    theme.revise(|value| *value = next.clone());
+                    on_persist(next);
+                }),
+        )
     }
 }
 

@@ -6,23 +6,23 @@ body{font:16px system-ui;background:#18222e;color:#eee;margin:24px}
 .row{border:1px solid #789;background:#273345;padding:12px;box-sizing:border-box;flex-shrink:0}#result{white-space:pre-wrap}
 </style>
 <h1>10,000 variable-height messages</h1><p>Local presentation fixture. No account, network, or message submission.</p>
-<div id="result">Running…</div><div id="feed"><div id="list" data-testid="virtual-timeline"><div id="slice"></div></div></div>
-<script>
+<div id="result">Running…</div><div id="feed"><div id="list" class="virtual-timeline"><div id="slice"></div></div></div>
+<script type="module">
+import {mountVirtualTimeline} from "../src/views/chat/timeline_window.js";
 const messages = Array.from({length:10000},(_,i)=>`fixture-${i}`);
-let pending=[], receiver, generation=1, peak=0, windows=0;
-const deliver=value=>receiver?(receiver(value),receiver=null):pending.push(value);
+let generation=1, peak=0, windows=0;
 const feed=document.getElementById('feed'), slice=document.getElementById('slice');
-window.dioxus={recv:()=>pending.length?Promise.resolve(pending.shift()):new Promise(resolve=>receiver=resolve),send(window){
+const bridge = mountVirtualTimeline({feed_id:'feed',follows_latest:true}, window=>{
  windows++; peak=Math.max(peak,window.end-window.start);
  slice.style.transform=`translateY(${window.top}px)`;
  slice.replaceChildren(...messages.slice(window.start,window.end).map((key,index)=>{
-  const row=document.createElement('div'); row.className='row';row.dataset.virtualIndex=window.start+index;row.dataset.messageId=key;
+  const row=document.createElement('div'); row.className='row chat-message-row';row.id=`chat-message-${key}`;
   row.style.minHeight=`${48+((window.start+index)%17)*13}px`;row.textContent=`${key}: variable-height presentation fixture`;
   return row;
  }));
- deliver({ack:true});
-}};
-deliver({feed_id:'feed',follows_latest:true});deliver({generation,keys:messages,focus:''});
+ bridge.update({ack:true});
+});
+bridge.update({generation,keys:messages,focus:''});
 const wait=()=>new Promise(resolve=>setTimeout(resolve,120));
 async function test(){
  try{
@@ -34,7 +34,7 @@ async function test(){
    if(!slice.children.length)throw Error('empty visible slice');
   }
   feed.scrollTop=feed.scrollHeight;feed.dispatchEvent(new Event('scroll'));await wait();
-  const last=slice.lastElementChild?.dataset.messageId;
+  const last=slice.lastElementChild?.id.slice('chat-message-'.length);
   if(last!==messages.at(-1))throw Error('latest message is missing');
   const settled=windows;await wait();await wait();
   if(windows!==settled)throw Error('layout feedback did not settle');
@@ -42,4 +42,4 @@ async function test(){
  }catch(error){document.getElementById('result').textContent=`FAIL: ${error.stack}`;}
 }
 window.addEventListener('load',test);
-</script><script src="../src/views/chat/timeline_window.js"></script>
+</script>

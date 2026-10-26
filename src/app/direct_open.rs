@@ -6,25 +6,21 @@
 //! differing only in how the peer is addressed and what the failure log calls
 //! it, so a fix to one could miss the other two.
 
-use dioxus::prelude::*;
-use dioxus_router::Navigator;
+use std::rc::Rc;
 
+use glory::prelude::*;
+
+use crate::presentation::{InksonContext, SharedStateStore};
 use crate::routes::Route;
-use crate::state::LocalStateStore;
 
-fn spawn_direct_open_task(
-    opening: Signal<Option<String>>,
-    task: impl std::future::Future<Output = ()> + 'static,
-) {
-    // Navigation leaves the application shell mounted. Keep its task with the
-    // shell's state, so unmount cancels it instead of accessing dropped
-    // signals from the root scope.
-    dioxus::core::Runtime::current().in_scope(opening.origin_scope(), || {
-        dioxus::core::spawn(task);
-    });
+fn spawn_direct_open_task(scope: &Scope, task: impl std::future::Future<Output = ()> + 'static) {
+    if let Err(error) = scope.spawn(task) {
+        scope.report_error(error);
+    }
 }
 
 /// Which subject a direct conversation is being opened with.
+#[derive(Clone)]
 pub(super) enum DirectConversationTarget {
     /// One of the signed-in account's own agents.
     ///
@@ -70,29 +66,28 @@ impl DirectConversationTarget {
 /// exit path, including the failures, so a failed open does not leave the
 /// sidebar permanently disabled.
 pub(super) fn open_direct_conversation(
+    scope: &Scope,
+    context: Rc<InksonContext>,
     base_url: String,
     api_token: String,
-    state_store: SyncSignal<LocalStateStore>,
-    navigator: Navigator,
-    mut direct_chat_opening: Signal<Option<String>>,
+    state_store: SharedStateStore,
+    direct_chat_opening: Cage<Option<String>>,
     target: DirectConversationTarget,
 ) {
-    // The transport half of this flow takes the host-neutral handle, not the
-    // Dioxus signal: `crate::transport` is engine code on its way to garth and
-    // must not name a UI runtime type. Wrapping here is the host's job.
-    let state_store = super::runtime_adapter::state_store_handle(state_store);
-    let initiating_account = crate::app::SessionContext::get().active_account();
+    let state_store = state_store.handle();
+    let initiating_account = context.active_account.get();
+    let generation = context.session_generation.get();
+    let account = initiating_account.clone();
+    let weak = scope.downgrade();
     let session_fence = crate::transport::auth::AuthoringSessionFence::capture();
-    spawn_direct_open_task(direct_chat_opening, async move {
+    spawn_direct_open_task(scope, async move {
         let Ok(session_fence) = session_fence else {
-            if let Ok(mut opening) = direct_chat_opening.try_write() {
-                *opening = None;
-            }
+            let _ = direct_chat_opening.try_revise(|opening| *opening = None);
             return;
         };
         let routed = std::rc::Rc::new(std::cell::Cell::new(false));
         let early_routed = routed.clone();
-        let early_navigator = navigator;
+        let early_context = context.clone();
         let final_fence = session_fence.clone();
         let subject = target.subject().to_owned();
         let failure_message = target.failure_message();
@@ -139,10 +134,8 @@ pub(super) fn open_direct_conversation(
                                 )
                                 .await?;
                             session_fence.check()?;
-                            if let Ok(mut opening) = direct_chat_opening.try_write() {
-                                *opening = None;
-                            }
-                            early_navigator.push(Route::DirectConversation {
+                            let _ = direct_chat_opening.try_revise(|opening| *opening = None);
+                            early_context.navigate(Route::DirectConversation {
                                 realm_id: accepted.realm_id.to_string(),
                                 strand_id: accepted.main_strand_id.to_string(),
                             });
@@ -206,10 +199,8 @@ pub(super) fn open_direct_conversation(
                                 )
                                 .await?;
                             session_fence.check()?;
-                            if let Ok(mut opening) = direct_chat_opening.try_write() {
-                                *opening = None;
-                            }
-                            early_navigator.push(Route::DirectConversation {
+                            let _ = direct_chat_opening.try_revise(|opening| *opening = None);
+                            early_context.navigate(Route::DirectConversation {
                                 realm_id: accepted.realm_id.to_string(),
                                 strand_id: accepted.main_strand_id.to_string(),
                             });
@@ -238,10 +229,11 @@ pub(super) fn open_direct_conversation(
                 }
             })
             .await;
-        if final_fence.check_session_identity().is_ok()
-            && let Ok(mut opening) = direct_chat_opening.try_write()
-        {
-            *opening = None;
+        if weak.upgrade().is_none() || !context.session_matches(generation, &account) {
+            return;
+        }
+        if final_fence.check_session_identity().is_ok() {
+            let _ = direct_chat_opening.try_revise(|opening| *opening = None);
         }
         if final_fence.check().is_err() {
             return;
@@ -290,13 +282,11 @@ pub(super) fn open_direct_conversation(
                 None
             }
         };
-        if let Ok(mut opening) = direct_chat_opening.try_write() {
-            *opening = None;
-        }
+        let _ = direct_chat_opening.try_revise(|opening| *opening = None);
         if !routed.get()
             && let Some(route) = route
         {
-            let _ = navigator.push(route);
+            context.navigate(route);
         }
     });
 }
@@ -352,80 +342,36 @@ pub(crate) async fn start_founder_genesis(
 
 #[cfg(test)]
 mod lifecycle_tests {
-    use std::cell::{Cell, RefCell};
-    use std::rc::Rc;
+    use std::cell::Cell;
 
     use super::*;
-
-    #[derive(Clone, PartialEq)]
-    struct Probe {
-        mounted: Rc<RefCell<Option<Signal<bool>>>>,
-        scope: Rc<Cell<Option<(ScopeId, ScopeId)>>>,
-        dropped: Rc<Cell<bool>>,
-    }
-
-    struct OpeningTask {
-        opening: Signal<Option<String>>,
-        probe: Probe,
-    }
-
-    impl std::future::Future for OpeningTask {
+    struct Pending(Rc<Cell<bool>>);
+    impl std::future::Future for Pending {
         type Output = ();
-
         fn poll(
-            mut self: std::pin::Pin<&mut Self>,
+            self: std::pin::Pin<&mut Self>,
             _: &mut std::task::Context<'_>,
         ) -> std::task::Poll<()> {
-            self.probe.scope.set(Some((
-                dioxus::core::current_scope_id(),
-                self.opening.origin_scope(),
-            )));
-            *self.opening.write() = None;
             std::task::Poll::Pending
         }
     }
-
-    impl Drop for OpeningTask {
+    impl Drop for Pending {
         fn drop(&mut self) {
-            self.probe.dropped.set(true);
+            self.0.set(true);
         }
     }
-
-    #[component]
-    fn OpeningShell(probe: Probe) -> Element {
-        let opening = use_signal(|| Some("opening".to_owned()));
-        use_hook(move || {
-            spawn_direct_open_task(opening, OpeningTask { opening, probe });
-        });
-        rsx! { div { "shell" } }
-    }
-
-    fn lifecycle_harness(probe: Probe) -> Element {
-        let mounted = use_signal(|| true);
-        *probe.mounted.borrow_mut() = Some(mounted);
-        rsx! {
-            if mounted() {
-                OpeningShell { probe }
-            }
-        }
-    }
-
     #[test]
-    fn direct_open_task_uses_shell_scope_and_is_cancelled_on_shell_unmount() {
-        let probe = Probe {
-            mounted: Rc::new(RefCell::new(None)),
-            scope: Rc::new(Cell::new(None)),
-            dropped: Rc::new(Cell::new(false)),
-        };
-        let mut dom = VirtualDom::new_with_props(lifecycle_harness, probe.clone());
-        dom.rebuild_in_place();
-        dom.render_immediate_to_vec();
-        let (task_scope, state_scope) = probe.scope.get().expect("opening task was polled");
-        assert_eq!(task_scope, state_scope);
-        assert_ne!(task_scope, ScopeId::ROOT);
-        assert!(!probe.dropped.get());
-        dom.in_runtime(|| probe.mounted.borrow().unwrap().set(false));
-        dom.render_immediate_to_vec();
-        assert!(probe.dropped.get(), "unmounted shell must cancel its task");
+    fn direct_open_task_is_cancelled_on_its_owner_retirement() {
+        let executor = Rc::new(glory::core::executor::Executor::new(32));
+        let app = glory::ui::App::with_host(executor, glory::render::memory::Memory::new);
+        let dropped = Rc::new(Cell::new(false));
+        let child = app.scope().child().expect("child owner");
+        spawn_direct_open_task(&child, Pending(dropped.clone()));
+        assert!(!dropped.get());
+        drop(child);
+        assert!(
+            dropped.get(),
+            "retired shell must cancel its direct-open command"
+        );
     }
 }

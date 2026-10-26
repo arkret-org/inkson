@@ -1,0 +1,160 @@
+/* The timeline's finite action menu uses a real icon and public layer placement. */
+.chat-action-menu-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  min-height: 32px;
+  box-sizing: border-box;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  background: var(--surface-solid, var(--surface));
+  color: var(--text-2);
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+}
+.chat-action-menu-trigger svg {
+  width: 15px;
+  height: 15px;
+}
+.chat-action-menu-trigger:hover,
+.chat-action-menu-trigger:focus-visible {
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface-2));
+  color: var(--text);
+}
+.discussion-message .message-pin-indicator {
+  position: absolute;
+  top: 7px;
+  right: 48px;
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  min-height: 26px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--accent) 44%, var(--border));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--surface) 82%, var(--accent-soft));
+  color: var(--accent-ink);
+  box-shadow: none;
+}
+
+/* The original test marker also names a legacy full-screen media stage. */
+.call-panel .call-stage {
+  display: inline-flex;
+  grid-template-rows: none;
+  height: 16px;
+  background: var(--accent);
+  color: white;
+}
+.call-dialer > .sapid-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  gap: 6px;
+}
+.call-dialer > .sapid-field > .sapid-field-label {
+  grid-column: 1;
+  grid-row: 1;
+}
+.call-dialer > .sapid-field > .input {
+  grid-column: 1;
+  grid-row: 2;
+  font-size: 13px;
+  line-height: 1.4;
+  padding: 8px 10px;
+}
+.call-peer-field > .sapid-field-description {
+  z-index: 1;
+  grid-column: 1;
+  grid-row: 2;
+  align-self: center;
+  margin: 0;
+  padding: 0 11px;
+  color: var(--text-3);
+  font-size: 13px;
+  line-height: 1.4;
+  pointer-events: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.discussion-chat-feed .discussion-message.is-own {
+  margin-left: auto;
+}
+.compose-upload-progress {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.compose-upload-progress > .retry-attachment-upload {
+  font: inherit;
+  min-height: 0;
+}
+.poll-card .poll-result-row {
+  display: flex;
+  align-items: center;
+}
+.watch-level-toggle > svg:last-child {
+  width: 12px;
+  height: 12px;
+  opacity: 0.7;
+}
+/* Inline descendants retain the original check/copy grid inside real buttons. */
+.watch-level-menu .watch-level-option {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  column-gap: 10px;
+  row-gap: 4px;
+}
+.native-finite-menu-navigation {
+  display: flex;
+  flex-direction: column;
+  gap: inherit;
+}
+.watch-level-option > .watch-level-check {
+  grid-column: 1;
+  grid-row: 1 / 3;
+}
+.watch-level-option > .watch-level-option-label,
+.watch-level-option > .watch-level-option-description {
+  grid-column: 2;
+}
+.call-panel .actions > .btn,
+.call-panel .actions > .primary {
+  padding: 8px 16px;
+  min-height: 36px;
+  border: 0;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+}
+.inkson-theme-dark .call-panel .actions > .btn-secondary:not(:disabled) {
+  background: rgb(34, 49, 41);
+  color: rgb(231, 239, 233);
+  box-shadow: none;
+}
+.inkson-theme-light .call-panel .actions > .btn-secondary:not(:disabled) {
+  background: rgb(235, 240, 235);
+  color: rgb(25, 33, 28);
+  box-shadow: none;
+}
+
+@media (pointer: coarse), (max-width: 640px) {
+  .chat-action-menu-trigger {
+    width: 40px;
+    min-width: 40px;
+    height: 40px;
+    min-height: 40px;
+  }
+  .message-context-menu .message-context-menu-item {
+    min-height: 44px;
+  }
+  .discussion-message .message-pin-indicator {
+    right: 56px;
+  }
+}

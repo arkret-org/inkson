@@ -46,7 +46,6 @@
   position: fixed;
   z-index: var(--layer-local-popover);
   background: var(--surface-solid, var(--surface));
-  inset: auto;
   margin: 0;
   visibility: hidden;
   display: grid;

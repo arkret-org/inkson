@@ -1,31 +1,41 @@
-use dioxus::prelude::{ReadableExt, Signal, WritableExt};
+use std::rc::{Rc, Weak};
 
+use glory::Cage;
+
+use crate::presentation::InksonContext;
 use crate::runtime::projection::{ClientProjectionEvent, ProjectionSink, SyncStatusEvent};
 use crate::state::projection::ProjectionEvent;
 
 pub(super) struct ProjectionAdapter {
-    projection_events: Signal<Vec<ProjectionEvent>>,
-    sync_cursor: Signal<String>,
-    connection_status: Signal<String>,
-    network_state: Signal<String>,
-    last_error: Signal<Option<String>>,
-    device_queue: Signal<usize>,
-    theme: Signal<String>,
-    selected_realm_id: Signal<String>,
+    context: Weak<InksonContext>,
+    generation: u64,
+    account: Option<crate::config::ActiveAccountContext>,
+    projection_events: Cage<Vec<ProjectionEvent>>,
+    sync_cursor: Cage<String>,
+    connection_status: Cage<String>,
+    network_state: Cage<String>,
+    last_error: Cage<Option<String>>,
+    device_queue: Cage<usize>,
+    theme: Cage<String>,
+    selected_realm_id: Cage<String>,
 }
 
 impl ProjectionAdapter {
     pub(super) fn new(
-        projection_events: Signal<Vec<ProjectionEvent>>,
-        sync_cursor: Signal<String>,
-        connection_status: Signal<String>,
-        network_state: Signal<String>,
-        last_error: Signal<Option<String>>,
-        device_queue: Signal<usize>,
-        theme: Signal<String>,
-        selected_realm_id: Signal<String>,
+        context: Rc<InksonContext>,
+        projection_events: Cage<Vec<ProjectionEvent>>,
+        sync_cursor: Cage<String>,
+        connection_status: Cage<String>,
+        network_state: Cage<String>,
+        last_error: Cage<Option<String>>,
+        device_queue: Cage<usize>,
+        theme: Cage<String>,
+        selected_realm_id: Cage<String>,
     ) -> Self {
         Self {
+            generation: context.session_generation.get_untracked(),
+            account: context.active_account.get_untracked(),
+            context: Rc::downgrade(&context),
             projection_events,
             sync_cursor,
             connection_status,
@@ -40,39 +50,52 @@ impl ProjectionAdapter {
 
 impl ProjectionSink for ProjectionAdapter {
     fn projection(&self, event: ClientProjectionEvent) {
+        if self
+            .context
+            .upgrade()
+            .is_none_or(|context| !context.session_matches(self.generation, &self.account))
+        {
+            return;
+        }
         match event {
             ClientProjectionEvent::Account(event) | ClientProjectionEvent::Realm(event) => {
-                let current = self.projection_events.read().clone();
                 self.projection_events
-                    .clone()
-                    .set(fold_projection_event(&current, event));
+                    .revise(|current| *current = fold_projection_event(current, event));
             }
             ClientProjectionEvent::CursorCheckpoint { cursor, .. } => {
-                self.sync_cursor.clone().set(cursor);
+                self.sync_cursor.revise(|current| *current = cursor);
             }
             ClientProjectionEvent::CursorReset { .. } => {
-                self.sync_cursor.clone().set(String::new());
+                self.sync_cursor.revise(|current| *current = String::new());
             }
             ClientProjectionEvent::DeviceQueue { pending } => {
-                self.device_queue.clone().set(pending);
+                self.device_queue.revise(|current| *current = pending);
             }
             ClientProjectionEvent::Theme { value } => {
-                self.theme.clone().set(value);
+                self.theme.revise(|current| *current = value);
             }
             ClientProjectionEvent::SelectedRealm { realm_id } => {
-                self.selected_realm_id.clone().set(realm_id);
+                self.selected_realm_id.revise(|current| *current = realm_id);
             }
             ClientProjectionEvent::Reset => {
-                self.projection_events.clone().set(Vec::new());
+                self.projection_events
+                    .revise(|current| *current = Vec::new());
             }
         }
     }
 
     fn sync_status(&self, event: SyncStatusEvent) {
+        if self
+            .context
+            .upgrade()
+            .is_none_or(|context| !context.session_matches(self.generation, &self.account))
+        {
+            return;
+        }
         let (status, network, error) = fold_sync_status(event);
-        self.connection_status.clone().set(status);
-        self.network_state.clone().set(network);
-        self.last_error.clone().set(error);
+        self.connection_status.revise(|current| *current = status);
+        self.network_state.revise(|current| *current = network);
+        self.last_error.revise(|current| *current = error);
     }
 }
 

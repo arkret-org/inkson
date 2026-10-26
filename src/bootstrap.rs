@@ -15,8 +15,8 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
-use dioxus::prelude::Signal;
 use garth::mls::backup_selection::recovery_setup_prompt_required;
+use glory::Cage;
 use serde_json::Value;
 
 use super::server_key;
@@ -723,6 +723,7 @@ fn should_ack_device_message_batch(
 }
 
 pub(crate) async fn bootstrap_mls_welcome_for_realm(
+    context: std::rc::Rc<crate::presentation::InksonContext>,
     base_url: String,
     session_credential: String,
     actor_id: String,
@@ -730,12 +731,13 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
     device_id: arkret_sdk::DeviceId,
     realm_id: String,
     state_store: &crate::runtime::input::StateStoreHandle,
-    needs_mls_backup: Option<Signal<bool>>,
+    needs_mls_backup: Option<Cage<bool>>,
 ) -> Result<MlsWelcomeBootstrapOutcome, String> {
     let scope = arkret_sdk::ScopeRef::Realm {
         realm_id: arkret_sdk::RealmId::new(realm_id).map_err(|error| error.to_string())?,
     };
     bootstrap_mls_welcome_for_scope(
+        context,
         base_url,
         session_credential,
         actor_id,
@@ -763,6 +765,7 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
 /// itself is account-wide, because one queue batch can carry deliveries for
 /// several scopes and discarding the others would lose them at the ACK.
 pub(crate) async fn bootstrap_mls_welcome_for_scope(
+    context: std::rc::Rc<crate::presentation::InksonContext>,
     base_url: String,
     session_credential: String,
     actor_id: String,
@@ -770,8 +773,16 @@ pub(crate) async fn bootstrap_mls_welcome_for_scope(
     device_id: arkret_sdk::DeviceId,
     scope: arkret_sdk::ScopeRef,
     state_store: &crate::runtime::input::StateStoreHandle,
-    needs_mls_backup: Option<Signal<bool>>,
+    needs_mls_backup: Option<Cage<bool>>,
 ) -> Result<MlsWelcomeBootstrapOutcome, String> {
+    let generation = context.session_generation.get_untracked();
+    let owner = context.active_account.get_untracked();
+    if owner
+        .as_ref()
+        .is_none_or(|account| account.authority != authority || account.device_id != device_id)
+    {
+        return Err("Account or device changed. Open this Realm again.".into());
+    }
     let realm_id = scope
         .realm_id_opt()
         .ok_or_else(|| "Welcome requires a Realm scope".to_owned())?
@@ -788,6 +799,9 @@ pub(crate) async fn bootstrap_mls_welcome_for_scope(
     )
     .await
     .map_err(|error| error.display())?;
+    if !context.session_matches(generation, &owner) {
+        return Err("Account or device changed. Open this Realm again.".into());
+    }
     let acknowledgement_token = messages.acknowledgement_token.clone();
     let delivered = messages.deliveries.len();
 
@@ -866,6 +880,7 @@ pub(crate) async fn bootstrap_mls_welcome_for_scope(
         // cached recovery public key when available, otherwise surface the
         // prompt.
         crate::components::maybe_auto_backup_mls_after_encrypted_write(
+            context.clone(),
             base_url.clone(),
             session_credential.clone(),
             authority.clone(),

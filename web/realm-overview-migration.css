@@ -1,0 +1,8 @@
+/* Preserve the original overview metric strong-label presentation. */
+.realm-admin-overview .metric > .realm-overview-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-2);
+  margin-bottom: 4px;
+}

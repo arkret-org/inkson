@@ -8,17 +8,17 @@ registerStrandsBeforeEach();
 
 async function advanceToCreate(page: import("@playwright/test").Page) {
   await page.goto("/setup/realms", { waitUntil: "domcontentloaded" });
-  await expect(page.getByTestId("setup-panel")).toBeVisible();
+  await expect(page.locator("[class~=\"setup-panel\"]")).toBeVisible();
   await dismissRecoveryMissingModal(page);
-  await page.getByTestId("realm-title-input").fill("Grant Regression Realm");
-  await page.getByTestId("new-realm-next-button").click();
-  await page.getByTestId("new-realm-next-button").click();
+  await page.locator(".realm-title-input input").fill("Grant Regression Realm");
+  await page.locator("[class~=\"new-realm-next-button\"]").click();
+  await page.locator("[class~=\"new-realm-next-button\"]").click();
 }
 
 test("configured recovery session can create a Realm", async ({ page }) => {
   await advanceToCreate(page);
 
-  const createButton = page.getByTestId("create-realm-button");
+  const createButton = page.locator("[class~=\"create-realm-button\"]");
   await expect(createButton).toBeEnabled();
   const createRequest = page.waitForRequest(
     (request) =>
@@ -33,17 +33,17 @@ test("configured recovery session can create a Realm", async ({ page }) => {
   const request = await Promise.race([
     createRequest,
     page
-      .getByTestId("realm-create-status")
+      .locator("[class~=\"realm-create-status\"]")
       .getByText(/create failed:/i)
       .waitFor({ timeout: 60_000 })
       .then(async () => {
-        throw new Error(await page.getByTestId("realm-create-status").innerText());
+        throw new Error(await page.locator("[class~=\"realm-create-status\"]").innerText());
       }),
   ]);
   expect(JSON.stringify(request.postDataJSON())).toContain(
     "ak.realm.create",
   );
-  await expect(page.getByTestId("realm-setup-done")).toBeVisible();
+  await expect(page.locator("[class~=\"realm-setup-done\"]")).toBeVisible();
 });
 
 test("new Recovery Key session cannot bypass the encrypted Realm recovery gate", async ({
@@ -51,10 +51,10 @@ test("new Recovery Key session cannot bypass the encrypted Realm recovery gate",
 }) => {
   await advanceToCreate(page);
 
-  await page.getByTestId("create-realm-button").click();
+  await page.locator("[class~=\"create-realm-button\"]").click();
 
-  const gate = page.getByTestId("encrypted-realm-recovery-gate");
+  const gate = page.locator("[class~=\"encrypted-realm-recovery-gate\"]");
   await expect(gate).toBeVisible();
-  await expect(gate.getByTestId("encrypted-realm-recovery-gate-setup")).toBeVisible();
-  await expect(gate.getByTestId("encrypted-realm-recovery-gate-override")).toHaveCount(0);
+  await expect(gate.locator("[class~=\"encrypted-realm-recovery-gate-setup\"]")).toBeVisible();
+  await expect(gate.locator("[class~=\"encrypted-realm-recovery-gate-override\"]")).toHaveCount(0);
 });

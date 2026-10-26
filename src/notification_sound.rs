@@ -29,107 +29,72 @@ fn private_bool_preference(value: Option<String>, default_value: bool) -> bool {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen(module = "/assets/notification_sound.js")]
+extern "C" {
+    #[wasm_bindgen::prelude::wasm_bindgen(js_name=initializeNotificationAudio)]
+    fn initialize_web_audio();
+    #[wasm_bindgen::prelude::wasm_bindgen(js_name=playNotificationSound)]
+    fn play_web_sound();
+}
+
 pub fn initialize_notification_audio() {
-    let _ = dioxus::document::eval(AUDIO_BOOTSTRAP_JS);
+    #[cfg(target_arch = "wasm32")]
+    initialize_web_audio();
 }
 
 pub fn play_notification_sound() {
-    let _ = dioxus::document::eval(PLAY_NOTIFICATION_SOUND_JS);
+    #[cfg(target_arch = "wasm32")]
+    play_web_sound();
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let path = match crate::presentation::host::asset_directory() {
+            Ok(directory) => directory.join("notification.wav"),
+            Err(error) => {
+                tracing::warn!(%error,"notification audio asset directory unavailable");
+                return;
+            }
+        };
+        std::thread::spawn(move || {
+            use std::process::{Command, Stdio};
+            #[cfg(target_os = "windows")]
+            let result = {
+                use std::os::windows::process::CommandExt;
+                Command::new("powershell.exe").args(["-NoProfile","-NonInteractive","-Command","(New-Object System.Media.SoundPlayer $env:INKSON_NOTIFICATION_SOUND).PlaySync()"]).env("INKSON_NOTIFICATION_SOUND",&path).creation_flags(0x08000000).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status()
+            };
+            #[cfg(target_os = "macos")]
+            let result = Command::new("afplay")
+                .arg(&path)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+            #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+            let result = Command::new("paplay")
+                .arg(&path)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .or_else(|error| {
+                    if error.kind() == std::io::ErrorKind::NotFound {
+                        Command::new("aplay")
+                            .arg("-q")
+                            .arg(&path)
+                            .stdin(Stdio::null())
+                            .stdout(Stdio::null())
+                            .stderr(Stdio::null())
+                            .status()
+                    } else {
+                        Err(error)
+                    }
+                });
+            if let Err(error) = result {
+                tracing::warn!(%error,"notification audio playback failed");
+            }
+        });
+    }
 }
-
-const AUDIO_BOOTSTRAP_JS: &str = r#"
-(() => {
-  try {
-    const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
-    if (!AudioContextCtor) {
-      return;
-    }
-    const key = "__inksonNotificationAudio";
-    const state = window[key] || {
-      ctx: null,
-      pending: false,
-      listenersInstalled: false,
-      play: null,
-      unlock: null
-    };
-    window[key] = state;
-
-    const context = () => {
-      if (!state.ctx) {
-        state.ctx = new AudioContextCtor();
-      }
-      return state.ctx;
-    };
-
-    state.play = () => {
-      const ctx = context();
-      if (ctx.state !== "running") {
-        state.pending = true;
-        return false;
-      }
-      const start = ctx.currentTime;
-      const gain = ctx.createGain();
-      gain.gain.setValueAtTime(0.0001, start);
-      gain.gain.exponentialRampToValueAtTime(0.06, start + 0.014);
-      gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.22);
-      gain.connect(ctx.destination);
-
-      const tone = ctx.createOscillator();
-      tone.type = "sine";
-      tone.frequency.setValueAtTime(784, start);
-      tone.frequency.setValueAtTime(1046.5, start + 0.09);
-      tone.connect(gain);
-      tone.start(start);
-      tone.stop(start + 0.23);
-      tone.addEventListener("ended", () => gain.disconnect(), { once: true });
-      state.pending = false;
-      return true;
-    };
-
-    state.unlock = () => {
-      const ctx = context();
-      const afterResume = () => {
-        if (state.pending && state.play) {
-          state.play();
-        }
-      };
-      if (ctx.state === "suspended") {
-        const resume = ctx.resume();
-        if (resume && typeof resume.then === "function") {
-          resume.then(afterResume).catch(() => {});
-          return;
-        }
-      }
-      afterResume();
-    };
-
-    if (!state.listenersInstalled) {
-      window.addEventListener("pointerdown", state.unlock, { capture: true, passive: true });
-      window.addEventListener("keydown", state.unlock, { capture: true });
-      state.listenersInstalled = true;
-    }
-  } catch (_) {}
-})()
-"#;
-
-const PLAY_NOTIFICATION_SOUND_JS: &str = r#"
-(() => {
-  try {
-    const key = "__inksonNotificationAudio";
-    if (!window[key]) {
-      return;
-    }
-    const state = window[key];
-    if (state.play && state.play()) {
-      return;
-    }
-    state.pending = true;
-    if (state.unlock) {
-      state.unlock();
-    }
-  } catch (_) {}
-})()
-"#;
 
 #[cfg(test)]
 mod tests {

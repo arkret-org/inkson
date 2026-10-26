@@ -1,38 +1,54 @@
-use super::card_detail_route_realm_id;
 use super::model::*;
 use crate::views::helpers::short_protocol_id;
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn select_kanban_board(
+    app: Rc<InksonContext>,
     board_id: Option<arkret_sdk::SpaceId>,
-    mut selected_board: Signal<Option<arkret_sdk::SpaceId>>,
-    mut board_popover: Signal<BoardToolbarPopover>,
-    mut selected_card: Signal<Option<KanbanCard>>,
+    selected_board: Cage<Option<arkret_sdk::SpaceId>>,
+    board_popover: Cage<BoardToolbarPopover>,
+    selected_card: Cage<Option<KanbanCard>>,
     board_route_realm_id: String,
-    mut adding_card_to: Signal<Option<String>>,
-    mut board_status: Signal<String>,
+    adding_card_to: Cage<Option<String>>,
+    board_status: Cage<String>,
 ) {
     // Board switching is pure selection: set `selected_board` and the
     // URL, then let the `columns` `use_memo` (keyed on the selection + the op
     // log) re-project the chosen board. No reproject / `columns.set` here.
-    selected_board.set(board_id.clone());
-    board_popover.set(BoardToolbarPopover::None);
+    selected_board.revise(|value| {
+        let next = board_id.clone();
+        *value = next;
+    });
+    board_popover.revise(|value| {
+        let next = BoardToolbarPopover::None;
+        *value = next;
+    });
     // Closing any open card too: a board switch should not keep a card from a
     // different board mounted.
-    selected_card.set(None);
+    selected_card.revise(|value| {
+        let next = None;
+        *value = next;
+    });
     match &board_id {
         None => {
-            adding_card_to.set(None);
-            board_status.set("Select or create a board before adding lists".to_owned());
+            adding_card_to.revise(|value| {
+                let next = None;
+                *value = next;
+            });
+            board_status.revise(|value| {
+                let next = "Select or create a board before adding lists".to_owned();
+                *value = next;
+            });
         }
         Some(board_id) => {
-            board_status.set(format!(
-                "Board selected · {}",
-                short_protocol_id(board_id.as_str())
-            ));
+            board_status.revise(|value| {
+                let next = format!("Board selected · {}", short_protocol_id(board_id.as_str()));
+                *value = next;
+            });
         }
     }
     replace_kanban_board_url(
+        app.clone(),
         &board_route_realm_id,
         board_id
             .as_ref()
@@ -41,19 +57,8 @@ pub(super) fn select_kanban_board(
     );
 }
 
-pub(super) fn replace_kanban_board_url(realm_id: &str, board_id: &str) {
-    let realm_id = card_detail_route_realm_id(realm_id);
-    let board_id = board_id.trim();
-    let path = if board_id.is_empty() {
-        format!("/kanban/{realm_id}")
-    } else {
-        format!("/kanban/{realm_id}/board/{board_id}")
-    };
-    let Ok(encoded_path) = serde_json::to_string(&path) else {
-        return;
-    };
-    let script = format!("window.history.replaceState(null, '', {encoded_path});");
-    let _ = document::eval(&script);
+pub(super) fn replace_kanban_board_url(app: Rc<InksonContext>, realm_id: &str, board_id: &str) {
+    app.replace_route(kanban_board_route(realm_id, board_id));
 }
 
 pub(super) fn seed_columns() -> Vec<KanbanColumn> {

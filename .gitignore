@@ -17,3 +17,14 @@ _*.md
 .agent*
 .*.log
 /release-assets/
+
+# Glory/Sapid build and development tools.
+!scripts/sdk_registry.py
+!scripts/dev_glory.py
+!scripts/test_sdk_registry.py
+!scripts/test_dev_glory.py
+!scripts/build_desktop.py
+!scripts/linux-native-runtime-smoke.py
+!.ci/install-wasm-bindgen.py
+
+!scripts/ui_dependencies.py

@@ -1,16 +1,5 @@
 use super::*;
-
-#[derive(Clone)]
-struct CacheRaceControl {
-    path: std::path::PathBuf,
-    handle: std::rc::Rc<std::cell::RefCell<Option<SyncSignal<LocalStateStore>>>>,
-}
-
-fn cache_race_harness(control: CacheRaceControl) -> Element {
-    let store = use_signal_sync(|| LocalStateStore::with_path(control.path));
-    *control.handle.borrow_mut() = Some(store);
-    rsx! {}
-}
+use crate::views::chat::native_harness::NativeHarness;
 
 #[tokio::test(flavor = "current_thread")]
 async fn accepted_cache_barrier_keeps_later_draft_clear_and_replacement_account() {
@@ -23,26 +12,23 @@ async fn accepted_cache_barrier_keeps_later_draft_clear_and_replacement_account(
     let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
     let strand = "ak:strand:01964137-0000-7000-8000-000000000002";
     for change in ["draft", "clear", "replacement"] {
-        let control = CacheRaceControl {
-            path: dir.path().join(format!("{change}.json")),
-            handle: Default::default(),
-        };
-        let mut dom = VirtualDom::new_with_props(cache_race_harness, control.clone());
-        dom.rebuild_in_place();
-        dom.in_runtime(|| {
-            let mut store = control.handle.borrow().unwrap();
-            store.write().switch_test_account("did:web:alice.example");
-            let authority = store.peek().active_authority().unwrap();
+        let dom = NativeHarness::new();
+        let context = dom.context(dir.path().join(format!("{change}.json")));
+        {
+            let store = context.state_store.clone();
+            store.write(|store| store.switch_test_account("did:web:alice.example"));
+            let authority = store.read(|store| store.active_authority()).unwrap();
             let secure = MemorySecureKeyStore::new();
             let (key, initial) = store
-                .write()
-                .prepare_composer_draft_write(
-                    &authority,
-                    &device,
-                    realm,
-                    strand,
-                    "old draft".to_owned(),
-                )
+                .write(|store| {
+                    store.prepare_composer_draft_write(
+                        &authority,
+                        &device,
+                        realm,
+                        strand,
+                        "old draft".to_owned(),
+                    )
+                })
                 .unwrap();
             LocalStateStore::persist_e2ee_plaintext_cache_write_durable(
                 &secure,
@@ -52,15 +38,17 @@ async fn accepted_cache_barrier_keeps_later_draft_clear_and_replacement_account(
             .now_or_never()
             .unwrap()
             .unwrap();
-            store.write().save_private_plaintext(
-                realm,
-                strand,
-                "message:accepted",
-                "accepted sidecar text",
-            );
+            store.write(|store| {
+                store.save_private_plaintext(
+                    realm,
+                    strand,
+                    "message:accepted",
+                    "accepted sidecar text",
+                )
+            });
             let (release, ready) = tokio::sync::oneshot::channel();
             let mut write = Box::pin(persist_chat_cache_after_account_barrier(
-                store,
+                store.clone(),
                 &authority,
                 async move { ready.await.map_err(anyhow::Error::from) },
                 || true,
@@ -71,14 +59,15 @@ async fn accepted_cache_barrier_keeps_later_draft_clear_and_replacement_account(
             match change {
                 "draft" => {
                     let (key, json) = store
-                        .write()
-                        .prepare_composer_draft_write(
-                            &authority,
-                            &device,
-                            realm,
-                            strand,
-                            "latest draft".to_owned(),
-                        )
+                        .write(|store| {
+                            store.prepare_composer_draft_write(
+                                &authority,
+                                &device,
+                                realm,
+                                strand,
+                                "latest draft".to_owned(),
+                            )
+                        })
                         .unwrap();
                     LocalStateStore::persist_e2ee_plaintext_cache_write_durable(
                         &secure,
@@ -91,16 +80,17 @@ async fn accepted_cache_barrier_keeps_later_draft_clear_and_replacement_account(
                 }
                 "clear" => {
                     let clear = store
-                        .write()
-                        .prepare_e2ee_plaintext_cache_clear(
-                            &crate::state::E2eePlaintextCacheClearScope::All,
-                        )
+                        .write(|store| {
+                            store.prepare_e2ee_plaintext_cache_clear(
+                                &crate::state::E2eePlaintextCacheClearScope::All,
+                            )
+                        })
                         .unwrap()
                         .unwrap();
                     clear.persist(&secure).now_or_never().unwrap().unwrap();
                 }
                 _ => {
-                    store.write().switch_test_account("did:web:bob.example");
+                    store.write(|store| store.switch_test_account("did:web:bob.example"));
                 }
             }
             let before_release = secure.get_secret(&key).unwrap();
@@ -130,7 +120,7 @@ async fn accepted_cache_barrier_keeps_later_draft_clear_and_replacement_account(
                     (change == "draft").then(|| "accepted sidecar text".to_owned())
                 );
             }
-        });
+        };
     }
 }
 

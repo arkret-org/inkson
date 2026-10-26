@@ -343,15 +343,7 @@ fn pending_card_lifecycle_survives_reopen_without_claiming_acceptance() {
             settled,
             "{tag}"
         );
-        let mut dom = VirtualDom::new_with_props(
-            |state: CardState| rsx! { WriteStateBadge { state } },
-            state,
-        );
-        let edits = dom.rebuild_to_vec();
-        assert!(edits.edits.iter().any(|edit| matches!(edit,
-            dioxus::core::Mutation::SetAttribute { name: "data-write-state", value: dioxus::core::AttributeValue::Text(value), .. }
-                    if value.as_str() == expected.write_state().data_state()
-        )), "real card badge {tag}");
+        assert_native_badge(state, expected);
     }
 }
 

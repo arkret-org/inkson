@@ -4,8 +4,6 @@
 //! ensure action into the source Strand shell without inventing a wire type or
 //! persisting message plaintext outside the existing composer lifecycle.
 
-use dioxus::prelude::*;
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct HostedSidecarState {
     pub trace_id: String,
@@ -835,9 +833,6 @@ pub(crate) fn pending_sidecar_submissions(
         })
         .collect()
 }
-
-#[derive(Clone, Copy)]
-pub struct HostedSidecarStateContext(pub Signal<Option<HostedSidecarState>>);
 
 #[cfg(test)]
 mod tests {

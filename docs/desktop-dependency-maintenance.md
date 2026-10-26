@@ -1,43 +1,17 @@
 # Desktop dependency maintenance
 
-Rust dependency fixes live in Arkret organization forks, never as source copies
-inside Inkson or the SDK. Work on a named non-main integration branch and pin a
-complete Git revision in Cargo.toml. Cargo.lock records the resolved source.
-The branch name describes maintenance ownership; the revision controls builds.
+The native application uses Glory/Blitz and Sapid. The browser application uses Glory Web. Both consume the same application state and typed protocol clients. Glory and Sapid use their GitHub `main` branches, locked by Cargo. `.ci/checkout-ui-dependencies.sh` verifies the actual Git package graph and asset source; local path overrides are not used.
 
-| Dependency | Fork | Maintenance branch | Consumer |
-| --- | --- | --- | --- |
-| Dioxus desktop | https://github.com/arkret-org/dioxus | `arkret/desktop-gtk4` | Inkson root crates.io patch |
-| KSNI | https://github.com/arkret-org/ksni | `arkret/zbus-6` | Inkson root crates.io patch |
-| Secret Service | https://github.com/arkret-org/secret-service-rs | `arkret/zbus-6` | SDK workspace dependency |
+Cargo.lock records the exact renderer graph, including the Glory-owned Blitz and Taffy revisions. The SDK continues to own OpenMLS and Secret Service dependencies. Renderer or D-Bus changes must preserve their package identities and original licenses; do not copy or relabel dependency source inside Inkson.
 
-The Dioxus branch starts at the upstream 0.7.10 release commit
-`57d6794ad60b949e5bd8aa282f6f8c3dc97a365e`. Its desktop manifest keeps the
-published registry identities of shared Dioxus types rather than pulling sibling
-workspace crates into the application. The renderer uses GTK4/WebKitGTK6 via
-Tao `1879ad839cb8caaf7b4c733392c21f68a86787f4` and Wry
-`006d0155eb46dedb6c43fa3aa152e55d162a4aa5`, Muda GTK4 and KSNI tray support.
-Protocol callbacks carry only Send request/response data to the event loop;
-Rc-backed handlers stay on their owning UI thread. Stale windows are rejected.
-The fork retains upstream history, license files, and the desktop maintenance
-record. Historical receipts in that record retain their original source scope.
+Review the exact dependency revision before updating it, resolve the lockfile, and run both browser and native checks. Native evidence must include the actual application binary, its assets and visible process-owned window on the affected operating system. Window startup alone does not establish visual parity or authenticated behavior. Metadata, library tests and Web builds cannot replace the platform checks.
 
-The KSNI and Secret Service branches start at upstream published 0.3.6 and
-5.2.0 commits respectively. They migrate actual D-Bus consumers to zbus 6,
-including its integrated wire types. No package version is disguised and no
-advisory waiver is introduced. SDK KeyStore retains its synchronous interface;
-its asynchronous D-Bus operations and cross-process mutation lease remain
-internal implementation details.
+All Windows build/cache output belongs under `D:/BuildCache/inkson-glory`; verify Cargo’s resolved target directory. WSL requires the verified D-drive mount. Docker builder storage must be verified separately before a local image build. Historical desktop receipts retain their original source scope and are not receipts for the Glory migration.
 
-To update a dependency, fetch and review the maintenance branch, test the
-specific candidate revision, then change its full Cargo.toml revision and
-resolve Cargo.lock. Preserve package identities, license terms and the original
-strict advisory policy. Ask Cargo metadata for the target directory. Validate
-native and web builds and resource startup. Changes to Linux D-Bus, GTK4 or
-renderer inputs require their actual platform executor; an advisory or metadata
-pass alone is insufficient. The existing 0932 Packages workflow owns the Linux
-package/X11/Wayland/SecretService and Windows/macOS renderer gates.
+The native asset layout is `assets` beside the binary on Windows/Linux and `Contents/Resources/assets` in a macOS application bundle. Development uses an explicit `INKSON_ASSET_DIR`. Clipboard, image selection and notifications use OS services. The media transport and its isolated process remain bounded by their call owner.
 
-Return to an upstream release only after confirming that it contains the needed
-fixes and passes the same affected gates. Do not reintroduce local source copies
-or replace a revision pin with a moving main branch.
+The desktop SFU media process retains the existing LiveKit/SFrame JavaScript in a separate Wry/tao host. Linux therefore still requires GTK 4.12+, WebKitGTK 6 (WebKit 2.42+), libsoup 3, and the WebKit sandbox runtime in addition to the Glory/Blitz libraries. Native notification playback uses paplay (pulseaudio-utils on Debian/Ubuntu). The main product surface remains Glory/Blitz.
+
+The tested remote sources are Glory b9d06545c701510ba18d5cdb7cd363c102cad906 and Sapid c5c4e23aeb6d37b3f2537545116bac43dbb40a64. Sapid currently declares its sibling Glory path internally; the application uses a remote-to-remote Cargo patch so both resolve to the same Git Glory package.
+
+At these revisions, Sapid TextField has no placeholder method and Glory InputAssist has no placeholder member. Product hints therefore use persistent input owners with real associated labels or noninteractive empty-value hint layers. The DOM placeholder attribute is not claimed. The shared local framework checkouts remain untouched.

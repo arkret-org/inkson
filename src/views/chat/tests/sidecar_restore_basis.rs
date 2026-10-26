@@ -13,49 +13,59 @@ fn account() -> arkret_sdk::AccountId {
     )
 }
 
+use crate::views::chat::native_harness::NativeHarness;
 #[derive(Clone)]
 struct Control {
     path: std::path::PathBuf,
     signals: Rc<RefCell<Option<Signals>>>,
 }
-
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct Signals {
-    store: SyncSignal<LocalStateStore>,
-    realm_epoch: Signal<u64>,
-    authority: Signal<arkret_sdk::AccountId>,
-    device: Signal<arkret_sdk::DeviceId>,
+    store: crate::presentation::SharedStateStore,
+    realm_epoch: Cage<u64>,
+    authority: Cage<arkret_sdk::AccountId>,
+    device: Cage<arkret_sdk::DeviceId>,
 }
-
-fn restore_harness(control: Control) -> Element {
-    let store = use_signal_sync(|| LocalStateStore::with_path(control.path));
-    let realm_epoch = use_signal(|| 0_u64);
-    let authority = use_signal(account);
-    let device = use_signal(|| {
-        arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000001").unwrap()
-    });
-    let token = use_signal(String::new);
-    let hosted = use_signal(|| None);
-    use_context_provider(|| crate::sidecar::HostedSidecarStateContext(hosted));
+fn restore_harness(control: Control) -> NativeHarness {
+    let dom = NativeHarness::new();
+    let context = dom.context(control.path);
+    let scope = dom.app.scope();
+    let store = context.state_store.clone();
+    let realm_epoch = context.realm_live_epoch;
+    let authority = scope.cage(account());
+    let device = scope
+        .cage(arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000001").unwrap());
+    let token = scope.cage(String::new());
     let basis =
-        super::super::timeline_projection::use_timeline_projection_basis(store, realm_epoch);
-    use_sidecar_restore(
-        "https://station.example".to_owned(),
-        REALM.to_owned(),
-        STRAND.to_owned(),
-        authority(),
-        device(),
-        token,
-        basis,
-        store,
-    );
+        super::super::timeline_projection::timeline_projection_basis(scope, context.clone());
     *control.signals.borrow_mut() = Some(Signals {
-        store,
+        store: store.clone(),
         realm_epoch,
         authority,
         device,
     });
-    rsx! { div { "restore harness" } }
+    let target = scope.bond(move || (authority.get(), device.get()));
+    let view = crate::presentation::widgets::reactive_distinct(
+        target,
+        move |scope, (authority, device)| {
+            sidecar_restore(
+                scope,
+                context.clone(),
+                "https://station.example".into(),
+                REALM.into(),
+                STRAND.to_owned().into(),
+                authority,
+                device,
+                token,
+                basis,
+                store.clone(),
+            );
+            crate::presentation::widgets::paragraph("restore-harness", "restore harness")
+        },
+    );
+    dom.app.mount(view).unwrap();
+    dom.flush();
+    dom
 }
 
 #[test]
@@ -68,29 +78,24 @@ fn restore_ignores_cursor_noise_and_revalidates_content_current_account_and_devi
         path: dir.path().join("state.json"),
         signals: Rc::new(RefCell::new(None)),
     };
-    let mut dom = VirtualDom::new_with_props(restore_harness, control.clone());
-    dom.rebuild_in_place();
-    let settle = |dom: &mut VirtualDom| {
-        for _ in 0..8 {
-            dom.render_immediate_to_vec();
-        }
-    };
+    let mut dom = restore_harness(control.clone());
+    let settle = |dom: &mut NativeHarness| dom.flush();
     settle(&mut dom);
-    let mut signals = control.signals.borrow().unwrap();
+    let signals = control.signals.borrow().as_ref().unwrap().clone();
     let initial = RESTORE_LOOKUPS.with(|count| count.get());
     assert!(initial > 0);
     for change in 0..20 {
-        dom.in_runtime(|| {
-            let mut state = signals.store.peek().load();
+        {
+            let mut state = signals.store.read(|store| store.load());
             state.sync_cursor = Some(format!("reminted-{change}"));
             state.presence_projection = vec![json!({"presence": change})].into();
-            signals.store.write().save(state);
-        });
+            signals.store.write(|store| store.save(state));
+        };
         settle(&mut dom);
     }
     assert_eq!(RESTORE_LOOKUPS.with(|count| count.get()), initial);
-    dom.in_runtime(|| {
-        signals.store.write().upsert_raw_operation(
+    signals.store.write(|store| {
+        store.upsert_raw_operation(
             "security-change",
             Some(REALM.to_owned()),
             json!({"evidence": "changed"}),
@@ -99,7 +104,7 @@ fn restore_ignores_cursor_noise_and_revalidates_content_current_account_and_devi
     settle(&mut dom);
     let after_content = RESTORE_LOOKUPS.with(|count| count.get());
     assert!(after_content > initial);
-    let mut detached = dom.in_runtime(|| signals.store.peek().clone());
+    let mut detached = signals.store.read(|store| store.clone());
     let before_state = detached.load();
     detached
         .install_current_product_view(crate::current_projection::RealmCurrentView {
@@ -109,25 +114,22 @@ fn restore_ignores_cursor_noise_and_revalidates_content_current_account_and_devi
         })
         .unwrap();
     assert_eq!(detached.load(), before_state);
-    dom.in_runtime(|| signals.realm_epoch.set(1));
+    signals.realm_epoch.revise(|value| *value = 1);
     settle(&mut dom);
     let after_current = RESTORE_LOOKUPS.with(|count| count.get());
     assert!(after_current > after_content);
-    dom.in_runtime(|| {
-        signals
-            .authority
-            .set(crate::test_support::authority_at_station(
-                "ak:did_core:webvh:zBob",
-                "ak:did_core:webvh:zStation",
-            ))
+    signals.authority.revise(|value| {
+        *value = crate::test_support::authority_at_station(
+            "ak:did_core:webvh:zBob",
+            "ak:did_core:webvh:zStation",
+        )
     });
     settle(&mut dom);
     let after_account = RESTORE_LOOKUPS.with(|count| count.get());
     assert!(after_account > after_current);
-    dom.in_runtime(|| {
-        signals.device.set(
-            arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000002").unwrap(),
-        )
+    signals.device.revise(|value| {
+        *value =
+            arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000002").unwrap()
     });
     settle(&mut dom);
     assert!(RESTORE_LOOKUPS.with(|count| count.get()) > after_account);

@@ -15,8 +15,13 @@
 //! This component is shared between `views/directory.rs`, `views/realm_admin.rs`,
 //! `views/kanban.rs`, and the rest of the UI.
 
+use std::rc::Rc;
+
 pub use arkret_sdk::{Discoverability, HistoryAccess, JoinRule};
-use dioxus::prelude::*;
+use glory::prelude::*;
+
+use crate::presentation::widgets::{line, paragraph};
+use crate::presentation::{InksonContext, View};
 
 pub trait DiscoverabilityUi {
     fn label(&self) -> &'static str;
@@ -124,45 +129,68 @@ fn history_access_from_str_loose(value: &str) -> HistoryAccess {
     }
 }
 
-/// Single-dimension pill. `prefix` is required so readers can tell which of
-/// the three dimensions this pill represents.
-#[component]
-pub fn VisibilityPill(prefix: String, value: String, kind: String) -> Element {
-    let class = match kind.as_str() {
-        "discoverability" => discoverability_from_str_loose(&value).class_name(),
-        "join_rule" => join_rule_from_str_loose(&value).class_name(),
-        "history" | "history_access" => history_access_from_str_loose(&value).class_name(),
+#[derive(Clone)]
+pub struct VisibilityPillProps {
+    pub prefix: String,
+    pub value: String,
+    pub kind: String,
+}
+pub fn visibility_pill(
+    _scope: &Scope,
+    _context: Rc<InksonContext>,
+    props: VisibilityPillProps,
+) -> View {
+    let class = match props.kind.as_str() {
+        "discoverability" => discoverability_from_str_loose(&props.value).class_name(),
+        "join_rule" => join_rule_from_str_loose(&props.value).class_name(),
+        "history" | "history_access" => history_access_from_str_loose(&props.value).class_name(),
         _ => "badge",
     };
-    let testid = format!("permission-pill-{kind}");
-    rsx! {
-        span {
-            class: "{class}",
-            "data-testid": "{testid}",
-            "title": crate::i18n::tr("visibility.pill_title"),
-            "{prefix}: {value}"
-        }
-    }
+    paragraph(class, format!("{}: {}", props.prefix, props.value))
 }
-
-/// Compact component that surfaces all three dimensions at once. Unset
-/// dimensions render as `—`.
-#[component]
-pub fn VisibilityPillRow(
-    discoverability: Option<String>,
-    join_rule: Option<String>,
-    history_access: Option<String>,
-) -> Element {
-    let disc = discoverability.unwrap_or_else(|| "—".to_owned());
-    let join = join_rule.unwrap_or_else(|| "—".to_owned());
-    let hist = history_access.unwrap_or_else(|| "—".to_owned());
-    rsx! {
-        div { class: "actions", "data-testid": "permission-pill-row",
-            VisibilityPill { prefix: "disc".to_owned(), value: disc, kind: "discoverability".to_owned() }
-            VisibilityPill { prefix: "join".to_owned(), value: join, kind: "join_rule".to_owned() }
-            VisibilityPill { prefix: "hist".to_owned(), value: hist, kind: "history".to_owned() }
-        }
-    }
+#[derive(Clone, Default)]
+pub struct VisibilityPillRowProps {
+    pub discoverability: Option<String>,
+    pub join_rule: Option<String>,
+    pub history_access: Option<String>,
+}
+pub fn visibility_pill_row(
+    scope: &Scope,
+    context: Rc<InksonContext>,
+    props: VisibilityPillRowProps,
+) -> View {
+    line(
+        "actions",
+        vec![
+            visibility_pill(
+                scope,
+                context.clone(),
+                VisibilityPillProps {
+                    prefix: "disc".into(),
+                    value: props.discoverability.unwrap_or_else(|| "—".into()),
+                    kind: "discoverability".into(),
+                },
+            ),
+            visibility_pill(
+                scope,
+                context.clone(),
+                VisibilityPillProps {
+                    prefix: "join".into(),
+                    value: props.join_rule.unwrap_or_else(|| "—".into()),
+                    kind: "join_rule".into(),
+                },
+            ),
+            visibility_pill(
+                scope,
+                context,
+                VisibilityPillProps {
+                    prefix: "hist".into(),
+                    value: props.history_access.unwrap_or_else(|| "—".into()),
+                    kind: "history".into(),
+                },
+            ),
+        ],
+    )
 }
 
 #[cfg(test)]

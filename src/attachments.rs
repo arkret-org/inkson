@@ -133,116 +133,67 @@ pub(crate) async fn input_bytes_to_parts(
     Ok(arkret_sdk::Hash::new(hasher.finish())?)
 }
 
-/// Consume selected file data incrementally and freeze only bounded parts.
+/// A selected host resource with a stable snapshot, never an ambient file path.
+/// Native implementations retain one open handle and reject length/mtime changes.
+/// Browser implementations retain the selected token and its owning file controller.
+pub trait AttachmentSource {
+    fn size(&self) -> u64;
+    fn read_range(
+        &self,
+        offset: u64,
+        length: usize,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<Vec<u8>>> + '_>>;
+    fn verify_snapshot(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + '_>>;
+}
+
+/// Freeze the same protocol-sized parts with bounded host reads and target fences.
 pub(crate) async fn file_to_parts(
     chunks: &crate::state::current_index::AttachmentChunkStore,
-    file: &dioxus::html::FileData,
+    file: &dyn AttachmentSource,
     suite: arkret_sdk::DigestSuite,
     active: impl Fn() -> bool,
 ) -> anyhow::Result<arkret_sdk::Hash> {
+    let size = file.size();
     anyhow::ensure!(
-        file.size() <= MAX_OBJECT_BYTES,
+        size <= MAX_OBJECT_BYTES,
         "attachment exceeds the client limit"
     );
+    with_target_fence(file.verify_snapshot(), &active).await?;
     let mut hasher = arkret_sdk::canonical::ContentHasher::new(suite);
-    #[cfg(not(target_arch = "wasm32"))]
-    if file.path().is_absolute() && file.path().is_file() {
-        use tokio::io::AsyncReadExt;
-        let mut source = tokio::fs::File::open(file.path()).await?;
-        let before = source.metadata().await?;
-        anyhow::ensure!(before.len() == file.size(), "selected file changed");
-        let count = arkret_models_crypto::stream_segment_count(file.size(), SEGMENT_BYTES)?;
-        for index in 0..count {
-            anyhow::ensure!(active(), "attachment target changed");
-            let length = file
-                .size()
-                .saturating_sub(u64::from(index) * u64::from(SEGMENT_BYTES))
-                .min(u64::from(SEGMENT_BYTES));
-            let mut part = zeroize::Zeroizing::new(vec![0; usize::try_from(length)?]);
-            source.read_exact(&mut part).await?;
-            hasher.update(&part);
-            chunks.write_part("input", index, &part).await?;
-        }
-        let after = source.metadata().await?;
+    let count = arkret_models_crypto::stream_segment_count(size, SEGMENT_BYTES)?;
+    for index in 0..count {
         anyhow::ensure!(
-            before.len() == after.len() && before.modified()? == after.modified()? && active(),
-            "selected file changed while reading"
+            active() && file.size() == size,
+            "attachment target or selected file changed"
         );
-        return Ok(arkret_sdk::Hash::new(hasher.finish())?);
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        let selected = file
-            .inner()
-            .downcast_ref::<web_sys::File>()
-            .ok_or_else(|| anyhow::anyhow!("selected attachment is not a browser File"))?;
-        let blob: &web_sys::Blob = selected.as_ref();
-        anyhow::ensure!(
-            blob.size() as u64 == file.size(),
-            "selected attachment size differs"
-        );
-        let count = arkret_models_crypto::stream_segment_count(file.size(), SEGMENT_BYTES)?;
-        for index in 0..count {
-            anyhow::ensure!(active(), "attachment target changed");
-            let start = u64::from(index) * u64::from(SEGMENT_BYTES);
-            let end = start
-                .saturating_add(u64::from(SEGMENT_BYTES))
-                .min(file.size());
-            let slice = blob
-                .slice_with_f64_and_f64(start as f64, end as f64)
-                .map_err(|e| anyhow::anyhow!("attachment slice: {e:?}"))?;
-            let bytes = wasm_bindgen_futures::JsFuture::from(slice.array_buffer())
-                .await
-                .map_err(|e| anyhow::anyhow!("attachment part read: {e:?}"))?;
-            let part = zeroize::Zeroizing::new(js_sys::Uint8Array::new(&bytes).to_vec());
-            anyhow::ensure!(
-                part.len() as u64 == end - start && active(),
-                "selected attachment part differs"
+        let start = u64::from(index) * u64::from(SEGMENT_BYTES);
+        let length = size.saturating_sub(start).min(u64::from(SEGMENT_BYTES));
+        let mut part = zeroize::Zeroizing::new(Vec::with_capacity(usize::try_from(length)?));
+        while (part.len() as u64) < length {
+            let remaining = length - part.len() as u64;
+            let read_length = usize::try_from(remaining.min(65536))?;
+            let offset = start + part.len() as u64;
+            let bytes = zeroize::Zeroizing::new(
+                with_target_fence(file.read_range(offset, read_length), &active).await?,
             );
-            hasher.update(&part);
-            chunks.write_part("input", index, &part).await?;
+            anyhow::ensure!(
+                bytes.len() == read_length,
+                "selected attachment part differs or is truncated"
+            );
+            part.extend_from_slice(&bytes);
         }
-        return Ok(arkret_sdk::Hash::new(hasher.finish())?);
+        anyhow::ensure!(active(), "attachment target changed");
+        hasher.update(&part);
+        with_target_fence(chunks.write_part("input", index, &part), &active).await?;
     }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        use futures_util::StreamExt;
-        let mut source = file.byte_stream();
-        let mut buffer = zeroize::Zeroizing::new(Vec::with_capacity(SEGMENT_BYTES as usize));
-        let mut total = 0_u64;
-        let mut index = 0_u32;
-        while let Some(part) = source.next().await {
-            let part = part.map_err(|e| anyhow::anyhow!("read attachment: {e}"))?;
-            let mut remaining = part.as_ref();
-            while !remaining.is_empty() {
-                anyhow::ensure!(active(), "attachment target changed");
-                let take = (SEGMENT_BYTES as usize - buffer.len()).min(remaining.len());
-                buffer.extend_from_slice(&remaining[..take]);
-                remaining = &remaining[take..];
-                total = total
-                    .checked_add(take as u64)
-                    .ok_or_else(|| anyhow::anyhow!("attachment size overflow"))?;
-                anyhow::ensure!(total <= file.size(), "selected file grew while reading");
-                if buffer.len() == SEGMENT_BYTES as usize {
-                    hasher.update(&buffer);
-                    chunks.write_part("input", index, &buffer).await?;
-                    use zeroize::Zeroize;
-                    buffer.zeroize();
-                    buffer.clear();
-                    index += 1;
-                }
-            }
-        }
-        anyhow::ensure!(
-            total == file.size() && active(),
-            "selected file is truncated or target changed"
-        );
-        if !buffer.is_empty() || total == 0 {
-            hasher.update(&buffer);
-            chunks.write_part("input", index, &buffer).await?;
-        }
-        Ok(arkret_sdk::Hash::new(hasher.finish())?)
-    }
+    with_target_fence(file.verify_snapshot(), &active).await?;
+    anyhow::ensure!(
+        file.size() == size && active(),
+        "selected file changed while reading"
+    );
+    Ok(arkret_sdk::Hash::new(hasher.finish())?)
 }
 
 pub(crate) fn restore_attachment_group(

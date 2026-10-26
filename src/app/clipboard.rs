@@ -1,7 +1,4 @@
-// Shared JS-interop helper (single source).
-pub(super) use yoface::utils::dom::copy_text_to_clipboard;
-
-use super::*;
+use crate::state::projection::ProjectionEvent;
 
 pub fn merge_projection_events(
     current: &[ProjectionEvent],

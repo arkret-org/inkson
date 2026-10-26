@@ -590,8 +590,9 @@ pub(crate) async fn ensure_binding(
     {
         return Ok(());
     }
-    let account = crate::app::SessionContext::get()
-        .active_account()
+    let account = crate::presentation::require_current_context()?
+        .active_account
+        .get_untracked()
         .ok_or_else(|| anyhow::anyhow!("active account is unavailable"))?;
     let http = api.sdk_http_client()?;
     let realm = arkret_sdk::RealmId::new(realm_id.to_owned())?;

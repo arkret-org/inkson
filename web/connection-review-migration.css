@@ -1,0 +1,11 @@
+/* Finite counterparts of the original strong/summary/dl/dt/dd rules. */
+.auth-connection-review .auth-connection-label { color: var(--text); font-weight: 700; }
+.auth-connection-summary-item { display: list-item; list-style-type: disc; }
+.auth-connection-details { min-width: 0; }
+.auth-connection-details .sapid-collapsible-trigger { color: var(--text); background: transparent; border: 0; padding: 0; margin: 0; min-height: 0; font: inherit; cursor: pointer; }
+.auth-connection-details .sapid-collapsible-trigger::before { content: "▸"; margin-inline-end: 5px; }
+.auth-connection-details .sapid-collapsible-trigger[aria-expanded="true"]::before { content: "▾"; }
+.auth-connection-details .sapid-collapsible-trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.auth-connection-values { margin: 6px 0 0; min-width: 0; }
+.auth-connection-review .auth-connection-term { font-size: 12px; margin: 0; }
+.auth-connection-review .auth-connection-value { margin: 2px 0 8px; color: var(--text); font: 12px/1.5 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; min-width: 0; }

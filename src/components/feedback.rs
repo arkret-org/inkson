@@ -1,14 +1,14 @@
-//! Unified feedback surface — toast queue + [`ToastHost`] + [`AppBanner`].
+//! Unified feedback surface — toast queue + [`toast_host`] + [`app_banner`].
 //!
 //! `docs/design/unified-feedback-system.md` Wave 0: a single stacked
 //! toast host replaces the per-concern feedback surfaces. Every producer
 //! writes directly to this single queue.
 //!
 //! Producer side is a process-wide `Mutex<VecDeque<Toast>>` rather than
-//! a Dioxus context/Signal on purpose: producers (the HTTP layer, sync
+//! a UI owner on purpose: producers (the HTTP layer, sync
 //! engine, arbitrary async blocks) may run on any thread and outside
-//! the Dioxus runtime, so [`push_toast`] must not require a component
-//! scope. The consumer ([`ToastHost`], mounted once near the app shell)
+//! the UI runtime, so [`push_toast`] must not require a component
+//! scope. The consumer ([`toast_host`], mounted once near the app shell)
 //! drains the queue at the top of each render — the renderer thread is
 //! the only consumer, so the lock is uncontended in practice.
 //!
@@ -19,14 +19,16 @@
 //! and unit tests.
 
 use std::collections::VecDeque;
+use std::rc::Rc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use dioxus::prelude::*;
+use glory::prelude::*;
 
 use crate::circle::CircleErrorKind;
 use crate::i18n::tr;
-use crate::ui::button::{Button, ButtonSize, ButtonVariant};
+use crate::presentation::widgets::{line, paragraph, reactive, stack};
+use crate::presentation::{InksonContext, View};
 
 /// Severity of a toast; drives styling, ARIA role and auto-dismiss.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -64,7 +66,7 @@ impl FeedbackSeverity {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Toast {
     pub severity: FeedbackSeverity,
-    /// i18n key, localized at render time inside [`ToastHost`].
+    /// i18n key, localized at render time inside [`toast_host`].
     pub key: String,
     /// `{placeholder}` substitutions applied to the localized string.
     pub args: Vec<(&'static str, String)>,
@@ -129,7 +131,7 @@ fn enqueue_toast(toast: Toast) {
 }
 
 /// Producer entry point — callable from any thread / async block, with
-/// or without a Dioxus runtime.
+/// or without a UI runtime.
 pub fn push_toast(
     severity: FeedbackSeverity,
     key: impl Into<String>,
@@ -163,7 +165,7 @@ pub fn toast_error(
 }
 
 /// Consumer entry point — drain everything queued so far. Only called
-/// by [`ToastHost`]; public for tests.
+/// by [`toast_host`]; public for tests.
 pub fn drain_toasts() -> Vec<Toast> {
     match TOAST_QUEUE.lock() {
         Ok(mut queue) => queue.drain(..).collect(),
@@ -264,151 +266,140 @@ fn localize_toast_message(toast: &Toast) -> String {
     crate::i18n::substitute_args(message, &toast.args)
 }
 
-/// The stacked toast host. Mount ONCE near the top of the app shell.
-///
-/// Each render it drains all producer queues into a local signal,
-/// schedules per-toast auto-dismiss timers, shows at most
-/// [`TOAST_VISIBLE_MAX`] items and collapses the rest behind a
-/// "+N more" row.
-#[component]
-pub fn ToastHost() -> Element {
-    let mut toasts = use_signal(Vec::<Toast>::new);
-    let mut expanded = use_signal(|| false);
-
-    // Opportunistic drain, same pattern as the former PolicyDenyBanner:
-    // Dioxus reruns this component whenever other signals tick, so a
-    // queued toast is picked up within milliseconds of the producing
-    // call. Writing the signal during render triggers exactly one extra
-    // rerender (the queue is then empty, so it settles).
-    let incoming = drain_toasts();
-    if !incoming.is_empty() {
-        for toast in &incoming {
-            // Auto-dismiss: one task per toast. Removal is keyed on the
-            // unique toast id, so a timer firing after a manual dismiss
-            // (or after the toast was dropped by the display cap) is a
-            // harmless no-op — no "still the same event?" guard needed,
-            // unlike the old single-slot banner.
-            let id = toast.id;
-            let ttl_ms = toast.severity.autodismiss_ms();
-            spawn(async move {
-                crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(ttl_ms)).await;
-                toasts.write().retain(|t| t.id != id);
-            });
-        }
-        let mut list = toasts.write();
-        list.extend(incoming);
-        // Mirror the queue cap on the displayed list: drop oldest.
-        let overflow = list.len().saturating_sub(TOAST_QUEUE_CAP);
-        if overflow > 0 {
-            list.drain(..overflow);
-        }
-    }
-
-    let list = toasts.read().clone();
-    if list.is_empty() {
-        // Reset the expansion state so the next burst starts collapsed.
-        if expanded() {
-            expanded.set(false);
-        }
-        return rsx! {};
-    }
-
-    let total = list.len();
-    let is_expanded = expanded();
-    let visible: Vec<Toast> = if is_expanded || total <= TOAST_VISIBLE_MAX {
-        list
-    } else {
-        list[..TOAST_VISIBLE_MAX].to_vec()
-    };
-    let hidden = total - visible.len();
-    let overflow_label =
-        crate::i18n::tr_args("feedback.toast_overflow", &[("count", hidden.to_string())]);
-
-    rsx! {
-        div {
-            class: "toast-host",
-            role: "status",
-            "aria-live": "polite",
-            "data-testid": "toast-host",
-            for toast in visible {
-                ToastItem { key: "{toast.id}", toast, toasts }
-            }
-            if hidden > 0 {
-                Button {
-                    variant: ButtonVariant::Secondary,
-                    class: "toast-overflow",
-                    "data-testid": "toast-overflow",
-                    onclick: move |_| expanded.set(true),
-                    "{overflow_label}"
-                }
-            }
-        }
-    }
+/// Drop pending feedback when its application session retires.
+pub fn clear_toasts() {
+    let _ = drain_toasts();
 }
-
-/// One visible toast row. Split out so per-item event handlers can
-/// capture the toast id / detail without manual loop plumbing.
-#[component]
-fn ToastItem(toast: Toast, toasts: Signal<Vec<Toast>>) -> Element {
-    let mut toasts = toasts;
-    let id = toast.id;
-    let severity = toast.severity.as_str();
-    let message = localize_toast_message(&toast);
-    let dismiss_label = tr("feedback.dismiss");
-    let copy_label = tr("feedback.copy_detail");
-    let detail = toast.detail.clone();
-    let icon_name = match toast.severity {
-        FeedbackSeverity::Success => "check",
-        FeedbackSeverity::Info => "bell",
-        FeedbackSeverity::Warning | FeedbackSeverity::Error => "alert",
-    };
-    // Errors announce assertively on their own; the host container
-    // already covers the polite path for everything else.
-    let role = if toast.severity == FeedbackSeverity::Error {
-        "alert"
-    } else {
-        "status"
-    };
-
-    rsx! {
-        div {
-            class: "toast toast--{severity}",
-            role,
-            "data-testid": "toast-item",
-            "data-severity": severity,
-            "data-i18n-key": "{toast.key}",
-            "data-source": toast.source,
-            span { class: "toast-severity-icon", "aria-hidden": "true",
-                crate::components::UiIcon { name: icon_name }
+pub fn toast_host(scope: &Scope, context: Rc<InksonContext>) -> View {
+    let toasts = scope.cage(Vec::<Toast>::new());
+    let expanded = scope.cage(false);
+    let owner = scope.downgrade();
+    let ctx = context.clone();
+    let _ = scope.owner().spawn(async move {
+        let mut expiry = std::collections::HashMap::<u64, u64>::new();
+        let mut generation = ctx.session_generation.get();
+        loop {
+            if owner.upgrade().is_none() {
+                break;
             }
-            div { class: "toast-body",
-                p { "{message}" }
+            let current = ctx.session_generation.get();
+            if current != generation {
+                generation = current;
+                expiry.clear();
+                toasts.revise(|list| list.clear());
+                clear_toasts();
             }
-            if let Some(detail) = detail {
-                Button {
-                    variant: ButtonVariant::Ghost,
-                    size: ButtonSize::IconSm,
-                    class: "btn",
-                    "data-testid": "toast-copy-detail",
-                    "aria-label": "{copy_label}",
-                    title: "{copy_label}",
-                    onclick: move |_| {
-                        crate::components::mls_backup_prompt::copy_text_to_clipboard(&detail);
-                    },
-                    crate::components::UiIcon { name: "copy" }
+            let now = crate::clock::now_unix_ms();
+            let incoming = drain_toasts();
+            let expired = toasts.with(|list| {
+                list.iter().any(|toast| {
+                    expiry
+                        .get(&toast.id)
+                        .is_some_and(|deadline| *deadline <= now)
+                })
+            });
+            if expired || !incoming.is_empty() {
+                for toast in &incoming {
+                    expiry.insert(
+                        toast.id,
+                        now.saturating_add(toast.severity.autodismiss_ms()),
+                    );
+                }
+                toasts.revise(|list| {
+                    list.retain(|toast| {
+                        expiry.get(&toast.id).is_none_or(|deadline| *deadline > now)
+                    });
+                    list.extend(incoming);
+                    let overflow = list.len().saturating_sub(TOAST_QUEUE_CAP);
+                    if overflow > 0 {
+                        list.drain(..overflow);
+                    }
+                });
+                expiry.retain(|id, _| toasts.with(|list| list.iter().any(|toast| toast.id == *id)));
+                if toasts.with(Vec::is_empty) {
+                    expanded.revise(|value| *value = false);
                 }
             }
-            Button {
-                variant: ButtonVariant::Ghost,
-                size: ButtonSize::IconSm,
-                class: "btn",
-                "data-testid": "toast-dismiss",
-                "aria-label": "{dismiss_label}",
-                onclick: move |_| toasts.write().retain(|t| t.id != id),
-                "×"
-            }
+            crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(100)).await;
         }
-    }
+    });
+    let source = scope.bond({
+        let context = context.clone();
+        move || (toasts.get(), expanded.get(), context.locale.get())
+    });
+    reactive(source, move |scope, (list, is_expanded, _)| {
+        if list.is_empty() {
+            return Box::new(widget(|_| Ok(())));
+        }
+        let total = list.len();
+        let visible = if is_expanded {
+            list
+        } else {
+            list.into_iter().take(TOAST_VISIBLE_MAX).collect()
+        };
+        let hidden = total - visible.len();
+        let mut children: Vec<View> = visible
+            .into_iter()
+            .map(|toast| {
+                let id = toast.id;
+                let severity = toast.severity;
+                let message = localize_toast_message(&toast);
+                let icon = match severity {
+                    FeedbackSeverity::Success => "check",
+                    FeedbackSeverity::Info => "bell",
+                    FeedbackSeverity::Warning | FeedbackSeverity::Error => "alert",
+                };
+                let mut row = vec![
+                    super::ui_icon(icon),
+                    stack("toast-body", vec![paragraph("", message)]),
+                ];
+                if let Some(detail) = toast.detail {
+                    row.push(Box::new(
+                        sapid::button()
+                            .unstyled()
+                            .class("btn toast-copy-detail")
+                            .label(context.translated(scope, "feedback.copy_detail"))
+                            .on_press(move || super::platform_io::copy_text_to_clipboard(&detail)),
+                    ) as View);
+                }
+                row.push(Box::new(
+                    sapid::button()
+                        .unstyled()
+                        .class("btn toast-dismiss")
+                        .label(context.translated(scope, "feedback.dismiss"))
+                        .on_press(move || {
+                            toasts.revise(|list| list.retain(|toast| toast.id != id))
+                        }),
+                ) as View);
+                let class = format!("toast toast--{}", severity.as_str());
+                Box::new(
+                    sapid::alert(format!("toast-{id}"))
+                        .unstyled()
+                        .class(class)
+                        .severity(match severity {
+                            FeedbackSeverity::Success => sapid::AlertSeverity::Success,
+                            FeedbackSeverity::Info => sapid::AlertSeverity::Info,
+                            FeedbackSeverity::Warning => sapid::AlertSeverity::Warning,
+                            FeedbackSeverity::Error => sapid::AlertSeverity::Danger,
+                        })
+                        .fill(line("toast-row", row)),
+                ) as View
+            })
+            .collect();
+        if hidden > 0 {
+            children.push(Box::new(
+                sapid::button()
+                    .unstyled()
+                    .class("toast-overflow secondary")
+                    .label(crate::i18n::substitute_args(
+                        context.tr("feedback.toast_overflow"),
+                        &[("count", hidden.to_string())],
+                    ))
+                    .on_press(move || expanded.revise(|value| *value = true)),
+            ) as View);
+        }
+        stack("toast-host", children)
+    })
 }
 
 /// Persistent-banner kinds, priority-ordered. Wave 0 only wires
@@ -436,34 +427,24 @@ impl AppBannerKind {
     }
 }
 
-/// Single-slot persistent banner in the main content flow above the topbar.
-/// Unlike toasts it has no lifecycle — it shows exactly while its
-/// condition holds.
-#[component]
-pub fn AppBanner(offline: bool) -> Element {
-    // Priority resolution: first active kind wins (only Offline exists
-    // in Wave 0).
-    let kind = if offline {
-        Some(AppBannerKind::Offline)
-    } else {
-        None
-    };
-    let Some(kind) = kind else {
-        return rsx! {};
-    };
-    let kind_str = kind.as_str();
-    let message = tr(kind.i18n_key());
-
-    rsx! {
-        div {
-            class: "app-banner app-banner--{kind_str}",
-            role: "status",
-            "aria-live": "polite",
-            "data-testid": "app-banner",
-            "data-banner-kind": kind_str,
-            "{message}"
+pub fn app_banner(
+    _scope: &Scope,
+    context: Rc<InksonContext>,
+    offline: impl Into<Lotus<bool>>,
+) -> View {
+    let offline: Lotus<bool> = offline.into();
+    reactive(offline, move |scope, offline| {
+        if !offline {
+            return Box::new(widget(|_| Ok(())));
         }
-    }
+        Box::new(
+            sapid::alert("app-offline")
+                .unstyled()
+                .class("app-banner app-banner--offline")
+                .severity(sapid::AlertSeverity::Info)
+                .content(context.translated(scope, AppBannerKind::Offline.i18n_key())),
+        )
+    })
 }
 
 #[cfg(test)]

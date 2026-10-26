@@ -4,9 +4,9 @@
 //! handoff lease, DID inception, PCR genesis and the recovery-material gate.
 //! Each is a resumable command, none of them touches `rsx!`, and every one was
 //! previously only reachable by mounting `PendingAccountIdentityCreation`.
+use anyhow::Context as _;
 
 use super::*;
-
 pub(super) async fn activate_pending_registration_signer(
     checkpoint: &crate::state::PendingPrincipalRegistration,
     device: &str,
@@ -38,13 +38,12 @@ pub(super) async fn activate_pending_registration_signer(
             .unwrap_or(signer),
     )
 }
-
 pub(super) async fn create_and_bind_identity(
     handoff: &crate::state::PendingAccountHandoff,
     recovery_key: &str,
     device: &str,
-    mut state_store: SyncSignal<crate::state::LocalStateStore>,
-    mut status: Signal<String>,
+    state_store: crate::presentation::SharedStateStore,
+    status: Cage<String>,
 ) -> anyhow::Result<IdentityCreationCommandOutcome> {
     let pending_device_id = arkret_sdk::DeviceId::new(device.to_owned())?;
     let pending_store = crate::secure_key_store::PendingLocalStore::new(pending_device_id);
@@ -54,7 +53,7 @@ pub(super) async fn create_and_bind_identity(
     // still has the user-confirmed key in memory. Switching to the generic
     // resume panel here made a successful, uninterrupted setup appear to ask
     // for the same 24 words twice.
-    let stored_checkpoint = state_store.read().pending_principal_registration();
+    let stored_checkpoint = state_store.read(|store| store.pending_principal_registration());
     let (checkpoint, checkpoint_changed) = match stored_checkpoint.as_ref() {
         Some(checkpoint)
             if (crate::identity::principal_registration::checkpoint_belongs_to_handoff(
@@ -86,14 +85,14 @@ pub(super) async fn create_and_bind_identity(
         }
     };
     if checkpoint_changed {
-        let barrier = {
-            let mut store = state_store.write();
-            store.set_pending_principal_registration(Some(checkpoint.clone()))?;
-            store.begin_durable_flush()?
-        };
+        let barrier = state_store.write(|store| -> anyhow::Result<_> {
+            Ok({
+                store.set_pending_principal_registration(Some(checkpoint.clone()))?;
+                store.begin_durable_flush()?
+            })
+        })?;
         barrier.wait().await?;
     }
-
     let checkpoint = if matches!(
         checkpoint.stage,
         crate::state::PendingPrincipalRegistrationStage::CustodyConfirmed
@@ -135,13 +134,13 @@ pub(super) async fn create_and_bind_identity(
             &pending_store,
         )
         .await?;
-        state_store
-            .write()
-            .set_pending_dpop_device_key_with_secure_store(
+        state_store.write(|store| {
+            store.set_pending_dpop_device_key_with_secure_store(
                 Some(dpop_record),
                 secure_store.as_ref(),
                 &pending_store,
-            )?;
+            )
+        })?;
         let prepared = crate::identity::principal_registration::prepare_genesis_draft(
             &checkpoint,
             recovery_key,
@@ -152,18 +151,18 @@ pub(super) async fn create_and_bind_identity(
             handoff.audience_id.clone(),
         )?;
         if prepared != checkpoint {
-            let barrier = {
-                let mut store = state_store.write();
-                store.set_pending_principal_registration(Some(prepared.clone()))?;
-                store.begin_durable_flush()?
-            };
+            let barrier = state_store.write(|store| -> anyhow::Result<_> {
+                Ok({
+                    store.set_pending_principal_registration(Some(prepared.clone()))?;
+                    store.begin_durable_flush()?
+                })
+            })?;
             barrier.wait().await?;
         }
         prepared
     } else {
         checkpoint
     };
-
     let (registration, completed) = if matches!(
         checkpoint.stage,
         crate::state::PendingPrincipalRegistrationStage::GenesisDraftPrepared
@@ -174,25 +173,25 @@ pub(super) async fn create_and_bind_identity(
             &pending_store,
         )
         .await?;
-        state_store
-            .write()
-            .set_pending_dpop_device_key_with_secure_store(
+        state_store.write(|store| {
+            store.set_pending_dpop_device_key_with_secure_store(
                 Some(dpop_record),
                 secure_store.as_ref(),
                 &pending_store,
-            )?;
+            )
+        })?;
         let completion =
             match crate::identity::principal_registration::complete_account_handoff_binding(
                 handoff,
                 &checkpoint,
                 recovery_key,
                 &dpop,
-                &crate::app::runtime_adapter::state_store_handle(state_store),
+                &state_store.handle(),
                 |delay| {
                     let seconds = delay.as_millis().div_ceil(1_000).max(1);
-                    status.set(format!(
+                    status.revise(|value|{*value=format!(
                         "The Account Authority asked this device to wait {seconds} seconds. Retrying automatically…"
-                    ));
+                    );});
                 },
             )
             .await
@@ -206,14 +205,7 @@ pub(super) async fn create_and_bind_identity(
                     recovery_handoff.bound_principal_id =
                         Some(arkret_sdk::project_did_to_core_id(&checkpoint.did)?);
                     recovery_handoff.bound_principal_did = Some(checkpoint.did.clone());
-                    {
-                        let mut store = state_store.write();
-                        store.set_pending_account_handoff(Some(recovery_handoff.clone()))?;
-                        store.set_pending_principal_registration(None)?;
-                        let barrier = store.begin_durable_flush()?;
-                        drop(store);
-                        barrier.wait().await?;
-                    }
+                    let barrier=state_store.write(|store|->anyhow::Result<_>{store.set_pending_account_handoff(Some(recovery_handoff.clone()))?;store.set_pending_principal_registration(None)?;store.begin_durable_flush()})?;barrier.wait().await?;
                     crate::identity::account_auth::clear_prepared_identity_creation_request_for_checkpoint(
                         &checkpoint,
                     )?;
@@ -222,7 +214,7 @@ pub(super) async fn create_and_bind_identity(
                         &checkpoint.did,
                         device,
                         recovery_key,
-                        state_store,
+                        state_store.clone(),
                     )
                     .await?;
                     return Ok(IdentityCreationCommandOutcome::Completed(Box::new(completed)));
@@ -239,7 +231,7 @@ pub(super) async fn create_and_bind_identity(
             handoff,
             &principal_did,
             arkret_sdk::DeviceId::new(device.to_owned())?,
-            state_store,
+            state_store.clone(),
             Some((
                 grant_jwt.clone(),
                 crate::identity::account_auth::grant_dpop::device_handle_from_seed(
@@ -275,28 +267,27 @@ pub(super) async fn create_and_bind_identity(
         accepted
             .advance_registration_stage(crate::state::PendingPrincipalRegistrationStage::Accepted)
             .map_err(anyhow::Error::msg)?;
-        {
-            let prepared_keys = crate::views::login::prepare_completed_login_dpop_key(
-                secure_store.as_ref(),
-                &account,
-                device,
-                &completion.dpop_device_key,
-            )
-            .await
-            .map_err(anyhow::Error::msg)?;
-            let account_store = crate::secure_key_store::UserLocalStore::new(
-                account.authority.clone(),
-                account.device_id.clone(),
-            )?;
-            crate::state::store_session_grant_in_user_secure_store_durable(
-                &account_store,
-                secure_store.as_ref(),
-                &persisted_grant,
-            )
-            .await?;
-            let mut store = state_store.write();
+        let prepared_keys = crate::views::login::prepare_completed_login_dpop_key(
+            secure_store.as_ref(),
+            &account,
+            device,
+            &completion.dpop_device_key,
+        )
+        .await
+        .map_err(anyhow::Error::msg)?;
+        let account_store = crate::secure_key_store::UserLocalStore::new(
+            account.authority.clone(),
+            account.device_id.clone(),
+        )?;
+        crate::state::store_session_grant_in_user_secure_store_durable(
+            &account_store,
+            secure_store.as_ref(),
+            &persisted_grant,
+        )
+        .await?;
+        let barrier = state_store.write(|store| -> anyhow::Result<_> {
             crate::views::login::commit_completed_login_dpop_key(
-                &mut store,
+                store,
                 secure_store.as_ref(),
                 &account,
                 &completion.dpop_device_key,
@@ -304,13 +295,9 @@ pub(super) async fn create_and_bind_identity(
             )
             .map_err(anyhow::Error::msg)?;
             store.set_pending_principal_registration(Some(accepted.clone()))?;
-            // Do not clear pending_account_handoff yet. Keeping it until
-            // finish_principal_setup succeeds keeps this component (and its
-            // in-memory Recovery Key) alive through the background work.
-            let barrier = store.begin_durable_flush()?;
-            drop(store);
-            barrier.wait().await?;
-        }
+            store.begin_durable_flush()
+        })?;
+        barrier.wait().await?;
         (
             accepted,
             CompletedIdentityCreation {
@@ -330,13 +317,17 @@ pub(super) async fn create_and_bind_identity(
             handoff,
             &checkpoint.did,
             arkret_sdk::DeviceId::new(checkpoint.device_id.clone())?,
-            state_store,
+            state_store.clone(),
             None,
         )
         .await?;
-        let inventory =
-            collect_bound_completion_resume_inventory(handoff, &checkpoint, &account, state_store)
-                .await;
+        let inventory = collect_bound_completion_resume_inventory(
+            handoff,
+            &checkpoint,
+            &account,
+            state_store.clone(),
+        )
+        .await;
         let correlation =
             crate::identity::account_auth::transition::LoginCorrelation::for_handoff(handoff)
                 .with_principal_id(account.principal_id().clone())
@@ -397,7 +388,7 @@ pub(super) async fn create_and_bind_identity(
                 let completed = match reissue_accepted_onboarding_session(
                     handoff,
                     &account,
-                    state_store,
+                    state_store.clone(),
                 )
                 .await
                 {
@@ -464,7 +455,7 @@ pub(super) async fn create_and_bind_identity(
                     &checkpoint.did,
                     device,
                     recovery_key,
-                    state_store,
+                    state_store.clone(),
                 )
                 .await
                 .context("recover the accepted device with its active policy")?;
@@ -518,21 +509,19 @@ pub(super) async fn create_and_bind_identity(
             }
         }
     };
-
     let mut completed = completed;
     completed.initial_mls_backup_id = finish_principal_setup(
         &registration,
         recovery_key,
         &completed,
         &handoff.holder_jkt,
-        state_store,
+        state_store.clone(),
     )
     .await?;
     Ok(IdentityCreationCommandOutcome::Completed(Box::new(
         completed,
     )))
 }
-
 /// Drop the durable identity draft together with the handoff it is fenced to,
 /// and the short-lived account handoff credential.
 ///
@@ -541,16 +530,17 @@ pub(super) async fn create_and_bind_identity(
 /// attempt has to re-authenticate for a fresh lease rather than reuse the one
 /// this draft consumed.
 pub(super) async fn clear_pending_principal_setup(
-    mut state_store: SyncSignal<crate::state::LocalStateStore>,
+    state_store: crate::presentation::SharedStateStore,
 ) -> anyhow::Result<()> {
-    let pending_registration = state_store.read().pending_principal_registration();
-    let pending_handoff = state_store.read().pending_account_handoff();
-    let barrier = {
-        let mut store = state_store.write();
-        store.set_pending_principal_registration(None)?;
-        store.set_pending_account_handoff(None)?;
-        store.begin_durable_flush()?
-    };
+    let pending_registration = state_store.read(|store| store.pending_principal_registration());
+    let pending_handoff = state_store.read(|store| store.pending_account_handoff());
+    let barrier = state_store.write(|store| -> anyhow::Result<_> {
+        Ok({
+            store.set_pending_principal_registration(None)?;
+            store.set_pending_account_handoff(None)?;
+            store.begin_durable_flush()?
+        })
+    })?;
     barrier.wait().await?;
     if let Some(handoff) = pending_handoff.as_ref() {
         crate::identity::account_auth::clear_pending_identity_creation_recovery_key(handoff)?;
@@ -563,7 +553,6 @@ pub(super) async fn clear_pending_principal_setup(
     }
     Ok(())
 }
-
 pub(super) fn checkpoint_for_handoff(
     checkpoint: &crate::state::PendingPrincipalRegistration,
     handoff: &crate::state::PendingAccountHandoff,
@@ -607,7 +596,6 @@ pub(super) fn checkpoint_for_handoff(
     let (Some(lease_id), Some(lease_fence)) = (&handoff.lease_id, handoff.lease_fence) else {
         anyhow::bail!("the renewed identity-creation lease is unavailable");
     };
-
     // A renewed lease carries forward any identity operation that the server
     // already reserved. Recovery must replay that exact public operation; a
     // newly-derived draft would correctly be rejected as a duplicate conflict.
@@ -628,20 +616,17 @@ pub(super) fn checkpoint_for_handoff(
         checkpoint,
         recovery_key,
     )?;
-
     let mut checkpoint = checkpoint.clone();
     checkpoint.handoff_request_id = handoff.request_id.clone();
     checkpoint.lease_id = lease_id.clone();
     checkpoint.lease_fence = lease_fence;
     Ok(checkpoint)
 }
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum RecoveryMaterialContinuation {
     SubmitAndPersist,
     FinalizeDurableEvidence,
 }
-
 pub(super) fn recovery_material_continuation(
     stage: crate::state::PendingPrincipalRegistrationStage,
 ) -> anyhow::Result<RecoveryMaterialContinuation> {
@@ -657,7 +642,6 @@ pub(super) fn recovery_material_continuation(
         ),
     }
 }
-
 pub(super) fn validate_completed_recovery_material(
     registration: &crate::state::PendingPrincipalRegistration,
     account: &crate::config::ActiveAccountContext,
@@ -691,7 +675,6 @@ pub(super) fn validate_completed_recovery_material(
     }
     Ok(())
 }
-
 pub(super) fn finish_pre_account_recovery_checkpoint(
     registration: &crate::state::PendingPrincipalRegistration,
 ) -> anyhow::Result<()> {
@@ -700,13 +683,12 @@ pub(super) fn finish_pre_account_recovery_checkpoint(
     )?;
     Ok(())
 }
-
 pub(super) async fn finish_principal_setup(
     registration: &crate::state::PendingPrincipalRegistration,
     recovery_key: &str,
     completed: &CompletedIdentityCreation,
     expected_holder_jkt: &str,
-    mut state_store: SyncSignal<crate::state::LocalStateStore>,
+    state_store: crate::presentation::SharedStateStore,
 ) -> anyhow::Result<Option<String>> {
     crate::identity::principal_registration::validate_checkpoint_recovery_key(
         registration,
@@ -719,23 +701,22 @@ pub(super) async fn finish_principal_setup(
     // Registration and current-principal already confirmed this Account. Its
     // storage must own frontier and recovery writes before setup completes;
     // runtime session publication remains in commit_completed_account.
-    let barrier = {
-        let mut store = state_store.write();
-        activate_accepted_account_setup_storage(
-            &mut store,
-            account,
-            registration.stage,
-            recovery_key,
-        )?;
-        store.set_session_grant(Some(completed.persisted_grant.clone()));
-        store.begin_durable_flush()?
-    };
+    let barrier = state_store.write(|store| -> anyhow::Result<_> {
+        Ok({
+            activate_accepted_account_setup_storage(
+                store,
+                account,
+                registration.stage,
+                recovery_key,
+            )?;
+            store.set_session_grant(Some(completed.persisted_grant.clone()));
+            store.begin_durable_flush()?
+        })
+    })?;
     barrier.wait().await?;
-
     if continuation == RecoveryMaterialContinuation::FinalizeDurableEvidence {
         let evidence = state_store
-            .read()
-            .recovery_material_evidence()
+            .read(|store| store.recovery_material_evidence())
             .context("completed recovery checkpoint has no durable evidence")?;
         validate_completed_recovery_material(&registration, account, &evidence)?;
         finish_pre_account_recovery_checkpoint(&registration)?;
@@ -798,21 +779,21 @@ pub(super) async fn finish_principal_setup(
         controller_authority: Some(controller_authority),
     };
     {
-        let barrier = {
-            let mut store = state_store.write();
-            store.set_pending_principal_registration(Some(registration.clone()))?;
-            store.set_recovery_material_evidence(Some(recovery_material_evidence))?;
-            store.begin_durable_flush()?
-        };
+        let barrier = state_store.write(|store| -> anyhow::Result<_> {
+            Ok({
+                store.set_pending_principal_registration(Some(registration.clone()))?;
+                store.set_recovery_material_evidence(Some(recovery_material_evidence))?;
+                store.begin_durable_flush()?
+            })
+        })?;
         barrier.wait().await?;
     }
-
     // The committed genesis unit makes the exact device projection available
     // through keys/query. Checkpoint its signer evidence before authoring the
     // ordinary recovery policy.
     crate::identity::device_directory::reset_session_cache();
     crate::identity::authoring_generation::reset_verified_authoring_generations();
-    state_store.write().set_device_authoring_authority(None);
+    state_store.write(|store| store.set_device_authoring_authority(None));
     let device_cache_epoch = crate::identity::device_directory::cache_epoch();
     let http = api.sdk_http_client()?;
     let signer = crate::event_signer::active_signer()
@@ -840,13 +821,13 @@ pub(super) async fn finish_principal_setup(
         crate::identity::authoring_generation::reset_verified_authoring_generations();
         anyhow::bail!("accepted founding device authoring evidence lost its cache epoch");
     }
-    let barrier = {
-        let mut store = state_store.write();
-        store.set_device_authoring_authority(Some(persisted));
-        store.begin_durable_flush()?
-    };
+    let barrier = state_store.write(|store| -> anyhow::Result<_> {
+        Ok({
+            store.set_device_authoring_authority(Some(persisted));
+            store.begin_durable_flush()?
+        })
+    })?;
     barrier.wait().await?;
-
     crate::recovery_flow::ensure_recovery_policy(
         &api,
         &recovery_actor,
@@ -884,17 +865,17 @@ pub(super) async fn finish_principal_setup(
         .map_err(anyhow::Error::msg)?;
     let completed_registration = registration.clone();
     {
-        let barrier = {
-            let mut store = state_store.write();
-            store.set_pending_principal_registration(Some(registration))?;
-            store.begin_durable_flush()?
-        };
+        let barrier = state_store.write(|store| -> anyhow::Result<_> {
+            Ok({
+                store.set_pending_principal_registration(Some(registration))?;
+                store.begin_durable_flush()?
+            })
+        })?;
         barrier.wait().await?;
     }
     finish_pre_account_recovery_checkpoint(&completed_registration)?;
     Ok(initial_mls_backup_id)
 }
-
 pub(super) fn hosting_label(url: &str) -> String {
     url::Url::parse(url)
         .ok()

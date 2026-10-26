@@ -3,12 +3,15 @@
 //! tasks (local state stays authoritative) plus a couple of label / option
 //! derivations used by the notification override picker.
 
+use std::rc::Rc;
+
 use arkret_wire::AccountDataKey;
-use dioxus::prelude::*;
+use glory::Cage;
 use serde_json::json;
 
 use super::build_read_receipt_preferences_body;
 use crate::notification_rules::{WatchLevel, parse_dnd_settings};
+use crate::presentation::{InksonContext, SharedStateStore};
 use crate::state::{LocalStateStore, PresencePreference, PresenceVisibility};
 use crate::transport::auth::with_event_submitter;
 use crate::views::helpers::short_protocol_id;
@@ -28,17 +31,18 @@ pub(crate) fn encrypted_account_data_value(
 /// from the local state store at call time —
 /// the local state is always authoritative; the server-sync is best-effort.
 pub(super) fn push_read_receipt_account_data(
+    context: Rc<InksonContext>,
     base_url: String,
     api_token: String,
-    state_store: SyncSignal<LocalStateStore>,
+    state_store: SharedStateStore,
 ) {
     let plaintext = build_read_receipt_preferences_body(
-        state_store.read().read_receipt_default_send(),
-        state_store.read().read_receipt_default_display(),
-        &state_store.read().read_receipt_realm_overrides(),
-        &state_store.read().read_receipt_realm_display_overrides(),
-        &state_store.read().read_receipt_strand_overrides(),
-        &state_store.read().read_receipt_strand_display_overrides(),
+        state_store.read(|store| store.read_receipt_default_send()),
+        state_store.read(|store| store.read_receipt_default_display()),
+        &state_store.read(|store| store.read_receipt_realm_overrides()),
+        &state_store.read(|store| store.read_receipt_realm_display_overrides()),
+        &state_store.read(|store| store.read_receipt_strand_overrides()),
+        &state_store.read(|store| store.read_receipt_strand_display_overrides()),
     );
     let body =
         match encrypted_account_data_value(AccountDataKey::READ_RECEIPT_PREFERENCES, &plaintext) {
@@ -48,26 +52,29 @@ pub(super) fn push_read_receipt_account_data(
                 return;
             }
         };
-    spawn(async move {
-        match with_event_submitter(&base_url, api_token, |sub| async move {
-            crate::transport::account::set_account_data(
-                &sub,
-                AccountDataKey::READ_RECEIPT_PREFERENCES,
-                body,
-            )
+    {
+        let task_owner = context.clone();
+        let _ = task_owner.spawn(async move {
+            match with_event_submitter(&base_url, api_token, |sub| async move {
+                crate::transport::account::set_account_data(
+                    &sub,
+                    AccountDataKey::READ_RECEIPT_PREFERENCES,
+                    body,
+                )
+                .await
+            })
             .await
-        })
-        .await
-        {
-            Ok(_) => {}
-            Err(err) => {
-                tracing::warn!(
-                    "ak.account_data.set for read-receipt prefs failed: {}",
-                    err.display()
-                );
+            {
+                Ok(_) => {}
+                Err(err) => {
+                    tracing::warn!(
+                        "ak.account_data.set for read-receipt prefs failed: {}",
+                        err.display()
+                    );
+                }
             }
-        }
-    });
+        });
+    };
 }
 
 // SDK preference structs are plain serializable data; the `expect` documents
@@ -83,16 +90,19 @@ pub(super) fn build_presence_preference_body(preference: &PresencePreference) ->
 /// this key (unlike the minimal `ak.presence.visibility` projection).
 /// An empty preference deletes the key instead of storing an empty body.
 pub(super) fn push_presence_preference_account_data(
+    context: Rc<InksonContext>,
     base_url: String,
     api_token: String,
-    state_store: SyncSignal<LocalStateStore>,
+    state_store: SharedStateStore,
 ) {
     if api_token.trim().is_empty() {
         return;
     }
-    let preference = state_store.read().presence_preference();
+    let preference = state_store.read(|store| store.presence_preference());
     if preference.is_empty() {
-        spawn(async move {
+        {
+            let task_owner = context.clone();
+            let _ = task_owner.spawn(async move {
             if let Err(err) = with_event_submitter(&base_url, api_token, |sub| async move {
                 crate::transport::account::delete_account_data(
                     &sub,
@@ -108,6 +118,7 @@ pub(super) fn push_presence_preference_account_data(
                 );
             }
         });
+        };
         return;
     }
     let plaintext = build_presence_preference_body(&preference);
@@ -118,26 +129,29 @@ pub(super) fn push_presence_preference_account_data(
             return;
         }
     };
-    spawn(async move {
-        match with_event_submitter(&base_url, api_token, |sub| async move {
-            crate::transport::account::set_account_data(
-                &sub,
-                AccountDataKey::PRESENCE_PREFERENCE,
-                body,
-            )
+    {
+        let task_owner = context.clone();
+        let _ = task_owner.spawn(async move {
+            match with_event_submitter(&base_url, api_token, |sub| async move {
+                crate::transport::account::set_account_data(
+                    &sub,
+                    AccountDataKey::PRESENCE_PREFERENCE,
+                    body,
+                )
+                .await
+            })
             .await
-        })
-        .await
-        {
-            Ok(_) => {}
-            Err(err) => {
-                tracing::warn!(
-                    "ak.account_data.set for ak.presence.preference failed: {}",
-                    err.display()
-                );
+            {
+                Ok(_) => {}
+                Err(err) => {
+                    tracing::warn!(
+                        "ak.account_data.set for ak.presence.preference failed: {}",
+                        err.display()
+                    );
+                }
             }
-        }
-    });
+        });
+    };
 }
 
 // SDK preference structs are plain serializable data; the `expect` documents
@@ -151,11 +165,13 @@ pub(super) fn build_presence_visibility_body(visibility: PresenceVisibility) -> 
 }
 
 pub(super) fn push_presence_visibility_account_data(
+    context: Rc<InksonContext>,
     base_url: String,
     api_token: String,
-    state_store: SyncSignal<LocalStateStore>,
+    state_store: SharedStateStore,
 ) {
-    let plaintext = build_presence_visibility_body(state_store.read().presence_visibility());
+    let plaintext =
+        build_presence_visibility_body(state_store.read(|store| store.presence_visibility()));
     let body = match encrypted_account_data_value(AccountDataKey::PRESENCE_VISIBILITY, &plaintext) {
         Ok(body) => body,
         Err(error) => {
@@ -163,26 +179,29 @@ pub(super) fn push_presence_visibility_account_data(
             return;
         }
     };
-    spawn(async move {
-        match with_event_submitter(&base_url, api_token, |sub| async move {
-            crate::transport::account::set_account_data(
-                &sub,
-                AccountDataKey::PRESENCE_VISIBILITY,
-                body,
-            )
+    {
+        let task_owner = context.clone();
+        let _ = task_owner.spawn(async move {
+            match with_event_submitter(&base_url, api_token, |sub| async move {
+                crate::transport::account::set_account_data(
+                    &sub,
+                    AccountDataKey::PRESENCE_VISIBILITY,
+                    body,
+                )
+                .await
+            })
             .await
-        })
-        .await
-        {
-            Ok(_) => {}
-            Err(err) => {
-                tracing::warn!(
-                    "ak.account_data.set for ak.presence.visibility failed: {}",
-                    err.display()
-                );
+            {
+                Ok(_) => {}
+                Err(err) => {
+                    tracing::warn!(
+                        "ak.account_data.set for ak.presence.visibility failed: {}",
+                        err.display()
+                    );
+                }
             }
-        }
-    });
+        });
+    };
 }
 
 /// Project the local per-realm watch levels into a spec-conformant
@@ -207,6 +226,7 @@ pub(super) fn push_presence_visibility_account_data(
 /// 6. `default.notify` — global catch-all: unset realms notify (the same baseline the in-app drawer
 ///    uses for non-muted realms).
 pub(super) fn push_notification_rules_account_data(
+    context: Rc<InksonContext>,
     base_url: String,
     api_token: String,
     realm_watch_levels: std::collections::BTreeMap<String, WatchLevel>,
@@ -295,22 +315,25 @@ pub(super) fn push_notification_rules_account_data(
             return;
         }
     };
-    spawn(async move {
-        match with_event_submitter(&base_url, api_token, |sub| async move {
-            crate::transport::account::set_account_data(&sub, AccountDataKey::PUSH_RULES, body)
-                .await
-        })
-        .await
-        {
-            Ok(_) => {}
-            Err(err) => {
-                tracing::debug!(
-                    "ak.account_data.set for ak.push_rules failed: {}",
-                    err.display()
-                );
+    {
+        let task_owner = context.clone();
+        let _ = task_owner.spawn(async move {
+            match with_event_submitter(&base_url, api_token, |sub| async move {
+                crate::transport::account::set_account_data(&sub, AccountDataKey::PUSH_RULES, body)
+                    .await
+            })
+            .await
+            {
+                Ok(_) => {}
+                Err(err) => {
+                    tracing::debug!(
+                        "ak.account_data.set for ak.push_rules failed: {}",
+                        err.display()
+                    );
+                }
             }
-        }
-    });
+        });
+    };
 }
 
 pub(super) fn build_dnd_account_data_body(enabled: bool, mode: &str) -> serde_json::Value {
@@ -329,6 +352,7 @@ pub(super) fn build_dnd_account_data_body(enabled: bool, mode: &str) -> serde_js
 }
 
 pub(super) fn push_dnd_account_data(
+    context: Rc<InksonContext>,
     base_url: String,
     api_token: String,
     authority: arkret_sdk::AccountId,
@@ -336,67 +360,79 @@ pub(super) fn push_dnd_account_data(
     device_id: String,
     enabled: bool,
     mode: String,
-    mut state_store: SyncSignal<LocalStateStore>,
-    backup_trigger_signal: Option<Signal<bool>>,
-    mut notification_settings_status: Signal<String>,
+    state_store: SharedStateStore,
+    backup_trigger_signal: Option<Cage<bool>>,
+    notification_settings_status: Cage<String>,
 ) {
     let plaintext_body = build_dnd_account_data_body(enabled, &mode);
     let parsed_settings = match parse_dnd_settings(&plaintext_body) {
         Ok(settings) => settings,
         Err(rejection) => {
-            notification_settings_status
-                .set(format!("DND save failed validation: {}", rejection.reason));
+            notification_settings_status.revise(|value| {
+                *value = format!("DND save failed validation: {}", rejection.reason)
+            });
             return;
         }
     };
-    state_store
-        .write()
-        .set_notification_dnd_settings(Some(parsed_settings));
+    state_store.write(|store| store.set_notification_dnd_settings(Some(parsed_settings)));
     if api_token.trim().is_empty() {
-        notification_settings_status.set("DND settings saved locally; sign in to sync.".to_owned());
+        notification_settings_status
+            .revise(|value| *value = "DND settings saved locally; sign in to sync.".to_owned());
         return;
     }
     let body = match encrypted_account_data_value(AccountDataKey::DND_SCHEDULE, &plaintext_body) {
         Ok(body) => body,
         Err(err) => {
-            notification_settings_status.set(format!("DND save failed: {err}"));
+            notification_settings_status.revise(|value| *value = format!("DND save failed: {err}"));
             return;
         }
     };
-    spawn(async move {
-        match with_event_submitter(&base_url, api_token.clone(), |sub| async move {
-            crate::transport::account::set_account_data(&sub, AccountDataKey::DND_SCHEDULE, body)
+    {
+        let task_owner = context.clone();
+        let _ = task_owner.spawn(async move {
+            match with_event_submitter(&base_url, api_token.clone(), |sub| async move {
+                crate::transport::account::set_account_data(
+                    &sub,
+                    AccountDataKey::DND_SCHEDULE,
+                    body,
+                )
                 .await
-        })
-        .await
-        {
-            Ok(_) => {
-                if let Some(signal) = backup_trigger_signal {
-                    crate::components::maybe_auto_backup_mls_after_encrypted_write(
-                        base_url,
-                        api_token,
-                        authority,
-                        actor_id,
-                        device_id,
-                        crate::app::runtime_adapter::state_store_handle(state_store),
-                        signal,
-                    )
-                    .await;
+            })
+            .await
+            {
+                Ok(_) => {
+                    if let Some(signal) = backup_trigger_signal {
+                        crate::components::maybe_auto_backup_mls_after_encrypted_write(
+                            context.clone(),
+                            base_url,
+                            api_token,
+                            authority,
+                            actor_id,
+                            device_id,
+                            state_store.handle(),
+                            signal,
+                        )
+                        .await;
+                    }
+                    notification_settings_status.revise(|value| {
+                        *value = if enabled {
+                            "Do not disturb enabled.".to_owned()
+                        } else {
+                            "DND disabled.".to_owned()
+                        }
+                    });
                 }
-                notification_settings_status.set(if enabled {
-                    "Do not disturb enabled.".to_owned()
-                } else {
-                    "DND disabled.".to_owned()
-                });
+                Err(err) => {
+                    notification_settings_status
+                        .revise(|value| *value = format!("DND save failed: {}", err.display()));
+                }
             }
-            Err(err) => {
-                notification_settings_status.set(format!("DND save failed: {}", err.display()));
-            }
-        }
-    });
+        });
+    };
 }
 
 pub(super) fn push_realm_remark_account_data_impl(
+    context: Rc<InksonContext>,
     base_url: String,
     api_token: String,
     realm_id: String,
@@ -404,7 +440,9 @@ pub(super) fn push_realm_remark_account_data_impl(
     notify_failure: bool,
 ) {
     let key = crate::account_data::realm_remark_account_data_key(&realm_id);
-    spawn(async move {
+    {
+        let task_owner = context.clone();
+        let _ = task_owner.spawn(async move {
         if remark.is_empty() {
             let key_for_log = key.clone();
             if let Err(err) = with_event_submitter(&base_url, api_token, |sub| {
@@ -460,6 +498,7 @@ pub(super) fn push_realm_remark_account_data_impl(
             }
         }
     });
+    };
 }
 
 /// Human-readable label for a watch level, used by the per-realm override

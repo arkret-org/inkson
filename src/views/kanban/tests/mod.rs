@@ -91,47 +91,6 @@ pub(super) fn creator_realm_projection(
     })
 }
 
-#[test]
-fn toast_editor_bootstrap_uses_asset_pipeline_urls() {
-    let script = toast_editor_bootstrap_script("editor-host", "editor-fallback", "", true)
-        .expect("bootstrap script");
-    let config_json = script
-        .split_once("const config = ")
-        .and_then(|(_, suffix)| suffix.split_once(";\n"))
-        .map(|(config, _)| config)
-        .expect("embedded editor config");
-    let config: serde_json::Value = serde_json::from_str(config_json).expect("editor config JSON");
-    assert_eq!(config["scriptUrl"], TOAST_EDITOR_SCRIPT.to_string());
-    assert_eq!(config["cssUrl"], TOAST_EDITOR_CSS.to_string());
-    let loader = script.split_once(";\n").expect("config statement").1;
-    assert!(!loader.contains("/assets/vendor/"));
-    assert!(script.contains("existing.host === host"));
-    assert!(script.contains("host.isConnected"));
-    assert!(script.contains("fallback.isConnected"));
-    assert!(script.contains("current.editor !== editor"));
-    assert!(script.contains("registry.set(config.hostId, { editor, host, sync })"));
-    assert!(script.contains("existing.editor.off(\"change\", existing.sync)"));
-    assert!(
-        script.find("const uploadImage").expect("upload callback")
-            < script
-                .find("editor = new window.toastui.Editor")
-                .expect("editor construction")
-    );
-    assert!(!script.contains("existing.dispose()"));
-}
-
-#[test]
-fn toast_editor_cleanup_revokes_callback_before_destroying_editor() {
-    let script = toast_editor_cleanup_script("editor-host").expect("cleanup script");
-    let delete = script.find("registry.delete").expect("registry deletion");
-    let off = script.find("editor.off").expect("change callback removal");
-    let destroy = script.find("editor.destroy").expect("editor destroy");
-
-    assert!(delete < off);
-    assert!(off < destroy);
-    assert!(script.contains("existing.host !== host"));
-}
-
 /// Canonical `encrypted_content` envelope fixture.
 ///
 /// `StrandProjectionView.encrypted_content` carries the SDK
@@ -210,4 +169,57 @@ pub(super) fn test_card(id: &str, rank: &str) -> KanbanCard {
         state: CardState::Synced,
         lifecycle: StrandLifecycleState::Active,
     }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) fn assert_native_badge(state: CardState, expected: CardState) {
+    let app = glory::ui::App::memory();
+    let scope = app.scope();
+    let directory = tempfile::Builder::new()
+        .prefix("kanban-badge-")
+        .tempdir_in("D:/BuildCache/inkson-glory/tmp")
+        .unwrap();
+    let config_store =
+        crate::config::LocalConfigStore::with_path(directory.path().join("config.json"));
+    let config = config_store.load();
+    let boot = crate::presentation::BootState {
+        config_store,
+        config,
+        state_store: SharedStateStore::new(LocalStateStore::with_path(
+            directory.path().join("state.json"),
+        )),
+        initial_credential: String::new(),
+        realm_tree_nodes: vec![],
+    };
+    let context = InksonContext::new(scope, boot, Route::Dashboard, |_| {
+        Box::pin(async { crate::runtime::session::CurrentSessionRefresh::retry_later("unused") })
+    });
+    app.mount(crate::components::write_state_badge(
+        scope,
+        context,
+        crate::components::WriteStateBadgeProps {
+            state: state.write_state(),
+            icon_only: None,
+        },
+    ))
+    .unwrap();
+    app.flush().unwrap();
+    let expected = format!("write-state-{}", expected.write_state().data_state());
+    let tree = app.tree();
+    let mut pending = tree.roots().to_vec();
+    let mut found = false;
+    while let Some(id) = pending.pop() {
+        let node = tree.node(id).unwrap();
+        found |= node
+            .descriptor
+            .view()
+            .classes
+            .iter()
+            .any(|class| class == &expected);
+        pending.extend(&node.children);
+    }
+    assert!(
+        found,
+        "actual native badge must expose its precise holder state {expected}"
+    );
 }

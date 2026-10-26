@@ -70,108 +70,52 @@ pub(super) fn server_options_for(
     crate::config::station_options_for(current_server_url, configured_stations)
 }
 
-#[derive(Clone, Copy)]
-pub(super) struct ServerSelectionContext {
-    pub(super) base_url: Signal<String>,
-    pub(super) token: Signal<String>,
-    pub(super) sync_cursor: Signal<String>,
-    pub(super) selected_realm_id: Signal<String>,
-    pub(super) realm_tree_nodes: Signal<Vec<RealmTreeNode>>,
-    pub(super) projection_events: Signal<Vec<ProjectionEvent>>,
-    pub(super) device_queue: Signal<usize>,
-    pub(super) frontier_state: Signal<String>,
-    pub(super) crypto_state: Signal<String>,
-    pub(super) config_store: Signal<LocalConfigStore>,
-    pub(super) state_store: SyncSignal<LocalStateStore>,
-    pub(super) network_state: Signal<String>,
-    pub(super) last_error: Signal<Option<String>>,
-    pub(super) server_description: Signal<Option<ServiceDescribe>>,
-    pub(super) server_probe_status: Signal<String>,
-    pub(super) connection_status: Signal<String>,
-    pub(super) principal_id: Signal<Option<arkret_sdk::DidCoreId>>,
-    pub(super) device_id: Signal<String>,
-    pub(super) account_primary_handle: Signal<String>,
-    pub(super) personal_handles: Signal<Vec<String>>,
-    pub(super) personal_handles_status: Signal<String>,
-    pub(super) personal_handles_lookup_key: Signal<String>,
-    /// SyncEngine generation counter — bumped to retire the
-    /// previous-server engine after the cache wipe + URL repoint.
-    pub(super) sync_generation: Signal<u64>,
-}
-
-pub(super) fn select_server(server_url: String, ctx: ServerSelectionContext) {
+pub(super) fn select_server(
+    server_url: String,
+    context: std::rc::Rc<crate::presentation::InksonContext>,
+) {
     let server_url = normalize_server_url(&server_url);
-    let mut base_url = ctx.base_url;
-    let mut token = ctx.token;
-    let mut sync_cursor = ctx.sync_cursor;
-    let mut selected_realm_id = ctx.selected_realm_id;
-    let mut realm_tree_nodes = ctx.realm_tree_nodes;
-    let mut projection_events = ctx.projection_events;
-    let mut device_queue = ctx.device_queue;
-    let mut frontier_state = ctx.frontier_state;
-    let mut crypto_state = ctx.crypto_state;
-    let mut network_state = ctx.network_state;
-    let mut last_error = ctx.last_error;
-    let mut server_description = ctx.server_description;
-    let mut server_probe_status = ctx.server_probe_status;
-    let mut status = ctx.connection_status;
-    let mut state_store = ctx.state_store;
-    let mut sync_generation = ctx.sync_generation;
-    let mut account_primary_handle = ctx.account_primary_handle;
-    let mut personal_handles = ctx.personal_handles;
-    let mut personal_handles_status = ctx.personal_handles_status;
-    let mut personal_handles_lookup_key = ctx.personal_handles_lookup_key;
-    let server_changed = !same_server_url(&base_url(), &server_url);
-
-    // A space cached against the previous server's view is meaningless
-    // on the new server (different service DID, different membership,
-    // potentially overlapping ak:space ids that point at unrelated
-    // rooms). Wipe the account-scoped cache before re-pointing the URL
-    // so the next sync starts from a clean slate. Device-level state
-    // (local_identity, push_registration) is preserved.
-    {
-        let mut store = state_store.write();
+    let server_changed = !same_server_url(&context.base_url.get(), &server_url);
+    context.state_store.write(|store| {
         store.clear_account_scoped();
         if server_changed {
             store.set_session_grant(None);
         }
-    }
-    // Retire the previous server's SyncEngine. The use_effect's
-    // base_url tracking would re-spawn anyway, but bumping here ensures
-    // the in-flight long-poll exits before the new URL takes over.
-    sync_generation.set(sync_generation() + 1);
-
+    });
+    context
+        .sync_generation
+        .revise(|value| *value = value.wrapping_add(1));
+    context.clear_account_projections();
     if server_changed {
-        token.set(String::new());
+        context.token.revise(String::clear);
     }
-    let next_token = if server_changed {
-        String::new()
-    } else {
-        token()
-    };
-    base_url.set(server_url.clone());
-    sync_cursor.set(String::new());
-    selected_realm_id.set(String::new());
-    realm_tree_nodes.set(Vec::new());
-    projection_events.set(Vec::new());
-    device_queue.set(0);
-    frontier_state.set("Not loaded".to_owned());
-    crypto_state.set("Refresh session for selected server".to_owned());
-    account_primary_handle.set(String::new());
-    personal_handles.set(Vec::new());
-    personal_handles_status.set("Not published".to_owned());
-    personal_handles_lookup_key.set(String::new());
+    context.base_url.revise(|value| *value = server_url.clone());
+    context.sync_cursor.revise(String::clear);
+    context.device_queue.revise(|value| *value = 0);
+    context
+        .frontier_state
+        .revise(|value| *value = "Not loaded".into());
+    context
+        .crypto_state
+        .revise(|value| *value = "Refresh session for selected server".into());
     crate::operation::set_authoring_station_id(None);
-    server_description.set(None);
-    server_probe_status.set("server not probed".to_owned());
-    status.set(ConnectionState::Offline.label().to_owned());
-    network_state.set("offline".to_owned());
-    last_error.set(None);
+    context.server_description.revise(|value| *value = None);
+    context
+        .server_probe_status
+        .revise(|value| *value = "server not probed".into());
+    context
+        .connection_status
+        .revise(|value| *value = ConnectionState::Offline.label().into());
+    context
+        .network_state
+        .revise(|value| *value = "offline".into());
+    context.last_error.revise(|value| *value = None);
     persist_config(
-        ctx.config_store,
+        context.config_store,
+        &context.active_account.get(),
         server_url,
-        (ctx.principal_id)(),
-        (ctx.device_id)(),
-        next_token,
+        context.principal_id.get(),
+        context.device_id.get(),
+        context.token.get(),
     );
 }

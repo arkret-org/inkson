@@ -68,20 +68,14 @@ export default defineConfig({
   projects,
   webServer: shouldStartServer
     ? {
-        // Finish the real WASM build before binding the HTTP socket. DX serve
-        // returns its rebuild page before the browser bundle is ready.
-        // The matrix exercises the bundle
-        // through the browser's native APIs (SubtleCrypto, PushManager,
-        // localStorage). Distinct port from the e2e harness so the two
-        // can run side-by-side in CI.
-        command:
-          "dx build --platform web --features web && node tests/e2e/staticServer.mjs target/dx/inkson/debug/web/public 4528 tests/cross_platform/fixtures",
+        // Build the real bundle before starting the fixture-aware static host.
+        command: "node scripts/serve_e2e.mjs",
         cwd: repositoryRoot,
-        url: `${baseURL}/wasm/inkson.js`,
+        url: `${baseURL}/assets/pkg/inkson.js`,
         reuseExistingServer: !process.env.CI,
         // A clean WASM build can take several minutes before the socket opens.
         timeout: 900_000,
-        env: { CARGO_TARGET_DIR: "target" },
+        env: { INKSON_E2E_PORT: "4528", INKSON_E2E_BUILD_PROFILE: "dev", INKSON_E2E_FEATURES: "web", INKSON_E2E_FIXTURES: "tests/cross_platform/fixtures" },
       }
     : undefined,
 });

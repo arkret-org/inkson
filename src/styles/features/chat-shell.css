@@ -480,9 +480,6 @@
 }
 .watch-level-toggle-caret svg { width: 12px; height: 12px; }
 .watch-level-menu {
-  position: absolute;
-  right: 0;
-  top: calc(100% + 4px);
   width: min(320px, calc(100vw - 32px));
   max-height: min(480px, calc(100dvh - 160px));
   overflow-y: auto;
@@ -496,16 +493,6 @@
   display: flex;
   flex-direction: column;
   gap: 0;
-}
-@supports (anchor-name: --strand-notifications) {
-  .watch-level-toggle { anchor-name: --strand-notifications; }
-  .watch-level-menu {
-    position: fixed;
-    position-anchor: --strand-notifications;
-    top: calc(anchor(bottom) + 4px);
-    left: clamp(16px, calc(anchor(right) - 320px), calc(100vw - 336px));
-    right: auto;
-  }
 }
 .watch-level-option {
   display: flex;

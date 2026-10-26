@@ -106,12 +106,15 @@ pub(super) fn card_detail_editor_basis(card: &KanbanCard) -> KanbanCard {
     card
 }
 
-pub(super) fn prepare_selected_card_for_edit(mut selected: Signal<Option<KanbanCard>>) {
-    let current = selected.peek().clone();
+pub(super) fn prepare_selected_card_for_edit(selected: Cage<Option<KanbanCard>>) {
+    let current = selected.get_untracked().clone();
     if let Some(current) = current {
         let next = card_detail_editor_basis(&current);
         if next != current {
-            selected.set(Some(next));
+            selected.revise(|value| {
+                let next = Some(next);
+                *value = next;
+            });
         }
     }
 }
@@ -246,40 +249,80 @@ pub(super) fn synthesis_body_after_entry_edit(
 #[allow(clippy::too_many_arguments)]
 pub(super) fn reset_card_detail_edit(
     current: &KanbanCard,
-    mut card_edit_title: Signal<String>,
-    mut card_edit_description: Signal<String>,
-    mut card_edit_body: Signal<String>,
-    mut card_edit_synthesis: Signal<String>,
-    mut card_edit_synthesis_target_id: Signal<Option<String>>,
-    mut card_edit_labels: Signal<String>,
-    mut card_edit_assignee: Signal<String>,
-    mut card_edit_due: Signal<String>,
-    mut editing_card_detail: Signal<bool>,
-    mut card_detail_actions_open: Signal<bool>,
-    mut card_synthesis_history_open_id: Signal<Option<String>>,
-    mut card_synthesis_selected_revision_id: Signal<Option<String>>,
-    mut card_detail_edit_status: Signal<String>,
+    card_edit_title: Cage<String>,
+    card_edit_description: Cage<String>,
+    card_edit_body: Cage<String>,
+    card_edit_synthesis: Cage<String>,
+    card_edit_synthesis_target_id: Cage<Option<String>>,
+    card_edit_labels: Cage<String>,
+    card_edit_assignee: Cage<String>,
+    card_edit_due: Cage<String>,
+    editing_card_detail: Cage<bool>,
+    card_detail_actions_open: Cage<bool>,
+    card_synthesis_history_open_id: Cage<Option<String>>,
+    card_synthesis_selected_revision_id: Cage<Option<String>>,
+    card_detail_edit_status: Cage<String>,
 ) {
     let draft = card_detail_draft_from_card(current);
-    card_edit_title.set(draft.title);
-    card_edit_description.set(draft.description);
-    card_edit_body.set(draft.description_body);
-    card_edit_synthesis.set(draft.synthesis);
-    card_edit_synthesis_target_id.set(None);
-    card_edit_labels.set(draft.labels.join(", "));
-    card_edit_assignee.set(draft.assignee);
-    card_edit_due.set(draft.due);
-    editing_card_detail.set(false);
-    card_detail_actions_open.set(false);
-    card_synthesis_history_open_id.set(None);
-    card_synthesis_selected_revision_id.set(None);
-    card_detail_edit_status.set(String::new());
+    card_edit_title.revise(|value| {
+        let next = draft.title;
+        *value = next;
+    });
+    card_edit_description.revise(|value| {
+        let next = draft.description;
+        *value = next;
+    });
+    card_edit_body.revise(|value| {
+        let next = draft.description_body;
+        *value = next;
+    });
+    card_edit_synthesis.revise(|value| {
+        let next = draft.synthesis;
+        *value = next;
+    });
+    card_edit_synthesis_target_id.revise(|value| {
+        let next = None;
+        *value = next;
+    });
+    card_edit_labels.revise(|value| {
+        let next = draft.labels.join(", ");
+        *value = next;
+    });
+    card_edit_assignee.revise(|value| {
+        let next = draft.assignee;
+        *value = next;
+    });
+    card_edit_due.revise(|value| {
+        let next = draft.due;
+        *value = next;
+    });
+    editing_card_detail.revise(|value| {
+        let next = false;
+        *value = next;
+    });
+    card_detail_actions_open.revise(|value| {
+        let next = false;
+        *value = next;
+    });
+    card_synthesis_history_open_id.revise(|value| {
+        let next = None;
+        *value = next;
+    });
+    card_synthesis_selected_revision_id.revise(|value| {
+        let next = None;
+        *value = next;
+    });
+    card_detail_edit_status.revise(|value| {
+        let next = String::new();
+        *value = next;
+    });
 }
 
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn save_card_detail_edit(
+    app: Rc<InksonContext>,
     base_url: String,
-    token: Signal<String>,
+    token: Cage<String>,
     realm_id: String,
     actor_id: String,
     device_id: String,
@@ -288,58 +331,66 @@ pub(super) async fn save_card_detail_edit(
     // R4: three-state security signal (see `kanban_plaintext_block_reason`).
     scope_security_encrypted: Option<bool>,
     sidecar_track_write: Option<SidecarTrackWriteContext>,
-    card_edit_scope: Signal<CardEditScope>,
-    card_edit_title: Signal<String>,
-    card_edit_description: Signal<String>,
-    card_edit_body: Signal<String>,
-    card_edit_synthesis: Signal<String>,
-    card_edit_synthesis_target_id: Signal<Option<String>>,
-    card_edit_labels: Signal<String>,
-    card_edit_assignee: Signal<String>,
-    card_edit_due: Signal<String>,
-    mut editing_card_detail: Signal<bool>,
-    mut card_detail_actions_open: Signal<bool>,
-    mut card_detail_edit_status: Signal<String>,
-    selected_card: Signal<Option<KanbanCard>>,
-    state_store: SyncSignal<LocalStateStore>,
-    mut board_status: Signal<String>,
+    card_edit_scope: Cage<CardEditScope>,
+    card_edit_title: Cage<String>,
+    card_edit_description: Cage<String>,
+    card_edit_body: Cage<String>,
+    card_edit_synthesis: Cage<String>,
+    card_edit_synthesis_target_id: Cage<Option<String>>,
+    card_edit_labels: Cage<String>,
+    card_edit_assignee: Cage<String>,
+    card_edit_due: Cage<String>,
+    editing_card_detail: Cage<bool>,
+    card_detail_actions_open: Cage<bool>,
+    card_detail_edit_status: Cage<String>,
+    selected_card: Cage<Option<KanbanCard>>,
+    state_store: SharedStateStore,
+    board_status: Cage<String>,
 ) {
-    let Some(active_account) = crate::app::SessionContext::get()
-        .active_account
-        .read()
-        .clone()
-    else {
-        card_detail_edit_status.set("Active account is unavailable".to_owned());
+    let Some(active_account) = app.active_account.get().clone() else {
+        card_detail_edit_status.revise(|value| {
+            let next = "Active account is unavailable".to_owned();
+            *value = next;
+        });
         return;
     };
     let authority = active_account.authority;
     let account_device_id = active_account.device_id;
-    card_detail_edit_status.set("Saving...".to_owned());
-    let edit_scope = card_edit_scope();
+    card_detail_edit_status.revise(|value| {
+        let next = "Saving...".to_owned();
+        *value = next;
+    });
+    let edit_scope = card_edit_scope.get();
     if sidecar_track_write.is_some() && edit_scope != CardEditScope::Synthesis {
-        card_detail_edit_status
-            .set("Private Sidecar editing is available only on the Synthesis track".to_owned());
+        card_detail_edit_status.revise(|value| {
+            let next =
+                "Private Sidecar editing is available only on the Synthesis track".to_owned();
+            *value = next;
+        });
         return;
     }
-    let synthesis_target_id = card_edit_synthesis_target_id();
+    let synthesis_target_id = card_edit_synthesis_target_id.get();
     let (draft, synthesis_revision) = card_detail_draft_for_edit_scope(
         &current,
         edit_scope,
         &synthesis_entries,
         synthesis_target_id.as_deref(),
-        &card_edit_title(),
-        &card_edit_description(),
-        &card_edit_body(),
-        &card_edit_synthesis(),
-        &card_edit_labels(),
-        &card_edit_assignee(),
-        &card_edit_due(),
+        &card_edit_title.get(),
+        &card_edit_description.get(),
+        &card_edit_body.get(),
+        &card_edit_synthesis.get(),
+        &card_edit_labels.get(),
+        &card_edit_assignee.get(),
+        &card_edit_due.get(),
     );
     let needs_encryption =
         match super::card_patch::card_detail_patch_needs_encryption(&current, &draft) {
             Ok(value) => value,
             Err(error) => {
-                card_detail_edit_status.set(error);
+                card_detail_edit_status.revise(|value| {
+                    let next = error;
+                    *value = next;
+                });
                 return;
             }
         };
@@ -349,7 +400,7 @@ pub(super) async fn save_card_detail_edit(
         // Re-read the holder's durable choice: a complete pre-Genesis cut is
         // still protocol plaintext, but must not publish this private draft.
         let has_creator_intent = async {
-            let api = crate::transport::auth::authed_api_ready(&base_url, token()).await?;
+            let api = crate::transport::auth::authed_api_ready(&base_url, token.get()).await?;
             let scope = arkret_sdk::ScopeRef::Realm {
                 realm_id: arkret_sdk::RealmId::new(realm_id.clone())?,
             };
@@ -368,9 +419,11 @@ pub(super) async fn save_card_detail_edit(
             }
             Ok(false) => {}
             Err(error) => {
-                card_detail_edit_status.set(format!(
-                    "encryption_transition_pending: read creator intent: {error}"
-                ));
+                card_detail_edit_status.revise(|value| {
+                    let next =
+                        format!("encryption_transition_pending: read creator intent: {error}");
+                    *value = next;
+                });
                 return;
             }
         }
@@ -381,68 +434,95 @@ pub(super) async fn save_card_detail_edit(
             .security_encrypted
             .unwrap_or_else(|| scope_security_encrypted.unwrap_or(true));
     if encrypted_realm_write
-        && !encrypted_realm_write_mls_ready(&state_store.read(), &realm_id, &authority)
+        && !state_store.read(|store| encrypted_realm_write_mls_ready(store, &realm_id, &authority))
     {
-        let session_credential = token();
-        card_detail_edit_status.set("Restoring encrypted Realm state before saving...".to_owned());
-        spawn(async move {
-            match recover_mls_checkpoint_for_encrypted_write(
-                &base_url,
-                &session_credential,
-                &realm_id,
-                &actor_id,
-                &authority,
-                &account_device_id,
-                state_store,
-            )
-            .await
-            {
-                Ok(()) => {
-                    if dispatch_card_detail_update(
-                        base_url,
-                        token,
-                        realm_id,
-                        actor_id,
-                        device_id,
-                        current,
-                        draft,
-                        scope_security_encrypted,
-                        sidecar_track_write,
-                        synthesis_target_id,
-                        synthesis_revision,
-                        selected_card,
-                        state_store,
-                        board_status,
-                    )
-                    .await
-                    {
-                        card_detail_edit_status.set(String::new());
-                        editing_card_detail.set(false);
-                        card_detail_actions_open.set(false);
-                    } else {
-                        let status = board_status();
-                        card_detail_edit_status.set(if status.trim().is_empty() {
-                            "Unable to save changes.".to_owned()
+        let session_credential = token.get();
+        card_detail_edit_status.revise(|value| {
+            let next = "Restoring encrypted Realm state before saving...".to_owned();
+            *value = next;
+        });
+        {
+            let task_context = app.clone();
+            spawn_write(task_context, async move {
+                match recover_mls_checkpoint_for_encrypted_write(
+                    app.clone(),
+                    &base_url,
+                    &session_credential,
+                    &realm_id,
+                    &actor_id,
+                    &authority,
+                    &account_device_id,
+                    state_store.clone(),
+                )
+                .await
+                {
+                    Ok(()) => {
+                        if dispatch_card_detail_update(
+                            app.clone(),
+                            base_url,
+                            token,
+                            realm_id,
+                            actor_id,
+                            device_id,
+                            current,
+                            draft,
+                            scope_security_encrypted,
+                            sidecar_track_write,
+                            synthesis_target_id,
+                            synthesis_revision,
+                            selected_card,
+                            state_store.clone(),
+                            board_status,
+                        )
+                        .await
+                        {
+                            card_detail_edit_status.revise(|value| {
+                                let next = String::new();
+                                *value = next;
+                            });
+                            editing_card_detail.revise(|value| {
+                                let next = false;
+                                *value = next;
+                            });
+                            card_detail_actions_open.revise(|value| {
+                                let next = false;
+                                *value = next;
+                            });
                         } else {
-                            status
+                            let status = board_status.get();
+                            card_detail_edit_status.revise(|value| {
+                                let next = if status.trim().is_empty() {
+                                    "Unable to save changes.".to_owned()
+                                } else {
+                                    status
+                                };
+                                *value = next;
+                            });
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            realm = %realm_id,
+                            %error,
+                            "encrypted Kanban write readiness recovery failed"
+                        );
+                        board_status.revise(|value| {
+                            let next = error.clone();
+                            *value = next;
+                        });
+                        card_detail_edit_status.revise(|value| {
+                            let next = error;
+                            *value = next;
                         });
                     }
                 }
-                Err(error) => {
-                    tracing::warn!(
-                        realm = %realm_id,
-                        %error,
-                        "encrypted Kanban write readiness recovery failed"
-                    );
-                    board_status.set(error.clone());
-                    card_detail_edit_status.set(error);
-                }
-            }
-        });
+            });
+        };
         return;
     }
 
     if dispatch_card_detail_update(
+        app.clone(),
         base_url,
         token,
         realm_id,
@@ -455,20 +535,32 @@ pub(super) async fn save_card_detail_edit(
         synthesis_target_id,
         synthesis_revision,
         selected_card,
-        state_store,
+        state_store.clone(),
         board_status,
     )
     .await
     {
-        card_detail_edit_status.set(String::new());
-        editing_card_detail.set(false);
-        card_detail_actions_open.set(false);
+        card_detail_edit_status.revise(|value| {
+            let next = String::new();
+            *value = next;
+        });
+        editing_card_detail.revise(|value| {
+            let next = false;
+            *value = next;
+        });
+        card_detail_actions_open.revise(|value| {
+            let next = false;
+            *value = next;
+        });
     } else {
-        let status = board_status();
-        card_detail_edit_status.set(if status.trim().is_empty() {
-            "Unable to save changes.".to_owned()
-        } else {
-            status
+        let status = board_status.get();
+        card_detail_edit_status.revise(|value| {
+            let next = if status.trim().is_empty() {
+                "Unable to save changes.".to_owned()
+            } else {
+                status
+            };
+            *value = next;
         });
     }
 }
@@ -478,13 +570,14 @@ pub(super) async fn save_card_detail_edit(
 /// fetch a pending Welcome, restore a decryptable account history backup, or
 /// finish creator genesis before retrying the exact draft the user submitted.
 async fn recover_mls_checkpoint_for_encrypted_write(
+    app: Rc<InksonContext>,
     base_url: &str,
     session_credential: &str,
     realm_id: &str,
     actor_id: &str,
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
-    state_store: SyncSignal<LocalStateStore>,
+    state_store: SharedStateStore,
 ) -> Result<(), String> {
     // The account MLS secret is an IndexedDB-only key on wasm; before that
     // tier finishes its async boot the sync store surface reports it missing.
@@ -498,12 +591,12 @@ async fn recover_mls_checkpoint_for_encrypted_write(
             "IndexedDB secure store unavailable before encrypted write recovery"
         );
     }
-    if encrypted_realm_write_mls_ready(&state_store.read(), realm_id, authority) {
+    if state_store.read(|store| encrypted_realm_write_mls_ready(store, realm_id, authority)) {
         return Ok(());
     }
 
     let mut failures = Vec::new();
-    let store_handle = crate::app::runtime_adapter::state_store_handle(state_store);
+    let store_handle = state_store.handle();
     // Current-sync can lag behind a newly accepted Realm, so the local
     // authority-root cell is an optimization rather than a prerequisite. If
     // it is absent, let creator bootstrap resolve the exact immutable
@@ -533,6 +626,7 @@ async fn recover_mls_checkpoint_for_encrypted_write(
         }
     } else {
         match crate::app::bootstrap_mls_welcome_for_realm(
+            app.clone(),
             base_url.to_owned(),
             session_credential.to_owned(),
             actor_id.to_owned(),
@@ -548,7 +642,7 @@ async fn recover_mls_checkpoint_for_encrypted_write(
             Err(error) => failures.push(format!("Welcome: {error}")),
         }
     }
-    if encrypted_realm_write_mls_ready(&state_store.read(), realm_id, authority) {
+    if state_store.read(|store| encrypted_realm_write_mls_ready(store, realm_id, authority)) {
         return Ok(());
     }
 
@@ -594,7 +688,7 @@ async fn recover_mls_checkpoint_for_encrypted_write(
             Err(error) => failures.push(format!("history backup: {}", error.display())),
         }
     }
-    if encrypted_realm_write_mls_ready(&state_store.read(), realm_id, authority) {
+    if state_store.read(|store| encrypted_realm_write_mls_ready(store, realm_id, authority)) {
         return Ok(());
     }
 
@@ -694,24 +788,29 @@ pub(super) fn card_detail_draft_for_edit_scope(
 
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn save_card_due_edit(
+    app: Rc<InksonContext>,
     base_url: String,
-    token: Signal<String>,
+    token: Cage<String>,
     realm_id: String,
     actor_id: String,
     device_id: String,
     current: KanbanCard,
     due_value: String,
     scope_security_encrypted: Option<bool>,
-    mut due_picker_open: Signal<bool>,
-    mut due_edit_status: Signal<String>,
-    selected_card: Signal<Option<KanbanCard>>,
-    state_store: SyncSignal<LocalStateStore>,
-    board_status: Signal<String>,
+    due_picker_open: Cage<bool>,
+    due_edit_status: Cage<String>,
+    selected_card: Cage<Option<KanbanCard>>,
+    state_store: SharedStateStore,
+    board_status: Cage<String>,
 ) -> bool {
     let mut draft = card_detail_draft_from_card(&current);
     draft.due = due_value.trim().to_owned();
-    due_edit_status.set("Saving...".to_owned());
+    due_edit_status.revise(|value| {
+        let next = "Saving...".to_owned();
+        *value = next;
+    });
     if dispatch_card_detail_update(
+        app.clone(),
         base_url,
         token,
         realm_id,
@@ -724,20 +823,29 @@ pub(super) async fn save_card_due_edit(
         None,
         None,
         selected_card,
-        state_store,
+        state_store.clone(),
         board_status,
     )
     .await
     {
-        due_edit_status.set(String::new());
-        due_picker_open.set(false);
+        due_edit_status.revise(|value| {
+            let next = String::new();
+            *value = next;
+        });
+        due_picker_open.revise(|value| {
+            let next = false;
+            *value = next;
+        });
         true
     } else {
-        let status = board_status();
-        due_edit_status.set(if status.trim().is_empty() {
-            "Unable to save due date.".to_owned()
-        } else {
-            status
+        let status = board_status.get();
+        due_edit_status.revise(|value| {
+            let next = if status.trim().is_empty() {
+                "Unable to save due date.".to_owned()
+            } else {
+                status
+            };
+            *value = next;
         });
         false
     }
@@ -745,25 +853,30 @@ pub(super) async fn save_card_due_edit(
 
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn save_card_calendar_edit(
+    app: Rc<InksonContext>,
     base_url: String,
-    token: Signal<String>,
+    token: Cage<String>,
     realm_id: String,
     actor_id: String,
     device_id: String,
     current: KanbanCard,
     calendar: CalendarCardFields,
     scope_security_encrypted: Option<bool>,
-    mut editing_card_detail: Signal<bool>,
-    mut card_detail_actions_open: Signal<bool>,
-    mut card_detail_edit_status: Signal<String>,
-    selected_card: Signal<Option<KanbanCard>>,
-    state_store: SyncSignal<LocalStateStore>,
-    board_status: Signal<String>,
+    editing_card_detail: Cage<bool>,
+    card_detail_actions_open: Cage<bool>,
+    card_detail_edit_status: Cage<String>,
+    selected_card: Cage<Option<KanbanCard>>,
+    state_store: SharedStateStore,
+    board_status: Cage<String>,
 ) -> bool {
     let mut draft = card_detail_draft_from_card(&current);
     draft.calendar = calendar;
-    card_detail_edit_status.set("Saving calendar...".to_owned());
+    card_detail_edit_status.revise(|value| {
+        let next = "Saving calendar...".to_owned();
+        *value = next;
+    });
     if dispatch_card_detail_update(
+        app.clone(),
         base_url,
         token,
         realm_id,
@@ -776,21 +889,33 @@ pub(super) async fn save_card_calendar_edit(
         None,
         None,
         selected_card,
-        state_store,
+        state_store.clone(),
         board_status,
     )
     .await
     {
-        card_detail_edit_status.set(String::new());
-        editing_card_detail.set(false);
-        card_detail_actions_open.set(false);
+        card_detail_edit_status.revise(|value| {
+            let next = String::new();
+            *value = next;
+        });
+        editing_card_detail.revise(|value| {
+            let next = false;
+            *value = next;
+        });
+        card_detail_actions_open.revise(|value| {
+            let next = false;
+            *value = next;
+        });
         true
     } else {
-        let status = board_status();
-        card_detail_edit_status.set(if status.trim().is_empty() {
-            "Unable to save calendar.".to_owned()
-        } else {
-            status
+        let status = board_status.get();
+        card_detail_edit_status.revise(|value| {
+            let next = if status.trim().is_empty() {
+                "Unable to save calendar.".to_owned()
+            } else {
+                status
+            };
+            *value = next;
         });
         false
     }
@@ -824,18 +949,22 @@ struct SyncedCalendarRsvpRecord<'a> {
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn dispatch_calendar_rsvp(
+    app: Rc<InksonContext>,
     base_url: String,
-    token: Signal<String>,
+    token: Cage<String>,
     realm_id: String,
     actor_id: String,
     card: KanbanCard,
     status: &'static str,
     occurrence: String,
-    mut state_store: SyncSignal<LocalStateStore>,
-    mut board_status: Signal<String>,
+    state_store: SharedStateStore,
+    board_status: Cage<String>,
 ) {
     if card.state != CardState::Synced {
-        board_status.set("cannot build RSVP: resolve the current Card first".to_owned());
+        board_status.revise(|value| {
+            let next = "cannot build RSVP: resolve the current Card first".to_owned();
+            *value = next;
+        });
         return;
     }
     // calendar-event.md section 8.5: an authoring client that cannot read the
@@ -845,122 +974,153 @@ pub(super) fn dispatch_calendar_rsvp(
     // client keeps no Realm-global order to walk.
     let schedule_basis_refs = card.calendar_schedule_basis_refs();
     if schedule_basis_refs.len() != 1 {
-        board_status.set(
-            "cannot build RSVP: calendar_schedule_unavailable - no readable schedule winner"
-                .to_owned(),
-        );
+        board_status.revise(|value| {
+            let next =
+                "cannot build RSVP: calendar_schedule_unavailable - no readable schedule winner"
+                    .to_owned();
+            *value = next;
+        });
         return;
     }
-    let submit_token = token();
+    let submit_token = token.get();
     let strand_id = card.primary_strand_id.clone();
     let calendar = card.calendar.clone();
     let build_realm_id = realm_id.clone();
     let build_actor_id = actor_id.clone();
-    spawn(async move {
-        let built = (|| {
-            let [schedule_basis_event] = schedule_basis_refs.as_slice() else {
-                anyhow::bail!(
-                    "calendar_schedule_unavailable - expected exactly one schedule Event"
-                );
-            };
-            let fields = calendar_event_fields_from_draft(&calendar).map_err(anyhow::Error::msg)?;
-            let actor = crate::mls_api_helpers::local_account_actor_id(&build_actor_id)?;
-            let active = crate::secure_key_store::active_device_seed_scope()
-                .ok_or_else(|| anyhow::anyhow!("active RSVP device is unavailable"))?;
-            let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-            crate::calendar::build_encrypted_calendar_rsvp_event(
-                &mut state_store.write(),
-                secure_store.as_ref(),
-                &build_realm_id,
-                &actor,
-                &active.device_id,
-                &strand_id,
-                status,
-                (!occurrence.trim().is_empty() && !calendar.recurrence_frequency.trim().is_empty())
-                    .then_some(occurrence.trim()),
-                &fields,
-                schedule_basis_event.clone(),
-            )
-        })();
-        match built {
-            Ok(event) => {
-                let operation_id = event.local_operation_id().to_string();
-                let kind = event.kind().as_str().to_owned();
-                let body = match event.typed_payload::<arkret_wire::event_spec::RsvpSet>() {
-                    Ok(body) => body,
-                    Err(err) => {
-                        board_status.set(format!("cannot queue RSVP: {err:#}"));
-                        return;
-                    }
+    {
+        let task_context = app.clone();
+        spawn_write(task_context, async move {
+            let built = (|| {
+                let [schedule_basis_event] = schedule_basis_refs.as_slice() else {
+                    anyhow::bail!(
+                        "calendar_schedule_unavailable - expected exactly one schedule Event"
+                    );
                 };
-                let record = match serde_json::to_value(QueuedCalendarRsvpRecord {
-                    kind: &kind,
-                    operation_id: &operation_id,
-                    actor_id: event.actor_id().to_string(),
-                    created_at: arkret_sdk::canonical::format_timestamp_canonical(
-                        event.created_at(),
-                    ),
-                    write_state: "queued",
-                    body: body.clone(),
-                }) {
-                    Ok(record) => record,
-                    Err(err) => {
-                        board_status.set(format!("cannot queue RSVP: {err}"));
-                        return;
-                    }
-                };
-                state_store.write().enqueue_local_projection_command(
-                    operation_id.clone(),
-                    Some(realm_id.clone()),
-                    record,
-                );
-                board_status.set(format!(
-                    "submitting RSVP {}",
-                    short_protocol_id(&operation_id)
-                ));
-                let submitted = with_authed_api(&base_url, submit_token, |api| async move {
-                    api.event_submitter()?.submit_sdk_event(&event).await
+                let fields =
+                    calendar_event_fields_from_draft(&calendar).map_err(anyhow::Error::msg)?;
+                let actor = crate::mls_api_helpers::local_account_actor_id(&build_actor_id)?;
+                let active = crate::secure_key_store::active_device_seed_scope()
+                    .ok_or_else(|| anyhow::anyhow!("active RSVP device is unavailable"))?;
+                let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+                state_store.write(|store| {
+                    crate::calendar::build_encrypted_calendar_rsvp_event(
+                        store,
+                        secure_store.as_ref(),
+                        &build_realm_id,
+                        &actor,
+                        &active.device_id,
+                        &strand_id,
+                        status,
+                        (!occurrence.trim().is_empty()
+                            && !calendar.recurrence_frequency.trim().is_empty())
+                        .then_some(occurrence.trim()),
+                        &fields,
+                        schedule_basis_event.clone(),
+                    )
                 })
-                .await;
-                let Ok(response) = submitted else {
-                    board_status.set(format!("RSVP failed: {submitted:#?}"));
-                    return;
-                };
-                let accepted_event_id = response.event_id.clone();
-                let record = match serde_json::to_value(SyncedCalendarRsvpRecord {
-                    kind: &kind,
-                    operation_id: &accepted_event_id,
-                    event_id: &response.event_id,
-                    local_operation_idempotency_alias: &operation_id,
-                    actor_id: &actor_id,
-                    created_at: arkret_sdk::canonical::format_timestamp_canonical(
-                        crate::clock::now_utc(),
-                    ),
-                    write_state: "synced",
-                    body,
-                }) {
-                    Ok(record) => record,
-                    Err(err) => {
-                        board_status.set(format!("cannot record RSVP: {err}"));
+            })();
+            match built {
+                Ok(event) => {
+                    let operation_id = event.local_operation_id().to_string();
+                    let kind = event.kind().as_str().to_owned();
+                    let body = match event.typed_payload::<arkret_wire::event_spec::RsvpSet>() {
+                        Ok(body) => body,
+                        Err(err) => {
+                            board_status.revise(|value| {
+                                let next = format!("cannot queue RSVP: {err:#}");
+                                *value = next;
+                            });
+                            return;
+                        }
+                    };
+                    let record = match serde_json::to_value(QueuedCalendarRsvpRecord {
+                        kind: &kind,
+                        operation_id: &operation_id,
+                        actor_id: event.actor_id().to_string(),
+                        created_at: arkret_sdk::canonical::format_timestamp_canonical(
+                            event.created_at(),
+                        ),
+                        write_state: "queued",
+                        body: body.clone(),
+                    }) {
+                        Ok(record) => record,
+                        Err(err) => {
+                            board_status.revise(|value| {
+                                let next = format!("cannot queue RSVP: {err}");
+                                *value = next;
+                            });
+                            return;
+                        }
+                    };
+                    state_store.write(|store| {
+                        store.enqueue_local_projection_command(
+                            operation_id.clone(),
+                            Some(realm_id.clone()),
+                            record,
+                        )
+                    });
+                    board_status.revise(|value| {
+                        let next = format!("submitting RSVP {}", short_protocol_id(&operation_id));
+                        *value = next;
+                    });
+                    let submitted = with_authed_api(&base_url, submit_token, |api| async move {
+                        api.event_submitter()?.submit_sdk_event(&event).await
+                    })
+                    .await;
+                    let Ok(response) = submitted else {
+                        board_status.revise(|value| {
+                            let next = format!("RSVP failed: {submitted:#?}");
+                            *value = next;
+                        });
                         return;
-                    }
-                };
-                state_store.write().upsert_raw_operation(
-                    accepted_event_id.clone(),
-                    Some(realm_id),
-                    record,
-                );
-                board_status.set(format!(
-                    "{} accepted as {}",
-                    kind,
-                    short_protocol_id(&response.event_id)
-                ));
+                    };
+                    let accepted_event_id = response.event_id.clone();
+                    let record = match serde_json::to_value(SyncedCalendarRsvpRecord {
+                        kind: &kind,
+                        operation_id: &accepted_event_id,
+                        event_id: &response.event_id,
+                        local_operation_idempotency_alias: &operation_id,
+                        actor_id: &actor_id,
+                        created_at: arkret_sdk::canonical::format_timestamp_canonical(
+                            crate::clock::now_utc(),
+                        ),
+                        write_state: "synced",
+                        body,
+                    }) {
+                        Ok(record) => record,
+                        Err(err) => {
+                            board_status.revise(|value| {
+                                let next = format!("cannot record RSVP: {err}");
+                                *value = next;
+                            });
+                            return;
+                        }
+                    };
+                    state_store.write(|store| {
+                        store.upsert_raw_operation(
+                            accepted_event_id.clone(),
+                            Some(realm_id),
+                            record,
+                        )
+                    });
+                    board_status.revise(|value| {
+                        let next = format!(
+                            "{} accepted as {}",
+                            kind,
+                            short_protocol_id(&response.event_id)
+                        );
+                        *value = next;
+                    });
+                }
+                Err(err) => {
+                    board_status.revise(|value| {
+                        let next = format!("cannot build RSVP: {err:#?}");
+                        *value = next;
+                    });
+                }
             }
-            Err(err) => {
-                board_status.set(format!("cannot build RSVP: {err:#?}"));
-            }
-        }
-    });
+        });
+    };
 }
 
 pub(super) fn projection_synthesis_revision(
@@ -1344,10 +1504,8 @@ pub(super) fn card_detail_tab_from_route(route: &Route) -> CardDetailContentTab 
     }
 }
 
-pub(super) fn card_detail_tab_from_current_route() -> CardDetailContentTab {
-    dioxus_router::try_router()
-        .map(|router| card_detail_tab_from_route(&router.current::<Route>()))
-        .unwrap_or_default()
+pub(super) fn card_detail_tab_from_current_route(app: &InksonContext) -> CardDetailContentTab {
+    card_detail_tab_from_route(&app.route.get())
 }
 
 pub(super) fn card_task_route_with_tab(route: &Route, tab: CardDetailContentTab) -> Option<Route> {
@@ -1366,12 +1524,9 @@ pub(super) fn card_task_route_with_tab(route: &Route, tab: CardDetailContentTab)
     Some(route)
 }
 
-pub(super) fn replace_card_detail_tab_query(tab: CardDetailContentTab) {
-    let Some(router) = dioxus_router::try_router() else {
-        return;
-    };
-    if let Some(route) = card_task_route_with_tab(&router.current::<Route>(), tab) {
-        let _ = router.replace(route);
+pub(super) fn replace_card_detail_tab_query(app: Rc<InksonContext>, tab: CardDetailContentTab) {
+    if let Some(route) = card_task_route_with_tab(&app.route.get_untracked(), tab) {
+        app.replace_route(route);
     }
 }
 
@@ -1395,41 +1550,52 @@ pub(super) fn strand_detail_deep_link_path_with_tab(
     )
 }
 
-pub(super) fn share_kanban_strand_link(path: &str) {
-    let Ok(encoded) = serde_json::to_string(path) else {
-        return;
-    };
-    let script = format!(
-        r#"(async () => {{
-    const path = {encoded};
-    const url = new URL(path, window.location.href).href;
-    if (navigator.share) {{
-        try {{
-            await navigator.share({{ url }});
-            return true;
-        }} catch (err) {{
-            if (err && err.name === "AbortError") {{
-                return false;
-            }}
-        }}
-    }}
-    if (navigator.clipboard && window.isSecureContext) {{
-        await navigator.clipboard.writeText(url);
-        return true;
-    }}
-    const node = document.createElement("textarea");
-    node.value = url;
-    node.setAttribute("readonly", "");
-    node.style.position = "fixed";
-    node.style.left = "-9999px";
-    document.body.appendChild(node);
-    node.select();
-    const copied = document.execCommand("copy");
-    document.body.removeChild(node);
-    return copied;
-}})()"#
-    );
-    let _ = document::eval(&script);
+pub(super) fn share_kanban_strand_link(app: Rc<InksonContext>, path: &str) {
+    let path = path.to_owned();
+    let root = app.clone();
+    spawn_write(root, async move {
+        #[cfg(target_arch = "wasm32")]
+        let base = web_sys::window()
+            .and_then(|window| window.location().href().ok())
+            .unwrap_or_else(|| app.base_url.get_untracked());
+        #[cfg(not(target_arch = "wasm32"))]
+        let base = app.base_url.get_untracked();
+        let url = url::Url::parse(&base)
+            .and_then(|base| base.join(&path))
+            .map(|url| url.to_string())
+            .unwrap_or(path);
+        #[cfg(target_arch = "wasm32")]
+        {
+            use wasm_bindgen::JsCast;
+            if let Some(window) = web_sys::window() {
+                let navigator = window.navigator();
+                if let Ok(share) = js_sys::Reflect::get(
+                    navigator.as_ref(),
+                    &wasm_bindgen::JsValue::from_str("share"),
+                ) && let Ok(share) = share.dyn_into::<js_sys::Function>()
+                {
+                    let data = js_sys::Object::new();
+                    let _ = js_sys::Reflect::set(
+                        &data,
+                        &wasm_bindgen::JsValue::from_str("url"),
+                        &wasm_bindgen::JsValue::from_str(&url),
+                    );
+                    match share.call1(navigator.as_ref(), &data) {
+                        Ok(result) => {
+                            if let Ok(promise) = result.dyn_into::<js_sys::Promise>() {
+                                let _ = wasm_bindgen_futures::JsFuture::from(promise).await;
+                                return;
+                            }
+                        }
+                        Err(_) => return,
+                    }
+                }
+            }
+        }
+        if let Err(error) = crate::components::platform_io::copy_text(&url).await {
+            tracing::warn!(%error,"card link copy failed");
+        }
+    });
 }
 
 pub(super) fn card_summary_text(summary: &str) -> String {

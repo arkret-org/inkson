@@ -1,0 +1,225 @@
+/* Preserve the original Settings/Agent layouts with inline semantic controls.
+   Logical Groups have no physical span wrapper, so their children carry the
+   corresponding row/label classes directly. */
+.settings-nav-item { text-align: left; justify-items: start; }
+.settings-nav-item-title { color: var(--text, var(--ak-ink)); font-size: 13px; font-weight: 700; }
+.settings-nav-search .input-empty-prompt { padding: 8px 12px; white-space: nowrap; }
+.settings-avatar-card .settings-avatar-preview { width: 128px; height: 128px; font-size: 42px; }
+.settings-avatar-card .settings-avatar-preview .content-block-image,
+.settings-avatar-card .settings-avatar-preview .content-block-image img {
+  display: block; width: 100%; height: 100%; max-width: none; max-height: none;
+  border-radius: 50%; object-fit: cover;
+}
+.agent-admin-list-row { grid-template-columns: 36px minmax(0, 1fr) auto auto; align-items: center; column-gap: 10px; }
+.agent-admin-list-row > .agent-admin-row-avatar { width: 36px; height: 36px; }
+.agent-admin-row-title { min-width: 0; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-admin-row-id { grid-column: 1 / -1; text-align: left; }
+.agent-admin-preset-copy { display: grid; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
+.agent-admin-preset-title, .agent-admin-section-title { font-weight: 700; }
+.agent-admin-preset-copy > .muted { white-space: normal; }
+
+/* Original card tracks must shrink at long opaque identity values. */
+.agent-admin-detail-pane { grid-template-columns: minmax(0, 1fr); }
+.agent-admin-detail-pane > .mono { min-width: 0; overflow-wrap: anywhere; word-break: break-word; white-space: normal; }
+.agent-admin-section-head > * { min-width: 0; }
+.settings-profile-fields > .form-field { margin-bottom: 0; }
+.settings-profile-fields > .form-field > .sapid-field-label { font-size: 14px; font-weight: 600; line-height: 1.3; white-space: nowrap; }
+.device-access-title, .device-name { font-weight: 700; }
+.settings-account-identity-grid .settings-identity-label { margin-bottom: 0; color: var(--text-3); font-size: 11px; font-weight: 700; letter-spacing: .06em; }
+
+/* Field keeps the real checkbox label/control association and readable help. */
+.agent-admin-preset-row.sapid-field { grid-template-columns: 16px minmax(0, 1fr); row-gap: 2px; }
+.agent-admin-preset-row > .sapid-field-label { grid-column: 2; grid-row: 1; color: var(--text); font-size: 14px; font-weight: 700; line-height: 1.5; }
+.agent-admin-preset-row > .sapid-field-description { grid-column: 2; grid-row: 2; min-width: 0; white-space: normal; overflow-wrap: anywhere; font-size: 14px; line-height: 1.5; }
+.agent-admin-preset-row > .sapid-checkbox { grid-column: 1; grid-row: 1 / span 2; align-self: center; }
+.agent-admin-preset-row input[type=checkbox], .contact-scope-editor input[type=checkbox], .settings-toggle.sapid-unstyled:not(.settings-switch) > input[type=checkbox] {
+  appearance: none; display: inline-block; flex: 0 0 16px; width: 16px; height: 16px;
+  margin: 0; border: 1px solid var(--border-strong); border-radius: 4px; background: var(--surface);
+  vertical-align: middle;
+}
+.agent-admin-preset-row input[type=checkbox]:checked, .contact-scope-editor input[type=checkbox]:checked, .settings-toggle.sapid-unstyled:not(.settings-switch) > input[type=checkbox]:checked {
+  border-color: var(--accent); background-color: var(--accent);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4 8l3 3 5-6' fill='none' stroke='%230b1019' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: center; background-size: 12px 12px;
+}
+.agent-admin-preset-row input[type=checkbox]:disabled { opacity: 1; }
+.contact-scope-editor .sapid-checkbox { display: flex; align-items: center; gap: 7px; }
+
+/* FileButton has a label-only public slot; keep its real controller and add
+   the existing decorative image geometry without replacing the trigger. */
+[data-gly-kind=file].settings-avatar-input.avatar-upload-button::before {
+  content: ""; display: inline-block; flex: 0 0 16px; width: 16px; height: 16px;
+  background: currentColor;
+  mask: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2024%2024%27%3E%3Cpath%20d%3D%27M3%205a2%202%200%200%201%202-2h14a2%202%200%200%201%202%202v14a2%202%200%200%201-2%202H5a2%202%200%200%201-2-2V5Zm3%2013%205-6%204%205%202-3%203%204M8%208.5h.01%27%20fill%3D%27none%27%20stroke%3D%27black%27%20stroke-width%3D%272%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%2F%3E%3C%2Fsvg%3E") center / contain no-repeat;
+}
+
+/* The original detail identity remains one shrinkable header track. */
+.agent-admin-detail-head > .agent-admin-detail-identity { display: grid; gap: 0; min-width: 0; width: 100%; }
+.agent-admin-detail-identity > .mono { min-width: 0; white-space: normal; overflow-wrap: anywhere; word-break: break-word; }
+
+/* Match the original 32 by 18 switch with a real controlled switch input. */
+.agent-admin-enabled-switch input[role=switch] {
+  appearance: none; display: block; flex: 0 0 32px; width: 32px; height: 18px; padding: 0; margin: 0; border: 0; border-radius: 999px;
+  background-color: var(--border-strong); background-image: radial-gradient(circle, white 0 7px, transparent 7px);
+  background-size: 14px 14px; background-position: 2px center; background-repeat: no-repeat; cursor: pointer; transition: 120ms;
+}
+.agent-admin-enabled-switch input[role=switch]:checked { background-color: var(--accent); background-position: 16px center; }
+.agent-admin-enabled-switch input[role=switch]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.agent-admin-enabled-switch input[role=switch]:disabled { cursor: not-allowed; }
+
+/* A semantic text leaf replaces the original metric strong element. */
+.settings-server-metric-label { display: block; font-size: 12px; font-weight: 700; color: var(--text-2); margin-bottom: 4px; }
+
+/* Original control CSSOM: the default primary Button, avatar label, and
+   small secondary invitation Button each had a distinct size/variant. */
+.settings .settings-profile-save {
+  display: inline-flex; box-sizing: border-box; flex-shrink: 0; align-items: center; justify-content: center; gap: 8px;
+  height: 36px; min-height: 36px; padding: 8px 16px; border: 0; border-radius: 8px;
+  font-family: inherit; font-size: 14px; font-weight: 500; line-height: 20px; white-space: nowrap;
+  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-2) 100%); color: var(--primary-foreground);
+  box-shadow: 0 14px 28px color-mix(in srgb, var(--primary) 24%, transparent);
+}
+.settings .settings-profile-save:not(:disabled):hover { background: linear-gradient(135deg, var(--primary-strong) 0%, color-mix(in srgb, var(--primary-2) 92%, white) 100%); }
+.settings .settings-avatar-input.avatar-upload-button {
+  display: inline-flex; box-sizing: border-box; align-items: center; justify-content: center; gap: 7px;
+  min-height: 36px; width: fit-content; max-width: 100%; padding: 0 12px;
+  border: 1px solid color-mix(in srgb, var(--border-strong) 92%, transparent); border-radius: 8px;
+  background: var(--inkson-original-control-surface); color: var(--inkson-original-control-text);
+  font-size: 13px; font-weight: 700; line-height: 1.2; text-decoration: none; cursor: pointer;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, white 4%, transparent);
+  transition: background-color 120ms, border-color 120ms, color 120ms;
+}
+.settings .settings-invite-locator-refresh {
+  display: inline-flex; box-sizing: border-box; flex-shrink: 0; align-items: center; justify-content: center; gap: 6px;
+  height: 32px; min-height: 32px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--border-strong);
+  font-family: inherit; font-size: 13px; font-weight: 500; line-height: 20px; white-space: nowrap;
+  background: var(--inkson-original-control-surface); color: var(--inkson-original-control-text); box-shadow: none;
+}
+.settings .settings-invite-locator-refresh:not(:disabled):hover { background-color: color-mix(in oklab, var(--inkson-original-control-surface) 80%, transparent); }
+
+/* Original Contact-row Buttons all used the default 36px size.
+   Variant colors below follow their original primary/secondary metadata. */
+.contact-row :is(.contact-scope-save,.contact-petname-save,.contact-message,.contact-call-voice,.contact-call-video,.contact-block) {
+  display: inline-flex; box-sizing: border-box; flex-shrink: 0; align-items: center; justify-content: center; gap: 8px;
+  height: 36px; min-height: 36px; padding: 8px 16px; border: 0; border-radius: 8px;
+  font-family: inherit; font-size: 14px; font-weight: 500; line-height: 20px; white-space: nowrap;
+}
+.contact-row :is(.contact-scope-save,.contact-petname-save,.contact-call-voice,.contact-call-video) {
+  background: var(--inkson-original-control-surface); color: var(--inkson-original-control-text); box-shadow: none;
+}
+.contact-row :is(.contact-scope-save,.contact-petname-save,.contact-call-voice,.contact-call-video):not(:disabled):hover { background-color: color-mix(in oklab, var(--inkson-original-control-surface) 80%, transparent); }
+.contact-row .contact-message {
+  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-2) 100%); color: var(--primary-foreground);
+  box-shadow: 0 14px 28px color-mix(in srgb, var(--primary) 24%, transparent);
+}
+.contact-row .contact-message:not(:disabled):hover { background: linear-gradient(135deg, var(--primary-strong) 0%, color-mix(in srgb, var(--primary-2) 92%, white) 100%); }
+
+/* HelpTip used an inline span; its real semantic button must not add UA paint. */
+.help-tip:where([data-gly-kind=button]) { appearance: none; background: transparent; padding: 0; }
+
+/* Audit summary labels retain the original metric strong typography. */
+.audit-metric-label { display: block; font-size: 12px; font-weight: 700; color: var(--text-2); margin-bottom: 4px; }
+
+/* A semantic check owns its label; the legacy .checkbox class only sized its decorative square. */
+.settings-toggle { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.settings-toggle.sapid-unstyled > input[type=checkbox] { flex: 0 0 auto; width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
+.settings-toggle.sapid-unstyled > input[type=checkbox]:disabled { opacity: .55; cursor: not-allowed; }
+.settings-switch.sapid-unstyled > input[type=checkbox] { appearance: none; position: relative; width: 32px; height: 18px; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--surface-3); }
+.settings-switch.sapid-unstyled > input[type=checkbox]::after { content: ""; position: absolute; width: 14px; height: 14px; left: 1px; top: 1px; border-radius: 50%; background: white; box-shadow: var(--shadow-xs); }
+.settings-switch.sapid-unstyled > input[type=checkbox]:checked { background: var(--accent); border-color: var(--accent); }
+.settings-switch.sapid-unstyled > input[type=checkbox]:checked::after { left: 15px; }
+.settings-switch.sapid-unstyled > input[type=checkbox]:focus-visible { outline: none; box-shadow: var(--ring); }
+.invite-policy-kind-row .settings-toggle { width: 100%; }
+.settings-subsection-title { font-weight: 700; }
+.settings-presence-editor { display: grid; gap: 8px; }
+.privacy-settings .presence-manual-state-select, .privacy-settings .presence-status-expiry-select { width: fit-content; }
+
+/* The original status editor named these controls without additional visible field labels. */
+.privacy-settings :is(.presence-manual-state-select, .presence-status-expiry-select, .presence-status-message-input) > .sapid-field-label { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+
+/* Original Label and secondary Button palette, measured in both live baseline themes. */
+.inkson-theme-light { --inkson-original-control-surface: #ebf0eb; --inkson-original-control-text: #19211c; }
+.inkson-theme-dark { --inkson-original-control-surface: #223129; --inkson-original-control-text: #e7efe9; }
+
+/* Original Directory text used paragraph margins and named placeholder-only inputs. */
+.directory-panel > .directory-title { margin-block: .83em; }
+.directory-panel > .directory-description { margin-block: 1em; }
+.directory-panel > .actions { align-items: center; }
+.directory-panel .input-prompt-host { min-width: 0; }
+.directory-panel .directory-search-button { height: 36px; min-height: 36px; white-space: nowrap; }
+/* Dashboard intrinsic table and operation sections retain their original structure. */
+.dashboard-panel .surface-head > :first-child { font-weight: 700; }
+.operations-surface > .actions { padding: 12px 16px 0; }
+.dashboard-health-results { padding: 12px 16px; }
+/* Long real failure details must wrap within the Consent content column. */
+.consent-settings-panel { min-width: 0; grid-template-columns: minmax(0, 1fr); }
+.consent-settings-panel > * { min-width: 0; }
+.consent-load-error { overflow-wrap: anywhere; white-space: normal; }
+.consent-edit-actions { display: grid; gap: 6px; }
+.consent-request-title { font-weight: 700; }
+.consent-settings-panel :is(.consent-retry-button,.consent-read-complete-button,.consent-recover-original-button,.consent-request-submit-button) {
+ display: inline-flex; box-sizing: border-box; align-items: center; justify-content: center; gap: 8px;
+ height: 36px; min-height: 36px; padding: 8px 16px; border: 0; border-radius: 8px;
+ font-family: inherit; font-size: 14px; font-weight: 500; line-height: 20px; white-space: nowrap;
+ background: var(--inkson-original-control-surface); color: var(--inkson-original-control-text);
+}
+.consent-settings-panel :is(.consent-retry-button,.consent-read-complete-button,.consent-recover-original-button,.consent-request-submit-button):not(:disabled):hover { background-color: color-mix(in oklab, var(--inkson-original-control-surface) 80%, transparent); }
+
+.consent-request-scope-input { width: fit-content; max-width: 100%; }
+.consent-request-scope-input > .sapid-field-label { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+
+/* The official unstyled slider keeps geometry and interaction; provide its visible product paint. */
+.settings-avatar-crop-controls { color: var(--text); }
+:is(.settings-avatar-crop-controls .avatar-crop-slider,.avatar-uploader .slider) .sapid-slider-track { background: var(--border-strong); border-radius: 2px; }
+:is(.settings-avatar-crop-controls .avatar-crop-slider,.avatar-uploader .slider) .sapid-slider-fill { background: var(--accent); border-radius: 2px; }
+:is(.settings-avatar-crop-controls .avatar-crop-slider,.avatar-uploader .slider) .sapid-slider-thumb { background: var(--accent); border: 2px solid var(--surface-solid); border-radius: 50%; box-sizing: border-box; }
+
+/* Both original crop confirmation actions were default-size secondary Buttons. */
+.settings-avatar-crop-controls :is(.settings-avatar-crop-save,.settings-avatar-crop-cancel) {
+ display: inline-flex; box-sizing: border-box; align-items: center; justify-content: center; gap: 8px;
+ height: 36px; min-height: 36px; padding: 8px 16px; border: 0; border-radius: 8px;
+ font-family: inherit; font-size: 14px; font-weight: 500; line-height: 20px; white-space: nowrap;
+ background: var(--inkson-original-control-surface); color: var(--inkson-original-control-text);
+}
+
+/* The original MIMI facade groups its four probes and preserves literal preformatted results. */
+.mimi-interop-panel .mimi-result-text { display: block; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--font-mono, monospace); margin-block: 1em; }
+.mimi-interop-panel > .actions > button { box-sizing: border-box; height: 36px; min-height: 36px; padding: 8px 16px; border: 0; border-radius: 8px; font-family: inherit; font-size: 14px; font-weight: 500; line-height: 20px; white-space: nowrap; background: var(--inkson-original-control-surface); color: var(--inkson-original-control-text); }
+
+/* Notification metrics retain their separate title and live Enabled/Muted label. */
+.settings-notification-kind-label { display: block; margin: 0 0 4px; font-weight: 700; font-size: 12px; color: var(--text-2); }
+.settings-mls-recovery :is(.settings-mls-recovery-status,.settings-mls-recovery-warning) { margin: 0; }
+.settings-mls-recovery-form { display: grid; gap: 6px; }
+
+/* Original Invite controls form compact labelled fields; receipts stay below their guidance. */
+.invite-policy-panel .invite-policy-domain-fields { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-start; }
+.invite-policy-panel .invite-policy-domain-field { display: flex; flex-direction: column; flex: 0 1 198px; min-width: 0; gap: 4px; margin: 0; }
+.invite-policy-panel .invite-policy-domain-field .input { width: 100%; }
+.invite-policy-panel :is(.invite-policy-handle-behavior,.invite-policy-explicit-behavior).field { align-items: flex-start; width: fit-content; }
+.invite-policy-panel :is(.invite-policy-handle-behavior,.invite-policy-explicit-behavior) .sapid-select { width: max-content; max-width: 100%; }
+.invite-policy-panel .invite-policy-domain-field .input-empty-prompt { padding: 8px 12px; white-space: nowrap; overflow: hidden; max-width: 100%; box-sizing: border-box; }
+.realm-preference-picker { width: fit-content; max-width: 100%; align-items: center; }
+.settings .realm-preference-picker > .sapid-select { width: fit-content; max-width: 100%; }
+.privacy-settings .presence-visibility-select.field { display: flex; flex-direction: row; align-items: center; width: fit-content; max-width: 100%; gap: 8px; }
+.privacy-settings :is(.presence-manual-state-select,.presence-status-expiry-select).field { width: fit-content; max-width: 100%; margin-bottom: 0; }
+.privacy-settings :is(.presence-manual-state-select,.presence-status-expiry-select) > .sapid-field-label { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.privacy-settings :is(.presence-visibility-select,.presence-manual-state-select,.presence-status-expiry-select) .sapid-select { width: max-content; max-width: 100%; }
+.privacy-settings .privacy-receipt-controls { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px; }
+.privacy-settings .realm-remark-add-save { width: fit-content; justify-self: start; }
+.privacy-settings .realm-remark-add-name { margin-bottom: 0; }
+.privacy-settings .realm-remark-add-name > .sapid-field-label { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+/* The original mobile actions stack placed labels above full-width selects. */
+@media (max-width: 768px) {
+  .privacy-settings .presence-visibility-select.field {
+    flex-direction: column; align-items: stretch; width: 100%;
+  }
+  .privacy-settings .presence-visibility-select > .sapid-field-label { align-self: flex-start; }
+  .privacy-settings :is(.presence-manual-state-select,.presence-status-expiry-select).field,
+  .privacy-settings .realm-preference-picker { width: 100%; align-items: stretch; }
+  .privacy-settings :is(.presence-visibility-select,.presence-manual-state-select,.presence-status-expiry-select,.realm-preference-picker) > .sapid-select {
+    box-sizing: border-box; width: 100%; min-width: 0; max-width: 100%;
+    text-align: left; justify-content: flex-start;
+  }
+  .privacy-settings .realm-preference-picker > [data-gly-kind=text] { text-align: center; }
+}

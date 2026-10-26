@@ -45,9 +45,14 @@ try {
         New-Item -ItemType Directory -Force -Path $installDir, $controlDir | Out-Null
         Copy-Item -Force -LiteralPath $BinaryPath -Destination (Join-Path $installDir "inkson")
         chmod 0755 (Join-Path $installDir "inkson")
+        $assetDirectory = Join-Path $pkgRoot "usr/share/inkson"
+        New-Item -ItemType Directory -Force -Path $assetDirectory | Out-Null
+        $assetOutput = Join-Path $assetDirectory "assets"
+        New-Item -ItemType Directory -Force -Path $assetOutput | Out-Null
+        Get-ChildItem -LiteralPath (Join-Path $repoRoot "assets") -Force | Copy-Item -Destination $assetOutput -Recurse -Force
 
         # Derive runtime ABI dependencies from the actual ELF, rather than
-        # retaining a manually maintained GTK/WebKit version list.
+        # retaining a manually maintained renderer library version list.
         if (-not (Get-Command dpkg-shlibdeps -ErrorAction SilentlyContinue)) {
             throw "dpkg-shlibdeps is required to describe native package dependencies"
         }
@@ -83,6 +88,10 @@ Description: Arkret cross-platform client local package
         if (-not $packageDepends) {
             throw "dynamic desktop binary has no identified package dependencies"
         }
+        $evidence.elf_runtime_dependencies = $packageDepends
+        # Notification playback invokes paplay as an OS service, so ELF
+        # dependency discovery cannot identify this executable requirement.
+        $packageDepends = "$packageDepends, pulseaudio-utils"
         $evidence.runtime_dependencies = $packageDepends
 
         @"

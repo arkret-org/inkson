@@ -29,7 +29,7 @@ pub(super) fn session_grant_boot_usable(
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum SessionBootState {
+pub enum SessionBootState {
     Checking,
     Restoring,
     Authenticated,
@@ -49,11 +49,11 @@ impl SessionBootState {
 }
 
 pub(super) fn transition_session_boot_state(
-    mut state: Signal<SessionBootState>,
+    state: glory::Cage<SessionBootState>,
     next: SessionBootState,
     reason: &'static str,
 ) {
-    let previous = *state.peek();
+    let previous = state.get_untracked();
     if previous == next {
         return;
     }
@@ -75,7 +75,7 @@ pub(super) fn transition_session_boot_state(
         reason,
         "session boot state transition"
     );
-    state.set(next);
+    state.revise(|state| *state = next);
 }
 
 /// Publish a newly accepted session as one generation change.
@@ -85,15 +85,15 @@ pub(super) fn transition_session_boot_state(
 /// background refresh from clearing the replacement session after login.
 pub(crate) fn accept_authenticated_session(
     session: &crate::runtime::session::SessionCoordinator,
-    mut session_generation: Signal<u64>,
-    mut token: Signal<String>,
+    session_generation: glory::Cage<u64>,
+    token: glory::Cage<String>,
     credential: String,
 ) {
     debug_assert!(!credential.trim().is_empty());
-    let next_generation = (*session_generation.peek()).wrapping_add(1);
-    session_generation.set(next_generation);
+    let next_generation = session_generation.get_untracked().wrapping_add(1);
+    session_generation.revise(|generation| *generation = next_generation);
     session.replace(credential.clone());
-    token.set(credential);
+    token.revise(|token| *token = credential);
 }
 
 pub(super) fn should_wait_for_secure_store_session_restore(
@@ -202,6 +202,7 @@ pub(super) fn auth_surface_for_route(
 /// still matches the current account. Pre-session onboarding is deliberately
 /// excluded: it runs in the anonymous pre-DID scope and must never paint the
 /// previous account's cached Realm tree.
+#[cfg(test)]
 pub(super) fn account_projections_visible(
     route: &Route,
     has_session: bool,
@@ -311,7 +312,7 @@ fn parse_test_account_id(fixture: &Value) -> Result<arkret_sdk::AccountId, &'sta
 /// compiled only into the explicit localStorage-secrets test build.
 #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
 pub(super) fn inject_test_session_credential(
-    config_store: Signal<LocalConfigStore>,
+    config_store: glory::Cage<LocalConfigStore>,
     server_url: &str,
     principal_id: Option<arkret_sdk::DidCoreId>,
     device_id: &str,
@@ -327,6 +328,9 @@ pub(super) fn inject_test_session_credential(
     }
     persist_config(
         config_store,
+        &crate::presentation::current_context()
+            .and_then(|context| context.active_account.try_get().ok())
+            .flatten(),
         server_url.to_owned(),
         principal_id,
         device_id.to_owned(),
@@ -353,8 +357,8 @@ pub(super) fn inject_test_session_credential(
 /// enrollment would already have established.
 #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
 pub(super) async fn inject_test_session_grant(
-    state_store: &mut SyncSignal<LocalStateStore>,
-    config_store: Signal<LocalConfigStore>,
+    state_store: &crate::presentation::SharedStateStore,
+    config_store: glory::Cage<LocalConfigStore>,
     server_url: &str,
     account: Option<crate::config::ActiveAccountContext>,
     device_id: &str,
@@ -410,8 +414,7 @@ pub(super) async fn inject_test_session_grant(
     // the same account scope. SecureStoreEffects also selects this scope before
     // hydration so the durable snapshot is loaded from the correct namespace.
     let configured_account = config_store
-        .read()
-        .load_with_secure_store(secure_store)
+        .with(|store| store.load_with_secure_store(secure_store))
         .active_account;
     let Some(configured_account) = configured_account.filter(|account| {
         account.principal_id() == &account_key
@@ -427,9 +430,7 @@ pub(super) async fn inject_test_session_grant(
         );
         return None;
     };
-    if let Err(error) = state_store
-        .write()
-        .switch_active_account(&configured_account)
+    if let Err(error) = state_store.write(|store| store.switch_active_account(&configured_account))
     {
         tracing::warn!(
             ?error,
@@ -463,17 +464,14 @@ pub(super) async fn inject_test_session_grant(
                     return None;
                 }
             };
-            state_store
-                .write()
-                .save_plain_local_data(plain_local_data_key, payload);
+            state_store.write(|store| store.save_plain_local_data(plain_local_data_key, payload));
         }
     }
     if let Some(value) = parsed.get("pending_principal_registration").cloned() {
         match serde_json::from_value::<crate::state::PendingPrincipalRegistration>(value) {
             Ok(registration) if registration.did == principal_did => {
                 if let Err(error) = state_store
-                    .write()
-                    .set_pending_principal_registration(Some(registration))
+                    .write(|store| store.set_pending_principal_registration(Some(registration)))
                 {
                     tracing::warn!(
                         ?error,
@@ -500,9 +498,8 @@ pub(super) async fn inject_test_session_grant(
     if let Some(value) = parsed.get("recovery_material_evidence").cloned() {
         match serde_json::from_value::<crate::state::RecoveryMaterialEvidence>(value) {
             Ok(evidence) => {
-                if let Err(error) = state_store
-                    .write()
-                    .set_recovery_material_evidence(Some(evidence))
+                if let Err(error) =
+                    state_store.write(|store| store.set_recovery_material_evidence(Some(evidence)))
                 {
                     tracing::warn!(
                         ?error,
@@ -566,8 +563,7 @@ pub(super) async fn inject_test_session_grant(
         }
     };
     if let Err(error) = state_store
-        .write()
-        .set_dpop_device_key_with_secure_store(Some(record), secure_store)
+        .write(|store| store.set_dpop_device_key_with_secure_store(Some(record), secure_store))
     {
         tracing::warn!(?error, "test session injection: DPoP key persist failed");
         return None;
@@ -695,11 +691,14 @@ pub(super) async fn inject_test_session_grant(
         device = %device_id,
         "test session injection: session grant installed"
     );
-    state_store.write().set_session_grant(Some(grant));
+    state_store.write(|store| store.set_session_grant(Some(grant)));
     // Mirror the grant into the persisted config credential slot so a re-render /
     // reload rehydrates the same session instead of bouncing to /login.
     persist_config(
         config_store,
+        &crate::presentation::current_context()
+            .and_then(|context| context.active_account.try_get().ok())
+            .flatten(),
         server_url.to_owned(),
         Some(account_key),
         device_id.to_owned(),

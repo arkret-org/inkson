@@ -1,26 +1,107 @@
-//! Shared avatar upload control for actor, Realm, and Space profiles.
-//!
-//! The component owns the file picker, image validation, crop preview, blob
-//! upload, and local status text. Callers own the profile write that stores
-//! the returned `avatar_blob_ref`.
+//! Shared image selection, validated crop preview and scoped blob upload.
+use std::rc::Rc;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
-use dioxus::prelude::*;
+use glory::prelude::*;
 
-use crate::ui::button::{Button, ButtonVariant};
-use crate::ui::label::Label;
-use crate::ui::slider::Slider;
-
+use crate::presentation::widgets::{line, paragraph, reactive, stack};
+use crate::presentation::{InksonContext, View};
 #[derive(Clone, Debug, PartialEq)]
-struct PendingAvatarSelection {
-    bytes: Vec<u8>,
-    media_type: String,
-    preview_data_url: String,
-    dimensions: (u32, u32),
-    filename: String,
+pub struct SelectedImage {
+    pub bytes: Vec<u8>,
+    pub media_type: String,
+    pub filename: String,
 }
 
+/// A page-owned read lease, independent of the crop editor's lifetime.
+#[derive(Clone)]
+pub struct ImageReadState {
+    owner: glory::ui::WeakScope,
+    pub reading: Cage<bool>,
+    revision: Cage<u64>,
+    request: Cage<Option<glory::render::QueryToken>>,
+    controller: Cage<Option<sapid::FileController>>,
+    started: Option<Rc<dyn Fn()>>,
+}
+
+impl ImageReadState {
+    pub fn new(scope: &Scope, reading: Cage<bool>) -> Self {
+        Self {
+            owner: scope.downgrade(),
+            reading,
+            revision: scope.cage(0),
+            request: scope.cage(None),
+            controller: scope.cage(None),
+            started: None,
+        }
+    }
+
+    pub fn on_begin(mut self, started: impl Fn() + 'static) -> Self {
+        self.started = Some(Rc::new(started));
+        self
+    }
+
+    fn invalidate(&self, clear_files: bool) {
+        let Some(scope) = self.owner.upgrade() else {
+            return;
+        };
+        self.revision.revise(|value| *value = value.wrapping_add(1));
+        let request = self.request.get_untracked();
+        self.request.revise(|value| *value = None);
+        if let Some(request) = request
+            && let Err(error) = scope.cancel_request(request)
+        {
+            tracing::warn!(%error, "image read reply could not be revoked");
+        }
+        if clear_files
+            && let Some(controller) = self.controller.get_untracked()
+            && let Err(error) = controller.clear()
+        {
+            tracing::warn!(%error, "image file selection could not be cleared");
+        }
+        self.reading.revise(|value| *value = false);
+    }
+
+    /// Revoke the reply and file lease; a host operation already in progress
+    /// may finish, but cannot publish or begin another bounded chunk.
+    pub fn cancel(&self) {
+        self.invalidate(true);
+    }
+
+    #[cfg(any(target_arch = "wasm32", test))]
+    fn begin(&self) -> u64 {
+        let revision = self.begin_lease();
+        self.selection_started();
+        revision
+    }
+
+    fn begin_lease(&self) -> u64 {
+        // The host has already installed the replacement FileToken. Clearing
+        // files here would incorrectly revoke that new selection as well.
+        self.invalidate(false);
+        self.reading.revise(|value| *value = true);
+        self.revision.get_untracked()
+    }
+
+    fn selection_started(&self) {
+        if let Some(started) = &self.started {
+            started();
+        }
+    }
+
+    fn is_current(&self, revision: u64) -> bool {
+        self.owner.upgrade().is_some()
+            && self.revision.try_get().is_ok_and(|value| value == revision)
+    }
+
+    fn finish(&self, revision: u64) {
+        if self.is_current(revision) {
+            self.request.revise(|value| *value = None);
+            self.reading.revise(|value| *value = false);
+        }
+    }
+}
 pub(crate) fn avatar_preview_data_url(bytes: &[u8], media_type: &str) -> String {
     let media_type = if media_type.trim().is_empty() {
         "application/octet-stream"
@@ -29,306 +110,527 @@ pub(crate) fn avatar_preview_data_url(bytes: &[u8], media_type: &str) -> String 
     };
     format!("data:{media_type};base64,{}", BASE64_STANDARD.encode(bytes))
 }
+fn validate_image(selected: SelectedImage) -> std::result::Result<SelectedImage, String> {
+    if !selected.media_type.starts_with("image/") {
+        return Err("Selected file is not an image.".into());
+    }
+    crate::avatar_crop::image_dimensions(&selected.bytes)
+        .map_err(|error| format!("Could not decode image: {error}"))?;
+    Ok(selected)
+}
+pub fn image_file_picker(
+    scope: &Scope,
+    context: Rc<InksonContext>,
+    key: String,
+    on_selected: Rc<dyn Fn(SelectedImage)>,
+    on_error: Rc<dyn Fn(String)>,
+) -> View {
+    image_file_picker_labeled(
+        scope,
+        context,
+        key,
+        "Upload image".into(),
+        true.into(),
+        on_selected,
+        on_error,
+    )
+}
+pub fn image_file_picker_labeled(
+    scope: &Scope,
+    context: Rc<InksonContext>,
+    key: String,
+    label: Lotus<String>,
+    enabled: Lotus<bool>,
+    on_selected: Rc<dyn Fn(SelectedImage)>,
+    on_error: Rc<dyn Fn(String)>,
+) -> View {
+    let state = ImageReadState::new(scope, scope.cage(false));
+    image_file_picker_labeled_with_state(context, key, label, enabled, on_selected, on_error, state)
+}
 
-#[derive(Clone, PartialEq, Props)]
+#[cfg(target_arch = "wasm32")]
+pub fn image_file_picker_labeled_with_state(
+    context: Rc<InksonContext>,
+    key: String,
+    label: Lotus<String>,
+    enabled: Lotus<bool>,
+    on_selected: Rc<dyn Fn(SelectedImage)>,
+    on_error: Rc<dyn Fn(String)>,
+    state: ImageReadState,
+) -> View {
+    use glory::render::{FileConfig, FileFilter, FileRead, MAX_FILE_BYTES};
+    Box::new(widget(move |scope| {
+        let controller = scope.cage(None::<sapid::FileController>);
+        let owner = state.owner.clone();
+        let state = state.clone();
+        let context = context.clone();
+        let on_selected = on_selected.clone();
+        let on_error = on_error.clone();
+        sapid::file_button()
+            .unstyled()
+            .class(format!("secondary avatar-upload-button {key}"))
+            .label(label.clone())
+            .enabled(enabled.clone())
+            .configuration(FileConfig {
+                filters: vec![FileFilter::Mime("image/*".into())],
+                max_file_bytes: MAX_FILE_BYTES,
+                max_total_bytes: MAX_FILE_BYTES,
+                ..Default::default()
+            })
+            .controller_ref(controller)
+            .on_files(move |files| {
+                #[cfg(feature = "spec-conformance")]
+                tracing::warn!(
+                    files = files.len(),
+                    owner_alive = owner.upgrade().is_some(),
+                    controller_ready = owner.upgrade().is_some()
+                        && controller.is_alive()
+                        && controller.get_untracked().is_some(),
+                    "Avatar file selection received"
+                );
+                let Some(file) = files.into_iter().next() else {
+                    return;
+                };
+                let Some(scope) = owner.upgrade() else { return };
+                let Some(controller) = controller.get() else {
+                    return;
+                };
+                state
+                    .controller
+                    .revise(|active| *active = Some(controller.clone()));
+                let serial = state.begin();
+                let state = state.clone();
+                let ctx = context.clone();
+                let generation = ctx.session_generation.get();
+                let account = ctx.active_account.get();
+                let selected = on_selected.clone();
+                let error = on_error.clone();
+                let owner = scope.downgrade();
+                let failed_owner = owner.clone();
+                let failed = error.clone();
+                let failed_state = state.clone();
+                if let Err(spawn_error) = scope.owner().spawn(async move {
+                    let result = async {
+                        if !file.media_type.starts_with("image/") {
+                            return Err("Selected file is not an image.".to_owned());
+                        }
+                        let mut bytes = Vec::new();
+                        let mut offset = 0;
+                        while offset < file.size {
+                            let Some(scope) = owner.upgrade() else {
+                                return Err("Image owner retired".into());
+                            };
+                            if !state.is_current(serial)
+                                || !ctx.session_matches(generation, &account)
+                            {
+                                return Err("Image selection replaced".into());
+                            }
+                            let length = (file.size - offset).min(65536) as u32;
+                            let (sender, receiver) = tokio::sync::oneshot::channel();
+                            let request = controller
+                                .read_in(
+                                    &scope,
+                                    FileRead {
+                                        file: file.token,
+                                        offset,
+                                        length,
+                                    },
+                                    move |result| {
+                                        let _ = sender.send(result);
+                                    },
+                                )
+                                .map_err(|error| error.to_string())?;
+                            state.request.revise(|value| *value = Some(request));
+                            let chunk = receiver
+                                .await
+                                .map_err(|_| "Image read stopped".to_owned())?
+                                .map_err(|error| error.to_string())?;
+                            if chunk.is_empty() {
+                                return Err("Image read ended before its declared size".into());
+                            }
+                            offset += chunk.len() as u64;
+                            bytes.extend(chunk);
+                        }
+                        validate_image(SelectedImage {
+                            bytes,
+                            media_type: file.media_type,
+                            filename: file.name,
+                        })
+                    }
+                    .await;
+                    if owner.upgrade().is_none()
+                        || !state.is_current(serial)
+                        || !ctx.session_matches(generation, &account)
+                    {
+                        #[cfg(feature = "spec-conformance")]
+                        tracing::warn!(
+                            owner_alive = owner.upgrade().is_some(),
+                            session_current = ctx.session_matches(generation, &account),
+                            "Avatar file selection retired before completion"
+                        );
+                        return;
+                    }
+                    #[cfg(feature = "spec-conformance")]
+                    tracing::warn!(
+                        success = result.is_ok(),
+                        "Avatar file read completed for current selection"
+                    );
+                    state.finish(serial);
+                    match result {
+                        Ok(image) => selected(image),
+                        Err(message) => error(message),
+                    }
+                }) {
+                    failed_state.finish(serial);
+                    if failed_owner.upgrade().is_some() {
+                        failed(format!("Could not start image read: {spawn_error}"));
+                    }
+                }
+            })
+            .on_result(move |outcome| {
+                #[cfg(feature = "spec-conformance")]
+                {
+                    let outcome_kind = match &outcome {
+                        glory::render::FileOutcome::Selected(_) => "selected",
+                        glory::render::FileOutcome::Cancelled => "cancelled",
+                        glory::render::FileOutcome::Rejected(_) => "rejected",
+                    };
+                    tracing::warn!(outcome_kind, "Avatar file chooser completed");
+                }
+                if let glory::render::FileOutcome::Rejected(reason) = outcome {
+                    tracing::warn!(?reason, "image selection rejected");
+                }
+            })
+            .build(scope)
+    }))
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[path = "avatar_uploader/image_read_tests.rs"]
+mod image_read_tests;
+#[cfg(not(target_arch = "wasm32"))]
+pub fn image_file_picker_labeled_with_state(
+    context: Rc<InksonContext>,
+    key: String,
+    label: Lotus<String>,
+    enabled: Lotus<bool>,
+    on_selected: Rc<dyn Fn(SelectedImage)>,
+    on_error: Rc<dyn Fn(String)>,
+    state: ImageReadState,
+) -> View {
+    let owner = state.owner.clone();
+    Box::new(
+        sapid::button()
+            .unstyled()
+            .class(format!("secondary avatar-upload-button {key}"))
+            .name(label.clone())
+            .fill(glory::ui::group().fill((super::ui_icon("image"), text().content(label))))
+            .enabled(enabled)
+            .on_press(move || {
+                let Some(scope) = owner.upgrade() else { return };
+                let owner = scope.downgrade();
+                let context = context.clone();
+                let serial = state.begin_lease();
+                let state = state.clone();
+                let generation = context.session_generation.get();
+                let account = context.active_account.get();
+                let selected = on_selected.clone();
+                let error = on_error.clone();
+                let failed = error.clone();
+                let failed_state = state.clone();
+                if let Err(spawn_error) = scope.owner().spawn(async move {
+                    let result = super::platform_io::choose_image().await.and_then(|value| {
+                        value
+                            .map(|(bytes, media_type, filename)| {
+                                validate_image(SelectedImage {
+                                    bytes,
+                                    media_type,
+                                    filename,
+                                })
+                            })
+                            .transpose()
+                    });
+                    if owner.upgrade().is_none()
+                        || !state.is_current(serial)
+                        || !context.session_matches(generation, &account)
+                    {
+                        return;
+                    }
+                    if !matches!(&result, Ok(None)) {
+                        state.selection_started();
+                    }
+                    state.finish(serial);
+                    match result {
+                        Ok(Some(value)) => selected(value),
+                        Ok(None) => {}
+                        Err(message) => error(message),
+                    }
+                }) {
+                    failed_state.finish(serial);
+                    if failed_state.owner.upgrade().is_some() {
+                        failed(format!("Could not start image read: {spawn_error}"));
+                    }
+                }
+            }),
+    )
+}
+#[derive(Clone)]
 pub struct AvatarUploaderProps {
     pub current_blob_ref: String,
     pub alt_text: String,
     pub api_token: String,
-    pub on_uploaded: EventHandler<String>,
-    pub on_clear: EventHandler<()>,
-    #[props(default)]
+    pub on_uploaded: Rc<dyn Fn(String)>,
+    pub on_clear: Rc<dyn Fn(())>,
     pub upload_realm_id: Option<String>,
-    #[props(default = "avatar-uploader".to_owned())]
     pub test_id_prefix: String,
 }
+fn crop_slider(_scope: &Scope, label: &str, value: Cage<f64>, min: f64, max: f64) -> View {
+    stack(
+        "form-field",
+        vec![
+            paragraph("", label.to_owned()),
+            Box::new(
+                sapid::slider(format!(
+                    "avatar-crop-{}",
+                    label.to_ascii_lowercase().replace(' ', "-")
+                ))
+                .unstyled()
+                .class("slider")
+                .name(label.to_owned())
+                .min(min)
+                .max(max)
+                .step(5.0)
+                .value(value)
+                .on_value_change(move |next| value.revise(|value| *value = next.clamp(min, max))),
+            ),
+        ],
+    )
+}
+pub fn avatar_uploader(
+    scope: &Scope,
+    context: Rc<InksonContext>,
+    props: AvatarUploaderProps,
+) -> View {
+    let seed: Lotus<String> = props.alt_text.clone().into();
+    avatar_uploader_with_seed(scope, context, props, seed)
+}
 
-#[component]
-pub fn AvatarUploader(props: AvatarUploaderProps) -> Element {
-    let AvatarUploaderProps {
-        current_blob_ref,
-        alt_text,
-        api_token,
-        on_uploaded,
-        on_clear,
-        upload_realm_id,
-        test_id_prefix,
-    } = props;
-    // A4 — base_url now comes from the session context instead of a prop.
-    let base_url = crate::app::SessionContext::base_url_string();
-
-    let mut pending_selection = use_signal(|| None::<PendingAvatarSelection>);
-    let mut crop_zoom = use_signal(|| 125_i32);
-    let mut crop_x = use_signal(|| 0_i32);
-    let mut crop_y = use_signal(|| 0_i32);
-    let mut status = use_signal(String::new);
-
-    let input_id = format!("{test_id_prefix}-input");
-    let preview_test_id = format!("{test_id_prefix}-preview");
-    let upload_label_test_id = format!("{test_id_prefix}-upload-label");
-    let input_test_id = format!("{test_id_prefix}-input");
-    let crop_editor_test_id = format!("{test_id_prefix}-crop-editor");
-    let crop_stage_test_id = format!("{test_id_prefix}-crop-stage");
-    let source_size_test_id = format!("{test_id_prefix}-source-size");
-    let crop_zoom_test_id = format!("{test_id_prefix}-crop-zoom");
-    let crop_x_test_id = format!("{test_id_prefix}-crop-x");
-    let crop_y_test_id = format!("{test_id_prefix}-crop-y");
-    let upload_cropped_test_id = format!("{test_id_prefix}-upload-cropped");
-    let crop_cancel_test_id = format!("{test_id_prefix}-crop-cancel");
-    let clear_test_id = format!("{test_id_prefix}-clear");
-    let status_test_id = format!("{test_id_prefix}-status");
-
-    rsx! {
-        div {
-            class: "avatar-uploader",
-            "data-testid": "{test_id_prefix}",
-            div { class: "avatar-uploader-preview",
-                crate::components::IdentityAvatar {
-                    seed: alt_text.clone(),
-                    alt_text: if current_blob_ref.trim().is_empty() {
-                        format!("Generated avatar for {alt_text}")
-                    } else {
-                        alt_text.clone()
-                    },
-                    blob_ref: Some(current_blob_ref.clone()),
-                    class: "avatar-img lg".to_owned(),
-                    test_id: Some(preview_test_id.clone()),
-                }
-            }
-            div { class: "avatar-uploader-controls",
-                Label {
-                    class: "secondary avatar-upload-button",
-                    "data-testid": "{upload_label_test_id}",
-                    html_for: "{input_id}",
-                    crate::components::UiIcon { name: "image" }
-                    span { "Upload image" }
-                }
-                input {
-                    id: "{input_id}",
-                    "data-testid": "{input_test_id}",
-                    class: "avatar-uploader-file-input",
-                    style: "display: none;",
-                    "aria-hidden": "true",
-                    tabindex: "-1",
-                    r#type: "file",
-                    accept: "image/*",
-                    onchange: {
-                        move |evt: Event<FormData>| {
-                            let files = evt.files();
-                            if files.is_empty() {
-                                status.set("No image selected.".to_owned());
-                                return;
-                            }
-                            let Some(file) = files.into_iter().next() else {
-                                status.set("No image selected.".to_owned());
-                                return;
-                            };
-                            let filename = file.name();
-                            let content_type = file
-                                .content_type()
-                                .unwrap_or_else(|| "application/octet-stream".to_owned());
-                            if !content_type.starts_with("image/") {
-                                status.set("Selected file is not an image.".to_owned());
-                                return;
-                            }
-                            status.set("Preparing image...".to_owned());
-                            spawn(async move {
-                                let bytes = match file.read_bytes().await {
-                                    Ok(bytes) => bytes.to_vec(),
-                                    Err(err) => {
-                                        status.set(format!("Could not read image: {err}"));
-                                        return;
-                                    }
-                                };
-                                let dimensions = match crate::avatar_crop::image_dimensions(&bytes) {
-                                    Ok(dimensions) => dimensions,
-                                    Err(err) => {
-                                        status.set(format!("Could not decode image: {err}"));
-                                        return;
-                                    }
-                                };
-                                let preview_data_url = avatar_preview_data_url(&bytes, &content_type);
-                                pending_selection.set(Some(PendingAvatarSelection {
+/// Preview identity changes independently of the file and crop owners.
+pub fn avatar_uploader_with_seed(
+    scope: &Scope,
+    context: Rc<InksonContext>,
+    props: AvatarUploaderProps,
+    seed: Lotus<String>,
+) -> View {
+    let pending = scope.cage(None::<SelectedImage>);
+    let zoom = scope.cage(125.0_f64);
+    let pan_x = scope.cage(0.0_f64);
+    let pan_y = scope.cage(0.0_f64);
+    let status = scope.cage(String::new());
+    let busy = scope.cage(false);
+    let selected = Rc::new(move |image| {
+        pending.revise(|value| *value = Some(image));
+        zoom.revise(|value| *value = 125.0);
+        pan_x.revise(|value| *value = 0.0);
+        pan_y.revise(|value| *value = 0.0);
+        status.revise(|value| *value = "Adjust crop, then save avatar.".into());
+    });
+    let picker = image_file_picker(
+        scope,
+        context.clone(),
+        format!("{}-input", props.test_id_prefix),
+        selected,
+        Rc::new(move |error| status.revise(|value| *value = error)),
+    );
+    let avatar_context = context.clone();
+    let current_blob = props.current_blob_ref.clone();
+    let avatar = crate::presentation::widgets::reactive_distinct(seed, move |scope, seed| {
+        super::generated_avatar::identity_avatar(
+            scope,
+            avatar_context.clone(),
+            super::generated_avatar::IdentityAvatarProps {
+                alt_text: if current_blob.trim().is_empty() {
+                    format!("Generated avatar for {seed}")
+                } else {
+                    seed.clone()
+                },
+                seed,
+                blob_ref: Some(current_blob.clone()),
+                class: "avatar-img lg".into(),
+                test_id: None,
+            },
+        )
+    });
+    let ctx = context.clone();
+    let upload = props.on_uploaded;
+    let api_token = props.api_token;
+    let realm = props.upload_realm_id;
+    let crop = reactive(pending, move |scope, selection| {
+        let Some(selection) = selection else {
+            return crate::presentation::widgets::empty();
+        };
+        let selected_image = selection.clone();
+        let preview = scope.bond(move || {
+            let crop = crate::avatar_crop::AvatarCrop {
+                zoom: zoom.get() as f32 / 100.0,
+                pan_x: pan_x.get() as f32 / 100.0,
+                pan_y: pan_y.get() as f32 / 100.0,
+            };
+            crate::avatar_crop::crop_avatar_jpeg(&selected_image.bytes, crop)
+                .map(|bytes| avatar_preview_data_url(&bytes, "image/jpeg"))
+                .unwrap_or_else(|_| {
+                    avatar_preview_data_url(&selected_image.bytes, &selected_image.media_type)
+                })
+        });
+        let preview_context = ctx.clone();
+        let preview_view =
+            reactive(
+                preview,
+                move |scope, source| match crate::content::scoped_image_url(
+                    scope,
+                    &preview_context,
+                    &source,
+                ) {
+                    Ok(source) => Box::new(image().source(source).name("Selected avatar")) as View,
+                    Err(error) => paragraph("form-hint-warn", error),
+                },
+            );
+        let ctx = ctx.clone();
+        let owner = scope.downgrade();
+        let upload = upload.clone();
+        let api_token = api_token.clone();
+        let realm = realm.clone();
+        let enabled = scope.bond(move || !busy.get());
+        let save = Box::new(
+            sapid::button()
+                .unstyled()
+                .class("primary")
+                .label("Save avatar")
+                .enabled(enabled)
+                .on_press(move || {
+                    if busy.get() {
+                        return;
+                    }
+                    let Some(scope) = owner.upgrade() else { return };
+                    let owner = scope.downgrade();
+                    let Some(selection) = pending.get() else {
+                        return;
+                    };
+                    let context = ctx.clone();
+                    let generation = context.session_generation.get();
+                    let account = context.active_account.get();
+                    let base = context.base_url.get();
+                    let token = api_token.clone();
+                    let realm = realm.clone();
+                    let upload = upload.clone();
+                    let crop = crate::avatar_crop::AvatarCrop {
+                        zoom: zoom.get() as f32 / 100.0,
+                        pan_x: pan_x.get() as f32 / 100.0,
+                        pan_y: pan_y.get() as f32 / 100.0,
+                    };
+                    busy.revise(|value| *value = true);
+                    status.revise(|value| *value = "Uploading avatar...".into());
+                    let _ = scope.owner().spawn(async move {
+                        let result = async {
+                            let bytes =
+                                crate::avatar_crop::crop_avatar_jpeg(&selection.bytes, crop)
+                                    .map_err(|error| format!("Could not crop image: {error}"))?;
+                            let api = crate::transport::auth::authed_api(&base, token)
+                                .map_err(|error| error.to_string())?;
+                            let clients = crate::transport::EndpointClients::from_http(
+                                api.sdk_http_client().map_err(|error| error.to_string())?,
+                            );
+                            clients
+                                .blob()
+                                .upload_bytes_scoped(
                                     bytes,
-                                    media_type: content_type,
-                                    preview_data_url,
-                                    dimensions,
-                                    filename,
-                                }));
-                                crop_zoom.set(125);
-                                crop_x.set(0);
-                                crop_y.set(0);
-                                status.set("Adjust crop, then save avatar.".to_owned());
-                            });
+                                    "image/jpeg",
+                                    realm.as_deref(),
+                                    Some(&selection.filename),
+                                )
+                                .await
+                                .map(|response| response.blob_ref.to_string())
+                                .map_err(|error| error.to_string())
                         }
-                    },
-                }
-
-                if let Some(selection) = pending_selection.read().clone() {
-                    div {
-                        class: "avatar-crop-editor",
-                        "data-testid": "{crop_editor_test_id}",
-                        div {
-                            class: "avatar-crop-stage",
-                            "data-testid": "{crop_stage_test_id}",
-                            img {
-                                src: "{selection.preview_data_url}",
-                                alt: "Selected avatar",
-                                style: format!(
-                                    "width: 100%; height: 100%; object-fit: cover; transform-origin: center; transform: translate({}% , {}%) scale({});",
-                                    crop_x() / 4,
-                                    crop_y() / 4,
-                                    crop_zoom() as f32 / 100.0,
-                                ),
+                        .await;
+                        if owner.upgrade().is_none()
+                            || !context.session_matches(generation, &account)
+                        {
+                            return;
+                        }
+                        busy.revise(|value| *value = false);
+                        match result {
+                            Ok(blob_ref) => {
+                                pending.revise(|value| *value = None);
+                                status.revise(|value| *value = "Avatar uploaded.".into());
+                                upload(blob_ref);
+                            }
+                            Err(error) => {
+                                status.revise(|value| *value = format!("Upload failed: {error}"))
                             }
                         }
-                        div { class: "avatar-crop-controls",
-                            div { class: "muted", "data-testid": "{source_size_test_id}",
-                                {format!("{} x {} / {}", selection.dimensions.0, selection.dimensions.1, selection.media_type)}
-                            }
-                            label { class: "form-field",
-                                span { "Zoom" }
-                                Slider {
-                                    "data-testid": "{crop_zoom_test_id}",
-                                    min: 100.0,
-                                    max: 300.0,
-                                    step: 5.0,
-                                    value: crop_zoom() as f64,
-                                    on_value_change: move |value: f64| {
-                                        crop_zoom.set((value as i32).clamp(100, 300));
-                                    },
-                                }
-                            }
-                            label { class: "form-field",
-                                span { "Pan X" }
-                                Slider {
-                                    "data-testid": "{crop_x_test_id}",
-                                    min: -100.0,
-                                    max: 100.0,
-                                    step: 5.0,
-                                    value: crop_x() as f64,
-                                    on_value_change: move |value: f64| {
-                                        crop_x.set((value as i32).clamp(-100, 100));
-                                    },
-                                }
-                            }
-                            label { class: "form-field",
-                                span { "Pan Y" }
-                                Slider {
-                                    "data-testid": "{crop_y_test_id}",
-                                    min: -100.0,
-                                    max: 100.0,
-                                    step: 5.0,
-                                    value: crop_y() as f64,
-                                    on_value_change: move |value: f64| {
-                                        crop_y.set((value as i32).clamp(-100, 100));
-                                    },
-                                }
-                            }
-                            div { class: "actions",
-                                Button {
-                                    variant: ButtonVariant::Primary,
-                                    "data-testid": "{upload_cropped_test_id}",
-                                    onclick: {
-                                        let base = base_url.clone();
-                                        let api_token = api_token.clone();
-                                        let upload_realm_id = upload_realm_id.clone();
-                                        move |_| {
-                                            let Some(selection) = pending_selection.read().clone() else {
-                                                status.set("No image selected.".to_owned());
-                                                return;
-                                            };
-                                            let crop = crate::avatar_crop::AvatarCrop {
-                                                zoom: crop_zoom() as f32 / 100.0,
-                                                pan_x: crop_x() as f32 / 100.0,
-                                                pan_y: crop_y() as f32 / 100.0,
-                                            };
-                                            let base = base.clone();
-                                            let api_token = api_token.clone();
-                                            let upload_realm_id = upload_realm_id.clone();
-                                            status.set("Uploading avatar...".to_owned());
-                                            spawn(async move {
-                                                let bytes = match crate::avatar_crop::crop_avatar_jpeg(&selection.bytes, crop) {
-                                                    Ok(bytes) => bytes,
-                                                    Err(err) => {
-                                                        status.set(format!("Could not crop image: {err}"));
-                                                        return;
-                                                    }
-                                                };
-                                                let api = match crate::transport::auth::authed_api(&base, api_token) {
-                                                    Ok(api) => api,
-                                                    Err(err) => {
-                                                        status.set(format!("Upload failed: {err}"));
-                                                        return;
-                                                    }
-                                                };
-                                                let clients = match api.sdk_http_client() {
-                                                    Ok(http) => crate::transport::EndpointClients::from_http(http),
-                                                    Err(err) => {
-                                                        status.set(format!("Upload failed: {err}"));
-                                                        return;
-                                                    }
-                                                };
-                                                match clients
-                                                    .blob()
-                                                    .upload_bytes_scoped(
-                                                        bytes,
-                                                        "image/jpeg",
-                                                        upload_realm_id.as_deref(),
-                                                        Some(&selection.filename),
-                                                    )
-                                                    .await
-                                                {
-                                                    Ok(resp) => {
-                                                        let blob_ref = resp.blob_ref.to_string();
-                                                        pending_selection.set(None);
-                                                        status.set("Avatar uploaded.".to_owned());
-                                                        on_uploaded.call(blob_ref);
-                                                    }
-                                                    Err(err) => status.set(format!("Upload failed: {err}")),
-                                                }
-                                            });
-                                        }
-                                    },
-                                    "Save avatar"
-                                }
-                                Button {
-                                    variant: ButtonVariant::Secondary,
-                                    "data-testid": "{crop_cancel_test_id}",
-                                    onclick: move |_| {
-                                        pending_selection.set(None);
-                                        status.set(String::new());
-                                    },
-                                    "Cancel"
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if !current_blob_ref.trim().is_empty() {
-                    Button {
-                        variant: ButtonVariant::Secondary,
-                        "data-testid": "{clear_test_id}",
-                        onclick: move |_| {
-                            pending_selection.set(None);
-                            status.set("Avatar cleared.".to_owned());
-                            on_clear.call(());
-                        },
-                        "Clear avatar"
-                    }
-                }
-
-                if !status().is_empty() {
-                    div {
-                        class: "muted",
-                        "data-testid": "{status_test_id}",
-                        "{status}"
-                    }
-                }
-            }
-        }
+                    });
+                }),
+        ) as View;
+        let cancel = Box::new(
+            sapid::button()
+                .unstyled()
+                .class("secondary")
+                .label("Cancel")
+                .enabled(enabled)
+                .on_press(move || {
+                    pending.revise(|value| *value = None);
+                    status.revise(|value| value.clear());
+                }),
+        ) as View;
+        let dimensions = crate::avatar_crop::image_dimensions(&selection.bytes).unwrap_or((0, 0));
+        stack(
+            "avatar-crop-editor",
+            vec![
+                stack("avatar-crop-stage", vec![preview_view]),
+                stack(
+                    "avatar-crop-controls",
+                    vec![
+                        paragraph(
+                            "muted",
+                            format!(
+                                "{} x {} / {}",
+                                dimensions.0, dimensions.1, selection.media_type
+                            ),
+                        ),
+                        crop_slider(scope, "Zoom", zoom, 100.0, 300.0),
+                        crop_slider(scope, "Pan X", pan_x, -100.0, 100.0),
+                        crop_slider(scope, "Pan Y", pan_y, -100.0, 100.0),
+                        line("actions", vec![save, cancel]),
+                    ],
+                ),
+            ],
+        )
+    });
+    let mut controls = vec![picker, crop];
+    if !props.current_blob_ref.trim().is_empty() {
+        let clear = props.on_clear;
+        controls.push(Box::new(
+            sapid::button()
+                .unstyled()
+                .class("secondary")
+                .label("Clear avatar")
+                .enabled(scope.bond(move || !busy.get()))
+                .on_press(move || {
+                    pending.revise(|value| *value = None);
+                    status.revise(|value| *value = "Avatar cleared.".into());
+                    clear(());
+                }),
+        ) as View);
     }
+    controls.push(paragraph("muted", status));
+    stack(
+        "avatar-uploader",
+        vec![
+            stack("avatar-uploader-preview", vec![avatar]),
+            stack("avatar-uploader-controls", controls),
+        ],
+    )
 }
 
 #[cfg(test)]

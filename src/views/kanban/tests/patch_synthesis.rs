@@ -62,14 +62,7 @@ fn saved_card_content_never_rolls_back_between_receipt_backfill_and_current() {
                 displayed[0].cards[0].state, expected,
                 "an existing Strand does not confirm its next edit: {state}"
             );
-            let mut dom = VirtualDom::new_with_props(
-                |state: CardState| rsx! { WriteStateBadge { state } },
-                displayed[0].cards[0].state,
-            );
-            assert!(dom.rebuild_to_vec().edits.iter().any(|edit| matches!(edit,
-                dioxus::core::Mutation::SetAttribute { name: "data-write-state", value: dioxus::core::AttributeValue::Text(value), .. }
-                    if value.as_str() == expected.write_state().data_state()
-            )));
+            assert_native_badge(displayed[0].cards[0].state, expected);
             assert!(card_detail_edit_ready(&displayed[0].cards[0]));
             assert!(!card_detail_write_ready(&displayed[0].cards[0]));
         }

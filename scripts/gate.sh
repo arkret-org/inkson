@@ -24,12 +24,14 @@
 #   scripts/gate.sh --lib recovery        # narrow re-run, same output contract
 
 set -eu
+. "$(dirname "$0")/build_env.sh"
 
 jobs="${INKSON_GATE_JOBS:-1}"
-gate_dir="${INKSON_GATE_DIR:-target/gate}"
-target_dir="${INKSON_GATE_TARGET_DIR:-target/test}"
+gate_dir="${INKSON_GATE_DIR:-$CARGO_TARGET_DIR/gate}"
+target_dir="${INKSON_GATE_TARGET_DIR:-$CARGO_TARGET_DIR}"
 
 mkdir -p "$gate_dir"
+CARGO_TARGET_DIR="$target_dir" cargo metadata --locked --no-deps --format-version 1 > "$gate_dir/metadata.json"
 log="$gate_dir/test.log"
 summary="$gate_dir/summary.txt"
 status="$gate_dir/status.txt"
@@ -37,7 +39,7 @@ status="$gate_dir/status.txt"
 echo "gate: jobs=$jobs target=$target_dir log=$log"
 
 set +e
-CARGO_TARGET_DIR="$target_dir" cargo test --locked --quiet \
+CARGO_TARGET_DIR="$target_dir" cargo test --locked --features app --quiet \
     --jobs "$jobs" --no-fail-fast "$@" > "$log" 2>&1
 code=$?
 set -e

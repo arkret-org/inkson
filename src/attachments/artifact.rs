@@ -161,6 +161,53 @@ impl Builder {
 }
 
 impl Artifact {
+    /// Read only this already-verified inline image, without dereferencing its
+    /// transport URL or admitting arbitrary network/filesystem destinations.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) async fn native_image_bytes(&self) -> anyhow::Result<(String, Vec<u8>)> {
+        use std::sync::atomic::Ordering;
+
+        use tokio::io::AsyncReadExt;
+        anyhow::ensure!(
+            self.inline && self.resource.inline,
+            "attachment is download-only"
+        );
+        anyhow::ensure!(
+            self.resource.mime.starts_with("image/"),
+            "attachment is not an image"
+        );
+        anyhow::ensure!(
+            self.size > 0 && self.size <= 8 * 1024 * 1024 && self.size == self.resource.size,
+            "verified image exceeds its native preview budget"
+        );
+        anyhow::ensure!(
+            !self.resource.revoked.load(Ordering::Acquire),
+            "attachment was released"
+        );
+        let mut file = tokio::fs::File::open(&self.resource.file).await?;
+        anyhow::ensure!(
+            file.metadata().await?.len() == self.size,
+            "verified image length changed"
+        );
+        let mut bytes = vec![0_u8; usize::try_from(self.size)?];
+        for part in bytes.chunks_mut(65_536) {
+            anyhow::ensure!(
+                !self.resource.revoked.load(Ordering::Acquire),
+                "attachment was released"
+            );
+            file.read_exact(part).await?;
+        }
+        anyhow::ensure!(
+            !self.resource.revoked.load(Ordering::Acquire),
+            "attachment was released"
+        );
+        anyhow::ensure!(
+            file.metadata().await?.len() == self.size,
+            "verified image length changed"
+        );
+        Ok((self.resource.mime.clone(), bytes))
+    }
+
     /// Byte-bounded UTF-8 pages, including at most three boundary octets.
     pub(crate) async fn text_page(&self, index: u64, page_bytes: u64) -> anyhow::Result<String> {
         let start = index
@@ -325,6 +372,42 @@ async fn serve(
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn native_image_reads_the_verified_resource_not_its_transport_url() {
+        let bytes: Vec<_> = (0..150_001).map(|index| (index % 251) as u8).collect();
+        let mut builder = Builder::new("image/png", true).unwrap();
+        for part in bytes.chunks(65_536) {
+            builder.push(part).unwrap();
+        }
+        let mut artifact = builder.finish().await.unwrap();
+        Rc::get_mut(&mut artifact).unwrap().url =
+            "https://untrusted.invalid/not-the-artifact".into();
+        let (mime, loaded) = artifact.native_image_bytes().await.unwrap();
+        assert_eq!(mime, "image/png");
+        assert_eq!(loaded, bytes);
+        tokio::fs::write(&artifact.resource.file, b"truncated")
+            .await
+            .unwrap();
+        assert!(artifact.native_image_bytes().await.is_err());
+    }
+
+    #[tokio::test]
+    async fn native_image_preview_rejects_download_documents_and_excessive_images() {
+        for (mime, inline) in [("image/png", false), ("text/html", true)] {
+            let mut builder = Builder::new(mime, inline).unwrap();
+            builder.push(b"payload").unwrap();
+            let artifact = builder.finish().await.unwrap();
+            assert!(artifact.native_image_bytes().await.is_err());
+        }
+        let mut builder = Builder::new("image/png", true).unwrap();
+        let block = vec![0_u8; 65_536];
+        for _ in 0..129 {
+            builder.push(&block).unwrap();
+        }
+        let artifact = builder.finish().await.unwrap();
+        assert!(artifact.native_image_bytes().await.is_err());
+    }
 
     #[tokio::test]
     async fn completed_attachment_asset_has_bounded_ranges_and_revokes_on_release() {

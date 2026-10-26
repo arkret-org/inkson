@@ -12,70 +12,78 @@ thread_local! {
     pub(super) static ORDINARY_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-pub(super) fn use_ordinary_timeline_projection(
-    state_store: SyncSignal<LocalStateStore>,
-    basis: Memo<TimelineProjectionBasis>,
-    messages: Signal<Vec<ChatMessage>>,
+pub(super) fn ordinary_timeline_projection(
+    scope: &Scope,
+    state_store: crate::presentation::SharedStateStore,
+    basis: Bond<TimelineProjectionBasis>,
+    messages: Cage<Vec<ChatMessage>>,
     principal: String,
     authority: arkret_sdk::AccountId,
     device: arkret_sdk::DeviceId,
     evidence_epoch: u64,
-) -> Memo<Vec<ChatMessage>> {
-    use_memo(use_reactive(
-        (&principal, &authority, &device, &evidence_epoch),
-        move |(principal, authority, device, _)| {
-            #[cfg(test)]
-            ORDINARY_BUILDS.with(|count| count.set(count.get() + 1));
-            let local_rows = messages.read();
-            let store = state_store.peek();
-            let snapshot = basis.read();
+) -> Bond<Vec<ChatMessage>> {
+    scope.bond(move || {
+        let _ = evidence_epoch;
+        #[cfg(test)]
+        ORDINARY_BUILDS.with(|count| count.set(count.get() + 1));
+        let rows = messages.get();
+        let snapshot = basis.get();
+        state_store.read(|store| {
             let identity = Some((&authority, principal.as_str(), &device));
             let mut folded = fold_local_state_into_chat_messages_with_sidecar(
-                verified_scope_timeline_seed(local_rows.as_slice()),
+                verified_scope_timeline_seed(&rows),
                 &snapshot.state,
-                Some(&store),
+                Some(store),
                 identity,
             );
             merge_chat_messages(
                 &mut folded,
                 chat_messages_from_sync_realms_with_sidecar(
                     &snapshot.state.realm_tree_projections,
-                    Some(&store),
+                    Some(store),
                     identity,
                 ),
             );
             position_local_timeline_rows(folded)
-        },
-    ))
+        })
+    })
 }
 
-/// Keep all security and content inputs, including receive overlays. Opaque
-/// resume tokens and delivery bookkeeping do not change a displayed message.
-/// Comparing this disposable snapshot prevents unrelated writes from repeating
-/// the cryptographic history fold while observing local accepted Events directly.
-pub(super) fn use_timeline_projection_basis(
-    state_store: SyncSignal<LocalStateStore>,
-    realm_live_epoch: Signal<u64>,
-) -> Memo<TimelineProjectionBasis> {
-    use_memo(move || {
-        let _ = realm_live_epoch();
-        let store = state_store.read();
-        let mut state = store.load();
-        state.sync_cursor = None;
-        state.commit_stream_cursors.clear();
-        state.device_message_cursors.clear();
-        state.client_core_pending_deliveries.clear();
-        state.client_core_next_delivery_id = 0;
-        state.client_core_seen_event_ids.clear();
-        state.presence_projection.clear();
-        state.notification_projection.clear();
-        state.notification_client_state.clear();
-        state.read_cursors.clear();
-        TimelineProjectionBasis {
-            state,
-            current: store.current_product_view(),
+/// Disposable content inputs exclude cursors and unrelated delivery bookkeeping.
+pub(super) fn timeline_projection_basis(
+    scope: &Scope,
+    context: Rc<crate::presentation::InksonContext>,
+) -> Bond<TimelineProjectionBasis> {
+    let read_context = context.clone();
+    let read = move || {
+        read_context.state_store.read(|store| {
+            let mut state = store.load();
+            state.sync_cursor = None;
+            state.commit_stream_cursors.clear();
+            state.device_message_cursors.clear();
+            state.client_core_pending_deliveries.clear();
+            state.client_core_next_delivery_id = 0;
+            state.client_core_seen_event_ids.clear();
+            state.presence_projection.clear();
+            state.notification_projection.clear();
+            state.notification_client_state.clear();
+            state.read_cursors.clear();
+            TimelineProjectionBasis {
+                state,
+                current: store.current_product_view(),
+            }
+        })
+    };
+    let published = scope.cage(read());
+    scope.effect(move || {
+        let _ = context.realm_live_epoch.get();
+        let _ = context.state_revision.get();
+        let next = read();
+        if published.get_untracked() != next {
+            published.revise(|value| *value = next);
         }
-    })
+    });
+    scope.bond(move || published.get())
 }
 
 /// Merge display heads only: neither wall clocks nor Event IDs may reverse the

@@ -4,9 +4,12 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use dioxus::prelude::*;
+use glory::{Cage, Scope};
+#[path = "support/glory_web.rs"]
+mod glory_web;
 use inkson::views::read_receipts::{
-    AdmittedSignal, ClientLocalState, ReadReceiptHub, ReadReceiptIndicator,
+    AdmittedSignal, ClientLocalState, ReadReceiptHub, ReadReceiptIndicatorProps,
+    read_receipt_indicator,
 };
 use wasm_bindgen_test::*;
 
@@ -90,8 +93,8 @@ fn accepted_state(has_target: bool) -> ClientLocalState {
 
 #[derive(Clone, Default)]
 struct Control {
-    handles: Rc<RefCell<Option<(Signal<arkret_sdk::ActorId>, ReadReceiptHub)>>>,
-    policy: Rc<RefCell<Option<Signal<Option<arkret_sdk::ReadReceiptPolicy>>>>>,
+    handles: Rc<RefCell<Option<(Cage<arkret_sdk::ActorId>, ReadReceiptHub)>>>,
+    policy: Rc<RefCell<Option<Cage<Option<arkret_sdk::ReadReceiptPolicy>>>>>,
     applied: Rc<Cell<Option<bool>>>,
 }
 
@@ -123,10 +126,23 @@ impl Default for Case {
     }
 }
 
-fn receipt_page(case: Case) -> Element {
-    let viewer = use_signal(|| case.viewer.clone());
-    let policy = use_signal(|| Some(case.policy.clone()));
+fn receipt_page(scope: &Scope, case: Case) -> inkson::presentation::View {
+    let context = glory_web::context(scope);
+    let viewer = scope.cage(case.viewer.clone());
+    let policy = scope.cage(Some(case.policy.clone()));
     *case.control.policy.borrow_mut() = Some(policy);
+    context
+        .active_account
+        .revise(|value| *value = Some(glory_web::account(&case.viewer)));
+    {
+        let context = context.clone();
+        scope.effect(move || {
+            let actor = viewer.get();
+            context
+                .active_account
+                .revise(|value| *value = Some(glory_web::account(&actor)));
+        });
+    }
     let mut admitted = signal();
     admitted.domain.scope_ref = case.scope.clone();
     let mut state = serde_json::to_value(accepted_state(case.target)).unwrap();
@@ -140,70 +156,44 @@ fn receipt_page(case: Case) -> Element {
         .unwrap();
     }
     let state: ClientLocalState = serde_json::from_value(state).unwrap();
-    let mut hub = use_context_provider(ReadReceiptHub::new);
-    use_hook(|| {
-        case.control.applied.set(Some(hub.apply_authorized(
-            &admitted,
-            &case.policy,
-            &case.viewer,
-            &state,
-        )));
-    });
+    let mut hub = context.read_receipt_hub;
+    case.control.applied.set(Some(hub.apply_authorized(
+        &admitted,
+        &case.policy,
+        &case.viewer,
+        &state,
+    )));
     *case.control.handles.borrow_mut() = Some((viewer, hub));
-    rsx! {
-        div {
-            "data-testid": "receipt-page-ready",
-            ReadReceiptIndicator {
-                realm_id: REALM,
-                strand_id: STRAND,
-                message_id: Some(message_id()),
-                target_author: case.visible_author,
-                viewer: viewer(),
-                display: case.display,
-                policy: policy(),
-            }
-        }
-    }
+    inkson::presentation::widgets::reactive(
+        scope.bond(move || (viewer.get(), policy.get())),
+        move |scope, (viewer, policy)| {
+            read_receipt_indicator(
+                scope,
+                context.clone(),
+                ReadReceiptIndicatorProps {
+                    realm_id: REALM.into(),
+                    strand_id: STRAND.into(),
+                    message_id: Some(message_id()),
+                    target_author: case.visible_author.clone(),
+                    viewer,
+                    display: case.display,
+                    policy,
+                },
+            )
+        },
+    )
 }
 
-async fn mount(
-    case: Case,
-) -> (
-    web_sys::Element,
-    Rc<dioxus::core::Runtime>,
-    futures_util::future::AbortHandle,
-) {
-    let document = web_sys::window().unwrap().document().unwrap();
-    let root = document.create_element("div").unwrap();
-    document.body().unwrap().append_child(&root).unwrap();
-    let dom = VirtualDom::new_with_props(receipt_page, case);
-    let runtime = dom.runtime();
-    let (abort, registration) = futures_util::future::AbortHandle::new_pair();
-    let render_root = root.clone();
-    wasm_bindgen_futures::spawn_local(async move {
-        let _ = futures_util::future::Abortable::new(
-            dioxus::web::run(dom, dioxus::web::Config::new().rootelement(render_root)),
-            registration,
-        )
-        .await;
-    });
-    for _ in 0..100 {
-        if root
-            .query_selector("[data-testid='receipt-page-ready']")
-            .unwrap()
-            .is_some()
-        {
-            return (root, runtime, abort);
-        }
-        gloo_timers::future::TimeoutFuture::new(10).await;
-    }
-    abort.abort();
-    panic!("receipt page did not mount");
+async fn mount(case: Case) -> (web_sys::Element, (), glory::web::WebApp) {
+    let root = glory_web::root();
+    let app =
+        glory::web::launch_with(root.clone(), move |scope| receipt_page(scope, case)).unwrap();
+    glory_web::settle().await;
+    (root, (), app)
 }
-
-async fn unmount(root: web_sys::Element, abort: futures_util::future::AbortHandle) {
-    abort.abort();
-    gloo_timers::future::TimeoutFuture::new(0).await;
+async fn unmount(root: web_sys::Element, app: glory::web::WebApp) {
+    drop(app);
+    glory_web::settle().await;
     root.remove();
 }
 
@@ -222,13 +212,25 @@ async fn browser_private_receipt_uses_target_author_and_complete_actor_identity(
         let control = case.control.clone();
         let (root, _, abort) = mount(case).await;
         assert_eq!(control.applied.get(), Some(expected));
-        let badge = root
-            .query_selector("[data-testid='read-receipt-indicator']")
-            .unwrap();
+        let badge = root.query_selector(".read-receipt-indicator").unwrap();
         assert_eq!(badge.is_some(), expected, "viewer {viewer}");
         if let Some(badge) = badge {
-            let readers: Vec<arkret_sdk::ActorId> =
-                serde_json::from_str(&badge.get_attribute("data-readers").unwrap()).unwrap();
+            let readers: Vec<arkret_sdk::ActorId> = {
+                let avatars = badge
+                    .query_selector_all(".read-receipt-avatar [data-gly-kind=graphic]")
+                    .unwrap();
+                (0..avatars.length())
+                    .map(|index| {
+                        use wasm_bindgen::JsCast;
+                        let avatar = avatars
+                            .item(index)
+                            .unwrap()
+                            .dyn_into::<web_sys::Element>()
+                            .unwrap();
+                        serde_json::from_str(&avatar.get_attribute("aria-label").unwrap()).unwrap()
+                    })
+                    .collect()
+            };
             assert_eq!(readers, vec![reader()]);
         }
         unmount(root, abort).await;
@@ -261,7 +263,7 @@ async fn browser_receipt_fails_closed_without_target_or_author_and_preserves_dis
     ] {
         let (root, _, abort) = mount(case).await;
         assert!(
-            root.query_selector("[data-testid='read-receipt-indicator']")
+            root.query_selector(".read-receipt-indicator")
                 .unwrap()
                 .is_none()
         );
@@ -273,17 +275,17 @@ async fn browser_receipt_fails_closed_without_target_or_author_and_preserves_dis
 async fn browser_receipt_disappears_when_current_account_changes_station() {
     let case = Case::default();
     let control = case.control.clone();
-    let (root, runtime, abort) = mount(case).await;
+    let (root, _, abort) = mount(case).await;
     assert!(
-        root.query_selector("[data-testid='read-receipt-indicator']")
+        root.query_selector(".read-receipt-indicator")
             .unwrap()
             .is_some()
     );
-    let (mut viewer, _) = control.handles.borrow().unwrap();
-    runtime.in_scope(ScopeId::ROOT, || viewer.set(actor("author", "station-b")));
+    let (viewer, _) = control.handles.borrow().unwrap();
+    viewer.revise(|value| *value = actor("author", "station-b"));
     for _ in 0..100 {
         if root
-            .query_selector("[data-testid='read-receipt-indicator']")
+            .query_selector(".read-receipt-indicator")
             .unwrap()
             .is_none()
         {
@@ -292,7 +294,7 @@ async fn browser_receipt_disappears_when_current_account_changes_station() {
         gloo_timers::future::TimeoutFuture::new(10).await;
     }
     assert!(
-        root.query_selector("[data-testid='read-receipt-indicator']")
+        root.query_selector(".read-receipt-indicator")
             .unwrap()
             .is_none()
     );
@@ -311,13 +313,13 @@ async fn browser_circle_receipt_retracts_without_resurrection_after_policy_tight
         ..Default::default()
     };
     let control = case.control.clone();
-    let (root, runtime, abort) = mount(case).await;
+    let (root, _, abort) = mount(case).await;
     assert!(
-        root.query_selector("[data-testid='read-receipt-indicator']")
+        root.query_selector(".read-receipt-indicator")
             .unwrap()
             .is_some()
     );
-    let mut policy = control.policy.borrow().unwrap();
+    let policy = control.policy.borrow().unwrap();
     for next in [
         Some(arkret_sdk::ReadReceiptPolicy {
             visibility: arkret_sdk::ReadReceiptVisibility::Private,
@@ -329,10 +331,10 @@ async fn browser_circle_receipt_retracts_without_resurrection_after_policy_tight
         }),
         None,
     ] {
-        runtime.in_scope(ScopeId::ROOT, || policy.set(next));
+        policy.revise(|value| *value = next);
         for _ in 0..100 {
             if root
-                .query_selector("[data-testid='read-receipt-indicator']")
+                .query_selector(".read-receipt-indicator")
                 .unwrap()
                 .is_none()
             {
@@ -341,18 +343,18 @@ async fn browser_circle_receipt_retracts_without_resurrection_after_policy_tight
             gloo_timers::future::TimeoutFuture::new(10).await;
         }
         assert!(
-            root.query_selector("[data-testid='read-receipt-indicator']")
+            root.query_selector(".read-receipt-indicator")
                 .unwrap()
                 .is_none()
         );
     }
     gloo_timers::future::TimeoutFuture::new(30).await;
-    runtime.in_scope(ScopeId::ROOT, || {
-        policy.set(Some(arkret_sdk::ReadReceiptPolicy::default()))
-    });
+    {
+        policy.revise(|value| *value = Some(arkret_sdk::ReadReceiptPolicy::default()))
+    };
     gloo_timers::future::TimeoutFuture::new(30).await;
     assert!(
-        root.query_selector("[data-testid='read-receipt-indicator']")
+        root.query_selector(".read-receipt-indicator")
             .unwrap()
             .is_none(),
         "discarded hint must not revive after policy relaxes"

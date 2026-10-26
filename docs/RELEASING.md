@@ -9,11 +9,10 @@ or upload Sigstore transparency-log entries.
 
 - A clean inkson worktree except for deliberate release changes.
 - Sibling `../arkret-rust-sdk`, `../garth`, and `../chime` checkouts matching
-  the local release plan. `yoface` is a private cargo git dependency, not a
-  sibling checkout: git credentials for `github.com/arkret-org/yoface` are
-  required instead, and the web image build additionally needs that token in
-  `GITHUB_TOKEN` for the `github_token` build secret.
-- Dioxus CLI `0.7.10`.
+  the local release plan. Glory and Sapid are public Git dependencies from
+  `glory-rs/glory` and `sapid-ui/sapid`, both on `main`; `Cargo.lock` pins
+  the exact commits. Local sibling UI overrides are rejected by the build helper.
+- Python 3 and the `wasm-bindgen-cli` version resolved by `Cargo.lock`.
 - Docker for web image evidence.
 - Optional local signing tools:
   - macOS: `codesign`, `xcrun`, `INKSON_MACOS_SIGN_IDENTITY`.
@@ -25,18 +24,26 @@ or upload Sigstore transparency-log entries.
 ## Verification
 
 ```powershell
-cargo fmt --check
+$env:CARGO_HOME = "D:/BuildCache/cargo"
+$env:CARGO_TARGET_DIR = "D:/BuildCache/inkson-glory/target"
+$env:TEMP = "D:/BuildCache/inkson-glory/tmp"
+$env:TMP = $env:TEMP
+New-Item -ItemType Directory -Force -Path $env:TEMP | Out-Null
+cargo +nightly fmt --check
 cargo clippy --all-targets -- -D warnings
 cargo test --locked
-dx build --platform web --features web --release
+python scripts/build_web.py --release --out-dir dist/web
 npm ci
+$inksonMetadata = cargo metadata --locked --no-deps --format-version 1 | ConvertFrom-Json
+cargo build --locked --profile joint-e2e --no-default-features --features spec-conformance --bin inkson-wire
+$env:INKSON_WIRE_BIN = Join-Path $inksonMetadata.target_directory "joint-e2e/inkson-wire.exe"
 npm run e2e
 ```
 
 Generate an optional Lighthouse report from a local web preview:
 
 ```powershell
-dx serve --platform web --features web --port 4528 --open false
+python scripts/dev_glory.py --platform web --port 4528
 powershell -ExecutionPolicy Bypass -File scripts/lighthouse-local.ps1 -Url http://127.0.0.1:4528
 ```
 
@@ -45,7 +52,7 @@ powershell -ExecutionPolicy Bypass -File scripts/lighthouse-local.ps1 -Url http:
 Build the native binary locally:
 
 ```powershell
-cargo build --release --features desktop
+python scripts/build_desktop.py --release
 ```
 
 Generate signing evidence without remote submission:

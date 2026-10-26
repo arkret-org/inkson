@@ -283,14 +283,14 @@
   line-height: 1.35;
 }
 
-.auth-session-state [data-testid^="session-"] {
+.auth-session-state .session-diagnostic {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.auth-session-state [data-testid="session-status"] {
+.auth-session-state [class~="session-status"] {
   color: var(--text-2);
   font-family: var(--font-sans);
   font-size: 12px;

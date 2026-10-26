@@ -47,13 +47,9 @@
   gap: 10px;
   min-width: 0;
 }
-/* The "Upload new avatar" control is a <label> bound to a hidden file
-   input. The dioxus-primitives Label ships `.dx-label` (small muted text),
-   which made it read as non-interactive caption text. Style it as a
-   self-contained secondary button so it clearly looks clickable. The
-   `label.` prefix raises specificity above `.dx-label` so the button look
-   wins regardless of stylesheet order. Shared with
-   `components/avatar_uploader.rs`. */
+/* The avatar file picker uses the same secondary-button presentation on both
+   hosts. Keep the label selector for older archived markup and the shared
+   class for the current semantic file button. */
 label.avatar-upload-button,
 .avatar-upload-button {
   width: fit-content;

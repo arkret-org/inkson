@@ -11,16 +11,15 @@
 use std::collections::BTreeSet;
 
 use anyhow::Context as _;
-use dioxus::prelude::*;
-use yoface::utils::text::short_protocol_id;
 
 pub(crate) use crate::mls::admission::mls_admission_authoring_lock;
 use crate::state::LocalStateStore;
 use crate::state::realm_membership::*;
+use crate::views::helpers::short_protocol_id;
 
 pub(crate) async fn submit_mls_admission_for_invitee(
     api: &crate::transport::TransportClient,
-    state_store: SyncSignal<LocalStateStore>,
+    state_store: &crate::runtime::input::StateStoreHandle,
     realm_id: String,
     actor_id: String,
     device_id: String,
@@ -31,8 +30,9 @@ pub(crate) async fn submit_mls_admission_for_invitee(
     let _authoring_guard = authoring_lock.lock().await;
     let invitee_actor: arkret_sdk::ActorId = serde_json::from_str(&invitee_id)?;
     let invitee_principal = invitee_actor.signing_principal_id().as_str();
-    let account = crate::app::SessionContext::get()
-        .active_account()
+    let account = crate::presentation::require_current_context()?
+        .active_account
+        .get_untracked()
         .ok_or_else(|| anyhow::anyhow!("active account context is unavailable"))?;
     anyhow::ensure!(
         account.principal_id().as_str() == actor_id && account.device_id.as_str() == device_id,
@@ -40,21 +40,17 @@ pub(crate) async fn submit_mls_admission_for_invitee(
     );
     anyhow::ensure!(
         !state_store
-            .read()
-            .realm_projection_has_retired_minimal_metadata_marker(&realm_id),
+            .read(|store| store.realm_projection_has_retired_minimal_metadata_marker(&realm_id)),
         "retired minimal-metadata Realm marker blocks MLS admission"
     );
-    let needs_mls_admission = {
-        let store = state_store.read();
+    let needs_mls_admission = state_store.read(|store| {
         store.mls_checkpoint_for(&realm_id).is_some()
             || store.realm_projection_is_mls_encrypted(&realm_id)
-    };
+    });
     if !needs_mls_admission {
         return Ok(None);
     }
-    let admission_submitter = api
-        .event_submitter()?
-        .with_state_store(crate::app::runtime_adapter::state_store_handle(state_store));
+    let admission_submitter = api.event_submitter()?.with_state_store(state_store.clone());
     if admission_submitter
         .has_pending_mls_admission_for_realm(&realm_id)
         .await?
@@ -95,34 +91,31 @@ pub(crate) async fn submit_mls_admission_for_invitee(
             destination_id: account.authority.station_id.to_string(),
             target_device_id: Some(target_device_id),
         }
-    } else if state_store.read().realm_collaboration_role(&realm_id)
+    } else if state_store.read(|store| store.realm_collaboration_role(&realm_id))
         == Some(arkret_sdk::CollaborationRealmRole::DirectConversation)
     {
         direct_contact_claim_route(&api.sdk_http_client()?, &invitee_actor).await?
     } else {
-        let store = state_store.read();
-        accepted_invite_claim_route(&store, &realm_id, &invitee_id).ok_or_else(|| {
-            anyhow::anyhow!(
-                "accepted invite has no exact destination service and accepting-device route"
-            )
-        })?
+        state_store
+            .read(|store| accepted_invite_claim_route(store, &realm_id, &invitee_id))
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "accepted invite has no exact destination service and accepting-device route"
+                )
+            })?
     };
     let target_device_id = if target_agent.is_some() {
         None
     } else {
         claim_target_device_id(&claim_route)?
     };
-    let group_id = {
-        let store = state_store.read();
-        store
-            .mls_checkpoint_for(&realm_id)
+    let group_id = state_store.read(|store| store.mls_checkpoint_for(&realm_id))
             .map(|snapshot| snapshot.group_id)
             .ok_or_else(|| {
                 anyhow::anyhow!(
                     "local MLS state is not ready; create or restore this device's MLS state before inviting into an encrypted Realm"
                 )
-            })?
-    };
+            })?;
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let claim_request_id = crate::mls_api_helpers::generate_mls_claim_request_id()?;
     let mls_clients = crate::transport::EndpointClients::from_http(api.sdk_http_client()?);
@@ -158,7 +151,7 @@ pub(crate) async fn submit_mls_admission_for_invitee(
     let scope = arkret_sdk::ScopeRef::Realm {
         realm_id: arkret_sdk::RealmId::new(realm_id.clone())?,
     };
-    let state_handle = crate::app::runtime_adapter::state_store_handle(state_store);
+    let state_handle = state_store.clone();
     let current_input = crate::mls::send_gate::MlsSendGateInput::capture(&state_handle, &scope);
     let current = crate::mls::send_gate::read_durable_mls_current(&current_input, &scope)
         .await?
@@ -167,7 +160,7 @@ pub(crate) async fn submit_mls_admission_for_invitee(
     // membership update. Pin one verified cut for the handshake and Event.
     let binding = crate::mls::governance_proof::binding_for_current_transition(&current)
         .map_err(anyhow::Error::msg)?;
-    let local_state = state_store.read().clone();
+    let local_state = state_store.read(|store| store.clone());
     let admission = crate::mls::admission::build_admission_events_with_binding(
         &local_state,
         secure_store.as_ref(),
@@ -194,7 +187,7 @@ pub(crate) async fn submit_mls_admission_for_invitee(
             welcomes,
             account.device_id.clone(),
             admission.authority_hints,
-            &crate::app::runtime_adapter::state_store_handle(state_store),
+            &state_store.clone(),
             admission.staged_checkpoint,
         )
         .await?;
@@ -289,7 +282,10 @@ pub(crate) fn realm_mls_roster_matches_complete_membership_hint(
     actor_id: &str,
     device_id: &str,
 ) -> bool {
-    let Some(account) = crate::app::SessionContext::get().active_account() else {
+    let Some(account) = crate::presentation::current_context()
+        .and_then(|context| context.active_account.try_get().ok())
+        .flatten()
+    else {
         return false;
     };
     if account.principal_id().as_str() != actor_id || account.device_id.as_str() != device_id {
@@ -369,13 +365,14 @@ pub(crate) struct MlsAdmissionReconcileOutcome {
 
 pub(crate) async fn reconcile_mls_admissions_for_realm(
     api: &crate::transport::TransportClient,
-    mut state_store: SyncSignal<LocalStateStore>,
+    state_store: &crate::runtime::input::StateStoreHandle,
     realm_id: String,
     actor_id: String,
     device_id: String,
 ) -> anyhow::Result<MlsAdmissionReconcileOutcome> {
-    let account = crate::app::SessionContext::get()
-        .active_account()
+    let account = crate::presentation::require_current_context()?
+        .active_account
+        .get_untracked()
         .ok_or_else(|| anyhow::anyhow!("active account context is unavailable"))?;
     anyhow::ensure!(
         account.principal_id().as_str() == actor_id && account.device_id.as_str() == device_id,
@@ -408,26 +405,20 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
     // permanent pre-filter deadlock and no later Welcome can ever be authored.
     let backfill = api.event_submitter()?.backfill(&realm_id).await?;
     let accepted_events = backfill.events();
-    {
-        let mut store = state_store.write();
-        crate::sync_engine::ingest_membership_projection_events(
-            &mut store,
-            &realm_id,
-            &accepted_events,
-        );
-    }
+    state_store.write(|store| {
+        crate::sync_engine::ingest_membership_projection_events(store, &realm_id, &accepted_events)
+    });
     // Only Realms this device can admit into: holding MLS state ⇒ able to build
     // the commit + Welcome. Without a snapshot we are not an admit-capable
     // member and have nothing to reconcile.
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-    let (group_member_ids, group_device_ids, group_endpoints): (
+    let roster: Option<(
         BTreeSet<String>,
         BTreeSet<String>,
         Vec<arkret_sdk::MlsEndpointIdentity>,
-    ) = {
-        let store = state_store.read();
+    )> = state_store.read(|store| {
         let Some(member_ids) = crate::mls::runtime::mls_group_member_actor_ids_for_effective_scope(
-            &store,
+            store,
             secure_store.as_ref(),
             &realm_id,
             None,
@@ -443,13 +434,13 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
                 realm = %short_protocol_id(&realm_id),
                 actor = %short_protocol_id(&actor_id),
                 device = %short_protocol_id(&device_id),
-                has_snapshot = state_store.read().mls_checkpoint_for(&realm_id).is_some(),
+                has_snapshot = store.mls_checkpoint_for(&realm_id).is_some(),
                 "admission aborted: cannot read local MLS group roster (snapshot/secret/decrypt) — no member can be admitted"
             );
-            return Ok(MlsAdmissionReconcileOutcome::default());
+            return None;
         };
         let Some(endpoints) = crate::mls::runtime::mls_group_member_endpoints_for_effective_scope(
-            &store,
+            store,
             secure_store.as_ref(),
             &realm_id,
             None,
@@ -461,9 +452,9 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
                 realm = %short_protocol_id(&realm_id),
                 "admission aborted: cannot read local MLS endpoint roster"
             );
-            return Ok(MlsAdmissionReconcileOutcome::default());
+            return None;
         };
-        (
+        Some((
             member_ids
                 .into_iter()
                 .map(|actor| actor.to_string())
@@ -478,15 +469,17 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
                 })
                 .collect(),
             endpoints,
-        )
+        ))
+    });
+    let Some((group_member_ids, group_device_ids, group_endpoints)) = roster else {
+        return Ok(MlsAdmissionReconcileOutcome::default());
     };
     // Joined Realm members not yet represented in the MLS group, plus current
     // same-account devices that need their own endpoint leaf. Actor membership
     // and endpoint admission are intentionally separate: deduplicating by
     // ActorId would strand every fresh device without a Welcome.
-    let mut pending: Vec<(String, Option<String>)> = {
-        let store = state_store.read();
-        admission_joined_members_for_realm(&store, &realm_id)
+    let mut pending: Vec<(String, Option<String>)> = state_store.read(|store| {
+        admission_joined_members_for_realm(store, &realm_id)
             .into_iter()
             .filter(|id| {
                 let id = id.trim();
@@ -496,13 +489,13 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
             })
             .map(|actor_id| (actor_id, None))
             .collect()
-    };
+    });
     let self_actor = arkret_sdk::ActorId::account(account.authority.clone()).to_string();
     let http = api.sdk_http_client()?;
     // Founding recovery follows the authenticated resolver. A bound owned
     // Agent also needs a fresh Welcome after its accepted runtime authorization
     // changes; ActorId membership alone cannot attest the current endpoint.
-    let direct_peer = state_store.read().direct_conversation_peer(&realm_id);
+    let direct_peer = state_store.read(|store| store.direct_conversation_peer(&realm_id));
     let mut direct_admission_pending = false;
     if let Some(peer) = direct_peer {
         let resolved = http
@@ -562,12 +555,12 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
         .then(|| (self_actor.clone(), Some(device.device_id.to_string())))
     }));
     if pending.is_empty() {
-        let local_state = state_store.read().clone();
+        let local_state = state_store.read(|store| store.clone());
         crate::mls::direct_binding::diagnostic_stage("admission_binding", "entered");
         let result = crate::mls::direct_binding::ensure_binding(
             api,
             &local_state,
-            &crate::app::runtime_adapter::state_store_handle(state_store),
+            &state_store.clone(),
             &realm_id,
             &backfill,
         )
@@ -671,20 +664,17 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
         // projected Add obligation is represented in the epoch. This only
         // resolves the locally tracked transition after an accepted Commit;
         // the hint itself is never membership or send authorization.
-        let res = {
-            let store = state_store.read();
+        let res = state_store.read(|store| {
             realm_mls_roster_matches_complete_membership_hint(
-                &store,
+                store,
                 secure_store.as_ref(),
                 &realm_id,
                 &actor_id,
                 &device_id,
             )
-        };
+        });
         if res {
-            state_store
-                .write()
-                .resolve_member_add_mls_bindings(&realm_id);
+            state_store.write(|store| store.resolve_member_add_mls_bindings(&realm_id));
         }
     }
     Ok(outcome)

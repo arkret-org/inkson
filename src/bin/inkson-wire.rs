@@ -51,7 +51,28 @@ mod contact_fixture;
 #[path = "inkson-wire/native_search.rs"]
 mod native_search;
 
+// Debug builds of the typed contact ceremony exceed Windows' small default
+// main-thread stack. Run the same verifier on a bounded, explicitly sized
+// stack; all parsing, signatures and schema checks remain in run().
+#[cfg(windows)]
 fn main() -> Result<()> {
+    let verifier = std::thread::Builder::new()
+        .name("inkson-wire".into())
+        .stack_size(16 * 1024 * 1024)
+        .spawn(run)
+        .context("start the native fixture verifier")?;
+    match verifier.join() {
+        Ok(result) => result,
+        Err(payload) => std::panic::resume_unwind(payload),
+    }
+}
+
+#[cfg(not(windows))]
+fn main() -> Result<()> {
+    run()
+}
+
+fn run() -> Result<()> {
     let command = std::env::args().nth(1).context("missing command")?;
     let input = read_stdin_json()?;
 
@@ -67,6 +88,7 @@ fn main() -> Result<()> {
         "mock-operation-verify" => operation_fixture::verify(input)?,
         "mock-runtime-candidate" => operation_fixture::runtime_candidate(input)?,
         "mock-account-data-value" => operation_fixture::account_data_value(input)?,
+        "open-fixture-client-ui-value" => operation_fixture::open_client_ui_value(input)?,
         "mock-ice-config" => {
             let request: arkret_models_collaboration::objects::media::MediaIceConfigurationRequestBody =
                 serde_json::from_value(input)?;

@@ -4,13 +4,13 @@ use std::rc::Rc;
 use super::*;
 
 type Handles = (
-    EventHandler<()>,
-    Signal<String>,
-    Signal<usize>,
-    Signal<String>,
-    Signal<String>,
-    Signal<std::collections::BTreeMap<String, String>>,
-    Signal<Vec<crate::attachments::DraftAttachment>>,
+    Rc<dyn Fn()>,
+    Cage<String>,
+    Cage<usize>,
+    Cage<String>,
+    Cage<String>,
+    Cage<std::collections::BTreeMap<String, String>>,
+    Cage<Vec<crate::attachments::DraftAttachment>>,
 );
 
 #[derive(Clone)]
@@ -19,54 +19,66 @@ struct Control {
     handles: Rc<RefCell<Option<Handles>>>,
 }
 
-fn command_harness(control: Control) -> Element {
-    let state_store = use_signal_sync(|| LocalStateStore::with_path(control.path));
-    let active_account = use_signal(|| None);
-    let base_url = use_signal(String::new);
-    let session_generation = use_signal(|| 0_u64);
-    let owned_agents_rev = use_signal(|| 0_u64);
-    use_context_provider(|| crate::app::SessionContext {
-        active_account,
-        state_store,
-        base_url,
-        session_generation,
-        owned_agents_rev,
-    });
+fn fixture_context(
+    scope: &Scope,
+    path: &std::path::Path,
+) -> Rc<crate::presentation::InksonContext> {
+    crate::presentation::InksonContext::new(
+        scope,
+        crate::presentation::BootState {
+            config_store: crate::config::LocalConfigStore::with_path(
+                path.with_extension("config.json"),
+            ),
+            config: crate::config::ClientConfig::default(),
+            state_store: crate::presentation::SharedStateStore::new(LocalStateStore::with_path(
+                path.to_owned(),
+            )),
+            initial_credential: String::new(),
+            realm_tree_nodes: Vec::new(),
+        },
+        Route::Dashboard,
+        |_| {
+            Box::pin(async {
+                crate::runtime::session::CurrentSessionRefresh::retry_later("fixture")
+            })
+        },
+    )
+}
+fn command_harness(scope: &Scope, control: Control) {
+    let context = fixture_context(scope, &control.path);
+    scope.retain(context.clone()).unwrap();
     let authority = crate::test_support::authority("ak:did_core:web:alice.example");
     let device =
         arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000001").unwrap();
-    let controller =
-        super::super::super::controller::use_chat_controller("", "", &authority, &device);
-    let frontier = use_signal(String::new);
-    let mut calls = use_signal(|| 0_usize);
-    let callback = use_callback(move |()| {
-        let next = *calls.peek() + 1;
-        calls.set(next);
+    let controller = super::super::super::controller::chat_controller(
+        scope, context, "", "", &authority, &device,
+    )
+    .unwrap();
+    let frontier = scope.cage(String::new());
+    let calls = scope.cage(0usize);
+    let callback: Rc<dyn Fn()> = Rc::new(move || {
+        calls.revise(|value| *value += 1);
         send_plaintext_message(
             controller,
             frontier,
             PlaintextSendRequest {
-                // Rejection is entirely local: this is neither a URL nor a
-                // Realm identity, and inline text cannot trigger blob upload.
-                base_url: "://invalid-command-fixture".to_owned(),
+                base_url: "://invalid-command-fixture".into(),
                 api_token: String::new(),
                 wait_for: None,
-                realm_id: "invalid-realm".to_owned(),
+                realm_id: "invalid-realm".into(),
                 circle_id: None,
-                strand_id: "invalid-strand".to_owned(),
-                actor: "invalid-actor".to_owned(),
-                local_id: "callback-fixture".to_owned(),
-                body: "local command fixture".to_owned(),
+                strand_id: "invalid-strand".into(),
+                actor: "invalid-actor".into(),
+                local_id: "callback-fixture".into(),
+                body: "local command fixture".into(),
                 reply_to: None,
                 mentions: Vec::new(),
                 shared_agent_targets: Vec::new(),
             },
         );
     });
-    // Exercise the real callback while the hook list is borrowed. Commands
-    // must not allocate component hooks, regardless of their caller's phase.
-    use_hook(move || callback.call(()));
-    let sentinel = use_signal(|| "stable hook after command".to_owned());
+    callback();
+    let sentinel = scope.cage("stable state after command".to_owned());
     *control.handles.borrow_mut() = Some((
         callback,
         sentinel,
@@ -76,7 +88,20 @@ fn command_harness(control: Control) -> Element {
         controller.pending_drafts,
         controller.attachments,
     ));
-    rsx! { div { "{calls}:{sentinel}:{controller.status_msg}" } }
+}
+fn host() -> (glory::App, Rc<glory::core::executor::Executor>) {
+    let executor = Rc::new(glory::core::executor::Executor::new(256));
+    let app = glory::App::with_host(executor.clone(), glory::render::memory::Memory::new);
+    (app, executor)
+}
+fn pump(app: &glory::App, executor: &glory::core::executor::Executor) {
+    for _ in 0..32 {
+        let polled = executor.poll_one();
+        app.flush().unwrap();
+        if !polled {
+            break;
+        }
+    }
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -86,47 +111,56 @@ async fn production_command_callback_does_not_allocate_hooks_and_survives_rerend
         path: dir.path().join("command-state.json"),
         handles: Rc::new(RefCell::new(None)),
     };
-    let mut dom = VirtualDom::new_with_props(command_harness, control.clone());
-    dom.rebuild_in_place();
-    let (_, sentinel, ..) = control.handles.borrow().unwrap();
+    let (app, executor) = host();
+    command_harness(app.scope(), control.clone());
+    let (_, sentinel, ..) = control.handles.borrow().clone().unwrap();
     for expected_calls in 1..=4 {
         if expected_calls > 1 {
-            let callback = control.handles.borrow().unwrap().0;
-            callback.call(());
+            let callback = control.handles.borrow().clone().unwrap().0;
+            callback();
         }
         for _ in 0..8 {
-            dom.render_immediate_to_vec();
+            pump(&app, &executor);
         }
         let (_, current_sentinel, calls, status, draft, pending_drafts, _) =
-            control.handles.borrow().unwrap();
-        assert_eq!(current_sentinel, sentinel);
-        dom.in_runtime(|| {
-            assert_eq!(*calls.peek(), expected_calls);
+            control.handles.borrow().clone().unwrap();
+        current_sentinel.revise(|value| *value = format!("sentinel identity {expected_calls}"));
+        assert_eq!(
+            sentinel.get_untracked(),
+            format!("sentinel identity {expected_calls}")
+        );
+        sentinel.revise(|value| *value = "stable state after command".to_owned());
+        {
+            assert_eq!(calls.get_untracked(), expected_calls);
             assert_eq!(
-                current_sentinel.peek().as_str(),
-                "stable hook after command"
+                current_sentinel.get_untracked().as_str(),
+                "stable state after command"
             );
-            assert!(status.peek().starts_with("send failed:"));
-            assert_eq!(draft.peek().as_str(), "local command fixture");
-            assert!(pending_drafts.peek().is_empty());
-        });
+            assert!(status.get_untracked().starts_with("send failed:"));
+            assert_eq!(draft.get_untracked().as_str(), "local command fixture");
+            assert!(pending_drafts.get_untracked().is_empty());
+        };
     }
-    dom.in_runtime(|| {
+    {
         use futures_util::FutureExt;
-        let (_, _, _, _, mut draft, mut pending, _) = control.handles.borrow().unwrap();
+        let (_, _, _, _, draft, pending, _) = control.handles.borrow().clone().unwrap();
         for (status, new_text, expected_text) in [
             (garth::SendQueueStatus::Committed, "", ""),
             (garth::SendQueueStatus::Queued, "", ""),
             (garth::SendQueueStatus::Forwarding, "", ""),
             (garth::SendQueueStatus::Failed, "", "submitted text"),
-            (garth::SendQueueStatus::Rejected, "new unsent text", "new unsent text"),
+            (
+                garth::SendQueueStatus::Rejected,
+                "new unsent text",
+                "new unsent text",
+            ),
         ] {
-            draft.set(new_text.to_owned());
-            pending
-                .write()
-                .insert("guard-fixture".to_owned(), "submitted text".to_owned());
+            draft.revise(|value| *value = new_text.to_owned());
+            pending.revise(|value| {
+                value.insert("guard-fixture".to_owned(), "submitted text".to_owned())
+            });
             let mut guard = PendingComposerDraft {
-                attachments: control.handles.borrow().unwrap().6,
+                attachments: control.handles.borrow().clone().unwrap().6,
                 attachment_ids: Vec::new(),
                 draft,
                 pending,
@@ -139,16 +173,18 @@ async fn production_command_callback_does_not_allocate_hooks_and_survives_rerend
             };
             // Before the future runs, its guard must still protect the pending
             // text. Capturing only a state field would drop the guard here.
-            assert!(pending.peek().contains_key("guard-fixture"));
-            assert_eq!(draft.peek().as_str(), new_text);
+            assert!(pending.get_untracked().contains_key("guard-fixture"));
+            assert_eq!(draft.get_untracked().as_str(), new_text);
             assert!(completion.now_or_never().is_some());
-            assert!(pending.peek().is_empty());
-            assert_eq!(draft.peek().as_str(), expected_text);
+            assert!(pending.get_untracked().is_empty());
+            assert_eq!(draft.get_untracked().as_str(), expected_text);
         }
-        draft.set(String::new());
-        pending.write().insert("unknown-fixture".to_owned(), "submitted text".to_owned());
+        draft.revise(|value| *value = String::new());
+        pending.revise(|value| {
+            value.insert("unknown-fixture".to_owned(), "submitted text".to_owned())
+        });
         let mut guard = PendingComposerDraft {
-            attachments: control.handles.borrow().unwrap().6,
+            attachments: control.handles.borrow().clone().unwrap().6,
             attachment_ids: Vec::new(),
             draft,
             pending,
@@ -162,12 +198,15 @@ async fn production_command_callback_does_not_allocate_hooks_and_survives_rerend
         guard.record_failure(&unknown);
         assert!(guard.submission == ComposerSubmissionState::DurablePending);
         drop(guard);
-        assert!(pending.peek().is_empty());
-        assert!(draft.peek().is_empty(), "the durable exact-byte queue owns the unknown result, so the composer must not invite duplicate authoring");
-    });
+        assert!(pending.get_untracked().is_empty());
+        assert!(
+            draft.get_untracked().is_empty(),
+            "the durable exact-byte queue owns the unknown result, so the composer must not invite duplicate authoring"
+        );
+    };
 }
 
-type UploadHandles = Rc<RefCell<Option<(EventHandler<()>, Signal<String>, Signal<String>)>>>;
+type UploadHandles = Rc<RefCell<Option<(Rc<dyn Fn()>, Cage<String>, Cage<String>)>>>;
 
 #[derive(Clone)]
 struct UploadControl {
@@ -177,63 +216,55 @@ struct UploadControl {
     handles: UploadHandles,
 }
 
-fn upload_command_harness(control: UploadControl) -> Element {
-    let state_store = use_signal_sync(|| LocalStateStore::with_path(control.path));
-    let active_account = use_signal(|| None);
-    let base_url = use_signal(String::new);
-    let session_generation = use_signal(|| 0_u64);
-    let owned_agents_rev = use_signal(|| 0_u64);
-    use_context_provider(|| crate::app::SessionContext {
-        active_account,
-        state_store,
-        base_url,
-        session_generation,
-        owned_agents_rev,
-    });
+fn upload_command_harness(scope: &Scope, control: UploadControl) {
+    let context = fixture_context(scope, &control.path);
+    scope.retain(context.clone()).unwrap();
     let authority = crate::test_support::authority("ak:did_core:web:alice.example");
     let device =
         arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000001").unwrap();
-    let mut controller =
-        super::super::super::controller::use_chat_controller("", "", &authority, &device);
+    let controller = super::super::super::controller::chat_controller(
+        scope, context, "", "", &authority, &device,
+    )
+    .unwrap();
     let realm = "ak:realm:AZAySZA7XRDeJ9cO4MqaDWrJD-rqPk6Cudk7CCzsDQz1";
     let strand = "ak:strand:01964137-0000-7000-8000-000000000001";
-    use_hook(move || {
-        controller.selected_channel.set(strand.to_owned());
-        controller.channels.set(vec![ChannelEntity {
-            strand_id: strand.to_owned(),
-            name: "Files".to_owned(),
-            kind: "chat".to_owned(),
-            category: String::new(),
-            topic: None,
-            unread: 0,
-            is_default: true,
-            is_private_sidecar: control.is_private_sidecar,
-            security_encrypted: None,
-            scope_circle: None,
-        }]);
-    });
-    let target = control.base_url;
-    let callback = use_callback(move |()| {
-        let file = dioxus::html::FileData::new(dioxus::html::SerializedFileData {
-            path: "private-note.txt".into(),
-            size: 14,
-            last_modified: 0,
-            content_type: Some("text/plain".to_owned()),
-            contents: Some(b"private bytes!".to_vec().into()),
+    {
+        controller
+            .selected_channel
+            .revise(|value| *value = strand.to_owned());
+        controller.channels.revise(|value| {
+            *value = vec![ChannelEntity {
+                strand_id: strand.to_owned(),
+                name: "Files".to_owned(),
+                kind: "chat".to_owned(),
+                category: String::new(),
+                topic: None,
+                unread: 0,
+                is_default: true,
+                is_private_sidecar: control.is_private_sidecar,
+                security_encrypted: None,
+                scope_circle: None,
+            }]
         });
+    }
+
+    let target = control.base_url;
+    let path = control.path.with_extension("private-note.txt");
+    std::fs::write(&path, b"private bytes!").unwrap();
+    let file = super::super::files::AttachmentFile::open(&path).unwrap();
+    let callback: Rc<dyn Fn()> = Rc::new(move || {
         upload_dropped_attachments(
             controller,
             target.clone(),
-            "fixture-session".to_owned(),
+            "fixture-session".into(),
             Some(arkret_sdk::ScopeRef::Realm {
-                realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
+                realm_id: arkret_sdk::RealmId::new(realm).unwrap(),
             }),
-            vec![file],
-        );
+            vec![file.clone()],
+        )
     });
     *control.handles.borrow_mut() =
         Some((callback, controller.compose_upload_status, controller.draft));
-    rsx! { div { "{controller.compose_upload_status}" } }
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -247,25 +278,25 @@ async fn dropped_attachment_with_unknown_current_sends_no_http_and_preserves_dra
         is_private_sidecar: false,
         handles: Rc::new(RefCell::new(None)),
     };
-    let mut dom = VirtualDom::new_with_props(upload_command_harness, control.clone());
-    dom.rebuild_in_place();
-    let (callback, status, draft) = control.handles.borrow().unwrap();
-    callback.call(());
+    let (app, executor) = host();
+    upload_command_harness(app.scope(), control.clone());
+    let (callback, status, draft) = control.handles.borrow().clone().unwrap();
+    callback();
     for _ in 0..100 {
-        dom.render_immediate_to_vec();
+        pump(&app, &executor);
         tokio::task::yield_now().await;
-        if dom.in_runtime(|| !status.peek().is_empty()) {
+        if !status.get_untracked().is_empty() {
             break;
         }
     }
-    dom.in_runtime(|| {
+    {
         assert!(
-            status.peek().starts_with("Attachment upload:"),
+            status.get_untracked().starts_with("Attachment upload:"),
             "{}",
-            status.peek()
+            status.get_untracked()
         );
-        assert!(draft.peek().is_empty());
-    });
+        assert!(draft.get_untracked().is_empty());
+    };
     assert_eq!(
         listener.accept().unwrap_err().kind(),
         std::io::ErrorKind::WouldBlock
@@ -281,10 +312,10 @@ async fn private_sidecar_file_drop_never_inherits_verified_plaintext_parent() {
     state.switch_active_account(&account).unwrap();
     state.set_current_reset_required(false);
     let realm = "ak:realm:AZAySZA7XRDeJ9cO4MqaDWrJD-rqPk6Cudk7CCzsDQz1";
-    let commit = arkret_sdk::RealmCommitId::from_digest([7; 32]);
+    let fixture_commit = arkret_sdk::RealmCommitId::from_digest([7; 32]);
     let head = serde_json::json!({
         "stream_ref":{"kind":"realm","realm_id":realm},
-        "stream_position":1,"commit_id":commit,
+        "stream_position":1,"commit_id":fixture_commit,
     });
     let frame: arkret_sdk::sync::AccountSubscribeFrame = serde_json::from_value(serde_json::json!({
         "kind":"delta","cursor":"ak:cursor:YQ",
@@ -325,24 +356,22 @@ async fn private_sidecar_file_drop_never_inherits_verified_plaintext_parent() {
         is_private_sidecar: true,
         handles: Rc::new(RefCell::new(None)),
     };
-    let mut dom = VirtualDom::new_with_props(upload_command_harness, control.clone());
-    dom.rebuild_in_place();
-    let (callback, status, draft) = control.handles.borrow().unwrap();
-    callback.call(());
+    let (app, executor) = host();
+    upload_command_harness(app.scope(), control.clone());
+    let (callback, status, draft) = control.handles.borrow().clone().unwrap();
+    callback();
     for _ in 0..100 {
-        dom.render_immediate_to_vec();
+        pump(&app, &executor);
         tokio::task::yield_now().await;
-        if dom.in_runtime(|| !status.peek().is_empty()) {
+        if !status.get_untracked().is_empty() {
             break;
         }
     }
-    dom.in_runtime(|| {
-        assert_eq!(
-            status.peek().as_str(),
-            "Attachment upload requires a verified conversation scope."
-        );
-        assert!(draft.peek().is_empty());
-    });
+    assert_eq!(
+        status.get_untracked().as_str(),
+        "Attachment upload requires a verified conversation scope."
+    );
+    assert!(draft.get_untracked().is_empty());
     assert_eq!(
         listener.accept().unwrap_err().kind(),
         std::io::ErrorKind::WouldBlock

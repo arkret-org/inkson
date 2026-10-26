@@ -19,3 +19,21 @@ for (const asset of manifest.assets) {
   }
   console.log(`verified ${asset.path} (${asset.version})`);
 }
+
+// Font subsets are self-hosted copies of the original UI font. Native SFNT
+// fallbacks use the same outlines and metrics; keep both formats pinned.
+const fontRoot = resolve(repositoryRoot, "assets/fonts");
+const fontManifest = JSON.parse(await readFile(resolve(fontRoot, "SOURCE.json"), "utf8"));
+for (const font of fontManifest.files) {
+  for (const entry of [font, font.nativeTtf]) {
+    if (!entry || !/^[a-z0-9-]+\.(woff2|ttf)$/.test(entry.file)) {
+      throw new Error("invalid packaged font entry");
+    }
+    const bytes = await readFile(resolve(fontRoot, entry.file));
+    const digest = createHash("sha256").update(bytes).digest("hex");
+    if (bytes.length !== entry.bytes || digest !== entry.sha256) {
+      throw new Error(`assets/fonts/${entry.file}: font integrity mismatch`);
+    }
+    console.log(`verified assets/fonts/${entry.file} (${fontManifest.version})`);
+  }
+}
