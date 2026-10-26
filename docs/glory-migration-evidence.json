@@ -1,0 +1,282 @@
+{
+  "originalCode": "0950b356",
+  "currentCode": "2f498720c8567276978b76cebce53d3e2589e341",
+  "finalRuntime": {
+    "sha256": "6f2ac35b3a83fbdc8a5adc2342506f3dec849841525afc124c760d865206aaab",
+    "files": 877
+  },
+  "finalProduction": {
+    "exitCode": 0,
+    "codeCommit": "2f498720c8567276978b76cebce53d3e2589e341",
+    "source": {
+      "sha256": "6f2ac35b3a83fbdc8a5adc2342506f3dec849841525afc124c760d865206aaab",
+      "files": 877
+    },
+    "profile": "release",
+    "features": [
+      "web"
+    ],
+    "testOnlyFeatures": false,
+    "target": "D:/BuildCache/inkson-glory/wasm-release-target",
+    "immutableWeb": "D:/BuildCache/inkson-glory/evidence/production46/web",
+    "wasmSha256": "abc437674dbe79d6b78a73be3d74fdca6a2f66b8eb6292513fe036ae3b901f0c",
+    "cssSha256": "a633a9dc0b7737f0762c8947fe8c583b1d0ed9bd24f672cc7dd3bb4771531dff",
+    "compilerWarnings": 0,
+    "uiDependencies": {
+      "glory": {
+        "source": "git+https://github.com/glory-rs/glory.git?branch=main#b9d06545c701510ba18d5cdb7cd363c102cad906",
+        "revision": "b9d06545c701510ba18d5cdb7cd363c102cad906",
+        "manifest_path": "D:\\BuildCache\\cargo\\git\\checkouts\\glory-61aa4fa5f422a5b8\\b9d0654\\crates\\glory\\Cargo.toml",
+        "version": "0.3.1"
+      },
+      "sapid": {
+        "source": "git+https://github.com/sapid-ui/sapid.git?branch=main#c5c4e23aeb6d37b3f2537545116bac43dbb40a64",
+        "revision": "c5c4e23aeb6d37b3f2537545116bac43dbb40a64",
+        "manifest_path": "D:\\BuildCache\\cargo\\git\\checkouts\\sapid-cc96a1e139865302\\c5c4e23\\Cargo.toml",
+        "version": "0.1.0",
+        "stylesheet_sha256": "23742f13fcaea2154ffbee8d1271212a6cbbbab28d28fc3b09726639b6b5fcde"
+      }
+    }
+  },
+  "selectedImages": [
+    {
+      "file": "realm-setup-original-night.png",
+      "sha256": "7a196d496b659f6b0ef87c292dbc4365bb5da7984396ca1cf7d282e4a846b25e",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "source": "0950b356"
+    },
+    {
+      "file": "realm-setup-original-light.png",
+      "sha256": "4b90e1e91921f74b7fd7fe714b9616fd4667ff0e971b002eb2dd7fa07815885c",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "source": "0950b356"
+    },
+    {
+      "file": "realm-setup-glory43-night.png",
+      "sha256": "48a54af4cc890d8bc540350d1dee6bfc07995aa978847f9b2c74bc4b1cbef758",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "source": "joint43; Stepper paint/hover"
+    },
+    {
+      "file": "realm-setup-glory43-light.png",
+      "sha256": "bac515c491f6e71379eb5654ebf6a72c47bcab84787ced09800ba28d8779ec75",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "source": "joint43; Stepper paint/hover"
+    },
+    {
+      "file": "chat-desktop-original.png",
+      "scene": "chat-desktop",
+      "source": "0950b356",
+      "width": 1440,
+      "height": 1000,
+      "sha256": "e1e704ddf2730307c04fabbc4d7a35e6e8ed3197eec81db370543afc3f3029f0"
+    },
+    {
+      "file": "chat-desktop-glory45.png",
+      "scene": "chat-desktop",
+      "source": "Rust43+CSS45; fresh real7385 page",
+      "width": 1440,
+      "height": 1000,
+      "sha256": "68663cba281b90e5f534eaed2f3bb55cbabc878c0170966adb0955e43a439fd7"
+    },
+    {
+      "file": "chat-mobile-original.png",
+      "scene": "chat-mobile",
+      "source": "0950b356",
+      "width": 390,
+      "height": 844,
+      "sha256": "d3aed7bd433dc3f943f5680f5eb183047b1fde89abebe3ad9e206a44c3af2c01"
+    },
+    {
+      "file": "chat-mobile-glory45.png",
+      "scene": "chat-mobile",
+      "source": "Rust43+CSS45; fresh real7385 page",
+      "width": 390,
+      "height": 844,
+      "sha256": "eb92b3d6d6fcb798325519afea7fd50458c5bf480db4bea9cf05bd4298375cf2"
+    },
+    {
+      "file": "call-desktop-original.png",
+      "scene": "call-desktop",
+      "source": "0950b356",
+      "width": 1440,
+      "height": 1000,
+      "sha256": "b783b5ff0ade35529f67a28ddcaced08ae67ab3dbae2e859eab7ed834ec826f6"
+    },
+    {
+      "file": "call-desktop-glory45.png",
+      "scene": "call-desktop",
+      "source": "Rust43+CSS45; fresh real7385 page",
+      "width": 1440,
+      "height": 1000,
+      "sha256": "41c326fb0712804b57503c070af1fd41a0619f60082286086312d7d4417a5980"
+    }
+  ],
+  "qualification": [
+    "Images are browser references, not physical native-window acceptance.",
+    "Chat and idle Call full business2PASS were executed on44;45 paint-only2PASS keeps18 measured controls at0px geometry delta and captures actual fresh45 pages.",
+    "Production46 CSS differs from sampled45 only by two spaces on one empty line; declarations are identical.",
+    "Twenty real WASM tests ran on1679fe44;2f498720 changes only feature-specific import/binding declarations and is independently rebuilt with strict native Clippy."
+  ],
+  "native": {
+    "codeCommit": "2f498720c8567276978b76cebce53d3e2589e341",
+    "runtime": {
+      "sha256": "6f2ac35b3a83fbdc8a5adc2342506f3dec849841525afc124c760d865206aaab",
+      "files": 877
+    },
+    "profile": "dev",
+    "features": [
+      "desktop"
+    ],
+    "nativeExeSha256": "88dc659dfeb72dee7df68b007bce2dfce1680348c4ce7763cab4657dc69b2d0b",
+    "targetDirectory": "D:/BuildCache/inkson-glory/target",
+    "nativeBuildExit": 0,
+    "strictNativeClippyExit": 0,
+    "physicalWindowAcceptance": false,
+    "qualification": "Staged Windows development verification build, not a release-profile build. No physical GUI interaction after user stop. Cargo inkson.pdb filename-collision warning retained; build/link/staging succeed.",
+    "uiDependencies": {
+      "glory": {
+        "source": "git+https://github.com/glory-rs/glory.git?branch=main#b9d06545c701510ba18d5cdb7cd363c102cad906",
+        "revision": "b9d06545c701510ba18d5cdb7cd363c102cad906",
+        "manifest_path": "D:\\BuildCache\\cargo\\git\\checkouts\\glory-61aa4fa5f422a5b8\\b9d0654\\crates\\glory\\Cargo.toml",
+        "version": "0.3.1"
+      },
+      "sapid": {
+        "source": "git+https://github.com/sapid-ui/sapid.git?branch=main#c5c4e23aeb6d37b3f2537545116bac43dbb40a64",
+        "revision": "c5c4e23aeb6d37b3f2537545116bac43dbb40a64",
+        "manifest_path": "D:\\BuildCache\\cargo\\git\\checkouts\\sapid-cc96a1e139865302\\c5c4e23\\Cargo.toml",
+        "version": "0.1.0",
+        "stylesheet_sha256": "23742f13fcaea2154ffbee8d1271212a6cbbbab28d28fc3b09726639b6b5fcde"
+      }
+    },
+    "archive": "inkson-glory-native-dev-windows-verification.zip",
+    "archiveSha256": "5a32b8b9f85ccbad2905f88e1c5d0686fcf7af613a1e9dbaa81ee7833cec3da3"
+  },
+  "wasmRealTests": {
+    "codeCommit": "1679fe44d1e53e82ae55e21306323b5f40b7a99d",
+    "suites": {
+      "mls": 1,
+      "indexedDb": 13,
+      "reactiveGroup": 1,
+      "readReceipts": 4,
+      "writeState": 1
+    },
+    "passed": 20,
+    "failed": 0,
+    "ignored": 0,
+    "timeoutSeconds": 120,
+    "headlessChrome": "155.0.8059.84",
+    "sourceMatchedBeforeAfter": true
+  },
+  "productionSmoke": {
+    "passed": 4,
+    "base": "http://127.0.0.1:7387",
+    "productionFeatures": [
+      "web"
+    ],
+    "realProductionBundle": true,
+    "headless": true,
+    "results": [
+      {
+        "colorScheme": "dark",
+        "width": 1440,
+        "height": 1000,
+        "metrics": {
+          "viewport": 1440,
+          "scrollWidth": 1440,
+          "lang": "en",
+          "htmlClass": "",
+          "bodyClass": "",
+          "panel": {
+            "x": 461,
+            "y": 357.09375,
+            "width": 518,
+            "height": 285.796875,
+            "right": 979
+          },
+          "font": "-apple-system, BlinkMacSystemFont, Inter, \"Segoe UI\", Roboto, \"Helvetica Neue\", \"PingFang SC\", \"Microsoft YaHei\", sans-serif"
+        },
+        "pageErrors": [],
+        "screenshot": "login-dark-1440.png"
+      },
+      {
+        "colorScheme": "dark",
+        "width": 390,
+        "height": 844,
+        "metrics": {
+          "viewport": 390,
+          "scrollWidth": 390,
+          "lang": "en",
+          "htmlClass": "",
+          "bodyClass": "",
+          "panel": {
+            "x": 17,
+            "y": 17,
+            "width": 356,
+            "height": 273.796875,
+            "right": 373
+          },
+          "font": "-apple-system, BlinkMacSystemFont, Inter, \"Segoe UI\", Roboto, \"Helvetica Neue\", \"PingFang SC\", \"Microsoft YaHei\", sans-serif"
+        },
+        "pageErrors": [],
+        "screenshot": "login-dark-390.png"
+      },
+      {
+        "colorScheme": "light",
+        "width": 1440,
+        "height": 1000,
+        "metrics": {
+          "viewport": 1440,
+          "scrollWidth": 1440,
+          "lang": "en",
+          "htmlClass": "",
+          "bodyClass": "",
+          "panel": {
+            "x": 461,
+            "y": 357.09375,
+            "width": 518,
+            "height": 285.796875,
+            "right": 979
+          },
+          "font": "-apple-system, BlinkMacSystemFont, Inter, \"Segoe UI\", Roboto, \"Helvetica Neue\", \"PingFang SC\", \"Microsoft YaHei\", sans-serif"
+        },
+        "pageErrors": [],
+        "screenshot": "login-light-1440.png"
+      },
+      {
+        "colorScheme": "light",
+        "width": 390,
+        "height": 844,
+        "metrics": {
+          "viewport": 390,
+          "scrollWidth": 390,
+          "lang": "en",
+          "htmlClass": "",
+          "bodyClass": "",
+          "panel": {
+            "x": 17,
+            "y": 17,
+            "width": 356,
+            "height": 273.796875,
+            "right": 373
+          },
+          "font": "-apple-system, BlinkMacSystemFont, Inter, \"Segoe UI\", Roboto, \"Helvetica Neue\", \"PingFang SC\", \"Microsoft YaHei\", sans-serif"
+        },
+        "pageErrors": [],
+        "screenshot": "login-light-390.png"
+      }
+    ]
+  }
+}
