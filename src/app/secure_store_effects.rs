@@ -46,7 +46,10 @@ pub(super) fn install(
         let base_url_for_secure_upgrade = base_url;
         let principal_id_for_secure_upgrade = principal_id;
         let device_id_for_secure_upgrade = device_id;
+        #[cfg(feature = "wasm-localstorage-secrets-test")]
         let mut state_store_for_secure_upgrade = state_store;
+        #[cfg(not(feature = "wasm-localstorage-secrets-test"))]
+        let state_store_for_secure_upgrade = state_store;
         let secure_store_ready_for_upgrade = secure_store_bootstrap_ready;
         let token_for_secure_upgrade = token;
         if let Err(error) = scope.spawn(async move {

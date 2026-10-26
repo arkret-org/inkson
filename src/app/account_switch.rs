@@ -7,9 +7,9 @@ use crate::config::{ActiveAccountContext, LocalConfigStore, MultiProfileConfig};
 use crate::presentation::widgets::{empty, reactive, stack};
 use crate::presentation::{InksonContext, SharedStateStore, View};
 use crate::routes::Route;
-#[cfg(any(test, target_arch = "wasm32"))]
+#[cfg(any(test, all(target_arch = "wasm32", feature = "spec-conformance")))]
 use crate::state::LocalStateStore;
-#[cfg(all(any(test, target_arch = "wasm32"), not(feature = "spec-conformance")))]
+#[cfg(all(test, not(feature = "spec-conformance")))]
 use crate::state::PersistedSessionGrant;
 // Name the grant type used by the public browser conformance storage helpers.
 #[cfg(feature = "spec-conformance")]

@@ -1,7 +1,10 @@
 //! Application composition over an explicit, single-window runtime.
 use std::collections::BTreeSet;
 
-#[cfg(any(test, target_arch = "wasm32"))]
+#[cfg(any(
+    test,
+    all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test")
+))]
 use serde_json::Value;
 
 use crate::config::{ClientConfig, LocalConfigStore, normalize_server_url};
