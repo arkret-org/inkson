@@ -1175,10 +1175,7 @@ impl SettingsController {
                         Ok(outcome) => {
                             state_store
                                 .write(|store| store.save_push_registration(outcome.state.clone()));
-                            let label = outcome.response.registration_id.map_or_else(
-                                || "registered".to_owned(),
-                                arkret_sdk::OpaqueLocalId::into_string,
-                            );
+                            let label = outcome.response.registration_id.into_string();
                             push_state.revise(|value| {
                                 *value = label.clone();
                             });
