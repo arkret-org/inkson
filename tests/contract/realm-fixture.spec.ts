@@ -103,6 +103,14 @@ const scanRequest = (fixture: Fixture) => ({
 });
 const scan = (fixture: Fixture, request = scanRequest(fixture)) =>
   inksonWire<Record<string, any>>("mock-realm-scan", { fixture, request });
+const currentCommittedCursor = (fixture: Fixture) => {
+  const { digest } = inksonWire<{ digest: string }>("sha256-canonical-json", { value: {
+    account_id: fixture.identity.account_id, device_id: fixture.signer_facts[1].device_id,
+    realm_ids: [fixture.snapshot.realm_id], actor_ids: [],
+    cuts: [{ realm_id: fixture.snapshot.realm_id, snapshot_id: fixture.snapshot.snapshot_id }],
+  } });
+  return `ak:cursor:e2e-events-${digest.replace(/^sha256:/, "")}`;
+};
 const changedSignature = (signature: string) =>
   `${signature[0] === "A" ? "B" : "A"}${signature.slice(1)}`;
 
@@ -661,31 +669,31 @@ test("Mock account and committed Event streams retain the native Realm cut witho
   });
   expect(stream?.status).toBe(200);
   const frames = decodeStreamFrames(stream?.body);
-  expect(frames.filter(frame => frame.kind === "committed_event").map(frame => frame.payload)).toEqual(fixture.committed_events);
-  expect(frames.at(-1)).toMatchObject({ kind: "catchup_complete" });
+  expect(frames).toEqual([{ kind: "checkpoint", cursor: currentCommittedCursor(fixture) }]);
+  expect(scan(fixture).committed_events).toEqual(fixture.committed_events);
 });
 
 test("Mock committed Event live-only subscriptions never replay history or complete catchup", async () => {
   const { fixture, route } = await mockReadFixture();
   const base = `https://local.host/_arkret/self/committed-events/subscribe?realm_ids=${encodeURIComponent(fixture.snapshot.realm_id)}`;
-  for (const after of ["", "&after=ak%3Acursor%3Ae2e-events-2"]) {
+  const cursor = currentCommittedCursor(fixture);
+  for (const after of ["", `&after=${encodeURIComponent(cursor)}`]) {
     const response = await driveOnce(route, { url: `${base}&catchup=false${after}`, method: "GET" });
     expect(response?.status).toBe(200);
     const frames = decodeStreamFrames(response?.body);
-    expect(frames).toEqual([{ kind: "checkpoint", cursor: "ak:cursor:e2e-events-2" }]);
+    expect(frames).toEqual([{ kind: "checkpoint", cursor }]);
     for (const frame of frames) validateMockSchema("schemas/committed-event-subscribe-frame.schema.json", frame);
   }
 });
 
-test("Mock empty committed Event catchup proves its checkpoint before completion by default and explicitly", async () => {
+test("Mock empty committed Event continuation defaults to live-only and completes only explicit catchup", async () => {
   const { fixture, route } = await mockReadFixture();
   const base = `https://local.host/_arkret/self/committed-events/subscribe?realm_ids=${encodeURIComponent(fixture.snapshot.realm_id)}`;
   const initial = await driveOnce(route, { url: base, method: "GET" });
   expect(initial?.status).toBe(200);
-  const history = decodeStreamFrames(initial?.body);
-  expect(history.filter(frame => frame.kind === "committed_event").map(frame => frame.payload)).toEqual(fixture.committed_events);
-  const cursor = history.at(-1)?.cursor;
-  expect(cursor).toBeTruthy();
+  const checkpoint = decodeStreamFrames(initial?.body);
+  const cursor = currentCommittedCursor(fixture);
+  expect(checkpoint).toEqual([{ kind: "checkpoint", cursor }]);
   for (const query of ["", "&catchup=true"]) {
     const response = await driveOnce(route, {
       url: `${base}&after=${encodeURIComponent(cursor)}${query}`, method: "GET",
@@ -694,10 +702,92 @@ test("Mock empty committed Event catchup proves its checkpoint before completion
     const frames = decodeStreamFrames(response?.body);
     expect(frames).toEqual([
       { kind: "checkpoint", cursor },
-      { kind: "catchup_complete", cursor },
+      ...(query === "&catchup=true" ? [{ kind: "catchup_complete", cursor }] : []),
     ]);
     for (const frame of frames) validateMockSchema("schemas/committed-event-subscribe-frame.schema.json", frame);
   }
+  for (const query of ["&catchup=true", "&catchup=true&after=ak%3Acursor%3Anot-issued", "&after=ak%3Acursor%3Anot-issued"]) {
+    await expect(driveOnce(route, { url: `${base}${query}`, method: "GET" })).rejects.toThrow();
+  }
+  const other = inksonWire<Fixture>("mock-realm-fixture", { salt: 11, title: "Other selector Realm" });
+  for (const changed of [
+    `${base}&actor_ids=${encodeURIComponent(JSON.stringify({ kind: "account", account_id: fixture.identity.account_id }))}`,
+    `https://local.host/_arkret/self/committed-events/subscribe?realm_ids=${encodeURIComponent(other.snapshot.realm_id)}`,
+  ]) {
+    await expect(driveOnce(route, {
+      url: `${changed}&catchup=true&after=${encodeURIComponent(cursor)}`, method: "GET",
+    })).rejects.toThrow();
+  }
+  for (const options of [{}, { accountPrincipalId: "did:web:bob.example" }, {
+    currentDeviceId: "ak:device:01964137-0000-7000-8000-0000000000b2",
+  }]) {
+    const unissued = captureRouteHandler();
+    await mockArkretApi(unissued.page as never, options);
+    await expect(driveOnce(unissued.handler(), {
+      url: `${base}&catchup=true&after=${encodeURIComponent(cursor)}`, method: "GET",
+    })).rejects.toThrow();
+  }
+});
+
+test("Mock committed Event catchup replays only signed facts actually accepted after its issued native cut", async () => {
+  const captured = captureRouteHandler();
+  await mockArkretApi(captured.page as never, { includeDemoRealms: false });
+  const route = captured.handler();
+  const fixture = inksonWire<Fixture>("mock-realm-fixture", {
+    salt: 10, title: "Incremental replay Realm", board: true,
+    plaintext_visible_services: { services: [] },
+  });
+  const creatorJoin = fixture.committed_events.findIndex(({ event }) => event.kind === "ak.member.state");
+  expect(creatorJoin).toBeGreaterThan(0);
+  const prefix = fixture.committed_events.slice(0, creatorJoin + 1);
+  const bootstrap = await driveOnce(route, {
+    url: "https://local.host/_arkret/self/events", method: "POST", postData: {
+      unit_kind: "ordinary_realm_bootstrap", idempotency_key: "01904100-0000-7000-8000-000000000011",
+      events: prefix.map(full => ({ event: full.event })),
+    },
+  });
+  expect(bootstrap?.status).toBe(200);
+  expect((bootstrap?.body as any).commits).toEqual(prefix.map(full => full.commit));
+  const base = `https://local.host/_arkret/self/committed-events/subscribe?realm_ids=${encodeURIComponent(fixture.snapshot.realm_id)}`;
+  const initial = await driveOnce(route, { url: base, method: "GET" });
+  expect(initial?.status).toBe(200);
+  const initialFrames = decodeStreamFrames(initial?.body);
+  expect(initialFrames).toHaveLength(1);
+  expect(initialFrames[0].kind).toBe("checkpoint");
+  const cursor = initialFrames[0].cursor;
+  const next = fixture.committed_events[prefix.length];
+  expect(next).toBeDefined();
+  const accepted = await driveOnce(route, {
+    url: "https://local.host/_arkret/self/events", method: "POST", postData: { event: next.event },
+  });
+  expect(accepted?.status).toBe(200);
+  expect((accepted?.body as any).status).toBe("committed");
+  expect((accepted?.body as any).commit).toEqual(next.commit);
+  const live = await driveOnce(route, { url: `${base}&after=${encodeURIComponent(cursor)}&catchup=false`, method: "GET" });
+  expect(live?.status).toBe(200);
+  const checkpoint = decodeStreamFrames(live?.body);
+  expect(checkpoint.map(frame => frame.kind)).toEqual(["checkpoint"]);
+  expect(checkpoint[0].cursor).not.toBe(cursor);
+  const resumed = await driveOnce(route, { url: `${base}&after=${encodeURIComponent(cursor)}&catchup=true`, method: "GET" });
+  expect(resumed?.status).toBe(200);
+  const frames = decodeStreamFrames(resumed?.body);
+  expect(frames.map(frame => frame.kind)).toEqual(["committed_event", "checkpoint", "catchup_complete"]);
+  expect(frames.filter(frame => frame.kind === "committed_event").map(frame => frame.payload)).toEqual([next]);
+  expect(frames.every(frame => frame.cursor === checkpoint[0].cursor)).toBe(true);
+  for (const frame of frames) validateMockSchema("schemas/committed-event-subscribe-frame.schema.json", frame);
+  const empty = await driveOnce(route, {
+    url: `${base}&after=${encodeURIComponent(checkpoint[0].cursor)}&catchup=true`, method: "GET",
+  });
+  expect(empty?.status).toBe(200);
+  expect(decodeStreamFrames(empty?.body)).toEqual([
+    { kind: "checkpoint", cursor: checkpoint[0].cursor },
+    { kind: "catchup_complete", cursor: checkpoint[0].cursor },
+  ]);
+  const scanned = await driveOnce(route, {
+    url: "https://local.host/_arkret/self/streams/scan", method: "POST", postData: scanRequest(fixture),
+  });
+  expect(scanned?.status).toBe(200);
+  expect((scanned?.body as any).committed_events).toEqual([...prefix, next]);
 });
 
 test("Account subscription emits schema-valid delta frames and catchup completion only when requested", async () => {
