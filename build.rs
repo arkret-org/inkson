@@ -66,10 +66,37 @@ fn main() {
         if let Ok(head) = fs::read_to_string(&head_path)
             && let Some(reference) = head.trim().strip_prefix("ref: ")
         {
-            println!(
-                "cargo:rerun-if-changed={}",
-                git_dir.join(reference).display()
-            );
+            // Worktree branch refs live in Git's common directory, unlike HEAD.
+            if let Some(path) = git_output(
+                &manifest_dir,
+                &[
+                    "rev-parse",
+                    "--path-format=absolute",
+                    "--git-path",
+                    reference,
+                ],
+            ) {
+                let path = PathBuf::from(path);
+                // A packed ref has no loose file. Watch its existing parent
+                // so a subsequent commit creating the loose ref invalidates us.
+                if let Some(watched) = path.ancestors().find(|candidate| candidate.exists()) {
+                    println!("cargo:rerun-if-changed={}", watched.display());
+                }
+            }
+            if let Some(path) = git_output(
+                &manifest_dir,
+                &[
+                    "rev-parse",
+                    "--path-format=absolute",
+                    "--git-path",
+                    "packed-refs",
+                ],
+            ) {
+                let path = PathBuf::from(path);
+                if path.exists() {
+                    println!("cargo:rerun-if-changed={}", path.display());
+                }
+            }
         }
     }
 
