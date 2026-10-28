@@ -6,7 +6,7 @@ import {
   openSettings,
   dismissBlockingRecoveryModal,
 } from "./strandsHarness";
-import { CURRENT_ACCOUNT_ACTOR_ID, CURRENT_ACCOUNT_ID, DEMO_INVITE_ID, INVITED_REALM } from "./mockArkretApi";
+import { CURRENT_ACCOUNT_ACTOR_ID, CURRENT_ACCOUNT_ID, DEMO_INVITE_ID, INVITED_REALM, validateMockSchema } from "./mockArkretApi";
 
 registerStrandsBeforeEach();
 
@@ -350,9 +350,36 @@ test("notification feed controls and local mute feedback follow the active langu
       writes.push(path);
     }
   });
-  for (const language of ["en", "zh", "en"] as const) {
+  const uiStatePath = "/_arkret/self/account_data/ak.client.ui_state";
+  const languageWrites: string[] = [];
+  const selectLanguage = async (language: "en" | "zh") => {
+    const changed = await page.getByTestId("client-shell").getAttribute("data-locale") !== language;
+    const saved = changed ? page.waitForResponse(response => response.request().method() === "PUT"
+      && new URL(response.url()).pathname === uiStatePath) : undefined;
     await page.getByTestId(`language-${language}`).click();
     await expect(page.getByTestId("client-shell")).toHaveAttribute("data-locale", language);
+    if (!saved) return;
+    const response = await saved;
+    expect(response.status()).toBe(200);
+    expect(response.request().headers()["arkret-operation"]).toBe("ak.self.account_data.resource.replace.v1");
+    const request = response.request().postDataJSON();
+    validateMockSchema("schemas/account-data-operations.schema.json#/$defs/account_data_replace_request_body", request);
+    const event = request.set_event.event;
+    expect(event.kind).toBe("ak.account_data.set");
+    expect(event.actor_id).toEqual(CURRENT_ACCOUNT_ACTOR_ID);
+    expect(event.payload.key).toBe("ak.client.ui_state");
+    expect(event.payload.body).toBeUndefined();
+    expect(event.payload.encrypted_payload.aad.actor_id).toEqual(CURRENT_ACCOUNT_ACTOR_ID);
+    expect(event.payload.encrypted_payload.aad.account_data_key).toBe("ak.client.ui_state");
+    const stored = await response.json();
+    validateMockSchema("schemas/account-data-operations.schema.json#/$defs/account_data_entry", stored);
+    expect(stored.account_data_key).toBe("ak.client.ui_state");
+    expect(stored.revision).toBe(event.payload.expected_server_revision + 1);
+    expect(stored.content).toEqual(event.payload.encrypted_payload);
+    languageWrites.push(uiStatePath);
+  };
+  for (const language of ["en", "zh", "en"] as const) {
+    await selectLanguage(language);
     await page.getByTestId("topbar-notifications-button").click();
     const panel = page.getByTestId("notifications-panel");
     await expect(panel).toHaveAttribute(
@@ -376,7 +403,10 @@ test("notification feed controls and local mute feedback follow the active langu
     );
     await page.getByTestId("notifications-drawer-close").click();
   }
-  await page.getByTestId("language-zh").click();
+  await selectLanguage("zh");
+  // Language sync is the registered encrypted UI cell; mute stays local.
+  expect(writes).toEqual(languageWrites);
+  const beforeMute = writes.length;
   await page.getByTestId("topbar-notifications-button").click();
   const message = page.getByTestId("notification-item").filter({
     hasText: "Alice sent a message in Demo Realm",
@@ -384,5 +414,6 @@ test("notification feed controls and local mute feedback follow the active langu
   await message.getByTestId("mute-realm-button").click();
   await expect(message).toHaveCount(0);
   await expect(page.getByTestId("notifications-status")).toContainText("已静音");
-  expect(writes).toEqual([]);
+  expect(writes.slice(beforeMute)).toEqual([]);
+  expect(writes).toEqual(languageWrites);
 });
