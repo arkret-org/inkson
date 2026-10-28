@@ -32,13 +32,19 @@ test("current Event cropping withdraws a visible search body and survives reload
   const originalId = await row.getAttribute("data-event-id");
   // The next ordinary Account poll carries an independently signed newer cut.
   // It still retains the old Full source, so only the current crop can hide it.
-  const croppedCut = page.waitForResponse(async response =>
-    new URL(response.url()).pathname === "/_arkret/self/account/subscribe"
-    && response.status() === 200
-    && (await response.text()).includes('"object_redaction"'));
+  let croppedBody: string | undefined;
+  const croppedCut = page.waitForResponse(async response => {
+    if (new URL(response.url()).pathname !== "/_arkret/self/account/subscribe"
+      || response.status() !== 200 || await response.finished()) return false;
+    const body = await response.text();
+    if (!body.includes('"object_redaction"')) return false;
+    croppedBody = body;
+    return true;
+  });
   cropped = true;
-  const response = await croppedCut;
-  const frame = (await response.text()).trim().split("\n").map(line => JSON.parse(line))
+  await croppedCut;
+  expect(croppedBody).toBeDefined();
+  const frame = croppedBody!.trim().split("\n").map(line => JSON.parse(line))
     .find(frame => frame.realms?.[DEMO_REALM]);
   const lastEvent = frame.realms[DEMO_REALM].committed_events.at(-1).commit.event_ref;
   // A received frame is not installed until all historical signer material
