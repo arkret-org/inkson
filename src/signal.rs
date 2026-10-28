@@ -1095,7 +1095,7 @@ mod tests {
         .unwrap();
         assert_eq!(body["payload_sequence"], "1024");
         assert_eq!(
-            body["sequence"], 6,
+            body["sequence"], "6",
             "per-call sequence is an independent axis"
         );
     }
