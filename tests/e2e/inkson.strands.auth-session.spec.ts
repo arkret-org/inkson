@@ -61,6 +61,33 @@ async function expectRealmSecurity(page: Page, row: Locator, encrypted: boolean)
   await expect(hint).toHaveText(encrypted ? "Encrypted Realm" : "Unencrypted Realm");
 }
 
+async function selectRealmAtDurableCut(page: Page, button: Locator) {
+  const href = await button.getAttribute("href");
+  expect(href).toBeTruthy();
+  const realm = decodeURIComponent(new URL(href!, page.url()).pathname.split("/").at(-1)!);
+  expect(realm).toMatch(/^ak:realm:/);
+  const [response] = await Promise.all([
+    page.waitForResponse(response => {
+      const url = new URL(response.url());
+      if (response.request().method() !== "GET" || url.pathname !== "/_arkret/self/account/subscribe"
+        || url.searchParams.get("replace_filter") !== "true") return false;
+      const filter = JSON.parse(url.searchParams.get("filter") ?? "{}");
+      return Array.isArray(filter.realm_ids) && filter.realm_ids.includes(realm);
+    }),
+    button.click(),
+  ]);
+  expect(response.status()).toBe(200);
+  expect(await response.finished()).toBeNull();
+  const frames = (await response.text()).trim().split("\n").map(line => JSON.parse(line));
+  const frame = frames.find(frame => frame.kind === "delta" && frame.realms?.[realm]);
+  expect(frame).toBeDefined();
+  expect(frame.cursor).toMatch(/^ak:cursor:/);
+  // A mounted shell precedes history verification. This checkpoint is emitted
+  // only after the verified Account stage is committed and durable.
+  await page.waitForFunction(cursor => document.querySelector('[class~="sync-cursor"]')
+    ?.textContent?.trim() === `cursor ${cursor}`, frame.cursor);
+}
+
 test("bootstrap login and sync shows the connected realm", async ({ page }) => {
   await refreshServer(page);
 
@@ -76,13 +103,13 @@ test("bootstrap login and sync shows the connected realm", async ({ page }) => {
   );
   // Realm summaries do not include encryption authority: load each detail
   // through its real demand subscription before checking its verified marker.
-  await byClass(page, "realm-tree-item")
-    .filter({ hasText: "Arkret Demo Realm" }).click();
+  await selectRealmAtDurableCut(page, byClass(page, "realm-tree-item")
+    .filter({ hasText: "Arkret Demo Realm" }));
   await expect(byClass(page, "kanban-panel")).toBeVisible();
   await expectRealmSecurity(page, byClass(page, "realm-tree-item")
     .filter({ hasText: "Arkret Demo Realm" }), true);
-  await byClass(page, "realm-tree-item")
-    .filter({ hasText: "Launch Realm" }).click();
+  await selectRealmAtDurableCut(page, byClass(page, "realm-tree-item")
+    .filter({ hasText: "Launch Realm" }));
   await expect(byClass(page, "kanban-panel")).toBeVisible();
   await expectRealmSecurity(page, byClass(page, "realm-tree-item")
     .filter({ hasText: "Launch Realm" }), false);
@@ -279,7 +306,7 @@ test("selected Realm security badge matches its encrypted sidebar marker", async
 
   const realmButton = byClass(page, "realm-tree-item")
     .filter({ hasText: "Arkret Demo Realm" });
-  await realmButton.click();
+  await selectRealmAtDurableCut(page, realmButton);
   await expect(byClass(page, "kanban-panel")).toBeVisible();
   await expectRealmSecurity(page, realmButton, true);
   await expect(page.locator(".topbar-context .security-state-badge-label")).toHaveText(

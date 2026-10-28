@@ -92,18 +92,23 @@ type RouteHandler = (route: unknown) => unknown | Promise<unknown>;
 export function captureRouteHandler(): {
   page: unknown;
   handler: () => RouteHandler;
+  close: () => void;
 } {
   let captured: RouteHandler | undefined;
+  const closeListeners: Array<() => void> = [];
   const register = async (_pattern: unknown, handler: RouteHandler) => { captured = handler; };
   const context = { route: register, addInitScript: async () => {} };
   const page = {
     route: register,
     addInitScript: async () => {},
-    on: () => {},
+    on: (event: string, listener: () => void) => {
+      if (event === "close") closeListeners.push(listener);
+    },
     context: () => context,
   };
   return {
     page,
+    close: () => closeListeners.forEach(listener => listener()),
     handler: () => {
       if (!captured) {
         throw new Error("mockArkretApi registered no route handler");
@@ -117,7 +122,7 @@ export function captureRouteHandler(): {
 /// `null` when it deferred to the network (`route.continue()`).
 export async function driveOnce(
   handler: RouteHandler,
-  request: { url: string; method: string; postData?: unknown; headers?: Record<string, string>; onFulfill?: () => void },
+  request: { url: string; method: string; postData?: unknown; headers?: Record<string, string>; onFulfill?: () => void; onAbort?: (code?: string) => void },
 ): Promise<FulfilledResponse | null> {
   let fulfilled: FulfilledResponse | null = null;
   const fakeRequest = {
@@ -142,7 +147,7 @@ export async function driveOnce(
         ...(response.headers ? { headers: response.headers } : {}) };
     },
     continue: async () => {},
-    abort: async () => {},
+    abort: async (code?: string) => { request.onAbort?.(code); },
   };
   await handler(route);
   return fulfilled;

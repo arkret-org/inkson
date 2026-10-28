@@ -6,7 +6,7 @@ import {
   openSettings,
   dismissBlockingRecoveryModal,
 } from "./strandsHarness";
-import { BOB_ACCOUNT_ID, CURRENT_ACCOUNT_ACTOR_ID, CURRENT_ACCOUNT_ID, DEMO_INVITE_ID, INVITED_REALM, PRINCIPAL_CONTROL_REALM } from "./mockArkretApi";
+import { BOB_ACCOUNT_ID, CURRENT_ACCOUNT_ACTOR_ID, CURRENT_ACCOUNT_ID, DEMO_INVITE_ID, INVITED_REALM, PRINCIPAL_CONTROL_REALM, validateMockSchema } from "./mockArkretApi";
 import { openFixtureClientUiValue } from "./clientUiFixture";
 
 const previewResponseGates = new WeakMap<Page, { wait: Promise<void>; release(): void }>();
@@ -413,17 +413,39 @@ test("notification feed controls and local mute feedback follow the active langu
       writes.push({ path, body: request.postDataJSON() });
     }
   });
-  for (const language of ["en", "zh", "en"] as const) {
+  const uiStatePath = "/_arkret/self/account_data/ak.client.ui_state";
+  const languageWrites: string[] = [];
+  const selectLanguage = async (language: "en" | "zh") => {
     const languageChoice = page.getByRole("button", {
       name: language === "zh" ? "中文" : "English", exact: true,
     });
-    const changesLocale = !(await languageChoice.evaluate(node => node.classList.contains("primary")));
-    const saved = changesLocale ? page.waitForResponse(response =>
-      new URL(response.url()).pathname === "/_arkret/self/account_data/ak.client.ui_state"
-        && response.request().method() === "PUT", { timeout: 20_000 }) : undefined;
+    const changed = !(await languageChoice.evaluate(node => node.classList.contains("primary")));
+    const saved = changed ? page.waitForResponse(response => response.request().method() === "PUT"
+      && new URL(response.url()).pathname === uiStatePath, { timeout: 20_000 }) : undefined;
     await languageChoice.click();
-    if (saved) expect((await saved).status()).toBe(200);
     await expect(languageChoice).toHaveClass(/\bprimary\b/);
+    if (!saved) return;
+    const response = await saved;
+    expect(response.status()).toBe(200);
+    expect(response.request().headers()["arkret-operation"]).toBe("ak.self.account_data.resource.replace.v1");
+    const request = response.request().postDataJSON();
+    validateMockSchema("schemas/account-data-operations.schema.json#/$defs/account_data_replace_request_body", request);
+    const event = request.set_event.event;
+    expect(event.kind).toBe("ak.account_data.set");
+    expect(event.actor_id).toEqual(CURRENT_ACCOUNT_ACTOR_ID);
+    expect(event.payload.key).toBe("ak.client.ui_state");
+    expect(event.payload.body).toBeUndefined();
+    expect(event.payload.encrypted_payload.aad.actor_id).toEqual(CURRENT_ACCOUNT_ACTOR_ID);
+    expect(event.payload.encrypted_payload.aad.account_data_key).toBe("ak.client.ui_state");
+    const stored = await response.json();
+    validateMockSchema("schemas/account-data-operations.schema.json#/$defs/account_data_entry", stored);
+    expect(stored.account_data_key).toBe("ak.client.ui_state");
+    expect(stored.revision).toBe(event.payload.expected_server_revision + 1);
+    expect(stored.content).toEqual(event.payload.encrypted_payload);
+    languageWrites.push(uiStatePath);
+  };
+  for (const language of ["en", "zh", "en"] as const) {
+    await selectLanguage(language);
     await page.locator(".topbar .topbar-notifications-link").click();
     const panel = page.locator("[class~=\"notifications-panel\"]");
     await expect(panel).toHaveAttribute(
@@ -447,12 +469,9 @@ test("notification feed controls and local mute feedback follow the active langu
     );
     await page.locator(".notifications-drawer-actions button").click();
   }
-  const savedFinalLocale = page.waitForResponse(response =>
-    new URL(response.url()).pathname === "/_arkret/self/account_data/ak.client.ui_state"
-      && response.request().method() === "PUT", { timeout: 20_000 });
-  await page.getByRole("button", { name: "中文", exact: true }).click();
-  expect((await savedFinalLocale).status()).toBe(200);
+  await selectLanguage("zh");
   const localeWriteCount = writes.length;
+  expect(writes.map(write => write.path)).toEqual(languageWrites);
   await page.locator(".topbar .topbar-notifications-link").click();
   const message = page.locator("[class~=\"notification-item\"]").filter({
     hasText: "Alice sent a message in Demo Realm",
@@ -461,7 +480,7 @@ test("notification feed controls and local mute feedback follow the active langu
   await expect(message).toHaveCount(0);
   await expect(page.locator("[class~=\"notifications-status\"]")).toContainText("已静音");
   expect(writes.length).toBe(localeWriteCount);
-  expect(writes.map(write => write.path)).toEqual(Array(3).fill("/_arkret/self/account_data/ak.client.ui_state"));
+  expect(writes.map(write => write.path)).toEqual(languageWrites);
   for (const [index, write] of writes.entries()) {
     const event = write.body.set_event.event;
     expect(event.kind).toBe("ak.account_data.set");
