@@ -73,7 +73,15 @@ test("invite preview disclosed stays loading then visible and only Accept joins"
   const joinedSignerKeys = page.waitForResponse(response =>
     response.request().method() === "POST" && new URL(response.url()).pathname === "/_arkret/self/signer-keys/query",
   );
+  const acceptedResponse = page.waitForResponse(response =>
+    new URL(response.url()).pathname === "/_arkret/self/events"
+    && response.request().method() === "POST"
+    && (response.request().postData() ?? "").includes("ak.invite.accept"),
+    { timeout: 60_000 });
   await item.locator("[class~=\"notification-action\"]").click();
+  const accepted = await acceptedResponse;
+  expect(accepted.status()).toBe(200);
+  expect(await accepted.json()).toMatchObject({ status: "accepted" });
   await expect
     .poll(() =>
       writes.some((request) =>
@@ -92,6 +100,7 @@ test("invite preview disclosed stays loading then visible and only Accept joins"
     .toBe(true);
   await expect(page.locator("[class~=\"notifications-status\"]")).toContainText(
     "Joined Realm",
+    { timeout: 90_000 },
   );
   const request = writes.find(request => request.path.endsWith("/events")
     && request.body.includes("ak.invite.accept"));
