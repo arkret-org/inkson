@@ -4651,6 +4651,7 @@ mod tests {
                     arkret_sdk::EventKind::InviteAccept.as_str().to_owned(),
                     json!({
                         "invite_id": "ak:invite:AT75JCcnHexLP4y-Juac4pnRIpfUaiaat4XhL9W7g610",
+                        "invitee_account_id": {"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:station.example"},
                         "previous_state": "pending"
                     }),
                 ),
@@ -4689,6 +4690,7 @@ mod tests {
             arkret_sdk::EventKind::InviteAccept.as_str(),
             json!({
                 "invite_id": "ak:invite:AT75JCcnHexLP4y-Juac4pnRIpfUaiaat4XhL9W7g610",
+                        "invitee_account_id": {"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:station.example"},
                 "previous_state": "pending"
             }),
             "alice.example",

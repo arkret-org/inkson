@@ -156,15 +156,13 @@ pub fn invite_cancel_for_station(
     )
 }
 
-/// Build the high-risk `ak.invite.revoke` path used by token/3PID invites.
-/// A directed invite may also use this path, but then its frozen invitee
-/// binding must be supplied so the reducer can atomically close member.state.
+/// Build the high-risk `ak.invite.revoke` path with the frozen directed invitee
+/// binding so the reducer can atomically close member.state.
 pub fn invite_revoke(
     realm_id: &str,
     actor: &str,
     invite_id: &str,
-    // The complete account the Invite stores, for the directed branch that
-    // releases the live-target slot; `None` for a token / 3PID Invite.
+    // The complete account the Invite stores, releasing its live-target slot.
     invitee: &arkret_sdk::AccountId,
     previous_state: arkret_sdk::InvitePreviousState,
     target_state: &str,

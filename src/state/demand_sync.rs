@@ -1894,7 +1894,7 @@ mod tests {
                 "kind":"delta",
                 "cursor":"ak:cursor:other-carriers",
                 "notifications":{"items":[]},
-                "to_device":{"messages":[]}
+                "to_device":{"deliveries":[]}
             })),
         );
         assert!(store.agent_draft_pending_intents().is_empty());
@@ -1943,19 +1943,19 @@ mod tests {
         apply(
             &mut store,
             &frame(
-                json!({"kind":"delta","cursor":"ak:cursor:YQ","baseline":{"snapshot_cursor":"ak:cursor:cw","channels":["station_cas"],"completed_channels":[]},"account_data":{"station_cas":{"upserts":[],"removals":[]}}}),
+                json!({"kind":"delta","cursor":"ak:cursor:YQ","baseline":{"snapshot_cursor":"ak:cursor:cw","channels":["station_cas"],"completed_channels":[]},"account_data":{"events":[],"station_cas":{"upserts":[],"removals":[]}}}),
             ),
         );
         apply(
             &mut store,
             &frame(
-                json!({"kind":"delta","cursor":"ak:cursor:Yg","account_data":{"station_cas":{"upserts":[row(8,"new")],"removals":[]}}}),
+                json!({"kind":"delta","cursor":"ak:cursor:Yg","account_data":{"events":[],"station_cas":{"upserts":[row(8,"new")],"removals":[]}}}),
             ),
         );
         let accepted = apply(
             &mut store,
             &frame(
-                json!({"kind":"delta","cursor":"ak:cursor:Yw","baseline":{"snapshot_cursor":"ak:cursor:cw","channels":["station_cas"],"completed_channels":["station_cas"]},"account_data":{"station_cas":{"upserts":[row(7,"old")],"removals":[]}}}),
+                json!({"kind":"delta","cursor":"ak:cursor:Yw","baseline":{"snapshot_cursor":"ak:cursor:cw","channels":["station_cas"],"completed_channels":["station_cas"]},"account_data":{"events":[],"station_cas":{"upserts":[row(7,"old")],"removals":[]}}}),
             ),
         );
         assert!(
