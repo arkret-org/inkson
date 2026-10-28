@@ -1228,7 +1228,13 @@ pub(super) fn page(
             )
         }
         RealmAdminSection::Profile => profile_view(scope, &state),
-        RealmAdminSection::Access => access_view(scope, &state),
+        RealmAdminSection::Access => stack(
+            "settings-content-stack",
+            vec![
+                super::invite_links::page(scope, context.clone(), Some(realm.clone()), None),
+                access_view(scope, &state),
+            ],
+        ),
         RealmAdminSection::Security => security_view(scope, &state),
         RealmAdminSection::Federation => stack(
             "settings-content-stack",

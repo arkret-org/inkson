@@ -3245,6 +3245,7 @@ enum LocalMembershipEvent {
     MemberState(arkret_sdk::MembershipPayload),
     InviteCreate(arkret_sdk::InviteCreatePayload),
     InviteAccept(arkret_sdk::InviteAcceptPayload),
+    RealmInviteLinkAccept(arkret_sdk::RealmInviteLinkAcceptPayload),
 }
 
 impl LocalMembershipEvent {
@@ -3258,6 +3259,11 @@ impl LocalMembershipEvent {
             arkret_sdk::EventKind::InviteAccept => Self::InviteAccept(
                 event
                     .typed_payload::<arkret_wire::event_spec::InviteAccept>()
+                    .ok()?,
+            ),
+            arkret_sdk::EventKind::RealmInviteLinkAccept => Self::RealmInviteLinkAccept(
+                event
+                    .typed_payload::<arkret_wire::event_spec::RealmInviteLinkAccept>()
                     .ok()?,
             ),
             arkret_sdk::EventKind::InviteCreate => Self::InviteCreate(
@@ -3295,6 +3301,9 @@ impl LocalMembershipEvent {
             Self::MemberState(payload) => serialize_record!(MemberState, payload),
             Self::InviteCreate(payload) => serialize_record!(InviteCreate, payload),
             Self::InviteAccept(payload) => serialize_record!(InviteAccept, payload),
+            Self::RealmInviteLinkAccept(payload) => {
+                serialize_record!(RealmInviteLinkAccept, payload)
+            }
         }
     }
 }

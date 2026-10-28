@@ -421,6 +421,10 @@ impl InksonContext {
         }
     }
 
+    pub fn root_scope(&self) -> Option<Scope> {
+        self.root.upgrade()
+    }
+
     /// All detached session work is still bounded by the root window owner.
     pub fn spawn(
         &self,

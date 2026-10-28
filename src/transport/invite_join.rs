@@ -34,6 +34,8 @@ fn invite_join_target(
         realm_id: realm,
         invite_id: Some(arkret_sdk::InviteId::new(invite_id.to_owned())?),
         authority_locator_hints: credential.authority_locator_hints.clone(),
+
+        realm_invite_link_id: None,
     })
 }
 
@@ -68,6 +70,8 @@ impl crate::transport::TransportClient {
         let request = arkret_sdk::SelfRealmJoinPreviewRequestBody {
             request_id: arkret_sdk::RequestId::new_v7_at(crate::clock::now_unix_ms()),
             target: invite_join_target(realm_id, invite_id, credential)?,
+
+            link_proof: None,
         };
         match self
             .sdk_http_client()?
@@ -108,18 +112,16 @@ impl crate::transport::TransportClient {
     /// `invitee_account_id` is required for a directed invite, whose
     /// acceptance also releases the inviter Realm's live-target slot for that
     /// account and therefore needs the account the slot subject is derived
-    /// from. A third-party invite stores no account and MUST omit it.
+    /// from. The complete accepting account is mandatory.
     pub async fn accept_realm_invite(
         &self,
         realm_id: &str,
         actor_id: &str,
         invite_id: &str,
         credential: Option<&crate::state::StoredInviteCredential>,
-        invitee_account_id: Option<arkret_sdk::AccountId>,
+        invitee_account_id: arkret_sdk::AccountId,
     ) -> anyhow::Result<(EventSubmissionProgress, Option<String>)> {
-        let account_id = invitee_account_id.ok_or_else(|| {
-            anyhow::anyhow!("directed invite acceptance requires the current complete account")
-        })?;
+        let account_id = invitee_account_id;
         let credential = credential.ok_or_else(|| anyhow::anyhow!("missing invite credential"))?;
         if account_id.principal_id.as_str() != actor_id {
             anyhow::bail!("invite acceptance actor differs from the accepting account");
@@ -153,7 +155,7 @@ impl crate::transport::TransportClient {
             realm_id,
             actor_id,
             invite_id,
-            Some(account_id),
+            account_id,
             arkret_sdk::InvitePreviousState::Pending,
         )?
         .build_sdk_event("inkson")?;

@@ -3528,9 +3528,11 @@ impl EventSubmitter {
         if intent.kind() == &arkret_sdk::EventKind::MlsGenesis {
             return Ok(true);
         }
-        let is_join = intent.kind().as_str() == event_kind_str::INVITE_ACCEPT
-            || (intent.kind().as_str() == event_kind_str::MEMBER_STATE
-                && intent.payload().get("membership").and_then(Value::as_str) == Some("join"));
+        let is_join = matches!(
+            intent.kind().as_str(),
+            event_kind_str::INVITE_ACCEPT | event_kind_str::REALM_INVITE_LINK_ACCEPT
+        ) || (intent.kind().as_str() == event_kind_str::MEMBER_STATE
+            && intent.payload().get("membership").and_then(Value::as_str) == Some("join"));
         if !is_join {
             return Ok(false);
         }
@@ -3604,7 +3606,7 @@ impl EventSubmitter {
                     "controller is not in an accepted ordinary joined generation"
                 );
             }
-            arkret_sdk::EventKind::InviteAccept => {
+            arkret_sdk::EventKind::InviteAccept | arkret_sdk::EventKind::RealmInviteLinkAccept => {
                 anyhow::ensure!(
                     event.actor_id == member,
                     "accepted Invite names another controller"

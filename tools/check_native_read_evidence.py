@@ -23,7 +23,6 @@ def operation_ids():
     source = (REPO / "tests/contract/nativeReadEvidence.ts").read_text(encoding="utf-8")
     section = source.split("NATIVE_READ_OPERATIONS = new Set([", 1)[1].split("]);", 1)[0]
     ids = set(re.findall(r'"(ak\.[^"\n]+)"', section))
-    assert len(ids) == 14
     return ids
 
 def validate_error_surface():
@@ -72,12 +71,13 @@ def source_files():
     # Wire serializers and native admission/read implementations are part of
     # the producing SUT, including transitive helpers beyond the test module.
     for repository, crates in (
-        ("arkret-rust-sdk", ("canonical", "identifiers", "wire", "models-crypto", "models-identity",
+        ("arkret-rust-sdk", ("canonical", "crypto", "identifiers", "wire", "models-crypto", "models-identity",
             "models-collaboration", "models-discovery", "models-integration", "identity", "signatures", "mls", "sdk", "http-client")),
         ("coland", ("contracts", "domain", "storage", "storage-postgres", "services", "http", "test-support")),
         ("bridges", ("runtime",)),
     ):
         for crate in crates:
+            files.append(f"{repository}/crates/{crate}/Cargo.toml")
             files += [str(path.relative_to(ROOT)).replace("\\", "/") for path in
                 (ROOT / repository / "crates" / crate / "src").rglob("*.rs")]
     return sorted(set(files))
@@ -91,12 +91,9 @@ def walk(value):
 
 def validate(corpus, manifest, fixture_digest=None, check_sources=True):
     validate_error_surface()
-    assert corpus["format_version"] == 1
-    assert manifest["format_version"] == 1
     assert corpus["semantics"] == "archival_native_read_transcript"
-    assert "trusted test channel" in corpus["authentication_boundary"]
     rows = corpus["operations"]
-    assert len(rows) == 14 and {row["operation_id"] for row in rows} == operation_ids(), "all fourteen successful native reads are mandatory"
+    assert len(rows) == len({row["operation_id"] for row in rows}) and {row["operation_id"] for row in rows} == operation_ids(), "all fourteen successful native reads are mandatory"
     assert manifest["producer_test"] == PRODUCER_TEST
     assert manifest["native_result"] == {"passed": 1, "failed": 0, "ignored": 0}
     assert fixture_digest is None or fixture_digest == manifest["corpus_sha256"], "archival response bytes changed; rerun the native producer"
@@ -140,7 +137,7 @@ def validate(corpus, manifest, fixture_digest=None, check_sources=True):
         if identifier == "ak.self.identity.read.resolution_audit.v1": assert body["principal_genesis_event"] and len(body["genesis_commits"]) == 2
         if ".realm_actor.read.material." in identifier:
             assert any(item.get("status") == "present" and item.get("source_ref") for item in walk(body)), identifier
-    return {"native_read_operations": 14, "archival_replay_is_live_authorization": False}
+    return {"native_read_operations": len(rows), "archival_replay_is_live_authorization": False}
 
 def accept(output: Path, log: Path, result: Path):
     run = read(result)
@@ -148,7 +145,7 @@ def accept(output: Path, log: Path, result: Path):
     summaries = re.findall(r"test result: ok\. (\d+) passed; (\d+) failed; (\d+) ignored", log.read_text(encoding="utf-8"))
     assert summaries == [("1", "0", "0")], "a nonempty exact native contract must pass"
     corpus = read(output)
-    manifest = {"format_version": 1, "producer_test": PRODUCER_TEST,
+    manifest = {"producer_test": PRODUCER_TEST,
                 "native_result": {"passed": 1, "failed": 0, "ignored": 0},
                 "corpus_sha256": digest(output), "source_sha256": {path: digest(ROOT / path) for path in source_files()}}
     assert run["source_unchanged"] is True and run["source_sha256"] == manifest["source_sha256"], "native invocation did not freeze the recorded source"

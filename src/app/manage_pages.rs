@@ -156,7 +156,9 @@ pub(super) fn realms_page(scope: &Scope, context: Rc<InksonContext>, ui: Rc<Shel
     });
     block(
         "settings realm-manage-page",
-        vec![block(
+        vec![
+            crate::views::realm_admin::invite_links::page(scope, context.clone(), None, None),
+            block(
             "settings-shell realm-manage-shell",
             vec![block(
                 "settings-content-stack realm-manage-main",

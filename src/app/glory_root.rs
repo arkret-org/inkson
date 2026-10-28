@@ -384,7 +384,12 @@ fn account_owner(scope: &Scope, context: Rc<InksonContext>) -> View {
             )
         }
     });
-    Box::new(view().class("inkson-account-owner").fill((global, content)))
+    let invitation = crate::views::realm_admin::invite_links::landing(scope, context.clone());
+    Box::new(
+        view()
+            .class("inkson-account-owner")
+            .fill((global, invitation, content)),
+    )
 }
 
 fn auth_card(scope: &Scope, context: Rc<InksonContext>, content: View) -> View {

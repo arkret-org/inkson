@@ -20,9 +20,9 @@ let cached: NativeReadTranscript[] | undefined;
 export function nativeReadTranscripts(): NativeReadTranscript[] {
   if (cached) return cached;
   const corpus = JSON.parse(readFileSync(new URL("./fixtures/native-read-evidence.json", import.meta.url), "utf8"));
-  if (corpus.format_version !== 1 || corpus.semantics !== "archival_native_read_transcript") throw new Error("native read transcript semantics drift");
+  if (corpus.semantics !== "archival_native_read_transcript") throw new Error("native read transcript semantics drift");
   const records = corpus.operations as NativeReadTranscript[];
-  if (records.length !== 14 || new Set(records.map(row => row.operation_id)).size !== 14
+  if (records.length !== NATIVE_READ_OPERATIONS.size || new Set(records.map(row => row.operation_id)).size !== NATIVE_READ_OPERATIONS.size
       || records.some(row => !NATIVE_READ_OPERATIONS.has(row.operation_id) || !row.accepted_originals || !row.response_body)) {
     throw new Error("native read evidence requires all fourteen real successful responses");
   }

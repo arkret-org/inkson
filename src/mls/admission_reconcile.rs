@@ -75,7 +75,7 @@ pub(crate) async fn submit_mls_admission_for_invitee(
         None
     };
     let claim_route = if target_agent.is_some() {
-        AcceptedInviteClaimRoute {
+        MemberJoinKeyPackageRoute {
             destination_id: invitee_actor
                 .fixed_route_service_id()
                 .ok_or_else(|| anyhow::anyhow!("Account invitee lacks its fixed Station"))?
@@ -87,7 +87,7 @@ pub(crate) async fn submit_mls_admission_for_invitee(
             invitee_actor == arkret_sdk::ActorId::account(account.authority.clone()),
             "device-targeted MLS admission is restricted to the active Account ActorId"
         );
-        AcceptedInviteClaimRoute {
+        MemberJoinKeyPackageRoute {
             destination_id: account.authority.station_id.to_string(),
             target_device_id: Some(target_device_id),
         }
@@ -97,7 +97,7 @@ pub(crate) async fn submit_mls_admission_for_invitee(
         direct_contact_claim_route(&api.sdk_http_client()?, &invitee_actor).await?
     } else {
         state_store
-            .read(|store| accepted_invite_claim_route(store, &realm_id, &invitee_id))
+            .read(|store| member_join_key_package_route(store, &realm_id, &invitee_id))
             .ok_or_else(|| {
                 anyhow::anyhow!(
                     "accepted invite has no exact destination service and accepting-device route"
@@ -254,7 +254,7 @@ async fn current_owned_agent_endpoint(
 async fn direct_contact_claim_route(
     http: &arkret_sdk::http_client::Client,
     peer: &arkret_sdk::ActorId,
-) -> anyhow::Result<AcceptedInviteClaimRoute> {
+) -> anyhow::Result<MemberJoinKeyPackageRoute> {
     let account = peer.as_account_id().ok_or_else(|| {
         anyhow::anyhow!("Direct Conversation human admission requires an exact AccountId")
     })?;
@@ -269,7 +269,7 @@ async fn direct_contact_claim_route(
         anyhow::anyhow!("accepted Contact has no verified peer endpoint selector")
     })?;
     let device = &endpoint.device_id;
-    Ok(AcceptedInviteClaimRoute {
+    Ok(MemberJoinKeyPackageRoute {
         destination_id: account.station_id.to_string(),
         target_device_id: Some(device.to_string()),
     })

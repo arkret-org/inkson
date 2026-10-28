@@ -1,5 +1,4 @@
 {
-  "schema": "inkson.vendored-assets.v1",
   "assets": [
     {
       "path": "assets/vendor/livekit-client.umd.min.js",

@@ -66,17 +66,48 @@ pub(crate) fn raw_operation_invite_ref(payload: &Value) -> Option<String> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct AcceptedInviteClaimRoute {
+pub(crate) struct MemberJoinKeyPackageRoute {
     pub(crate) destination_id: String,
     pub(crate) target_device_id: Option<String>,
 }
 
-pub(crate) fn accepted_invite_claim_route(
+pub(crate) fn member_join_key_package_route(
     store: &LocalStateStore,
     realm_id: &str,
     invitee_id: &str,
-) -> Option<AcceptedInviteClaimRoute> {
+) -> Option<MemberJoinKeyPackageRoute> {
     let state = store.load();
+    // Only an already accepted, exact-subject link Event can select a KeyPackage endpoint.
+    for record in state
+        .raw_operations
+        .iter()
+        .rev()
+        .filter(|r| raw_operation_realm_matches_exact(r, realm_id))
+    {
+        let raw = &record.payload;
+        if raw_operation_payload_kind(raw).as_deref()
+            != Some(event_kind_str::REALM_INVITE_LINK_ACCEPT)
+            || raw_operation_path_string(raw, &["write_state"]).as_deref() != Some("synced")
+            || raw_member_actor_id(raw).as_deref() != Some(invitee_id)
+        {
+            continue;
+        }
+        let body = raw.get("body").or_else(|| raw.get("payload"))?;
+        let body: arkret_sdk::RealmInviteLinkAcceptPayload =
+            serde_json::from_value(body.clone()).ok()?;
+        if arkret_sdk::ActorId::account(body.subject_account_id.clone()).to_string() != invitee_id {
+            return None;
+        }
+        return Some(MemberJoinKeyPackageRoute {
+            destination_id: body.subject_account_id.station_id.to_string(),
+            target_device_id: raw_operation_path_string(raw, &["signing_device_id"])
+                .map(arkret_sdk::DeviceId::new)
+                .transpose()
+                .ok()?
+                .map(|d| d.to_string()),
+        });
+    }
+
     let accepted = state
         .raw_operations
         .iter()
@@ -118,14 +149,14 @@ pub(crate) fn accepted_invite_claim_route(
         .transpose()
         .ok()?
         .map(|device| device.to_string());
-    Some(AcceptedInviteClaimRoute {
+    Some(MemberJoinKeyPackageRoute {
         destination_id,
         target_device_id,
     })
 }
 
 pub(crate) fn claim_target_device_id(
-    route: &AcceptedInviteClaimRoute,
+    route: &MemberJoinKeyPackageRoute,
 ) -> anyhow::Result<Option<&str>> {
     route.target_device_id.as_deref().map(Some).ok_or_else(|| {
         anyhow::anyhow!(
@@ -222,6 +253,25 @@ pub(crate) fn local_membership_fact_from_raw_operation(
             profile.membership = Some(membership);
             profile.invite_id = raw_operation_invite_ref(payload);
             Some(profile)
+        }
+        event_kind_str::REALM_INVITE_LINK_ACCEPT => {
+            if raw_operation_path_string(payload, &["write_state"]).as_deref() != Some("synced") {
+                return None;
+            }
+            let body: arkret_sdk::RealmInviteLinkAcceptPayload = serde_json::from_value(
+                payload
+                    .get("body")
+                    .or_else(|| payload.get("payload"))?
+                    .clone(),
+            )
+            .ok()?;
+            let actor = arkret_sdk::ActorId::account(body.subject_account_id).to_string();
+            if raw_member_actor_id(payload).as_deref() != Some(actor.as_str()) {
+                return None;
+            }
+            let mut fact = MembershipFact::bare(actor);
+            fact.membership = Some("join".into());
+            Some(fact)
         }
         event_kind_str::INVITE_ACCEPT => {
             let invite_id = raw_operation_invite_ref(payload);

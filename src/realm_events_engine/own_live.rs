@@ -168,7 +168,7 @@ impl HintBatch {
             self.revalidate = true;
         }
         self.discover |= matches!(view, CommittedEventView::Full(full) if matches!(full.event.kind,
-            arkret_sdk::EventKind::CircleCreate | arkret_sdk::EventKind::CircleMemberState | arkret_sdk::EventKind::MemberState | arkret_sdk::EventKind::InviteAccept | arkret_sdk::EventKind::SidecarCreate | arkret_sdk::EventKind::SidecarContextAttach));
+            arkret_sdk::EventKind::CircleCreate | arkret_sdk::EventKind::CircleMemberState | arkret_sdk::EventKind::MemberState | arkret_sdk::EventKind::InviteAccept | arkret_sdk::EventKind::RealmInviteLinkAccept | arkret_sdk::EventKind::SidecarCreate | arkret_sdk::EventKind::SidecarContextAttach));
         if let Some(cursor) = &frame.cursor {
             self.cursor = Some(cursor.clone());
         }

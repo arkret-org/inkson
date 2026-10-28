@@ -50,7 +50,7 @@ def main():
     assert summaries == [("1", "0", "0")], "exact native producer must execute"
     if args.accept:
         accept(corpus, log, result)
-    print(json.dumps({"native_read_operations": 14, "exit_code": 0, "output": str(corpus)}))
+    print(json.dumps({"native_read_operations": len(json.loads(corpus.read_text(encoding="utf-8"))["operations"]), "exit_code": 0, "output": str(corpus)}))
     return 0
 
 if __name__ == "__main__":
