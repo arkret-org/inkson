@@ -29,13 +29,19 @@ test("current retention Policy withdraws and restores the same search body at it
   await expect(row).toHaveCount(1);
   const original = await row.getAttribute("data-event-id");
   const commit = await row.getAttribute("data-commit-id");
-  const update = page.waitForResponse(async response =>
-    new URL(response.url()).pathname === "/_arkret/self/account/subscribe"
-    && response.status() === 200
-    && (await response.text()).includes('"policy_kind":"retention"'));
+  let policyBody: string | undefined;
+  const update = page.waitForResponse(async response => {
+    if (new URL(response.url()).pathname !== "/_arkret/self/account/subscribe"
+      || response.status() !== 200 || await response.finished()) return false;
+    const body = await response.text();
+    if (!body.includes('"policy_kind":"retention"')) return false;
+    policyBody = body;
+    return true;
+  });
   active = true;
-  const response = await update;
-  const frame = (await response.text()).trim().split("\n").map(line => JSON.parse(line))
+  await update;
+  expect(policyBody).toBeDefined();
+  const frame = policyBody!.trim().split("\n").map(line => JSON.parse(line))
     .find(frame => frame.realms?.[DEMO_REALM]);
   const entry = frame.realms[DEMO_REALM];
   const lastEvent = entry.committed_events.at(-1).commit.event_ref;

@@ -749,16 +749,39 @@ test("Mock empty committed Event continuation defaults to live-only and complete
       url: `${base}&catchup=true&after=${encodeURIComponent(cursor)}`, method: "GET",
     })).rejects.toThrow();
   }
-  const pending = driveOnce(route, { url: base, method: "GET" });
-  const rejectedPending = expect(pending).rejects.toThrow("subscription context changed");
+  const aborted: Array<string | undefined> = [];
+  let fulfilled = 0;
+  const pending = driveOnce(route, {
+    url: base, method: "GET", onAbort: code => aborted.push(code), onFulfill: () => { fulfilled += 1; },
+  });
   validateMockSchema("schemas/account-operations.schema.json#/$defs/session_revoke_request_body", {});
   const revoked = await driveOnce(route, {
     url: "https://local.host/_arkret/gate/account/session-grants/revoke", method: "POST", postData: {},
   });
   expect(revoked?.status).toBe(200);
-  await rejectedPending;
+  expect(await pending).toBeNull();
+  expect(aborted).toEqual(["aborted"]);
+  expect(fulfilled).toBe(0);
   await expect(driveOnce(route, {
     url: `${base}&catchup=true&after=${encodeURIComponent(cursor)}`, method: "GET",
+  })).rejects.toThrow("replay from this cursor is not implemented");
+
+  const closing = captureRouteHandler();
+  await mockArkretApi(closing.page as never);
+  const active = closing.handler();
+  const issued = await driveOnce(active, { url: base, method: "GET" });
+  const issuedCursor = decodeStreamFrames(issued?.body)[0].cursor;
+  const closeAborted: Array<string | undefined> = [];
+  let closeFulfilled = 0;
+  const closingPoll = driveOnce(active, {
+    url: base, method: "GET", onAbort: code => closeAborted.push(code), onFulfill: () => { closeFulfilled += 1; },
+  });
+  closing.close();
+  expect(await closingPoll).toBeNull();
+  expect(closeAborted).toEqual(["aborted"]);
+  expect(closeFulfilled).toBe(0);
+  await expect(driveOnce(active, {
+    url: `${base}&catchup=true&after=${encodeURIComponent(issuedCursor)}`, method: "GET",
   })).rejects.toThrow("replay from this cursor is not implemented");
 });
 

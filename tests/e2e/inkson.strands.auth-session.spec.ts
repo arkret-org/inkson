@@ -1,4 +1,4 @@
-import { chromium, expect, test } from "@playwright/test";
+import { chromium, expect, test, type Locator, type Page } from "@playwright/test";
 import {
   registerStrandsBeforeEach,
   CURRENT_PRINCIPAL_CORE_ID,
@@ -17,6 +17,33 @@ import { mockArkretApi } from "./mockArkretApi";
 
 registerStrandsBeforeEach();
 
+async function selectRealmAtDurableCut(page: Page, button: Locator) {
+  const href = await button.getAttribute("href");
+  expect(href).toBeTruthy();
+  const realm = decodeURIComponent(new URL(href!, page.url()).pathname.split("/").at(-1)!);
+  expect(realm).toMatch(/^ak:realm:/);
+  const [response] = await Promise.all([
+    page.waitForResponse(response => {
+      const url = new URL(response.url());
+      if (response.request().method() !== "GET" || url.pathname !== "/_arkret/self/account/subscribe"
+        || url.searchParams.get("replace_filter") !== "true") return false;
+      const filter = JSON.parse(url.searchParams.get("filter") ?? "{}");
+      return Array.isArray(filter.realm_ids) && filter.realm_ids.includes(realm);
+    }),
+    button.click(),
+  ]);
+  expect(response.status()).toBe(200);
+  expect(await response.finished()).toBeNull();
+  const frames = (await response.text()).trim().split("\n").map(line => JSON.parse(line));
+  const frame = frames.find(frame => frame.kind === "delta" && frame.realms?.[realm]);
+  expect(frame).toBeDefined();
+  expect(frame.cursor).toMatch(/^ak:cursor:/);
+  // A mounted shell precedes history verification. This checkpoint is emitted
+  // only after the verified Account stage is committed and durable.
+  await page.waitForFunction(cursor => document.querySelector('[data-testid="sync-cursor"]')
+    ?.textContent?.trim() === `cursor ${cursor}`, frame.cursor);
+}
+
 test("bootstrap login and sync shows the connected realm", async ({ page }) => {
   await refreshServer(page);
 
@@ -32,8 +59,8 @@ test("bootstrap login and sync shows the connected realm", async ({ page }) => {
   );
   // Realm summaries do not include encryption authority: load each detail
   // through its real demand subscription before checking its verified marker.
-  await page.getByTestId("realm-tree-node-button")
-    .filter({ hasText: "Arkret Demo Realm" }).click();
+  await selectRealmAtDurableCut(page, page.getByTestId("realm-tree-node-button")
+    .filter({ hasText: "Arkret Demo Realm" }));
   await expect(page.getByTestId("kanban-panel")).toBeVisible();
   await expect(
     page
@@ -41,8 +68,8 @@ test("bootstrap login and sync shows the connected realm", async ({ page }) => {
       .filter({ hasText: "Arkret Demo Realm" })
       .locator(".sidebar-nav-icon"),
   ).toHaveAttribute("title", "Encrypted Realm");
-  await page.getByTestId("realm-tree-node-button")
-    .filter({ hasText: "Launch Realm" }).click();
+  await selectRealmAtDurableCut(page, page.getByTestId("realm-tree-node-button")
+    .filter({ hasText: "Launch Realm" }));
   await expect(page.getByTestId("kanban-panel")).toBeVisible();
   await expect(
     page
@@ -246,7 +273,7 @@ test("selected Realm security badge matches its encrypted sidebar marker", async
   const realmButton = page
     .getByTestId("realm-tree-node-button")
     .filter({ hasText: "Arkret Demo Realm" });
-  await realmButton.click();
+  await selectRealmAtDurableCut(page, realmButton);
   await expect(page.getByTestId("kanban-panel")).toBeVisible();
   await expect(realmButton.locator(".sidebar-nav-icon")).toHaveAttribute(
     "title",
