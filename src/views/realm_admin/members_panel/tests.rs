@@ -93,7 +93,9 @@ fn actor_key(id: &str) -> String {
 }
 
 fn member(id: &str) -> MemberProfile {
-    MemberProfile::bare(actor_key(id))
+    let mut profile = MemberProfile::bare(actor_key(id));
+    profile.membership = Some("join".to_owned());
+    profile
 }
 
 fn agent(id: &str, controller: &str, name: &str) -> MemberAgentRow {
@@ -195,6 +197,7 @@ fn splits_pending_invites_out_of_active_members() {
     let mut alice = member("ak:did_core:web:alice.example");
     alice.membership = Some("join".to_owned());
     let mut bob = member("ak:did_core:web:bob.example");
+    bob.membership = None;
     bob.pending_invite = true;
 
     let (active, pending) = split_member_profiles(vec![alice, bob]);
@@ -1225,9 +1228,42 @@ fn roster(
 
 fn pending_invite(id: &str) -> MemberProfile {
     let mut profile = member(id);
+    profile.membership = None;
     profile.pending_invite = true;
     profile.invite_id = Some(format!("ak:invite:{id}"));
     profile
+}
+
+#[test]
+fn roster_counts_only_joined_members_after_terminal_and_unconfirmed_facts() {
+    let mut joined = member(SELF_PRINCIPAL);
+    joined.pending_invite = true;
+    let mut rows = vec![joined, pending_invite("ak:did_core:web:invited.example")];
+    for (index, membership) in [Some("leave"), Some("ban"), Some("knock"), None]
+        .into_iter()
+        .enumerate()
+    {
+        let mut historical = member(&format!("ak:did_core:web:historical{index}.example"));
+        historical.membership = membership.map(str::to_owned);
+        historical.is_admin = true;
+        historical.pending_invite = membership == Some("leave");
+        rows.push(historical);
+    }
+    let view = roster(
+        rows,
+        Vec::new(),
+        MemberRosterSection::Members,
+        "",
+        MEMBER_PAGE_SIZE,
+    );
+    assert_eq!(view.total_members, 1);
+    assert_eq!(view.total_pending_invites, 1);
+    assert_eq!(view.total_admin_members, 0);
+    assert_eq!(view.visible_groups.len(), 1);
+    assert_eq!(
+        view.visible_groups[0].controller.actor_id,
+        actor_key(SELF_PRINCIPAL)
+    );
 }
 
 fn owner(id: &str) -> MemberProfile {

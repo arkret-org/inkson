@@ -632,10 +632,12 @@ pub(super) fn split_member_profiles(
     let mut active_members = Vec::new();
     let mut pending_invites = Vec::new();
     for member in members {
-        if member.is_pending_invite() {
-            pending_invites.push(member);
-        } else {
-            active_members.push(member);
+        match member.normalized_membership() {
+            Some("join") => active_members.push(member),
+            None | Some("invite" | "pending" | "pending_invite") if member.is_pending_invite() => {
+                pending_invites.push(member);
+            }
+            _ => {}
         }
     }
     (active_members, pending_invites)
