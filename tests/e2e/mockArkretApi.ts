@@ -2901,7 +2901,8 @@ export async function mockArkretApi(
       const request = await route.request().postDataJSON();
       const fixture = nativeFixtures.get(request.realm_id);
       if (!fixture || !nativeReadable(fixture)) return mockProblem(route, "not_found", "not found");
-      if (request.recipient_account_id !== undefined && canonicalJson(request.recipient_account_id) !== canonicalJson(fixture.identity.account_id)) {
+      const recipient = fixture.invite_recipient?.identity.account_id ?? fixture.identity.account_id;
+      if (request.recipient_account_id !== undefined && canonicalJson(request.recipient_account_id) !== canonicalJson(recipient)) {
         return mockProblem(route, "capability_denied", "Signer key query is not authorized for this recipient");
       }
       // Cache only identical source facts and query bindings. Request IDs are
@@ -4041,6 +4042,15 @@ export async function mockArkretApi(
           accepted_at: acceptedAt,
         });
       }
+    }
+
+    if (
+      /^\/_arkret\/self\/keys\/backups\/[^/]+\/unlock-challenge$/.test(url.pathname) &&
+      route.request().method() === "POST"
+    ) {
+      // Backup summaries do not provide the native challenge or one-use ledger.
+      // Keep that positive contract uncovered and expose its registered refusal.
+      return mockProblem(route, "not_implemented", "Native backup unlock challenges are not implemented by this fixture.");
     }
 
     const keyBackupMatch = url.pathname.match(
