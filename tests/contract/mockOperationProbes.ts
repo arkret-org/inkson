@@ -110,6 +110,9 @@ export async function operationProbe(operation: MockOperation, handler: Handler)
       cachedNative ??= native();
       request.postData = { realm_id: DEMO_REALM, stream_ref: cachedNative.committed_events[0].commit.stream_ref, after_position: null, limit: 100 };
       break;
+    case "ak.self.committed_event.stream.subscribe.v1":
+      request.url += `?realm_ids=${encodeURIComponent(DEMO_REALM)}`;
+      break;
     case "ak.self.strand.watch.read.current.v1":
       cachedNative ??= native();
       request.postData = { realm_id: DEMO_REALM, strand_id: cachedNative.ids.review, watcher_actor_id: CURRENT_ACCOUNT_ACTOR_ID };
