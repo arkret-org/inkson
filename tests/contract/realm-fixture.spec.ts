@@ -710,15 +710,37 @@ test("Mock empty committed Event continuation defaults to live-only and complete
     await expect(driveOnce(route, { url: `${base}${query}`, method: "GET" })).rejects.toThrow();
   }
   const other = inksonWire<Fixture>("mock-realm-fixture", { salt: 11, title: "Other selector Realm" });
-  for (const changed of [
-    `${base}&actor_ids=${encodeURIComponent(JSON.stringify({ kind: "account", account_id: fixture.identity.account_id }))}`,
-    `https://local.host/_arkret/self/committed-events/subscribe?realm_ids=${encodeURIComponent(other.snapshot.realm_id)}`,
-  ]) {
-    await expect(driveOnce(route, {
-      url: `${changed}&catchup=true&after=${encodeURIComponent(cursor)}`, method: "GET",
-    })).rejects.toThrow();
-  }
-  for (const options of [{}, { accountPrincipalId: "did:web:bob.example" }, {
+  const otherScope = `https://local.host/_arkret/self/committed-events/subscribe?realm_ids=${encodeURIComponent(other.snapshot.realm_id)}`;
+  expect((await driveOnce(route, { url: otherScope, method: "GET" }))?.status).toBe(200);
+  await expect(driveOnce(route, {
+    url: `${otherScope}&catchup=true&after=${encodeURIComponent(cursor)}`, method: "GET",
+  })).rejects.toThrow("replay from this cursor is not implemented");
+  const actorScope = `${base}&actor_ids=${encodeURIComponent(JSON.stringify({ kind: "account", account_id: fixture.identity.account_id }))}`;
+  const actorInitial = await driveOnce(route, { url: actorScope, method: "GET" });
+  expect(actorInitial?.status).toBe(200);
+  expect(decodeStreamFrames(actorInitial?.body).map(frame => frame.kind)).toEqual(["checkpoint"]);
+  await expect(driveOnce(route, {
+    url: `${actorScope}&catchup=true&after=${encodeURIComponent(cursor)}`, method: "GET",
+  })).rejects.toThrow("replay from this cursor is not implemented");
+  const assertDeniedWithoutFacts = (response: Awaited<ReturnType<typeof driveOnce>>) => {
+    expect(response?.status).toBe(403);
+    expect(response?.contentType).toBe("application/problem+json");
+    expect(response?.body).toMatchObject({ type: "https://arkret.org/problems/capability_denied", status: 403 });
+    expect(Object.keys(response?.body as object).sort()).toEqual(["detail", "status", "title", "type"]);
+    const operation = mockOperations().find(operation => operation.operation_id === "ak.self.committed_event.stream.subscribe.v1")!;
+    expect(() => validateMockResponseForOperation(operation, 403, response?.body, "application/problem+json")).not.toThrow();
+  };
+  const missing = inksonWire<Fixture>("mock-realm-fixture", { salt: 13, title: "Unregistered native Realm" });
+  assertDeniedWithoutFacts(await driveOnce(route, {
+    url: `https://local.host/_arkret/self/committed-events/subscribe?realm_ids=${encodeURIComponent(missing.snapshot.realm_id)}&after=${encodeURIComponent(cursor)}&catchup=true`,
+    method: "GET",
+  }));
+  const foreignSubject = captureRouteHandler();
+  await mockArkretApi(foreignSubject.page as never, { accountPrincipalId: "did:web:bob.example" });
+  assertDeniedWithoutFacts(await driveOnce(foreignSubject.handler(), {
+    url: `${base}&after=${encodeURIComponent(cursor)}&catchup=true`, method: "GET",
+  }));
+  for (const options of [{}, {
     currentDeviceId: "ak:device:01964137-0000-7000-8000-0000000000b2",
   }]) {
     const unissued = captureRouteHandler();
@@ -727,6 +749,17 @@ test("Mock empty committed Event continuation defaults to live-only and complete
       url: `${base}&catchup=true&after=${encodeURIComponent(cursor)}`, method: "GET",
     })).rejects.toThrow();
   }
+  const pending = driveOnce(route, { url: base, method: "GET" });
+  const rejectedPending = expect(pending).rejects.toThrow("subscription context changed");
+  validateMockSchema("schemas/account-operations.schema.json#/$defs/session_revoke_request_body", {});
+  const revoked = await driveOnce(route, {
+    url: "https://local.host/_arkret/gate/account/session-grants/revoke", method: "POST", postData: {},
+  });
+  expect(revoked?.status).toBe(200);
+  await rejectedPending;
+  await expect(driveOnce(route, {
+    url: `${base}&catchup=true&after=${encodeURIComponent(cursor)}`, method: "GET",
+  })).rejects.toThrow("replay from this cursor is not implemented");
 });
 
 test("Mock committed Event catchup replays only signed facts actually accepted after its issued native cut", async () => {
