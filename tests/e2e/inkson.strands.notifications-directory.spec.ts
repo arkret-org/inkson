@@ -77,7 +77,8 @@ test("invite preview disclosed stays loading then visible and only Accept joins"
   await item.getByTestId("notification-action").click();
   const accepted = await acceptedResponse;
   expect(accepted.status()).toBe(200);
-  expect(await accepted.json()).toMatchObject({ status: "accepted" });
+  const outcome = await accepted.json();
+  expect(outcome).toMatchObject({ status: "committed", commit: { realm_id: INVITED_REALM } });
   await expect
     .poll(() =>
       writes.some((request) =>
@@ -103,6 +104,7 @@ test("invite preview disclosed stays loading then visible and only Accept joins"
   expect(request).toBeDefined();
   const submission = JSON.parse(request!.body);
   const event = submission.event ?? submission;
+  expect(outcome.commit.event_ref).toBe(event.event_id);
   expect(event.actor_id).toEqual(CURRENT_ACCOUNT_ACTOR_ID);
   expect(event.realm_id).toBe(INVITED_REALM);
   expect(event.payload).toEqual({ invite_id: DEMO_INVITE_ID,
