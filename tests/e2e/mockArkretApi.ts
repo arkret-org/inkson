@@ -1248,6 +1248,18 @@ export async function mockArkretApi(
   const nativeFixtures = new Map<string, NativeRealmFixture>();
   const watchReads = new MockWatchReads();
   const accountContinuation = new MockAccountContinuation();
+  const issuedCommittedCuts = new Map<string, {
+    scope: string;
+    facts: Map<string, Array<Record<string, any>>>;
+  }>();
+  // Per-installation mock state only; eviction never invents replay evidence.
+  const committedCutBudget = 64;
+  let committedCutEpoch = 0;
+  const resetCommittedCuts = () => {
+    committedCutEpoch += 1;
+    issuedCommittedCuts.clear();
+  };
+  page.on("close", resetCommittedCuts);
   const historicalSignerResponses = new Map<string, Record<string, any>>();
   const registerNative = (fixture: NativeRealmFixture) => {
     nativeFixtures.set(String(fixture.snapshot.realm_id), structuredClone(fixture));
@@ -2319,6 +2331,7 @@ export async function mockArkretApi(
       url.pathname === "/_arkret/gate/account/session-grants/revoke" &&
       route.request().method() === "POST"
     ) {
+      resetCommittedCuts();
       return json(route, { revoked_count: 1, revoked_session_grant_ids: [] });
     }
 
@@ -2684,51 +2697,70 @@ export async function mockArkretApi(
       url.pathname === "/_arkret/self/committed-events/subscribe" &&
       route.request().method() === "GET"
     ) {
-      const cursor = "ak:cursor:e2e-events-2";
-      if (url.searchParams.has("after")) {
-        await new Promise((resolve) => setTimeout(resolve, 5_000));
-        const controlFrames = [
-          { kind: "checkpoint", cursor },
-          { kind: "catchup_complete", cursor },
-        ];
-        controlFrames.forEach((frame) =>
-          validateMockSchema(
-            "schemas/committed-event-subscribe-frame.schema.json",
-            frame,
-          ),
-        );
-        return route.fulfill({
-          status: 200,
-          contentType: "application/x-ndjson",
-          body: `${controlFrames.map(canonicalJson).join("\n")}\n`,
-        });
-      }
+      const epoch = committedCutEpoch;
       const requestedRealms = url.searchParams
         .getAll("realm_ids")
         .map((realm) => realm.trim())
-        .filter(Boolean);
-      const frames: Array<Record<string, unknown>> = projectionEvents
-        .filter((event) => {
-          const realmId = eventRealmId(event);
-          const fixture = nativeFixtures.get(realmId);
-          if (!fixture) throw new Error(`committed subscription has no registered native source for ${realmId}`);
-          return nativeReadable(fixture) &&
-            (requestedRealms.length === 0 || requestedRealms.includes(realmId));
-        })
-        .map((payload, index) => ({
-          kind: "committed_event",
-          realm_id: eventRealmId(payload),
-          cursor,
-          payload: committedEventView(payload, index),
-        }));
-      frames.push({ kind: "catchup_complete", cursor });
-      frames.forEach((frame, index) => {
-        try {
-          validateMockSchema("schemas/committed-event-subscribe-frame.schema.json", frame);
-        } catch (error) {
-          throw new Error(`committed event frame ${index} (${String((frame.payload as Record<string, unknown> | undefined)?.event && ((frame.payload as Record<string, unknown>).event as Record<string, unknown>).kind)}): ${String(error)}`);
+        .filter(Boolean).sort();
+      const requestedActors = url.searchParams.getAll("actor_ids").map(actor => {
+        const value = JSON.parse(actor);
+        validateMockSchema("schemas/common-ids.schema.json#/$defs/actor_id", value);
+        return canonicalJson(value);
+      }).sort();
+      if (requestedRealms.length === 0 && requestedActors.length === 0) {
+        throw new Error("committed Event subscription requires an explicit selector");
+      }
+      const selected = Array.from(nativeFixtures.values()).filter(nativeReadable)
+        .filter(fixture => canonicalJson(fixture.invite_recipient?.identity.account_id ?? fixture.identity.account_id) === canonicalJson(accountId))
+        .filter(fixture => requestedRealms.length === 0 || requestedRealms.includes(String(fixture.snapshot.realm_id)));
+      if (selected.length === 0 || requestedRealms.some(realm => !selected.some(fixture => fixture.snapshot.realm_id === realm))) {
+        return mockProblem(route, "capability_denied", "The requested event stream is not available to this account.");
+      }
+      for (const fixture of selected) {
+        if (inksonWire<{ verified: boolean }>("mock-realm-verify", fixture).verified !== true) {
+          throw new Error("committed Event source failed native verification");
         }
-      });
+      }
+      const cuts = selected
+        .map(fixture => ({ realm_id: fixture.snapshot.realm_id, snapshot_id: fixture.snapshot.snapshot_id }))
+        .sort((left, right) => String(left.realm_id).localeCompare(String(right.realm_id)));
+      const selector = { account_id: accountId, device_id: currentDeviceId, realm_ids: requestedRealms, actor_ids: requestedActors };
+      const scope = JSON.stringify(selector);
+      const cut = { ...selector, cuts };
+      const cursor = `ak:cursor:e2e-events-${canonicalSha256(cut).replace(/^sha256:/, "")}`;
+      const catchup = url.searchParams.get("catchup") === "true";
+      const after = url.searchParams.get("after");
+      if (catchup && after === null) throw new Error("committed Event catchup requires an issued after cursor");
+      const previous = after === null ? undefined : issuedCommittedCuts.get(after);
+      if (after !== null && previous?.scope !== scope) {
+        throw new Error("committed Event replay from this cursor is not implemented");
+      }
+      const facts = new Map(selected.map(fixture => [String(fixture.snapshot.realm_id),
+        fixture.committed_events.filter(full => requestedActors.length === 0 || requestedActors.includes(canonicalJson(full.event.actor_id))),
+      ]));
+      const replay: Array<Record<string, any>> = [];
+      if (catchup && previous) {
+        if (facts.size !== previous.facts.size || [...previous.facts.keys()].some(realm => !facts.has(realm))) {
+          throw new Error("committed Event replay source set changed");
+        }
+        for (const [realm, current] of facts) {
+          const prior = previous.facts.get(realm)!;
+          if (canonicalJson(current.slice(0, prior.length)) !== canonicalJson(prior)) {
+            throw new Error("committed Event replay source is not an extension of the issued cut");
+          }
+          replay.push(...current.slice(prior.length));
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, 5_000));
+      if (epoch !== committedCutEpoch) throw new Error("committed Event subscription context changed");
+      const frames = [
+        ...replay.map(full => ({ kind: "committed_event", realm_id: full.commit.realm_id, cursor, payload: structuredClone(full) })),
+        { kind: "checkpoint", cursor },
+        ...(catchup ? [{ kind: "catchup_complete", cursor }] : []),
+      ];
+      frames.forEach(frame => validateMockSchema("schemas/committed-event-subscribe-frame.schema.json", frame));
+      issuedCommittedCuts.set(cursor, { scope, facts: structuredClone(facts) });
+      while (issuedCommittedCuts.size > committedCutBudget) issuedCommittedCuts.delete(issuedCommittedCuts.keys().next().value!);
       return route.fulfill({
         status: 200,
         contentType: "application/x-ndjson",
@@ -2901,7 +2933,8 @@ export async function mockArkretApi(
       const request = await route.request().postDataJSON();
       const fixture = nativeFixtures.get(request.realm_id);
       if (!fixture || !nativeReadable(fixture)) return mockProblem(route, "not_found", "not found");
-      if (request.recipient_account_id !== undefined && canonicalJson(request.recipient_account_id) !== canonicalJson(fixture.identity.account_id)) {
+      const recipient = fixture.invite_recipient?.identity.account_id ?? fixture.identity.account_id;
+      if (request.recipient_account_id !== undefined && canonicalJson(request.recipient_account_id) !== canonicalJson(recipient)) {
         return mockProblem(route, "capability_denied", "Signer key query is not authorized for this recipient");
       }
       // Cache only identical source facts and query bindings. Request IDs are
@@ -4041,6 +4074,15 @@ export async function mockArkretApi(
           accepted_at: acceptedAt,
         });
       }
+    }
+
+    if (
+      /^\/_arkret\/self\/keys\/backups\/[^/]+\/unlock-challenge$/.test(url.pathname) &&
+      route.request().method() === "POST"
+    ) {
+      // Backup summaries do not provide the native challenge or one-use ledger.
+      // Keep that positive contract uncovered and expose its registered refusal.
+      return mockProblem(route, "not_implemented", "Native backup unlock challenges are not implemented by this fixture.");
     }
 
     const keyBackupMatch = url.pathname.match(
