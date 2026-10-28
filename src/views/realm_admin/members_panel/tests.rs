@@ -370,6 +370,53 @@ fn acme_policy_current() -> Vec<arkret_wire::CurrentState> {
 }
 
 #[test]
+fn projected_roster_uses_complete_current_without_optional_roster_or_history() {
+    let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
+    let mut store = temp_store("current-only-roster");
+    let actors = [
+        "ak:did_core:web:alice.example",
+        "ak:did_core:web:carol.example",
+    ]
+    .map(|id| serde_json::from_str::<arkret_sdk::ActorId>(&actor_key(id)).unwrap());
+    fixture::install_complete_joined_members(&mut store, realm, actors.to_vec());
+    let (active, pending) =
+        split_member_profiles(projected_member_profiles_for_realm(&store, realm));
+    assert_eq!(active.len(), 2);
+    assert!(pending.is_empty());
+    assert_eq!(
+        active
+            .into_iter()
+            .map(|profile| profile.actor_id)
+            .collect::<BTreeSet<_>>(),
+        actors.into_iter().map(|actor| actor.to_string()).collect()
+    );
+}
+
+#[test]
+fn projected_roster_current_join_wins_old_leave_and_omits_departed_history() {
+    let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
+    let mut store = temp_store("current-roster-over-history");
+    for (id, membership) in [
+        ("ak:did_core:web:alice.example", "leave"),
+        ("ak:did_core:web:bob.example", "join"),
+    ] {
+        let actor: arkret_sdk::ActorId = serde_json::from_str(&actor_key(id)).unwrap();
+        store.append_raw_operation(format!("historical-{membership}"), Some(realm.to_owned()),
+            serde_json::json!({ "kind": "ak.member.state", "write_state": "synced", "actor_id": actor,
+                "body": { "member_id": actor, "membership": membership } }));
+    }
+    let alice =
+        serde_json::from_str::<arkret_sdk::ActorId>(&actor_key("ak:did_core:web:alice.example"))
+            .unwrap();
+    fixture::install_complete_joined_members(&mut store, realm, vec![alice.clone()]);
+    let (active, pending) =
+        split_member_profiles(projected_member_profiles_for_realm(&store, realm));
+    assert_eq!(active.len(), 1);
+    assert_eq!(active[0].actor_id, alice.to_string());
+    assert!(pending.is_empty());
+}
+
+#[test]
 fn projected_member_profiles_use_only_verified_canonical_identity_fields() {
     let realm_id = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
     let mut store = temp_store("projected-profiles");
