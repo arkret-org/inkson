@@ -235,10 +235,12 @@ async fn join_basis(
                 "Controller current is not an ordinary join"
             );
         }
-        arkret_sdk::EventKind::InviteAccept => anyhow::ensure!(
-            controller_event.actor_id == controller_actor,
-            "Controller Invite acceptance names another Account"
-        ),
+        arkret_sdk::EventKind::InviteAccept | arkret_sdk::EventKind::RealmInviteLinkAccept => {
+            anyhow::ensure!(
+                controller_event.actor_id == controller_actor,
+                "Controller Invite acceptance names another Account"
+            )
+        }
         _ => anyhow::bail!("Controller join original is unavailable"),
     }
     let agent_event = join_original(

@@ -33,10 +33,6 @@ export const UNIMPLEMENTED_OPERATIONS = new Set<string>(
   "ak.open.agent_pairing.read.runtime_key_request_status.v1",
   "ak.open.identity.read.resolution.v1",
   "ak.open.realm_authority.read.bundle.v1",
-  "ak.open.third_party_invite.command.activate.v1",
-  "ak.open.third_party_invite.command.present_token.v1",
-  "ak.open.third_party_invite.command.provision.v1",
-  "ak.open.third_party_invite.read.provisioning_status.v1",
   "ak.peer.account_status.command.submit.v1",
   "ak.peer.account_status.read.resolve.v1",
   "ak.peer.applet.configuration.command.submit.v1",
@@ -133,7 +129,6 @@ export const UNIMPLEMENTED_OPERATIONS = new Set<string>(
   "ak.self.security_transaction.resource.get.v1",
   "ak.self.security_transaction.command.continue.v1",
   "ak.self.strand.watch.command.audit_read.v1",
-  "ak.self.third_party_invite.read.acceptance_attestation.v1"
 ]);
 
 // Provider-authenticated traffic requires native fixtures not executed by this suite.

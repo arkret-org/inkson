@@ -653,12 +653,12 @@ fn accepted_invite_route_recovers_from_canonical_history_after_restart() {
         };
         assert_eq!(changed, 2);
         assert_eq!(
-            accepted_invite_claim_route(
+            member_join_key_package_route(
                 &store,
                 realm_id,
                 &arkret_sdk::ActorId::account(invitee.clone()).to_string()
             ),
-            Some(AcceptedInviteClaimRoute {
+            Some(MemberJoinKeyPackageRoute {
                 destination_id: invitee.station_id.to_string(),
                 target_device_id: Some(device_id.to_owned()),
             })
@@ -668,7 +668,7 @@ fn accepted_invite_route_recovers_from_canonical_history_after_restart() {
             "ak:did_core:web:other.example",
         );
         assert!(
-            accepted_invite_claim_route(
+            member_join_key_package_route(
                 &store,
                 realm_id,
                 &arkret_sdk::ActorId::account(other_station).to_string()
@@ -735,14 +735,14 @@ fn accepted_invite_route_binds_delivery_service_and_accepting_device() {
     );
 
     assert_eq!(
-        accepted_invite_claim_route(&store, realm_id, &actor_key(invitee)),
-        Some(AcceptedInviteClaimRoute {
+        member_join_key_package_route(&store, realm_id, &actor_key(invitee)),
+        Some(MemberJoinKeyPackageRoute {
             destination_id: "ak:did_core:web:principal.example".to_owned(),
             target_device_id: Some(device_id.to_owned()),
         })
     );
     assert!(
-        accepted_invite_claim_route(
+        member_join_key_package_route(
             &store,
             "ak:realm:Ac4tyK_nwe4AYgJmR9A6pbiRrGZiDOx-i-EVWYUQabXC",
             &actor_key(invitee),
@@ -785,19 +785,19 @@ fn accepted_human_invite_route_fails_closed_without_exact_accepting_device() {
     );
 
     assert_eq!(
-        accepted_invite_claim_route(&store, realm_id, &actor_key(invitee)),
-        Some(AcceptedInviteClaimRoute {
+        member_join_key_package_route(&store, realm_id, &actor_key(invitee)),
+        Some(MemberJoinKeyPackageRoute {
             destination_id: "ak:did_core:web:principal.example".to_owned(),
             target_device_id: None,
         })
     );
-    let route = accepted_invite_claim_route(&store, realm_id, &actor_key(invitee)).unwrap();
+    let route = member_join_key_package_route(&store, realm_id, &actor_key(invitee)).unwrap();
     assert!(claim_target_device_id(&route).is_err());
 }
 
 #[test]
 fn human_claim_selector_requires_the_accepted_device_coordinate() {
-    let route = AcceptedInviteClaimRoute {
+    let route = MemberJoinKeyPackageRoute {
         destination_id: "ak:did_core:web:principal.example".to_owned(),
         target_device_id: Some("ak:device:0196419b-0000-7000-8000-000000000002".to_owned()),
     };

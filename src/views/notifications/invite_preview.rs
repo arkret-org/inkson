@@ -78,6 +78,8 @@ fn preview_target(
         realm_id: arkret_sdk::RealmId::new(realm_id.to_owned()).ok()?,
         invite_id: Some(arkret_sdk::InviteId::new(invite_id.to_owned()).ok()?),
         authority_locator_hints: credential.authority_locator_hints.clone(),
+
+        realm_invite_link_id: None,
     })
 }
 

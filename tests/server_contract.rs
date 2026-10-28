@@ -502,6 +502,8 @@ fn directory_preview_and_join_locator_keep_separate_authority_boundaries() {
             endpoint_url: Some("https://server.local/_arkret".to_owned()),
             source: arkret_sdk::AuthorityLocatorSource::Directory,
         }],
+
+        realm_invite_link_id: None,
     };
     target.validate().expect("closed join locator target");
     assert_eq!(

@@ -483,7 +483,7 @@ pub async fn revoke_realm_invite(
     realm_id: &str,
     actor_id: &str,
     invite_id: &str,
-    invitee: Option<&arkret_sdk::AccountId>,
+    invitee: &arkret_sdk::AccountId,
     target_state: &str,
     reason_code: &str,
 ) -> anyhow::Result<EventSubmissionProgress> {
@@ -492,7 +492,7 @@ pub async fn revoke_realm_invite(
         actor_id,
         invite_id,
         invitee,
-        arkret_sdk::InviteRevokePreviousState::Pending,
+        arkret_sdk::InvitePreviousState::Pending,
         target_state,
         reason_code,
     )?

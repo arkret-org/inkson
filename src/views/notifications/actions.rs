@@ -573,8 +573,7 @@ fn accept_invite_notification(
             // This notification is raised from a directed private invite
             // delivery, so the Invite stores this account and the accept both
             // joins the Realm and releases the inviter Realm's live-target slot
-            // for it. A third-party invite reaches acceptance through
-            // `ak.invite.claim` instead and carries no account here.
+            // for the exact complete accepting account.
             let invitee_account_id = state_store
                 .read()
                 .active_authority()
@@ -590,7 +589,7 @@ fn accept_invite_notification(
                     account.principal_id.as_str(),
                     &invite_id,
                     credential.as_ref(),
-                    Some(invitee_account_id.clone()),
+                    invitee_account_id.clone(),
                 )
                 .await?;
             crate::realm_events_engine::refresh_joined_realm(
