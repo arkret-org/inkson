@@ -1304,13 +1304,62 @@ fn roster_counts_only_joined_members_after_terminal_and_unconfirmed_facts() {
         MEMBER_PAGE_SIZE,
     );
     assert_eq!(view.total_members, 1);
-    assert_eq!(view.total_pending_invites, 1);
+    assert_eq!(view.total_pending_invites, 2);
     assert_eq!(view.total_admin_members, 0);
     assert_eq!(view.visible_groups.len(), 1);
     assert_eq!(
         view.visible_groups[0].controller.actor_id,
         actor_key(SELF_PRINCIPAL)
     );
+}
+
+#[test]
+fn reinviting_departed_actor_keeps_new_invite_and_termination_coordinates() {
+    let mut departed = member("ak:did_core:web:departed.example");
+    departed.membership = Some("leave".to_owned());
+    departed.invite_id = Some("previous-consumed-invite".to_owned());
+    departed.invite_is_direct = Some(false);
+    let actor = departed.actor_id.clone();
+    let mut rows = vec![departed];
+    upsert_pending_invite_profile(&mut rows, &actor, None, Some("new-live-invite"));
+    let (active, pending) = split_member_profiles(rows);
+    assert!(active.is_empty());
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].membership.as_deref(), Some("leave"));
+    assert_eq!(pending[0].invite_id.as_deref(), Some("new-live-invite"));
+    assert_eq!(pending[0].invite_is_direct, Some(true));
+}
+
+#[test]
+fn reinvitation_survives_hydration_from_departure_and_new_invite_history() {
+    let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
+    let mut store = temp_store("reinvitation-after-departure");
+    let actor: arkret_sdk::ActorId =
+        serde_json::from_str(&actor_key("ak:did_core:web:departed.example")).unwrap();
+    store.append_raw_operation(
+        "departed".to_owned(),
+        Some(realm.to_owned()),
+        serde_json::json!({
+            "kind": "ak.member.state", "write_state": "synced", "actor_id": actor,
+            "body": { "member_id": actor, "membership": "leave", "invite_ref": "old-invite" }
+        }),
+    );
+    store.append_raw_operation(
+        "reinvited".to_owned(),
+        Some(realm.to_owned()),
+        serde_json::json!({
+            "kind": "ak.invite.create", "invite_id": "new-live-invite",
+            "invitee_account_id": actor.as_account_id().unwrap(), "state": "pending"
+        }),
+    );
+    fixture::install_complete_joined_members(&mut store, realm, Vec::new());
+    let (active, pending) =
+        split_member_profiles(projected_member_profiles_for_realm(&store, realm));
+    assert!(active.is_empty());
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].actor_id, actor.to_string());
+    assert_eq!(pending[0].invite_id.as_deref(), Some("new-live-invite"));
+    assert_eq!(pending[0].invite_is_direct, Some(true));
 }
 
 fn owner(id: &str) -> MemberProfile {
