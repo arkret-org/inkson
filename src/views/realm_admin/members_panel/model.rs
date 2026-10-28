@@ -335,6 +335,15 @@ pub(super) fn push_unique(out: &mut Vec<String>, value: impl Into<String>) {
 }
 
 pub(super) fn merge_member_profile(target: &mut MemberProfile, incoming: MemberProfile) {
+    // A live invitation is independent of the actor's historical membership.
+    // The caller has already excluded terminal invitation ids.
+    if incoming.pending_invite {
+        target.pending_invite = true;
+        if incoming.invite_id.is_some() {
+            target.invite_id = incoming.invite_id.clone();
+            target.invite_is_direct = incoming.invite_is_direct;
+        }
+    }
     if target.subject_id.is_none() {
         target.subject_id = incoming.subject_id;
     }
@@ -657,7 +666,7 @@ pub(super) fn split_member_profiles(
     for member in members {
         match member.normalized_membership() {
             Some("join") => active_members.push(member),
-            None | Some("invite" | "pending" | "pending_invite") if member.is_pending_invite() => {
+            _ if member.is_pending_invite() => {
                 pending_invites.push(member);
             }
             _ => {}
@@ -709,15 +718,10 @@ pub(super) fn upsert_pending_invite_profile(
         .find(|profile| profile.actor_id.trim() == actor_id)
     {
         existing.pending_invite = existing.normalized_membership() != Some("join");
-        if existing.invite_id.is_none() {
-            existing.invite_id = invite_id
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToOwned::to_owned);
+        if let Some(invite_id) = invite_id.map(str::trim).filter(|value| !value.is_empty()) {
+            existing.invite_id = Some(invite_id.to_owned());
         }
-        if existing.invite_is_direct.is_none() {
-            existing.invite_is_direct = Some(true);
-        }
+        existing.invite_is_direct = Some(true);
         apply_label(existing);
         return;
     }
