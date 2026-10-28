@@ -478,6 +478,29 @@ pub(super) fn projected_member_profiles_for_realm(
             upsert_member_profile(&mut rows, profile);
         }
     }
+    // A complete installed cut is the membership source. The optional roster
+    // display projection and bounded Event history may both lag or be absent
+    // after a cold navigation; neither may replace current joined membership.
+    if store.current_product_cut_generation(realm_id).is_some()
+        && let Ok(Some(joined)) = store.complete_joined_member_hint_for_realm(realm_id)
+    {
+        let joined: BTreeSet<String> = joined.into_iter().map(|actor| actor.to_string()).collect();
+        for profile in rows.values_mut() {
+            if joined.contains(&profile.actor_id) {
+                profile.membership = Some("join".to_owned());
+                profile.pending_invite = false;
+            } else if profile.normalized_membership() == Some("join") {
+                profile.membership = None;
+            }
+        }
+        for actor in joined {
+            let profile = rows
+                .entry(actor.clone())
+                .or_insert_with(|| MemberProfile::bare(actor));
+            profile.membership = Some("join".to_owned());
+            profile.pending_invite = false;
+        }
+    }
     let mut out: Vec<MemberProfile> = rows.into_values().collect();
     for profile in &mut out {
         // Realm actor ids are not Contact identity keys. Join a global
