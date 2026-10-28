@@ -291,7 +291,7 @@ fn calendar_editor_round_trips_the_complete_v1_schedule() {
             "title": "Planning room",
             "address": "1 Example Street",
             "geo_uri": "geo:31.2304,121.4737",
-            "url": "https://meet.example/room"
+            "uri": "https://meet.example/room"
         },
         "call_id": "ak:call:AWXbZ-mBelWXBOM1haN1Q6WcwR_RscrylSZph2icMZ6y",
         "attendees": [

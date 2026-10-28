@@ -478,28 +478,6 @@ pub async fn cancel_realm_invite(
     submitter.submit_sdk_event(&event).await
 }
 
-pub async fn revoke_realm_invite(
-    submitter: &EventSubmitter,
-    realm_id: &str,
-    actor_id: &str,
-    invite_id: &str,
-    invitee: &arkret_sdk::AccountId,
-    target_state: &str,
-    reason_code: &str,
-) -> anyhow::Result<EventSubmissionProgress> {
-    let event = ak_ops::invite_revoke(
-        realm_id,
-        actor_id,
-        invite_id,
-        invitee,
-        arkret_sdk::InvitePreviousState::Pending,
-        target_state,
-        reason_code,
-    )?
-    .build_sdk_event("inkson")?;
-    submitter.submit_sdk_event(&event).await
-}
-
 /// Leave a Realm via `ak.member.state` event (`join → leave` FSM).
 pub async fn leave_realm(
     submitter: &EventSubmitter,

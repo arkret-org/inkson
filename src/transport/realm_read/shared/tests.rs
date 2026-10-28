@@ -347,7 +347,7 @@ async fn actual_http_exit_coalesces_waiters_and_refuses_a_replaced_session() {
             started.send(()).unwrap();
             released.recv_timeout(Duration::from_secs(5)).unwrap();
             let body =
-                serde_json::json!({"realm_id":server_realm,"spaces":[],"total":0,"has_more":false})
+                serde_json::json!({"realm_id":server_realm,"spaces":[],"total_count":0,"has_more":false})
                     .to_string();
             write!(connection, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{}", body.len(), body).unwrap();
         });

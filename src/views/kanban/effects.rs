@@ -877,7 +877,7 @@ mod projection_read_tests {
                     "strands"
                 };
                 let body =
-                    json!({"realm_id": realm, (collection): [], "total": 0, "has_more": false})
+                    json!({"realm_id": realm, (collection): [], "total_count": 0, "has_more": false})
                         .to_string();
                 write!(connection, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{}", body.len(), body).unwrap();
                 paths.push(path);

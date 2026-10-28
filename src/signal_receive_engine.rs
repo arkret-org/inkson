@@ -1733,7 +1733,7 @@ mod tests {
         // The registered closed profile the receiver dispatches on. The tests
         // below assert how each route reshapes the typed profile, so admission
         // parses the same object rather than keeping a parallel raw body.
-        body.entry("payload_sequence").or_insert(json!(7));
+        body.entry("payload_sequence").or_insert(json!("7"));
         if kind == arkret_sdk::SignalPlaintextKind::Presence.as_str() {
             body.entry("actor_id").or_insert(json!({
                 "kind": "account",

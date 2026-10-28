@@ -1065,7 +1065,10 @@ fn invite_helpers_emit_canonical_kinds() {
     assert_eq!(revoke.payload()["previous_state"], "pending");
     assert_eq!(revoke.payload()["reason_code"], "admin_revoke");
     assert!(!revoke.payload().contains_key("reason"));
-    assert!(!revoke.payload().contains_key("invitee_account_id"));
+    assert_eq!(
+        revoke.payload()["invitee_account_id"],
+        serde_json::to_value(&invitee_account_id).unwrap()
+    );
 }
 
 #[test]

@@ -900,7 +900,7 @@ mod tests {
         // track MUST NOT spell the default out.
         assert!(body.get("track_name").is_none());
         assert_eq!(body["typing"], true);
-        assert_eq!(body["payload_sequence"], 7);
+        assert_eq!(body["payload_sequence"], "7");
         // Typing is an ordinary session signal: the 30 second class ceiling.
         assert_eq!(payload.signal_class(), arkret_wire::SignalClass::Session);
         assert_eq!(payload.signal_class().max_ttl().num_seconds(), 30);
@@ -937,7 +937,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(body["kind"], "ak.message.stream");
-        assert_eq!(body["payload_sequence"], 8);
+        assert_eq!(body["payload_sequence"], "8");
         assert!(body.get("actor_id").is_none());
         assert!(body.get("ttl_ms").is_none());
     }
@@ -995,7 +995,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(body["kind"], "ak.receipt.read");
-        assert_eq!(body["payload_sequence"], 2);
+        assert_eq!(body["payload_sequence"], "2");
         // The durable-object leftovers are gone: the receipt is a Signal
         // plaintext, so it restates neither the Realm nor the send time, and
         // has no `receipt_kind` / `schema` / `created_at`.
@@ -1093,7 +1093,7 @@ mod tests {
                 .unwrap(),
         )
         .unwrap();
-        assert_eq!(body["payload_sequence"], 1024);
+        assert_eq!(body["payload_sequence"], "1024");
         assert_eq!(
             body["sequence"], 6,
             "per-call sequence is an independent axis"
