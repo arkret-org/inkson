@@ -30,7 +30,7 @@ jobs:
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U coland"
+          --health-cmd "pg_isready -U coland -d coland_native_reads"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
@@ -64,6 +64,13 @@ jobs:
         with:
           repository: ${{ github.repository_owner }}/garth
           path: garth
+          token: ${{ secrets.CI_REPO_TOKEN || github.token }}
+
+      - name: Checkout Coauth contract references
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ github.repository_owner }}/coauth
+          path: coauth
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
 
       - name: Checkout chime
@@ -152,6 +159,17 @@ jobs:
       - name: SDK wire type ownership gate
         working-directory: inkson
         run: python ../arkret-rust-sdk/tools/wire_type_ownership_audit.py --workspace-root .. --require-repository inkson
+
+      - name: Verify reviewed mock contract references
+        working-directory: inkson
+        run: |
+          python - <<'PY'
+          import sys
+          sys.path.insert(0, "tools")
+          from check_mock_operation_review import REVIEW, read, verify_contract_bindings
+          verify_contract_bindings(read(REVIEW))
+          print("Mock contract source and normative references verified")
+          PY
 
       - name: Produce current native archival read evidence
         working-directory: inkson
