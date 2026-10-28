@@ -20,6 +20,20 @@ jobs:
     # Playwright 1.60 documents missing Chromium crash events on Ubuntu 24.04.
     # Keep the real renderer-crash recovery test on its supported Linux host.
     runs-on: ubuntu-22.04
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: coland
+          POSTGRES_PASSWORD: coland
+          POSTGRES_DB: coland_native_reads
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U coland"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - name: Install Python for locked TOML tool resolution
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -59,10 +73,32 @@ jobs:
           path: chime
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
 
+      - name: Checkout Coland native read producer
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ github.repository_owner }}/coland
+          path: coland
+          token: ${{ secrets.CI_REPO_TOKEN || github.token }}
+
+      - name: Checkout canonical native test isolation
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ github.repository_owner }}/cotest
+          path: cotest
+          token: ${{ secrets.CI_REPO_TOKEN || github.token }}
+
+      - name: Complete native producer dependency layout
+        working-directory: coland
+        env:
+          CI_REPO_TOKEN: ${{ secrets.CI_REPO_TOKEN || github.token }}
+        run: bash .ci/checkout-build-dependencies.sh
+
       - name: Install Linux desktop dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
+            libpq-dev \
+            openssl \
             dbus-x11 \
             gnome-keyring \
             libsecret-tools \
@@ -86,7 +122,9 @@ jobs:
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: inkson
+          workspaces: |
+            inkson
+            coland
 
       - name: Install Node
         uses: actions/setup-node@v7
@@ -106,9 +144,6 @@ jobs:
         working-directory: inkson
         run: node scripts/verify_vendored_assets.mjs
 
-      - name: Install Dioxus CLI
-        run: cargo install dioxus-cli --version "${DIOXUS_CLI_VERSION}" --locked
-
       # ARC-0002 (重构计划 2026-07-10): legacy patterns must ratchet to zero.
       - name: Deletion gate
         working-directory: inkson
@@ -117,6 +152,25 @@ jobs:
       - name: SDK wire type ownership gate
         working-directory: inkson
         run: python ../arkret-rust-sdk/tools/wire_type_ownership_audit.py --workspace-root .. --require-repository inkson
+
+      - name: Produce current native archival read evidence
+        working-directory: inkson
+        env:
+          COLAND_TEST_DATABASE_URL: postgres://coland:coland@localhost:5432/coland_native_reads
+          CARGO_PROFILE_TEST_DEBUG: line-tables-only
+          CARGO_BUILD_JOBS: "2"
+        run: python tools/run_native_read_evidence.py --output-dir artifacts/ci-native-read-evidence --accept
+
+      - name: Preserve native evidence producer diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-read-evidence-${{ github.sha }}
+          path: inkson/artifacts/ci-native-read-evidence/
+          if-no-files-found: ignore
+
+      - name: Install Dioxus CLI
+        run: cargo install dioxus-cli --version "${DIOXUS_CLI_VERSION}" --locked
 
       - name: Check formatting
         working-directory: inkson
