@@ -1254,7 +1254,12 @@ export async function mockArkretApi(
   }>();
   // Per-installation mock state only; eviction never invents replay evidence.
   const committedCutBudget = 64;
-  page.on("close", () => issuedCommittedCuts.clear());
+  let committedCutEpoch = 0;
+  const resetCommittedCuts = () => {
+    committedCutEpoch += 1;
+    issuedCommittedCuts.clear();
+  };
+  page.on("close", resetCommittedCuts);
   const historicalSignerResponses = new Map<string, Record<string, any>>();
   const registerNative = (fixture: NativeRealmFixture) => {
     nativeFixtures.set(String(fixture.snapshot.realm_id), structuredClone(fixture));
@@ -2326,7 +2331,7 @@ export async function mockArkretApi(
       url.pathname === "/_arkret/gate/account/session-grants/revoke" &&
       route.request().method() === "POST"
     ) {
-      issuedCommittedCuts.clear();
+      resetCommittedCuts();
       return json(route, { revoked_count: 1, revoked_session_grant_ids: [] });
     }
 
@@ -2692,6 +2697,7 @@ export async function mockArkretApi(
       url.pathname === "/_arkret/self/committed-events/subscribe" &&
       route.request().method() === "GET"
     ) {
+      const epoch = committedCutEpoch;
       const requestedRealms = url.searchParams
         .getAll("realm_ids")
         .map((realm) => realm.trim())
@@ -2707,8 +2713,8 @@ export async function mockArkretApi(
       const selected = Array.from(nativeFixtures.values()).filter(nativeReadable)
         .filter(fixture => canonicalJson(fixture.invite_recipient?.identity.account_id ?? fixture.identity.account_id) === canonicalJson(accountId))
         .filter(fixture => requestedRealms.length === 0 || requestedRealms.includes(String(fixture.snapshot.realm_id)));
-      if (requestedRealms.some(realm => !selected.some(fixture => fixture.snapshot.realm_id === realm))) {
-        throw new Error("committed Event selector has no readable native source for this subject");
+      if (selected.length === 0 || requestedRealms.some(realm => !selected.some(fixture => fixture.snapshot.realm_id === realm))) {
+        return mockProblem(route, "capability_denied", "The requested event stream is not available to this account.");
       }
       for (const fixture of selected) {
         if (inksonWire<{ verified: boolean }>("mock-realm-verify", fixture).verified !== true) {
@@ -2746,6 +2752,7 @@ export async function mockArkretApi(
         }
       }
       await new Promise((resolve) => setTimeout(resolve, 5_000));
+      if (epoch !== committedCutEpoch) throw new Error("committed Event subscription context changed");
       const frames = [
         ...replay.map(full => ({ kind: "committed_event", realm_id: full.commit.realm_id, cursor, payload: structuredClone(full) })),
         { kind: "checkpoint", cursor },
