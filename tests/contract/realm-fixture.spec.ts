@@ -665,6 +665,41 @@ test("Mock account and committed Event streams retain the native Realm cut witho
   expect(frames.at(-1)).toMatchObject({ kind: "catchup_complete" });
 });
 
+test("Mock committed Event live-only subscriptions never replay history or complete catchup", async () => {
+  const { fixture, route } = await mockReadFixture();
+  const base = `https://local.host/_arkret/self/committed-events/subscribe?realm_ids=${encodeURIComponent(fixture.snapshot.realm_id)}`;
+  for (const after of ["", "&after=ak%3Acursor%3Ae2e-events-2"]) {
+    const response = await driveOnce(route, { url: `${base}&catchup=false${after}`, method: "GET" });
+    expect(response?.status).toBe(200);
+    const frames = decodeStreamFrames(response?.body);
+    expect(frames).toEqual([{ kind: "checkpoint", cursor: "ak:cursor:e2e-events-2" }]);
+    for (const frame of frames) validateMockSchema("schemas/committed-event-subscribe-frame.schema.json", frame);
+  }
+});
+
+test("Mock empty committed Event catchup proves its checkpoint before completion by default and explicitly", async () => {
+  const { fixture, route } = await mockReadFixture();
+  const base = `https://local.host/_arkret/self/committed-events/subscribe?realm_ids=${encodeURIComponent(fixture.snapshot.realm_id)}`;
+  const initial = await driveOnce(route, { url: base, method: "GET" });
+  expect(initial?.status).toBe(200);
+  const history = decodeStreamFrames(initial?.body);
+  expect(history.filter(frame => frame.kind === "committed_event").map(frame => frame.payload)).toEqual(fixture.committed_events);
+  const cursor = history.at(-1)?.cursor;
+  expect(cursor).toBeTruthy();
+  for (const query of ["", "&catchup=true"]) {
+    const response = await driveOnce(route, {
+      url: `${base}&after=${encodeURIComponent(cursor)}${query}`, method: "GET",
+    });
+    expect(response?.status).toBe(200);
+    const frames = decodeStreamFrames(response?.body);
+    expect(frames).toEqual([
+      { kind: "checkpoint", cursor },
+      { kind: "catchup_complete", cursor },
+    ]);
+    for (const frame of frames) validateMockSchema("schemas/committed-event-subscribe-frame.schema.json", frame);
+  }
+});
+
 test("Account subscription emits schema-valid delta frames and catchup completion only when requested", async () => {
   const { route } = await mockReadFixture();
   let issuedCursor: string | undefined;

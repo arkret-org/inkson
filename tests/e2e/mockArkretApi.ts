@@ -2685,11 +2685,12 @@ export async function mockArkretApi(
       route.request().method() === "GET"
     ) {
       const cursor = "ak:cursor:e2e-events-2";
-      if (url.searchParams.has("after")) {
+      const catchup = url.searchParams.get("catchup") !== "false";
+      if (url.searchParams.has("after") || !catchup) {
         await new Promise((resolve) => setTimeout(resolve, 5_000));
         const controlFrames = [
           { kind: "checkpoint", cursor },
-          { kind: "catchup_complete", cursor },
+          ...(catchup ? [{ kind: "catchup_complete", cursor }] : []),
         ];
         controlFrames.forEach((frame) =>
           validateMockSchema(
@@ -2721,6 +2722,8 @@ export async function mockArkretApi(
           cursor,
           payload: committedEventView(payload, index),
         }));
+      // An empty replay still proves its cursor before catchup completion.
+      if (frames.length === 0) frames.push({ kind: "checkpoint", cursor });
       frames.push({ kind: "catchup_complete", cursor });
       frames.forEach((frame, index) => {
         try {
