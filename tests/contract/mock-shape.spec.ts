@@ -1,8 +1,8 @@
 import { expect, test } from "@playwright/test";
 import { readFileSync, writeFileSync } from "node:fs";
-import { mockArkretApi } from "../e2e/mockArkretApi";
+import { buildMockProblem, mockArkretApi } from "../e2e/mockArkretApi";
 import { captureRouteHandler, driveOnce, mockOperations } from "./mockShapeDriver";
-import { ACCOUNT_AUTHORITY_OPERATIONS, CONDITIONAL_OPERATIONS, MOCK_INSTALLS, PROVIDER_FIXTURE_OPERATIONS, UNIMPLEMENTED_OPERATIONS } from "./mockOperationCoverage";
+import { ACCOUNT_AUTHORITY_OPERATIONS, CONDITIONAL_OPERATIONS, MOCK_INSTALLS, PROVIDER_FIXTURE_OPERATIONS, UNIMPLEMENTED_OPERATIONS, UNIMPLEMENTED_PROBLEM_OPERATIONS } from "./mockOperationCoverage";
 import { IMPLEMENTED_REMAINING_OPERATIONS } from "./remainingOperationProbes";
 import { NATIVE_READ_OPERATIONS } from "./nativeReadEvidence";
 const review = JSON.parse(readFileSync(new URL("./mock-operation-review.json", import.meta.url), "utf8")) as { operations: { operation_id: string; verification_need: string }[] };
@@ -16,6 +16,7 @@ test("operation inventory separates response observations from uncovered native 
   for (const group of classifications) for (const id of group) expect(ids.has(id), `stale classification: ${id}`).toBe(true);
   const nonProducing = classifications.flatMap(group => [...group]);
   expect(new Set(nonProducing).size, "operation classifications must be disjoint").toBe(nonProducing.length);
+  for (const id of UNIMPLEMENTED_PROBLEM_OPERATIONS) expect(UNIMPLEMENTED_OPERATIONS.has(id)).toBe(true);
   const validated = new Set<string>();
   const validRequests = new Set<string>();
   const failures: string[] = [];
@@ -40,6 +41,18 @@ test("operation inventory separates response observations from uncovered native 
         }
         const request = await operationProbe(operation, active);
         const response = await driveOnce(active, { ...request, onFulfill: () => { emitted += 1; } });
+        if (UNIMPLEMENTED_PROBLEM_OPERATIONS.has(id)) {
+          const descriptor = buildMockProblem("not_implemented", "");
+          expect(response?.status).toBe(descriptor.status);
+          expect(response?.contentType).toBe("application/problem+json");
+          expect(response?.body).toMatchObject({ type: descriptor.type, title: descriptor.title, status: descriptor.status });
+          expect(Object.keys(response!.body as object).sort()).toEqual(["detail", "status", "title", "type"]);
+          expect(emitted).toBe(1);
+          evidence.push({ install: index, operation_id: id, verdict: "uncovered", boundary_rejection_observed: true,
+            native_authority_contract: "not_run", verification_need: review.operations.find(row => row.operation_id === id)?.verification_need,
+            reason: "registered HTTP 501 not_implemented refusal", status: response!.status, media_type: response!.contentType });
+          continue;
+        }
         if (expected) throw new Error(`stale non-producing classification emitted a response: ${id}`);
         expect(response, `${id} must produce a validated response, not continue/abort`).not.toBeNull();
         expect(emitted).toBe(1);
@@ -60,7 +73,7 @@ test("operation inventory separates response observations from uncovered native 
   await test.info().attach("mock-operation-coverage", { body: JSON.stringify({ evidence, failures }, null, 2), contentType: "application/json" });
   expect(failures, failures.join("\n")).toEqual([]);
   const expectedProducing = [...ids].filter(id => !nonProducing.includes(id)).sort();
-  expect([...validated].sort(), "every response-producing operation must be judged").toEqual(expectedProducing);
+  expect([...validated].sort(), "every non-boundary response producer must be judged").toEqual(expectedProducing);
   expect(validRequests.size, "all valid-request operations must succeed in both installs").toBe(new Set([...VALID_REQUEST_OPERATIONS, ...IMPLEMENTED_REMAINING_OPERATIONS, ...NATIVE_READ_OPERATIONS]).size * MOCK_INSTALLS.length);
   expect(evidence).toHaveLength(operations.length * MOCK_INSTALLS.length);
   console.log(`mock response inventory: ${ids.size} operations classified; ${validated.size} response producers validated; ${IMPLEMENTED_REMAINING_OPERATIONS.size} newly implemented mock contracts; ${nonProducing.length} uncovered operations (boundary rejection is not coverage)`);

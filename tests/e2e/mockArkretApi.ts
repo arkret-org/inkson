@@ -4138,6 +4138,14 @@ export async function mockArkretApi(
       // A closed service-unavailable result is not an unlock challenge or proof.
       return mockProblem(route, "temporarily_unavailable", "The explicitly preseeded backup unlock service is temporarily unavailable in this fixture.");
     }
+    if (
+      /^\/_arkret\/self\/keys\/backups\/[^/]+\/unlock-challenge$/.test(url.pathname) &&
+      route.request().method() === "POST"
+    ) {
+      // Backup summaries do not provide the native challenge or one-use ledger.
+      // Keep that positive contract uncovered and expose its registered refusal.
+      return mockProblem(route, "not_implemented", "Native backup unlock challenges are not implemented by this fixture.");
+    }
 
     const keyBackupMatch = url.pathname.match(
       /^\/_arkret\/self\/keys\/backups\/([^/]+)$/,
