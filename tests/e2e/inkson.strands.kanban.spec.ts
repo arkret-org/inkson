@@ -213,7 +213,7 @@ test("fresh Sidecar rejection preserves its bound draft without publishing to th
   const ensureBodies: Record<string, any>[] = [];
   await page.route("**/_arkret/self/agent-sidecars:ensure", async (route) => {
     const body = route.request().postDataJSON();
-    validateMockSchema("schemas/agent-operations.schema.json#/$defs/agent_sidecar_ensure_request_body", body);
+    validateMockSchema("schemas/principal-operations.schema.json#/$defs/agent_sidecar_ensure_request_body", body);
     ensureBodies.push(body);
     const problem = {
       type: "https://arkret.org/problems/service_unavailable",
