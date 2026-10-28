@@ -2748,7 +2748,7 @@ export async function mockArkretApi(
         }
       }
       await new Promise((resolve) => setTimeout(resolve, 5_000));
-      if (epoch !== committedCutEpoch) throw new Error("committed Event subscription context changed");
+      if (epoch !== committedCutEpoch) return route.abort("aborted");
       const frames = [
         ...replay.map(full => ({ kind: "committed_event", realm_id: full.commit.realm_id, cursor, payload: structuredClone(full) })),
         { kind: "checkpoint", cursor },
@@ -4070,6 +4070,13 @@ export async function mockArkretApi(
           accepted_at: acceptedAt,
         });
       }
+    }
+
+    if (url.pathname === "/_arkret/self/actor-profiles/query" && route.request().method() === "POST") {
+      expect(route.request().headers()["arkret-operation"]).toBe("ak.self.actor_profile.read.resolve.v1");
+      validateMockSchema("schemas/actor-profile-operations.schema.json#/$defs/resolve_request_body", await contractRequestBody(route));
+      // Native archival responses cannot authorize the ordinary mock account.
+      return mockProblem(route, "not_implemented", "Native Actor Profile resolution is not implemented by this fixture.");
     }
 
     if (

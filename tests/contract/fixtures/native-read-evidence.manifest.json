@@ -5,7 +5,7 @@
     "failed": 0,
     "ignored": 0
   },
-  "corpus_sha256": "4bd61aeadb6701457f3d673df7102436de93915c33c8960c7d70487764fc2ba4",
+  "corpus_sha256": "d836c3b8feaeb5e86312bbcec991ec37e19352776e00d870ba2458e67db3b920",
   "source_sha256": {
     "arkret-rust-sdk/Cargo.lock": "8ece2e78c604ecb6649025d12d5c51535568f52f5480f56f36df6bffbddc1ea6",
     "arkret-rust-sdk/Cargo.toml": "2550ae404a5d910187bd497f1584aec953b35e83e85c13f10f904dd9b4650672",
@@ -31,7 +31,7 @@
     "arkret-rust-sdk/crates/crypto/src/mls_exporter.rs": "35724da03d2bc8365a12b21f28fcaf94379a321efe0d9a353a96e58321f985a0",
     "arkret-rust-sdk/crates/crypto/src/secret_share.rs": "0d23634bf7e8fcc1b18edbd1f2a03a8c0b30d65f38ea6d86aaa445d606ef632c",
     "arkret-rust-sdk/crates/crypto/src/sframe.rs": "d5901869fe24d566ca454916aee27005eb9a49cf6b882355c87bd50123b739f8",
-    "arkret-rust-sdk/crates/http-client/Cargo.toml": "cdf27d84f9bceb7519f37d181b7fafd1e2b98585b4203f1bccc3e80b77aead17",
+    "arkret-rust-sdk/crates/http-client/Cargo.toml": "4899bc7b6b7396a3fbf6f836bbf6ce52f7f668d388cbbe42144a608ec591e1c2",
     "arkret-rust-sdk/crates/http-client/src/account_subscribe.rs": "05c77900f7d57a5f383553c48de4d101680c4b1baaab9336c92be5417c81e519",
     "arkret-rust-sdk/crates/http-client/src/builder.rs": "8eae5c9ffa716dfd0e2786e090d905e116b5a5487a59605d76dc37f3f0605227",
     "arkret-rust-sdk/crates/http-client/src/client_internals.rs": "62b783ad86129afb4a35f1287a855cc5273ae8ab424c3ca88a938e79230c7651",
@@ -575,7 +575,7 @@
     "arkret-rust-sdk/crates/wire/src/signer_evidence.rs": "d0316bcd403653df6dba8a1acb860094caaef35f82783b48554a57adcaaeaff4",
     "arkret-rust-sdk/crates/wire/src/string_profiles.rs": "99f78224fd5bb2d5c738dec2f2399cddf2eb63a069dad29bd4ee5bc215b8f7aa",
     "arkret-rust-sdk/crates/wire/src/test_support.rs": "7596c11e99c3e8fd29369db5d2302512a0ccc7c674465f60d4ad58b1c11a84e9",
-    "arkret-rust-sdk/crates/wire/src/websocket_binding.rs": "88c54eccc7fcd63cdd1c38f194135760475ef01c768d4b081eb3b657bcea3487",
+    "arkret-rust-sdk/crates/wire/src/websocket_binding.rs": "72f3525b85f8f3f306a5d2b458c69a51c76c8de8c81095867aec01e09baa8cfd",
     "arkret-rust-sdk/crates/wire/src/webvh_parameters.rs": "2c60f3d9c05baac4bba6a7a8378d785cf1b714855b568c148c02a50bd73c60d3",
     "arkret-rust-sdk/crates/wire/src/wire_presence.rs": "c8a81ab30e097774764a32c090452fac04063c15e0c4b4dfd6424d5648a8751e",
     "arkret-rust-sdk/crates/wire/src/wire_strings.rs": "ecf1fb205b9d7de7f4a5c9d153c835a08e5a0fe764d381f933445793994bb00d",
