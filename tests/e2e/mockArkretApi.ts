@@ -122,7 +122,7 @@ type MockArkretApiOptions = {
   demoEventRedaction?: () => boolean;
   demoSearchPolicy?: () => boolean;
   invitePreview?: "disclosed" | "restricted" | "retry_once";
-  invitePreviewDelayMs?: number;
+  beforeInvitePreviewResponse?: (page: Page) => Promise<void>;
   contactRequestOutcome?: "failed" | "tampered";
   contactCeremony?: Record<string, any>;
   deviceProjectionValidityMs?: number;
@@ -2599,11 +2599,7 @@ export async function mockArkretApi(
       expect(body.target.realm_id).toBe(invitedRealmId);
       expect(body.target.invite_id).toBe(DEMO_INVITE_ID);
       invitePreviewAttempts += 1;
-      if ((options.invitePreviewDelayMs ?? 0) > 0) {
-        await new Promise((resolve) =>
-          setTimeout(resolve, options.invitePreviewDelayMs),
-        );
-      }
+      await options.beforeInvitePreviewResponse?.(page);
       if (options.invitePreview === "restricted") {
         return mockProblem(route, "not_found", "resource not found");
       }
