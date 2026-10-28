@@ -721,11 +721,6 @@ export function registerStrandsBeforeEach(apiOptions: Parameters<typeof mockArkr
         ? "failed" : testInfo.title.startsWith("contact request rejects tampered receipt")
           ? "tampered" : undefined,
       invitePreview,
-      invitePreviewDelayMs: testInfo.title.startsWith(
-        "invite preview disclosed",
-      )
-        ? 750
-        : undefined,
       ...apiOptions,
     });
     scenarioRealms.set(page, scenario);

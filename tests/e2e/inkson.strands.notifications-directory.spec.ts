@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import {
   registerStrandsBeforeEach,
   DEMO_REALM,
@@ -8,7 +8,26 @@ import {
 } from "./strandsHarness";
 import { CURRENT_ACCOUNT_ACTOR_ID, CURRENT_ACCOUNT_ID, DEMO_INVITE_ID, INVITED_REALM } from "./mockArkretApi";
 
-registerStrandsBeforeEach();
+const previewResponseGates = new WeakMap<Page, { wait: Promise<void>; release(): void }>();
+
+test.beforeEach(async ({ page }, testInfo) => {
+  if (testInfo.title.startsWith("invite preview disclosed")) {
+    let release!: () => void;
+    const wait = new Promise<void>((resolve) => { release = resolve; });
+    previewResponseGates.set(page, { wait, release });
+  }
+});
+
+registerStrandsBeforeEach({
+  beforeInvitePreviewResponse: async (page) => {
+    await previewResponseGates.get(page)?.wait;
+  },
+});
+
+test.afterEach(async ({ page }) => {
+  previewResponseGates.get(page)?.release();
+  previewResponseGates.delete(page);
+});
 
 async function openInviteNotification(page: import("@playwright/test").Page) {
   await dismissBlockingRecoveryModal(page);
@@ -37,6 +56,8 @@ test("invite preview disclosed stays loading then visible and only Accept joins"
 
   const item = await openInviteNotification(page);
   await expect(item.getByTestId("invite-preview-loading")).toBeVisible();
+  expect(writes).toEqual([]);
+  previewResponseGates.get(page)!.release();
   await expect(item.getByTestId("invite-preview-disclosed")).toBeVisible();
   await expect(item.getByTestId("invite-preview-name")).toHaveText(
     "Preview-only Realm",
