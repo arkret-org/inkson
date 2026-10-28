@@ -323,7 +323,7 @@ struct AccountDataValueInput {
 pub(super) fn account_data_value(value: Value) -> Result<Value> {
     let input: AccountDataValueInput = serde_json::from_value(value)?;
     ensure!(
-        input.key == "ak.account.blocklist",
+        input.key == arkret_sdk::AccountDataKey::ACCOUNT_BLOCKLIST,
         "fixture supports the registered blocklist value"
     );
     super::validate_mock_response(
