@@ -5,7 +5,7 @@
     "failed": 0,
     "ignored": 0
   },
-  "corpus_sha256": "82f74c0ce192a11d01f9a721c55689042f7bc68575399b8a8063d5dcf128dfac",
+  "corpus_sha256": "c40adbb13f2e5260a631e28bba53bdb71837a9966c1b0eb8a771f434db042acc",
   "source_sha256": {
     "arkret-rust-sdk/Cargo.lock": "8ece2e78c604ecb6649025d12d5c51535568f52f5480f56f36df6bffbddc1ea6",
     "arkret-rust-sdk/Cargo.toml": "2550ae404a5d910187bd497f1584aec953b35e83e85c13f10f904dd9b4650672",
@@ -1452,7 +1452,7 @@
     "coland/crates/storage-postgres/src/agent_management_review.rs": "98339452acbabede14a9558deed9e64f3fd00a996cf94b5ce31e1c2ba93fcf8e",
     "coland/crates/storage-postgres/src/agent_membership_cascades.rs": "3534a5b89348b6e320511cfbaaa5450d59b126681573ba37ca44c193d328c110",
     "coland/crates/storage-postgres/src/agent_origin.rs": "518c47d7350355b77fa2144191432da7e5bba0c951f912200eac27e388ddb49f",
-    "coland/crates/storage-postgres/src/agent_participation_admission.rs": "1c0591b2ae5c5a19f339269e531a87de3dee9c0c429c039824b3cc6b3be7034a",
+    "coland/crates/storage-postgres/src/agent_participation_admission.rs": "aac7ad6dd4fff92551d9a3c90dae60f2286c49c7be91c74178e8031850d79a25",
     "coland/crates/storage-postgres/src/agent_pcr_genesis.rs": "d11e5e73684c183cca572bf25cf9f0867ec8b1d923a9c392fddba51c7d58a114",
     "coland/crates/storage-postgres/src/agent_principal_row.rs": "1fe5657b9dc5d8e24ba1ea675da866150105890cadbf278ebcc73e64d41e5ca9",
     "coland/crates/storage-postgres/src/agent_producer_evidence.rs": "b5a569807554b6d567922fab2b9f2db134f3f2dbadffe28ea0f59bf4b7372fc6",
