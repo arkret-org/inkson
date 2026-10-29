@@ -3,6 +3,7 @@ import { assertSearchSource, searchReference } from "./searchSource";
 import { byClass } from "./strandsHarness";
 import { expect, test } from "@playwright/test";
 import { DEMO_REALM, dismissBlockingRecoveryModal, openKanban, registerStrandsBeforeEach } from "./strandsHarness";
+import { deliveredMockAccountBody, observeSuccessfulSignerQueries } from "./mockArkretApi";
 
 let cropped = false;
 registerStrandsBeforeEach({ demoNotification: true, demoEventRedaction: () => cropped });
@@ -36,11 +37,12 @@ test("current Event cropping withdraws a visible search body and survives reload
   const originalId = await searchReference(row, "event").textContent();
   // The next ordinary Account poll carries an independently signed newer cut.
   // It still retains the old Full source, so only the current crop can hide it.
+  const hasSignerQuery = observeSuccessfulSignerQueries(page);
   let croppedBody: string | undefined;
   const croppedCut = page.waitForResponse(async response => {
     if (new URL(response.url()).pathname !== "/_arkret/self/account/subscribe"
-      || response.status() !== 200 || await response.finished()) return false;
-    const body = await response.text();
+      || response.status() !== 200) return false;
+    const body = await deliveredMockAccountBody(response);
     if (!body.includes('"object_redaction"')) return false;
     croppedBody = body;
     return true;
@@ -53,11 +55,7 @@ test("current Event cropping withdraws a visible search body and survives reload
   const lastEvent = frame.realms[DEMO_REALM].committed_events.at(-1).commit.event_ref;
   // A received frame is not installed until all historical signer material
   // arrives. The fixture CLI validates each proof independently on Windows.
-  await page.waitForResponse(response =>
-    new URL(response.url()).pathname === "/_arkret/self/signer-keys/query"
-    && response.status() === 200
-    && response.request().postDataJSON().queries.some((query: any) =>
-      query.committed_event_ref?.event_id === lastEvent), { timeout: 60_000 });
+  await expect.poll(() => hasSignerQuery(lastEvent), { timeout: 60_000 }).toBe(true);
   await expect(row).toHaveCount(0);
   await expect(byClass(panel, "global-search-results-no-results")).toBeVisible();
   await byClass(panel, "global-search-submit").click();

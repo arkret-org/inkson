@@ -3,6 +3,7 @@ import { assertSearchSource, searchReference } from "./searchSource";
 import { byClass } from "./strandsHarness";
 import { expect, test } from "@playwright/test";
 import { DEMO_REALM, dismissBlockingRecoveryModal, openKanban, registerStrandsBeforeEach } from "./strandsHarness";
+import { deliveredMockAccountBody, observeSuccessfulSignerQueries } from "./mockArkretApi";
 
 let active = false;
 registerStrandsBeforeEach({ demoNotification: true, demoSearchPolicy: () => active });
@@ -33,11 +34,12 @@ test("current retention Policy withdraws and restores the same search body at it
   await assertSearchSource(row);
   const original = await searchReference(row, "event").textContent();
   const commit = await searchReference(row, "commit").textContent();
+  const hasSignerQuery = observeSuccessfulSignerQueries(page);
   let policyBody: string | undefined;
   const update = page.waitForResponse(async response => {
     if (new URL(response.url()).pathname !== "/_arkret/self/account/subscribe"
-      || response.status() !== 200 || await response.finished()) return false;
-    const body = await response.text();
+      || response.status() !== 200) return false;
+    const body = await deliveredMockAccountBody(response);
     if (!body.includes('"policy_kind":"retention"')) return false;
     policyBody = body;
     return true;
@@ -49,11 +51,7 @@ test("current retention Policy withdraws and restores the same search body at it
     .find(frame => frame.realms?.[DEMO_REALM]);
   const entry = frame.realms[DEMO_REALM];
   const lastEvent = entry.committed_events.at(-1).commit.event_ref;
-  await page.waitForResponse(response =>
-    new URL(response.url()).pathname === "/_arkret/self/signer-keys/query"
-    && response.status() === 200
-    && response.request().postDataJSON().queries.some((query: any) =>
-      query.committed_event_ref?.event_id === lastEvent), { timeout: 60_000 });
+  await expect.poll(() => hasSignerQuery(lastEvent), { timeout: 60_000 }).toBe(true);
   const policy = entry.current.entries.find((row: any) => row.selector.kind === "policy").value;
   const observed: Record<string, unknown> = { policy, proofsAt: Date.now(), original, commit };
   // This source exists only in the new cut and a different Strand. The Policy
