@@ -29,6 +29,22 @@ test("Account fixture observation preserves the exact validated NDJSON delivery"
   captured.close();
 });
 
+test("a failed Account fulfillment never records a delivered cut", async () => {
+  const captured = captureRouteHandler();
+  const observed: string[] = [];
+  try {
+    await mockArkretApi(captured.page as never, {
+      observeAccountSubscribe: body => observed.push(body),
+    });
+    await expect(driveOnce(captured.handler(), {
+      method: "GET",
+      url: "https://local.host/_arkret/self/account/subscribe?catchup=true",
+      onFulfill: () => { throw new Error("cancelled before fulfillment"); },
+    })).rejects.toThrow("cancelled before fulfillment");
+    expect(observed).toHaveLength(0);
+  } finally { captured.close(); }
+});
+
 
 async function emit(request: Parameters<typeof driveOnce>[1], response: any) {
   const captured = captureRouteHandler();
