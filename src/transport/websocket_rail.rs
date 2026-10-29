@@ -556,7 +556,11 @@ impl<H: garth::AccountSubscribeTransport> garth::AccountSubscribeTransport for S
                     }
                     if done
                         || (!request.catchup.unwrap_or(false)
-                            && kind == AccountSubscribeFrameKind::Delta)
+                            && matches!(
+                                kind,
+                                AccountSubscribeFrameKind::Delta
+                                    | AccountSubscribeFrameKind::Checkpoint
+                            ))
                         || (kind == AccountSubscribeFrameKind::Heartbeat
                             && folder.reconnect_cursor().is_some()
                             && !request.catchup.unwrap_or(false))
@@ -801,8 +805,7 @@ mod tests {
         let _ = &mut s;
     }
 
-    #[tokio::test]
-    async fn http_handoff_retires_the_old_consumer_and_completes_the_same_request() {
+    async fn verify_http_handoff(kind: AccountSubscribeFrameKind) {
         use std::sync::atomic::{AtomicBool, Ordering};
         struct Cancelled(Arc<AtomicBool>);
         impl Drop for Cancelled {
@@ -891,15 +894,24 @@ mod tests {
                 operation_id,
             })
             .unwrap();
+        let frame = Box::new(
+            serde_json::from_value(
+                serde_json::json!({"kind": kind, "cursor":"ak:cursor:after-upgrade"}),
+            )
+            .unwrap(),
+        );
         connection
-            .publish(WebSocketServerFrame::Data {
-                channel_id: channel_id.clone(),
-                payload: WebSocketDataPayload::Account(Box::new(
-                    serde_json::from_value(
-                        serde_json::json!({"kind":"delta", "cursor":"ak:cursor:after-upgrade"}),
-                    )
-                    .unwrap(),
-                )),
+            .publish(if kind == AccountSubscribeFrameKind::Delta {
+                WebSocketServerFrame::Data {
+                    channel_id: channel_id.clone(),
+                    payload: WebSocketDataPayload::Account(frame),
+                }
+            } else {
+                WebSocketServerFrame::ChannelControl {
+                    frame_scope: WebSocketChannelScope::Channel,
+                    channel_id: channel_id.clone(),
+                    payload: WebSocketChannelControlPayload::Account(frame),
+                }
             })
             .unwrap();
         let result = tokio::time::timeout(std::time::Duration::from_secs(2), attempt)
@@ -911,9 +923,117 @@ mod tests {
             panic!("a preferred transport handoff must not request backoff or cursor reset");
         };
         assert_eq!(batch.cursor, "ak:cursor:after-upgrade");
+        assert_eq!(
+            batch.frames.len(),
+            usize::from(kind == AccountSubscribeFrameKind::Delta)
+        );
         assert!(matches!(connection.next_command(),
             Some(WebSocketClientFrame::Close { channel_id: closed, .. }) if closed == channel_id));
         assert!(connection.next_command().is_none());
+    }
+
+    #[tokio::test]
+    async fn http_handoff_retires_the_old_consumer_and_completes_the_same_request() {
+        verify_http_handoff(AccountSubscribeFrameKind::Delta).await;
+    }
+
+    #[tokio::test]
+    async fn http_handoff_completes_a_checkpoint_without_fabricating_a_delta() {
+        verify_http_handoff(AccountSubscribeFrameKind::Checkpoint).await;
+    }
+
+    #[tokio::test]
+    async fn initial_catchup_checkpoint_keeps_its_consumer_until_catchup_complete() {
+        struct NoHttp;
+        impl garth::AccountSubscribeTransport for NoHttp {
+            async fn subscribe(
+                &self,
+                _: &AccountSubscribeParameters,
+            ) -> garth::Result<AccountSubscribeReadAction> {
+                panic!("the ready socket must own this subscription");
+            }
+        }
+        let rail = WebSocketRail::default();
+        let connection = SharedConnection::new();
+        connection.set_ready(true);
+        rail.attach(connection.clone());
+        let transport = StreamRail::select(&rail, NoHttp);
+        let attempt = tokio::spawn(async move {
+            garth::AccountSubscribeTransport::subscribe(
+                &transport,
+                &AccountSubscribeParameters {
+                    catchup: Some(true),
+                    ..Default::default()
+                },
+            )
+            .await
+        });
+        let command = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                if let Some(command) = connection.next_command() {
+                    break command;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        let WebSocketClientFrame::Open {
+            channel_id,
+            operation_id,
+            ..
+        } = command
+        else {
+            panic!("open required")
+        };
+        connection
+            .publish(WebSocketServerFrame::Opened {
+                channel_id: channel_id.clone(),
+                operation_id,
+            })
+            .unwrap();
+        let control = |kind: &str, cursor: &str| WebSocketServerFrame::ChannelControl {
+            frame_scope: WebSocketChannelScope::Channel,
+            channel_id: channel_id.clone(),
+            payload: WebSocketChannelControlPayload::Account(Box::new(
+                serde_json::from_value(serde_json::json!({"kind":kind, "cursor":cursor})).unwrap(),
+            )),
+        };
+        connection
+            .publish(control("checkpoint", "ak:cursor:initial-baseline"))
+            .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while !connection.with(|q| {
+                q.channels
+                    .get(&channel_id)
+                    .is_some_and(|c| c.frames.is_empty())
+            }) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(
+            !attempt.is_finished(),
+            "the baseline checkpoint is not catchup completion"
+        );
+        assert!(connection.next_command().is_none());
+        connection
+            .publish(control("catchup_complete", "ak:cursor:initial-complete"))
+            .unwrap();
+        let result = tokio::time::timeout(std::time::Duration::from_secs(2), attempt)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        let AccountSubscribeReadAction::Batch(batch) = result else {
+            panic!("validated batch required")
+        };
+        assert_eq!(batch.cursor, "ak:cursor:initial-complete");
+        assert!(batch.frames.is_empty());
+        assert!(
+            matches!(connection.next_command(), Some(WebSocketClientFrame::Close {channel_id: closed, ..}) if closed == channel_id)
+        );
     }
 
     #[tokio::test]
