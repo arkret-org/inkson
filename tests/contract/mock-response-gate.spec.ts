@@ -9,6 +9,42 @@ const blob = { method: "GET", url: "https://local.host/_arkret/self/blob/get" };
 const signal = { method: "GET", url: "https://local.host/_arkret/self/signal/subscribe" };
 const validJson = { status: 200, contentType: "application/json", body: JSON.stringify({ realm_id: DEMO_REALM, circles: [] }) };
 
+test("Account fixture observation preserves the exact validated NDJSON delivery", async () => {
+  const captured = captureRouteHandler();
+  const observed: Array<{ body: string; url: string }> = [];
+  await mockArkretApi(captured.page as never, {
+    observeAccountSubscribe: (body, url) => observed.push({ body, url: url.href }),
+  });
+  const response = await driveOnce(captured.handler(), {
+    method: "GET",
+    url: "https://local.host/_arkret/self/account/subscribe?catchup=true",
+  });
+  expect(response?.status).toBe(200);
+  expect(response?.contentType).toBe("application/x-ndjson");
+  expect(observed).toHaveLength(1);
+  expect(observed[0].url).toBe("https://local.host/_arkret/self/account/subscribe?catchup=true");
+  expect(observed[0].body).toBe(response?.body);
+  expect(observed[0].body.trim().split("\n").map(line => JSON.parse(line)))
+    .toEqual(expect.arrayContaining([expect.objectContaining({ kind: "catchup_complete" })]));
+  captured.close();
+});
+
+test("a failed Account fulfillment never records a delivered cut", async () => {
+  const captured = captureRouteHandler();
+  const observed: string[] = [];
+  try {
+    await mockArkretApi(captured.page as never, {
+      observeAccountSubscribe: body => observed.push(body),
+    });
+    await expect(driveOnce(captured.handler(), {
+      method: "GET",
+      url: "https://local.host/_arkret/self/account/subscribe?catchup=true",
+      onFulfill: () => { throw new Error("cancelled before fulfillment"); },
+    })).rejects.toThrow("cancelled before fulfillment");
+    expect(observed).toHaveLength(0);
+  } finally { captured.close(); }
+});
+
 
 async function emit(request: Parameters<typeof driveOnce>[1], response: any) {
   const captured = captureRouteHandler();

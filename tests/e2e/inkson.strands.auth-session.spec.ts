@@ -12,8 +12,9 @@ import {
   readLocalConfig,
   addSessionGrantInjection,
   testLocalConfig,
+  observedAccountSubscribeDeliveries,
 } from "./strandsHarness";
-import { deliveredMockAccountBody, mockArkretApi } from "./mockArkretApi";
+import { mockArkretApi } from "./mockArkretApi";
 
 registerStrandsBeforeEach();
 
@@ -22,25 +23,23 @@ async function selectRealmAtDurableCut(page: Page, button: Locator) {
   expect(href).toBeTruthy();
   const realm = decodeURIComponent(new URL(href!, page.url()).pathname.split("/").at(-1)!);
   expect(realm).toMatch(/^ak:realm:/);
-  const [response] = await Promise.all([
-    page.waitForResponse(response => {
-      const url = new URL(response.url());
-      if (response.request().method() !== "GET" || url.pathname !== "/_arkret/self/account/subscribe"
-        || url.searchParams.get("replace_filter") !== "true") return false;
-      const filter = JSON.parse(url.searchParams.get("filter") ?? "{}");
-      return Array.isArray(filter.realm_ids) && filter.realm_ids.includes(realm);
-    }),
-    button.click(),
-  ]);
-  expect(response.status()).toBe(200);
-  const frames = (await deliveredMockAccountBody(response)).trim().split("\n").map(line => JSON.parse(line));
-  const frame = frames.find(frame => frame.kind === "delta" && frame.realms?.[realm]);
-  expect(frame).toBeDefined();
-  expect(frame.cursor).toMatch(/^ak:cursor:/);
+  const deliveries = observedAccountSubscribeDeliveries(page);
+  const start = deliveries.length;
+  await button.click();
   // A mounted shell precedes history verification. This checkpoint is emitted
-  // only after the verified Account stage is committed and durable.
-  await page.waitForFunction(cursor => document.querySelector('[data-testid="sync-cursor"]')
-    ?.textContent?.trim() === `cursor ${cursor}`, frame.cursor);
+  // only after the verified Account stage is committed and durable. Match an
+  // exact Realm/cursor in the validated bytes; an aborted first delivery must
+  // not hide a later successful delivery of the same demand-scoped cut.
+  await expect.poll(async () => {
+    const checkpoint = (await page.getByTestId("sync-cursor").textContent())?.trim();
+    return deliveries.slice(start).some(delivery => {
+      const filter = JSON.parse(new URL(delivery.url).searchParams.get("filter") ?? "{}");
+      if (!Array.isArray(filter.realm_ids) || !filter.realm_ids.includes(realm)) return false;
+      return delivery.body.trim().split("\n").map(line => JSON.parse(line)).some(frame =>
+        frame.kind === "delta" && frame.realms?.[realm]
+        && /^ak:cursor:/.test(frame.cursor) && checkpoint === `cursor ${frame.cursor}`);
+    });
+  }, { timeout: 60_000 }).toBe(true);
 }
 
 test("bootstrap login and sync shows the connected realm", async ({ page }) => {
