@@ -536,13 +536,14 @@ fn prepared_contact_request(
     }
 }
 
-pub(crate) fn sign_prepared_contact_event(
+pub(crate) async fn sign_prepared_contact_event(
+    http: &arkret_sdk::http_client::Client,
     draft: &PreparedEventDraft,
     expected_kind: &str,
 ) -> anyhow::Result<arkret_sdk::AuthoredEvent> {
     let mut event = draft.unsigned_event_for_kind(expected_kind)?;
-    let signer = crate::event_signer::active_signer()
-        .ok_or_else(|| anyhow::anyhow!("active device signer is required for Contact commit"))?;
+    let session = AuthoringSessionFence::capture()?;
+    let signer = &session.signer;
     let principal =
         arkret_sdk::project_did_to_core_id(&arkret_sdk::Did::new(signer.signer_did().to_owned())?)?;
     contact_commit_actor(&event.actor_id, &principal)?;
@@ -554,7 +555,10 @@ pub(crate) fn sign_prepared_contact_event(
         );
     }
     let digest_suite = event.digest_suite();
-    let proof_context = crate::event_signer::cached_active_event_proof_context(digest_suite)?;
+    let proof_context = crate::app::runtime_adapter::event_submitter(http.clone())
+        .event_proof_context(digest_suite)
+        .await?;
+    session.check()?;
     signer.sign_sdk_event_with_context(&mut event, proof_context)?;
     let signed_digest =
         arkret_sdk::Hash::new(event.event_digest_with_digest_suite(event.digest_suite())?)?;
@@ -640,9 +644,11 @@ impl crate::transport::TransportClient {
             anyhow::bail!("Contact prepare changed operation_id");
         }
         let signed_event = sign_prepared_contact_event(
+            &http,
             &event_draft,
             arkret_wire::event_kind_str::CONTACT_REQUESTED,
-        )?;
+        )
+        .await?;
         let commit_context = freeze_contact_commit_context(&signed_event)?;
         session.check()?;
         let commit = ContactOperationRequestBody::Commit(ContactCommitRequestBody {

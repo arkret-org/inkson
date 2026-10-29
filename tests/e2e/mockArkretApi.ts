@@ -152,6 +152,7 @@ type MockArkretApiOptions = {
   demoNotification?: boolean;
   demoEventRedaction?: () => boolean;
   demoSearchPolicy?: () => boolean;
+  observeAccountSubscribe?: (body: string, url: URL) => void;
   invitePreview?: "disclosed" | "restricted" | "retry_once";
   beforeInvitePreviewResponse?: (page: Page) => Promise<void>;
   contactRequestOutcome?: "failed" | "tampered";
@@ -2623,6 +2624,9 @@ export async function mockArkretApi(
       });
       deliveredAccountBodies.set(route.request(), delivered);
       await delivered;
+      // Only completed fulfillment is observable. Installation is independently
+      // proved by the new cut's visible content or exact durable UI cursor.
+      options.observeAccountSubscribe?.(body, url);
       return;
     }
 

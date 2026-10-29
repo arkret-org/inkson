@@ -1,10 +1,15 @@
 import { expect, test } from "@playwright/test";
 import { DEMO_REALM, dismissBlockingRecoveryModal, openKanban, registerStrandsBeforeEach } from "./strandsHarness";
-import { deliveredMockAccountBody, observeSuccessfulSignerQueries } from "./mockArkretApi";
 
 let active = false;
-registerStrandsBeforeEach({ demoNotification: true, demoSearchPolicy: () => active });
-test.beforeEach(() => { active = false; });
+let policyBody: string | undefined;
+registerStrandsBeforeEach({
+  demoNotification: true, demoSearchPolicy: () => active,
+  observeAccountSubscribe: body => {
+    if (body.includes('"policy_kind":"retention"')) policyBody = body;
+  },
+});
+test.beforeEach(() => { active = false; policyBody = undefined; });
 
 test("current retention Policy withdraws and restores the same search body at its validity boundaries", async ({ page }, testInfo) => {
   test.setTimeout(300_000);
@@ -30,32 +35,21 @@ test("current retention Policy withdraws and restores the same search body at it
   await expect(row).toHaveCount(1);
   const original = await row.getAttribute("data-event-id");
   const commit = await row.getAttribute("data-commit-id");
-  const hasSignerQuery = observeSuccessfulSignerQueries(page);
-  let policyBody: string | undefined;
-  const update = page.waitForResponse(async response => {
-    if (new URL(response.url()).pathname !== "/_arkret/self/account/subscribe"
-      || response.status() !== 200) return false;
-    const body = await deliveredMockAccountBody(response);
-    if (!body.includes('"policy_kind":"retention"')) return false;
-    policyBody = body;
-    return true;
-  });
   active = true;
-  await update;
-  expect(policyBody).toBeDefined();
+  await expect.poll(() => policyBody, { timeout: 60_000 }).toBeDefined();
   const frame = policyBody!.trim().split("\n").map(line => JSON.parse(line))
     .find(frame => frame.realms?.[DEMO_REALM]);
   const entry = frame.realms[DEMO_REALM];
-  const lastEvent = entry.committed_events.at(-1).commit.event_ref;
-  await expect.poll(() => hasSignerQuery(lastEvent), { timeout: 60_000 }).toBe(true);
   const policy = entry.current.entries.find((row: any) => row.selector.kind === "policy").value;
-  const observed: Record<string, unknown> = { policy, proofsAt: Date.now(), original, commit };
+  const observed: Record<string, unknown> = { policy, preparedCutAt: Date.now(), original, commit };
   // This source exists only in the new cut and a different Strand. The Policy
   // must neither poison the entire index nor broaden its exact resource.
   await input.fill(control);
   await submit.click();
+  await expect(row.getByTestId("global-search-result-snippet"))
+    .toHaveText(control, { timeout: 60_000 });
   await expect(row).toHaveCount(1);
-  await expect(row.getByTestId("global-search-result-snippet")).toHaveText(control);
+  observed.proofsAt = Date.now();
   await input.fill(body);
   await submit.click();
   await expect(row).toHaveCount(1);
