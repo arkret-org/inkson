@@ -131,6 +131,44 @@ fn scope_label(scope: &ContactScope) -> String {
     tr(key)
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ContactSessionStamp {
+    account: Option<(String, arkret_sdk::AccountId, arkret_sdk::DeviceId, String)>,
+    base: String,
+    credential_available: bool,
+    generation: u64,
+}
+
+impl ContactSessionStamp {
+    pub(crate) fn capture(context: &Rc<InksonContext>) -> Self {
+        Self {
+            account: context.active_account.get_untracked().map(|account| {
+                (
+                    account.profile_id,
+                    account.authority,
+                    account.device_id,
+                    account.server_url.to_string(),
+                )
+            }),
+            base: context.base_url.get_untracked(),
+            credential_available: !context.token.get_untracked().trim().is_empty(),
+            generation: context.session_generation.get_untracked(),
+        }
+    }
+
+    pub(crate) fn is_current(&self, context: &Rc<InksonContext>) -> bool {
+        &Self::capture(context) == self
+    }
+
+    pub(crate) fn require_current(&self, context: &Rc<InksonContext>) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.account.is_some() && self.credential_available && self.is_current(context),
+            "contact action belongs to a replaced session"
+        );
+        Ok(())
+    }
+}
+
 #[derive(Clone)]
 pub(crate) enum ContactRowAction {
     Respond {
@@ -183,8 +221,7 @@ pub(crate) fn run_contact_action(
     let confirmation_base = base.clone();
     let confirmation_token = api_token.clone();
     {
-        let generation = context.session_generation.get_untracked();
-        let account = context.active_account.get_untracked();
+        let stamp = ContactSessionStamp::capture(&context);
         let task_owner = context.clone();
         let _ = task_owner.spawn(async move {
             let result = match action {
@@ -192,44 +229,52 @@ pub(crate) fn run_contact_action(
                     requester,
                     request_event_ref,
                     verb,
-                } => with_authed_sdk_client(&base, api_token, |http| async move {
-                    match request_event_ref {
-                        Some(request_event_ref) => {
-                            crate::transport::account::respond_contact_with_request_id(
-                                &http,
-                                &requester,
-                                &request_event_ref,
-                                &verb,
-                            )
-                            .await
-                        }
-                        None => {
-                            crate::transport::account::respond_contact(&http, &requester, &verb)
-                                .await
-                        }
-                    }
-                })
-                .await
-                .map(|_| ()),
-                ContactRowAction::Tombstone { peer, block } => {
+                } => {
+                    let request_stamp = stamp.clone();
+                    let request_context = context.clone();
                     with_authed_sdk_client(&base, api_token, |http| async move {
+                        request_stamp.require_current(&request_context)?;
+                        match request_event_ref {
+                            Some(request_event_ref) => {
+                                crate::transport::account::respond_contact_with_request_id(
+                                    &http,
+                                    &requester,
+                                    &request_event_ref,
+                                    &verb,
+                                )
+                                .await
+                            }
+                            None => {
+                                crate::transport::account::respond_contact(&http, &requester, &verb)
+                                    .await
+                            }
+                        }
+                    })
+                    .await
+                    .map(|_| ())
+                }
+                ContactRowAction::Tombstone { peer, block } => {
+                    let request_stamp = stamp.clone();
+                    let request_context = context.clone();
+                    with_authed_sdk_client(&base, api_token, |http| async move {
+                        request_stamp.require_current(&request_context)?;
                         crate::transport::account::tombstone_contact(&http, &peer, block).await
                     })
                     .await
                     .map(|_| ())
                 }
                 ContactRowAction::ScopeUpdate { peer, scopes } => {
+                    let request_stamp = stamp.clone();
+                    let request_context = context.clone();
                     with_authed_sdk_client(&base, api_token, |http| async move {
+                        request_stamp.require_current(&request_context)?;
                         crate::transport::account::update_contact_scopes(&http, &peer, scopes).await
                     })
                     .await
                     .map(|_| ())
                 }
             };
-            if !context.session_matches(generation, &account)
-                || !busy.is_alive()
-                || !row_status.is_alive()
-            {
+            if !stamp.is_current(&context) || !busy.is_alive() || !row_status.is_alive() {
                 return;
             }
             match result {
@@ -741,8 +786,7 @@ pub fn contact_new_panel(
                     return;
                 };
                 let context = context.clone();
-                let generation = context.session_generation.get_untracked();
-                let account = context.active_account.get_untracked();
+                let stamp = ContactSessionStamp::capture(&context);
                 let on_submitted = on_submitted.clone();
                 let _ = scope.owner().spawn(async move {
                     let greeting_opt = if greeting.is_empty() {
@@ -750,12 +794,15 @@ pub fn contact_new_panel(
                     } else {
                         Some(greeting.as_str())
                     };
+                    let request_stamp = stamp.clone();
+                    let request_context = context.clone();
                     let result = with_authed_api(&base, api_token, |api| async move {
+                        request_stamp.require_current(&request_context)?;
                         api.request_contact_with_message(&target_did, &scopes, greeting_opt)
                             .await
                     })
                     .await;
-                    if !context.session_matches(generation, &account) {
+                    if !stamp.is_current(&context) {
                         return;
                     }
                     match result {
@@ -1345,16 +1392,18 @@ pub fn contacts_panel(scope: &Scope, context: Rc<InksonContext>, advanced: bool)
             let _ = reload.get();
             let base = ctx.base_url.get();
             let token = ctx.token.get();
-            let generation = ctx.session_generation.get();
-            let account = ctx.active_account.get();
+            let stamp = ContactSessionStamp::capture(&ctx);
             let ctx = ctx.clone();
             async move {
+                let request_stamp = stamp.clone();
+                let request_context = ctx.clone();
                 let response = with_authed_sdk_client(&base, token, |http| async move {
+                    request_stamp.require_current(&request_context)?;
                     crate::transport::account::contacts(&http).await
                 })
                 .await
                 .map_err(|e| e.display())?;
-                if ctx.session_matches(generation, &account) {
+                if stamp.is_current(&ctx) {
                     ctx.contact_rows.revise(|v| *v = response.contacts.clone());
                     ctx.state_store
                         .write(|store| store.replace_accepted_human_contacts(&response.contacts));

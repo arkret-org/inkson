@@ -82,11 +82,12 @@ pub(super) fn install(scope: &Scope, context: Rc<InksonContext>, ui: Rc<ShellSta
     // Realm invite notification carrier. Keep this inbox live even when the
     // Contacts sidebar has never been opened. A session change cancels the
     // resource and fences responses from the previous account.
+    let contact_context = context.clone();
     resource(scope, move || {
         let account = active_account.get().map(|account| account.authority);
         let api_token = token.get();
         let base = base_url.get();
-        let generation = session_generation.get();
+        let stamp = crate::views::contacts::ContactSessionStamp::capture(&contact_context);
         let state_store = state_store.clone();
         async move {
             direct_contact_rows.revise(|value| *value = Vec::new());
@@ -94,21 +95,18 @@ pub(super) fn install(scope: &Scope, context: Rc<InksonContext>, ui: Rc<ShellSta
                 return Ok(());
             }
             loop {
+                let request_stamp = stamp.clone();
+                let request_context = contact_context.clone();
                 let result = crate::transport::auth::with_authed_sdk_client(
                     &base,
                     api_token.clone(),
-                    |http| async move { crate::transport::account::contacts(&http).await },
+                    |http| async move {
+                        request_stamp.require_current(&request_context)?;
+                        crate::transport::account::contacts(&http).await
+                    },
                 )
                 .await;
-                if session_generation.get_untracked() != generation
-                    || active_account
-                        .get_untracked()
-                        .as_ref()
-                        .map(|account| &account.authority)
-                        != account.as_ref()
-                    || base_url.get_untracked() != base
-                    || token.get_untracked() != api_token
-                {
+                if !stamp.is_current(&contact_context) {
                     return Ok(());
                 }
                 match result {
