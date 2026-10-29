@@ -152,6 +152,7 @@ type MockArkretApiOptions = {
   demoNotification?: boolean;
   demoEventRedaction?: () => boolean;
   demoSearchPolicy?: () => boolean;
+  observeAccountSubscribe?: (body: string, url: URL) => void;
   invitePreview?: "disclosed" | "restricted" | "retry_once";
   beforeInvitePreviewResponse?: (page: Page) => Promise<void>;
   contactRequestOutcome?: "failed" | "tampered";
@@ -2703,6 +2704,7 @@ export async function mockArkretApi(
         validateMockSchema("schemas/account-subscribe-frame.schema.json", value),
       );
       const body = `${frames.map(canonicalJson).join("\n")}\n`;
+      options.observeAccountSubscribe?.(body, url);
       // Register before sending headers; resolve only after actual fulfillment.
       // A non-catchup consumer may cancel its body after the first valid delta.
       const delivered = Promise.resolve().then(async () => {
