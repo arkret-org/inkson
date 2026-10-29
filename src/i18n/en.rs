@@ -3147,15 +3147,15 @@ fn add_contacts_keys(dict: &mut TranslationDict) {
     dict.set("contacts.new.subtitle", "Needs their approval");
     dict.set(
         "contacts.new.intro",
-        "Enter the other person's invite link, handle, or complete account selector to send a friend request. All contact permissions are allowed by default. You can change them later in Settings.",
+        "Enter the other person's invite link or complete account selector to send a friend request. All contact permissions are allowed by default. You can change them later in Settings.",
     );
     dict.set(
         "contacts.new.target_label",
-        "Their invite link, handle, or account",
+        "Their invite link or complete account selector",
     );
     dict.set(
         "contacts.new.target_placeholder",
-        "Paste an invite link or enter alice:example.com",
+        "Paste an invite link or complete account selector",
     );
     dict.set("contacts.new.message_label", "Note (optional)");
     dict.set("contacts.new.message_placeholder", "Say hello…");

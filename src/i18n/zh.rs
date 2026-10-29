@@ -2860,12 +2860,12 @@ fn add_contacts_keys_zh(dict: &mut TranslationDict) {
     dict.set("contacts.new.subtitle", "需对方同意");
     dict.set(
         "contacts.new.intro",
-        "输入对方的邀请链接、handle 或完整账号标识发送好友请求。默认允许全部联系人权限，添加后可在设置中修改。",
+        "输入对方的邀请链接或完整账号标识发送好友请求。默认允许全部联系人权限，添加后可在设置中修改。",
     );
-    dict.set("contacts.new.target_label", "对方邀请链接、handle 或账号");
+    dict.set("contacts.new.target_label", "对方邀请链接或完整账号标识");
     dict.set(
         "contacts.new.target_placeholder",
-        "粘贴邀请链接或输入 alice:example.com",
+        "粘贴邀请链接或完整账号标识",
     );
     dict.set("contacts.new.message_label", "附言(可选)");
     dict.set("contacts.new.message_placeholder", "打个招呼…");
