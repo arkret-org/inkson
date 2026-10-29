@@ -13,7 +13,7 @@ import {
   addSessionGrantInjection,
   testLocalConfig,
 } from "./strandsHarness";
-import { mockArkretApi } from "./mockArkretApi";
+import { deliveredMockAccountBody, mockArkretApi } from "./mockArkretApi";
 
 registerStrandsBeforeEach();
 
@@ -33,8 +33,7 @@ async function selectRealmAtDurableCut(page: Page, button: Locator) {
     button.click(),
   ]);
   expect(response.status()).toBe(200);
-  expect(await response.finished()).toBeNull();
-  const frames = (await response.text()).trim().split("\n").map(line => JSON.parse(line));
+  const frames = (await deliveredMockAccountBody(response)).trim().split("\n").map(line => JSON.parse(line));
   const frame = frames.find(frame => frame.kind === "delta" && frame.realms?.[realm]);
   expect(frame).toBeDefined();
   expect(frame.cursor).toMatch(/^ak:cursor:/);
