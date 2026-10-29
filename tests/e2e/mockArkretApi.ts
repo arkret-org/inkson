@@ -2713,6 +2713,9 @@ export async function mockArkretApi(
       });
       deliveredAccountBodies.set(route.request(), delivered);
       await delivered;
+      // Only completed fulfillment is observable. Installation is independently
+      // proved by the new cut's visible content or exact durable UI cursor.
+      options.observeAccountSubscribe?.(body, url);
       return;
     }
 
