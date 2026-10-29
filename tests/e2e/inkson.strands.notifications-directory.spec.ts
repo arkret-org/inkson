@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import {
   registerStrandsBeforeEach,
   DEMO_REALM,
@@ -8,7 +8,26 @@ import {
 } from "./strandsHarness";
 import { CURRENT_ACCOUNT_ACTOR_ID, CURRENT_ACCOUNT_ID, DEMO_INVITE_ID, INVITED_REALM, validateMockSchema } from "./mockArkretApi";
 
-registerStrandsBeforeEach();
+const previewResponseGates = new WeakMap<Page, { wait: Promise<void>; release(): void }>();
+
+test.beforeEach(async ({ page }, testInfo) => {
+  if (testInfo.title.startsWith("invite preview disclosed")) {
+    let release!: () => void;
+    const wait = new Promise<void>((resolve) => { release = resolve; });
+    previewResponseGates.set(page, { wait, release });
+  }
+});
+
+registerStrandsBeforeEach({
+  beforeInvitePreviewResponse: async (page) => {
+    await previewResponseGates.get(page)?.wait;
+  },
+});
+
+test.afterEach(async ({ page }) => {
+  previewResponseGates.get(page)?.release();
+  previewResponseGates.delete(page);
+});
 
 async function openInviteNotification(page: import("@playwright/test").Page) {
   await dismissBlockingRecoveryModal(page);
@@ -37,6 +56,8 @@ test("invite preview disclosed stays loading then visible and only Accept joins"
 
   const item = await openInviteNotification(page);
   await expect(item.getByTestId("invite-preview-loading")).toBeVisible();
+  expect(writes).toEqual([]);
+  previewResponseGates.get(page)!.release();
   await expect(item.getByTestId("invite-preview-disclosed")).toBeVisible();
   await expect(item.getByTestId("invite-preview-name")).toHaveText(
     "Preview-only Realm",
@@ -48,7 +69,16 @@ test("invite preview disclosed stays loading then visible and only Accept joins"
   ).toHaveCount(0);
   expect(writes).toEqual([]);
 
+  const acceptedResponse = page.waitForResponse(response =>
+    new URL(response.url()).pathname === "/_arkret/self/events"
+    && response.request().method() === "POST"
+    && (response.request().postData() ?? "").includes("ak.invite.accept"),
+    { timeout: 60_000 });
   await item.getByTestId("notification-action").click();
+  const accepted = await acceptedResponse;
+  expect(accepted.status()).toBe(200);
+  const outcome = await accepted.json();
+  expect(outcome).toMatchObject({ status: "committed", commit: { realm_id: INVITED_REALM } });
   await expect
     .poll(() =>
       writes.some((request) =>
@@ -67,12 +97,14 @@ test("invite preview disclosed stays loading then visible and only Accept joins"
     .toBe(true);
   await expect(page.getByTestId("notifications-status")).toContainText(
     "Joined Realm",
+    { timeout: 90_000 },
   );
   const request = writes.find(request => request.path.endsWith("/events")
     && request.body.includes("ak.invite.accept"));
   expect(request).toBeDefined();
   const submission = JSON.parse(request!.body);
   const event = submission.event ?? submission;
+  expect(outcome.commit.event_ref).toBe(event.event_id);
   expect(event.actor_id).toEqual(CURRENT_ACCOUNT_ACTOR_ID);
   expect(event.realm_id).toBe(INVITED_REALM);
   expect(event.payload).toEqual({ invite_id: DEMO_INVITE_ID,
