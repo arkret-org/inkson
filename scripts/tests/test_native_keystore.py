@@ -166,6 +166,19 @@ class NativeKeystoreTests(unittest.TestCase):
         self.assertTrue(self.daemon.terminated)
         self.assertTrue(result["daemon_cleanup"] and result["private_state_cleanup"])
 
+    def test_incomplete_cleanup_cannot_return_success_for_a_successful_command(self):
+        close = native_keystore.NativeKeystoreLease.close
+
+        def incomplete(lease):
+            close(lease)
+            lease.proof["private_state_cleanup"] = False
+
+        with patch.object(native_keystore.NativeKeystoreLease, "close", incomplete):
+            code, result = self.invoke()
+        self.assertEqual(result["command_exit_code"], 0)
+        self.assertFalse(result["passed"])
+        self.assertNotEqual(code, 0)
+
 
 if __name__ == "__main__":
     unittest.main()
