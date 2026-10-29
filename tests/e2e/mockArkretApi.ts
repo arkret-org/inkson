@@ -121,6 +121,7 @@ type MockArkretApiOptions = {
   demoNotification?: boolean;
   demoEventRedaction?: () => boolean;
   demoSearchPolicy?: () => boolean;
+  observeAccountSubscribe?: (body: string, url: URL) => void;
   invitePreview?: "disclosed" | "restricted" | "retry_once";
   beforeInvitePreviewResponse?: (page: Page) => Promise<void>;
   contactRequestOutcome?: "failed" | "tampered";
@@ -2583,10 +2584,15 @@ export async function mockArkretApi(
       frames.forEach((value) =>
         validateMockSchema("schemas/account-subscribe-frame.schema.json", value),
       );
+      const body = `${frames.map(canonicalJson).join("\n")}\n`;
+      // Observe the exact validated fixture bytes before transport. Browser
+      // cancellation can discard CDP's response body after the app read it;
+      // successful installation must still be established by UI assertions.
+      options.observeAccountSubscribe?.(body, url);
       return route.fulfill({
         status: 200,
         contentType: "application/x-ndjson",
-        body: `${frames.map(canonicalJson).join("\n")}\n`,
+        body,
       });
     }
 
