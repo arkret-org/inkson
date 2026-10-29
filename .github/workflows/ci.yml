@@ -202,6 +202,14 @@ jobs:
         working-directory: inkson
         run: bash scripts/test-native-with-keystore.sh --locked
 
+      - name: Preserve native key store diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-key-store-${{ github.run_id }}
+          path: inkson/artifacts/native-keystore/
+          if-no-files-found: ignore
+
       # Production-path gate: build + test without optional local UI surfaces.
       - name: cargo check (no-default-features, prod path)
         working-directory: inkson
