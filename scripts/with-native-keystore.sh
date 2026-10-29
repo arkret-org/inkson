@@ -7,12 +7,5 @@ test "$#" -gt 0
 command -v dbus-run-session >/dev/null
 command -v gnome-keyring-daemon >/dev/null
 command -v secret-tool >/dev/null
-dbus-run-session -- bash -euo pipefail -c '
-  printf "%s" "inkson-ci-scratch-keyring" |
-    gnome-keyring-daemon --unlock --components=secrets
-  printf "%s" "durable-value" | secret-tool store --label=inkson-ci-probe \
-    service arkret.inkson-ci-probe account preflight
-  test "$(secret-tool lookup service arkret.inkson-ci-probe account preflight)" = durable-value
-  secret-tool clear service arkret.inkson-ci-probe account preflight
-  "$@"
-' bash "$@"
+command -v gdbus >/dev/null
+exec dbus-run-session -- python3 "$(dirname "${BASH_SOURCE[0]}")/native_keystore.py" -- "$@"
