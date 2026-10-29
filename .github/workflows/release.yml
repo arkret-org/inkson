@@ -100,7 +100,7 @@ jobs:
       - name: Package desktop application
         run: python .ci/package-release.py --target ${{ matrix.target }} --dx ${{ matrix.platform }} --app inkson
       - name: Upload release assets
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-${{ matrix.target }}
           path: arkret-org/inkson/release-assets/*
