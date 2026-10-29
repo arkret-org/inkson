@@ -85,6 +85,8 @@ on:
       - "tests/e2e/staticServer.mjs"
       - "scripts/test-native-with-keystore.sh"
       - "scripts/with-native-keystore.sh"
+      - "scripts/native_keystore.py"
+      - "scripts/tests/test_native_keystore.py"
       - ".github/workflows/cross-platform.yaml"
       - "Cargo.toml"
       - "Cargo.lock"
@@ -97,6 +99,8 @@ on:
       - "tests/e2e/staticServer.mjs"
       - "scripts/test-native-with-keystore.sh"
       - "scripts/with-native-keystore.sh"
+      - "scripts/native_keystore.py"
+      - "scripts/tests/test_native_keystore.py"
       - ".github/workflows/cross-platform.yaml"
       - "Cargo.toml"
       - "Cargo.lock"
@@ -262,5 +266,6 @@ jobs:
           path: |
             inkson/playwright-report/
             inkson/test-results/
+            inkson/artifacts/native-keystore/
           retention-days: 7
           if-no-files-found: ignore
