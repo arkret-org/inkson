@@ -149,7 +149,10 @@ def main(arguments=None) -> int:
     finally:
         signal.signal(signal.SIGTERM, previous)
         result.update(lease.proof)
-        result["passed"] = result["passed"] and result["daemon_cleanup"] and result["private_state_cleanup"]
+        result["passed"] = (result["passed"] and exit_code == 0
+                            and result["daemon_cleanup"] and result["private_state_cleanup"])
+        if exit_code == 0 and not result["passed"]:
+            exit_code = 1
         output.mkdir(parents=True, exist_ok=True)
         (output / "result.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
         print(f"native Secret Service lease evidence: {output}")
