@@ -559,7 +559,7 @@ fn ContactRequestNotification(
                     let completed_peer = peer.clone();
                     let completed_request = request_event_ref.clone();
                     crate::views::contacts::run_contact_action(
-                        session.base_url.peek().clone(), token(),
+                        session.base_url.peek().clone(), token,
                         crate::views::contacts::ContactRowAction::Respond {
                             requester: peer.clone(), request_event_ref: request_event_ref.clone(),
                             verb: "accept".to_owned(),

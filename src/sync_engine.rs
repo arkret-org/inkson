@@ -1728,6 +1728,17 @@ impl AccountBatchProjector for InksonAccountProjector {
         // Their successful durable checkpoint is still the retry clock for
         // queued work after a transient submission failure or a client restart.
         if result.is_ok() && !reset && batch.frames.is_empty() {
+            if self.fence() {
+                self.ctx
+                    .projection_sink
+                    .sync_status(SyncStatusEvent::Online);
+                self.ctx
+                    .projection_sink
+                    .projection(ClientProjectionEvent::CursorCheckpoint {
+                        scope: "account".into(),
+                        cursor: batch.cursor.clone(),
+                    });
+            }
             self.drain_durable_outbound(false).await?;
         }
         // Garth keeps the request's demand fixed for this subscription. Once
@@ -3811,6 +3822,190 @@ mod tests {
         projector.ctx.effect.cancel();
         assert!(!projector.active());
         assert!(!provider.is_active());
+    }
+
+    #[derive(Clone)]
+    struct PausedCheckpointStore {
+        inner: crate::client_core::InksonLocalStateStoreAdapter,
+        saved: std::sync::Arc<tokio::sync::Notify>,
+        resume: std::sync::Arc<tokio::sync::Notify>,
+        fail: bool,
+    }
+
+    impl garth::CursorStore for PausedCheckpointStore {
+        async fn load(&self, scope: garth::CursorScope) -> garth::Result<Option<String>> {
+            garth::CursorStore::load(&self.inner, scope).await
+        }
+        async fn save(&self, scope: garth::CursorScope, cursor: String) -> garth::Result<()> {
+            garth::CursorStore::save(&self.inner, scope, cursor).await
+        }
+        async fn clear(&self, scope: garth::CursorScope) -> garth::Result<()> {
+            garth::CursorStore::clear(&self.inner, scope).await
+        }
+        async fn load_account_checkpoint(
+            &self,
+            scope: garth::CursorScope,
+        ) -> garth::Result<Option<garth::AccountCursorCheckpoint>> {
+            garth::CursorStore::load_account_checkpoint(&self.inner, scope).await
+        }
+        async fn save_account_checkpoint(
+            &self,
+            scope: garth::CursorScope,
+            checkpoint: garth::AccountCursorCheckpoint,
+        ) -> garth::Result<()> {
+            if !self.fail {
+                // Retain the real adapter's filesystem write and flush barrier.
+                garth::CursorStore::save_account_checkpoint(&self.inner, scope, checkpoint).await?;
+            }
+            self.saved.notify_one();
+            self.resume.notified().await;
+            if self.fail {
+                return Err(garth::Error::Storage(
+                    "injected checkpoint save failure".into(),
+                ));
+            }
+            Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct CheckpointProjectionProbe {
+        status: RefCell<Vec<SyncStatusEvent>>,
+        events: RefCell<Vec<ClientProjectionEvent>>,
+    }
+
+    impl ProjectionSink for CheckpointProjectionProbe {
+        fn sync_status(&self, event: SyncStatusEvent) {
+            self.status.borrow_mut().push(event);
+        }
+        fn projection(&self, event: ClientProjectionEvent) {
+            self.events.borrow_mut().push(event);
+        }
+    }
+
+    #[tokio::test]
+    async fn empty_checkpoint_publishes_connection_only_after_durable_save_under_original_fence() {
+        use arkret_models_collaboration::sync_frames::account_subscribe::AccountSubscribeReadAction;
+        use garth::CursorStore;
+
+        use crate::runtime::input::ValueReader;
+
+        // Normal completion, failed storage, or a session/effect/demand/account
+        // replacement while the checkpoint future is pending.
+        for variant in 0..7 {
+            let (mut projector, _) = retired_account_attempt();
+            let generation = Rc::new(std::cell::Cell::new(1));
+            let read_generation = generation.clone();
+            projector.generation = ValueReader::new(move || read_generation.get());
+            let selected = Rc::new(RefCell::new(String::new()));
+            let read_selected = selected.clone();
+            projector.ctx.selected_realm_id =
+                ValueReader::new(move || read_selected.borrow().clone());
+            projector.ctx.state_store.write(|store| {
+                store.switch_active_account(&projector.ctx.account).unwrap();
+            });
+            projector.blocklist_catchup = projector
+                .ctx
+                .state_store
+                .read(LocalStateStore::begin_blocklist_catchup);
+            projector.request_filter = Some(selected_account_filter(&projector.ctx));
+            assert!(projector.fence());
+            let probe = Rc::new(CheckpointProjectionProbe::default());
+            projector.ctx.projection_sink.install(probe.clone());
+            let scope = garth::CursorScope::Account {
+                service_id: None,
+                actor_id: arkret_sdk::ActorId::account(projector.ctx.account.authority.clone()),
+                device_id: projector.ctx.account.device_id.clone(),
+            };
+            let request = AccountSubscribeParameters {
+                after: Some("ak:cursor:before-empty-checkpoint".into()),
+                catchup: Some(false),
+                filter: projector.request_filter.clone(),
+                realm_list_parameters: None,
+                replace_filter: None,
+            };
+            let mut folder = arkret_sdk::AccountSubscribeFolder::for_request(&request);
+            folder
+                .push(
+                    serde_json::from_value(json!({
+                        "kind": "checkpoint", "cursor": "ak:cursor:durable-empty-checkpoint"
+                    }))
+                    .unwrap(),
+                )
+                .unwrap();
+            let AccountSubscribeReadAction::Batch(batch) = folder.finish().unwrap() else {
+                panic!("validated checkpoint batch required")
+            };
+            assert!(batch.frames.is_empty());
+            let checkpoint = garth::AccountCursorCheckpoint {
+                cursor: batch.cursor.clone(),
+                station_cas: Default::default(),
+            };
+            let cursors = PausedCheckpointStore {
+                inner: projector.ctx.client_runtime.cursors(),
+                saved: Default::default(),
+                resume: Default::default(),
+                fail: variant == 1,
+            };
+            let replace_while_pending = async {
+                cursors.saved.notified().await;
+                assert!(probe.status.borrow().is_empty());
+                assert!(probe.events.borrow().is_empty());
+                match variant {
+                    2 => {
+                        projector.ctx.session.replace("replacement");
+                    }
+                    3 => projector.ctx.effect.cancel(),
+                    4 => generation.set(2),
+                    5 => *selected.borrow_mut() = sdk_realm_id().to_string(),
+                    6 => projector.ctx.state_store.write(|store| {
+                        store
+                            .switch_saved_account(
+                                &crate::test_support::AccountFixture::new(
+                                    "ak:did_core:web:retired-sync.example",
+                                )
+                                .station("ak:did_core:web:replacement-station.example")
+                                .profile_id("replacement-station".into())
+                                .build(),
+                            )
+                            .unwrap();
+                    }),
+                    _ => {}
+                }
+                cursors.resume.notify_one();
+            };
+            let (result, ()) = tokio::join!(
+                projector.project_and_checkpoint(
+                    &batch,
+                    scope.clone(),
+                    checkpoint.clone(),
+                    &cursors
+                ),
+                replace_while_pending
+            );
+            assert_eq!(
+                result.is_err(),
+                variant == 1,
+                "variant {variant}: {result:?}"
+            );
+            if variant == 0 {
+                assert_eq!(*probe.status.borrow(), vec![SyncStatusEvent::Online]);
+                assert_eq!(
+                    *probe.events.borrow(),
+                    vec![ClientProjectionEvent::CursorCheckpoint {
+                        scope: "account".into(),
+                        cursor: batch.cursor.clone()
+                    }]
+                );
+                assert_eq!(
+                    cursors.load_account_checkpoint(scope).await.unwrap(),
+                    Some(checkpoint)
+                );
+            } else {
+                assert!(probe.status.borrow().is_empty(), "variant {variant}");
+                assert!(probe.events.borrow().is_empty(), "variant {variant}");
+            }
+        }
     }
 
     fn terminal_refresh_refusal() -> anyhow::Error {

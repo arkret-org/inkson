@@ -60,6 +60,18 @@ struct RailQueues {
     ready: bool,
     closed: bool,
 }
+
+impl RailQueues {
+    fn has_channel_capacity(&self) -> bool {
+        self.used < USED_CHANNELS
+            && self
+                .channels
+                .values()
+                .filter(|c| !c.closed && !c.abandoned)
+                .count()
+                < 16
+    }
+}
 #[derive(Clone, Debug, Default)]
 pub struct SharedConnection {
     queues: Arc<Mutex<RailQueues>>,
@@ -100,7 +112,7 @@ impl SharedConnection {
         let Ok(key) = selector_key(parameters) else {
             return false;
         };
-        self.with(|q| q.ready && !q.closed && !q.refused.contains(&key))
+        self.with(|q| q.ready && !q.closed && !q.refused.contains(&key) && q.has_channel_capacity())
     }
     pub fn open(
         &self,
@@ -112,13 +124,7 @@ impl SharedConnection {
             if !q.ready || q.closed || q.refused.contains(&key) {
                 return Ok(None);
             }
-            if q.used >= USED_CHANNELS
-                || q.channels
-                    .values()
-                    .filter(|c| !c.closed && !c.abandoned)
-                    .count()
-                    >= 16
-            {
+            if !q.has_channel_capacity() {
                 return Ok(None);
             }
             let operation = operation(&parameters);
@@ -514,60 +520,71 @@ impl<H: garth::AccountSubscribeTransport> garth::AccountSubscribeTransport for S
             realm_list_parameters: request.realm_list_parameters.clone(),
             replace_filter: request.replace_filter,
         });
-        if let Some(mut channel) = self.rail.open(parameters.clone())? {
-            let mut folder = arkret_sdk::http_client::AccountSubscribeFolder::for_request(request);
-            loop {
-                let frame = match channel.next_frame().await? {
-                    WebSocketServerFrame::Data {
-                        payload: WebSocketDataPayload::Account(f),
-                        ..
+        loop {
+            if let Some(mut channel) = self.rail.open(parameters.clone())? {
+                let mut folder =
+                    arkret_sdk::http_client::AccountSubscribeFolder::for_request(request);
+                loop {
+                    let frame = match channel.next_frame().await? {
+                        WebSocketServerFrame::Data {
+                            payload: WebSocketDataPayload::Account(f),
+                            ..
+                        }
+                        | WebSocketServerFrame::ChannelControl {
+                            payload: WebSocketChannelControlPayload::Account(f),
+                            ..
+                        } => *f,
+                        WebSocketServerFrame::ChannelControl {
+                            payload: WebSocketChannelControlPayload::Heartbeat(_),
+                            ..
+                        } => serde_json::from_value(serde_json::json!({"kind":"heartbeat"}))
+                            .map_err(|e| garth::Error::Protocol(e.to_string()))?,
+                        _ => {
+                            return Err(garth::Error::Protocol(
+                                "wrong account channel payload".to_owned(),
+                            ));
+                        }
+                    };
+                    let kind = frame.kind;
+                    let interrupt = frame.interrupt()?;
+                    let done = folder.push(frame)?;
+                    if let Some(interrupt) = interrupt {
+                        return Err(arkret_sdk::http_client::Error::AccountStreamInterrupt(
+                            interrupt,
+                        )
+                        .into());
                     }
-                    | WebSocketServerFrame::ChannelControl {
-                        payload: WebSocketChannelControlPayload::Account(f),
-                        ..
-                    } => *f,
-                    WebSocketServerFrame::ChannelControl {
-                        payload: WebSocketChannelControlPayload::Heartbeat(_),
-                        ..
-                    } => serde_json::from_value(serde_json::json!({"kind":"heartbeat"}))
-                        .map_err(|e| garth::Error::Protocol(e.to_string()))?,
-                    _ => {
-                        return Err(garth::Error::Protocol(
-                            "wrong account channel payload".to_owned(),
-                        ));
+                    if done
+                        || (!request.catchup.unwrap_or(false)
+                            && matches!(
+                                kind,
+                                AccountSubscribeFrameKind::Delta
+                                    | AccountSubscribeFrameKind::Checkpoint
+                            ))
+                        || (kind == AccountSubscribeFrameKind::Heartbeat
+                            && folder.reconnect_cursor().is_some()
+                            && !request.catchup.unwrap_or(false))
+                    {
+                        return Ok(folder.finish()?);
                     }
-                };
-                let kind = frame.kind;
-                let interrupt = frame.interrupt()?;
-                let done = folder.push(frame)?;
-                if let Some(interrupt) = interrupt {
-                    return Err(
-                        arkret_sdk::http_client::Error::AccountStreamInterrupt(interrupt).into(),
-                    );
-                }
-                if done
-                    || (!request.catchup.unwrap_or(false)
-                        && kind == AccountSubscribeFrameKind::Delta)
-                    || (kind == AccountSubscribeFrameKind::Heartbeat
-                        && folder.reconnect_cursor().is_some()
-                        && !request.catchup.unwrap_or(false))
-                {
-                    return Ok(folder.finish()?);
                 }
             }
-        }
-        let pending = self.http.subscribe(request);
-        let mut pending = Box::pin(pending);
-        loop {
-            use futures_util::future::{Either, select};
-            match select(pending, Box::pin(InksonPacer.pace())).await {
-                Either::Left((result, _)) => return result,
-                Either::Right((paced, future)) => {
-                    paced?;
-                    pending = future;
-                    if self.rail.can_open(&parameters) {
-                        // Dropping the HTTP future precedes any socket open.
-                        return Err(garth::Error::Http("account transport handoff".to_owned()));
+            let pending = self.http.subscribe(request);
+            let mut pending = Box::pin(pending);
+            loop {
+                use futures_util::future::{Either, select};
+                match select(pending, Box::pin(InksonPacer.pace())).await {
+                    Either::Left((result, _)) => return result,
+                    Either::Right((paced, future)) => {
+                        paced?;
+                        pending = future;
+                        if self.rail.can_open(&parameters) {
+                            // A preferred rail becoming ready is a lifecycle
+                            // transition. Retain the original durable request and
+                            // retire HTTP before opening its socket replacement.
+                            drop(pending);
+                            break;
+                        }
                     }
                 }
             }
@@ -788,8 +805,7 @@ mod tests {
         let _ = &mut s;
     }
 
-    #[tokio::test]
-    async fn http_future_is_cancelled_before_a_socket_consumer_can_open() {
+    async fn verify_http_handoff(kind: AccountSubscribeFrameKind) {
         use std::sync::atomic::{AtomicBool, Ordering};
         struct Cancelled(Arc<AtomicBool>);
         impl Drop for Cancelled {
@@ -821,12 +837,27 @@ mod tests {
                 cancelled: cancelled.clone(),
             },
         );
+        let request = AccountSubscribeParameters {
+            after: Some("ak:cursor:before-upgrade".into()),
+            catchup: Some(false),
+            filter: Some(
+                serde_json::from_value(serde_json::json!({
+                    "realm_ids": [], "window_limit": 20, "lazy_load_members": true,
+                }))
+                .unwrap(),
+            ),
+            ..Default::default()
+        };
+        let expected = WebSocketOpenParameters::Account(WebSocketAccountOpenParameters {
+            after: request.after.clone(),
+            catchup: request.catchup,
+            filter: request.filter.clone(),
+            wait_for: None,
+            realm_list_parameters: request.realm_list_parameters.clone(),
+            replace_filter: request.replace_filter,
+        });
         let attempt = tokio::spawn(async move {
-            garth::AccountSubscribeTransport::subscribe(
-                &transport,
-                &AccountSubscribeParameters::default(),
-            )
-            .await
+            garth::AccountSubscribeTransport::subscribe(&transport, &request).await
         });
         while !started.load(Ordering::SeqCst) {
             tokio::task::yield_now().await;
@@ -834,14 +865,245 @@ mod tests {
         let connection = SharedConnection::new();
         connection.set_ready(true);
         rail.attach(connection.clone());
-        assert!(
-            tokio::time::timeout(std::time::Duration::from_secs(2), attempt)
-                .await
-                .unwrap()
-                .unwrap()
-                .is_err()
-        );
+        let command = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                if let Some(command) = connection.next_command() {
+                    break command;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
         assert!(cancelled.load(Ordering::SeqCst));
+        let WebSocketClientFrame::Open {
+            channel_id,
+            operation_id,
+            parameters,
+        } = command
+        else {
+            panic!("handoff must open the replacement consumer");
+        };
+        assert_eq!(
+            serde_json::to_value(parameters).unwrap(),
+            serde_json::to_value(expected).unwrap()
+        );
+        connection
+            .publish(WebSocketServerFrame::Opened {
+                channel_id: channel_id.clone(),
+                operation_id,
+            })
+            .unwrap();
+        let frame = Box::new(
+            serde_json::from_value(
+                serde_json::json!({"kind": kind, "cursor":"ak:cursor:after-upgrade"}),
+            )
+            .unwrap(),
+        );
+        connection
+            .publish(if kind == AccountSubscribeFrameKind::Delta {
+                WebSocketServerFrame::Data {
+                    channel_id: channel_id.clone(),
+                    payload: WebSocketDataPayload::Account(frame),
+                }
+            } else {
+                WebSocketServerFrame::ChannelControl {
+                    frame_scope: WebSocketChannelScope::Channel,
+                    channel_id: channel_id.clone(),
+                    payload: WebSocketChannelControlPayload::Account(frame),
+                }
+            })
+            .unwrap();
+        let result = tokio::time::timeout(std::time::Duration::from_secs(2), attempt)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        let AccountSubscribeReadAction::Batch(batch) = result else {
+            panic!("a preferred transport handoff must not request backoff or cursor reset");
+        };
+        assert_eq!(batch.cursor, "ak:cursor:after-upgrade");
+        assert_eq!(
+            batch.frames.len(),
+            usize::from(kind == AccountSubscribeFrameKind::Delta)
+        );
+        assert!(matches!(connection.next_command(),
+            Some(WebSocketClientFrame::Close { channel_id: closed, .. }) if closed == channel_id));
+        assert!(connection.next_command().is_none());
+    }
+
+    #[tokio::test]
+    async fn http_handoff_retires_the_old_consumer_and_completes_the_same_request() {
+        verify_http_handoff(AccountSubscribeFrameKind::Delta).await;
+    }
+
+    #[tokio::test]
+    async fn http_handoff_completes_a_checkpoint_without_fabricating_a_delta() {
+        verify_http_handoff(AccountSubscribeFrameKind::Checkpoint).await;
+    }
+
+    #[tokio::test]
+    async fn initial_catchup_checkpoint_keeps_its_consumer_until_catchup_complete() {
+        struct NoHttp;
+        impl garth::AccountSubscribeTransport for NoHttp {
+            async fn subscribe(
+                &self,
+                _: &AccountSubscribeParameters,
+            ) -> garth::Result<AccountSubscribeReadAction> {
+                panic!("the ready socket must own this subscription");
+            }
+        }
+        let rail = WebSocketRail::default();
+        let connection = SharedConnection::new();
+        connection.set_ready(true);
+        rail.attach(connection.clone());
+        let transport = StreamRail::select(&rail, NoHttp);
+        let attempt = tokio::spawn(async move {
+            garth::AccountSubscribeTransport::subscribe(
+                &transport,
+                &AccountSubscribeParameters {
+                    catchup: Some(true),
+                    ..Default::default()
+                },
+            )
+            .await
+        });
+        let command = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                if let Some(command) = connection.next_command() {
+                    break command;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        let WebSocketClientFrame::Open {
+            channel_id,
+            operation_id,
+            ..
+        } = command
+        else {
+            panic!("open required")
+        };
+        connection
+            .publish(WebSocketServerFrame::Opened {
+                channel_id: channel_id.clone(),
+                operation_id,
+            })
+            .unwrap();
+        let control = |kind: &str, cursor: &str| WebSocketServerFrame::ChannelControl {
+            frame_scope: WebSocketChannelScope::Channel,
+            channel_id: channel_id.clone(),
+            payload: WebSocketChannelControlPayload::Account(Box::new(
+                serde_json::from_value(serde_json::json!({"kind":kind, "cursor":cursor})).unwrap(),
+            )),
+        };
+        connection
+            .publish(control("checkpoint", "ak:cursor:initial-baseline"))
+            .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while !connection.with(|q| {
+                q.channels
+                    .get(&channel_id)
+                    .is_some_and(|c| c.frames.is_empty())
+            }) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(
+            !attempt.is_finished(),
+            "the baseline checkpoint is not catchup completion"
+        );
+        assert!(connection.next_command().is_none());
+        connection
+            .publish(control("catchup_complete", "ak:cursor:initial-complete"))
+            .unwrap();
+        let result = tokio::time::timeout(std::time::Duration::from_secs(2), attempt)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        let AccountSubscribeReadAction::Batch(batch) = result else {
+            panic!("validated batch required")
+        };
+        assert_eq!(batch.cursor, "ak:cursor:initial-complete");
+        assert!(batch.frames.is_empty());
+        assert!(
+            matches!(connection.next_command(), Some(WebSocketClientFrame::Close {channel_id: closed, ..}) if closed == channel_id)
+        );
+    }
+
+    #[tokio::test]
+    async fn http_refusal_still_fails_when_no_preferred_rail_is_available() {
+        struct Refused;
+        impl garth::AccountSubscribeTransport for Refused {
+            async fn subscribe(
+                &self,
+                _: &AccountSubscribeParameters,
+            ) -> garth::Result<AccountSubscribeReadAction> {
+                Err(garth::Error::Api {
+                    status: 403,
+                    error: Box::new(arkret_wire::Problem::new(
+                        "capability_denied",
+                        403,
+                        "refused",
+                    )),
+                })
+            }
+        }
+        let transport = StreamRail::select(&WebSocketRail::default(), Refused);
+        assert!(matches!(
+            garth::AccountSubscribeTransport::subscribe(
+                &transport,
+                &AccountSubscribeParameters::default()
+            )
+            .await,
+            Err(garth::Error::Api { status: 403, .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn exhausted_socket_budget_keeps_one_uninterrupted_http_consumer() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        struct Http(Arc<AtomicUsize>);
+        impl garth::AccountSubscribeTransport for Http {
+            async fn subscribe(
+                &self,
+                _: &AccountSubscribeParameters,
+            ) -> garth::Result<AccountSubscribeReadAction> {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                tokio::time::sleep(garth::websocket::socket::CHANNEL_PACE * 3).await;
+                Err(garth::Error::Api {
+                    status: 403,
+                    error: Box::new(arkret_wire::Problem::new(
+                        "capability_denied",
+                        403,
+                        "refused",
+                    )),
+                })
+            }
+        }
+        let calls = Arc::new(AtomicUsize::new(0));
+        let connection = SharedConnection::new();
+        connection.set_ready(true);
+        connection.with(|q| q.used = USED_CHANNELS);
+        let rail = WebSocketRail::default();
+        rail.attach(connection.clone());
+        let transport = StreamRail::select(&rail, Http(calls.clone()));
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            garth::AccountSubscribeTransport::subscribe(
+                &transport,
+                &AccountSubscribeParameters::default(),
+            ),
+        )
+        .await
+        .unwrap();
+        assert!(matches!(result, Err(garth::Error::Api { status: 403, .. })));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
         assert!(connection.next_command().is_none());
     }
 
