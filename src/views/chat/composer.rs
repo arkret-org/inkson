@@ -1453,6 +1453,35 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                         }
                         if attachment_menu_open() {
                             div { class: "attachment-menu",
+                                label {
+                                    class: "attachment-menu-file-picker",
+                                    {crate::i18n::tr("chat.composer.choose_files")}
+                                    input {
+                                        key: "{target_key}",
+                                        r#type: "file",
+                                        multiple: true,
+                                        "data-testid": "compose-file-input",
+                                        "aria-label": crate::i18n::tr("chat.composer.choose_files"),
+                                        disabled: upload_scope.is_none(),
+                                        onchange: {
+                                            let base = base_url.clone();
+                                            let scope = upload_scope.clone();
+                                            move |evt: Event<FormData>| {
+                                                let files = evt.files();
+                                                if files.is_empty() {
+                                                    return;
+                                                }
+                                                attachment_menu_open.set(false);
+                                                compose_upload_status.set(
+                                                    crate::i18n::tr("compose.upload_progress"),
+                                                );
+                                                commands::upload_dropped_attachments(
+                                                    controller, base.clone(), token(), scope.clone(), files,
+                                                );
+                                            }
+                                        },
+                                    }
+                                }
                                 if polls_available {
                                     Button {
                                         variant: ButtonVariant::Secondary,

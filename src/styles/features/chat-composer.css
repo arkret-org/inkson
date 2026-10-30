@@ -313,6 +313,17 @@
   box-shadow: var(--shadow-md);
 }
 
+.discussion-composer .attachment-menu-file-picker {
+  display: grid;
+  gap: 6px;
+  padding: 6px;
+  max-width: 280px;
+}
+
+.discussion-composer .attachment-menu-file-picker input {
+  max-width: 100%;
+}
+
 .discussion-composer > .actions {
   display: flex;
   align-items: center;

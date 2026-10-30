@@ -2608,6 +2608,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("chat.composer.search_members", "Search members");
     dict.set("chat.composer.mention_member", "Mention member");
     dict.set("chat.composer.add_attachment", "Add attachment");
+    dict.set("chat.composer.choose_files", "Choose files");
     dict.set("chat.composer.schedule_message", "Schedule message");
     dict.set("chat.composer.poll_question", "Question");
     dict.set("chat.composer.poll_option", "Option {number}");
