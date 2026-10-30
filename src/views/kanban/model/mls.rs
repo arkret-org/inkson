@@ -127,18 +127,6 @@ pub(crate) fn private_strand_event_field_value(
             None,
         )
         .or_else(|| {
-            // The author's own MLS ciphertext need not be self-receivable.
-            // Use its local sidecar only after verifying this exact Event,
-            // sender and patch value above, and only for the same Account.
-            if event.actor_id.as_account_id() == Some(authority) {
-                return ctx
-                    .state_store
-                    .private_plaintext_for(ctx.realm_id, strand_id, field_path)
-                    .map(|text| text.into_bytes());
-            }
-            None
-        })
-        .or_else(|| {
             warn_pending("Strand verified envelope or receive state is unavailable");
             None
         })?;
