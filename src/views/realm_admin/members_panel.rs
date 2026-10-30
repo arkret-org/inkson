@@ -1239,6 +1239,14 @@ fn invite_modal(_scope: &Scope, state: &MembersPage) -> View {
                     "invite-divider muted",
                     context.translated(scope, "realm_admin.invite_divider"),
                 ),
+                paragraph(
+                    "muted",
+                    context.translated(scope, "realm_admin.invite_by_address"),
+                ),
+                paragraph(
+                    "muted",
+                    context.translated(scope, "realm_admin.invite_link_recommended"),
+                ),
                 Box::new(
                     sapid::field("invite-target-input")
                         .unstyled()

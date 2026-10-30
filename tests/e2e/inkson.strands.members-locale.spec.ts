@@ -72,7 +72,8 @@ test("Member sections and local invite drafts follow the active language without
     await expect(dialog).toBeVisible();
     await expect(byClass(dialog, "invite-modal-close")).toHaveAttribute("aria-label", zh ? "关闭" : "Close");
     const target = inputByClass(dialog, "invite-target-input");
-    await expect(byClass(dialog, "invite-target-input").locator(".input-empty-prompt")).toHaveText("alice:example.com");
+    await expect(dialog.getByRole("textbox", { name: zh ? "邀请地址" : "Invitation address", exact: true })).toBeVisible();
+    await expect(byClass(dialog, "invite-target-input").locator(".input-empty-prompt")).toHaveText(zh ? "粘贴个人邀请链接" : "Paste a personal invitation link");
     await expect(byClass(dialog, "send-invite-button")).toHaveText(zh ? "发送邀请" : "Send Invite");
     const contact = byClass(dialog, "invite-contact-list").getByRole("checkbox").first();
     await expect(contact).toBeEnabled();
