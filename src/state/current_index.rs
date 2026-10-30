@@ -311,6 +311,19 @@ fn progress_is_complete_cut(
 }
 
 impl CurrentRealmProgress {
+    pub(crate) fn exact_current_governance_generation(
+        &self,
+        realm_id: &arkret_sdk::RealmId,
+    ) -> anyhow::Result<u64> {
+        anyhow::ensure!(
+            progress_is_complete_cut(self, realm_id),
+            "exact current read requires a complete verified Realm current cut"
+        );
+        self.governance_generation.ok_or_else(|| {
+            anyhow::anyhow!("exact current read lacks a verified governance generation")
+        })
+    }
+
     /// Keep independent authority watermarks when withdrawing a complete cut.
     fn remember_current_watermarks(&mut self) -> anyhow::Result<()> {
         let held_heads = self
@@ -3600,7 +3613,7 @@ mod tests {
         ))
     }
     #[test]
-    fn signed_snapshot_coverage_cannot_survive_invalidation_reset_or_new_authority() {
+    fn exact_current_generation_accepts_signed_snapshot_and_preserves_invalidation_guards() {
         let realm: arkret_sdk::RealmId = REALM.parse().unwrap();
         let progress = CurrentRealmProgress {
             governance_generation: Some(1),
@@ -3620,19 +3633,56 @@ mod tests {
             ..Default::default()
         };
         assert!(progress_is_complete_cut(&progress, &realm));
+        assert_eq!(
+            progress
+                .exact_current_governance_generation(&realm)
+                .unwrap(),
+            1
+        );
+        let mut incomplete = progress.clone();
+        incomplete
+            .signed_snapshot
+            .as_mut()
+            .unwrap()
+            .stream_heads
+            .clear();
+        assert!(
+            incomplete
+                .exact_current_governance_generation(&realm)
+                .is_err()
+        );
+        let mut unknown_authority = progress.clone();
+        unknown_authority.governance_generation = None;
+        assert!(
+            unknown_authority
+                .exact_current_governance_generation(&realm)
+                .is_err()
+        );
         let foreign: arkret_sdk::RealmId = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
             .parse()
             .unwrap();
         assert!(!progress_is_complete_cut(&progress, &foreign));
+        assert!(
+            progress
+                .exact_current_governance_generation(&foreign)
+                .is_err()
+        );
         let mut invalidated = progress.clone();
         invalidated.invalidate(9);
         assert!(!progress_is_complete_cut(&invalidated, &realm));
+        assert!(
+            invalidated
+                .exact_current_governance_generation(&realm)
+                .is_err()
+        );
         let mut reset = progress.clone();
         reset.reset();
         assert!(!progress_is_complete_cut(&reset, &realm));
+        assert!(reset.exact_current_governance_generation(&realm).is_err());
         let mut changed = progress;
         changed.begin_governance_generation(2);
         assert!(!progress_is_complete_cut(&changed, &realm));
+        assert!(changed.exact_current_governance_generation(&realm).is_err());
     }
     #[test]
     fn device_current_families_share_device_page_without_merging_selectors() {
@@ -4508,6 +4558,14 @@ mod tests {
                 .is_err()
         );
         assert_eq!(index.read_complete_cut(REALM).await.unwrap(), None);
+        assert!(
+            index
+                .read_progress(REALM)
+                .await
+                .unwrap()
+                .exact_current_governance_generation(&REALM.parse().unwrap())
+                .is_err()
+        );
         index
             .stage_frame(1, &frame(vec![], Some(baseline(CURSORS[0], 1, true))))
             .await
@@ -4521,7 +4579,24 @@ mod tests {
                 .is_some()
         );
         assert!(index.read_complete_cut(REALM).await.unwrap().is_some());
+        assert_eq!(
+            index
+                .read_progress(REALM)
+                .await
+                .unwrap()
+                .exact_current_governance_generation(&REALM.parse().unwrap())
+                .unwrap(),
+            1
+        );
         assert_eq!(index.read_complete_cut(OTHER_REALM).await.unwrap(), None);
+        assert!(
+            index
+                .read_progress(REALM)
+                .await
+                .unwrap()
+                .exact_current_governance_generation(&OTHER_REALM.parse().unwrap())
+                .is_err()
+        );
         let reset = serde_json::from_value(json!({"kind":"resync_required"})).unwrap();
         index.stage_frame(2, &reset).await.unwrap().finish();
         assert!(
@@ -4531,6 +4606,14 @@ mod tests {
                 .is_err()
         );
         assert_eq!(index.read_complete_cut(REALM).await.unwrap(), None);
+        assert!(
+            index
+                .read_progress(REALM)
+                .await
+                .unwrap()
+                .exact_current_governance_generation(&REALM.parse().unwrap())
+                .is_err()
+        );
     }
 
     #[tokio::test]

@@ -1007,6 +1007,14 @@ pub fn english_translations() -> TranslationDict {
     dict.set("kanban.rename_list_hint", "Double-click to rename");
     dict.set("realm_admin.apply_policy", "Apply Policy");
     dict.set("realm_admin.grant_capability_move", "Grant capability");
+    dict.set("realm_admin.allowed_write_fields", "Allowed write fields");
+    dict.set("realm_admin.description_only", "Description only");
+    dict.set("realm_admin.synthesis_only", "Synthesis only");
+    dict.set("realm_admin.write_fields_hint", "Choose a preset or enter one exact field path per line. Description and Synthesis permissions are independent. This grant covers the selected fields across this Realm.");
+    dict.set(
+        "realm_admin.write_fields_required",
+        "Select the fields this person may edit before granting permission.",
+    );
     dict.set("realm_admin.revoke_capability_move", "Revoke capability");
     dict.set(
         "realm_admin.grant_capability_pending",
