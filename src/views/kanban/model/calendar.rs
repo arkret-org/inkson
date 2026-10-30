@@ -281,6 +281,11 @@ pub(crate) fn calendar_patch_entries(
     current: &CalendarCardFields,
     draft: &CalendarCardFields,
 ) -> Result<(), String> {
+    // An unrelated content edit must neither acquire calendar field authority
+    // nor create a schedule revision (and invalidate an RSVP basis).
+    if current == draft {
+        return Ok(());
+    }
     if !current.has_schedule() && !draft.has_editable_schedule() {
         return Ok(());
     }
