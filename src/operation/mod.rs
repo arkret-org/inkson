@@ -307,14 +307,8 @@ impl LocalOperation {
     }
 
     /// Record the principal that executes this write on the actor's behalf.
-    pub fn with_executed_by(mut self, executed_by: arkret_sdk::DidCoreId) -> Self {
-        let account_id = arkret_sdk::AccountId::new(
-            executed_by,
-            self.intent.actor_id().route_service_id().clone(),
-        );
-        self.intent = self
-            .intent
-            .with_executed_by(arkret_sdk::ActorId::account(account_id));
+    pub fn with_executed_by(mut self, executed_by: arkret_sdk::ActorId) -> Self {
+        self.intent = self.intent.with_executed_by(executed_by);
         self
     }
 
@@ -367,7 +361,7 @@ impl LocalOperation {
 /// Standard Event builder whose kind is fixed by the SDK payload marker.
 ///
 /// This boundary never accepts a runtime `EventKind` or an erased JSON payload.
-/// The only constructor requires the payload associated with `K`, and erasure
+/// Each constructor requires the payload associated with `K`, and erasure
 /// happens inside [`arkret_sdk::TypedEventDraft`] after its marker-specific
 /// validation.
 ///
@@ -381,6 +375,29 @@ pub struct TypedOperationBuilder {
 }
 
 impl TypedOperationBuilder {
+    /// Preserve an already captured complete actor and effective scope without
+    /// reconstructing its Station from the currently selected connection.
+    pub fn new_for_actor<K>(
+        scope_ref: ScopeRef,
+        actor_id: arkret_sdk::ActorId,
+        payload: K::Payload,
+    ) -> Self
+    where
+        K: arkret_sdk::EventSpec,
+    {
+        let intent = arkret_sdk::TypedEventDraft::<K>::new(scope_ref, actor_id, payload)
+            .map_err(|err| anyhow::anyhow!("typed Event draft construction failed: {err}"))
+            .and_then(|draft| {
+                draft
+                    .into_intent(crate::clock::now_utc_millis())
+                    .map_err(|err| anyhow::anyhow!("typed Event intent erasure failed: {err}"))
+            });
+        Self {
+            intent,
+            target_ref: None,
+        }
+    }
+
     pub fn new<K>(
         realm_id: impl Into<String>,
         actor: impl Into<String>,
@@ -468,7 +485,15 @@ impl TypedOperationBuilder {
                 .map_err(|err| anyhow::anyhow!("invalid executed_by core_id: {err}"))?;
             let account_id = arkret_sdk::AccountId::new(
                 principal_id,
-                intent.actor_id().route_service_id().clone(),
+                intent
+                    .actor_id()
+                    .fixed_route_service_id()
+                    .cloned()
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "Realm execution requires an explicitly resolved current Station"
+                        )
+                    })?,
             );
             Ok(intent.with_executed_by(arkret_sdk::ActorId::account(account_id)))
         })
@@ -579,6 +604,9 @@ impl AuthoredEventExt for AuthoredEvent {
         let signer = crate::event_signer::InksonEventSigner::from_dyn_signer(
             Arc::new(sdk_signer),
             signer_did.clone(),
+            arkret_sdk::signatures::PublicKeyMaterial::Ed25519Raw {
+                bytes: signing_key.verifying_key().to_bytes().to_vec(),
+            },
         );
         signer
             .sign_envelope_with_context(

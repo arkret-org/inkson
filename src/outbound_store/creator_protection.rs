@@ -17,14 +17,25 @@ fn device_key(
     device: &arkret_sdk::DeviceId,
     purpose: &str,
 ) -> anyhow::Result<[u8; 32]> {
-    let material = crate::secure_key_store::load_signing_seed_for(store, authority, device)?
-        .ok_or_else(|| anyhow::anyhow!("creator recovery requires the original device secret"))?;
-    let context = crate::canonical::canonical_json_bytes(&(
-        "inkson.mls.creator_bootstrap.v1",
+    device_key_for_domain(
+        store,
         authority,
         device,
+        "inkson.mls.creator_bootstrap.v1",
         purpose,
-    ))?;
+    )
+}
+
+pub(super) fn device_key_for_domain(
+    store: &dyn SecureKeyStore,
+    authority: &arkret_sdk::AccountId,
+    device: &arkret_sdk::DeviceId,
+    domain: &str,
+    purpose: &str,
+) -> anyhow::Result<[u8; 32]> {
+    let material = crate::secure_key_store::load_signing_seed_for(store, authority, device)?
+        .ok_or_else(|| anyhow::anyhow!("creator recovery requires the original device secret"))?;
+    let context = crate::canonical::canonical_json_bytes(&(domain, authority, device, purpose))?;
     let mut key = [0u8; 32];
     Hkdf::<Sha256>::new(None, &material.seed)
         .expand(&context, &mut key)
@@ -88,6 +99,8 @@ pub(super) fn protect_records(
             })?;
         }
     }
+    super::agent_provision::protect_records(&mut value, authority, store)?;
+    super::attachments::protect_records(&mut value, authority, store)?;
     Ok(serde_json::to_string(&value)?)
 }
 
@@ -132,5 +145,7 @@ pub(super) fn open_records(
             *record = original;
         }
     }
+    super::agent_provision::open_records(&mut value, authority, store)?;
+    super::attachments::open_records(&mut value, authority, store)?;
     Ok(serde_json::to_string(&value)?)
 }

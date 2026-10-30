@@ -1,5 +1,5 @@
 //! Agent mode reads consume the original exact cut through the accepted own Station.
-use arkret_sdk::exact_current_results::{ExactCurrentResultEntry, ExactCurrentResultsReadOutcome};
+use arkret_sdk::exact_current_state::{ExactCurrentState, ExactCurrentStateReadResponseBody};
 use arkret_sdk::{
     AccountId, AgentInteractionCurrentValue, AgentInteractionMode, AgentInteractionSetPayload,
     CurrentRevision, RealmId,
@@ -20,11 +20,11 @@ pub(crate) async fn read(
             .await?;
     let current = response.into_value()?;
     match current {
-        ExactCurrentResultsReadOutcome::NeverWritten { .. } => {
+        ExactCurrentStateReadResponseBody::NeverWritten { .. } => {
             Ok((AgentInteractionMode::Private, None, None))
         }
-        ExactCurrentResultsReadOutcome::Present {
-            entry: ExactCurrentResultEntry::AgentInteraction(entry),
+        ExactCurrentStateReadResponseBody::Present {
+            current_state: ExactCurrentState::AgentInteraction(entry),
             ..
         } => Ok((
             entry.value.interaction_mode,
@@ -61,7 +61,7 @@ pub(crate) async fn write(
         operation.actor_id().as_account_id() == Some(&controller),
         "Agent mode producer changed account"
     );
-    let accepted = crate::event_submit::EventSubmitter::from_current_session(http.clone())
+    let accepted = crate::app::runtime_adapter::event_submitter(http.clone())
         .submit_sdk_event(&operation)
         .await?;
     anyhow::ensure!(

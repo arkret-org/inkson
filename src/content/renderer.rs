@@ -460,7 +460,7 @@ fn is_safe_link_url(url: &str) -> bool {
     }
 }
 
-fn markdown_to_safe_html(src: &str) -> String {
+pub(crate) fn markdown_to_safe_html(src: &str) -> String {
     let mut opts = Options::empty();
     opts.insert(Options::ENABLE_STRIKETHROUGH);
     opts.insert(Options::ENABLE_TABLES);
@@ -568,6 +568,24 @@ async fn authenticated_blob_data_url(blob_ref: &str, media_type: &str) -> anyhow
 
 async fn authenticated_blob_bytes(blob_ref: &str) -> anyhow::Result<Vec<u8>> {
     let config = LocalConfigStore::default().load();
+    let account = config
+        .active_account()
+        .ok_or_else(|| anyhow::anyhow!("authenticated renderer has no active account"))?;
+    let session_epoch = crate::identity::device_directory::session_cache_epoch();
+    let check_session = || -> anyhow::Result<()> {
+        let current = LocalConfigStore::default().load();
+        anyhow::ensure!(
+            session_epoch == crate::identity::device_directory::session_cache_epoch()
+                && current.active_account().is_some_and(|active| {
+                    active.authority == account.authority
+                        && active.device_id == account.device_id
+                        && active.profile_id == account.profile_id
+                        && active.server_url == account.server_url
+                }),
+            "blob download belongs to a replaced account session"
+        );
+        Ok(())
+    };
     let token = config.session_credential.trim().to_owned();
     if token.is_empty() {
         anyhow::bail!("no authenticated session for blob download");
@@ -576,9 +594,12 @@ async fn authenticated_blob_bytes(blob_ref: &str) -> anyhow::Result<Vec<u8>> {
     let server_url = config
         .server_url()
         .ok_or_else(|| anyhow::anyhow!("authenticated renderer has no active account route"))?;
-    let api = crate::transport::auth::authed_api(server_url.as_str(), token)?;
+    let api = crate::transport::auth::authed_api_ready(server_url.as_str(), token).await?;
+    check_session()?;
     let clients = crate::transport::EndpointClients::from_http(api.sdk_http_client()?);
-    clients.blob().get_bytes(blob_ref).await
+    let bytes = clients.blob().get_bytes(blob_ref).await?;
+    check_session()?;
+    Ok(bytes)
 }
 
 /// RSX renderer for a slice of [`ContentBlock`]s.
@@ -792,31 +813,57 @@ fn AuthenticatedLongText(blob_ref: String, fallback: String, markdown: bool) -> 
 
 #[component]
 pub fn AuthenticatedBlobImage(blob_ref: String, alt_text: String) -> Element {
-    let mut src = use_signal(String::new);
+    let mut src = use_signal(|| (String::new(), 0_u64, String::new()));
     let mut status = use_signal(String::new);
-    let blob_for_effect = blob_ref.clone();
-    use_effect(move || {
-        let blob = blob_for_effect.clone();
-        let media_type = blob_ref_media_type_hint(&blob).unwrap_or_else(|| "image/png".to_owned());
-        spawn(async move {
-            match authenticated_blob_data_url(&blob, &media_type).await {
-                Ok(url) => {
-                    src.set(url);
-                    status.set(String::new());
+    let mut request_generation = use_signal(|| 0_u64);
+    let session = try_consume_context::<crate::app::SessionContext>();
+    let generation = session
+        .map(|session| *session.session_generation.read())
+        .unwrap_or(0);
+    use_effect(use_reactive(
+        (&blob_ref, &generation),
+        move |(blob, generation)| {
+            let request = request_generation.peek().wrapping_add(1);
+            request_generation.set(request);
+            src.set((blob.clone(), generation, String::new()));
+            status.set(String::new());
+            let media_type =
+                blob_ref_media_type_hint(&blob).unwrap_or_else(|| "image/png".to_owned());
+            spawn(async move {
+                let result = authenticated_blob_data_url(&blob, &media_type).await;
+                if *request_generation.peek() != request
+                    || session
+                        .is_some_and(|session| *session.session_generation.peek() != generation)
+                {
+                    return;
                 }
-                Err(err) => status.set(crate::api_error::display_user_facing(&err)),
-            }
-        });
-    });
+                match result {
+                    Ok(url) => {
+                        src.set((blob, generation, url));
+                        status.set(String::new());
+                    }
+                    Err(err) => status.set(crate::api_error::display_user_facing(&err)),
+                }
+            });
+        },
+    ));
+    let image_src = {
+        let source = src.read();
+        if source.0 == blob_ref && source.1 == generation {
+            source.2.clone()
+        } else {
+            String::new()
+        }
+    };
     let broken_label = crate::i18n::tr("content.image.broken");
     rsx! {
         div {
             class: "content-block-image",
             "data-testid": "content-block-image",
-            if !src().is_empty() {
+            if !image_src.is_empty() {
                 img {
                     loading: "lazy",
-                    src: "{src}",
+                    src: "{image_src}",
                     alt: "{alt_text}",
                     title: "{blob_ref}",
                 }

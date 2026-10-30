@@ -859,7 +859,7 @@ fn sign_ed25519_attaches_typed_proof() {
     let proof = event.producer_proof.as_ref().expect("proof present");
     assert_eq!(proof.verification_method, "did:web:alice#k1");
     assert!(proof.event_digest.as_str().starts_with("sha256:"));
-    // JWS layout: header.. (detached) ..sig — 3 parts separated by '.'.
+    // JWS layout: header.. (detached) ..signature — 3 parts separated by '.'.
     assert_eq!(proof.jws.matches('.').count(), 2);
     assert!(event.require_proof().is_ok());
     // Attaching the proof does not move the identity it committed to.
@@ -986,30 +986,12 @@ fn invite_helpers_emit_canonical_kinds() {
     assert!(!create.payload().contains_key("state"));
     assert_registered_payload_valid(&create);
 
-    // Third-party form: the Invite stores no account, so the payload carries
-    // none.
-    let accept = ak_ops::invite_accept(
-        "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
-        "did:web:bob.example",
-        invite_id,
-        None,
-        arkret_sdk::InvitePreviousState::Claimed,
-    )
-    .expect("builds")
-    .build("node");
-    assert_eq!(accept.kind().as_str(), "ak.invite.accept");
-    assert_eq!(accept.payload()["invite_id"], invite_id);
-    assert_eq!(accept.payload()["previous_state"], "claimed");
-    assert!(!accept.payload().contains_key("state"));
-    assert!(!accept.payload().contains_key("invitee_account_id"));
-    assert_registered_payload_valid(&accept);
-
     // Directed form carries the complete invitee account in the signed payload.
     let directed_accept = ak_ops::invite_accept(
         "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
         "did:web:bob.example",
         invite_id,
-        Some(invitee_account_id.clone()),
+        invitee_account_id.clone(),
         arkret_sdk::InvitePreviousState::Pending,
     )
     .expect("builds")
@@ -1071,19 +1053,22 @@ fn invite_helpers_emit_canonical_kinds() {
         "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
         "did:web:alice.example",
         invite_id,
-        None,
-        arkret_sdk::InviteRevokePreviousState::Pending,
+        &invitee_account_id,
+        arkret_sdk::InvitePreviousState::Pending,
         "revoked",
         "admin_revoke",
     )
-    .expect("token invite revoke builds")
+    .expect("directed invite revoke builds")
     .build("node");
     assert_eq!(revoke.kind().as_str(), "ak.invite.revoke");
     assert_eq!(revoke.payload()["target_state"], "revoked");
     assert_eq!(revoke.payload()["previous_state"], "pending");
     assert_eq!(revoke.payload()["reason_code"], "admin_revoke");
     assert!(!revoke.payload().contains_key("reason"));
-    assert!(!revoke.payload().contains_key("invitee_account_id"));
+    assert_eq!(
+        revoke.payload()["invitee_account_id"],
+        serde_json::to_value(&invitee_account_id).unwrap()
+    );
 }
 
 #[test]

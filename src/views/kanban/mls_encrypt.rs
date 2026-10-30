@@ -438,7 +438,15 @@ pub(super) async fn dispatch_card_detail_update(
             )
             .await
             {
-                board_status.set(format!("encrypted card write is not ready: {error}"));
+                let pending_baseline = matches!(
+                    error.downcast_ref::<crate::mls::send_gate::MlsSendGateBlocked>(),
+                    Some(crate::mls::send_gate::MlsSendGateBlocked::DetailBaselinePending)
+                );
+                board_status.set(if pending_baseline {
+                    format!("encryption_transition_pending: {error}")
+                } else {
+                    format!("encrypted card write is not ready: {error}")
+                });
                 return false;
             }
         }
@@ -481,6 +489,60 @@ pub(super) async fn dispatch_card_detail_update(
             board_status.set(format!("cannot seal card update: {error}"));
             return false;
         }
+    };
+
+    // Seal metadata at the shared producer boundary before recording the
+    // optimistic operation. In particular, a calendar location must remain
+    // plaintext inside this one authenticated metadata envelope, rather than
+    // acquiring an inner ciphertext with no independently retained sender.
+    let sealed_patch = if sealed_patch.as_object().is_some_and(|patch| {
+        patch.keys().any(|path| {
+            path == "metadata" || path.starts_with("metadata.") || path == "schema_refs"
+        })
+    }) {
+        let prepared = async {
+            let operation = build_card_detail_update_operation(
+                &realm_id,
+                &actor_id,
+                &current.id,
+                sealed_patch,
+            )?
+            .with_effective_scope(source_scope.clone())?;
+            let authority = crate::app::SessionContext::get()
+                .active_account
+                .read()
+                .as_ref()
+                .map(|account| account.authority.clone())
+                .ok_or_else(|| anyhow::anyhow!("active account authority is unavailable"))?;
+            let store = crate::app::runtime_adapter::state_store_handle(state_store);
+            let intent = with_authed_api(&base_url, api_token.clone(), |api| async move {
+                api.event_submitter()?
+                    .with_state_store(store)
+                    .with_authority(authority)
+                    .prepare_metadata(operation.into_intent())
+                    .await
+            })
+            .await
+            .map_err(|error| anyhow::Error::msg(error.display()))?;
+            if let Some(reason) = kanban_plaintext_block_reason(
+                guard_security_state,
+                &crate::operation::LocalOperation::new(intent.clone()),
+            ) {
+                anyhow::bail!(reason);
+            }
+            let payload = intent.typed_payload::<arkret_wire::event_spec::StrandUpdate>()?;
+            Ok::<Value, anyhow::Error>(serde_json::to_value(payload.patch)?)
+        }
+        .await;
+        match prepared {
+            Ok(patch) => patch,
+            Err(error) => {
+                board_status.set(format!("cannot seal card metadata: {error:#}"));
+                return false;
+            }
+        }
+    } else {
+        sealed_patch
     };
 
     // Do not mutate the detail signal before acceptance. The durable queued
@@ -686,6 +748,9 @@ pub(super) async fn dispatch_card_detail_update(
                         .await;
                     }
                 }
+            }
+            Err(err) if crate::event_submit::is_durably_queued_error(err.inner()) => {
+                tracing::debug!(%operation_id, "encrypted card update remains durably queued");
             }
             Err(err) => {
                 let error = err.display().to_string();

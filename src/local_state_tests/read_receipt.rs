@@ -1,4 +1,4 @@
-//! Read-receipt defaults, override resolution, and server-policy locking.
+//! User read-receipt preferences and their local default resolution.
 
 use super::*;
 
@@ -90,45 +90,6 @@ fn read_receipt_display_resolution_is_local_rendering_only() {
 }
 
 #[test]
-fn read_receipt_display_is_not_locked_by_server_disclosure_policy() {
-    let path = temp_state_path("read-receipt-display-policy");
-    let mut store = LocalStateStore::with_path(path);
-    store.set_read_receipt_default_display(false);
-    store.set_read_receipt_policy_snapshot(
-        "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
-        Some(ReadReceiptPolicySnapshot {
-            disclosure: "required".to_owned(),
-            visibility: Some("members".to_owned()),
-        }),
-    );
-    assert!(store.read_receipt_should_send(
-        None,
-        Some("ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE")
-    ));
-    assert!(!store.read_receipt_should_display(
-        None,
-        Some("ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE")
-    ));
-
-    store.set_read_receipt_default_display(true);
-    store.set_read_receipt_policy_snapshot(
-        "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
-        Some(ReadReceiptPolicySnapshot {
-            disclosure: "disabled".to_owned(),
-            visibility: Some("private".to_owned()),
-        }),
-    );
-    assert!(!store.read_receipt_should_send(
-        None,
-        Some("ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE")
-    ));
-    assert!(store.read_receipt_should_display(
-        None,
-        Some("ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE")
-    ));
-}
-
-#[test]
 fn read_receipt_clearing_override_falls_back_to_default() {
     let path = temp_state_path("read-receipt-clear");
     let mut store = LocalStateStore::with_path(path);
@@ -149,100 +110,4 @@ fn read_receipt_clearing_override_falls_back_to_default() {
         None,
         Some("ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE")
     ));
-}
-
-#[test]
-fn server_policy_required_locks_user_choice_to_send() {
-    let path = temp_state_path("read-receipt-policy-required");
-    let mut store = LocalStateStore::with_path(path);
-    // User opted out of the Space.
-    store.set_read_receipt_realm_override(
-        "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
-        Some(false),
-    );
-    // But server publishes disclosure=required → must override to true.
-    store.set_read_receipt_policy_snapshot(
-        "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
-        Some(ReadReceiptPolicySnapshot {
-            disclosure: "required".to_owned(),
-            visibility: Some("public".to_owned()),
-        }),
-    );
-    assert!(store.read_receipt_should_send(
-        None,
-        Some("ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE")
-    ));
-    let snap = store
-        .read_receipt_policy_for_realm("ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE")
-        .unwrap();
-    assert!(snap.locks_user_choice());
-    assert!(!snap.lock_reason().is_empty());
-}
-
-#[test]
-fn server_policy_disabled_locks_user_choice_to_skip() {
-    let path = temp_state_path("read-receipt-policy-disabled");
-    let mut store = LocalStateStore::with_path(path);
-    // User opts in.
-    store.set_read_receipt_default_send(true);
-    // Server publishes disclosure=disabled → must override to false.
-    store.set_read_receipt_policy_snapshot(
-        "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
-        Some(ReadReceiptPolicySnapshot {
-            disclosure: "disabled".to_owned(),
-            visibility: Some("private".to_owned()),
-        }),
-    );
-    assert!(!store.read_receipt_should_send(
-        None,
-        Some("ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE")
-    ));
-}
-
-#[test]
-fn server_policy_optional_does_not_lock() {
-    let path = temp_state_path("read-receipt-policy-optional");
-    let mut store = LocalStateStore::with_path(path);
-    store.set_read_receipt_realm_override(
-        "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
-        Some(false),
-    );
-    store.set_read_receipt_policy_snapshot(
-        "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
-        Some(ReadReceiptPolicySnapshot {
-            disclosure: "optional".to_owned(),
-            visibility: None,
-        }),
-    );
-    // optional → user override wins.
-    assert!(!store.read_receipt_should_send(
-        None,
-        Some("ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE")
-    ));
-    let snap = store
-        .read_receipt_policy_for_realm("ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE")
-        .unwrap();
-    assert!(!snap.locks_user_choice());
-    assert_eq!(snap.lock_reason(), "");
-}
-
-#[test]
-fn read_receipt_policy_snapshot_persists_across_store_instances() {
-    let path = temp_state_path("read-receipt-policy-persists");
-    {
-        let mut store = LocalStateStore::with_path(path.clone());
-        store.set_read_receipt_policy_snapshot(
-            "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
-            Some(ReadReceiptPolicySnapshot {
-                disclosure: "required".to_owned(),
-                visibility: Some("track_scoped".to_owned()),
-            }),
-        );
-    }
-    let reader = LocalStateStore::with_path(path);
-    let snap = reader
-        .read_receipt_policy_for_realm("ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE")
-        .unwrap();
-    assert_eq!(snap.disclosure, "required");
-    assert_eq!(snap.visibility.as_deref(), Some("track_scoped"));
 }

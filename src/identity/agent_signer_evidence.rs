@@ -1,28 +1,22 @@
 //! Historical signing keys supplied by the authenticated Account Station.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use arkret_sdk::signatures::PublicKeyMaterial;
-use arkret_sdk::{
-    Did, DidCoreId, DidUrl, HistoricalSignerKeyQuerySender, RealmId, SignerKeyQueryOutcome,
-    SignerKeyQuerySelector, SignerKeysQueryRequestBody,
+#[cfg(test)]
+use arkret_sdk::{DidCoreId, SignerKeyResolution, SignerKeysQueryRequestBody};
+use arkret_sdk::{DidUrl, RealmId};
+#[cfg(test)]
+use garth::historical_agent_keys::{EventAgentSelector, query_selector};
+use garth::historical_agent_keys::{
+    did_from_method_for_actor, event_agent_identity, historical_key, selector_from_candidate,
+    selector_from_committed_event, verify_event_producer,
 };
 use serde_json::Value;
 
 use crate::state::{
     CachedHistoricalAgentSignerKey, HistoricalAgentEventCandidate, LocalStateStore,
 };
-
-#[derive(Clone)]
-struct EventAgentSelector {
-    accepted_event: arkret_sdk::Event,
-    realm_id: RealmId,
-    agent_actor_id: arkret_sdk::ActorId,
-    agent_id: DidCoreId,
-    verification_method: DidUrl,
-    target_ref: arkret_wire::CommittedEventRef,
-    receiver_id: DidCoreId,
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CachedAgentEventVerdict {
@@ -39,175 +33,58 @@ pub(crate) struct OrdinaryAgentMlsBinding<'a> {
     pub group_state_ref: &'a str,
 }
 
-const MAX_REQUEST_SELECTORS: usize = 64;
+struct HistoricalKeyPort<'a>(&'a crate::runtime::input::StateStoreHandle);
 
-fn query_selector(selector: &EventAgentSelector) -> SignerKeyQuerySelector {
-    SignerKeyQuerySelector::HistoricalEvent {
-        sender: HistoricalSignerKeyQuerySender::Agent {
-            actor: selector.agent_actor_id.clone(),
-            verification_method: selector.verification_method.clone(),
-            committed_event_ref: selector.target_ref.clone(),
-        },
+impl garth::historical_agent_keys::HistoricalAgentKeyPort for HistoricalKeyPort<'_> {
+    fn recipient(&self) -> Option<arkret_sdk::AccountId> {
+        self.0.read(LocalStateStore::active_authority)
+    }
+    fn generation(&self) -> u64 {
+        crate::identity::device_directory::cache_epoch()
+    }
+    fn candidates(&self) -> Vec<HistoricalAgentEventCandidate> {
+        self.0
+            .read(LocalStateStore::historical_agent_event_candidates)
+    }
+    fn cached_keys(
+        &self,
+        actor: &arkret_sdk::ActorId,
+        method: &DidUrl,
+    ) -> Vec<CachedHistoricalAgentSignerKey> {
+        self.0
+            .read(|store| store.historical_agent_signer_keys(actor, method))
+    }
+    fn store_if_current(
+        &self,
+        recipient: &arkret_sdk::AccountId,
+        generation: u64,
+        entry: CachedHistoricalAgentSignerKey,
+    ) -> Result<bool, String> {
+        self.0.write(|store| {
+            if generation != crate::identity::device_directory::cache_epoch()
+                || store.active_authority().as_ref() != Some(recipient)
+            {
+                return Err("historical signer response arrived after account changed".into());
+            }
+            store.store_historical_agent_signer_key(entry)
+        })
     }
 }
 
-fn historical_key(
-    entry: &CachedHistoricalAgentSignerKey,
-    selector: &EventAgentSelector,
-    recipient: &arkret_sdk::AccountId,
-) -> Option<[u8; 32]> {
-    if entry.recipient_account_id != *recipient
-        || entry.realm_id != selector.realm_id
-        || entry.target_ref != selector.target_ref
-        || entry.receiver_id != selector.receiver_id
-        || entry.actor != selector.agent_actor_id
-        || entry.verification_method != selector.verification_method
-        || entry.authorization_ref.stream_position > entry.revision.stream_position
-    {
-        return None;
-    }
-    arkret_sdk::base64url_decode(entry.public_key_b64u.as_str().as_bytes())
-        .ok()?
-        .try_into()
-        .ok()
-}
-
-fn verify_event_producer(selector: &EventAgentSelector, key: &[u8; 32]) -> bool {
-    let event = &selector.accepted_event;
-    let Ok(envelope) = serde_json::to_value(event) else {
-        return false;
-    };
-    let Ok(preimage) = arkret_sdk::event_digest_preimage(&envelope) else {
-        return false;
-    };
-    let Ok(suite) = event.event_id.event_digest().digest_suite() else {
-        return false;
-    };
-    let material = PublicKeyMaterial::Ed25519Raw {
-        bytes: key.to_vec(),
-    };
-    event.producer_proof.as_ref().is_some_and(|proof| {
-        if proof.verification_method != selector.verification_method {
-            return false;
-        }
-        let Ok(proof) = serde_json::to_value(proof) else {
-            return false;
-        };
-        crate::identity::device_directory::verify_proof_value_for_signer_result_with_digest_suite(
-            &preimage,
-            &proof,
-            selector.agent_id.as_str(),
-            event.actor_id.signing_principal_id().as_str(),
-            &material,
-            suite,
-        )
-        .is_ok()
-    })
-}
-
-/// Resolve only exact durable candidates. The query is deliberately rebuilt
-/// from the committed coordinate stored at the verified carrier boundary; a
-/// current projection or a bare Event id can never create transport work.
 pub(crate) async fn prefetch_durable_historical_agent_keys(
     http: &arkret_sdk::http_client::Client,
     state_store: &crate::runtime::input::StateStoreHandle,
 ) -> bool {
-    let Some(recipient) = state_store.read(|store| store.active_authority()) else {
-        return false;
-    };
-    let generation = crate::identity::device_directory::cache_epoch();
-    let mut pending_by_realm = BTreeMap::<RealmId, Vec<EventAgentSelector>>::new();
-    let candidates = state_store.read(LocalStateStore::historical_agent_event_candidates);
-    for candidate in candidates {
-        if pending_by_realm.values().map(Vec::len).sum::<usize>() >= MAX_REQUEST_SELECTORS {
-            break;
-        }
-        let Some(selector) =
-            selector_from_candidate(&candidate, &candidate.accepted_event, &recipient.station_id)
-        else {
-            continue;
-        };
-        let already_resolved = state_store.read(|store| {
-            store
-                .historical_agent_signer_keys(
-                    &selector.agent_actor_id,
-                    &selector.verification_method,
-                )
-                .iter()
-                .any(|entry| historical_key(entry, &selector, &recipient).is_some())
-        });
-        if !already_resolved {
-            pending_by_realm
-                .entry(selector.realm_id.clone())
-                .or_default()
-                .push(selector);
-        }
+    let report = garth::historical_agent_keys::resolve_historical_agent_keys(
+        http,
+        &HistoricalKeyPort(state_store),
+        &crate::event_submit::InksonHostClock,
+    )
+    .await;
+    for error in report.errors {
+        tracing::warn!(%error, "historical Agent signer query remains pending");
     }
-
-    let mut changed = false;
-    for (realm_id, pending) in pending_by_realm {
-        let request = SignerKeysQueryRequestBody {
-            request_id: arkret_sdk::RequestId::new_v7_at(crate::clock::now_unix_ms()),
-            realm_id,
-            recipient_account_id: recipient.clone(),
-            queries: pending.iter().map(query_selector).collect(),
-        };
-        let outcome = match http.signer_keys_query(&request).await {
-            Ok(outcome) => outcome,
-            Err(error) => {
-                tracing::warn!(realm_id = %request.realm_id, %error, "historical Agent signer query remains pending");
-                continue;
-            }
-        };
-        for result in outcome.results {
-            let SignerKeyQueryOutcome::HistoricalResolved {
-                selector,
-                key,
-                accepted_at,
-            } = result
-            else {
-                continue;
-            };
-            let Some(selected) = pending
-                .iter()
-                .find(|candidate| query_selector(candidate) == selector)
-            else {
-                continue;
-            };
-            let entry = CachedHistoricalAgentSignerKey {
-                recipient_account_id: recipient.clone(),
-                realm_id: selected.realm_id.clone(),
-                target_ref: selected.target_ref.clone(),
-                receiver_id: selected.receiver_id.clone(),
-                accepted_at,
-                actor: selected.agent_actor_id.clone(),
-                verification_method: selected.verification_method.clone(),
-                public_key_b64u: key.public_key_b64u,
-                authorization_ref: key.authorization_ref,
-                revision: key.revision,
-                governance_generation: key.governance_generation,
-                cached_at_unix_ms: crate::clock::now_unix_ms(),
-            };
-            let Some(public_key) = historical_key(&entry, selected, &recipient) else {
-                continue;
-            };
-            if !verify_event_producer(selected, &public_key) {
-                continue;
-            }
-            let stored = state_store.write(|store| {
-                if generation != crate::identity::device_directory::cache_epoch()
-                    || store.active_authority().as_ref() != Some(&recipient)
-                {
-                    return Err(
-                        "historical signer response arrived after account changed".to_owned()
-                    );
-                }
-                store.store_historical_agent_signer_key(entry)
-            });
-            changed |= matches!(stored, Ok(true));
-        }
-    }
-    changed
+    report.changed
 }
 
 /// Index one row only after its carrier crossed the fresh Realm authority
@@ -389,92 +266,6 @@ pub(crate) fn verified_cached_agent_event_endpoint(
     Some(arkret_sdk::SignalSequenceEndpoint::AgentKey { public_key_digest })
 }
 
-fn event_agent_identity(envelope: &Value) -> Option<(arkret_sdk::Event, DidCoreId, DidUrl)> {
-    let event: arkret_sdk::Event = serde_json::from_value(envelope.clone()).ok()?;
-    if event.actual_signer().as_account_id().is_none()
-        || event.human_device_producer().ok().flatten().is_some()
-    {
-        return None;
-    }
-    let frozen_agent_evidence = event.producer_proof.is_some();
-    if event.applet_id.is_some() || (event.executed_by.is_none() && !frozen_agent_evidence) {
-        return None;
-    }
-    let agent_id = event
-        .executed_by
-        .as_ref()
-        .unwrap_or(&event.actor_id)
-        .signing_principal_id()
-        .clone();
-    let proof = event.producer_proof.as_ref()?;
-    let verification_method = proof
-        .verification_method
-        .as_str()
-        .split_once('#')
-        .and_then(|(controller, _)| Did::new(controller.to_owned()).ok())
-        .and_then(|did| arkret_sdk::project_did_to_core_id(&did).ok())
-        .filter(|controller| controller == &agent_id)
-        .map(|_| proof)
-        .map(|proof| proof.verification_method.clone())?;
-    Some((event, agent_id, verification_method))
-}
-
-fn actor_id_from_full(did: &Did) -> Option<DidCoreId> {
-    arkret_sdk::project_did_to_core_id(did).ok()
-}
-
-fn did_from_method_for_actor(method: &DidUrl, actor_id: &DidCoreId) -> Option<Did> {
-    let did = Did::new(method.as_str().split_once('#')?.0.to_owned()).ok()?;
-    (actor_id_from_full(&did).as_ref() == Some(actor_id)).then_some(did)
-}
-
-fn selector_from_committed_event(
-    event: arkret_sdk::Event,
-    target_ref: arkret_wire::CommittedEventRef,
-    receiver_id: &DidCoreId,
-) -> Option<EventAgentSelector> {
-    let (event, agent_id, verification_method) =
-        event_agent_identity(&serde_json::to_value(event).ok()?)?;
-    let realm_id = event.realm_id.clone();
-    if target_ref.event_id != event.event_id || target_ref.stream_ref.realm_id() != &realm_id {
-        return None;
-    }
-    let suite = event.event_id.event_digest().digest_suite().ok()?;
-    event
-        .validate_proof_bindings_with_digest_suite(suite)
-        .ok()?;
-    Some(EventAgentSelector {
-        accepted_event: event.clone(),
-        realm_id,
-        agent_actor_id: event
-            .executed_by
-            .as_ref()
-            .unwrap_or(&event.actor_id)
-            .clone(),
-        agent_id,
-        verification_method,
-        target_ref,
-        receiver_id: receiver_id.clone(),
-    })
-}
-
-fn selector_from_candidate(
-    candidate: &HistoricalAgentEventCandidate,
-    event: &arkret_sdk::Event,
-    receiver_id: &DidCoreId,
-) -> Option<EventAgentSelector> {
-    if &candidate.accepted_event != event || &candidate.receiver_id != receiver_id {
-        return None;
-    }
-    let selector =
-        selector_from_committed_event(event.clone(), candidate.target_ref.clone(), receiver_id)?;
-    (selector.realm_id == candidate.realm_id
-        && selector.agent_actor_id == candidate.agent_actor_id
-        && selector.agent_id == candidate.agent_id
-        && selector.verification_method == candidate.verification_method)
-        .then_some(selector)
-}
-
 #[cfg(test)]
 mod historical_result_tests {
     use serde_json::json;
@@ -523,6 +314,9 @@ mod historical_result_tests {
                 ),
             ),
             "did:web:agent.example".to_owned(),
+            arkret_sdk::signatures::PublicKeyMaterial::Ed25519Raw {
+                bytes: public_key.to_vec(),
+            },
         );
         signer.sign_envelope(&mut authored).unwrap();
         let event = authored.into_event();
@@ -553,7 +347,7 @@ mod historical_result_tests {
                 .created_at,
             actor: selector.agent_actor_id.clone(),
             verification_method: selector.verification_method.clone(),
-            public_key_b64u: arkret_sdk::Base64UrlString::new(arkret_sdk::base64url_encode(
+            public_key_base64url: arkret_sdk::Base64UrlString::new(arkret_sdk::base64url_encode(
                 public_key,
             ))
             .unwrap(),
@@ -605,7 +399,7 @@ mod historical_result_tests {
                         .as_ref()
                         .unwrap()
                         .created_at,
-                    sig: arkret_sdk::Base64UrlString::new("AA").unwrap(),
+                    signature: arkret_sdk::Base64UrlString::new("AA").unwrap(),
                 },
             },
         })
@@ -619,7 +413,7 @@ mod historical_result_tests {
             "did:web:agent.example#ak:device:0196419b-0000-7000-8000-0000000000f1".to_owned(),
         )
         .unwrap();
-        assert!(device.human_device_producer().unwrap().is_some());
+        assert!(device.account_device_producer().unwrap().is_some());
         assert!(event_agent_identity(&serde_json::to_value(device).unwrap()).is_none());
         let mut service = selector.accepted_event;
         service.actor_id = arkret_sdk::ActorId::service(selector.agent_id);
@@ -837,16 +631,17 @@ mod historical_result_tests {
                     }
                 }
             };
-            assert_eq!(request.recipient_account_id, recipient);
+            assert_eq!(request.recipient_account_id, Some(recipient));
             assert_eq!(request.queries, vec![expected_selector.clone()]);
-            let outcome = arkret_sdk::SignerKeysQueryOutcome {
+            let outcome = arkret_sdk::SignerKeyQueryResponseBody {
+                recipient_actor_id: None,
                 request_id: request.request_id.clone(),
                 realm_id: request.realm_id.clone(),
                 recipient_account_id: request.recipient_account_id.clone(),
-                results: vec![SignerKeyQueryOutcome::HistoricalResolved {
+                resolutions: vec![SignerKeyResolution::HistoricalResolved {
                     selector: expected_selector,
                     key: arkret_sdk::ResolvedSignerKey {
-                        public_key_b64u: entry.public_key_b64u,
+                        public_key_base64url: entry.public_key_base64url,
                         authorization_ref: entry.authorization_ref,
                         revision: entry.revision,
                         governance_generation: entry.governance_generation,
@@ -878,8 +673,9 @@ mod historical_result_tests {
             handle.read(|store| verify_cached_event(&envelope, store, None)),
             CachedAgentEventVerdict::Verified
         );
-        let garth::DecodedInbound::Message(message) =
-            garth::InboundDecoder::new().decode_event(selector.accepted_event.clone())
+        let garth::DecodedInbound::Message(message) = garth::InboundDecoder::new()
+            .try_decode_event(selector.accepted_event.clone())
+            .unwrap()
         else {
             panic!("fixture is an ordinary Agent reply");
         };
@@ -1031,7 +827,16 @@ mod historical_result_tests {
             .unwrap();
         store.store_historical_agent_signer_key(entry).unwrap();
         let mut legacy = store.load();
-        for candidate in legacy.historical_agent_event_candidates.values_mut() {
+        let keys = legacy
+            .historical_agent_event_candidates
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        for key in keys {
+            let candidate = legacy
+                .historical_agent_event_candidates
+                .get_mut(&key)
+                .unwrap();
             let mut old_value = serde_json::to_value(&*candidate).unwrap();
             old_value
                 .as_object_mut()
@@ -1109,6 +914,9 @@ mod historical_result_tests {
                 ),
             ),
             "did:web:agent.example".to_owned(),
+            arkret_sdk::signatures::PublicKeyMaterial::Ed25519Raw {
+                bytes: key.to_vec(),
+            },
         );
         signer.sign_envelope(&mut authored).unwrap();
         selector.accepted_event = authored.into_event();

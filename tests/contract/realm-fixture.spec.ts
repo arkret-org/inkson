@@ -1,13 +1,17 @@
 import { expect, test } from "@playwright/test";
 import { createHash } from "node:crypto";
-import { inksonWire, mockArkretApi, validateMockSchema } from "../e2e/mockArkretApi";
-import { captureRouteHandler, driveOnce } from "./mockShapeDriver";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { inksonWire, mockArkretApi, validateMockResponseForOperation, validateMockSchema } from "../e2e/mockArkretApi";
+import { captureRouteHandler, driveOnce, mockOperations } from "./mockShapeDriver";
 
 type Fixture = {
   snapshot: Record<string, any>;
   committed_events: Array<{ event: Record<string, any>; commit: Record<string, any> }>;
   signer_facts: Array<Record<string, any>>;
   source_authorization: { event: Record<string, any>; commit: Record<string, any> };
+  source_create: { event: Record<string, any>; commit: Record<string, any> };
   identity: { did: string; account_id: { principal_id: string; station_id: string }; principal_control_realm_id: string; inception_log_entry: Record<string, any>; resolution: Record<string, any> };
   account_entry: Record<string, any>;
   ids: Record<string, string>;
@@ -56,7 +60,7 @@ test("Plaintext-visible service bootstrap retains the signed declaration and exa
       value: payload,
     });
     expect(fixture.account_entry.current.entries).toContainEqual(row);
-    validateMockSchema("schemas/typed-current-result.schema.json", row);
+    validateMockSchema("schemas/current-state.schema.json", row);
   }
 });
 
@@ -99,6 +103,14 @@ const scanRequest = (fixture: Fixture) => ({
 });
 const scan = (fixture: Fixture, request = scanRequest(fixture)) =>
   inksonWire<Record<string, any>>("mock-realm-scan", { fixture, request });
+const currentCommittedCursor = (fixture: Fixture) => {
+  const { digest } = inksonWire<{ digest: string }>("sha256-canonical-json", { value: {
+    account_id: fixture.identity.account_id, device_id: fixture.signer_facts[1].device_id,
+    realm_ids: [fixture.snapshot.realm_id], actor_ids: [],
+    cuts: [{ realm_id: fixture.snapshot.realm_id, snapshot_id: fixture.snapshot.snapshot_id }],
+  } });
+  return `ak:cursor:e2e-events-${digest.replace(/^sha256:/, "")}`;
+};
 const changedSignature = (signature: string) =>
   `${signature[0] === "A" ? "B" : "A"}${signature.slice(1)}`;
 
@@ -171,14 +183,14 @@ test("Encrypted native Realm has authenticated public MLS material and exact Gen
     kind: "device", device_id: fixture.source_authorization.event.payload.device_id,
   });
   const fact = fixture.signer_facts.find(fact => fact.event_id === full.event.event_id)!;
-  expect(payload.creator_leaf_authority.leaf_signature_key_b64u).toBe(fact.key.public_key_b64u);
+  expect(payload.creator_leaf_authority.leaf_signature_key_base64url).toBe(fact.key.public_key_base64url);
   const rows = fixture.snapshot.current_state_entries.filter((row: any) => row.selector.kind === "mls_group");
   expect(rows).toHaveLength(1);
   expect(rows[0].source_stream_ref).toEqual(full.commit.stream_ref);
   expect(rows[0].revision).toEqual({ commit_id: full.commit.commit_id, stream_position: full.commit.stream_position });
   expect(rows[0].value).toMatchObject({
     genesis_event_ref: full.event.event_id, current_mls_commit_event_ref: full.event.event_id,
-    epoch: 0, public_tree_ref: payload.ratchet_tree_ref,
+    epoch: "0", public_tree_ref: payload.ratchet_tree_ref,
   });
   expect(scan(fixture).committed_events).toEqual(fixture.committed_events);
 });
@@ -201,7 +213,7 @@ test("Encrypted native Realm rejects altered public MLS bytes and Genesis author
     if (mutation === "missing tree") delete changed.public_blobs![payload.ratchet_tree_ref];
     if (mutation === "creator authorization") payload.creator_leaf_authority.authorization_event_ref = fixture.committed_events[0].event.event_id;
     if (mutation === "creator device") payload.creator_leaf_authority.endpoint.device_id = "ak:device:01964137-0000-7000-8000-0000000000a2";
-    if (mutation === "creator leaf") payload.creator_leaf_authority.leaf_signature_key_b64u = "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI";
+    if (mutation === "creator leaf") payload.creator_leaf_authority.leaf_signature_key_base64url = "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI";
     const current = changed.snapshot.current_state_entries.find((row: any) => row.selector.kind === "mls_group");
     if (mutation === "current epoch") current.value.epoch += 1;
     if (mutation === "current source") current.revision = structuredClone(fixture.snapshot.current_state_entries[0].revision);
@@ -256,7 +268,7 @@ test("Managed Agent native verification rejects altered delegation, possession a
     if (mutation === "delegation") agent.controller_authorization_ref = `${agent.did}#other-controller`;
     if (mutation === "possession signature") agent.runtime_proof.signature = changedSignature(agent.runtime_proof.signature);
     if (mutation === "source commit") agent.provision.commit.event_ref = fixture.committed_events[0].event.event_id;
-    if (mutation === "runtime commit") agent.runtime_authorization.commit.signature.sig = changedSignature(agent.runtime_authorization.commit.signature.sig);
+    if (mutation === "runtime commit") agent.runtime_authorization.commit.signature.signature = changedSignature(agent.runtime_authorization.commit.signature.signature);
     const current = changed.snapshot.current_state_entries.find((row: any) => row.selector.kind === "member_state"
       && row.selector.actor_id?.account_id?.principal_id === agent.account_id.principal_id);
     if (mutation === "member Account") current.selector.actor_id.account_id.station_id = fixture.identity.account_id.principal_id;
@@ -278,22 +290,22 @@ test("Historical signer query resolves only the exact accepted Event and Commit"
   expect(outcome).toMatchObject({
     request_id: request.request_id, realm_id: request.realm_id,
     recipient_account_id: request.recipient_account_id,
-    results: [{ status: "resolved", selector: request.queries[0],
+    resolutions: [{ status: "resolved", selector: request.queries[0],
       key: fixture.signer_facts[1].key, accepted_at: fixture.signer_facts[1].accepted_at }],
   });
   const changed = structuredClone(request);
   changed.queries[0].committed_event_ref.commit_id = fixture.committed_events[0].commit.commit_id;
   expect(inksonWire<Record<string, any>>("mock-realm-signer-keys", {
     fixture, request: changed,
-  }).results).toEqual([{ status: "unavailable", selector: changed.queries[0] }]);
+  }).resolutions).toEqual([{ status: "unavailable", selector: changed.queries[0] }]);
 });
 
 test("Native read entry rejects changed signatures, source authorization and historical key facts", () => {
   const fixture = build();
   for (const mutation of ["snapshot signature", "commit signature", "producer signature", "source authorization", "historical key", "inception"] as const) {
     const changed = structuredClone(fixture);
-    if (mutation === "snapshot signature") changed.snapshot.signature.sig = changedSignature(changed.snapshot.signature.sig);
-    if (mutation === "commit signature") changed.committed_events[1].commit.signature.sig = changedSignature(changed.committed_events[1].commit.signature.sig);
+    if (mutation === "snapshot signature") changed.snapshot.signature.signature = changedSignature(changed.snapshot.signature.signature);
+    if (mutation === "commit signature") changed.committed_events[1].commit.signature.signature = changedSignature(changed.committed_events[1].commit.signature.signature);
     if (mutation === "producer signature") {
       const proof = changed.committed_events[1].event.producer_proof;
       const parts = proof.jws.split(".");
@@ -301,7 +313,7 @@ test("Native read entry rejects changed signatures, source authorization and his
       proof.jws = parts.join(".");
     }
     if (mutation === "source authorization") changed.source_authorization.commit.event_ref = fixture.committed_events[0].event.event_id;
-    if (mutation === "historical key") changed.signer_facts[1].key.public_key_b64u = "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI";
+    if (mutation === "historical key") changed.signer_facts[1].key.public_key_base64url = "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI";
     if (mutation === "inception") changed.identity.inception_log_entry.versionId = "1-forged";
     expect(() => scan(changed), mutation).toThrow();
   }
@@ -341,6 +353,140 @@ async function mockReadFixture() {
   });
   return { fixture, route: captured.handler() };
 }
+
+test("Self Watch current reads the SDK-verified complete cell without advancing its cut", async () => {
+  const fixture = build();
+  const original = structuredClone(fixture);
+  const request = {
+    realm_id: fixture.snapshot.realm_id, strand_id: fixture.ids.review,
+    watcher_actor_id: { kind: "account", account_id: fixture.identity.account_id },
+  };
+  const current = inksonWire<Record<string, any>>("mock-strand-watch-current", { fixture, request });
+  expect(current).toEqual({
+    status: "never_written", realm_id: request.realm_id,
+    governance_generation: fixture.snapshot.governance_generation,
+    stream_head: fixture.snapshot.visible_stream_heads[0],
+    selector: { kind: "strand_watch", strand_id: request.strand_id, watcher_actor_id: request.watcher_actor_id },
+  });
+  validateMockSchema("schemas/service-operation-dtos.schema.json#/$defs/StrandWatchCurrentResponseBody", current);
+  expect(fixture).toEqual(original);
+  for (const field of ["Realm", "Strand", "Account", "Station"] as const) {
+    const changed = structuredClone(request);
+    if (field === "Realm") changed.realm_id = inksonWire<Fixture>("mock-realm-fixture", { salt: 10, title: "Other" }).snapshot.realm_id;
+    if (field === "Strand") changed.strand_id = "ak:strand:AWXzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c";
+    if (field === "Account") changed.watcher_actor_id.account_id.principal_id = "ak:did_core:web:other.example";
+    if (field === "Station") changed.watcher_actor_id.account_id.station_id = "ak:did_core:web:other.example";
+    expect(() => inksonWire("mock-strand-watch-current", { fixture, request: changed }), field).toThrow();
+  }
+  const changed = structuredClone(fixture);
+  changed.snapshot.current_state_entries.push({
+    selector: current.selector, source_stream_ref: current.stream_head.stream_ref,
+    revision: { commit_id: current.stream_head.commit_id, stream_position: current.stream_head.stream_position },
+    value: { level: "muted" },
+  });
+  expect(() => inksonWire("mock-strand-watch-current", { fixture: changed, request })).toThrow();
+});
+
+test("Watch read controls delay only the exact response and keep failures and other targets independent", async () => {
+  const captured = captureRouteHandler();
+  const scenario = await mockArkretApi(captured.page as never);
+  const fixture = inksonWire<Fixture>("mock-realm-fixture", { salt: 9, title: "Arkret Demo Realm", board: true });
+  const target = { realmId: scenario.demoRealm, strandId: scenario.demoStrands.review };
+  const request = {
+    realm_id: target.realmId, strand_id: target.strandId,
+    watcher_actor_id: { kind: "account", account_id: fixture.identity.account_id },
+  };
+  const current = inksonWire("mock-strand-watch-current", { fixture, request });
+  const route = captured.handler();
+  const url = "https://local.host/_arkret/self/strands/watch/current";
+  const gate = scenario.watchReads.holdNext(target);
+  let entered = false;
+  void gate.entered.then(() => { entered = true; });
+  let delivered = false;
+  let pending: ReturnType<typeof driveOnce> | undefined;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    for (const field of ["principal_id", "station_id"] as const) {
+      const foreign = structuredClone(request);
+      foreign.watcher_actor_id.account_id[field] = "ak:did_core:web:other.example";
+      const refused = await Promise.race([
+        driveOnce(route, { url, method: "POST", postData: foreign }),
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(() => reject(new Error("foreign Actor consumed the own watch gate")), 5_000);
+        }),
+      ]);
+      clearTimeout(timeout);
+      timeout = undefined;
+      expect(refused?.status).toBe(404);
+      expect(refused?.body).not.toHaveProperty("result");
+      expect(scenario.watchReads.count(target)).toBe(0);
+      expect(entered).toBe(false);
+    }
+    pending = driveOnce(route, { url, method: "POST", postData: request }).then(result => { delivered = true; return result; });
+    await gate.entered;
+    expect(scenario.watchReads.count(target)).toBe(1);
+    expect(delivered).toBe(false);
+    const otherTarget = { realmId: target.realmId, strandId: scenario.demoStrands.scope };
+    const other = await driveOnce(route, { url, method: "POST", postData: { ...request, strand_id: otherTarget.strandId } });
+    expect(other?.status).toBe(200);
+    expect(scenario.watchReads.count(otherTarget)).toBe(1);
+    expect(delivered).toBe(false);
+  } finally {
+    clearTimeout(timeout);
+    gate.release();
+  }
+  expect(pending).toBeDefined();
+  expect(await pending).toEqual({ status: 200, contentType: "application/json", body: current });
+  scenario.watchReads.failNext(target, 503, "service_unavailable");
+  const failure = await driveOnce(route, { url, method: "POST", postData: request });
+  expect(failure?.status).toBe(503);
+  expect(failure?.body).toMatchObject({ status: 503 });
+  expect(failure?.body).not.toHaveProperty("value");
+  expect(failure?.body).not.toHaveProperty("result");
+  expect(await driveOnce(route, { url, method: "POST", postData: request })).toEqual({ status: 200, contentType: "application/json", body: current });
+  expect(scenario.watchReads.count(target)).toBe(3);
+  const foreign = structuredClone(request);
+  foreign.watcher_actor_id.account_id.station_id = "ak:did_core:web:other.example";
+  const refused = await driveOnce(route, { url, method: "POST", postData: foreign });
+  expect(refused?.status).toBe(404);
+  expect(refused?.body).not.toHaveProperty("result");
+  expect(scenario.watchReads.count(target)).toBe(3);
+  expect(await driveOnce(route, {
+    url: `https://local.host/_arkret/self/realm-state-snapshot/head?realm_id=${encodeURIComponent(target.realmId)}`, method: "GET",
+  })).toEqual({ status: 200, contentType: "application/json", body: fixture.snapshot });
+});
+
+test("Watch CAS validation preserves other declared conflict responses without treating them as Watch failures", () => {
+  const registryPath = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "arkret-spec", "spec", "v1", "artifacts", "registry", "error-code-registry.json");
+  const registry = JSON.parse(readFileSync(registryPath, "utf8")) as {
+    codes: Array<{ code: string; status: string; http_status: number; type_uri: string; title: string }>;
+  };
+  const problem = (code: string) => {
+    const descriptor = registry.codes.find(entry => entry.code === code && entry.status === "active")!;
+    expect(descriptor).toBeDefined();
+    return { type: descriptor.type_uri, title: descriptor.title, status: descriptor.http_status, detail: "Current registered conflict fixture." };
+  };
+  const operations = mockOperations();
+  const submit = operations.find(operation => operation.operation_id === "ak.self.events.command.submit.v1")!;
+  const generic = operations.find(operation => operation.operation_id === "ak.gate.account.command.pair_device.v1")!;
+  expect(submit).toBeDefined();
+  expect(generic).toBeDefined();
+  const watch = problem("failed_precondition");
+  expect(() => validateMockResponseForOperation(submit, 409, watch, "application/problem+json")).not.toThrow();
+  expect(() => validateMockResponseForOperation(submit, 409, { ...watch, title: "Wrong Watch title" }, "application/problem+json")).toThrow();
+  const duplicate = problem("duplicate_conflict");
+  const original = structuredClone(duplicate);
+  expect(() => validateMockResponseForOperation(generic, 409, problem("failed_precondition"), "application/problem+json")).not.toThrow();
+  expect(() => validateMockResponseForOperation(generic, 409, duplicate, "application/problem+json")).toThrow("registered error surface");
+  // Exercise the generic declared-response path under the same operation id.
+  // This validator input does not add a response to the embedded inventory.
+  const declared = { ...submit, responses: { ...submit.responses, "409": generic.responses["409"] } };
+  expect(() => validateMockResponseForOperation(declared, 409, duplicate, "application/problem+json")).not.toThrow();
+  expect(duplicate).toEqual(original);
+  // Domain failures are owned by the canonical operation error map even
+  // when OpenAPI lists only success responses for this operation.
+  expect(() => validateMockResponseForOperation(submit, 409, duplicate, "application/problem+json")).not.toThrow();
+});
 
 test("New Root bootstrap registers its native Realm before exact historical reads", async () => {
   const captured = captureRouteHandler();
@@ -396,16 +542,19 @@ test("New Root bootstrap registers its native Realm before exact historical read
   expect(keys?.status).toBe(200);
   expect(keys?.body).toMatchObject({
     request_id: keyRequest.request_id, realm_id: realm, recipient_account_id: fixture.identity.account_id,
-    results: [{ status: "resolved", key: fixture.signer_facts[1].key, accepted_at: fixture.signer_facts[1].accepted_at }],
+    resolutions: [{ status: "resolved", key: fixture.signer_facts[1].key, accepted_at: fixture.signer_facts[1].accepted_at }],
   });
   const other = inksonWire<Fixture>("mock-realm-fixture", { salt: 11, title: "Unregistered Realm" });
-  for (const bad of [
-    { ...keyRequest, realm_id: other.snapshot.realm_id },
-    { ...keyRequest, recipient_account_id: { ...fixture.identity.account_id, station_id: "ak:did_core:web:other.example" } },
-  ]) {
-    await expect(driveOnce(route, {
+  for (const [bad, status] of [
+    [{ ...keyRequest, realm_id: other.snapshot.realm_id }, 404],
+    [{ ...keyRequest, recipient_account_id: { ...fixture.identity.account_id, station_id: "ak:did_core:web:other.example" } }, 403],
+  ] as const) {
+    const rejected = await driveOnce(route, {
       url: "https://local.host/_arkret/self/signer-keys/query", method: "POST", postData: bad,
-    })).rejects.toThrow();
+    });
+    expect(rejected?.status).toBe(status);
+    expect(rejected?.contentType).toBe("application/problem+json");
+    expect(rejected?.body).not.toHaveProperty("error");
   }
 });
 
@@ -424,9 +573,9 @@ test("Exact managed Agent current read proves never-written at the unchanged ver
       && head.stream_ref.realm_id === request.realm_id),
     selector: request.selector,
   });
-  expect(() => validateMockSchema("schemas/exact-current-results-read.schema.json#/$defs/exact_current_results_read_outcome", outcome)).not.toThrow();
+  expect(() => validateMockSchema("schemas/exact-current-state-read.schema.json#/$defs/exact_current_state_read_response_body", outcome)).not.toThrow();
   const response = await driveOnce(route, {
-    url: "https://local.host/_arkret/self/current-results/exact", method: "POST", postData: request,
+    url: "https://local.host/_arkret/self/current-state/exact", method: "POST", postData: request,
   });
   expect(response?.status).toBe(200);
   expect(response?.body).toEqual(outcome);
@@ -490,7 +639,7 @@ test("Mock read routes preserve the native snapshot, original Event and exact si
     url: "https://local.host/_arkret/self/signer-keys/query", method: "POST", postData: signerRequest(fixture),
   });
   expect(queried?.status).toBe(200);
-  expect((queried?.body as any).results[0]).toMatchObject({ status: "resolved", key: fixture.signer_facts[1].key });
+  expect((queried?.body as any).resolutions[0]).toMatchObject({ status: "resolved", key: fixture.signer_facts[1].key });
   const request = { request_id: "ak:request:01904100-0000-7000-8000-000000000002", account_id: fixture.identity.account_id };
   const principal = await driveOnce(route, {
     url: "https://local.host/_arkret/self/account/current-principal", method: "POST", postData: request,
@@ -509,7 +658,9 @@ test("Mock account and committed Event streams retain the native Realm cut witho
   });
   expect(account?.status).toBe(200);
   const accountFrames = decodeStreamFrames(account?.body);
-  const realm = accountFrames.find(frame => frame.kind === "delta").realms[fixture.snapshot.realm_id];
+  const delta = accountFrames.find(frame => frame.kind === "delta");
+  if (!delta) throw new Error("native Account stream has no delta frame");
+  const realm = delta.realms[fixture.snapshot.realm_id];
   expect(realm.committed_events).toEqual(fixture.committed_events);
   expect(realm.current).toEqual(fixture.account_entry.current);
   const stream = await driveOnce(route, {
@@ -518,8 +669,181 @@ test("Mock account and committed Event streams retain the native Realm cut witho
   });
   expect(stream?.status).toBe(200);
   const frames = decodeStreamFrames(stream?.body);
-  expect(frames.filter(frame => frame.kind === "committed_event").map(frame => frame.payload)).toEqual(fixture.committed_events);
-  expect(frames.at(-1)).toMatchObject({ kind: "catchup_complete" });
+  expect(frames).toEqual([{ kind: "checkpoint", cursor: currentCommittedCursor(fixture) }]);
+  expect(scan(fixture).committed_events).toEqual(fixture.committed_events);
+});
+
+test("Mock committed Event live-only subscriptions never replay history or complete catchup", async () => {
+  const { fixture, route } = await mockReadFixture();
+  const base = `https://local.host/_arkret/self/committed-events/subscribe?realm_ids=${encodeURIComponent(fixture.snapshot.realm_id)}`;
+  const cursor = currentCommittedCursor(fixture);
+  for (const after of ["", `&after=${encodeURIComponent(cursor)}`]) {
+    const response = await driveOnce(route, { url: `${base}&catchup=false${after}`, method: "GET" });
+    expect(response?.status).toBe(200);
+    const frames = decodeStreamFrames(response?.body);
+    expect(frames).toEqual([{ kind: "checkpoint", cursor }]);
+    for (const frame of frames) validateMockSchema("schemas/committed-event-subscribe-frame.schema.json", frame);
+  }
+});
+
+test("Mock empty committed Event continuation defaults to live-only and completes only explicit catchup", async () => {
+  const { fixture, route } = await mockReadFixture();
+  const base = `https://local.host/_arkret/self/committed-events/subscribe?realm_ids=${encodeURIComponent(fixture.snapshot.realm_id)}`;
+  const initial = await driveOnce(route, { url: base, method: "GET" });
+  expect(initial?.status).toBe(200);
+  const checkpoint = decodeStreamFrames(initial?.body);
+  const cursor = currentCommittedCursor(fixture);
+  expect(checkpoint).toEqual([{ kind: "checkpoint", cursor }]);
+  for (const query of ["", "&catchup=true"]) {
+    const response = await driveOnce(route, {
+      url: `${base}&after=${encodeURIComponent(cursor)}${query}`, method: "GET",
+    });
+    expect(response?.status).toBe(200);
+    const frames = decodeStreamFrames(response?.body);
+    expect(frames).toEqual([
+      { kind: "checkpoint", cursor },
+      ...(query === "&catchup=true" ? [{ kind: "catchup_complete", cursor }] : []),
+    ]);
+    for (const frame of frames) validateMockSchema("schemas/committed-event-subscribe-frame.schema.json", frame);
+  }
+  for (const query of ["&catchup=true", "&catchup=true&after=ak%3Acursor%3Anot-issued", "&after=ak%3Acursor%3Anot-issued"]) {
+    await expect(driveOnce(route, { url: `${base}${query}`, method: "GET" })).rejects.toThrow();
+  }
+  const other = inksonWire<Fixture>("mock-realm-fixture", { salt: 11, title: "Other selector Realm" });
+  const otherScope = `https://local.host/_arkret/self/committed-events/subscribe?realm_ids=${encodeURIComponent(other.snapshot.realm_id)}`;
+  expect((await driveOnce(route, { url: otherScope, method: "GET" }))?.status).toBe(200);
+  await expect(driveOnce(route, {
+    url: `${otherScope}&catchup=true&after=${encodeURIComponent(cursor)}`, method: "GET",
+  })).rejects.toThrow("replay from this cursor is not implemented");
+  const actorScope = `${base}&actor_ids=${encodeURIComponent(JSON.stringify({ kind: "account", account_id: fixture.identity.account_id }))}`;
+  const actorInitial = await driveOnce(route, { url: actorScope, method: "GET" });
+  expect(actorInitial?.status).toBe(200);
+  expect(decodeStreamFrames(actorInitial?.body).map(frame => frame.kind)).toEqual(["checkpoint"]);
+  await expect(driveOnce(route, {
+    url: `${actorScope}&catchup=true&after=${encodeURIComponent(cursor)}`, method: "GET",
+  })).rejects.toThrow("replay from this cursor is not implemented");
+  const assertDeniedWithoutFacts = (response: Awaited<ReturnType<typeof driveOnce>>) => {
+    expect(response?.status).toBe(403);
+    expect(response?.contentType).toBe("application/problem+json");
+    expect(response?.body).toMatchObject({ type: "https://arkret.org/problems/capability_denied", status: 403 });
+    expect(Object.keys(response?.body as object).sort()).toEqual(["detail", "status", "title", "type"]);
+    const operation = mockOperations().find(operation => operation.operation_id === "ak.self.committed_event.stream.subscribe.v1")!;
+    expect(() => validateMockResponseForOperation(operation, 403, response?.body, "application/problem+json")).not.toThrow();
+  };
+  const missing = inksonWire<Fixture>("mock-realm-fixture", { salt: 13, title: "Unregistered native Realm" });
+  assertDeniedWithoutFacts(await driveOnce(route, {
+    url: `https://local.host/_arkret/self/committed-events/subscribe?realm_ids=${encodeURIComponent(missing.snapshot.realm_id)}&after=${encodeURIComponent(cursor)}&catchup=true`,
+    method: "GET",
+  }));
+  const foreignSubject = captureRouteHandler();
+  await mockArkretApi(foreignSubject.page as never, { accountPrincipalId: "did:web:bob.example" });
+  assertDeniedWithoutFacts(await driveOnce(foreignSubject.handler(), {
+    url: `${base}&after=${encodeURIComponent(cursor)}&catchup=true`, method: "GET",
+  }));
+  for (const options of [{}, {
+    currentDeviceId: "ak:device:01964137-0000-7000-8000-0000000000b2",
+  }]) {
+    const unissued = captureRouteHandler();
+    await mockArkretApi(unissued.page as never, options);
+    await expect(driveOnce(unissued.handler(), {
+      url: `${base}&catchup=true&after=${encodeURIComponent(cursor)}`, method: "GET",
+    })).rejects.toThrow();
+  }
+  const aborted: Array<string | undefined> = [];
+  let fulfilled = 0;
+  const pending = driveOnce(route, {
+    url: base, method: "GET", onAbort: code => aborted.push(code), onFulfill: () => { fulfilled += 1; },
+  });
+  validateMockSchema("schemas/account-operations.schema.json#/$defs/session_revoke_request_body", {});
+  const revoked = await driveOnce(route, {
+    url: "https://local.host/_arkret/gate/account/session-grants/revoke", method: "POST", postData: {},
+  });
+  expect(revoked?.status).toBe(200);
+  expect(await pending).toBeNull();
+  expect(aborted).toEqual(["aborted"]);
+  expect(fulfilled).toBe(0);
+  await expect(driveOnce(route, {
+    url: `${base}&catchup=true&after=${encodeURIComponent(cursor)}`, method: "GET",
+  })).rejects.toThrow("replay from this cursor is not implemented");
+
+  const closing = captureRouteHandler();
+  await mockArkretApi(closing.page as never);
+  const active = closing.handler();
+  const issued = await driveOnce(active, { url: base, method: "GET" });
+  const issuedCursor = decodeStreamFrames(issued?.body)[0].cursor;
+  const closeAborted: Array<string | undefined> = [];
+  let closeFulfilled = 0;
+  const closingPoll = driveOnce(active, {
+    url: base, method: "GET", onAbort: code => closeAborted.push(code), onFulfill: () => { closeFulfilled += 1; },
+  });
+  closing.close();
+  expect(await closingPoll).toBeNull();
+  expect(closeAborted).toEqual(["aborted"]);
+  expect(closeFulfilled).toBe(0);
+  await expect(driveOnce(active, {
+    url: `${base}&catchup=true&after=${encodeURIComponent(issuedCursor)}`, method: "GET",
+  })).rejects.toThrow("replay from this cursor is not implemented");
+});
+
+test("Mock committed Event catchup replays only signed facts actually accepted after its issued native cut", async () => {
+  const captured = captureRouteHandler();
+  await mockArkretApi(captured.page as never, { includeDemoRealms: false });
+  const route = captured.handler();
+  const fixture = inksonWire<Fixture>("mock-realm-fixture", {
+    salt: 10, title: "Incremental replay Realm", board: true,
+    plaintext_visible_services: { services: [] },
+  });
+  const creatorJoin = fixture.committed_events.findIndex(({ event }) => event.kind === "ak.member.state");
+  expect(creatorJoin).toBeGreaterThan(0);
+  const prefix = fixture.committed_events.slice(0, creatorJoin + 1);
+  const bootstrap = await driveOnce(route, {
+    url: "https://local.host/_arkret/self/events", method: "POST", postData: {
+      unit_kind: "ordinary_realm_bootstrap", idempotency_key: "01904100-0000-7000-8000-000000000011",
+      events: prefix.map(full => ({ event: full.event })),
+    },
+  });
+  expect(bootstrap?.status).toBe(200);
+  expect((bootstrap?.body as any).commits).toEqual(prefix.map(full => full.commit));
+  const base = `https://local.host/_arkret/self/committed-events/subscribe?realm_ids=${encodeURIComponent(fixture.snapshot.realm_id)}`;
+  const initial = await driveOnce(route, { url: base, method: "GET" });
+  expect(initial?.status).toBe(200);
+  const initialFrames = decodeStreamFrames(initial?.body);
+  expect(initialFrames).toHaveLength(1);
+  expect(initialFrames[0].kind).toBe("checkpoint");
+  const cursor = initialFrames[0].cursor;
+  const next = fixture.committed_events[prefix.length];
+  expect(next).toBeDefined();
+  const accepted = await driveOnce(route, {
+    url: "https://local.host/_arkret/self/events", method: "POST", postData: { event: next.event },
+  });
+  expect(accepted?.status).toBe(200);
+  expect((accepted?.body as any).status).toBe("committed");
+  expect((accepted?.body as any).commit).toEqual(next.commit);
+  const live = await driveOnce(route, { url: `${base}&after=${encodeURIComponent(cursor)}&catchup=false`, method: "GET" });
+  expect(live?.status).toBe(200);
+  const checkpoint = decodeStreamFrames(live?.body);
+  expect(checkpoint.map(frame => frame.kind)).toEqual(["checkpoint"]);
+  expect(checkpoint[0].cursor).not.toBe(cursor);
+  const resumed = await driveOnce(route, { url: `${base}&after=${encodeURIComponent(cursor)}&catchup=true`, method: "GET" });
+  expect(resumed?.status).toBe(200);
+  const frames = decodeStreamFrames(resumed?.body);
+  expect(frames.map(frame => frame.kind)).toEqual(["committed_event", "checkpoint", "catchup_complete"]);
+  expect(frames.filter(frame => frame.kind === "committed_event").map(frame => frame.payload)).toEqual([next]);
+  expect(frames.every(frame => frame.cursor === checkpoint[0].cursor)).toBe(true);
+  for (const frame of frames) validateMockSchema("schemas/committed-event-subscribe-frame.schema.json", frame);
+  const empty = await driveOnce(route, {
+    url: `${base}&after=${encodeURIComponent(checkpoint[0].cursor)}&catchup=true`, method: "GET",
+  });
+  expect(empty?.status).toBe(200);
+  expect(decodeStreamFrames(empty?.body)).toEqual([
+    { kind: "checkpoint", cursor: checkpoint[0].cursor },
+    { kind: "catchup_complete", cursor: checkpoint[0].cursor },
+  ]);
+  const scanned = await driveOnce(route, {
+    url: "https://local.host/_arkret/self/streams/scan", method: "POST", postData: scanRequest(fixture),
+  });
+  expect(scanned?.status).toBe(200);
+  expect((scanned?.body as any).committed_events).toEqual([...prefix, next]);
 });
 
 test("Account subscription emits schema-valid delta frames and catchup completion only when requested", async () => {
@@ -584,4 +908,14 @@ test("Account continuation rejects unknown and cross-filter handles without adva
   const frames = decodeStreamFrames(resumed?.body);
   expect(frames).toEqual([{ kind: "delta", cursor: issuedCursor }]);
   expect(() => validateMockSchema("schemas/account-subscribe-frame.schema.json", frames[0])).not.toThrow();
+});
+
+test("founding PCR sources obey the public committed Event schema without private DID refs", async () => {
+  const fixture = build();
+  validateMockSchema("schemas/service-operation-dtos.schema.json#/$defs/CommittedEventView", fixture.source_create);
+  expect(fixture.source_create.event.semantic_refs).toBeUndefined();
+  expect(fixture.source_create.event.payload.object.founding_device_descriptor.hpke_key).toMatch(/^z6LS[1-9A-HJ-NP-Za-km-z]+$/);
+  const invalid = structuredClone(fixture.source_create);
+  invalid.event.semantic_refs = [{ id: fixture.identity.inception_log_entry.versionId, role: "did_inception", critical: true }];
+  expect(() => validateMockSchema("schemas/service-operation-dtos.schema.json#/$defs/CommittedEventView", invalid)).toThrow();
 });

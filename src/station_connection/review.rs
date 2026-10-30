@@ -37,8 +37,8 @@ pub(crate) fn connection_changes(change: &ConnectionTrustChange) -> Vec<Connecti
     // Walk serialized metadata so optional fields, additions/removals, and
     // future authentication fields cannot silently disappear from the review.
     match (
-        serde_json::to_value(&change.previous.auth_metadata),
-        serde_json::to_value(&change.candidate.auth_metadata),
+        serde_json::to_value(&change.previous.authentication_metadata),
+        serde_json::to_value(&change.candidate.authentication_metadata),
     ) {
         (Ok(previous), Ok(candidate)) => changed_fields(&previous, &candidate, "", &mut details),
         (previous, candidate) => details.push(ConnectionChangeDetail {
@@ -188,7 +188,7 @@ mod tests {
             "base_url": "https://station.example/",
             "service_id": "ak:did_core:webvh:z6mkfixture",
             "trust_domain": "ak:trust_domain:station.example",
-            "auth_metadata": {
+            "authentication_metadata": {
                 "account_authority": { "origin": "https://auth.example", "gate_account_base_url": "https://auth.example/_arkret/gate/account" },
                 "methods": [{ "method": "oidc", "issuer_uri": "https://auth.example/", "client_id": "old-client", "scopes": ["openid", "profile"], "grant_exchange": { "kind": "account_handoff" } }]
             }
@@ -214,8 +214,9 @@ mod tests {
     fn authentication_change_only_shows_changed_fields() {
         let previous = binding();
         let mut candidate = previous.clone();
-        candidate.auth_metadata.methods[0].client_id = Some("new-client".into());
-        candidate.auth_metadata.methods[0].provider_uri = Some("https://provider.example/".into());
+        candidate.authentication_metadata.methods[0].client_id = Some("new-client".into());
+        candidate.authentication_metadata.methods[0].provider_uri =
+            Some("https://provider.example/".into());
         let details = connection_changes(&ConnectionTrustChange {
             previous,
             candidate,
@@ -232,8 +233,8 @@ mod tests {
     fn removed_authority_and_method_keep_previous_values_visible() {
         let previous = binding();
         let mut candidate = previous.clone();
-        candidate.auth_metadata.account_authority = None;
-        candidate.auth_metadata.methods.clear();
+        candidate.authentication_metadata.account_authority = None;
+        candidate.authentication_metadata.methods.clear();
         let details = connection_changes(&ConnectionTrustChange {
             previous,
             candidate,
@@ -259,12 +260,12 @@ mod tests {
     #[test]
     fn reordered_methods_do_not_create_changes_for_unchanged_providers() {
         let mut previous = binding();
-        let mut second_method = previous.auth_metadata.methods[0].clone();
+        let mut second_method = previous.authentication_metadata.methods[0].clone();
         second_method.client_id = Some("second-client".into());
-        previous.auth_metadata.methods.push(second_method);
+        previous.authentication_metadata.methods.push(second_method);
         let mut candidate = previous.clone();
-        candidate.auth_metadata.methods[0].client_id = Some("third-client".into());
-        candidate.auth_metadata.methods.swap(0, 1);
+        candidate.authentication_metadata.methods[0].client_id = Some("third-client".into());
+        candidate.authentication_metadata.methods.swap(0, 1);
         let details = connection_changes(&ConnectionTrustChange {
             previous,
             candidate,

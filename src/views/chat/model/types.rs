@@ -126,7 +126,15 @@ impl MessageCryptoState {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub(crate) struct AuthenticatedMessageContent {
+    pub scope: arkret_sdk::ScopeRef,
+    pub source: arkret_sdk::EventId,
+    pub content: arkret_sdk::ContentBlock,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ChatMessage {
+    pub(crate) protocol_content: Option<AuthenticatedMessageContent>,
     /// Scope fixed by the local ordinary composer before authoring. Private
     /// Sidecar rows never acquire this ordinary-timeline provenance.
     pub(crate) local_scope: Option<arkret_sdk::ScopeRef>,
@@ -310,21 +318,4 @@ pub(crate) enum ParticipantRosterRow {
     },
 }
 
-/// Receiver-side proof verdict for a committed chat Event
-/// (`server-trusted-results.md` §2, fail-closed).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ChatProofVerdict {
-    /// Non-persistent system row with no attributed actor. Persistent actor
-    /// messages without proofs are rejected before projection.
-    Unattributed,
-    /// Human-device producer proof is self-consistent, or an Agent producer
-    /// verified against its historical signer evidence.
-    Verified,
-    /// Proof present but not self-consistent, or Agent evidence failed. The
-    /// message MUST be dropped (fail-closed).
-    Rejected,
-    /// Proof is self-consistent but the producer is not a human device and its
-    /// Agent signer evidence is not available yet. The message is shown
-    /// flagged (`NeedsVerification`) rather than trusted.
-    Unresolved,
-}
+pub(crate) use crate::identity::committed_sender::ChatProofVerdict;

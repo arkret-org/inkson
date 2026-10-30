@@ -5,12 +5,14 @@
 //! this account client cannot impersonate its RFC9421 transport identity.
 //! Registry rows retain actual Applet identifiers and registration epochs.
 
+mod configuration;
+
 use std::collections::BTreeSet;
 
 use arkret_models_integration::{
     AppletActorPolicy, AppletApprovalRequest, AppletGhostActorMode,
-    AppletInstallAuthoringRequestBasis, AppletInstallPlan, AppletInstallPreviewOutcome,
-    AppletInstallPreviewRequestBody, AppletInstallRequestBody, AppletManagedActorPurpose,
+    AppletInstallAuthoringRequestBasis, AppletInstallPlan, AppletInstallPreviewRequestBody,
+    AppletInstallPreviewResponseBody, AppletInstallRequestBody, AppletManagedActorPurpose,
     AppletPackage, AppletRegistrationEpochEvidence, AppletRevokeRequestBody,
 };
 use arkret_wire::{AppletRevokeMode, DidCoreId, ScopeRef, event_kind_str};
@@ -96,7 +98,7 @@ pub fn parse_applet_approval_actions(raw: &str) -> Vec<String> {
 struct AppletInstallPreviewSnapshot {
     package: AppletPackage,
     basis: AppletInstallAuthoringRequestBasis,
-    preview: AppletInstallPreviewOutcome,
+    preview: AppletInstallPreviewResponseBody,
 }
 
 fn approved_actions_from_plan(
@@ -199,6 +201,7 @@ fn applet_capability_issuer_basis(
 fn build_formal_applet_install_events(
     package: &AppletPackage,
     registration_epoch_evidence: &AppletRegistrationEpochEvidence,
+    expected_revision: Option<arkret_sdk::CurrentRevision>,
     effective_scope: &ScopeRef,
     approved_actions: &[String],
     actor_id: &str,
@@ -213,9 +216,11 @@ fn build_formal_applet_install_events(
         .map_err(|error| anyhow::anyhow!("invalid install actor DID: {error}"))?;
     package.validate_with_epoch_evidence(registration_epoch_evidence)?;
     let registration_payload: arkret_sdk::AppletRegistrationPayload =
-        package.to_registration(registration_epoch_evidence)?;
+        package.to_registration(registration_epoch_evidence, expected_revision)?;
     let registration = operation_builder_for_scope::<arkret_sdk::event_spec::AppletRegistration>(
-        effective_scope,
+        &ScopeRef::Realm {
+            realm_id: effective_scope.realm_id().clone(),
+        },
         actor_id,
         registration_payload,
     )
@@ -285,6 +290,15 @@ fn build_formal_applet_install_events(
 /// Whether the local UI should expose applet install / registration panels.
 pub fn applets_enabled() -> bool {
     cfg!(feature = "experimental-applets")
+}
+
+fn observed_applet_event(payload: &Value) -> &Value {
+    payload.get("event").unwrap_or(payload)
+}
+
+fn observed_applet_body(payload: &Value) -> Option<&Value> {
+    let event = observed_applet_event(payload);
+    event.get("payload").or_else(|| event.get("body"))
 }
 
 /// Render the namespace keys from the canonical registration payload. The
@@ -468,19 +482,20 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
     // Optional Circle scope for the install. Blank = Realm-wide; a `ak:circle:…`
     // id scopes the install to that Circle only (spec §4b effective_scope).
     let mut install_circle_id = use_signal(String::new);
-    let mut trace_open_for = use_signal(|| Option::<String>::None);
+    let mut trace_open_for = use_signal(|| Option::<(String, String)>::None);
+    let mut revoke_circle_id = use_signal(String::new);
 
-    // Pull registry rows from the local raw-operation
-    // projection. The shape is keyed by op_type so a row's evidence is
-    // the actual canonical event the projection observed; this view is
-    // explicitly local-only — coland's projection_events feed will fan
-    // out the same shape once the server-side applet broker ships.
+    // Retain observed local history separately from the verified current index.
+    // Neither collection is an inventory of active installation scopes.
     let raw_ops = state_store.read().load().raw_operations;
     let registrations: Vec<_> = raw_ops
         .iter()
+        .filter(|r| {
+            r.realm_id.as_deref()
+                == Some(crate::operation::trim_realm_id(&selected_realm_id).as_str())
+        })
         .filter_map(|r| {
-            let is_registration = r
-                .payload
+            let is_registration = observed_applet_event(&r.payload)
                 .get("kind")
                 .and_then(Value::as_str)
                 .map(|k| k == event_kind_str::APPLET_REGISTRATION)
@@ -488,9 +503,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
             if !is_registration {
                 return None;
             }
-            let service_id = r
-                .payload
-                .get("body")
+            let service_id = observed_applet_body(&r.payload)
                 .and_then(|body| body.get("service_id"))
                 .and_then(Value::as_str)
                 .and_then(|value| DidCoreId::new(value.to_owned()).ok())?;
@@ -500,7 +513,11 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
     let bridge_errors: Vec<_> = raw_ops
         .iter()
         .filter(|r| {
-            r.payload
+            r.realm_id.as_deref()
+                == Some(crate::operation::trim_realm_id(&selected_realm_id).as_str())
+        })
+        .filter(|r| {
+            observed_applet_event(&r.payload)
                 .get("kind")
                 .and_then(Value::as_str)
                 .map(|k| k == event_kind_str::APPLET_BRIDGE_ERROR)
@@ -509,60 +526,75 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
         .cloned()
         .collect();
 
-    // Render only actual registration coordinates and exact executable scopes.
-    // Local projection rows never manufacture an Applet id or package digest.
-    let applet_rows: Vec<_> = registrations
+    // Observed registrations identify Services, not active installation scopes.
+    // Revisions remain visible in the history panel; each Service has one action row.
+    let mut applet_rows: BTreeSet<_> = registrations
         .iter()
         .filter_map(|(r, service_id)| {
-            let body = r.payload.get("body")?;
+            let body = observed_applet_body(&r.payload)?;
             let applet_id = arkret_sdk::AppletId::new(body.get("applet_id")?.as_str()?).ok()?;
-            let registration_epoch =
-                arkret_sdk::Hash::new(body.get("registration_epoch")?.as_str()?).ok()?;
             let scope: ScopeRef =
-                serde_json::from_value(r.payload.get("scope_ref")?.clone()).ok()?;
-            if !matches!(scope, ScopeRef::Realm { .. } | ScopeRef::Circle { .. })
+                serde_json::from_value(observed_applet_event(&r.payload).get("scope_ref")?.clone())
+                    .ok()?;
+            if !matches!(scope, ScopeRef::Realm { .. })
                 || scope.realm_id_opt()?.as_str()
                     != crate::operation::trim_realm_id(&selected_realm_id)
             {
                 return None;
             }
-            Some((
-                applet_id.to_string(),
-                service_id.clone(),
-                registration_namespace_label(Some(body)),
-                registration_epoch.to_string(),
-                r.operation_id.clone(),
-                scope,
-            ))
+            Some((applet_id.to_string(), service_id.clone()))
         })
         .collect();
 
-    // Audit trace for an applet: every raw op whose body
-    // service_id matches the row's service_id. We materialize
-    // once so the modal rendering doesn't re-filter on every paint.
-    let trace_open_applet_id = trace_open_for();
-    let trace_target_id = applet_rows
-        .iter()
-        .find(|(id, ..)| Some(id) == trace_open_applet_id.as_ref())
-        .map(|(_, did, ..)| did.clone());
+    if let Some(entries) = state_store
+        .read()
+        .realm_current_view_entries(&crate::operation::trim_realm_id(&selected_realm_id))
+    {
+        for entry in entries {
+            let arkret_wire::CurrentState::Value {
+                selector, value, ..
+            } = entry;
+            if let arkret_wire::CurrentSelector::AppletRegistration {
+                applet_id,
+                service_id,
+            } = selector
+                && let Ok(registration) =
+                    serde_json::from_value::<arkret_sdk::AppletRegistrationPayload>(value)
+                && registration.applet_id == applet_id
+                && registration.service_id == service_id
+            {
+                applet_rows.insert((applet_id.to_string(), service_id.to_string()));
+            }
+        }
+    }
+
+    let trace_target_id = trace_open_for();
     let trace_events: Vec<_> = match &trace_target_id {
-        Some(target) => raw_ops
+        Some((applet, target)) => raw_ops
             .iter()
             .filter(|r| {
-                let kind_is_applet = r
-                    .payload
+                let kind_is_applet = observed_applet_event(&r.payload)
                     .get("kind")
                     .and_then(Value::as_str)
                     .map(|k| k.starts_with("ak.applet."))
                     .unwrap_or(false);
-                let matches_did = r
-                    .payload
-                    .get("body")
+                let matches_did = observed_applet_body(&r.payload)
                     .and_then(|b| b.get("service_id"))
                     .and_then(Value::as_str)
                     .map(|d| d == target.as_str())
                     .unwrap_or(false);
-                kind_is_applet && matches_did
+                let matches_applet = observed_applet_body(&r.payload)
+                    .and_then(|b| b.get("applet_id"))
+                    .and_then(Value::as_str)
+                    == Some(applet.as_str());
+                let matches_realm = observed_applet_event(&r.payload)
+                    .get("scope_ref")
+                    .and_then(|value| serde_json::from_value::<ScopeRef>(value.clone()).ok())
+                    .and_then(|scope| scope.realm_id_opt().map(ToString::to_string))
+                    .is_some_and(|realm| {
+                        realm == crate::operation::trim_realm_id(&selected_realm_id)
+                    });
+                kind_is_applet && matches_did && matches_applet && matches_realm
             })
             .cloned()
             .collect(),
@@ -586,7 +618,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                    } else {
                        for (r, service_id) in registrations {
                            {
-                               let namespace = registration_namespace_label(r.payload.get("body"));
+                               let namespace = registration_namespace_label(observed_applet_body(&r.payload));
                                let op_id = r.operation_id.clone();
                                let service_id_label = short_protocol_id(&service_id);
                                let op_id_label = short_protocol_id(&op_id);
@@ -613,17 +645,17 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                    } else {
                        for e in bridge_errors {
                            {
-                               let error_code = e.payload.get("body")
+                               let error_code = observed_applet_body(&e.payload)
                                    .and_then(|b| b.get("error_code"))
                                    .and_then(Value::as_str)
                                    .unwrap_or("?")
                                    .to_owned();
-                               let failed_transaction_ref = e.payload.get("body")
+                               let failed_transaction_ref = observed_applet_body(&e.payload)
                                    .and_then(|b| b.get("failed_transaction_ref"))
                                    .and_then(Value::as_str)
                                    .unwrap_or("?")
                                    .to_owned();
-                               let msg_opt = e.payload.get("body")
+                               let msg_opt = observed_applet_body(&e.payload)
                                    .and_then(|b| b.get("message"))
                                    .and_then(Value::as_str)
                                    .map(ToOwned::to_owned);
@@ -788,10 +820,30 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                                let authored_package = package.clone();
                                                let authored_scope = effective_scope.clone();
                                                let result = with_event_submitter(&base, api_token, |submitter| async move {
+                                                   use arkret_sdk::exact_current_state::{
+                                                       AppletRegistrationExactCurrentSelector, AppletRegistrationExactCurrentSelectorKind,
+                                                       ExactCurrentStateSelector, ExactCurrentState, ExactCurrentStateReadRequestBody,
+                                                       ExactCurrentStateReadResponseBody, NeverWrittenExactCurrentSelector,
+                                                   };
+                                                   let registration_current = submitter.http().exact_current_state(
+                                                       &ExactCurrentStateReadRequestBody {
+                                                           realm_id: authored_scope.realm_id().clone(),
+                                                           selector: ExactCurrentStateSelector::AppletRegistration(AppletRegistrationExactCurrentSelector {
+                                                               kind: AppletRegistrationExactCurrentSelectorKind::AppletRegistration,
+                                                               applet_id: authored_package.applet_id.clone(), service_id: authored_package.service_id.clone(),
+                                                           }),
+                                                       }, issuer_authority_basis.authority_generation,
+                                                   ).await?;
+                                                   let expected_revision = match registration_current {
+                                                       ExactCurrentStateReadResponseBody::Present { current_state: ExactCurrentState::AppletRegistration(row), .. } => Some(row.revision),
+                                                       ExactCurrentStateReadResponseBody::NeverWritten { selector: NeverWrittenExactCurrentSelector::AppletRegistration(_), .. } => None,
+                                                       _ => anyhow::bail!("registration current returned a different selector"),
+                                                   };
                                                    let (registration, grants) =
                                                        build_formal_applet_install_events(
                                                            &authored_package,
                                                            &registration_epoch_evidence,
+                                                           expected_revision,
                                                            &authored_scope,
                                                            &approve_actions,
                                                            actor_id.as_str(),
@@ -901,7 +953,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                                        authoring_request_basis: snapshot.basis,
                                                        plan_digest: snapshot.preview.plan.plan_digest,
                                                    };
-                                                   http.applet_install(&idem, &body)
+                                                   http.applet_install(&idem, &crate::transport::own_station_results::verify_local_publication(&http, body).await?)
                                                        .await
                                                        .map_err(anyhow::Error::from)
                                                })
@@ -944,29 +996,39 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                        }
                    }
 
+                   div { class: "workflow-form",
+                       label { r#for: "applet-revoke-circle", {tr("applets.revoke_scope")} }
+                       Textarea {
+                           id: "applet-revoke-circle",
+                           "data-testid": "applet-revoke-circle-input",
+                           placeholder: tr("applets.circle_placeholder"),
+                           value: "{revoke_circle_id}",
+                           oninput: move |event: FormEvent| revoke_circle_id.set(event.value()),
+                       }
+                       p { class: "muted", {tr("applets.revoke_scope_help")} }
+                   }
                    if applet_rows.is_empty() {
                        div { class: "muted", "data-testid": "applet-empty",
                            {tr("applets.installed_empty")}
                        }
                    } else {
-                       for (applet_id, service_id, namespace, registration_epoch, registration_event_id, installed_scope) in applet_rows.iter().cloned() {
+                       for (applet_id, service_id) in applet_rows.iter().cloned() {
                            {
                                let service_id_label = short_protocol_id(&service_id);
-                               let registration_epoch_label = short_protocol_id(&registration_epoch);
                                rsx! {
                                    div {
                                        class: "event",
                                        "data-testid": "applet-row",
                                        "data-applet-id": "{applet_id}",
-                                       "data-applet-registration-epoch": "{registration_epoch}",
-                                       "data-registration-event-id": "{registration_event_id}",
+                                       "data-service-id": "{service_id}",
                                        div { class: "event-head",
                                            span { class: "mono", title: "{service_id}", "{service_id_label}" }
-                                           span { class: "badge", "{namespace}" }
-                                           span { class: "mono muted", title: "{registration_epoch}", "{registration_epoch_label}" }
+                                           span { class: "mono muted", title: "{applet_id}", {short_protocol_id(&applet_id)} }
                                        }
-                                       div { class: "muted", "data-testid": "applet-bot-creation-status",
-                                           {tr("applets.bot_creation_help")}
+                                       configuration::ConfigurationPanel {
+                                           key: "{applet_id}/{service_id}/{selected_realm_id}",
+                                           token, realm_id: selected_realm_id.clone(),
+                                           applet_id: applet_id.clone(), service_id: service_id.clone(),
                                        }
                                        div { class: "actions",
                                            Button {
@@ -974,7 +1036,8 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                                "data-testid": "applet-accountability-trace-button",
                                                onclick: {
                                                    let aid = applet_id.clone();
-                                                   move |_| trace_open_for.set(Some(aid.clone()))
+                                                   let sid = service_id.clone();
+                                                   move |_| trace_open_for.set(Some((aid.clone(), sid.clone())))
                                                },
                                                {tr("applets.trace_events")}
                                            }
@@ -983,16 +1046,20 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                                "data-testid": "applet-uninstall-button",
                                                onclick: {
                                                    let base = base_url.clone();
-                                                   let effective_scope = installed_scope.clone();
-                                                   let realm = effective_scope.realm_id_opt().map(ToString::to_string);
+                                                   let realm = selected_realm_id.clone();
+                                                   let service_id = service_id.clone();
                                                    let aid = applet_id.clone();
                                                    move |_| {
                                                        let base = base.clone();
-                                                       let Some(realm) = realm.clone() else {
-                                                           install_status.set(Some(AppletInstallFeedback::RevokeAccountUnavailable));
-                                                           return;
+                                                       let realm = crate::operation::trim_realm_id(&realm);
+                                                       let effective_scope = match applet_effective_scope(&realm, Some(&revoke_circle_id())) {
+                                                           Ok(scope) => scope,
+                                                           Err(error) => {
+                                                               install_status.set(Some(AppletInstallFeedback::InvalidScope(error)));
+                                                               return;
+                                                           }
                                                        };
-                                                       let effective_scope = effective_scope.clone();
+                                                       let service_id = service_id.clone();
                                                        let aid = aid.clone();
                                                        let api_token = token();
                                                        let Some(account) = active_account.peek().clone() else {
@@ -1005,16 +1072,18 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                                            let reason_code = arkret_sdk::ReasonCode::PolicyRevoked;
                                                            let revoke_mode = AppletRevokeMode::RevokeRuntimeOnly;
                                                            let result = with_event_submitter(&base, api_token, |submitter| async move {
+                                                               let service_id: DidCoreId = service_id.parse()?;
                                                                let preview = submitter.http().applet_revoke_preview(
                                                                    &aid,
                                                                    &arkret_sdk::AppletRevokePreviewRequestBody {
+                                                                       service_id: service_id.clone(),
                                                                        effective_scope: effective_scope.clone(),
                                                                        reason_code: reason_code.clone(),
                                                                        revoke_mode,
                                                                    },
                                                                ).await.map_err(anyhow::Error::from)?;
-                                                               if preview.revoke_plan.effective_scope != effective_scope {
-                                                                   anyhow::bail!("revoke preview changed the installed scope");
+                                                               if preview.revoke_plan.effective_scope != effective_scope || preview.revoke_plan.service_id != service_id {
+                                                                   anyhow::bail!("revoke preview changed the requested scope");
                                                                }
                                                                if !preview.revoke_plan.membership_removals.is_empty() {
                                                                    anyhow::bail!("runtime revoke preview unexpectedly requires membership Events");
@@ -1050,6 +1119,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                                                )?;
                                                                let body = AppletRevokeRequestBody {
                                                                    revoke_plan_digest,
+                                                                   service_id: preview.revoke_plan.service_id.clone(),
                                                                    effective_scope,
                                                                    reason_code,
                                                                    revoke_mode,
@@ -1060,7 +1130,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                                                submitter.http().applet_revoke(
                                                                    &aid,
                                                                    &idempotency_key,
-                                                                   &body,
+                                                                   &submitter.verify_publication(body)?,
                                                                ).await.map_err(anyhow::Error::from)
                                                            })
                                                            .await;
@@ -1085,7 +1155,8 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                // operator clicked the trace button on a row.
                if let Some(target) = trace_open_for() {
                    {
-                       let target_label = short_protocol_id(&target);
+                       let target = format!("{} / {}", target.0, target.1);
+                       let target_label = target.clone();
                        rsx! {
                            Dialog {
                                open: true,

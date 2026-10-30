@@ -31,7 +31,7 @@ pub(crate) enum InvitePreviewView {
 
 struct CachedPreview {
     preview: arkret_sdk::RealmPublicPreview,
-    fresh_until: DateTime<Utc>,
+    cache_expires_at: DateTime<Utc>,
 }
 
 /// Disclosed answers keyed by account and exact join target, kept only while
@@ -46,21 +46,21 @@ pub(crate) fn cached_invite_preview(
     now: DateTime<Utc>,
 ) -> Option<arkret_sdk::RealmPublicPreview> {
     let mut cache = preview_cache().lock().ok()?;
-    cache.retain(|_, cached| cached.fresh_until > now);
+    cache.retain(|_, cached| cached.cache_expires_at > now);
     cache.get(key).map(|cached| cached.preview.clone())
 }
 
 pub(crate) fn remember_invite_preview(
     key: String,
     preview: arkret_sdk::RealmPublicPreview,
-    fresh_until: DateTime<Utc>,
+    cache_expires_at: DateTime<Utc>,
 ) {
     if let Ok(mut cache) = preview_cache().lock() {
         cache.insert(
             key,
             CachedPreview {
                 preview,
-                fresh_until,
+                cache_expires_at,
             },
         );
     }
@@ -78,6 +78,8 @@ fn preview_target(
         realm_id: arkret_sdk::RealmId::new(realm_id.to_owned()).ok()?,
         invite_id: Some(arkret_sdk::InviteId::new(invite_id.to_owned()).ok()?),
         authority_locator_hints: credential.authority_locator_hints.clone(),
+
+        realm_invite_link_id: None,
     })
 }
 
@@ -112,9 +114,9 @@ async fn load_invite_preview(
     match result {
         Ok(InvitePreviewOutcome::Disclosed {
             preview,
-            fresh_until,
+            cache_expires_at,
         }) => {
-            remember_invite_preview(key, preview.clone(), fresh_until);
+            remember_invite_preview(key, preview.clone(), cache_expires_at);
             InvitePreviewView::Disclosed(preview)
         }
         Ok(InvitePreviewOutcome::Restricted) => InvitePreviewView::Restricted,

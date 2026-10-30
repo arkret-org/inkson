@@ -77,7 +77,7 @@ impl JoinedRealmIds {
     /// the joined set, so an unreadable roster keeps an invite visible rather
     /// than silently claiming an authorization it cannot prove.
     pub(crate) fn from_local_projections(
-        projections: &BTreeMap<String, Value>,
+        projections: &impl crate::state::account_items::ReadMap<Value>,
         actor: Option<&arkret_sdk::ActorId>,
     ) -> Self {
         let Some(actor) = actor else {
@@ -426,9 +426,14 @@ pub(crate) fn test_invite(ordinal: u64, realm_id: &str) -> Invite {
                 .expect("valid test inviter"),
             arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
         ),
-        invitee_account_id: None,
-        introduction_evidence_digest: None,
-        third_party_invite: None,
+        invitee_account_id: arkret_sdk::AccountId::new(
+            arkret_sdk::DidCoreId::new("ak:did_core:web:bob.example").unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
+        ),
+        introduction_evidence_digest: arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(
+            b"test invitation introduction",
+        ))
+        .unwrap(),
         capability_grant_refs: Vec::new(),
         state: arkret_sdk::InviteState::Pending,
         expires_at: chrono::DateTime::parse_from_rfc3339("2027-05-29T00:00:00.000Z")

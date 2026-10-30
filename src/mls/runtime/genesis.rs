@@ -66,7 +66,7 @@ fn creator_leaf_authority_from_group(
         ),
     };
     let result = arkret_sdk::MlsGenesisCreatorLeafAuthority {
-        leaf_signature_key_b64u: creator.signature_key.clone(),
+        leaf_signature_key_base64url: creator.signature_key.clone(),
         endpoint,
         authorization_event_ref,
     };
@@ -263,7 +263,7 @@ pub(crate) fn generate_creator_epoch_zero(
     pinned_device_authorization: Option<&arkret_sdk::EventId>,
 ) -> Result<
     (
-        crate::mls::persistence::MlsLocalCheckpointEnvelope,
+        garth::mls::checkpoint::MlsLocalCheckpointEnvelope,
         InitialMlsCheckpointSummary,
     ),
     MlsRuntimeError,
@@ -324,7 +324,7 @@ pub(crate) fn generate_creator_epoch_zero(
     let mut salt = [0u8; 16];
     getrandom::fill(&mut salt)
         .map_err(|err| MlsRuntimeError::Genesis(format!("MLS checkpoint salt: {err}")))?;
-    let snapshot = crate::mls::persistence::encrypt_state(
+    let snapshot = garth::mls::checkpoint::encrypt_state(
         effective_scope.realm_id().as_str(),
         &post_state.group_id,
         post_state.epoch,
@@ -378,7 +378,7 @@ pub(crate) fn restore_creator_epoch_zero(
     intent: &arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapIntent,
     checkpoint_secret: &str,
 ) -> Result<(Vec<u8>, InitialMlsCheckpointSummary), MlsRuntimeError> {
-    let snapshot: crate::mls::persistence::MlsLocalCheckpointEnvelope =
+    let snapshot: garth::mls::checkpoint::MlsLocalCheckpointEnvelope =
         serde_json::from_slice(unit.encrypted_private_state()).map_err(|error| {
             MlsRuntimeError::Genesis(format!("decode creator private envelope: {error}"))
         })?;
@@ -422,7 +422,7 @@ pub(crate) fn restore_creator_epoch_zero(
             "creator private MLS state differs from its frozen public unit".into(),
         ));
     }
-    let raw = crate::mls::persistence::decrypt_envelope(&snapshot, checkpoint_secret)
+    let raw = garth::mls::checkpoint::decrypt_envelope(&snapshot, checkpoint_secret)
         .map_err(|error| MlsRuntimeError::Genesis(error.to_string()))?;
     Ok((
         raw,

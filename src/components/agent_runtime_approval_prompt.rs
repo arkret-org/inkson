@@ -22,29 +22,44 @@ fn approval_scope_summary(scope: &arkret_sdk::AgentKeyScope) -> Vec<String> {
     let mut labels = Vec::new();
     for action in &scope.actions {
         let key = match action.as_str() {
-            "ak.event.read" => "agent_runtime.permission_read",
-            "ak.message.create" => "agent_runtime.permission_post",
-            "ak.reaction.add" => "agent_runtime.permission_react",
-            "ak.agent.draft.propose" | "ak.agent.action.request" => {
+            arkret_wire::CapabilityActionId::EVENT_READ => "agent_runtime.permission_read",
+            arkret_wire::CapabilityActionId::OBJECT_READ => "agent_runtime.permission_metadata",
+            arkret_wire::CapabilityActionId::MESSAGE_CREATE => "agent_runtime.permission_post",
+            arkret_wire::CapabilityActionId::REACTION_ADD => "agent_runtime.permission_react",
+            arkret_wire::CapabilityActionId::AGENT_DRAFT_PROPOSE
+            | arkret_wire::CapabilityActionId::AGENT_ACTION_REQUEST => {
                 "agent_runtime.permission_draft"
             }
-            "ak.strand.create" | "ak.strand.update" | "ak.relation.create" => {
+            arkret_wire::CapabilityActionId::STRAND_CREATE
+            | arkret_wire::CapabilityActionId::STRAND_UPDATE
+            | arkret_wire::CapabilityActionId::RELATION_CREATE => {
                 "agent_runtime.permission_organize"
             }
-            "ak.self.committed_event.read.scan.v1"
-            | "ak.self.committed_event.stream.subscribe.v1" => "agent_runtime.permission_sync",
-            "ak.self.events.command.submit.v1" => "agent_runtime.permission_submit",
-            "ak.self.keys.keypackages.upload.create.v1"
-            | "ak.self.keys.keypackages.command.consume.v1"
-            | "ak.self.keys.keypackages.command.revoke.v1"
-            | "ak.self.keys.keypackages.read.claim.v1"
-            | "ak.self.mls.read.group_state_material.v1"
-            | "ak.self.mls.read.roster_authority.v1"
-            | "ak.self.realm_state_snapshot.read.manifest_head.v1"
-            | "ak.self.device_messages.read.list.v1"
-            | "ak.self.device_messages.command.ack.v1" => "agent_runtime.permission_encrypted",
-            "ak.self.signal.command.send.v1" => "agent_runtime.permission_presence",
-            "ak.self.committed_event.resource.get.v1" => "agent_runtime.permission_resources",
+            arkret_wire::CapabilityActionId::SELF_COMMITTED_EVENT_READ_SCAN_V1
+            | arkret_wire::CapabilityActionId::SELF_COMMITTED_EVENT_STREAM_SUBSCRIBE_V1
+            | arkret_wire::ServiceOperationId::SELF_DIRECT_CONVERSATION_READ_RESOLVE_V1 => {
+                "agent_runtime.permission_sync"
+            }
+            arkret_wire::ServiceOperationId::SELF_EVENTS_COMMAND_SUBMIT_V1 => {
+                "agent_runtime.permission_submit"
+            }
+            arkret_wire::ServiceOperationId::SELF_KEYS_KEYPACKAGES_UPLOAD_CREATE_V1
+            | arkret_wire::ServiceOperationId::SELF_KEYS_KEYPACKAGES_COMMAND_CONSUME_V1
+            | arkret_wire::ServiceOperationId::SELF_KEYS_KEYPACKAGES_COMMAND_REVOKE_V1
+            | arkret_wire::ServiceOperationId::SELF_KEYS_KEYPACKAGES_READ_CLAIM_V1
+            | arkret_wire::ServiceOperationId::SELF_MLS_READ_GROUP_STATE_MATERIAL_V1
+            | arkret_wire::ServiceOperationId::SELF_MLS_READ_ROSTER_AUTHORITY_V1
+            | arkret_wire::CapabilityActionId::SELF_REALM_STATE_SNAPSHOT_READ_MANIFEST_HEAD_V1
+            | arkret_wire::ServiceOperationId::SELF_DEVICE_MESSAGES_READ_LIST_V1
+            | arkret_wire::ServiceOperationId::SELF_DEVICE_MESSAGES_COMMAND_ACK_V1 => {
+                "agent_runtime.permission_encrypted"
+            }
+            arkret_wire::ServiceOperationId::SELF_SIGNAL_COMMAND_SEND_V1 => {
+                "agent_runtime.permission_presence"
+            }
+            arkret_wire::ServiceOperationId::SELF_COMMITTED_EVENT_RESOURCE_GET_V1 => {
+                "agent_runtime.permission_resources"
+            }
             _ => "",
         };
         let label = if key.is_empty() {
@@ -665,7 +680,7 @@ async fn fetch_pending_agent_runtime_approval(
     handled: HashSet<OpaqueLocalId>,
 ) -> Result<Option<PendingAgentRuntimeApproval>, crate::transport::auth::ApiCallError> {
     with_authed_sdk_client(base_url, token, move |http| async move {
-        let list = http.agent_list().await?;
+        let list = http.agent_page().await?;
         for row in list.agents {
             let agent_id = row.agent_id.as_str();
             if agent_id.trim().is_empty() {
@@ -760,10 +775,9 @@ fn approval_fallback_delay(failed: bool) -> Duration {
 
 fn approval_fallback_allowed(description: Option<&arkret_sdk::ServiceDescribe>) -> bool {
     description.is_some_and(|description| {
-        !description
-            .supported_features
-            .iter()
-            .any(|feature| feature == "ak.feature.agent_runtime_approval_notifications.v1")
+        !description.supported_features.iter().any(|feature| {
+            feature == arkret_wire::FeatureDescriptor::AGENT_RUNTIME_APPROVAL_NOTIFICATIONS_V1
+        })
     })
 }
 

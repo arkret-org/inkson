@@ -90,7 +90,7 @@ fn chat_message_from_event_keeps_bodyless_encrypted_payload_visible() {
                     "scheme": "mls_rfc9420",
                     "version": "1.0",
                     "group_id": "ak:mls:test",
-                    "epoch": 1,
+                    "epoch": "1",
                     "content_type": "application/vnd.arkret.message+json",
                     "ciphertext": "AAAA",
                     "payload_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
@@ -132,7 +132,7 @@ fn chat_message_from_event_marks_failed_local_decrypt_as_key_missing() {
                     "scheme": "mls_rfc9420",
                     "version": "1.0",
                     "group_id": "ak:mls:test",
-                    "epoch": 1,
+                    "epoch": "1",
                     "content_type": "application/vnd.arkret.message+json",
                     "ciphertext": "AAAA",
                     "payload_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"

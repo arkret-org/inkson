@@ -64,7 +64,7 @@ impl SessionGrantTransport for ReplaceableSessionTransport {
     fn issue_session_grant<'a>(
         &'a self,
         request: arkret_sdk::SessionGrantRequestBody,
-    ) -> BoxSessionFuture<'a, arkret_sdk::SessionGrantOutcome> {
+    ) -> BoxSessionFuture<'a, arkret_sdk::SessionGrantResponseBody> {
         let client = self.current();
         Box::pin(async move {
             client?
@@ -77,7 +77,7 @@ impl SessionGrantTransport for ReplaceableSessionTransport {
     fn refresh_session_grant<'a>(
         &'a self,
         request: arkret_sdk::SessionGrantRefreshRequestBody,
-    ) -> BoxSessionFuture<'a, arkret_sdk::SessionGrantOutcome> {
+    ) -> BoxSessionFuture<'a, arkret_sdk::SessionGrantResponseBody> {
         let client = self.current();
         Box::pin(async move {
             client?
@@ -451,7 +451,7 @@ pub(crate) struct AuthenticatedSession {
 /// The provider supplies the formal live grant; the host additionally rejects
 /// results after account/device replacement, including a switch away and back.
 struct HostOwnStationSessionSource {
-    provider_client: arkret_sdk::http_client::own_station_results::OwnStationResultClient,
+    provider_client: arkret_sdk::http_client::own_station_results::OwnStationStateClient,
     authority: arkret_sdk::AccountId,
     device_id: arkret_sdk::DeviceId,
     runtime_generation: u64,
@@ -486,16 +486,16 @@ impl arkret_sdk::http_client::own_station_results::OwnStationSessionSource
 
 pub(crate) async fn own_station_result_client_for_http(
     http: &arkret_sdk::http_client::Client,
-) -> anyhow::Result<arkret_sdk::http_client::own_station_results::OwnStationResultClient> {
+) -> anyhow::Result<arkret_sdk::http_client::own_station_results::OwnStationStateClient> {
     own_station_result_client(http.base_url().as_str(), Some(http)).await
 }
 
 async fn own_station_result_client(
     station_url: &str,
     requested_http: Option<&arkret_sdk::http_client::Client>,
-) -> anyhow::Result<arkret_sdk::http_client::own_station_results::OwnStationResultClient> {
+) -> anyhow::Result<arkret_sdk::http_client::own_station_results::OwnStationStateClient> {
     use arkret_sdk::http_client::own_station_results::{
-        OwnStationResultClient, OwnStationSessionSource,
+        OwnStationSessionSource, OwnStationStateClient,
     };
     let runtime = session_grant_runtime();
     let runtime_generation = runtime.generation.load(Ordering::SeqCst);
@@ -534,7 +534,7 @@ async fn own_station_result_client(
     // Re-check after all asynchronous trust/provider restoration and before
     // constructing a carrier. Token-only transports cannot enter this path.
     source.snapshot()?;
-    Ok(OwnStationResultClient::new(client, accepted, source)?)
+    Ok(OwnStationStateClient::new(client, accepted, source)?)
 }
 
 fn load_active_session_grant(
@@ -622,10 +622,9 @@ async fn provide_authenticated_session_with_secure_store(
     let runtime = session_grant_runtime();
     let provider =
         session_transport_provider(runtime.as_ref(), &grant, &device_handle, secure_store).await?;
-    let client = provider
-        .provide()
-        .await
-        .map_err(|error| anyhow::anyhow!("provide authenticated session transport: {error}"))?;
+    let client = provider.provide().await.map_err(|error| {
+        anyhow::Error::from(error).context("provide authenticated session transport")
+    })?;
     let state = provider
         .session()
         .current_state()
@@ -646,6 +645,46 @@ pub(crate) async fn refresh_authenticated_session_after_unauthorized(
     .await
 }
 
+/// One-shot joint-test scheduling fault: rotate the real issuer grant while a
+/// caller retains an already-created SDK transport. No token or key leaves Rust.
+#[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+pub(crate) async fn rotate_captured_transport_for_test(
+    station_url: &str,
+    account: &arkret_sdk::AccountId,
+    device: &arkret_sdk::DeviceId,
+) -> anyhow::Result<(String, String)> {
+    let secure = crate::secure_key_store::default_secure_key_store("inkson");
+    let grant = load_active_session_grant(station_url, secure.as_ref())?;
+    anyhow::ensure!(
+        &grant.account_id == account && &grant.device_id == device,
+        "captured transport test belongs to another account/device"
+    );
+    let holder = load_session_holder(&grant, secure.as_ref())?;
+    let runtime = session_grant_runtime();
+    let provider = session_transport_provider(runtime.as_ref(), &grant, &holder, secure).await?;
+    let previous = provider
+        .session()
+        .current_state()
+        .context("captured transport test has no current issuer grant")?;
+    // This is the production refresh exchange and durable grant store, not a
+    // fabricated denial or a mutation of local expiry/authorization material.
+    provider.refresh_for_sensitive_action().await?;
+    let successor = provider
+        .session()
+        .current_state()
+        .context("captured transport test lost the successor grant")?;
+    anyhow::ensure!(
+        successor.account_id == previous.account_id
+            && successor.device_id == previous.device_id
+            && successor.grant_id != previous.grant_id,
+        "issuer refresh did not preserve the holder and rotate its grant"
+    );
+    Ok((
+        previous.grant_id.to_string(),
+        successor.grant_id.to_string(),
+    ))
+}
+
 async fn refresh_authenticated_session_after_unauthorized_with_secure_store(
     station_url: &str,
     secure_store: Arc<dyn crate::secure_key_store::SecureKeyStore + Send + Sync>,
@@ -660,10 +699,9 @@ async fn refresh_authenticated_session_after_unauthorized_with_secure_store(
         // The generation-fenced app coordinator owns terminal cleanup.
         return Err(error);
     }
-    let client = provider
-        .provide()
-        .await
-        .map_err(|error| anyhow::anyhow!("rebuild authenticated session transport: {error}"))?;
+    let client = provider.provide().await.map_err(|error| {
+        anyhow::Error::from(error).context("rebuild authenticated session transport")
+    })?;
     let state = provider
         .session()
         .current_state()
@@ -961,15 +999,15 @@ mod tests {
 
     fn test_host_own_client(
         state: &SessionGrantState,
-    ) -> arkret_sdk::http_client::own_station_results::OwnStationResultClient {
+    ) -> arkret_sdk::http_client::own_station_results::OwnStationStateClient {
         use arkret_sdk::http_client::own_station_results::{
-            OwnStationResultClient, OwnStationSessionSource,
+            OwnStationSessionSource, OwnStationStateClient,
         };
         let binding = arkret_sdk::StationConnectionBinding {
             service_id: state.account_id.station_id.clone(),
             base_url: "https://coland.example/".into(),
             trust_domain: arkret_sdk::TrustDomainId::new("ak:trust_domain:coland.example").unwrap(),
-            auth_metadata: arkret_sdk::AuthMetadata::minimal(),
+            authentication_metadata: arkret_sdk::AuthenticationMetadata::minimal(),
         };
         let client = ClientBuilder::new(Url::parse(&binding.base_url).unwrap())
             .auth(Auth::Dpop(
@@ -984,7 +1022,7 @@ mod tests {
             ),
             binding: binding.clone(),
         });
-        let inner = OwnStationResultClient::new(client.clone(), binding.clone(), formal).unwrap();
+        let inner = OwnStationStateClient::new(client.clone(), binding.clone(), formal).unwrap();
         let (scope, device_scope_epoch) =
             crate::secure_key_store::active_device_seed_scope_snapshot().unwrap();
         let host = Arc::new(HostOwnStationSessionSource {
@@ -996,7 +1034,7 @@ mod tests {
             device_scope_epoch,
         });
         host.snapshot().unwrap();
-        OwnStationResultClient::new(client, binding, host).unwrap()
+        OwnStationStateClient::new(client, binding, host).unwrap()
     }
 
     #[test]

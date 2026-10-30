@@ -5,7 +5,7 @@ use dioxus_router::hooks::use_navigator;
 
 use crate::components::DismissiblePopup;
 use crate::i18n::tr;
-use crate::models::ContactListRow;
+use crate::models::ContactView;
 use crate::routes::Route;
 use crate::transport::auth::{with_authed_api, with_authed_sdk_client};
 use crate::ui::button::{Button, ButtonVariant};
@@ -14,6 +14,10 @@ use crate::ui::input::Input;
 use crate::ui::label::Label;
 use crate::ui::textarea::Textarea;
 use crate::views::helpers::short_protocol_id;
+
+#[cfg(test)]
+#[path = "contacts/lifecycle_tests.rs"]
+mod lifecycle_tests;
 
 /// Maximum length of the optional contact-request greeting (protocol contract:
 /// `message` is `1..2000`).
@@ -121,6 +125,133 @@ fn scope_label(scope: &ContactScope) -> String {
     tr(key)
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ContactSessionStamp {
+    account: Option<(String, arkret_sdk::AccountId, arkret_sdk::DeviceId, String)>,
+    base: String,
+    credential_available: bool,
+    generation: u64,
+}
+
+impl ContactSessionStamp {
+    fn from_parts(
+        account: Option<crate::config::ActiveAccountContext>,
+        base: String,
+        credential_available: bool,
+        generation: u64,
+    ) -> Self {
+        Self {
+            account: account.map(|a| {
+                (
+                    a.profile_id,
+                    a.authority,
+                    a.device_id,
+                    a.server_url.to_string(),
+                )
+            }),
+            base,
+            credential_available,
+            generation,
+        }
+    }
+
+    pub(crate) fn capture(session: crate::app::SessionContext, token: Signal<String>) -> Self {
+        Self::from_parts(
+            (session.active_account)(),
+            (session.base_url)(),
+            !token().trim().is_empty(),
+            (session.session_generation)(),
+        )
+    }
+
+    fn peek(session: crate::app::SessionContext, token: Signal<String>) -> Option<Self> {
+        Some(Self::from_parts(
+            session.active_account.try_peek().ok()?.clone(),
+            session.base_url.try_peek().ok()?.clone(),
+            !token.try_peek().ok()?.trim().is_empty(),
+            *session.session_generation.try_peek().ok()?,
+        ))
+    }
+
+    pub(crate) fn is_current(
+        &self,
+        session: crate::app::SessionContext,
+        token: Signal<String>,
+    ) -> bool {
+        Self::peek(session, token).as_ref() == Some(self)
+    }
+
+    fn require_current(
+        &self,
+        session: crate::app::SessionContext,
+        token: Signal<String>,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.account.is_some() && self.credential_available && self.is_current(session, token),
+            "contact action belongs to a replaced session"
+        );
+        Ok(())
+    }
+}
+
+fn use_contact_session_reset(
+    session: crate::app::SessionContext,
+    token: Signal<String>,
+    mut busy: Signal<bool>,
+    mut status: Signal<ContactFeedback>,
+) {
+    let stamp = use_memo(move || ContactSessionStamp::capture(session, token));
+    let previous = use_hook(|| std::rc::Rc::new(std::cell::RefCell::new(stamp.peek().clone())));
+    use_effect(move || {
+        let current = stamp();
+        if *previous.borrow() == current {
+            return;
+        }
+        *previous.borrow_mut() = current;
+        busy.set(false);
+        status.set(ContactFeedback::default());
+    });
+}
+
+fn spawn_contact_task(
+    future: impl std::future::Future<Output = ()> + 'static,
+) -> Option<dioxus::core::Task> {
+    // The inbox is owned by AppBootstrap's account boundary. A row or modal
+    // may disappear while receipt verification is still completing.
+    let inbox = try_consume_context::<crate::app::ContactInbox>()?;
+    Some(crate::runtime_helpers::spawn_owned(
+        inbox.0.origin_scope(),
+        future,
+    ))
+}
+
+fn finish_contact_feedback(
+    stamp: &ContactSessionStamp,
+    session: crate::app::SessionContext,
+    token: Signal<String>,
+    mut busy: Signal<bool>,
+    mut status: Signal<ContactFeedback>,
+    feedback: ContactFeedback,
+    on_changed: Option<EventHandler<()>>,
+) -> bool {
+    if !stamp.is_current(session, token) {
+        return false;
+    }
+    {
+        let (Ok(mut busy), Ok(mut status)) = (busy.try_write(), status.try_write()) else {
+            return false;
+        };
+        *busy = false;
+        *status = feedback;
+    }
+    // No await separates the live row handles from its owning callback. Drop
+    // the write guards before calling a host that may schedule another render.
+    if let Some(callback) = on_changed {
+        callback.call(());
+    }
+    true
+}
+
 /// Embeddable contact-request form. Used both as the modal body inside
 /// [`ContactsPanel`] and (historically) as a standalone panel. `on_submitted`
 /// fires after a request is accepted by the server so the host can close the
@@ -136,6 +267,8 @@ pub fn ContactNewPanel(
     let mut message = use_signal(String::new);
     let mut status = use_signal(ContactFeedback::default);
     let mut sending = use_signal(|| false);
+    let session = crate::app::SessionContext::get();
+    use_contact_session_reset(session, token, sending, status);
 
     let message_len = message.read().chars().count();
     let message_over = message_len > CONTACT_MESSAGE_MAX;
@@ -186,13 +319,16 @@ pub fn ContactNewPanel(
                             let greeting = message().trim().to_owned();
                             sending.set(true);
                             status.set(ContactFeedback::new("contacts.new.sending"));
-                            spawn(async move {
+                            let stamp = ContactSessionStamp::capture(session, token);
+                            let task = spawn_contact_task(async move {
                                 let greeting_opt = if greeting.is_empty() {
                                     None
                                 } else {
                                     Some(greeting.as_str())
                                 };
-                                match with_authed_api(&base, api_token, |api| async move {
+                                let request_stamp = stamp.clone();
+                                let result = with_authed_api(&base, api_token, |api| async move {
+                                    request_stamp.require_current(session, token)?;
                                     api.request_contact_with_message(
                                         &target_did,
                                         &scopes,
@@ -200,21 +336,23 @@ pub fn ContactNewPanel(
                                     )
                                     .await
                                 })
-                                .await
-                                {
+                                .await;
+                                match result {
                                     Ok(_) => {
-                                        status.set(ContactFeedback::new("contacts.new.sent"));
-                                        message.set(String::new());
-                                        if let Some(cb) = on_submitted {
-                                            cb.call(());
+                                        if finish_contact_feedback(&stamp, session, token, sending, status,
+                                            ContactFeedback::new("contacts.new.sent"), None) {
+                                            if let Ok(mut value) = message.try_write() { value.clear(); }
+                                            if let Some(cb) = on_submitted { cb.call(()); }
                                         }
                                     }
-                                    Err(err) => status.set(
-                                        ContactFeedback::new("contacts.new.send_failed").with_api_error(err),
-                                    ),
+                                    Err(err) => { finish_contact_feedback(&stamp, session, token, sending, status,
+                                        ContactFeedback::new("contacts.new.send_failed").with_api_error(err), None); }
                                 }
-                                sending.set(false);
                             });
+                            if task.is_none() {
+                                sending.set(false);
+                                status.set(ContactFeedback::new("contacts.new.send_failed"));
+                            }
                         }
                     },
                     if sending() { {tr("contacts.new.submit_busy")} } else { {tr("contacts.new.submit")} }
@@ -235,7 +373,7 @@ pub fn ContactNewPanel(
 #[component]
 fn ContactRow(
     token: Signal<String>,
-    contact: ContactListRow,
+    contact: ContactView,
     on_changed: EventHandler<()>,
     #[props(default)] advanced: bool,
 ) -> Element {
@@ -246,6 +384,8 @@ fn ContactRow(
     let mut row_status = use_signal(ContactFeedback::default);
     let mut busy = use_signal(|| false);
     let mut confirm_block = use_signal(|| false);
+    let session = crate::app::SessionContext::get();
+    use_contact_session_reset(session, token, busy, row_status);
     let grants_invite = contact
         .granted_to_peer_scopes
         .contains(&ContactScope::Invite);
@@ -616,7 +756,7 @@ fn ContactRow(
                                 move |_| {
                                     run_contact_action(
                                         base.clone(),
-                                        token(),
+                                        token,
                                         ContactRowAction::ScopeUpdate {
                                             peer: peer.clone(),
                                             scopes: scopes.clone(),
@@ -712,7 +852,7 @@ fn ContactRow(
                             move |_| {
                                 run_contact_action(
                                     base.clone(),
-                                    token(),
+                                    token,
                                     ContactRowAction::Respond { requester: peer.clone(), request_event_ref: request_event_ref.clone(), verb: "accept".to_owned() },
                                     "contacts.action.accepting",
                                     busy,
@@ -736,7 +876,7 @@ fn ContactRow(
                             move |_| {
                                 run_contact_action(
                                     base.clone(),
-                                    token(),
+                                    token,
                                     ContactRowAction::Respond { requester: peer.clone(), request_event_ref: request_event_ref.clone(), verb: "reject".to_owned() },
                                     "contacts.action.rejecting",
                                     busy,
@@ -767,7 +907,7 @@ fn ContactRow(
                             move |_| {
                                 run_contact_action(
                                     base.clone(),
-                                    token(),
+                                    token,
                                     ContactRowAction::Tombstone { peer: peer.clone(), block: false },
                                     "contacts.action.withdrawing",
                                     busy,
@@ -1033,7 +1173,7 @@ fn ContactRow(
                                     confirm_block.set(false);
                                     run_contact_action(
                                         base.clone(),
-                                        token(),
+                                        token,
                                         ContactRowAction::Tombstone { peer: peer.clone(), block: true },
                                         "contacts.action.blocking",
                                         busy,
@@ -1102,7 +1242,7 @@ pub(crate) struct ContactAcceptConfirmation {
 
 pub(crate) fn run_contact_action(
     base: String,
-    api_token: String,
+    token: Signal<String>,
     action: ContactRowAction,
     pending_key: &'static str,
     mut busy: Signal<bool>,
@@ -1110,17 +1250,22 @@ pub(crate) fn run_contact_action(
     on_changed: EventHandler<()>,
     confirmation: Option<ContactAcceptConfirmation>,
 ) {
+    let session = crate::app::SessionContext::get();
+    let stamp = ContactSessionStamp::capture(session, token);
+    let api_token = token.peek().clone();
     busy.set(true);
     row_status.set(ContactFeedback::new(pending_key));
     let confirmation_base = base.clone();
     let confirmation_token = api_token.clone();
-    spawn(async move {
+    let task = spawn_contact_task(async move {
+        let request_stamp = stamp.clone();
         let result = match action {
             ContactRowAction::Respond {
                 requester,
                 request_event_ref,
                 verb,
             } => with_authed_sdk_client(&base, api_token, |http| async move {
+                request_stamp.require_current(session, token)?;
                 match request_event_ref {
                     Some(request_event_ref) => {
                         crate::transport::account::respond_contact_with_request_id(
@@ -1140,6 +1285,7 @@ pub(crate) fn run_contact_action(
             .map(|_| ()),
             ContactRowAction::Tombstone { peer, block } => {
                 with_authed_sdk_client(&base, api_token, |http| async move {
+                    request_stamp.require_current(session, token)?;
                     crate::transport::account::tombstone_contact(&http, &peer, block).await
                 })
                 .await
@@ -1147,6 +1293,7 @@ pub(crate) fn run_contact_action(
             }
             ContactRowAction::ScopeUpdate { peer, scopes } => {
                 with_authed_sdk_client(&base, api_token, |http| async move {
+                    request_stamp.require_current(session, token)?;
                     crate::transport::account::update_contact_scopes(&http, &peer, scopes).await
                 })
                 .await
@@ -1155,7 +1302,9 @@ pub(crate) fn run_contact_action(
         };
         match result {
             Ok(()) => {
-                row_status.set(ContactFeedback::default());
+                if !stamp.is_current(session, token) {
+                    return;
+                }
                 if let Some(confirmation) = confirmation {
                     crate::views::settings::push_contact_remark_edit(
                         confirmation_base,
@@ -1166,14 +1315,33 @@ pub(crate) fn run_contact_action(
                         ),
                     );
                 }
-                on_changed.call(());
+                finish_contact_feedback(
+                    &stamp,
+                    session,
+                    token,
+                    busy,
+                    row_status,
+                    ContactFeedback::default(),
+                    Some(on_changed),
+                );
             }
             Err(err) => {
-                row_status.set(ContactFeedback::new("contacts.action_failed").with_api_error(err))
+                finish_contact_feedback(
+                    &stamp,
+                    session,
+                    token,
+                    busy,
+                    row_status,
+                    ContactFeedback::new("contacts.action_failed").with_api_error(err),
+                    None,
+                );
             }
         }
-        busy.set(false);
     });
+    if task.is_none() {
+        busy.set(false);
+        row_status.set(ContactFeedback::new("contacts.action_failed"));
+    }
 }
 
 #[component]
@@ -1182,14 +1350,16 @@ pub fn ContactsPanel(token: Signal<String>, #[props(default)] advanced: bool) ->
     // A4 — base_url and the account-scoped state store come from session
     // context instead of props.
     let base_url = crate::app::SessionContext::base_url_string();
-    let mut state_store = crate::app::SessionContext::get().state_store;
-    let mut contacts = use_signal(Vec::<ContactListRow>::new);
+    let session = crate::app::SessionContext::get();
+    let mut state_store = session.state_store;
+    let read_session = use_memo(move || ContactSessionStamp::capture(session, token));
+    let mut contacts = use_signal(Vec::<ContactView>::new);
     use_effect(move || contacts.set(contact_inbox.0()));
     let mut status = use_signal(|| "loading".to_owned());
     let mut error =
         use_signal(|| Option::<std::rc::Rc<crate::transport::auth::ApiCallError>>::None);
     let mut reload = use_signal(|| 0_u32);
-    let mut loaded_generation = use_signal(|| u32::MAX);
+    let mut loaded_request = use_signal(|| Option::<(ContactSessionStamp, u32)>::None);
     // M0.2 - "Add Contact" is a popup modal, not a standalone /contacts/new page.
     let mut add_modal_open = use_signal(|| false);
 
@@ -1197,20 +1367,33 @@ pub fn ContactsPanel(token: Signal<String>, #[props(default)] advanced: bool) ->
         let base = base_url.clone();
         use_effect(move || {
             let generation = reload();
-            if loaded_generation() == generation {
+            let stamp = read_session();
+            if loaded_request.peek().as_ref() == Some(&(stamp.clone(), generation)) {
                 return;
             }
-            loaded_generation.set(generation);
-            let api_token = token();
+            let changed_session = loaded_request
+                .peek()
+                .as_ref()
+                .is_some_and(|(previous, _)| previous != &stamp);
+            loaded_request.set(Some((stamp.clone(), generation)));
+            let api_token = token.peek().clone();
             let base = base.clone();
+            if changed_session {
+                contacts.set(Vec::new());
+            }
             error.set(None);
             status.set("loading".to_owned());
             spawn(async move {
-                match with_authed_sdk_client(&base, api_token, |http| async move {
+                let request_stamp = stamp.clone();
+                let result = with_authed_sdk_client(&base, api_token, |http| async move {
+                    request_stamp.require_current(session, token)?;
                     crate::transport::account::contacts(&http).await
                 })
-                .await
-                {
+                .await;
+                if !stamp.is_current(session, token) {
+                    return;
+                }
+                match result {
                     Ok(response) => {
                         let count = response.contacts.len();
                         contact_inbox.0.set(response.contacts.clone());
@@ -1276,7 +1459,7 @@ pub fn ContactsPanel(token: Signal<String>, #[props(default)] advanced: bool) ->
                                     }
                                 }
                             }
-                        } else if is_loading {
+                        } else if is_loading && contact_rows.is_empty() {
                             div { class: "muted", "data-testid": "contacts-loading", {tr("contacts.loading")} }
                         } else if contact_rows.is_empty() {
                             div { class: "members-empty", "data-testid": "contacts-empty-state",

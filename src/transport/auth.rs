@@ -15,6 +15,18 @@ pub(crate) struct AuthoringSessionFence {
 }
 
 impl AuthoringSessionFence {
+    pub(crate) fn same_session_identity(&self, other: &Self) -> bool {
+        self.session_epoch == other.session_epoch
+            && self.scope == other.scope
+            && std::sync::Arc::ptr_eq(&self.signer, &other.signer)
+    }
+
+    pub(crate) fn belongs_to_account(&self, account: &arkret_sdk::AccountId) -> bool {
+        self.scope.as_ref().is_some_and(|scope| {
+            &scope.authority == account && self.signer.device_id() == Some(scope.device_id.as_str())
+        })
+    }
+
     pub(crate) fn capture() -> anyhow::Result<Self> {
         Ok(Self {
             session_epoch: crate::identity::device_directory::session_cache_epoch(),
@@ -290,11 +302,12 @@ where
     }
 }
 
-/// Session-gated Directory exit backed by an independently verified Directory
-/// role route. The Principal grant is refreshed as a local session-liveness
-/// prerequisite but is never attached to the Directory client.
+/// Session-gated Directory exit backed by an explicit, independently verified
+/// Directory route. The separate Principal grant is refreshed as a local
+/// liveness prerequisite and is never attached to the public Directory client.
 pub async fn with_directory_sdk_client<F, Fut, T>(
     principal_base_url: &str,
+    directory_candidate_base_url: &str,
     session_credential: String,
     f: F,
 ) -> Result<T, ApiCallError>
@@ -311,9 +324,10 @@ where
     crate::identity::session_refresh::provide_authenticated_sdk_client(principal_base_url)
         .await
         .map_err(ApiCallError::Unavailable)?;
-    let directory = crate::transport::directory::verified_directory_client(principal_base_url)
-        .await
-        .map_err(ApiCallError::Unavailable)?;
+    let directory =
+        crate::transport::directory::verified_directory_client(directory_candidate_base_url)
+            .await
+            .map_err(ApiCallError::Unavailable)?;
     f(directory).await.map_err(ApiCallError::Failed)
 }
 
@@ -365,10 +379,7 @@ where
     Fut: std::future::Future<Output = anyhow::Result<T>>,
 {
     with_authed_sdk_client(base_url, session_credential, |http| async move {
-        f(crate::event_submit::EventSubmitter::from_current_session(
-            http,
-        ))
-        .await
+        f(crate::app::runtime_adapter::event_submitter(http)).await
     })
     .await
 }

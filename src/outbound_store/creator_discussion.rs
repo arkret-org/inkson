@@ -34,7 +34,7 @@ impl DurableOutboundState {
         self.creator_bootstrap_records.iter().find(|record| {
             record.intent().effective_scope() == &ScopeRef::Realm { realm_id: realm.clone() }
                 && matches!(record.intent().signed_scope_create_unit(),
-                    arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest::OrdinaryRealmBootstrap(_))
+                    arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequestBody::OrdinaryRealmBootstrap(_))
         }).ok_or_else(|| garth::Error::Storage("default discussion has no ordinary Realm creator intent".into()))
     }
 
@@ -98,7 +98,7 @@ impl DurableOutboundState {
         let event = submission.primary_event();
         if !matches!(
             submission.request,
-            arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest::Event(_)
+            arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequestBody::Event(_)
         ) || &event.scope_ref != record.intent().effective_scope()
             || &event.actor_id != record.intent().owner_actor_id()
             || event

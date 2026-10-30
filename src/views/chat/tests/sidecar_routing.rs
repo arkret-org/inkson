@@ -247,7 +247,7 @@ fn signed_sidecar_event_with_source_strand_id_never_enters_ordinary_timeline() {
         "both signed Events reach the local input boundary"
     );
     let local = ClientLocalState {
-        raw_operations: records,
+        raw_operations: records.into(),
         ..ClientLocalState::default()
     };
     let restored = chat_messages_from_local_state_with_sidecar(&local, None, None);

@@ -84,7 +84,7 @@ impl WebSocketFallbackPolicy {
 pub struct WebSocketEndpoint {
     pub base_url: String,
     pub max_frame_bytes: u32,
-    pub max_channels: u32,
+    pub max_channel_count: u32,
 }
 
 /// The largest reassembled frame this client will buffer, independent of what
@@ -116,12 +116,12 @@ impl WebSocketTransportSelector {
                     arkret_models_discovery::TransportBinding::Websocket {
                         base_url,
                         max_frame_bytes,
-                        max_channels,
+                        max_channel_count,
                         ..
                     } => Some(WebSocketEndpoint {
                         base_url: base_url.clone(),
                         max_frame_bytes: max_frame_bytes.to_owned(),
-                        max_channels: max_channels.to_owned(),
+                        max_channel_count: max_channel_count.to_owned(),
                     }),
                     _ => None,
                 });
@@ -518,7 +518,7 @@ pub(crate) mod tests {
         arkret_sdk::TransportBinding::Websocket {
             base_url: "wss://server.example/_arkret/ws".to_owned(),
             max_frame_bytes,
-            max_channels: 16,
+            max_channel_count: 16,
         }
     }
 

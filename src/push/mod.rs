@@ -13,7 +13,7 @@ mod token_source;
 use std::sync::Arc;
 
 #[cfg(test)]
-use arkret_models_integration::PushRegisterDeviceOutcome;
+use arkret_models_integration::PushRegisterDeviceResponseBody;
 pub use binding::*;
 pub use gateway::*;
 pub use request::*;

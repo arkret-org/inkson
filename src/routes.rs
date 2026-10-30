@@ -146,7 +146,7 @@ pub enum Route {
     #[route("/notifications/settings", NotificationsSettingsPage)]
     NotificationsSettings,
 
-    /// Live call surface. Optional query params deep-link an in-progress
+    /// Live call surface. Optional query parameters deep-link an in-progress
     /// or outgoing call: `call_id` (the `ak:call:…` id), `peer` (the 1:1
     /// callee DID, empty for SFU group calls), `realm_id`, `video` (`1`
     /// for a video call, else audio-only), and `incoming` (`1` when this
@@ -477,7 +477,7 @@ mod tests {
         for route in routes {
             let view = route.to_view();
             let back: Route = view.into();
-            // The round-trip should produce the same variant (without params)
+            // The round-trip should produce the same variant (without parameters)
             assert_eq!(route.to_view(), back.to_view());
         }
     }

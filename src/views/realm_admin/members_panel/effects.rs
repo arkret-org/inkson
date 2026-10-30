@@ -48,7 +48,7 @@ pub(super) fn use_realm_members_effects(
                 .await
                 {
                     Ok(response) => {
-                        let accepted: Vec<crate::models::ContactListRow> = response
+                        let accepted: Vec<crate::models::ContactView> = response
                             .contacts
                             .into_iter()
                             .filter(|c| c.state == arkret_sdk::ContactState::Accepted)

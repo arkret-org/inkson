@@ -12,9 +12,9 @@
 use arkret_models_crypto::{
     GenericRecoveryTranscript, RecoveryBackupHpkeSuite, RecoveryKeyAgreementAlgorithm,
     RecoveryKeyAgreementEntry, RecoveryKeyAgreementUse, RecoveryKeyEntry, RecoveryPolicy,
-    RecoveryPolicyActiveOutcome, RecoveryPolicyAuthData, RecoveryPolicySummary, RecoveryProofKind,
-    RecoverySignatureAlgorithm, RecoveryTranscriptProofBody, RecoveryUnlockProofBody,
-    RecoveryUnlockProofBodyWithSignature, RecoveryUnlockProofKind,
+    RecoveryPolicySignatureProof, RecoveryPolicyStatusView, RecoveryPolicySummary,
+    RecoveryProofKind, RecoverySignatureAlgorithm, RecoveryTranscriptProofBody,
+    RecoveryUnlockProofBody, RecoveryUnlockProofBodyWithSignature, RecoveryUnlockProofKind,
 };
 use arkret_sdk::{DidUrl, PolicyId, TrustDomainId};
 use base64::Engine as _;
@@ -25,9 +25,7 @@ use serde_json::Value;
 use crate::transport::TransportClient;
 
 /// Return the accepted policy from the already-validated transport DTO.
-pub fn active_recovery_policy(
-    outcome: &RecoveryPolicyActiveOutcome,
-) -> Option<RecoveryPolicySummary> {
+pub fn active_recovery_policy(outcome: &RecoveryPolicyStatusView) -> Option<RecoveryPolicySummary> {
     outcome
         .active_policy
         .as_ref()
@@ -49,7 +47,7 @@ pub enum FirstBackupGateBlockReason {
 
 pub fn first_backup_gate_status(
     accepted_principal_control_commit: bool,
-    recovery_policy_outcome: &RecoveryPolicyActiveOutcome,
+    recovery_policy_outcome: &RecoveryPolicyStatusView,
 ) -> FirstBackupGateStatus {
     if !accepted_principal_control_commit {
         return FirstBackupGateStatus::Blocked(
@@ -305,7 +303,7 @@ fn build_signed_genesis_recovery_policy_with_raw_signer(
         issued_at,
         not_before: None,
         expires_at: None,
-        auth_data: RecoveryPolicyAuthData {
+        signature_proof: RecoveryPolicySignatureProof {
             verification_method: arkret_sdk::DidUrl::new(verification_method.to_owned()).map_err(
                 |error| anyhow::anyhow!("recovery policy verification method is invalid: {error}"),
             )?,
@@ -319,14 +317,14 @@ fn build_signed_genesis_recovery_policy_with_raw_signer(
     let bytes = recovery_policy_signing_payload(&typed_policy)?;
     let signature =
         sign_raw(&bytes).map_err(|err| anyhow::anyhow!("recovery policy sign: {err:?}"))?;
-    typed_policy.auth_data.signature =
+    typed_policy.signature_proof.signature =
         arkret_sdk::Base64UrlString::new(B64.encode(signature)).map_err(anyhow::Error::msg)?;
     typed_policy.validate_shape()?;
     Ok(serde_json::to_value(typed_policy)?)
 }
 
 /// `key-management.md` §8.1 recovery-policy signature transcript.
-/// `auth_data` is excluded as a whole; the signer identity and algorithm are
+/// `signature_proof` is excluded as a whole; the signer identity and algorithm are
 /// authorized by the accepted device context rather than self-authenticated by
 /// the policy document.
 fn recovery_policy_signing_payload(policy: &RecoveryPolicy) -> anyhow::Result<Vec<u8>> {
@@ -334,8 +332,8 @@ fn recovery_policy_signing_payload(policy: &RecoveryPolicy) -> anyhow::Result<Ve
     value
         .as_object_mut()
         .ok_or_else(|| anyhow::anyhow!("recovery policy must serialize as an object"))?
-        .remove("auth_data")
-        .ok_or_else(|| anyhow::anyhow!("recovery policy auth_data is required"))?;
+        .remove("signature_proof")
+        .ok_or_else(|| anyhow::anyhow!("recovery policy signature_proof is required"))?;
     let mut transcript = b"ak.identity.recovery_policy.signature.v1\n".to_vec();
     transcript.extend_from_slice(&arkret_sdk::canonical::canonical_json_bytes(&value)?);
     Ok(transcript)
@@ -424,7 +422,7 @@ async fn publish_recovery_policy(
     principal_control_realm_id: &arkret_sdk::RealmId,
     _accepted_pcr_genesis_unit: &arkret_wire::PcrGenesisUnit,
     policy_value: Value,
-) -> anyhow::Result<arkret_sdk::RecoveryPolicyPublishOutcome> {
+) -> anyhow::Result<arkret_sdk::RecoveryPolicyPublishResponseBody> {
     if arkret_sdk::project_did_to_core_id(principal_did)? != account_id.principal_id {
         anyhow::bail!("recovery policy principal projection does not match account authority");
     }
@@ -457,7 +455,7 @@ async fn publish_recovery_policy(
         .into_iter()
         .next()
         .ok_or_else(|| anyhow::anyhow!("recovery policy authoring produced no submission"))?;
-    let request = arkret_sdk::RecoveryPolicyPublishRequest::new(submission)?;
+    let request = arkret_sdk::RecoveryPolicyPublishRequestBody::new(submission)?;
     api.put_recovery_policy(request.submission()).await
 }
 

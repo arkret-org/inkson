@@ -124,8 +124,8 @@ pub struct AssignedToRelationProjectionView {
     pub actor_id: arkret_sdk::ActorId,
 }
 
-impl From<arkret_sdk::ProjectionSpaceRow> for SpaceContainerProjectionView {
-    fn from(row: arkret_sdk::ProjectionSpaceRow) -> Self {
+impl From<arkret_sdk::SpaceView> for SpaceContainerProjectionView {
+    fn from(row: arkret_sdk::SpaceView) -> Self {
         Self {
             space_id: row.space_id.as_str().to_owned(),
             realm_id: row.realm_id.as_str().to_owned(),
@@ -149,8 +149,8 @@ impl From<arkret_sdk::ProjectionAssignedToRelation> for AssignedToRelationProjec
     }
 }
 
-impl From<arkret_sdk::ProjectionStrandRow> for StrandProjectionView {
-    fn from(row: arkret_sdk::ProjectionStrandRow) -> Self {
+impl From<arkret_sdk::StrandView> for StrandProjectionView {
+    fn from(row: arkret_sdk::StrandView) -> Self {
         Self {
             strand_id: row.strand_id.as_str().to_owned(),
             realm_id: row.realm_id.as_str().to_owned(),

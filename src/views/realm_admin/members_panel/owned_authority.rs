@@ -1,9 +1,9 @@
 //! Explicit controller confirmation, using original accepted membership and
 //! exact grant currents through the authenticated own Station.
-use arkret_sdk::exact_current_results::{
-    CapabilityGrantExactCurrentRow, CapabilityGrantExactCurrentSelector,
-    CapabilityGrantExactCurrentSelectorKind, ExactCurrentResultEntry, ExactCurrentResultSelector,
-    ExactCurrentResultsReadOutcome, ExactCurrentResultsReadRequestBody,
+use arkret_sdk::exact_current_state::{
+    CapabilityGrantExactCurrentSelector, CapabilityGrantExactCurrentSelectorKind,
+    CurrentCapabilityGrant, ExactCurrentState, ExactCurrentStateReadRequestBody,
+    ExactCurrentStateReadResponseBody, ExactCurrentStateSelector,
 };
 
 use super::*;
@@ -19,14 +19,14 @@ struct JoinBasis {
 #[derive(Clone, Debug)]
 struct AuthorityView {
     basis: Option<JoinBasis>,
-    strands: Vec<arkret_sdk::ProjectionStrandRow>,
-    grants: Vec<CapabilityGrantExactCurrentRow>,
+    strands: Vec<arkret_sdk::StrandView>,
+    grants: Vec<CurrentCapabilityGrant>,
     effective: Vec<String>,
     join_status: String,
     management_rules: Vec<String>,
 }
 
-fn decision_label(outcome: &arkret_sdk::AuthzCheckOutcome) -> &'static str {
+fn decision_label(outcome: &arkret_sdk::AuthorizationCheckResponseBody) -> &'static str {
     if matches!(
         outcome.freshness_state,
         Some(arkret_sdk::FreshnessState::Stale | arkret_sdk::FreshnessState::Unknown)
@@ -42,27 +42,25 @@ fn decision_label(outcome: &arkret_sdk::AuthzCheckOutcome) -> &'static str {
     }
     let current_precheck = outcome.freshness_state == Some(arkret_sdk::FreshnessState::Fresh)
         && outcome.authority_status == Some(arkret_sdk::AuthorityStatus::Fresh)
-        && outcome.policy_results.iter().any(|row| {
+        && outcome.policy_evaluations.iter().any(|row| {
             row.get("reason_detail").and_then(Value::as_str)
                 == Some("owned_agent_current_capability_and_management")
         });
     if current_precheck {
         return match outcome.decision {
-            arkret_sdk::AuthzDecision::Allow => "当前权限/管理预检允许（运行时仍需验收）",
-            arkret_sdk::AuthzDecision::SoftDeny | arkret_sdk::AuthzDecision::HardDeny => {
-                "当前权限/管理预检拒绝"
-            }
-            arkret_sdk::AuthzDecision::Quarantine => "当前权限/管理预检隔离",
-            arkret_sdk::AuthzDecision::RequireReview => "当前权限/管理预检需批准",
+            arkret_sdk::AuthorizationDecision::Allow => "当前权限/管理预检允许（运行时仍需验收）",
+            arkret_sdk::AuthorizationDecision::SoftDeny
+            | arkret_sdk::AuthorizationDecision::HardDeny => "当前权限/管理预检拒绝",
+            arkret_sdk::AuthorizationDecision::Quarantine => "当前权限/管理预检隔离",
+            arkret_sdk::AuthorizationDecision::RequireReview => "当前权限/管理预检需批准",
         };
     }
     match outcome.decision {
-        arkret_sdk::AuthzDecision::Allow => "基础权限允许；完整动态判定未确认",
-        arkret_sdk::AuthzDecision::SoftDeny | arkret_sdk::AuthzDecision::HardDeny => {
-            "基础权限拒绝；完整动态判定未确认"
-        }
-        arkret_sdk::AuthzDecision::Quarantine => "基础权限隔离；完整动态判定未确认",
-        arkret_sdk::AuthzDecision::RequireReview => "基础权限需批准；完整动态判定未确认",
+        arkret_sdk::AuthorizationDecision::Allow => "基础权限允许；完整动态判定未确认",
+        arkret_sdk::AuthorizationDecision::SoftDeny
+        | arkret_sdk::AuthorizationDecision::HardDeny => "基础权限拒绝；完整动态判定未确认",
+        arkret_sdk::AuthorizationDecision::Quarantine => "基础权限隔离；完整动态判定未确认",
+        arkret_sdk::AuthorizationDecision::RequireReview => "基础权限需批准；完整动态判定未确认",
     }
 }
 
@@ -91,14 +89,14 @@ fn OwnedAgentScopePreview(
                 let scope = arkret_sdk::WireResourceSelector::strand(realm, arkret_sdk::StrandId::new(strand)?);
                 let mut messages = Vec::new();
                 for action in actions {
-                    let request = |account| arkret_models_collaboration::governance::authorization::AuthzCheckRequestBody {
+                    let request = |account| arkret_models_collaboration::governance::authorization::AuthorizationCheckRequestBody {
                         actor_id: arkret_sdk::ActorId::account(account), action: action.clone(), resource: Some(scope.clone()), context: None,
                     };
                     let owner = crate::transport::realm_read::authz_check_request(&http, &request(controller.clone())).await?;
                     let target = crate::transport::realm_read::authz_check_request(&http, &request(agent.clone())).await;
                     let target = match target {
                         Ok(outcome) => decision_label(&outcome).to_owned(),
-                        Err(error) => format!("当前有效性未确认：{}", error.to_string()),
+                        Err(error) => format!("当前有效性未确认：{error}"),
                     };
                     messages.push(format!("{}：主人{}；Agent{}", action, decision_label(&owner), target));
                 }
@@ -178,14 +176,47 @@ async fn join_basis(
             && resource.agent.lifecycle != arkret_sdk::AgentLifecycleState::Deactivated,
         "Agent ownership/lifecycle is unavailable"
     );
-    let genesis = crate::transport::own_station_results::accepted_genesis(http, realm).await?;
-    let founding: arkret_sdk::RealmCreatePayload =
-        serde_json::from_value(serde_json::to_value(&genesis.event.payload)?)?;
+    // Since-join members need not read the old create Event. The authenticated
+    // complete Snapshot already carries its immutable registered current.
+    let genesis_rows: Vec<_> = snapshot
+        .current_state_entries
+        .iter()
+        .filter(|row| {
+            matches!(
+                row,
+                arkret_sdk::CurrentState::Value {
+                    selector: arkret_sdk::CurrentSelector::RealmGenesis,
+                    ..
+                }
+            )
+        })
+        .collect();
     anyhow::ensure!(
-        founding.object.purpose == arkret_sdk::RealmPurpose::Collaboration,
+        genesis_rows.len() == 1,
+        "Realm Genesis current is unavailable"
+    );
+    let arkret_sdk::CurrentState::Value {
+        source_stream_ref,
+        revision,
+        value,
+        ..
+    } = genesis_rows[0];
+    anyhow::ensure!(
+        snapshot.realm_id == *realm
+            && *source_stream_ref
+                == arkret_sdk::CommitStreamRef::Realm {
+                    realm_id: realm.clone()
+                }
+            && revision.stream_position == 0,
+        "Realm Genesis current has another scope or revision"
+    );
+    let founding: arkret_sdk::RealmGenesis = serde_json::from_value(value.clone())?;
+    founding.validate()?;
+    anyhow::ensure!(
+        founding.purpose == arkret_sdk::RealmPurpose::Collaboration,
         "Owned Agent grants require a Collaboration Realm"
     );
-    let submitter = crate::event_submit::EventSubmitter::from_current_session(http.clone());
+    let submitter = crate::app::runtime_adapter::event_submitter(http.clone());
     anyhow::ensure!(
         submitter.authority()? == controller,
         "Authenticated controller changed"
@@ -204,10 +235,12 @@ async fn join_basis(
                 "Controller current is not an ordinary join"
             );
         }
-        arkret_sdk::EventKind::InviteAccept => anyhow::ensure!(
-            controller_event.actor_id == controller_actor,
-            "Controller Invite acceptance names another Account"
-        ),
+        arkret_sdk::EventKind::InviteAccept | arkret_sdk::EventKind::RealmInviteLinkAccept => {
+            anyhow::ensure!(
+                controller_event.actor_id == controller_actor,
+                "Controller Invite acceptance names another Account"
+            )
+        }
         _ => anyhow::bail!("Controller join original is unavailable"),
     }
     let agent_event = join_original(
@@ -249,22 +282,20 @@ async fn exact_grant(
     http: &arkret_sdk::http_client::Client,
     realm: &arkret_sdk::RealmId,
     grant: &arkret_sdk::GrantId,
-) -> anyhow::Result<CapabilityGrantExactCurrentRow> {
+) -> anyhow::Result<CurrentCapabilityGrant> {
     let client = crate::transport::own_station_results::client_for_http(http).await?;
     // Original issuers retain their dedicated withdrawal even after leaving.
     // Public nonce-bound authority acquisition cannot impose a member read gate.
     let before = current_authority(http, realm).await?;
-    let request = ExactCurrentResultsReadRequestBody {
+    let request = ExactCurrentStateReadRequestBody {
         realm_id: realm.clone(),
-        selector: ExactCurrentResultSelector::CapabilityGrant(
-            CapabilityGrantExactCurrentSelector {
-                kind: CapabilityGrantExactCurrentSelectorKind::CapabilityGrant,
-                grant_id: grant.clone(),
-            },
-        ),
+        selector: ExactCurrentStateSelector::CapabilityGrant(CapabilityGrantExactCurrentSelector {
+            kind: CapabilityGrantExactCurrentSelectorKind::CapabilityGrant,
+            grant_id: grant.clone(),
+        }),
     };
     let result = client
-        .exact_current_result(&request, before.current_generation)
+        .exact_current_state(&request, before.current_generation)
         .await?;
     let after = current_authority(http, realm).await?;
     result
@@ -278,8 +309,8 @@ async fn exact_grant(
         "Grant read crossed a current cut; refresh and confirm again"
     );
     match result.into_value()? {
-        ExactCurrentResultsReadOutcome::Present {
-            entry: ExactCurrentResultEntry::CapabilityGrant(row),
+        ExactCurrentStateReadResponseBody::Present {
+            current_state: ExactCurrentState::CapabilityGrant(row),
             effective_stream_head,
             ..
         } => {
@@ -299,7 +330,7 @@ async fn current_authority(
 ) -> anyhow::Result<arkret_sdk::RealmAuthorityBundle> {
     let mut nonce = [0_u8; 32];
     getrandom::fill(&mut nonce).map_err(|error| anyhow::anyhow!("authority nonce: {error}"))?;
-    let request = arkret_sdk::AuthorityBundleRequest {
+    let request = arkret_sdk::RealmAuthorityBundleRequestBody {
         realm_id: realm.clone(),
         nonce: arkret_sdk::Base64UrlString::new(arkret_sdk::base64url_encode(nonce))
             .map_err(|error| anyhow::anyhow!(error))?,
@@ -317,7 +348,7 @@ async fn current_authority(
 async fn retain_accepted_grant_locator(
     submitter: &crate::event_submit::EventSubmitter,
     controller: &arkret_sdk::AccountId,
-    accepted: &crate::models::SubmitEventResult,
+    accepted: &crate::models::EventSubmissionProgress,
 ) -> anyhow::Result<()> {
     let commit = accepted
         .commit
@@ -399,11 +430,81 @@ fn retained_owned_grant_ids(
     ids.into_iter().collect()
 }
 
+async fn withdraw_owned_grant(
+    base: &str,
+    credential: String,
+    realm: String,
+    account: arkret_sdk::AccountId,
+    id: arkret_sdk::GrantId,
+) -> Result<(), crate::transport::auth::ApiCallError> {
+    use crate::transport::auth::{ApiCallError, AuthoringSessionFence, with_authed_sdk_client};
+
+    let fence = AuthoringSessionFence::capture().map_err(ApiCallError::Failed)?;
+    let send_realm = realm.clone();
+    let send_account = account.clone();
+    let send_id = id.clone();
+    let send_fence = fence.clone();
+    let submitted = with_authed_sdk_client(base, credential.clone(), |http| async move {
+        session_matches(&send_account)?;
+        let realm = arkret_sdk::RealmId::new(send_realm)?;
+        let current = exact_grant(&http, &realm, &send_id).await?;
+        send_fence.check_session_identity()?;
+        let event = ak_ops::capability_revoke_from_owned_current(
+            realm.as_str(),
+            send_account.principal_id.as_str(),
+            &current,
+            Some("controller_withdrawal"),
+        )?
+        .build_sdk_event("inkson")?;
+        let accepted = crate::app::runtime_adapter::event_submitter(http)
+            .submit_sdk_event(&event)
+            .await?;
+        anyhow::ensure!(
+            accepted.is_committed(),
+            "撤回未接纳：{:?}",
+            accepted.rejection_reason_code
+        );
+        Ok(())
+    })
+    .await;
+    fence
+        .check_session_identity()
+        .map_err(ApiCallError::Failed)?;
+
+    // A lost response or a rotated transport can leave the submission unknown
+    // after the Station committed it. The original issuer's exact current is
+    // independently readable after leaving; use a fresh provider transport.
+    // This confirms the target state, never manufactures an Event receipt or
+    // changes the durable submission's outcome, and never signs another Event.
+    let revoked = with_authed_sdk_client(base, credential, |http| async move {
+        session_matches(&account)?;
+        let realm = arkret_sdk::RealmId::new(realm)?;
+        let current = exact_grant(&http, &realm, &id).await?;
+        session_matches(&account)?;
+        anyhow::ensure!(
+            current.value.owned_agent_issuer() == Some(&account),
+            "Original issuer differs from withdrawal target"
+        );
+        Ok(current.value.status == arkret_sdk::CapabilityGrantStatus::Revoked)
+    })
+    .await;
+    fence
+        .check_session_identity()
+        .map_err(ApiCallError::Failed)?;
+    match revoked {
+        Ok(true) => Ok(()),
+        Ok(false) => {
+            submitted.and_then(|()| Err(ApiCallError::Failed(anyhow::anyhow!("撤回结果尚未确认"))))
+        }
+        Err(error) => Err(error),
+    }
+}
+
 /// Kept outside the currently joined Agent roster: leaving or deactivation
 /// must not hide the original issuer's withdrawal surface.
 #[component]
 pub(super) fn OwnedAgentWithdrawal(realm_id: String, token: Signal<String>) -> Element {
-    let mut rows = use_signal(Vec::<CapabilityGrantExactCurrentRow>::new);
+    let mut rows = use_signal(Vec::<CurrentCapabilityGrant>::new);
     let mut message = use_signal(String::new);
     let mut pending = use_signal(|| false);
     let mut refresh = use_signal(|| 0_u64);
@@ -448,7 +549,7 @@ pub(super) fn OwnedAgentWithdrawal(realm_id: String, token: Signal<String>) -> E
     rsx! {
         div { "data-testid": "owned-agent-withdrawal-ledger",
             p { "我签发的自有 Agent 授权（离群或停用后仍可撤回）" }
-            p { "{message}" }
+            p { "data-testid": "owned-agent-authority-status", "{message}" }
             button { r#type: "button", disabled: pending(), onclick: move |_| refresh += 1, "重读原授权记录" }
             for row in rows() {
                 div { "data-grant-id": "{row.value.id}",
@@ -460,16 +561,7 @@ pub(super) fn OwnedAgentWithdrawal(realm_id: String, token: Signal<String>) -> E
                                 let Some(account) = account.clone() else { return }; let realm = realm.clone(); let id = id.clone(); pending.set(true);
                                 spawn(async move {
                                     let base = crate::app::SessionContext::base_url_string();
-                                    let result = crate::transport::auth::with_authed_sdk_client(&base, token(), |http| async move {
-                                        session_matches(&account)?;
-                                        let realm = arkret_sdk::RealmId::new(realm)?;
-                                        let current = exact_grant(&http, &realm, &id).await?;
-                                        let event = ak_ops::capability_revoke_from_owned_current(realm.as_str(), account.principal_id.as_str(), &current, Some("controller_withdrawal"))?.build_sdk_event("inkson")?;
-                                        let accepted = crate::event_submit::EventSubmitter::from_current_session(http.clone()).submit_sdk_event(&event).await?;
-                                        anyhow::ensure!(accepted.is_committed(), "撤回未接纳：{:?}", accepted.rejection_reason_code);
-                                        anyhow::ensure!(exact_grant(&http, &realm, &id).await?.value.status == arkret_sdk::CapabilityGrantStatus::Revoked, "撤回结果尚未确认");
-                                        Ok(())
-                                    }).await;
+                                    let result = withdraw_owned_grant(&base, token(), realm, account, id).await;
                                     match result { Ok(()) => { message.set("已撤回。旧记录不会恢复；重新授权需明确确认新的记录".into()); refresh += 1; }, Err(e) => message.set(e.display()) }
                                     pending.set(false);
                                 });
@@ -500,7 +592,7 @@ async fn load(
     let mut effective = Vec::new();
     let mut management_rules = Vec::new();
     for row in &before.value()?.current_state_entries {
-        let arkret_sdk::TypedCurrentRow::Value {
+        let arkret_sdk::CurrentState::Value {
             selector: arkret_sdk::CurrentSelector::Policy { .. },
             source_stream_ref,
             revision,
@@ -509,9 +601,9 @@ async fn load(
         else {
             continue;
         };
-        let state: arkret_sdk::PolicySetStatePayload = serde_json::from_value(value.clone())?;
-        state.validate()?;
-        let arkret_sdk::PolicySetValue::Governance(policy) = state.value else {
+        let document: arkret_sdk::PolicySetValue = serde_json::from_value(value.clone())?;
+        document.validate()?;
+        let arkret_sdk::PolicySetValue::Governance(policy) = document else {
             continue;
         };
         if policy.policy_kind != arkret_sdk::PolicyKind::Agent {
@@ -551,7 +643,7 @@ async fn load(
         }
     }
     for row in &before.value()?.current_state_entries {
-        let arkret_sdk::TypedCurrentRow::Value {
+        let arkret_sdk::CurrentState::Value {
             selector: arkret_sdk::CurrentSelector::CapabilityGrant { grant_id },
             value,
             ..
@@ -577,18 +669,14 @@ async fn load(
         for action in &row.value.actions {
             for resource in &row.value.resources {
                 let result = crate::transport::realm_read::authz_check_request(http,
-                    &arkret_models_collaboration::governance::authorization::AuthzCheckRequestBody {
+                    &arkret_models_collaboration::governance::authorization::AuthorizationCheckRequestBody {
                         actor_id: arkret_sdk::ActorId::account(agent.clone()), action: action.clone(),
                         resource: Some(resource.clone()), context: None,
                     }).await;
                 let outcome = match result {
                     Ok(outcome) => outcome,
                     Err(error) => {
-                        decisions.push(format!(
-                            "{}：当前有效性未确认：{}",
-                            action,
-                            error.to_string()
-                        ));
+                        decisions.push(format!("{}：当前有效性未确认：{}", action, error));
                         continue;
                     }
                 };
@@ -714,12 +802,12 @@ pub(super) fn OwnedAgentAuthority(
                         }
                     }
                     for (action, label) in [
-                        ("ak.message.create", "发送消息"), ("ak.reaction.add", "添加回应"),
-                        ("ak.reaction.remove", "移除回应"), ("ak.message.revise.own", "修改自己消息"),
-                        ("ak.message.redact.own", "撤回自己消息"), ("ak.strand.read", "读取 Strand"),
-                        ("ak.event.read", "读取事件"), ("ak.object.read", "读取对象"),
-                        ("ak.object.read_metadata", "读取对象信息"), ("ak.object.read_content", "读取对象内容"),
-                        ("ak.object.read_history", "读取对象历史"),
+                        (arkret_wire::CapabilityActionId::MESSAGE_CREATE, "发送消息"), (arkret_wire::CapabilityActionId::REACTION_ADD, "添加回应"),
+                        (arkret_wire::CapabilityActionId::REACTION_REMOVE, "移除回应"), (arkret_wire::CapabilityActionId::MESSAGE_REVISE_OWN, "修改自己消息"),
+                        (arkret_wire::CapabilityActionId::MESSAGE_REDACT_OWN, "撤回自己消息"), (arkret_wire::CapabilityActionId::STRAND_READ, "读取 Strand"),
+                        (arkret_wire::CapabilityActionId::EVENT_READ, "读取事件"), (arkret_wire::CapabilityActionId::OBJECT_READ, "读取对象"),
+                        (arkret_wire::CapabilityActionId::OBJECT_READ_METADATA, "读取对象信息"), (arkret_wire::CapabilityActionId::OBJECT_READ_CONTENT, "读取对象内容"),
+                        (arkret_wire::CapabilityActionId::OBJECT_READ_HISTORY, "读取对象历史"),
                     ] {
                         label {
                             input { r#type: "checkbox", checked: selected.read().contains(action), disabled: pending(),
@@ -760,7 +848,7 @@ pub(super) fn OwnedAgentAuthority(
                                     let actions = actions.iter().map(String::as_str).collect::<Vec<_>>();
                                     let event = ak_ops::capability_grant_owned_agent(realm.as_str(), account.principal_id.as_str(),
                                         &basis.controller, &basis.agent, &basis.controller_join, &basis.agent_join, &actions, resource)?.build_sdk_event("inkson")?;
-                                    let submitter = crate::event_submit::EventSubmitter::from_current_session(http.clone());
+                                    let submitter = crate::app::runtime_adapter::event_submitter(http.clone());
                                     let accepted = submitter.submit_sdk_event(&event).await?;
                                     anyhow::ensure!(accepted.is_committed(), "授权未接纳：{:?}", accepted.rejection_reason_code);
                                     retain_accepted_grant_locator(&submitter, &account, &accepted).await?;
@@ -788,17 +876,7 @@ pub(super) fn OwnedAgentAuthority(
                                     let id = id.clone(); let realm = realm.clone(); pending.set(true);
                                     spawn(async move {
                                         let base = crate::app::SessionContext::base_url_string();
-                                        let result = crate::transport::auth::with_authed_sdk_client(&base, token(), |http| async move {
-                                            session_matches(&account)?;
-                                            let realm = arkret_sdk::RealmId::new(realm)?;
-                                            let row = exact_grant(&http, &realm, &id).await?;
-                                            let event = ak_ops::capability_revoke_from_owned_current(realm.as_str(), account.principal_id.as_str(), &row, Some("controller_withdrawal"))?.build_sdk_event("inkson")?;
-                                            let accepted = crate::event_submit::EventSubmitter::from_current_session(http.clone()).submit_sdk_event(&event).await?;
-                                            anyhow::ensure!(accepted.is_committed(), "撤回未接纳：{:?}", accepted.rejection_reason_code);
-                                            let current = exact_grant(&http, &realm, &id).await?;
-                                            anyhow::ensure!(current.value.status == arkret_sdk::CapabilityGrantStatus::Revoked, "撤回结果尚未确认");
-                                            Ok(())
-                                        }).await;
+                                        let result = withdraw_owned_grant(&base, token(), realm, account, id).await;
                                         match result { Ok(()) => { message.set("已撤回；再次授权需要重新确认并签发新记录".into()); refresh += 1; }, Err(e) => message.set(e.display()) }
                                         pending.set(false);
                                     });

@@ -15,6 +15,7 @@ use arkret_models_collaboration::governance::invite_addressing::{
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
+use super::account_items::MapExt as _;
 use super::{ClientLocalState, LocalStateStore, StoredInviteCredential};
 
 /// Upper bound on locally retained invite credentials; writes evict expired
@@ -346,7 +347,7 @@ mod tests {
             .unwrap()
             .with_timezone(&Utc);
         store.apply_station_cas_account_data(&[arkret_sdk::sync::StationCasAccountDataContainer {
-            upserts: vec![arkret_sdk::AccountDataRow {
+            upserts: vec![arkret_sdk::AccountDataEntry {
                 account_data_key: arkret_wire::AccountDataKey::ACCOUNT_INVITE_DELIVERY.to_owned(),
                 revision: 3,
                 content: cell(json!([entry(

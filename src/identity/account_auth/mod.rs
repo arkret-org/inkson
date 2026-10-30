@@ -22,7 +22,7 @@ pub use onboarding::*;
 pub(crate) use util::*;
 
 const INKSON_OIDC_REDIRECT_URI_NATIVE: &str = "urn:inkson:oauth:callback";
-/// Fallback OIDC `client_id` when `auth_metadata.methods[].oidc.client_id` is
+/// Fallback OIDC `client_id` when `authentication_metadata.methods[].oidc.client_id` is
 /// absent. Public (PKCE, no secret) client.
 const INKSON_OIDC_CLIENT_ID: &str = "inkson";
 

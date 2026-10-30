@@ -5,8 +5,8 @@ fn current_space_siblings(
     kind: &str,
     title: &str,
     parent: Option<&str>,
-) -> Vec<arkret_wire::TypedCurrentRow> {
-    use arkret_wire::{CommitStreamRef, CurrentRevision, CurrentSelector, TypedCurrentRow};
+) -> Vec<arkret_wire::CurrentState> {
+    use arkret_wire::{CommitStreamRef, CurrentRevision, CurrentSelector, CurrentState};
     let space_id = arkret_sdk::SpaceId::new(id).unwrap();
     let space = arkret_sdk::Space::new(
         space_id.clone(),
@@ -34,7 +34,7 @@ fn current_space_siblings(
         ),
     ]
     .into_iter()
-    .map(|(selector, value)| TypedCurrentRow::Value {
+    .map(|(selector, value)| CurrentState::Value {
         selector,
         source_stream_ref: CommitStreamRef::Realm {
             realm_id: arkret_sdk::RealmId::new(PENDING_TEST_REALM).unwrap(),
@@ -160,7 +160,7 @@ fn current_space_requires_exact_realm_and_complete_resolved_siblings() {
     ));
     assert!(space_container_views_from_current(&cycle, PENDING_TEST_REALM).is_empty());
     let mut foreign = entries.clone();
-    let arkret_wire::TypedCurrentRow::Value {
+    let arkret_wire::CurrentState::Value {
         source_stream_ref, ..
     } = &mut foreign[1];
     *source_stream_ref = arkret_wire::CommitStreamRef::Realm {
@@ -287,6 +287,72 @@ fn pending_board_create_derives_title_and_write_state_from_the_op_log() {
         )
         .is_empty()
     );
+}
+
+#[test]
+fn pending_card_lifecycle_survives_reopen_without_claiming_acceptance() {
+    let path = std::env::temp_dir().join(format!(
+        "inkson-write-state-{}.json",
+        crate::operation::uuid_v7()
+    ));
+    let mut store = LocalStateStore::with_path(&path);
+    let local_id = "01904100-0000-7000-8000-000000000099";
+    let event_id = "ak:event:AV624IkuHj3HmxAYE6uyYmBa4Est3gGGdnOsjn71z5L2";
+    let list_id = "ak:space:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL";
+    store.upsert_raw_operation(local_id, Some(PENDING_TEST_REALM.to_owned()), json!({
+        "kind":"ak.strand.create", "operation_id":local_id, "local_target_ref":local_id,
+        "write_state":"queued", "effect":{"strand_id":local_id,"board_space_id":PENDING_TEST_SPACE,
+        "list_space_id":list_id,"title":"Recoverable card","rank":"U"}
+    }));
+    for (tag, expected, settled) in [
+        ("queued", CardState::Queued, false),
+        ("submitting", CardState::Submitted, false),
+        ("pending", CardState::Submitted, false),
+        ("pending_commit", CardState::Submitted, false),
+        ("cas_conflict", CardState::Conflict, false),
+        ("rejected", CardState::SoftFailed, false),
+        ("queued", CardState::Queued, false),
+        ("accepted", CardState::Accepted, true),
+        ("synced", CardState::Synced, true),
+    ] {
+        assert!(store.update_raw_operation_write_state(
+            local_id,
+            tag,
+            Some(event_id.to_owned()),
+            None
+        ));
+        let reopened = LocalStateStore::with_path(&path);
+        let rows = reopened.load().raw_operations;
+        let state = raw_operation_card_state(&rows[0].payload);
+        assert_eq!(state, expected, "reopened {tag}");
+        assert_eq!(state.is_settled(), settled, "reopened {tag}");
+        let card = local_card_create_from_raw_operation(&rows[0]);
+        if matches!(state, CardState::Conflict | CardState::SoftFailed) {
+            assert!(card.is_none(), "refused write must not overlay current");
+        } else {
+            let display = card.unwrap().card;
+            let expected_display = if settled { CardState::Queued } else { expected };
+            assert_eq!(display.state, expected_display);
+            assert!(
+                !display.state.is_settled(),
+                "a create receipt does not place the card"
+            );
+        }
+        assert_eq!(
+            raw_operation_accepted_create_target_id(&rows[0].payload).is_some(),
+            settled,
+            "{tag}"
+        );
+        let mut dom = VirtualDom::new_with_props(
+            |state: CardState| rsx! { WriteStateBadge { state } },
+            state,
+        );
+        let edits = dom.rebuild_to_vec();
+        assert!(edits.edits.iter().any(|edit| matches!(edit,
+            dioxus::core::Mutation::SetAttribute { name: "data-write-state", value: dioxus::core::AttributeValue::Text(value), .. }
+                    if value.as_str() == expected.write_state().data_state()
+        )), "real card badge {tag}");
+    }
 }
 
 #[test]
@@ -638,7 +704,7 @@ fn terminal_current_suppresses_history_when_projection_omits_the_board() {
         .unwrap(),
     );
     space.state = Some(arkret_sdk::SpaceState::Tombstoned);
-    let entry = arkret_wire::TypedCurrentRow::Value {
+    let entry = arkret_wire::CurrentState::Value {
         selector: arkret_wire::CurrentSelector::Space {
             space_id: space.id.clone().unwrap(),
         },
@@ -680,7 +746,7 @@ fn terminal_current_suppresses_history_when_projection_omits_the_board() {
     );
 
     let mut foreign = entries.clone();
-    let arkret_wire::TypedCurrentRow::Value {
+    let arkret_wire::CurrentState::Value {
         source_stream_ref, ..
     } = &mut foreign[0];
     *source_stream_ref = arkret_wire::CommitStreamRef::Realm {
@@ -689,53 +755,12 @@ fn terminal_current_suppresses_history_when_projection_omits_the_board() {
     };
     assert!(terminal_space_ids_from_current(&foreign, PENDING_TEST_REALM).is_empty());
     foreign = entries.clone();
-    let arkret_wire::TypedCurrentRow::Value { selector, .. } = &mut foreign[0];
+    let arkret_wire::CurrentState::Value { selector, .. } = &mut foreign[0];
     *selector = arkret_wire::CurrentSelector::Space {
         space_id: arkret_sdk::SpaceId::new("ak:space:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-")
             .unwrap(),
     };
     assert!(terminal_space_ids_from_current(&foreign, PENDING_TEST_REALM).is_empty());
-}
-
-#[test]
-fn local_space_create_state_becomes_synced_once_projection_contains_target() {
-    let board_id = "ak:space:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-";
-    let raw_operations = vec![RawOperationRecord {
-        operation_id: "sha256:local-board-create".to_owned(),
-        realm_id: Some("ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk".to_owned()),
-        received_at: chrono::Utc::now(),
-        payload: json!({
-            "kind": "ak.space.create",
-            "operation_id": "sha256:local-board-create",
-            "body": {
-                "object": {
-                    "id": board_id,
-                    "schema": "ak.schema.space.v1",
-                    "kind": "board",
-                    "title": "Design board"
-                }
-            },
-            "write_state": "queued"
-        }),
-    }];
-    let projected_ids = BTreeSet::from([board_id.to_owned()]);
-
-    let state = local_space_create_state_for_target(&raw_operations, &projected_ids, board_id);
-
-    assert_eq!(state, Some(CardState::Synced));
-}
-
-#[test]
-fn displayed_card_state_uses_server_strand_projection_over_local_queue() {
-    let strand_id = "ak:strand:AV624IkuHj3HmxAYE6uyYmBa4Est3gGGdnOsjn71z5L2";
-    let mut card = test_card(strand_id, "U");
-    card.state = CardState::Queued;
-    let projected_strand_ids = BTreeSet::from([strand_id.to_owned()]);
-
-    assert_eq!(
-        displayed_card_state(&card, &projected_strand_ids),
-        CardState::Synced
-    );
 }
 
 #[test]
@@ -960,7 +985,7 @@ fn stamped_pending_card_has_exact_holder_local_render_evidence_without_acceptanc
         ));
         assert!(raw_operation_accepted_create_target_id(&rows[0].payload).is_none());
         assert!(event_derived_target_aliases(&rows).is_empty());
-        assert!(!displayed_card_state(&card, &BTreeSet::new()).is_settled());
+        assert!(!card.state.is_settled());
     }
     for state in [
         "failed",
@@ -1053,7 +1078,7 @@ fn card_create_stays_visible_through_commit_and_backfill_until_placement() {
     for (write_state, expected_id, expected_state) in [
         ("queued", local_id, CardState::Queued),
         ("pending_commit", strand_id, CardState::Submitted),
-        ("effective", strand_id, CardState::Synced),
+        ("accepted", strand_id, CardState::Queued),
     ] {
         store.update_raw_operation_write_state(
             local_id,
@@ -1105,6 +1130,27 @@ fn card_create_stays_visible_through_commit_and_backfill_until_placement() {
         1,
         "projection handoff must not duplicate the card"
     );
+
+    for (write_state, expected_state) in [
+        ("queued", CardState::Queued),
+        ("rejected", CardState::SoftFailed),
+        ("failed", CardState::SoftFailed),
+        ("cancelled", CardState::SoftFailed),
+    ] {
+        let mut pending_rows = rows.clone();
+        pending_rows.push(RawOperationRecord {
+            operation_id: "initial-placement".into(),
+            realm_id: Some(PENDING_TEST_REALM.into()),
+            received_at: chrono::Utc::now(),
+            payload: json!({"kind":"ak.strand.move", "board_space_id":board_id,
+                "strand_id":strand_id, "write_state":write_state,
+                "body":{"board_space_id":board_id,"strand_id":strand_id}}),
+        });
+        let shown = overlay_local_card_create_records(columns.clone(), &pending_rows, board_id);
+        assert_eq!(shown[0].cards.len(), 1);
+        assert_eq!(shown[0].cards[0].state, expected_state);
+        assert!(!shown[0].cards[0].state.is_settled());
+    }
 
     // Once placed, subsequent moves/archives must not resurrect the create's
     // original destination, even when that column no longer contains the card.
@@ -1213,7 +1259,7 @@ fn remote_encrypted_strand_update_overlay_marks_private_fields_locked() {
         "ciphertext": "AAAA",
         "content_type": KANBAN_STRAND_PATCH_VALUE_CONTENT_TYPE,
         "group_id": "g",
-        "epoch": 0,
+        "epoch": "0",
     });
     let events = vec![json!({
         "event_id": "ak:event:AYiSAxDIS8PlP8d9iucotDVTdZ9-CahOJVw2Km3R38HU",

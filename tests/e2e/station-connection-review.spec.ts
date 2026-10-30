@@ -26,7 +26,7 @@ for (const viewport of [
         base_url: "https://server.local/",
         service_id: "ak:did_core:web:previous-station.example",
         trust_domain: "ak:trust_domain:previous-station.example",
-        auth_metadata: {
+        authentication_metadata: {
           account_authority: {
             origin: "https://previous-auth.example",
             gate_account_base_url: `https://previous-auth.example/${longPath}_arkret/gate/account`,
@@ -122,11 +122,11 @@ for (const changedField of ["identity", "trust domain", "client"] as const) {
         service_id: description.service_id,
         base_url: "https://server.local/",
         trust_domain: description.trust_domain,
-        auth_metadata: structuredClone(description.auth_metadata),
+        authentication_metadata: structuredClone(description.authentication_metadata),
       };
       if (changedField === "identity") binding.service_id = "ak:did_core:web:previous-station.example";
       if (changedField === "trust domain") binding.trust_domain = "ak:trust_domain:previous-station.example";
-      if (changedField === "client") binding.auth_metadata.methods[0].client_id = "previous-client";
+      if (changedField === "client") binding.authentication_metadata.methods[0].client_id = "previous-client";
       const encoded = JSON.stringify(binding);
       await new Promise<void>((resolve, reject) => {
         const opening = indexedDB.open("inkson.station-connections.v1", 1);
@@ -174,7 +174,7 @@ for (const changedField of ["identity", "trust domain", "client"] as const) {
       await review.getByRole("button", { name: "Trust new connection" }).click();
       await expect(review).toBeHidden();
       await expect(page.getByTestId("auth-status")).toHaveText("New connection accepted. Start a new sign-in.");
-      expect(JSON.parse(await readBinding()).auth_metadata.methods[0].client_id).toBe(description.auth_metadata.methods[0].client_id);
+      expect(JSON.parse(await readBinding()).authentication_metadata.methods[0].client_id).toBe(description.authentication_metadata.methods[0].client_id);
     } else {
       await review.getByRole("button", { name: "Keep previous connection" }).click();
       await expect(review).toBeHidden();

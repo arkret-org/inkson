@@ -10,7 +10,7 @@ test("root logout suppresses a pending settings query in the same page instance"
   page,
 }, testInfo) => {
   await gotoAndDismissRecovery(page, "/settings/mimi");
-  const marker = "old-session-mimi-query-late-500";
+  const marker = "old-session-directory-read-late-500";
   let releaseQuery!: () => void;
   const heldQuery = new Promise<void>((resolve) => { releaseQuery = resolve; });
   let queryRequest: Request | undefined;
@@ -25,14 +25,14 @@ test("root logout suppresses a pending settings query in the same page instance"
   page.on("requestfailed", (request) => {
     if (request === queryRequest) failureText = request.failure()?.errorText;
   });
-  await page.route("**/_arkret/open/mimi/identifiers/query", async (route) => {
+  await page.route("**/_arkret/open/mimi/provider-directory", async (route) => {
     queryRequest = route.request();
     await heldQuery;
     try {
       await route.fulfill({
         status: 500,
-        contentType: "application/json",
-        body: JSON.stringify({ error: { code: "internal_error", message: marker } }),
+        contentType: "application/problem+json",
+        body: JSON.stringify({ type: "https://arkret.org/problems/internal_error", title: "Internal error", status: 500, detail: marker }),
       });
     } catch (error) {
       // The Settings scope can cancel its fetch during logout. Keep this
@@ -44,10 +44,10 @@ test("root logout suppresses a pending settings query in the same page instance"
   });
   const timeOrigin = await page.evaluate(() => {
     const state = { observedMimiError: false, observedReceipt: false };
-    // The panel begins with a localized "no receipt" placeholder, not an
+    // The panel begins with a localized directory placeholder, not an
     // empty string. A result must change that original content to count.
     const initialReceipt = document.querySelector(
-      '[data-testid="mimi-query-receipt"]',
+      '[data-testid="mimi-directory-result"] pre',
     )?.textContent;
     Object.assign(window, { __settingsLogoutWitness: state });
     const inspect = () => {
@@ -55,7 +55,7 @@ test("root logout suppresses a pending settings query in the same page instance"
         '[data-testid="toast-item"][data-i18n-key="feedback.mimi_failed"]',
       );
       const receipt = document.querySelector(
-        '[data-testid="mimi-query-receipt"]',
+        '[data-testid="mimi-directory-result"] pre',
       );
       state.observedReceipt ||= receipt !== null && receipt.textContent !== initialReceipt;
     };
@@ -69,10 +69,12 @@ test("root logout suppresses a pending settings query in the same page instance"
     return performance.timeOrigin;
   });
 
+  // Directory reads are ordinary own-Station reads. Provider-signed POSTs
+  // cannot be used as account-session requests (mimi-interop section 5).
   try {
-    await page.getByTestId("mimi-identifier-query").click();
+    await page.getByTestId("mimi-refresh-directory").click();
     await expect.poll(() => !!queryRequest).toBe(true);
-    await expect(page.getByTestId("mimi-identifier-query")).toBeDisabled();
+    await expect(page.getByTestId("mimi-refresh-directory")).toBeDisabled();
     await page.getByTestId("account-menu-button").click();
     await page.getByTestId("account-menu-session-logout").click();
     await expect(page).toHaveURL(/\/login(?:[?#]|$)/);
@@ -101,7 +103,7 @@ test("root logout suppresses a pending settings query in the same page instance"
     expect(witness.timeOrigin).toBe(timeOrigin);
     expect(witness.state).toEqual({ observedMimiError: false, observedReceipt: false });
     await expect(page.getByTestId("login-panel")).toBeVisible();
-    await expect(page.getByTestId("mimi-query-receipt")).toHaveCount(0);
+    await expect(page.getByTestId("mimi-directory-result")).toHaveCount(0);
     await expect(page.locator('[data-i18n-key="feedback.mimi_failed"]')).toHaveCount(0);
     await testInfo.attach("settings-logout-network-outcome", {
       body: JSON.stringify({ responseStatus, failureText, fulfillError, samePage: true }),

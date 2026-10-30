@@ -72,13 +72,15 @@ fn restores_messages_from_local_raw_operations() {
     )
     .unwrap();
     let committed = verified_chat_create(&realm, "alice.example", "local fallback message");
+    let realm = committed.event.realm_id.clone();
     let state = ClientLocalState {
         raw_operations: vec![crate::state::RawOperationRecord {
             operation_id: "ak:operation:local".to_owned(),
             realm_id: Some(realm.to_string()),
             received_at: chrono::Utc::now(),
             payload: serde_json::to_value(&committed.event).unwrap(),
-        }],
+        }]
+        .into(),
         ..ClientLocalState::default()
     };
 
@@ -108,7 +110,8 @@ fn restores_canonical_actor_id_from_local_raw_operations() {
             realm_id: Some(realm.to_string()),
             received_at: chrono::Utc::now(),
             payload: serde_json::to_value(&committed.event).unwrap(),
-        }],
+        }]
+        .into(),
         ..ClientLocalState::default()
     };
 
@@ -131,11 +134,12 @@ fn message_operations_from_events_folds_create_and_renders_local_first() {
     )
     .unwrap();
     let committed = verified_chat_create(&realm, "bob.example", "hello from bob");
+    let realm = committed.event.realm_id.clone();
     let create = serde_json::to_value(&committed.event).unwrap();
     // A non-message timeline event (e.g. a poll close) MUST be ignored.
     let poll = json!({
         "event_id": "ak:event:AemHyQfTHaRP4hPsEzDRoY0ybwSW0ZIu_kPanXYJ_cJ8",
-        "kind": "ak.content.poll.close",
+        "kind": "ak.realm.create",
         "realm_id": "ak:realm:ARqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
         "strand_id": "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE"
     });
@@ -150,7 +154,7 @@ fn message_operations_from_events_folds_create_and_renders_local_first() {
     );
 
     let state = ClientLocalState {
-        raw_operations: records,
+        raw_operations: records.into(),
         ..ClientLocalState::default()
     };
     let messages = chat_messages_from_local_state_with_sidecar(&state, None, None);
@@ -258,7 +262,7 @@ fn chat_messages_keep_bare_reaction_events_without_promoting_membership() {
         "create plus reaction add/remove events must survive raw ingest"
     );
     let state = ClientLocalState {
-        raw_operations: records,
+        raw_operations: records.into(),
         ..ClientLocalState::default()
     };
     let restored = chat_messages_from_local_state_with_sidecar(&state, None, None);
@@ -294,6 +298,7 @@ fn chat_messages_do_not_promote_projection_reaction_without_verified_scan() {
         "bob.example",
         "ak:device:0196419b-0000-7000-8000-000000000001",
     );
+    let realm = committed[0].event.realm_id.clone();
     assert_eq!(committed[0].event.event_id, create.event.event_id);
     assert_eq!(
         committed[0].commit.stream_position + 1,
@@ -325,7 +330,7 @@ fn chat_messages_do_not_promote_projection_reaction_without_verified_scan() {
         "message create and reaction projection frames must both survive raw ingest"
     );
     let state = ClientLocalState {
-        raw_operations: records,
+        raw_operations: records.into(),
         ..ClientLocalState::default()
     };
     let restored = chat_messages_from_local_state_with_sidecar(&state, None, None);
@@ -373,7 +378,7 @@ fn chat_messages_keep_streamed_reaction_envelope_provisional_without_commit() {
         &events,
     );
     let state = ClientLocalState {
-        raw_operations: records,
+        raw_operations: records.into(),
         ..ClientLocalState::default()
     };
     let messages = chat_messages_from_local_state_with_sidecar(&state, None, None);
@@ -419,7 +424,7 @@ fn bare_reaction_does_not_fold_onto_controller_only_create() {
     let seed = chat_messages_from_events_with_sidecar(realm_id, &events[..1], None, None);
     let reaction_records = message_operations_from_events(realm_id, &events[1..]);
     let state = ClientLocalState {
-        raw_operations: reaction_records,
+        raw_operations: reaction_records.into(),
         ..ClientLocalState::default()
     };
 
@@ -434,6 +439,7 @@ fn durable_redaction_folds_onto_controller_only_create() {
     let realm_id = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
     let message_id = "ak:message:AXh0mpVGb536xVxbSPfM4Wc_1WuXAxTYgmtXEncKM9T0";
     let seed = vec![ChatMessage {
+        protocol_content: None,
         local_scope: None,
         id: "ak:event:AfqXI4jyBJWA5HRhSr3SdFP5Qb_2V210Q00mFqUjA7_z".to_owned(),
         protocol_message_id: Some(message_id.to_owned()),
@@ -469,7 +475,7 @@ fn durable_redaction_folds_onto_controller_only_create() {
     })];
     sign_chat_fixtures(&mut redactions);
     let state = ClientLocalState {
-        raw_operations: message_operations_from_events(realm_id, &redactions),
+        raw_operations: message_operations_from_events(realm_id, &redactions).into(),
         ..ClientLocalState::default()
     };
 
@@ -546,7 +552,7 @@ fn chat_messages_fold_revision_chain_into_latest_message() {
         None,
         None,
     );
-    // A current-result batch can omit an earlier accepted revision. The
+    // A current-state batch can omit an earlier accepted revision. The
     // later accepted revision still supplies the visible current value.
     assert_eq!(incomplete[0].body, "v3");
     assert_eq!(
@@ -564,7 +570,8 @@ fn chat_messages_fold_revision_chain_into_latest_message() {
         raw_operations: message_operations_from_events(
             "ak:realm:ARqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
             &events[..2],
-        ),
+        )
+        .into(),
         ..ClientLocalState::default()
     };
     let optimistic = fold_local_state_into_chat_messages_with_sidecar(
@@ -590,7 +597,7 @@ fn chat_messages_fold_revision_chain_into_latest_message() {
         "create and both revisions must survive raw ingest"
     );
     let state = ClientLocalState {
-        raw_operations: records,
+        raw_operations: records.into(),
         ..ClientLocalState::default()
     };
     let restored = chat_messages_from_local_state_with_sidecar(&state, None, None);
@@ -870,6 +877,7 @@ fn chat_messages_fold_nested_server_redacted_revision_tombstone_into_root_tombst
 fn merge_chat_messages_dedupes_tombstones_by_protocol_message_id() {
     fn redacted_message(id: &str, protocol_message_id: &str) -> ChatMessage {
         ChatMessage {
+            protocol_content: None,
             local_scope: None,
             realm_id: "ak:realm:ARqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0".to_owned(),
             id: id.to_owned(),
@@ -961,6 +969,7 @@ fn merge_chat_messages_keeps_newer_revision_when_older_create_arrives_late() {
 
     fn message(id: &str, protocol_message_id: &str, body: &str, created_at: &str) -> ChatMessage {
         ChatMessage {
+            protocol_content: None,
             local_scope: None,
             realm_id: "ak:realm:ARqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0".to_owned(),
             id: id.to_owned(),
@@ -1142,6 +1151,7 @@ fn message_operations_fold_independent_redaction_event_by_message_id() {
             ),
         ],
     );
+    let realm = committed[0].event.realm_id.clone();
     assert_eq!(committed[0].event.event_id, create_id);
     assert_eq!(committed[0].commit.stream_position, 1);
     assert_eq!(committed[1].commit.stream_position, 2);
@@ -1164,7 +1174,7 @@ fn message_operations_fold_independent_redaction_event_by_message_id() {
         let records = message_operations_from_events(realm.as_str(), &events);
         assert_eq!(records.len(), 2);
         let state = ClientLocalState {
-            raw_operations: records,
+            raw_operations: records.into(),
             ..ClientLocalState::default()
         };
         let messages = chat_messages_from_local_state_with_sidecar(&state, None, None);
@@ -1212,6 +1222,7 @@ fn committed_create_revision_redaction_folds_in_any_arrival_order() {
             ),
         ],
     );
+    let realm = committed[0].event.realm_id.clone();
     assert_eq!(committed[0].event.event_id, create_id);
     assert_eq!(
         committed
@@ -1292,6 +1303,7 @@ fn local_redaction_tombstone_without_signed_scope_cannot_render_row() {
         .unwrap()
         .with_timezone(&chrono::Utc);
     let message = ChatMessage {
+        protocol_content: None,
         local_scope: None,
         realm_id: "ak:realm:ARqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0".to_owned(),
         id: "ak:event:AeVYtOcVkQu9JLkr0AO35k8Vn36NgL7qI1NnvHuzyDDs".to_owned(),
@@ -1351,7 +1363,8 @@ fn local_redaction_tombstone_without_signed_scope_cannot_render_row() {
             realm_id: Some(message.realm_id.clone()),
             received_at: redacted_at,
             payload: tombstone,
-        }],
+        }]
+        .into(),
         ..ClientLocalState::default()
     };
     // This local replacement has no signed scope; it can only suppress an

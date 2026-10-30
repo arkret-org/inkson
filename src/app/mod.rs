@@ -75,6 +75,7 @@ pub(crate) use realm_surface::*;
 // session-shell/effect extraction continues behind that boundary. Each glob
 // re-export keeps the inline call sites and `app_tests.rs` `use super::*`
 // resolution unchanged.
+pub mod account_switch;
 mod clipboard;
 mod command_palette;
 mod connect;
@@ -276,7 +277,20 @@ pub fn App() -> Element {
 
 #[component]
 pub fn RouterView() -> Element {
-    rsx! { AppBootstrap {} }
+    let root = account_switch::AccountSessionRoot::get();
+    let revision = root.revision();
+    // Dropping the account subtree cancels its component-scoped futures before
+    // a new owner is published. The root-owned switch task survives this cut.
+    if root.account_view_retired() {
+        return rsx! { main { role: "status", {crate::i18n::tr("app.account.switching")} } };
+    }
+    if root.blocked() {
+        return rsx! { main { role: "alert",
+            {crate::i18n::tr("app.account.switch_failed")}
+            account_switch::AccountSwitcher {}
+        } };
+    }
+    rsx! { account_switch::AccountViewBoundary { revision, AppBootstrap {} } }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -337,20 +351,11 @@ fn AppBootstrap() -> Element {
         chrono::Utc::now().timestamp(),
     );
     let initial_active_account = initial_config.active_account.clone();
-    let initial_server_url = initial_active_account
-        .as_ref()
-        .map(|account| account.server_url.to_string())
-        .or_else(|| initial_config.stations.first().map(ToString::to_string))
-        .unwrap_or_else(|| "https://local.host".to_owned());
     let initial_principal_id = initial_active_account
         .as_ref()
         .map(|account| account.principal_id().clone());
-    let initial_device_id = initial_active_account
-        .as_ref()
-        .map(|account| account.device_id.to_string())
-        .unwrap_or_else(crate::config::new_device_id);
     let initial_can_restore_session =
-        has_bootstrap_refresh_material(&initial_state_store, initial_active_account.as_ref());
+        has_bootstrap_refresh_material(initial_state_store, initial_active_account.as_ref());
     let initial_secure_store_bootstrap_ready = !cfg!(target_arch = "wasm32");
     let initial_session_boot_state = session_boot_state_from_bootstrap_material(
         &initial_session_credential,
@@ -358,7 +363,7 @@ fn AppBootstrap() -> Element {
         crate::app::principal_id_text(&initial_principal_id),
         initial_secure_store_bootstrap_ready,
     );
-    let initial_control_realm_ids = principal_control_realm_ids(&initial_local_state);
+    let initial_control_realm_ids = principal_control_realm_ids(initial_local_state);
     let initial_realm_tree_nodes = realm_tree_nodes_from_sync_realms_with_roles(
         &initial_local_state.realm_tree_projections,
         &initial_local_state.realm_collaboration_roles,
@@ -369,7 +374,7 @@ fn AppBootstrap() -> Element {
     let initial_realm_tree_owner_id = initial_state_store
         .active_principal_id()
         .unwrap_or_default();
-    let initial_sidebar_width = load_sidebar_width_preference(&initial_state_store);
+    let initial_sidebar_width = load_sidebar_width_preference(initial_state_store);
     // Boot locale: the device cache plus the platform default, through the
     // shared resolver. The account tier is deliberately absent here — the
     // signed-in account's `preferred_locale` arrives with the session, which
@@ -390,7 +395,8 @@ fn AppBootstrap() -> Element {
     let initial_account_primary_handle = initial_state_store
         .primary_handle_for_principal_id(crate::app::principal_id_text(&initial_principal_id))
         .unwrap_or_default();
-    let config_store = use_signal(LocalConfigStore::default);
+    let root_session = account_switch::AccountSessionRoot::get();
+    let config_store = root_session.config;
     let mut state_store = use_context::<AppStateStore>().0;
     // Move-into-signal initialisers. Each `use_signal(...)` runs once on
     // first render, so we pre-extract the fields and hand each closure a
@@ -415,15 +421,19 @@ fn AppBootstrap() -> Element {
             }
         });
     }
-    let base_url = use_signal(move || initial_server_url);
-    let active_account = use_signal(move || initial_active_account);
-    let principal_id = use_signal(move || initial_principal_id);
-    let device_id = use_signal(move || initial_device_id);
-    let mut token = use_signal(move || initial_session_credential);
+    let base_url = root_session.base_url;
+    let active_account = root_session.account;
+    let principal_id = root_session.principal;
+    let device_id = root_session.device;
+    let mut token = root_session.token;
     let session_boot_state = use_signal(move || initial_session_boot_state);
-    let mut session_generation = use_signal(|| 0_u64);
+    let mut session_generation = root_session.generation;
+    {
+        let initial_credential = initial_session_credential;
+        use_hook(move || token.set(initial_credential));
+    }
     // Bumped by Settings → My Agents on every owned-agent mutation so the
-    // Contacts sidebar can re-pull `agent_list`. See `SessionContext`.
+    // Contacts sidebar can re-pull `agent_page`. See `SessionContext`.
     let owned_agents_rev = use_signal(|| 0_u64);
 
     // A4 — provide the session-scoped shared handles (`state_store`, `base_url`)
@@ -439,25 +449,7 @@ fn AppBootstrap() -> Element {
     });
     let sidecar_session = use_signal(|| None::<crate::sidecar::HostedSidecarState>);
     use_context_provider(|| crate::sidecar::HostedSidecarStateContext(sidecar_session));
-    // Construct the typed session coordinator once. Runtime and UI effects
-    // share this owner instead of registering unrelated thread-local callbacks.
-    let session_coordinator = use_hook(move || {
-        crate::runtime::session::SessionCoordinator::new(move || {
-            Box::pin(refresh_session_credential_for_active_context(
-                base_url,
-                state_store,
-                token,
-                config_store,
-                session_generation,
-            )) as crate::runtime::session::LocalRefreshFuture
-        })
-    });
-    let runtime_services = use_context_provider(|| {
-        let state_adapter = crate::client_core::InksonLocalStateStoreAdapter::from_backend(
-            runtime_adapter::SignalLocalStateBackend::new(state_store),
-        );
-        crate::runtime::services::RuntimeServices::new(state_adapter, session_coordinator.clone())
-    });
+    let runtime_services = use_context::<crate::runtime::services::RuntimeServices>();
 
     let navigator = use_navigator();
     let route = use_route::<Route>();
@@ -602,14 +594,14 @@ fn AppBootstrap() -> Element {
     let mut direct_sidebar_query = use_signal(String::new);
     let realm_manage_query = use_signal(String::new);
     let contact_manage_query = use_signal(String::new);
-    let direct_contact_rows = use_signal(Vec::<crate::models::ContactListRow>::new);
+    let direct_contact_rows = use_signal(Vec::<crate::models::ContactView>::new);
     use_context_provider(|| ContactInbox(direct_contact_rows));
     let direct_contacts_loaded = use_signal(|| false);
     let own_agent_rows = use_signal(Vec::<arkret_sdk::AgentProjection>::new);
     let own_agents_loaded = use_signal(|| false);
     // Keep the Contacts sidebar's owned-agent list in sync with Settings → My
     // Agents. That panel bumps `owned_agents_rev` after provisioning, pausing,
-    // resuming, or deactivating an agent; re-pull `agent_list` here so the
+    // resuming, or deactivating an agent; re-pull `agent_page` here so the
     // change is reflected without a manual reload. Only reload once the sidebar
     // has already loaded its agents — before that the lazy first load fetches
     // fresh state anyway, so there is nothing to keep in sync yet.
@@ -676,6 +668,19 @@ fn AppBootstrap() -> Element {
     let message_stream_hub =
         use_context_provider(crate::views::message_streams::MessageStreamHub::new);
     let read_receipt_hub = use_context_provider(crate::views::read_receipts::ReadReceiptHub::new);
+    use_effect(move || {
+        let session = SessionContext::get();
+        let viewer = session
+            .active_account()
+            .map(|account| arkret_sdk::ActorId::account(account.authority));
+        let store = session.state_store.read();
+        let mut hub = read_receipt_hub;
+        hub.retain_generation(
+            viewer.as_ref(),
+            store.current_generation(),
+            store.current_reset_required(),
+        );
+    });
     {
         let signal_product_router = runtime_services.signal_product_sink.clone();
         use_hook(move || {
@@ -684,9 +689,7 @@ fn AppBootstrap() -> Element {
                     call_signal_hub,
                     message_stream_hub,
                     read_receipt_hub,
-                    base_url,
-                    token,
-                    principal_id,
+                    SessionContext::get(),
                 ),
             ));
         });
@@ -719,12 +722,18 @@ fn AppBootstrap() -> Element {
     let websocket_rail_active_generation = use_signal(|| Option::<u64>::None);
     let bootstrap_pending = use_signal(|| true);
 
-    // P3B.4.3 — active multi-profile snapshot, threaded into
-    // the sync engine context so the loop can detect a profile rotation
-    // and exit cleanly. The shell is currently single-profile; the
-    // signal stays default-empty until the account switcher writes to
-    // it on the first user-driven add-account / switch action.
-    let profiles_signal = use_signal(crate::config::MultiProfileConfig::default);
+    let mut profiles_signal = root_session.profiles;
+    use_effect(move || {
+        let current = active_account();
+        let _credential = token();
+        match config_store.read().load_profile_metadata() {
+            Ok(mut profiles) => {
+                profiles.active_profile_id = current.map(|account| account.profile_id);
+                profiles_signal.set(profiles);
+            }
+            Err(error) => tracing::warn!(%error, "saved account metadata unavailable"),
+        }
+    });
 
     let shell_model::RealmSelection {
         effective_realm_id,
@@ -3145,6 +3154,7 @@ fn AppBootstrap() -> Element {
                                                 span { "{active_server_label}" }
                                             }
                                         }
+                                        account_switch::AccountSwitcher {}
                                         div { class: "account-menu__actions",
                                             Button {
                                                 variant: ButtonVariant::Ghost,
@@ -3227,7 +3237,7 @@ fn AppBootstrap() -> Element {
                                                             // T1.Y4 — re-resolved at
                                                             // logout time from the
                                                             // Station's
-                                                            // describe.auth_metadata.
+                                                            // describe.authentication_metadata.
                                                             gate_account_base_url: None,
                                                             base_url: active.server_url.clone(),
                                                             session_credential: api_token.clone(),

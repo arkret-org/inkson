@@ -442,7 +442,7 @@ impl LocalStateStore {
 
     pub fn client_core_event_seen(&self, event_id: &str) -> bool {
         garth::BoundedSeenWindow::from_entries(
-            self.load().client_core_seen_event_ids,
+            self.load().client_core_seen_event_ids.into_inner(),
             garth::DEFAULT_SEEN_EVENTS_CAPACITY,
         )
         .contains(event_id)
@@ -456,7 +456,7 @@ impl LocalStateStore {
             garth::DEFAULT_SEEN_EVENTS_CAPACITY,
         );
         let inserted = window.remember(event_id);
-        self.cached.client_core_seen_event_ids = window.into_entries();
+        *self.cached.client_core_seen_event_ids = window.into_entries();
         if !inserted {
             return;
         }
@@ -488,10 +488,10 @@ impl LocalStateStore {
     pub fn save_presence_projection(&mut self, bodies: &[serde_json::Value]) {
         let events = bodies.to_vec();
         self.ensure_cached_loaded();
-        if self.cached.presence_projection == events {
+        if *self.cached.presence_projection == events {
             return;
         }
-        self.cached.presence_projection = events;
+        *self.cached.presence_projection = events;
         let _ = self.flush();
     }
 
@@ -602,7 +602,7 @@ impl LocalStateStore {
                     index.entry(key).or_default().push(position);
                 }
             }
-            self.cached.mls_welcome_inbox_index = index;
+            self.cached.mls_welcome_inbox_index = index.into();
         }
         if inserted > 0
             || pruned_receipts
@@ -706,7 +706,7 @@ impl LocalStateStore {
     }
 
     pub fn to_device_inbox(&self) -> Vec<Value> {
-        self.load().to_device_inbox
+        self.load().to_device_inbox.into_inner()
     }
 
     pub(crate) fn welcome_inbox_for_scope(&self, scope: &arkret_sdk::ScopeRef) -> Vec<Value> {

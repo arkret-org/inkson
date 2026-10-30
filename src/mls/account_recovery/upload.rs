@@ -183,7 +183,7 @@ async fn ensure_initial_active_series(
 }
 
 fn ordered_active_summaries(
-    list: &arkret_sdk::KeysBackupsList,
+    list: &arkret_sdk::KeysBackupsPage,
     backup_kind: arkret_sdk::BackupKind,
 ) -> Result<Vec<&arkret_sdk::KeyBackupSummary>> {
     let Some(series_id) = list.active_series.secret_storage.series_id() else {
@@ -208,7 +208,7 @@ fn ordered_active_summaries(
         summaries.len() <= 4096 && serde_json::to_vec(&summaries)?.len() <= 8 * 1024 * 1024,
         "active backup series exceeds this device's recovery metadata budget"
     );
-    summaries.sort_by_key(|row| row.series_seq);
+    summaries.sort_by_key(|row| row.series_sequence);
     let actor = arkret_sdk::ActorId::account(list.active_series.account_id.clone());
     let mut ids = std::collections::BTreeSet::new();
     for (index, row) in summaries.iter().enumerate() {
@@ -217,7 +217,7 @@ fn ordered_active_summaries(
             "backup predecessor has another complete Account actor"
         );
         anyhow::ensure!(
-            row.series_seq == index as u64 && ids.insert(row.backup_id.clone()),
+            row.series_sequence == index as u64 && ids.insert(row.backup_id.clone()),
             "backup predecessor chain has duplicate sequence, gap or fork"
         );
         if index == 0 {
@@ -254,7 +254,7 @@ fn verified_full_tail<'a>(
     let tail = bodies
         .last()
         .ok_or_else(|| anyhow!("backup full chain has no tail"))?;
-    // The ordered complete candidate set bounds series_seq before the shared
+    // The ordered complete candidate set bounds series_sequence before the shared
     // verifier walks every canonical supersedes digest back to its root.
     garth::mls::backup_series::verify_series_chain(tail, bodies)?;
     Ok(tail)
@@ -283,7 +283,7 @@ async fn fetch_active_series_tail(
         backup_kind,
     ))
     .map_err(|error| anyhow!(error))?;
-    let list: arkret_sdk::KeysBackupsList = serde_json::from_value(list_payload.clone())?;
+    let list: arkret_sdk::KeysBackupsPage = serde_json::from_value(list_payload.clone())?;
     anyhow::ensure!(
         crate::mls_api_helpers::principal_core_id(actor_id)?
             == list.active_series.account_id.principal_id,
@@ -607,7 +607,7 @@ pub async fn upload_mls_account_secret_backup_with_recovery_public_key(
 /// through the X3 `mls_account_secret` backup), so the restore flow decrypts the
 /// sidecar with no second passphrase prompt. Reuses any prior sidecar backup's
 /// `backup_id`/series so the upload stays in the same rotation series
-/// (`series_seq++` whenever the sidecar changes). Returns the `backup_id` it
+/// (`series_sequence++` whenever the sidecar changes). Returns the `backup_id` it
 /// wrote. Errors if no local account secret exists (the user hasn't used
 /// encryption, so there is nothing to wrap the sidecar with).
 pub async fn upload_mls_private_plaintext_backup(
@@ -803,7 +803,7 @@ mod tests {
                     | "backup_kind"
                     | "backup_version"
                     | "series_id"
-                    | "series_seq"
+                    | "series_sequence"
                     | "supersedes_id"
                     | "supersedes_digest"
                     | "expires_at"
@@ -821,7 +821,7 @@ mod tests {
         serde_json::from_value(wire).expect("closed summary of the actual sealed envelope")
     }
 
-    pub(super) fn sealed_chain() -> (Vec<arkret_sdk::KeyBackup>, arkret_sdk::KeysBackupsList) {
+    pub(super) fn sealed_chain() -> (Vec<arkret_sdk::KeyBackup>, arkret_sdk::KeysBackupsPage) {
         use ed25519_dalek::Signer as _;
         let account = crate::test_support::authority("did:web:alice.example");
         let device = "ak:device:01964137-0000-7000-8000-000000000001";
@@ -860,7 +860,7 @@ mod tests {
         for body in &bodies {
             crate::key_backup::verify_key_backup_auth_data(body, &key.verifying_key()).unwrap();
         }
-        let list = arkret_sdk::KeysBackupsList {
+        let list = arkret_sdk::KeysBackupsPage {
             backups: bodies.iter().map(summary).collect(),
             active_series: arkret_sdk::BackupActiveSeriesState {
                 account_id: account,
@@ -891,7 +891,7 @@ mod tests {
             ))
             .unwrap(),
             hpke_key: arkret_sdk::NonEmptyString::new("fixture-hpke-key").unwrap(),
-            device_authorize_event_id: bodies[0].auth_data.device_authorize_event_id.clone(),
+            device_authorize_event_id: bodies[0].signature_proof.device_authorize_event_id.clone(),
             authorized_generation_ref: 1,
             device_status: arkret_sdk::DeviceStatus::Active,
             attested_at: now - chrono::Duration::seconds(1),
@@ -951,7 +951,7 @@ mod tests {
                 .contains("authorization window")
         );
         let mut wrong = bodies[0].clone();
-        wrong.auth_data.verification_method = arkret_sdk::DidUrl::new(format!(
+        wrong.signature_proof.verification_method = arkret_sdk::DidUrl::new(format!(
             "{}#{}",
             projection.device_signing_key_did,
             projection
@@ -1015,7 +1015,7 @@ mod tests {
         let (_, list) = sealed_chain();
         for sequence in [0, 2, u64::MAX] {
             let mut bad = list.clone();
-            bad.backups[1].series_seq = sequence;
+            bad.backups[1].series_sequence = sequence;
             assert!(
                 super::ordered_active_summaries(&bad, arkret_sdk::BackupKind::SecretStorage)
                     .unwrap_err()
@@ -1143,7 +1143,7 @@ mod tests {
             issued_at: not_before,
             not_before: Some(not_before),
             expires_at: Some(expires_at),
-            auth_data: arkret_sdk::RecoveryPolicyAuthData {
+            signature_proof: arkret_sdk::RecoveryPolicySignatureProof {
                 verification_method: arkret_sdk::DidUrl::new(
                     "did:webvh:z6mkholder#recovery-proof-1",
                 )

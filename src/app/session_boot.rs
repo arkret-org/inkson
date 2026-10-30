@@ -622,6 +622,17 @@ pub(super) async fn inject_test_session_grant(
     }
 
     let now = chrono::Utc::now();
+    let expires_at = parsed
+        .get("expires_at")
+        .and_then(Value::as_str)
+        .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())?
+        .with_timezone(&chrono::Utc);
+    if expires_at <= now {
+        tracing::warn!("test session injection: grant has expired");
+        return None;
+    }
+    let granted_scope: Vec<String> =
+        serde_json::from_value(parsed.get("granted_scope")?.clone()).ok()?;
     let grant = PersistedSessionGrant {
         grant_jwt: grant_jwt.clone(),
         // ②(A+②): the grant rotation proof is signed by the grant-binding DPoP
@@ -630,13 +641,13 @@ pub(super) async fn inject_test_session_grant(
         session_private_key_pem: String::new(),
         grant_id,
         audience_id: arkret_sdk::DidCoreId::new(audience.clone()).ok()?,
-        granted_scope: Vec::new(),
+        granted_scope,
         account_id: fixture_account_id,
         device_id: arkret_sdk::DeviceId::new(device_id.to_owned()).ok()?,
         // MUST match the active server so the bootstrap does not discard the
         // grant as stale (see `grant_matches_station`).
         station_url: url::Url::parse(server_url).ok()?,
-        grant_expires_at: Some(now + chrono::Duration::hours(8)),
+        grant_expires_at: Some(expires_at),
         stored_at: now,
     };
     let user_store = match crate::secure_key_store::UserLocalStore::new(

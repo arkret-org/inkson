@@ -1,6 +1,6 @@
 //! Recover disclosed historical acceptance before applying a new-send gate.
 
-use arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest;
+use arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequestBody;
 
 use super::*;
 
@@ -9,12 +9,23 @@ impl EventSubmitter {
         &self,
         outbound: &InksonOutboundEngine,
     ) -> anyhow::Result<usize> {
+        self.recover_accepted_application_items_checked(outbound, || Ok(()))
+            .await
+    }
+
+    pub(super) async fn recover_accepted_application_items_checked(
+        &self,
+        outbound: &InksonOutboundEngine,
+        check: impl Fn() -> anyhow::Result<()> + garth::MaybeSendSync,
+    ) -> anyhow::Result<usize> {
+        check()?;
         let mut recovered = 0usize;
         for item in outbound.snapshot().await?.items {
+            check()?;
             if !is_unsettled(item.status) || item.attempts == 0 {
                 continue;
             }
-            let SelfAuthoritySubmitRequest::Event(submission) = item.request() else {
+            let SelfAuthoritySubmitRequestBody::Event(submission) = item.request() else {
                 continue;
             };
             if crate::mls::send_gate::ApplicationBody::of_event(&submission.event)?.is_none()
@@ -27,12 +38,14 @@ impl EventSubmitter {
             }
             // Absence or unavailable disclosure never proves a rejection.
             let client = crate::transport::own_station_results::client_for_http(&self.http).await?;
+            check()?;
             let Some(settled) =
-                recover_disclosed_application_item(outbound, self.authority()?, &client, &item)
+                recover_disclosed_event_item(outbound, self.authority()?, &client, &item, &check)
                     .await?
             else {
                 continue;
             };
+            check()?;
             if let Some(state) = self.state_store.as_ref() {
                 state.write(|store| {
                     reconcile_settled_outbound_item(store, &settled);
@@ -46,12 +59,24 @@ impl EventSubmitter {
     }
 }
 
+#[cfg(test)]
 async fn recover_disclosed_application_item(
     outbound: &InksonOutboundEngine,
     authority: &arkret_sdk::AccountId,
-    client: &arkret_sdk::http_client::own_station_results::OwnStationResultClient,
+    client: &arkret_sdk::http_client::own_station_results::OwnStationStateClient,
     item: &garth::SendQueueItem,
 ) -> anyhow::Result<Option<garth::SendQueueItem>> {
+    recover_disclosed_event_item(outbound, authority, client, item, || Ok(())).await
+}
+
+pub(super) async fn recover_disclosed_event_item(
+    outbound: &InksonOutboundEngine,
+    authority: &arkret_sdk::AccountId,
+    client: &arkret_sdk::http_client::own_station_results::OwnStationStateClient,
+    item: &garth::SendQueueItem,
+    check: impl Fn() -> anyhow::Result<()> + garth::MaybeSendSync,
+) -> anyhow::Result<Option<garth::SendQueueItem>> {
+    check()?;
     anyhow::ensure!(
         client.session()?.account_id() == authority,
         "outbound recovery belongs to another Account"
@@ -60,6 +85,7 @@ async fn recover_disclosed_application_item(
         Ok(response) => response,
         Err(_) => return Ok(None),
     };
+    check()?;
     let commit = response.value()?.commit();
     let reference = arkret_wire::CommittedEventRef {
         event_id: item.event_id().clone(),
@@ -69,6 +95,7 @@ async fn recover_disclosed_application_item(
     };
     let response =
         garth::own_station_results::consume_bound_event(client, &reference, response).await?;
+    check()?;
     let arkret_wire::CommittedEventView::Full(accepted) = response.value()? else {
         anyhow::bail!("outbound historical original is withheld");
     };
@@ -77,6 +104,7 @@ async fn recover_disclosed_application_item(
     let settled = outbound
         .store()
         .mutate_outbound(move |queue| {
+            check().map_err(|error| garth::Error::Protocol(error.to_string()))?;
             client
                 .check_session()
                 .map_err(|error| garth::Error::Protocol(error.to_string()))?;
@@ -92,7 +120,7 @@ fn restore_application_outcome(
     original: &QueuedSubmission,
     accepted: &arkret_wire::CommittedEventFullView,
 ) -> garth::Result<garth::SendQueueItem> {
-    let SelfAuthoritySubmitRequest::Event(submission) = &original.request else {
+    let SelfAuthoritySubmitRequestBody::Event(submission) = &original.request else {
         return Err(garth::Error::Protocol("not an application Event".into()));
     };
     if submission.event != accepted.event {
@@ -114,7 +142,7 @@ fn restore_application_outcome(
         ));
     }
     item.submission
-        .apply_outcome(arkret_wire::AuthoritySubmitOutcome::Accepted {
+        .apply_outcome(arkret_wire::AuthoritySubmitResponseBody::Accepted {
             status: arkret_wire::AuthorityCommitStatus::Committed,
             commit: accepted.commit.clone(),
         })?;

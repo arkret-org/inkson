@@ -152,12 +152,12 @@ pub(crate) fn test_handle_claim(
         schema: HandleClaim::SCHEMA.to_owned(),
         claim: core,
         status,
-        as_of: now,
+        evaluated_at: now,
         verifier_id: arkret_sdk::DidCoreId::new(issuer_did.to_owned()).unwrap(),
         verified_at: matches!(status, arkret_models_identity::HandleClaimStatus::Verified)
             .then_some(now),
         revocation: None,
-        fresh_until: now + chrono::Duration::minutes(5),
+        cache_expires_at: now + chrono::Duration::minutes(5),
         status_proof: proof(
             PayloadProofPurpose::StatusAttestation,
             HANDLE_CLAIM_STATUS_DOMAIN,
@@ -188,25 +188,7 @@ pub(crate) fn test_issuer_policy(issuer_did: &str, domain: &str) -> HandleIssuer
 /// empty result is not "no constraint": §3.2.1 Step 0 makes the issuer filter
 /// mandatory, so an empty policy makes the inline candidate set empty and the
 /// renderer degrades instead of showing an unvetted handle.
-pub(crate) fn realm_handle_issuer_policies(
-    store: &LocalStateStore,
-    realm_id: &str,
-) -> Vec<HandleIssuerPolicyEntry> {
-    let Some(value) = store
-        .realm_current_view_entries(realm_id)
-        .and_then(|entries| crate::current_projection::current_realm_policy_bundle_value(&entries))
-    else {
-        return Vec::new();
-    };
-    // The Station selects the current policy value; the published value is
-    // either the bundle payload itself or the generic `{"value": ...}`
-    // envelope it was committed in.
-    let candidate = value.get("value").unwrap_or(&value);
-    serde_json::from_value::<arkret_sdk::RealmPolicyBundlePayload>(candidate.clone())
-        .ok()
-        .and_then(|bundle| bundle.handle_issuer_policies)
-        .unwrap_or_default()
-}
+pub(crate) use crate::identity::member_identity_store::realm_handle_issuer_policies;
 
 /// §3.8.2 step 1c/1d — run the SDK §3.2.1 primary-handle selection over the
 /// roster's inline signed handle-claim evidence.
@@ -665,8 +647,8 @@ mod petname_tests {
         )
     }
 
-    fn accepted_human(principal_id: &str) -> crate::models::ContactListRow {
-        crate::models::ContactListRow {
+    fn accepted_human(principal_id: &str) -> crate::models::ContactView {
+        crate::models::ContactView {
             peer: arkret_sdk::contact_operations::ContactPeer::Human {
                 account_id: arkret_sdk::AccountId::new(
                     arkret_sdk::DidCoreId::new(principal_id).unwrap(),
@@ -683,7 +665,6 @@ mod petname_tests {
             granted_by_peer_scopes: Vec::new(),
             bidirectional_scopes: Vec::new(),
             effective_scopes: None,
-            continuity_evidence: None,
             direct_conversation: None,
             contact_agent_projections: Vec::new(),
             peer_endpoint: None,

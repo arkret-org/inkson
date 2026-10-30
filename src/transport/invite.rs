@@ -65,10 +65,11 @@ fn invite_address(
     )
 }
 
-/// A Contact scope is not a Consent grant. The direct-DID contact path uses
-/// the protocol's explicit-address introduction evidence and relies on the
-/// independent directional `invite` scope gate; it never fabricates a
-/// `consent_grant_ref` from Contact request/response Events.
+/// The direct-DID Contact path uses explicit-address introduction evidence
+/// and the independent directional `invite` gate. Invite `consent_grant_ref`
+/// instead names the invitee's accepted `ak.consent.replace` for the complete
+/// inviter peer with an `invite` permission; reception still checks that peer's
+/// current permission set, window and constraints.
 fn contact_explicit_address_evidence_digest() -> anyhow::Result<String> {
     crate::canonical::canonical_sha256(&serde_json::json!({
         "kind": "explicit_address",
@@ -172,7 +173,7 @@ async fn resolve_principal_locator_url(
     body.validate_minimal()
         .map_err(|err| anyhow::anyhow!("invalid invite locator token: {err}"))?;
     let locator: arkret_sdk::PrincipalLocator = resolver
-        .post(arkret_sdk::INVITE_LOCATOR_RESOLVE_PATH, &body)
+        .resolve_invite_locator(&body)
         .await
         .map_err(|error| {
             let unavailable = matches!(
@@ -243,9 +244,10 @@ impl crate::transport::TransportClient {
         &self,
         accepted_event_id: &str,
         invitee: &InviteeResolution,
-    ) -> anyhow::Result<arkret_sdk::InviteDeliveryOutcome> {
+    ) -> anyhow::Result<arkret_sdk::InviteDeliveryResponseBody> {
         let event_id = arkret_sdk::EventId::new(accepted_event_id.to_owned())
             .map_err(|error| anyhow::anyhow!("accepted invite event id is invalid: {error}"))?;
+        let idempotency_key = arkret_sdk::InviteId::from_event_id(&event_id).to_string();
         // The self dispatch endpoint resolves the already accepted Event from
         // durable local storage.  Carrying the full Event here would be the
         // peer-delivery wire shape and is rejected by the closed self schema.
@@ -254,13 +256,13 @@ impl crate::transport::TransportClient {
             invite_event_id: event_id,
             invite_address: invitee.invite_address.clone(),
             introduction_evidence: invitee.introduction_evidence.clone(),
-            idempotency_key: accepted_event_id.to_owned(),
+            idempotency_key,
         };
         delivery
             .validate_minimal()
             .map_err(|error| anyhow::anyhow!("invite delivery request is invalid: {error}"))?;
         self.sdk_http_client()?
-            .post("/_arkret/self/invites/dispatch", &delivery)
+            .dispatch_invite(&delivery)
             .await
             .map_err(Into::into)
     }
@@ -392,7 +394,7 @@ mod invite_addressing_tests {
                     "verification_method": "did:web:ps.bob.example#server-key-1",
                     "payload_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
                     "created_at": "2026-06-07T00:00:00.000Z",
-                    "jws": "header..sig"
+                    "jws": "header..signature"
                 }
             }],
         })

@@ -2,6 +2,88 @@ use arkret_wire::{AccountDataKey, CapabilityActionId};
 
 use super::*;
 
+// The key must belong to the loop's immediate VNode, not a node produced by
+// a nested Rust expression. Otherwise a sliding window matches rows by slot
+// and disposes the attachment components of still-visible messages.
+fn keyed_timeline_rows(rows: Vec<(String, Element)>) -> Element {
+    rsx! {
+        for (key, row) in rows {
+            Fragment {key: "{key}", {row}}
+        }
+    }
+}
+
+#[cfg(test)]
+mod row_lifetime_tests {
+    use std::cell::RefCell;
+    use std::collections::BTreeMap;
+    use std::rc::Rc;
+
+    use super::*;
+
+    #[derive(Clone)]
+    struct Control {
+        window: Rc<RefCell<Option<Signal<usize>>>>,
+        mounts: Rc<RefCell<BTreeMap<String, usize>>>,
+    }
+
+    #[component]
+    fn RowProbe(id: String, mounts: Rc<RefCell<BTreeMap<String, usize>>>) -> Element {
+        let instance = use_hook(|| {
+            let mut counts = mounts.borrow_mut();
+            let count = counts.entry(id.clone()).or_default();
+            *count += 1;
+            *count
+        });
+        rsx! {div {"{id}:{instance}"}}
+    }
+
+    fn window_harness(control: Control) -> Element {
+        let start = use_signal(|| 0_usize);
+        *control.window.borrow_mut() = Some(start);
+        let rows = ["a", "b", "c", "d", "e"]
+            .into_iter()
+            .skip(start())
+            .take(3)
+            .map(|id| {
+                (
+                    id.to_owned(),
+                    rsx! {RowProbe {id, mounts: control.mounts.clone()}},
+                )
+            })
+            .collect();
+        keyed_timeline_rows(rows)
+    }
+
+    #[test]
+    fn overlapping_virtual_rows_keep_their_component_instances_when_window_slides() {
+        let control = Control {
+            window: Rc::new(RefCell::new(None)),
+            mounts: Rc::new(RefCell::new(BTreeMap::new())),
+        };
+        let mut dom = VirtualDom::new_with_props(window_harness, control.clone());
+        dom.rebuild_in_place();
+        let mut previous_start = 0;
+        for start in [1, 2, 1] {
+            let before = control.mounts.borrow().clone();
+            dom.in_runtime(|| control.window.borrow().unwrap().set(start));
+            for _ in 0..4 {
+                dom.render_immediate_to_vec();
+            }
+            let after = control.mounts.borrow();
+            // b/c/d remain mounted across these overlapping windows. A row
+            // that actually leaves the window is allowed to release its URL.
+            let keys = ["a", "b", "c", "d", "e"];
+            for &id in &keys[start.max(previous_start)..(start + 3).min(previous_start + 3)] {
+                if let Some(count) = before.get(id) {
+                    assert_eq!(after.get(id), Some(count), "overlapping row {id} remounted");
+                }
+            }
+            previous_start = start;
+        }
+    }
+}
+
 thread_local! {
     static CHAT_FEED_SCROLL_OFFSETS: std::cell::RefCell<
         std::collections::BTreeMap<String, ChatFeedScrollPosition>,
@@ -238,8 +320,8 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                         style: "height: {virtual_window.total}px",
                         div { class: "chat-virtual-slice",
                             style: "transform: translateY({virtual_window.top}px)",
-                    for (virtual_index, msg) in mounted_rows {
-                        {
+                    {keyed_timeline_rows(mounted_rows.into_iter().map(|(virtual_index, msg)| {
+                            let row_key = msg.id.clone();
                             let message_is_private_sidecar =
                                 private_sidecar_event_ids.contains(&msg.id);
                             let message_is_read_only_private = message_is_private_sidecar;
@@ -325,7 +407,7 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                             let message_menu_is_open =
                                 message_context_menu().as_deref() == Some(msg.id.as_str());
                             let message_menu_id = format!("message-actions-{}", msg.id);
-                            rsx! {
+                            (row_key, rsx! {
                         div {
                             key: "{msg.id}",
                             id: "chat-msg-{msg.id}",
@@ -836,7 +918,11 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                             } else if sender_blocked {
                                                 {crate::i18n::tr("message.blocked_user")}
                                             } else {
-                                                {render_message_body(&msg.body, msg.content_format, &msg.mentions, &base_url)}
+                                                if let Some(source) = &msg.protocol_content {
+                                                    {super::attachment_renderer::render_protocol_content(source, &msg.mentions, &base_url)}
+                                                } else {
+                                                    {render_message_body(&msg.body, msg.content_format, &msg.mentions, &base_url)}
+                                                }
                                             }
                                         }
                                     }
@@ -936,47 +1022,26 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                 // receive path, so a reader appears only after
                                 // their device proof and the MLS AEAD verified.
                                 {
-                                    let readers: Vec<String> = msg
-                                        .protocol_message_id
-                                        .as_deref()
-                                        .map(str::trim)
-                                        .filter(|value| !value.is_empty())
-                                        .and_then(|message_id| {
-                                            let hub =
-                                                crate::views::read_receipts::ReadReceiptHub::try_use()?;
-                                            Some(hub.readers_of(
-                                                &selected_realm_id,
-                                                &selected_channel_value,
-                                                message_id,
-                                            ))
-                                        })
-                                        .unwrap_or_default();
-                                    let should_display = {
+                                    let (should_display, receipt_policy) = {
                                         let store = state_store.read();
-                                        chat_visible_read_receipt_should_display(
-                                            &store,
-                                            &selected_channel_value,
-                                            &selected_realm_id,
-                                        )
+                                        let display = chat_visible_read_receipt_should_display(
+                                            &store, &selected_channel_value, &selected_realm_id,
+                                        );
+                                        let policy = msg.protocol_content.as_ref().and_then(|target| {
+                                            store.current_read_receipt_policy(&target.scope).ok()
+                                        });
+                                        (display, policy)
                                     };
-                                    if should_display && !readers.is_empty() {
-                                        let attr = readers.join(",");
-                                        rsx! {
-                                            div {
-                                                class: "read-receipt-indicator",
-                                                "data-testid": "read-receipt-indicator",
-                                                "data-readers": "{attr}",
-                                                for did in &readers {
-                                                    crate::components::IdentityAvatar {
-                                                        seed: did.clone(),
-                                                        alt_text: did.clone(),
-                                                        class: "read-receipt-avatar avatar-img".to_owned(),
-                                                    }
-                                                }
-                                            }
+                                    rsx! {
+                                        crate::views::read_receipts::ReadReceiptIndicator {
+                                            realm_id: selected_realm_id.clone(),
+                                            strand_id: selected_channel_value.clone(),
+                                            message_id: msg.protocol_message_id.clone(),
+                                            target_author: msg.actor_id.clone(),
+                                            viewer: arkret_sdk::ActorId::account(command_context.authority.clone()),
+                                            display: should_display,
+                                            policy: receipt_policy,
                                         }
-                                    } else {
-                                        rsx! {}
                                     }
                                 }
                                 // G3.Y2 — poll card. If this message
@@ -1238,9 +1303,8 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                 }
                             }
                         }
-                            }
-                        }
-                    }
+                            })
+                        }).collect())}
                     }
                     }
                     if let Some(report) = moderation_report_draft() {

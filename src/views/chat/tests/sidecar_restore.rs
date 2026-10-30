@@ -52,7 +52,8 @@ fn rebuild_restores_authors_own_encrypted_message_from_sidecar() {
             realm_id: Some("ak:realm:ATwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q".to_owned()),
             received_at: chrono::Utc::now(),
             payload: event,
-        }],
+        }]
+        .into(),
         ..ClientLocalState::default()
     };
 
@@ -104,7 +105,7 @@ fn encrypted_poll_sidecar_is_not_a_formal_v1_poll() {
         "body": "Deploy now?",
         "poll": {
             "kind": "disclosed",
-            "max_selections": 1,
+            "max_selection_count": 1,
             "answers": [
                 {
                     "id": "opt-0",
@@ -190,6 +191,7 @@ fn pending_message_refreshes_from_restored_private_plaintext_sidecar() {
     let strand = "ak:strand:AWXzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c";
     let message_id = "ak:message:AWYcbgQPjPWiFZOW87QxvndGtWcImO9Xf2-TcOjH1pXs";
     let mut messages = vec![ChatMessage {
+        protocol_content: None,
         local_scope: None,
         realm_id: realm.to_owned(),
         id: "ak:event:AZhsY0DZJGk1qN28pQapwgLRRgx7kyis3JdX2xGL1Cj8".to_owned(),

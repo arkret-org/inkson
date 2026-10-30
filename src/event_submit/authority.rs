@@ -10,7 +10,7 @@ use super::*;
 
 pub(crate) fn creator_cache_belongs_to_closed_attempt(
     record: &arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapRecord,
-    cache: &crate::mls::persistence::MlsLocalCheckpointEnvelope,
+    cache: &garth::mls::checkpoint::MlsLocalCheckpointEnvelope,
     emitted: bool,
     public: &[u8],
     tree: &[u8],
@@ -91,7 +91,7 @@ pub(crate) fn verify_creator_genesis_producer(
     let projection = record
         .governance_evidence()
         .ok_or_else(|| anyhow::anyhow!("accepted creator lost its pin"))?
-        .creator_device_authority()
+        .creator_device_authority()?
         .projection();
     let key = crate::identity::device_directory::public_key_from_directory_value(
         projection.device_signing_key_did.as_str(),
@@ -128,7 +128,7 @@ pub(crate) fn original_creator_checkpoint_secret(
         .ok_or_else(|| anyhow::anyhow!("creator recovery has no active pinned authority"))?;
     let public = crate::identity::device_directory::public_key_from_directory_value(
         evidence
-            .creator_device_authority()
+            .creator_device_authority()?
             .projection()
             .device_signing_key_did
             .as_str(),
@@ -226,10 +226,25 @@ impl EventSubmitter {
             // pin must authenticate its own current creator/endpoint cut.
             return Ok(());
         }
-        let (accepted, snapshot, own_client) =
-            self.read_verified_creator_cut(record.intent()).await?;
+        let own_client = crate::transport::own_station_results::client_for_http(&self.http).await?;
+        let read = garth::mls::creator::read_creator_scope(&own_client, record.intent()).await?;
+        if let Some(winner) = read.genesis {
+            let winner = arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapWinner::from_accepted(
+                record.intent(), read.accepted_create, winner, read.authority)?;
+            store
+                .supersede_creator_guarded(record, winner, Some(&own_client))
+                .await?;
+            anyhow::bail!(
+                "creator was superseded before its acceptance checkpoint; use Welcome, migration or recovery"
+            );
+        }
         store
-            .accept_creator_realm_guarded(record, accepted, snapshot, Some(&own_client))
+            .accept_creator_realm_guarded(
+                record,
+                read.accepted_create,
+                read.snapshot,
+                Some(&own_client),
+            )
             .await?;
         Ok(())
     }
@@ -265,7 +280,7 @@ impl EventSubmitter {
                     &signer,
                     self.authority()?,
                     intent.creator_device_id(),
-                    evidence.creator_device_authority().projection()
+                    evidence.creator_device_authority()?.projection()
                 ),
                 "pinned creator authority does not match the local private signer"
             );
@@ -352,7 +367,7 @@ impl EventSubmitter {
                 &secret,
                 Some(
                     &evidence
-                        .creator_device_authority()
+                        .creator_device_authority()?
                         .projection()
                         .device_authorize_event_id,
                 ),
@@ -449,7 +464,7 @@ impl EventSubmitter {
             state.write(|store| -> anyhow::Result<()> {
                 let mut salt = [0u8; 16];
                 getrandom::fill(&mut salt)?;
-                let cache = crate::mls::persistence::encrypt_state(
+                let cache = garth::mls::checkpoint::encrypt_state(
                     scope.realm_id().as_str(),
                     record.intent().mls_group_id().as_str(),
                     0,
@@ -470,7 +485,7 @@ impl EventSubmitter {
     pub(crate) async fn submit_creator_genesis(
         &self,
         mut record: arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapRecord,
-    ) -> anyhow::Result<SubmitEventResult> {
+    ) -> anyhow::Result<EventSubmissionProgress> {
         let _single_writer = outbound_submit_lock().lock().await;
         #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
         let _trace = OutboundWriterTrace::acquired("creator_genesis");
@@ -520,15 +535,15 @@ impl EventSubmitter {
     /// treating a gate refusal as an authority rejection.
     pub(super) async fn ensure_creator_genesis_replay_gate(
         &self,
-        request: &arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest,
+        request: &arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequestBody,
     ) -> anyhow::Result<
         Option<(
             arkret_sdk::EventId,
             arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapVerifiedAbsence,
-            arkret_sdk::http_client::own_station_results::OwnStationResultClient,
+            arkret_sdk::http_client::own_station_results::OwnStationStateClient,
         )>,
     > {
-        let arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest::Event(
+        let arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequestBody::Event(
             submission,
         ) = request
         else {
@@ -600,7 +615,7 @@ impl EventSubmitter {
         record: arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapRecord,
         accepted: arkret_wire::CommittedEventFullView,
         bundle: arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapAuthority,
-        own_client: &arkret_sdk::http_client::own_station_results::OwnStationResultClient,
+        own_client: &arkret_sdk::http_client::own_station_results::OwnStationStateClient,
     ) -> anyhow::Result<()> {
         use arkret_models_collaboration::mls_creator_bootstrap::{
             MlsCreatorBootstrapInvariant, MlsCreatorBootstrapKnownGenesis,
@@ -913,7 +928,7 @@ impl EventSubmitter {
     ) -> anyhow::Result<(
         arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapAcceptedCreate,
         arkret_wire::RealmStateSnapshot,
-        arkret_sdk::http_client::own_station_results::OwnStationResultClient,
+        arkret_sdk::http_client::own_station_results::OwnStationStateClient,
     )> {
         crate::realm_events_engine::verified_creator_create(&self.http, intent)
             .await

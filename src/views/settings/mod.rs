@@ -17,9 +17,10 @@ pub mod storage;
 
 pub(crate) mod account_data;
 mod controller;
-mod invite_locator;
+pub mod invite_locator;
 mod model;
 mod profile_helpers;
+pub mod realm_picker;
 mod sections;
 mod widgets;
 
@@ -32,11 +33,12 @@ use dioxus_router::Link;
 use dioxus_router::hooks::use_route;
 use invite_locator::*;
 use profile_helpers::*;
+use realm_picker::{RealmPreferencePicker, preference_realm_options, selected_realm_id};
 use sections::*;
 use serde_json::{Map, Value, json};
 use widgets::*;
 
-use crate::components::{HelpTip, QrSharePanel, UiIcon};
+use crate::components::{HelpTip, UiIcon};
 use crate::config::LocalConfigStore;
 use crate::i18n::UiLocale;
 use crate::notification_rules::WatchLevel;
@@ -439,7 +441,7 @@ pub(crate) async fn save_contact_remark_edit(
                 chrono::Utc::now(),
             ));
         }
-        let row: arkret_sdk::AccountDataRow = serde_json::from_value(result)?;
+        let row: arkret_sdk::AccountDataEntry = serde_json::from_value(result)?;
         let remark: crate::account_data::ContactRemark = serde_json::from_value(
             crate::account_data::decrypt_account_data_entry(&authority, &key, &row)?,
         )?;
@@ -545,9 +547,7 @@ pub fn SettingsPanel(
     // `realm_remarks_snapshot` is the resolved BTreeMap rendered for the
     // list; `realm_remark_inputs` keeps unsaved text edits keyed by
     // realm_id so users can type without round-tripping through coland.
-    // `new_realm_remark_id` / `new_realm_remark_name` drive the "Add by
-    // Realm ID" row for Realms the user has joined but isn't yet
-    // tracking locally.
+    // The add row retains an exact Realm selection separately from its label.
     let mut realm_remarks_snapshot = use_signal(|| state_store.read().realm_remarks());
     let mut realm_remark_inputs = use_signal(|| {
         state_store
@@ -560,7 +560,7 @@ pub fn SettingsPanel(
     let mut new_realm_remark_id = use_signal(String::new);
     let mut new_realm_remark_name = use_signal(String::new);
     let contact_remarks_snapshot = use_signal(|| state_store.read().contact_remarks());
-    // A4b — profile (display_name / bio / avatar) state.
+    // A4b — profile (display_name / biography / avatar) state.
     // `avatar_blob_ref` mirrors the most-recently uploaded avatar via
     // `ak.account_data.set("ak.client.ui_state", { avatar_blob_ref })` and is also
     // published through the spec profile endpoint so directory projections can index it.
@@ -595,21 +595,17 @@ pub fn SettingsPanel(
     let mimi_proxy_receipt = use_signal(|| crate::i18n::tr("settings.mimi.no_receipt"));
     let realm_watch_overrides = state_store.read().realm_watch_levels();
     let known_realms = known_realm_options(&state_store.read());
+    let preference_realms = preference_realm_options(&state_store.read());
     let active_locale = locale();
     let active_direction = active_locale.direction().as_str();
     let push_registration = state_store.read().push_registration();
     let push_label = crate::push::push_status_label(push_registration.as_ref());
     let has_session = !token().trim().is_empty();
-    let mut invite_locator_subject = use_signal(String::new);
-    let mut invite_locator_id = use_signal(String::new);
-    let mut invite_locator_token = use_signal(String::new);
-    let mut invite_locator_status = use_signal(String::new);
+    let invite_locator = use_signal(InviteLocatorState::default);
     // One bundle for every write below, so the rsx decides only when a
     // command runs — never how it is issued or where its outcome lands.
     let controller = controller::SettingsController {
-        invite_locator_id,
-        invite_locator_token,
-        invite_locator_status,
+        invite_locator,
         profile_avatar_blob_ref,
         avatar_upload_status,
         avatar_uploading,
@@ -645,6 +641,16 @@ pub fn SettingsPanel(
         state_store,
     };
     controller::use_avatar_selection_boundary(controller);
+    use_effect(move || {
+        let current = controller.settings_session.capture();
+        let mut state = controller.invite_locator;
+        if state.peek().session.as_ref() != Some(&current) {
+            state.set(InviteLocatorState {
+                session: Some(current),
+                ..Default::default()
+            });
+        }
+    });
     {
         let current_account = principal_id();
         let current_token = token();
@@ -673,7 +679,7 @@ pub fn SettingsPanel(
                             profile_bio.set(
                                 profile
                                     .profile_fields
-                                    .get("bio")
+                                    .get("biography")
                                     .and_then(serde_json::Value::as_str)
                                     .unwrap_or_default()
                                     .to_owned(),
@@ -688,35 +694,14 @@ pub fn SettingsPanel(
             });
         });
     }
-    {
-        let current_account = principal_id();
-        let current_token = token();
-        let current_base_url = base_url();
-        use_effect(move || {
-            if current_account.trim().is_empty() || current_token.trim().is_empty() {
-                invite_locator_subject.set(String::new());
-                invite_locator_id.set(String::new());
-                invite_locator_token.set(String::new());
-                return;
-            }
-            if current_account == invite_locator_subject() {
-                return;
-            }
-            invite_locator_subject.set(current_account.clone());
-            invite_locator_id.set(String::new());
-            invite_locator_token.set(String::new());
-            invite_locator_status.set(crate::i18n::tr("settings.invite_locator.issuing"));
-            let base = current_base_url.clone();
-            let api_token = current_token.clone();
-            controller.issue_first_invite_locator(base, api_token);
-        });
-    }
-    let invite_locator_url = if has_session && !invite_locator_token().trim().is_empty() {
-        build_invite_locator_url(&base_url(), &invite_locator_token())
+    let locator_state = invite_locator();
+    let locator_current =
+        locator_state.session.as_ref() == Some(&controller.settings_session.capture());
+    let invite_locator_url = if has_session && locator_current && !locator_state.token.is_empty() {
+        build_invite_locator_url(&base_url(), &locator_state.token)
     } else {
         String::new()
     };
-    let invite_locator_qr_svg = render_invite_locator_qr_svg(&invite_locator_url);
     let model::SessionIdentityLabels {
         principal: principal_label,
         device: device_label,
@@ -865,9 +850,9 @@ pub fn SettingsPanel(
                                         }
                                     }
                                     label { class: "form-field",
-                                        span { {crate::i18n::tr("settings.profile.bio")} }
+                                        span { {crate::i18n::tr("settings.profile.biography")} }
                                         textarea {
-                                            "data-testid": "settings-profile-bio",
+                                            "data-testid": "settings-profile-biography",
                                             value: "{profile_bio}",
                                             disabled: profile_text_saving(),
                                             oninput: move |event: FormEvent| profile_bio.set(event.value()),
@@ -1216,55 +1201,14 @@ pub fn SettingsPanel(
                                 }
                             }
 
-                            div { class: "event settings-card-span-2 invite-locator-card", "data-testid": "settings-invite-locator-card",
-                                div { class: "event-head invite-locator-head",
-                                    span { {crate::i18n::tr("settings.invite_locator.title")} }
-                                    if has_session {
-                                        div { class: "invite-locator-head-actions",
-                                            span { class: "invite-locator-expiry", {crate::i18n::tr("settings.invite_locator.expiry")} }
-                                            Button {
-                                                variant: ButtonVariant::Secondary,
-                                                size: ButtonSize::Sm,
-                                                class: "btn invite-locator-action",
-                                                "data-testid": "settings-invite-locator-refresh",
-                                                onclick: move |_| {
-                                                    let base = base_url();
-                                                    let api_token = token();
-                                                    let old_locator_id = invite_locator_id();
-                                                    invite_locator_status.set(crate::i18n::tr("settings.invite_locator.rotating"));
-                                                    controller.rotate_invite_locator(base, api_token, old_locator_id);
-                                                },
-                                                UiIcon { name: "refresh" }
-                                                span { {crate::i18n::tr("common.refresh")} }
-                                            }
-                                        }
-                                    } else {
-                                        span { {crate::i18n::tr("common.offline")} }
-                                    }
-                                }
-                                if has_session {
-                                    if !invite_locator_status().is_empty() {
-                                        div { class: "muted", "data-testid": "settings-invite-locator-status", "{invite_locator_status}" }
-                                    }
-                                    div { "data-testid": "settings-invite-locator-url-pane",
-                                        QrSharePanel {
-                                            qr_svg: invite_locator_qr_svg,
-                                            url: invite_locator_url,
-                                            qr_aria_label: crate::i18n::tr("settings.invite_locator.qr_aria"),
-                                            url_aria_label: crate::i18n::tr("settings.invite_locator.url_aria"),
-                                            qr_test_id: "settings-invite-locator-qr".to_owned(),
-                                            url_test_id: "settings-invite-locator-url".to_owned(),
-                                            copy_test_id: "settings-invite-locator-copy".to_owned(),
-                                            url_rows: 4,
-                                        }
-                                    }
-                                } else {
-                                    div {
-                                        class: "muted",
-                                        "data-testid": "settings-invite-locator-signed-out",
-                                        {crate::i18n::tr("settings.invite_locator.sign_in")}
-                                    }
-                                }
+                            invite_locator::InviteLocatorCard {
+                                has_session,
+                                url: invite_locator_url,
+                                status: if locator_current { locator_state.status.clone() } else { String::new() },
+                                busy: locator_current && locator_state.busy,
+                                has_locator: locator_current && !locator_state.id.is_empty(),
+                                onrefresh: move |_| controller.change_invite_locator(false),
+                                onrevoke: move |_| controller.change_invite_locator(true),
                             }
 
                         }
@@ -1280,7 +1224,6 @@ pub fn SettingsPanel(
 
                     if active_section == SettingsSection::Devices {
                         crate::views::settings::devices::SettingsDevicesPanel {
-                            principal_id,
                             device_id,
                             token,
                         }
@@ -1907,6 +1850,12 @@ pub fn SettingsPanel(
                             }
                             SelectOption::<String> {
                                 index: 2usize,
+                                value: "consent_only".to_string(),
+                                text_value: crate::i18n::tr("settings.privacy.presence_visibility.consent_only"),
+                                {crate::i18n::tr("settings.privacy.presence_visibility.consent_only")}
+                            }
+                            SelectOption::<String> {
+                                index: 3usize,
                                 value: "nobody".to_string(),
                                 text_value: crate::i18n::tr("settings.privacy.presence_visibility.nobody"),
                                 {crate::i18n::tr("settings.privacy.presence_visibility.nobody")}
@@ -2125,23 +2074,17 @@ pub fn SettingsPanel(
                         span { "{read_receipt_realm_overrides().len()} configured" }
                     }
                     for (realm_id, send) in read_receipt_realm_overrides() {
-                            // Policy lock — when coland publishes a
-                            // ak.realm.read_receipt_policy with disclosure=
-                            // required|disabled, the toggle is disabled and
-                            // we show a lock badge with the reason. Until
-                            // sync (P0 M3) wires the snapshot, this returns
-                            // `None` for every realm and the row stays
-                            // editable.
+                            // Show the exact Realm-scope current lock when verified.
                             {
                                 let policy = state_store
                                     .read()
                                     .read_receipt_policy_for_realm(&realm_id);
                                 let locked = policy
                                     .as_ref()
-                                    .is_some_and(|p| p.locks_user_choice());
+                                    .is_some_and(|p| p.disclosure != arkret_sdk::ReadReceiptDisclosure::Optional);
                                 let lock_reason = policy
                                     .as_ref()
-                                    .map(|p| p.lock_reason())
+                                    .map(|p| match p.disclosure { arkret_sdk::ReadReceiptDisclosure::Required => "Read receipts are required in this scope.".to_owned(), arkret_sdk::ReadReceiptDisclosure::Disabled => "Read receipts are disabled in this scope.".to_owned(), _ => String::new() })
                                     .unwrap_or_default();
                                 let realm_id_label = short_protocol_id(&realm_id);
                                 rsx! {
@@ -2241,21 +2184,21 @@ pub fn SettingsPanel(
                             }
                         }
                     div { class: "actions", "data-testid": "read-receipt-add-override",
-                        Input {
-                            r#type: "text",
-                            placeholder: "ak:realm:ANdHzqrrf1Z2KXHMDZ24Qwje2JXNuOzgDexjxj3KVNBY",
-                            value: "{read_receipt_override_input()}",
-                            oninput: move |event: FormEvent| read_receipt_override_input.set(event.value()),
+                        RealmPreferencePicker {
+                            options: preference_realms.clone(),
+                            selected: read_receipt_override_input,
+                            test_id: "read-receipt-realm-select",
                         }
                         Button {
                             variant: ButtonVariant::Secondary,
                             "data-testid": "read-receipt-add-override-skip",
+                            disabled: selected_realm_id(&preference_realms, &read_receipt_override_input()).is_none(),
                             onclick: move |_| {
-                                let realm_id = read_receipt_override_input().trim().to_owned();
-                                if realm_id.is_empty() {
-                                    crate::components::feedback::toast_info("feedback.enter_realm_id", vec![]);
+                                let Some(realm_id) = selected_realm_id(&preference_realm_options(&state_store.read()), &read_receipt_override_input()) else {
+                                    crate::components::feedback::toast_info("settings.notifications.select_realm", vec![]);
                                     return;
-                                }
+                                };
+                                let realm_id = realm_id.to_string();
                                 state_store.write().set_read_receipt_realm_override(
                                     realm_id.clone(),
                                     Some(false),
@@ -2279,12 +2222,13 @@ pub fn SettingsPanel(
                         Button {
                             variant: ButtonVariant::Secondary,
                             "data-testid": "read-receipt-add-override-send",
+                            disabled: selected_realm_id(&preference_realms, &read_receipt_override_input()).is_none(),
                             onclick: move |_| {
-                                let realm_id = read_receipt_override_input().trim().to_owned();
-                                if realm_id.is_empty() {
-                                    crate::components::feedback::toast_info("feedback.enter_realm_id", vec![]);
+                                let Some(realm_id) = selected_realm_id(&preference_realm_options(&state_store.read()), &read_receipt_override_input()) else {
+                                    crate::components::feedback::toast_info("settings.notifications.select_realm", vec![]);
                                     return;
-                                }
+                                };
+                                let realm_id = realm_id.to_string();
                                 state_store.write().set_read_receipt_realm_override(
                                     realm_id.clone(),
                                     Some(true),
@@ -2492,12 +2436,10 @@ pub fn SettingsPanel(
                         }
                     }
                     div { class: "actions", "data-testid": "realm-remark-add-row",
-                        Input {
-                            r#type: "text",
-                            "data-testid": "realm-remark-add-id",
-                            placeholder: "ak:realm:ANdHzqrrf1Z2KXHMDZ24Qwje2JXNuOzgDexjxj3KVNBY",
-                            value: "{new_realm_remark_id()}",
-                            oninput: move |event: FormEvent| new_realm_remark_id.set(event.value()),
+                        RealmPreferencePicker {
+                            options: preference_realms.clone(),
+                            selected: new_realm_remark_id,
+                            test_id: "realm-remark-realm-select",
                         }
                         Input {
                             r#type: "text",
@@ -2509,19 +2451,18 @@ pub fn SettingsPanel(
                         Button {
                             variant: ButtonVariant::Secondary,
                             "data-testid": "realm-remark-add-save",
+                            disabled: selected_realm_id(&preference_realms, &new_realm_remark_id()).is_none() || new_realm_remark_name().trim().is_empty(),
                             onclick: move |_| {
-                                let realm_id = new_realm_remark_id().trim().to_owned();
+                                let Some(typed_realm_id) = selected_realm_id(&preference_realm_options(&state_store.read()), &new_realm_remark_id()) else {
+                                    crate::components::feedback::toast_info("settings.notifications.select_realm", vec![]);
+                                    return;
+                                };
+                                let realm_id = typed_realm_id.to_string();
                                 let local_name = new_realm_remark_name().trim().to_owned();
                                 if realm_id.is_empty() || local_name.is_empty() {
                                     crate::components::feedback::toast_info("feedback.enter_realm_and_name", vec![]);
                                     return;
                                 }
-                                let Ok(typed_realm_id) =
-                                    arkret_sdk::RealmId::new(realm_id.clone())
-                                else {
-                                    crate::components::feedback::toast_error("feedback.invalid_realm_id", vec![], None);
-                                    return;
-                                };
                                 let now = chrono::Utc::now();
                                 let mut remark = crate::account_data::RealmRemark::new(
                                     typed_realm_id,

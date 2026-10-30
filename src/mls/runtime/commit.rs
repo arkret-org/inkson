@@ -24,14 +24,14 @@ pub struct StagedMlsCommit {
     pub envelope: arkret_sdk::MlsCommitEnvelope,
     /// The encrypted group state holding the pending commit, persisted before
     /// submission so acceptance can always be merged.
-    pub staged_checkpoint: crate::mls::persistence::MlsLocalCheckpointEnvelope,
+    pub staged_checkpoint: garth::mls::checkpoint::MlsLocalCheckpointEnvelope,
 }
 
 fn staged_checkpoint(
     group: &arkret_sdk::ArkretMlsGroup,
     realm_id: &str,
     secret: &str,
-) -> Result<crate::mls::persistence::MlsLocalCheckpointEnvelope, MlsRuntimeError> {
+) -> Result<garth::mls::checkpoint::MlsLocalCheckpointEnvelope, MlsRuntimeError> {
     let post_state = group
         .export_state_record()
         .map_err(|err| MlsRuntimeError::Export(err.to_string()))?;
@@ -40,7 +40,7 @@ fn staged_checkpoint(
     let mut salt = [0_u8; 16];
     getrandom::fill(&mut salt)
         .map_err(|err| MlsRuntimeError::Commit(format!("MLS checkpoint salt: {err}")))?;
-    Ok(crate::mls::persistence::encrypt_state(
+    Ok(garth::mls::checkpoint::encrypt_state(
         realm_id,
         &post_state.group_id,
         post_state.epoch,
@@ -266,7 +266,7 @@ pub(crate) fn build_mls_remove_actors_commit_for_scope(
     authority: &AccountId,
     device_id: &DeviceId,
     frozen: &crate::circle_mls::MembershipRemovalSnapshot,
-) -> Result<(arkret_sdk::MlsRemoveMemberResult, StagedMlsCommit), MlsRuntimeError> {
+) -> Result<(arkret_sdk::MlsMemberRemovalArtifacts, StagedMlsCommit), MlsRuntimeError> {
     frozen
         .ensure_current(state_store)
         .map_err(MlsRuntimeError::Commit)?;
@@ -326,7 +326,7 @@ pub(crate) fn build_add_member_commit_with_binding(
     member_authority_hints: &[crate::mls::governance_proof::MlsLeafAuthorityHint],
     member_actor_id: Option<&arkret_sdk::ActorId>,
     pinned_binding: Option<&arkret_sdk::MlsGovernanceBindingPayload>,
-) -> Result<(arkret_sdk::MlsAddMemberResult, StagedMlsCommit), MlsRuntimeError> {
+) -> Result<(arkret_sdk::MlsMemberAdditionArtifacts, StagedMlsCommit), MlsRuntimeError> {
     let realm_id = effective_scope
         .realm_id_opt()
         .ok_or_else(|| MlsRuntimeError::Commit("MLS Add has no Realm scope".to_owned()))?

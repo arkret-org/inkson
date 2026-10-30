@@ -84,7 +84,7 @@ pub(crate) fn binding_for_transition(
 
 /// Pin a transition to one already verified durable current result.
 pub(crate) fn binding_for_current_transition(
-    current: &arkret_wire::MlsGroupCurrent,
+    current: &arkret_wire::MlsGroupValue,
 ) -> Result<arkret_sdk::MlsGovernanceBindingPayload, String> {
     let next_epoch = current
         .epoch

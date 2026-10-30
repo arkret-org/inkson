@@ -10,52 +10,16 @@ use arkret_models_collaboration::agent_operations::{
 use arkret_models_collaboration::events_payloads::agent::{
     AgentKeyScope, AgentKeyScopeResource, AgentKeyScopeResourceKind,
 };
-use arkret_models_identity::handle::HandleVisibility;
 use arkret_sdk::{
     AgentKeyApprovalEvidence, AgentKeyApprovalEvidenceKind, AgentKeyAuthorizePayload,
     AgentKeyPairRequestBody, AgentKeySupersession, AgentPairingBootstrap,
     AgentRequestedScopeDisclosure, AgentRuntimeApprovalControllerProjection, CapabilityActionId,
     Did, DidCoreId, DidUrl, GrantConstraint, GrantConstraintEffect, GrantConstraintKind,
-    GrantConstraintSubkind, Hash, KeyState, NonEmptyString, OpaqueLocalId, PayloadProof, RealmId,
-    RequestId, ServiceOperationId,
+    GrantConstraintSubkind, Hash, KeyState, NonEmptyString, OpaqueLocalId, PayloadProof, RequestId,
+    ServiceOperationId,
 };
 use chrono::Utc;
 use serde_json::{Value, json};
-
-pub fn build_agent_provision_intent(
-    controller_did: &Did,
-    controller_station_id: &DidCoreId,
-    controller_realm_id: &RealmId,
-    agent_id: &DidCoreId,
-    principal_control_realm_id: &RealmId,
-    controller_authorization_ref: &DidUrl,
-    agent_slug: &str,
-    requested_scope_digest: &Hash,
-) -> anyhow::Result<crate::operation::LocalOperation> {
-    let created_at = crate::clock::now_utc();
-    let controller_actor_id = arkret_sdk::project_did_to_core_id(controller_did)?;
-    let authored = arkret_bootstrap::build_agent_provision_intent(
-        &controller_actor_id,
-        controller_realm_id,
-        agent_id,
-        principal_control_realm_id,
-        controller_authorization_ref,
-        agent_slug,
-        requested_scope_digest,
-        HandleVisibility::Private,
-        None,
-        arkret_bootstrap::AgentProvisionIntentOptions {
-            controller_station_id: controller_station_id.clone(),
-            created_at,
-        },
-    )?;
-    // The bootstrap builder finalizes producer content, while the shared
-    // submitter owns signing and Station admission. Reconstruct only that
-    // exact producer intent, never a retired Seal basis.
-    Ok(crate::operation::LocalOperation::new(
-        arkret_event_draft::EventIntent::from_authored(&authored),
-    ))
-}
 
 // ─────────────────────────────────────────────────────────────────────
 // Actor Profile `actor_kind` is non-authoritative display metadata.
@@ -110,7 +74,7 @@ pub enum AgentGrantPreset {
     Draft,
     /// `reply_as_agent` — agent posts as itself.
     ReplyAsAgent,
-    /// `act_on_behalf` — controller is actor_id, agent is executed_by.
+    /// `acting_on_behalf_allowed` — controller is actor_id, agent is executed_by.
     /// High risk: the expanded grant carries a controller-approval
     /// constraint per §4.10.
     ActOnBehalf,
@@ -134,7 +98,7 @@ impl AgentGrantPreset {
             Self::Read => "read",
             Self::Draft => "draft",
             Self::ReplyAsAgent => "reply_as_agent",
-            Self::ActOnBehalf => "act_on_behalf",
+            Self::ActOnBehalf => "acting_on_behalf_allowed",
             Self::Organizer => "organizer",
         }
     }
@@ -239,7 +203,7 @@ impl AgentServiceScopePreset {
                 "Submit approved durable Events for governing Station acceptance."
             }
             Self::SecureMessaging => {
-                "Publish and consume MLS key packages, verify encrypted conversation membership, receive encrypted messages, and send encrypted live presence."
+                "Read authorized conversation metadata, publish and consume MLS key packages, verify encrypted conversation membership, receive encrypted messages, and send encrypted live presence."
             }
             Self::ResolveResources => "Fetch event resources referenced by allowed payloads.",
         }
@@ -250,9 +214,10 @@ impl AgentServiceScopePreset {
             // Each preset declares only the operation it directly authors.
             // The canonical registry selects capabilities from this draft and
             // `service_actions_for_presets` completes the atomic runtime floor.
-            Self::SubscribeEvents => {
-                &[ServiceOperationId::SELF_COMMITTED_EVENT_STREAM_SUBSCRIBE_V1]
-            }
+            Self::SubscribeEvents => &[
+                ServiceOperationId::SELF_DIRECT_CONVERSATION_READ_RESOLVE_V1,
+                ServiceOperationId::SELF_COMMITTED_EVENT_STREAM_SUBSCRIBE_V1,
+            ],
             Self::ScanCatchUp => &[
                 ServiceOperationId::SELF_COMMITTED_EVENT_READ_SCAN_V1,
                 ServiceOperationId::SELF_SIGNER_KEYS_READ_RESOLVE_V1,
@@ -335,7 +300,12 @@ pub fn requested_scope_for_presets(
     content_presets: &[AgentGrantPreset],
     service_presets: &[AgentServiceScopePreset],
 ) -> Option<AgentKeyScope> {
-    let content_actions = content_actions_for_presets(content_presets);
+    let mut content_actions = content_actions_for_presets(content_presets);
+    // Snapshot/current bootstrap needs its own content action in the new
+    // immutable ceiling. Service operation selectors never imply this action.
+    if service_presets.contains(&AgentServiceScopePreset::SecureMessaging) {
+        push_unique_action(&mut content_actions, CapabilityActionId::OBJECT_READ);
+    }
     let service_actions = match service_actions_for_presets(service_presets) {
         Ok(actions) => actions,
         Err(error) => {
@@ -772,7 +742,7 @@ fn validate_runtime_approval_candidate(
 /// bounds the TTL. This is a separate Realm-scoped grant and is never
 /// materialized by provisioning.
 ///
-/// `act_on_behalf` additionally attaches a `claim_based` /
+/// `acting_on_behalf_allowed` additionally attaches a `claim_based` /
 /// `accountability` constraint (`controller_approval_required=true`) per
 /// §4.10 so the high-risk executor path cannot run without controller
 /// approval.

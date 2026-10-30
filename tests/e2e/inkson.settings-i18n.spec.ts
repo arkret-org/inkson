@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { CURRENT_ACCOUNT_ID, validateMockSchema } from "./mockArkretApi";
 import {
   registerStrandsBeforeEach,
   gotoAndDismissRecovery,
@@ -7,9 +8,6 @@ import {
 registerStrandsBeforeEach();
 
 test("settings capabilities and consent read surfaces and forms follow the active language", async ({ page }) => {
-  await page.route("**/_arkret/self/authz/effective-grants?*", async (route) => {
-    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ grants: [] }) });
-  });
   let failConsent = true;
   let consentReads = 0;
   await page.route("**/_arkret/self/consent/results", async (route) => {
@@ -23,7 +21,6 @@ test("settings capabilities and consent read surfaces and forms follow the activ
             title: "Internal error",
             status: 500,
             detail: "consent-read-detail / 原文",
-            code: "internal_error",
           }
         : { consents: [] }),
     });
@@ -49,20 +46,64 @@ test("settings capabilities and consent read surfaces and forms follow the activ
     await page.getByTestId("consent-retry-button").click();
     await expect.poll(() => consentReads).toBeGreaterThan(readsBefore);
     await expect(error).toHaveCount(0);
-    await expect(page.getByTestId("consent-grant-empty")).toContainText(language === "zh" ? "尚未设置联系许可" : "No consent decisions yet");
-    await page.getByTestId("consent-new-grant-button").click();
-    await expect(page.getByTestId("consent-new-grant-submit-button")).toBeDisabled();
-    await page.getByTestId("consent-new-grant-scope-input").getByRole("button").click();
+    await expect(page.getByTestId("consent-peer-empty")).toContainText(language === "zh" ? "尚未设置联系许可" : "No consent decisions yet");
+    await expect(page.getByTestId("consent-read-complete-button")).toBeDisabled();
+    await expect(page.getByTestId("consent-confirm-replace-button")).toHaveCount(0);
+    await expect(page.getByTestId("consent-read-complete-button")).toHaveText(language === "zh" ? "读取完整许可" : "Read complete permissions");
+    await page.getByTestId("consent-request-scope-input").getByRole("button").click();
     for (const name of language === "zh"
-      ? ["群组邀请", "语音通话", "视频通话", "在线状态", "全部联系许可"]
-      : ["Group invites", "Voice calls", "Video calls", "Presence", "All consent permissions"]) {
+      ? ["语音通话", "视频通话", "在线状态"]
+      : ["Voice calls", "Video calls", "Presence"]) {
       await expect(page.getByRole("option", { name, exact: true })).toBeVisible();
     }
+    await expect(page.getByRole("option")).toHaveCount(3);
     await page.keyboard.press("Escape");
-    await page.getByTestId("consent-request-button").click();
     await expect(page.getByTestId("consent-request-submit-button")).toBeDisabled();
     await expect(page.getByTestId("consent-request-submit-button")).toHaveText(language === "zh" ? "发送请求" : "Send request");
   }
+});
+
+test("invite policy saves the actual Account policy and restores it after reload", async ({ page }) => {
+  const policyPath = "/_arkret/self/invite-receive-policy";
+  const writes: Array<Record<string, unknown>> = [];
+  page.on("request", request => {
+    if (request.method() === "PUT" && new URL(request.url()).pathname === policyPath) {
+      // Observe every actual write before validating it in the test flow. A
+      // callback assertion must not hide an emitted request from the count.
+      writes.push(request.postDataJSON());
+    }
+  });
+  await gotoAndDismissRecovery(page, "/settings/invite-policy");
+  await expect(page.getByTestId("invite-policy-blocked-row")).toHaveCount(1);
+  await page.getByTestId("invite-policy-explicit-behavior").getByRole("button").click();
+  await page.getByRole("option", { name: "Notify me", exact: true }).click();
+  await page.getByTestId("invite-policy-blocked-row").getByRole("button").click();
+  await expect(page.getByTestId("invite-policy-blocked-empty")).toBeVisible();
+  const saveResponsePromise = page.waitForResponse(response =>
+    response.request().method() === "PUT" && new URL(response.url()).pathname === policyPath);
+  await page.getByTestId("invite-policy-save-button").click();
+  const saveResponse = await saveResponsePromise;
+  expect(saveResponse.status()).toBe(200);
+  const savedPolicy = await saveResponse.json();
+  await expect(page.getByTestId("invite-policy-status")).toHaveText("Saved.");
+  expect(writes).toHaveLength(1);
+  const written = writes[0];
+  validateMockSchema("schemas/invite-receive-policy.schema.json", written);
+  expect(written.account_id).toEqual(CURRENT_ACCOUNT_ID);
+  expect(written.explicit_address_behavior).toBe("notify");
+  // The formal field is optional. The SDK canonical serializer omits an
+  // empty denied_actor_ids Vec; omission decodes as the empty block list.
+  expect(written).not.toHaveProperty("denied_actor_ids");
+  expect(savedPolicy).toEqual(written);
+  const reloadResponsePromise = page.waitForResponse(response =>
+    response.request().method() === "GET" && new URL(response.url()).pathname === policyPath);
+  await page.reload();
+  const reloadResponse = await reloadResponsePromise;
+  expect(reloadResponse.status()).toBe(200);
+  expect(await reloadResponse.json()).toEqual(written);
+  await expect(page.getByTestId("invite-policy-explicit-behavior").getByRole("button")).toHaveText("Notify me");
+  await expect(page.getByTestId("invite-policy-blocked-empty")).toBeVisible();
+  expect(writes).toHaveLength(1);
 });
 
 test("settings invite policy labels and options follow the active language without saving", async ({ page }) => {

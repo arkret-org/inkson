@@ -8,9 +8,8 @@
 use std::time::Duration;
 
 use arkret_models_collaboration::agent_operations::{
-    AgentDeactivateRequestBody, AgentLifecycleState, AgentPauseRequestBody, AgentProvisionOutcome,
-    AgentProvisionRequestBody, AgentRenewPairingOutcome, AgentResumeRequestBody, AgentRuntimeState,
-    AgentView, KeyState,
+    AgentDeactivateRequestBody, AgentLifecycleState, AgentPauseRequestBody,
+    AgentRenewPairingResponseBody, AgentResumeRequestBody, AgentRuntimeState, AgentView, KeyState,
 };
 use arkret_models_collaboration::events_payloads::agent::AgentKeyScope;
 use dioxus::prelude::*;
@@ -20,13 +19,12 @@ use dioxus_router::hooks::{use_navigator, use_route};
 use super::model::{
     AgentGrantPreset, AgentServiceScopePreset, agent_lifecycle_wire, agent_runtime_state_wire,
     agent_state_badge_class, agent_state_label, agent_view_from_directory_row,
-    build_agent_pairing_deep_link, build_agent_pairing_handoff_token, build_agent_provision_intent,
-    is_pairing_request_expired, key_state_runtime_state, render_agent_pairing_qr_svg,
-    requested_scope_for_presets,
+    build_agent_pairing_deep_link, build_agent_pairing_handoff_token, is_pairing_request_expired,
+    key_state_runtime_state, render_agent_pairing_qr_svg, requested_scope_for_presets,
 };
 use crate::components::{QrSharePanel, UiIcon};
 use crate::routes::Route;
-use crate::transport::auth::{with_authed_api, with_authed_sdk_client, with_event_submitter};
+use crate::transport::auth::{with_authed_sdk_client, with_event_submitter};
 use crate::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
 use crate::ui::dialog::Dialog;
@@ -97,6 +95,7 @@ pub fn AgentAdminPanel(
     let mut new_agent_slug = use_signal(String::new);
     let mut new_agent_avatar_blob_ref = use_signal(String::new);
     let provision_in_flight = use_signal(|| false);
+    let mut provision_operation_id = use_signal(|| None::<arkret_sdk::ProtocolOperationId>);
     let mut provision_presets =
         use_signal(|| vec![AgentGrantPreset::Read, AgentGrantPreset::ReplyAsAgent]);
     let mut provision_service_scopes = use_signal(|| AgentServiceScopePreset::DEFAULTS.to_vec());
@@ -125,6 +124,7 @@ pub fn AgentAdminPanel(
         create_mode,
         new_agent_avatar_blob_ref,
         provision_in_flight,
+        provision_operation_id,
         deactivate_dialog_open,
         deactivate_confirm,
         pairing_action_agent_id,
@@ -160,6 +160,18 @@ pub fn AgentAdminPanel(
     }
 
     use_agent_selection(agents, selected_agent_id, active_agent_filter.clone());
+
+    {
+        let base = base_url.clone();
+        use_effect(move || {
+            let _ = owned_agents_rev();
+            let original = provision_operation_id();
+            let in_flight = provision_in_flight();
+            if original.is_some() && !in_flight && create_mode() {
+                controller.reconcile_completed_provision(base.clone(), token());
+            }
+        });
+    }
 
     {
         let base = base_url.clone();
@@ -259,6 +271,7 @@ pub fn AgentAdminPanel(
                                     last_op_status.set(String::new());
                                     new_agent_slug.set(String::new());
                                     new_agent_avatar_blob_ref.set(String::new());
+                                    provision_operation_id.set(None);
                                     create_mode.set(true);
                                 },
                                 UiIcon { name: "plus" }
@@ -338,6 +351,12 @@ pub fn AgentAdminPanel(
                                             }
                                         },
                                         span { class: "agent-admin-list-row-main",
+                                            crate::components::IdentityAvatar {
+                                                seed: id.clone(),
+                                                alt_text: slug_label.clone(),
+                                                blob_ref: agent.agent.avatar_blob_ref.as_ref().map(ToString::to_string),
+                                                test_id: Some("agent-admin-avatar".to_owned()),
+                                            }
                                             strong { "{slug_label}" }
                                             span { class: "{agent_state_badge_class(status)}", "{agent_state_label(status)}" }
                                             span { class: "{agent_state_badge_class(runtime_state)}", "{agent_state_label(runtime_state)}" }
@@ -479,6 +498,7 @@ pub fn AgentAdminPanel(
                                                         controller_principal_id: controller_principal_id
                                                             .clone(),
                                                         slug: new_agent_slug(),
+                                                        avatar_blob_ref: new_agent_avatar_blob_ref(),
                                                         content_presets: provision_presets.read().clone(),
                                                         service_scopes: provision_service_scopes
                                                             .read()
@@ -495,6 +515,7 @@ pub fn AgentAdminPanel(
                                         disabled: agent_provision_in_flight,
                                         onclick: move |_| {
                                             new_agent_avatar_blob_ref.set(String::new());
+                                            provision_operation_id.set(None);
                                             create_mode.set(false);
                                         },
                                         "Cancel"

@@ -31,6 +31,10 @@ struct BuildInput {
     #[serde(default)]
     demo_notification: bool,
     #[serde(default)]
+    demo_event_redaction: bool,
+    #[serde(default)]
+    demo_search_policy: Option<arkret_models_collaboration::governance::operation_wire::Policy>,
+    #[serde(default)]
     directed_invite: bool,
     #[serde(default)]
     plaintext_visible_services: Option<PlaintextVisibleServicesPayload>,
@@ -41,7 +45,8 @@ struct BuildInput {
 struct Fixture {
     snapshot: RealmStateSnapshot,
     committed_events: Vec<CommittedEventFullView>,
-    signer_facts: Vec<arkret_models_collaboration::authority_commit::HumanHistoricalSignerFact>,
+    signer_facts:
+        Vec<arkret_models_collaboration::authority_commit::AccountDeviceHistoricalSignerFact>,
     source_create: CommittedEventFullView,
     source_authorization: CommittedEventFullView,
     identity: FixtureIdentity,
@@ -163,14 +168,18 @@ struct Builder {
     source_authorization: CommittedEventFullView,
     identity: FixtureIdentity,
     events: Vec<CommittedEventFullView>,
-    facts: Vec<arkret_models_collaboration::authority_commit::HumanHistoricalSignerFact>,
-    rows: Vec<TypedCurrentRow>,
+    facts: Vec<arkret_models_collaboration::authority_commit::AccountDeviceHistoricalSignerFact>,
+    rows: Vec<CurrentState>,
     ids: BTreeMap<String, String>,
     public_blobs: BTreeMap<String, Base64UrlString>,
     managed_agent: Option<ManagedAgentFixture>,
     invite_recipient: Option<Box<Builder>>,
     directed_invite: bool,
 }
+
+#[derive(Debug, thiserror::Error)]
+#[error("watch expected_value differs from the complete current value")]
+struct FixtureWatchConflict;
 
 fn at(position: usize) -> chrono::DateTime<chrono::Utc> {
     chrono::DateTime::parse_from_rfc3339("2026-09-19T00:00:00.000Z")
@@ -187,57 +196,7 @@ fn unsigned<T: Serialize>(value: &T, excluded: &[&str]) -> Result<Value> {
     Ok(value)
 }
 
-fn commit(
-    authority: &MockServiceAuthority,
-    event: &Event,
-    position: u64,
-    predecessor: Option<RealmCommitId>,
-    genesis: EventId,
-    fact: Option<Hash>,
-) -> Result<RealmCommit> {
-    let mut value = RealmCommit {
-        commit_id: RealmCommitId::from_digest([0; 32]),
-        realm_id: event.realm_id.clone(),
-        stream_ref: CommitStreamRef::from_scope(&event.scope_ref, Some(event.realm_id.clone()))?,
-        stream_position: position,
-        previous_commit_ref: predecessor,
-        event_ref: event.event_id.clone(),
-        governance_generation: 0,
-        authority_ref: arkret_wire::RealmCommitAuthorityRef::GenesisOrChangeEvent(genesis),
-        committed_at: event.created_at,
-        producer_signer_fact_digest: fact,
-        signature: arkret_signatures::detached_object::sign_detached_object(
-            &json!({}),
-            arkret_wire::DetachedSignatureContext::RealmCommit,
-            authority.verification_method.clone(),
-            event.created_at,
-            &authority.signing_key,
-        )?,
-    };
-    value.commit_id = RealmCommitId::from_digest(arkret_sdk::canonical::sha256_bytes(
-        &arkret_sdk::canonical::canonical_json_bytes(&unsigned(
-            &value,
-            &["commit_id", "signature"],
-        )?)?,
-    ));
-    value.signature = arkret_signatures::detached_object::sign_detached_object(
-        &unsigned(&value, &["signature"])?,
-        arkret_wire::DetachedSignatureContext::RealmCommit,
-        authority.verification_method.clone(),
-        event.created_at,
-        &authority.signing_key,
-    )?;
-    value.verify_commit_id_matches_content()?;
-    arkret_signatures::detached_object::verify_detached_object_signature(
-        &value.signature,
-        &unsigned(&value, &["signature"])?,
-        arkret_wire::DetachedSignatureContext::RealmCommit,
-        &arkret_signatures::PublicKeyMaterial::Ed25519Raw {
-            bytes: authority.signing_key.verifying_key().to_bytes().to_vec(),
-        },
-    )?;
-    Ok(value)
-}
+use arkret_test_kit::authority_objects::signed_commit as commit;
 
 impl Builder {
     fn new(input: &BuildInput) -> Result<Self> {
@@ -263,7 +222,7 @@ impl Builder {
                     "alice"
                 },
                 also_known_as: &[],
-                version_time: at(0),
+                version_created_at: at(0),
                 did_key_fragment: Some("signing-1"),
             },
             &seed,
@@ -272,7 +231,7 @@ impl Builder {
         let mut resolver = arkret_identity::DidWebvhResolver::new();
         resolver.insert_from_https_response(
             &did,
-            arkret_identity::DidWebvhDocumentOutcome {
+            arkret_identity::DidWebvhDocumentHttpResponse {
                 url: arkret_identity::DidWebvhResolver::document_url(&did)?,
                 content_type: "application/json".into(),
                 body: serde_json::to_vec(&inception.log_entry["state"])?,
@@ -280,7 +239,7 @@ impl Builder {
         )?;
         resolver.ingest_log(
             &did,
-            arkret_identity::DidWebvhLogOutcome {
+            arkret_identity::DidWebvhLogHttpResponse {
                 url: arkret_identity::DidWebvhResolver::log_url(&did)?,
                 content_type: "application/jsonl".into(),
                 body: serde_json::to_vec(&inception.log_entry)?,
@@ -307,11 +266,15 @@ impl Builder {
         let multibase =
             ed25519_pubkey_to_did_key_multibase(producer_key.verifying_key().as_bytes());
         let mut authorize = DeviceAuthorizePayload {
+            expected_control_revision: None,
+            expected_device_revision: None,
             device_id: device_id.clone(),
             device_public_key_did: NonEmptyString::new(format!("did:key:{multibase}"))
                 .map_err(anyhow::Error::msg)?,
-            hpke_key: NonEmptyString::new(base64url_encode([17; 32]))
-                .map_err(anyhow::Error::msg)?,
+            hpke_key: NonEmptyString::new(arkret_sdk::encode_multibase_base58btc(
+                [vec![0xec, 0x01], vec![17; 32]].concat(),
+            ))
+            .map_err(anyhow::Error::msg)?,
             algorithms: ["Ed25519", "HPKE-X25519-HKDF-SHA256-AES128GCM"]
                 .into_iter()
                 .map(|s| NonEmptyString::new(s).map_err(anyhow::Error::msg))
@@ -361,10 +324,6 @@ impl Builder {
                 principal_did: did.clone(),
                 genesis_salt: GenesisSalt::new(base64url_encode([33; 32]))?,
                 trust_domain: TrustDomainId::new("ak:trust_domain:server.local")?,
-                did_inception_ref: SemanticRef::new(
-                    version.clone(),
-                    arkret_bootstrap::DID_INCEPTION_REF_ROLE,
-                ),
                 initial_resolution: ResolutionCommitment {
                     did: did.clone(),
                     method_history_head: version.clone(),
@@ -387,7 +346,15 @@ impl Builder {
             &root,
             arkret_sdk::signatures::SignEventOptions::new().with_created_at(at(0)),
         )?;
-        let source_create = commit(&authority, &create, 0, None, create.event_id.clone(), None)?;
+        let source_create = commit(
+            &authority.verification_method,
+            &authority.signing_key,
+            &create,
+            0,
+            None,
+            create.event_id.clone(),
+            None,
+        )?;
         let mut authorization = TypedEventDraft::<event_spec::DeviceAuthorize>::new(
             ScopeRef::Realm {
                 realm_id: create.realm_id.clone(),
@@ -413,7 +380,8 @@ impl Builder {
             updated_at: at(0),
         };
         let source_commit = commit(
-            &authority,
+            &authority.verification_method,
+            &authority.signing_key,
             &authorization,
             1,
             Some(source_create.commit_id.clone()),
@@ -429,7 +397,7 @@ impl Builder {
             event: create.into_event(),
         };
         let key = arkret_models_identity::signer_key_operations::ResolvedSignerKey {
-            public_key_b64u: Base64UrlString::new(base64url_encode(
+            public_key_base64url: Base64UrlString::new(base64url_encode(
                 producer_key.verifying_key().as_bytes(),
             ))
             .map_err(anyhow::Error::msg)?,
@@ -482,6 +450,8 @@ impl Builder {
                 empty_board: true,
                 encrypted: false,
                 demo_notification: false,
+                demo_event_redaction: false,
+                demo_search_policy: None,
                 directed_invite: false,
                 plaintext_visible_services: None,
             };
@@ -512,24 +482,26 @@ impl Builder {
             &canonical::canonical_json_bytes(&event.digest_payload()?)?,
             &event.actor_id,
             &arkret_signatures::PublicKeyMaterial::Ed25519Raw {
-                bytes: base64url_decode(self.key.public_key_b64u.as_str())?,
+                bytes: base64url_decode(self.key.public_key_base64url.as_str())?,
             },
             DigestSuite::Sha256,
         )?;
-        let fact = arkret_models_collaboration::authority_commit::HumanHistoricalSignerFact {
-            event_id: event.event_id.clone(),
-            actor: self.actor.clone(),
-            device_id: self.source_authorization.event.payload["device_id"]
-                .as_str()
-                .ok_or_else(|| anyhow::anyhow!("controller device missing"))?
-                .parse()?,
-            verification_method: proof.verification_method.clone(),
-            key: self.key.clone(),
-            accepted_at: event.created_at,
-        };
+        let fact =
+            arkret_models_collaboration::authority_commit::AccountDeviceHistoricalSignerFact {
+                event_id: event.event_id.clone(),
+                actor: self.actor.clone(),
+                device_id: self.source_authorization.event.payload["device_id"]
+                    .as_str()
+                    .ok_or_else(|| anyhow::anyhow!("controller device missing"))?
+                    .parse()?,
+                verification_method: proof.verification_method.clone(),
+                key: self.key.clone(),
+                accepted_at: event.created_at,
+            };
         fact.validate_event_binding(&event, DigestSuite::Sha256)?;
         let accepted = commit(
-            &self.authority,
+            &self.authority.verification_method,
+            &self.authority.signing_key,
             &event,
             position,
             previous,
@@ -579,7 +551,7 @@ impl Builder {
                 "assistant"
             },
             controller_principal_id: &controller.principal_id,
-            version_time: time(2),
+            version_created_at: time(2),
             root_seed: &[41; 32],
             next_root_public_key_multibase: &next,
         })?;
@@ -589,7 +561,7 @@ impl Builder {
         let delegation =
             DidUrl::new(format!("{did}#managed-controller")).map_err(anyhow::Error::msg)?;
         let requested_scope: AgentKeyScope = serde_json::from_value(json!({
-            "actions":["ak.event.read"], "resources":[{"kind":"operation","operation":"ak.self.committed_event.read.scan.v1"}]
+            "actions":[arkret_wire::CapabilityActionId::EVENT_READ], "resources":[{"kind":"operation","operation":arkret_wire::CapabilityActionId::SELF_COMMITTED_EVENT_READ_SCAN_V1}]
         }))?;
         let digest = arkret_models_collaboration::agent_scope::agent_requested_scope_digest(
             &agent_id,
@@ -663,7 +635,7 @@ impl Builder {
             did: did.as_str(),
             local_id: &inception.local_id,
             previous_entries: std::slice::from_ref(&inception.log_entry),
-            version_time: time(4),
+            version_created_at: time(4),
             current_root_seed: &[42; 32],
             next_root_public_key_multibase: &successor,
             controller_principal_id: &controller.principal_id,
@@ -673,7 +645,7 @@ impl Builder {
         let mut resolver = arkret_identity::DidWebvhResolver::new();
         resolver.insert_from_https_response(
             &did,
-            arkret_identity::DidWebvhDocumentOutcome {
+            arkret_identity::DidWebvhDocumentHttpResponse {
                 url: arkret_identity::DidWebvhResolver::document_url(&did)?,
                 content_type: "application/json".into(),
                 body: serde_json::to_vec(&binding.log_entry["state"])?,
@@ -684,7 +656,7 @@ impl Builder {
         log.extend(serde_json::to_vec(&binding.log_entry)?);
         resolver.ingest_log(
             &did,
-            arkret_identity::DidWebvhLogOutcome {
+            arkret_identity::DidWebvhLogHttpResponse {
                 url: arkret_identity::DidWebvhResolver::log_url(&did)?,
                 content_type: "application/jsonl".into(),
                 body: log,
@@ -851,8 +823,8 @@ impl Builder {
                 && leaves[0].leaf_index == 0
                 && leaves[0].actor_id == self.actor
                 && leaves[0].signature_key
-                    == payload.creator_leaf_authority.leaf_signature_key_b64u
-                && leaves[0].signature_key == self.key.public_key_b64u,
+                    == payload.creator_leaf_authority.leaf_signature_key_base64url
+                && leaves[0].signature_key == self.key.public_key_base64url,
             "MLS Genesis creator leaf differs from the authorized fixture actor/key"
         );
         Ok(())
@@ -878,8 +850,11 @@ impl Builder {
                 .as_deref()
                 .ok_or_else(|| anyhow::anyhow!("fixture Event belongs to another Account actor"))?;
             ensure!(
-                event.kind == EventKind::InviteAccept && event.actor_id == recipient.actor,
-                "fixture secondary producer may only accept its own directed Invite"
+                matches!(
+                    event.kind,
+                    EventKind::InviteAccept | EventKind::StrandWatchSet
+                ) && event.actor_id == recipient.actor,
+                "fixture secondary producer must use its own directed Invite or watch cell"
             );
             recipient
         };
@@ -889,17 +864,18 @@ impl Builder {
             .producer_proof
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("fixture Event omits its producer proof"))?;
-        let fact = arkret_models_collaboration::authority_commit::HumanHistoricalSignerFact {
-            event_id: event.event_id.clone(),
-            actor: event.actor_id.clone(),
-            device_id: producer.source_authorization.event.payload["device_id"]
-                .as_str()
-                .ok_or_else(|| anyhow::anyhow!("authorization device missing"))?
-                .parse()?,
-            verification_method: proof.verification_method.clone(),
-            key: producer.key.clone(),
-            accepted_at,
-        };
+        let fact =
+            arkret_models_collaboration::authority_commit::AccountDeviceHistoricalSignerFact {
+                event_id: event.event_id.clone(),
+                actor: event.actor_id.clone(),
+                device_id: producer.source_authorization.event.payload["device_id"]
+                    .as_str()
+                    .ok_or_else(|| anyhow::anyhow!("authorization device missing"))?
+                    .parse()?,
+                verification_method: proof.verification_method.clone(),
+                key: producer.key.clone(),
+                accepted_at,
+            };
         fact.validate_event_binding(&event, DigestSuite::Sha256)?;
         let predecessor = self.events.last().map(|view| view.commit.commit_id.clone());
         let genesis = self
@@ -908,7 +884,8 @@ impl Builder {
             .map(|view| view.event.event_id.clone())
             .unwrap_or_else(|| event.event_id.clone());
         let accepted = commit(
-            &self.authority,
+            &self.authority.verification_method,
+            &self.authority.signing_key,
             &event,
             self.events.len() as u64,
             predecessor,
@@ -942,9 +919,9 @@ impl Builder {
         value: T,
     ) -> Result<()> {
         self.rows.retain(
-            |row| !matches!(row, TypedCurrentRow::Value { selector: old, .. } if old == &selector),
+            |row| !matches!(row, CurrentState::Value { selector: old, .. } if old == &selector),
         );
-        self.rows.push(TypedCurrentRow::Value {
+        self.rows.push(CurrentState::Value {
             selector,
             source_stream_ref: full.commit.stream_ref.clone(),
             revision: CurrentRevision {
@@ -1029,7 +1006,7 @@ impl Builder {
                     CurrentSelector::MemberState {
                         actor_id: payload.member_id,
                     },
-                    arkret_wire::MemberStateCurrent {
+                    arkret_wire::MemberStateValue {
                         membership: serde_json::from_value(serde_json::to_value(
                             payload.membership,
                         )?)?,
@@ -1052,7 +1029,7 @@ impl Builder {
                     CurrentSelector::MlsGroup {
                         scope_ref: payload.effective_scope().clone(),
                     },
-                    arkret_wire::MlsGroupCurrent {
+                    arkret_wire::MlsGroupValue {
                         effective_scope: payload.effective_scope().clone(),
                         genesis_event_ref: full.event.event_id.clone(),
                         cipher_suite: payload.cipher_suite,
@@ -1098,17 +1075,123 @@ impl Builder {
                 strand.id = Some(id.clone());
                 self.row(full, CurrentSelector::Strand { strand_id: id }, strand)?;
             }
+            EventKind::StrandWatchSet => {
+                let watch = full.event.typed_payload::<event_spec::StrandWatchSet>()?;
+                ensure!(
+                    watch.watcher_actor_id == full.event.actor_id,
+                    "fixture watch must belong to its complete authenticated Actor"
+                );
+                let strand = self
+                    .rows
+                    .iter()
+                    .find_map(|row| match row {
+                        CurrentState::Value {
+                            selector: CurrentSelector::Strand { strand_id },
+                            value,
+                            ..
+                        } if strand_id == &watch.strand_id => Some(value),
+                        _ => None,
+                    })
+                    .ok_or_else(|| anyhow::anyhow!("fixture watch requires its original Strand"))?;
+                ensure!(
+                    strand.get("state").and_then(Value::as_str) == Some("active")
+                        && strand.get("scope_circle_id").is_none_or(Value::is_null)
+                        && full.event.scope_ref
+                            == (ScopeRef::Realm {
+                                realm_id: full.event.realm_id.clone()
+                            }),
+                    "fixture watch requires the active Realm-default Strand namespace"
+                );
+                let selector = CurrentSelector::StrandWatch {
+                    strand_id: watch.strand_id,
+                    watcher_actor_id: watch.watcher_actor_id,
+                };
+                let current = self
+                    .rows
+                    .iter()
+                    .find_map(|row| match row {
+                        CurrentState::Value {
+                            selector: existing,
+                            value,
+                            ..
+                        } if existing == &selector => Some(value.clone()),
+                        _ => None,
+                    })
+                    .map(serde_json::from_value::<StrandWatchValue>)
+                    .transpose()?;
+                if current != watch.expected_value {
+                    return Err(FixtureWatchConflict.into());
+                }
+                let value = match watch.level {
+                    Some(level) => StrandWatchValue::Set(StrandWatchExpectedValue {
+                        level,
+                        level_public: watch.level_public,
+                    }),
+                    None => StrandWatchValue::Cleared(()),
+                };
+                self.row(full, selector, value)?;
+            }
             EventKind::MessageCreate => {
                 let message = full.event.typed_payload::<event_spec::MessageCreate>()?;
                 ensure!(
                     self.rows.iter().any(|row| matches!(row,
-                        TypedCurrentRow::Value {
+                        CurrentState::Value {
                             selector: CurrentSelector::Strand { strand_id }, ..
                         } if strand_id == &message.strand_id
                     )),
                     "fixture Message requires its exact existing Strand"
                 );
-                // Messages belong to the committed Event stream, not a current selector.
+                self.row(
+                    full,
+                    CurrentSelector::MessageRevision {
+                        message_id: MessageId::from_event_id(&full.event.event_id),
+                    },
+                    payload,
+                )?;
+            }
+            EventKind::PolicySet => {
+                let policy = full.event.typed_payload::<event_spec::PolicySet>()?;
+                policy.validate()?;
+                let arkret_sdk::PolicySetValue::Governance(value) = policy.value else {
+                    anyhow::bail!("fixture Policy must be a governance document");
+                };
+                ensure!(
+                    value.realm_id.as_ref() == Some(&full.event.realm_id),
+                    "fixture Policy Realm differs"
+                );
+                self.row(
+                    full,
+                    CurrentSelector::Policy {
+                        policy_id: policy.policy_id,
+                    },
+                    value,
+                )?;
+            }
+            EventKind::Redaction => {
+                let redaction = full.event.typed_payload::<event_spec::Redaction>()?;
+                ensure!(
+                    redaction.target_ref.as_str().starts_with("ak:event:"),
+                    "fixture supports exact Event cropping only"
+                );
+                let mut value: arkret_models_collaboration::events_payloads::redaction::ObjectRedactionCurrentValue = serde_json::from_value(json!({"assertions":[{
+                    "tag_id":format!("{}:0",full.event.event_id),"value":redaction
+                }]}))?;
+                let selector = CurrentSelector::ObjectRedaction {
+                    target_ref: redaction.target_ref.to_string(),
+                };
+                if let Some(CurrentState::Value {
+                    value: previous, ..
+                }) = self.rows.iter().find(|row| {
+                    matches!(row,
+                        CurrentState::Value { selector: held, .. } if held == &selector
+                    )
+                }) {
+                    let previous: arkret_models_collaboration::events_payloads::redaction::ObjectRedactionCurrentValue = serde_json::from_value(previous.clone())?;
+                    value.assertions.extend(previous.assertions);
+                    value.assertions.sort_by(|a, b| a.tag_id.cmp(&b.tag_id));
+                }
+                value.validate_for_subject(redaction.target_ref.as_str())?;
+                self.row(full, selector, value)?;
             }
             EventKind::StrandMove => {
                 let payload: StrandMovePayload = serde_json::from_value(payload)?;
@@ -1180,8 +1263,7 @@ impl Builder {
                             == (ScopeRef::Realm {
                                 realm_id: full.event.realm_id.clone()
                             })
-                        && payload.invitee_account_id.as_ref()
-                            == Some(&recipient.identity.account_id)
+                        && payload.invitee_account_id == recipient.identity.account_id
                         && payload.previous_state == InvitePreviousState::Pending,
                     "directed Invite acceptance differs from its registered recipient/prestate"
                 );
@@ -1230,7 +1312,7 @@ impl Builder {
                 for (selector, expected_value) in expected {
                     ensure!(
                         self.rows.iter().any(|row| matches!(row,
-                        TypedCurrentRow::Value { selector: actual, value, .. }
+                        CurrentState::Value { selector: actual, value, .. }
                             if actual == &selector && value == &expected_value)),
                         "directed Invite acceptance does not match its locked current prestate"
                     );
@@ -1239,7 +1321,7 @@ impl Builder {
                     actor_id: full.event.actor_id.clone(),
                 };
                 ensure!(self.rows.iter().any(|row| matches!(row,
-                    TypedCurrentRow::Value { selector, value, .. }
+                    CurrentState::Value { selector, value, .. }
                         if selector == &member && value.get("membership").and_then(Value::as_str) == Some("leave"))),
                     "directed Invite acceptance requires an accepted leave prestate");
                 // All preconditions precede the three writes; every result is
@@ -1254,7 +1336,7 @@ impl Builder {
                 self.row(
                     full,
                     member,
-                    arkret_wire::MemberStateCurrent {
+                    arkret_wire::MemberStateValue {
                         membership: arkret_wire::MembershipState::Join,
                         joined_at: None,
                     },
@@ -1303,6 +1385,8 @@ impl Builder {
             .last()
             .ok_or_else(|| anyhow::anyhow!("fixture cannot be empty"))?;
         let mut snapshot = RealmStateSnapshot {
+            purpose: arkret_wire::RealmSnapshotPurpose::FullRecovery,
+            history_basis: None,
             snapshot_id: RealmSnapshotId::from_digest([0; 32]),
             realm_id: last.event.realm_id.clone(),
             governance_generation: 0,
@@ -1372,7 +1456,7 @@ impl Builder {
         }
         use arkret_models_collaboration::sync_frames::account_subscribe::RealmSyncEntry;
         use arkret_models_collaboration::sync_frames::account_sync::RealmStreamWindow;
-        let current = AccountCurrentView {
+        let current = AccountStateView {
             realm_id: snapshot.realm_id.clone(),
             governance_generation: snapshot.governance_generation,
             stream_heads: snapshot.visible_stream_heads.clone(),
@@ -1471,7 +1555,7 @@ impl Builder {
 
 pub(super) fn realm_list(input: Value) -> Result<Value> {
     use arkret_models_collaboration::sync_frames::demand_sync::{
-        RealmListMembership, RealmListPage, RealmListRow,
+        AccountRealmView, RealmListMembership, RealmListPage,
     };
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
@@ -1486,7 +1570,7 @@ pub(super) fn realm_list(input: Value) -> Result<Value> {
             .current_state_entries
             .iter()
             .find_map(|row| {
-                let TypedCurrentRow::Value {
+                let CurrentState::Value {
                     selector, value, ..
                 } = row;
                 matches!(selector, CurrentSelector::RealmProfile)
@@ -1494,7 +1578,7 @@ pub(super) fn realm_list(input: Value) -> Result<Value> {
             })
             .transpose()?
             .map(|profile| profile.title);
-        items.push(RealmListRow {
+        items.push(AccountRealmView {
             realm_id: fixture.snapshot.realm_id,
             revision: fixture.committed_events.len() as u64,
             activity_position: index as u64,
@@ -1521,6 +1605,15 @@ pub(super) fn realm_list(input: Value) -> Result<Value> {
 
 pub(super) fn build(input: Value) -> Result<Value> {
     let mut input: BuildInput = serde_json::from_value(input)?;
+    ensure!(
+        !input.demo_event_redaction || input.demo_notification,
+        "Event crop requires its demo Message"
+    );
+    ensure!(
+        input.demo_search_policy.is_none()
+            || (input.demo_notification && !input.demo_event_redaction),
+        "Search Policy requires its independent demo Message fixture"
+    );
     ensure!(
         [9, 10, 11, 12, 13].contains(&input.salt),
         "fixture salt is not registered"
@@ -1782,7 +1875,7 @@ pub(super) fn build(input: Value) -> Result<Value> {
             group_info_ref: info_ref,
             ratchet_tree_ref: tree_ref,
             creator_leaf_authority: MlsGenesisCreatorLeafAuthority {
-                leaf_signature_key_b64u: leaves[0].signature_key.clone(),
+                leaf_signature_key_base64url: leaves[0].signature_key.clone(),
                 endpoint: MlsWelcomeRecipientEndpoint::Device { device_id: device },
                 authorization_event_ref: builder.source_authorization.event.event_id.clone(),
             },
@@ -1813,7 +1906,7 @@ pub(super) fn build(input: Value) -> Result<Value> {
                 StrandId::from_event_id(&source.event_id)
             }
         };
-        builder.author::<event_spec::MessageCreate>(
+        let message = builder.author::<event_spec::MessageCreate>(
             &realm,
             MessageCreatePayload::with_content(
                 strand_id,
@@ -1821,6 +1914,58 @@ pub(super) fn build(input: Value) -> Result<Value> {
                 ContentBlock::text(DEMO_NOTIFICATION_BODY),
             ),
         )?;
+        if input.demo_event_redaction {
+            builder.author::<event_spec::Redaction>(
+                &realm,
+                arkret_models_collaboration::events_payloads::redaction::CrossObjectRedactionPayload {
+                    target_ref: message.event_id.to_string().parse()?, reason: None,
+                    preserve: Some(vec!["kind".into(), "actor_id".into(), "created_at".into()]),
+                },
+            )?;
+            let payload = message.typed_payload::<event_spec::MessageCreate>()?;
+            // This new source proves the consumer installed the newer cut and
+            // stayed authorized, rather than hiding everything after an error.
+            builder.author::<event_spec::MessageCreate>(
+                &realm,
+                MessageCreatePayload::with_content(
+                    payload.strand_id,
+                    "discussion",
+                    ContentBlock::text("Independent current control needle"),
+                ),
+            )?;
+        }
+        if let Some(policy) = input.demo_search_policy.as_ref() {
+            policy.validate()?;
+            ensure!(
+                policy.realm_id.as_ref() == Some(&realm) && policy.created_by == builder.actor,
+                "search Policy differs from its accepted Realm/creator"
+            );
+            builder.author::<event_spec::PolicySet>(
+                &realm,
+                arkret_sdk::PolicySetStatePayload {
+                    policy_id: policy.id.clone(),
+                    expected_revision: None,
+                    value: arkret_sdk::PolicySetValue::Governance(Box::new(policy.clone())),
+                },
+            )?;
+            let mut strand =
+                Strand::new_create(realm.clone(), "Policy control", builder.actor.clone());
+            strand.created_at = at(builder.events.len() + 10);
+            strand.state = Some(ObjectState::Active);
+            strand.tracks = serde_json::from_value(json!({"discussion":{}}))?;
+            let source = builder.author::<event_spec::StrandCreate>(
+                &realm,
+                StrandCreatePayload { object: strand },
+            )?;
+            builder.author::<event_spec::MessageCreate>(
+                &realm,
+                MessageCreatePayload::with_content(
+                    StrandId::from_event_id(&source.event_id),
+                    "discussion",
+                    ContentBlock::text("Independent policy control needle"),
+                ),
+            )?;
+        }
     }
     if let Some(recipient) = builder.invite_recipient.as_deref() {
         let account = recipient.identity.account_id.clone();
@@ -1847,10 +1992,20 @@ pub(super) fn build(input: Value) -> Result<Value> {
             InviteId::from_event_id(&create.event_id).to_string(),
         );
     }
-    serde_json::to_value(builder.finish()?).map_err(Into::into)
+    let fixture = builder.finish()?;
+    super::validate_mock_response(json!({
+        "schema_ref": "schemas/service-operation-dtos.schema.json#/$defs/CommittedEventView",
+        "value": fixture.source_create,
+    }))?;
+    serde_json::to_value(fixture).map_err(Into::into)
 }
 
 fn validate_fixture(fixture: &Fixture) -> Result<Fixture> {
+    super::validate_mock_response(json!({
+        "schema_ref": "schemas/service-operation-dtos.schema.json#/$defs/CommittedEventView",
+        "value": fixture.source_create,
+    }))?;
+
     let mut expected_blobs = BTreeSet::new();
     for full in &fixture.committed_events {
         if full.event.kind == EventKind::MlsGenesis {
@@ -1881,6 +2036,8 @@ fn validate_fixture(fixture: &Fixture) -> Result<Fixture> {
         empty_board: true,
         encrypted: false,
         demo_notification: false,
+        demo_event_redaction: false,
+        demo_search_policy: None,
         directed_invite: fixture.invite_recipient.is_some(),
         plaintext_visible_services: None,
     };
@@ -1926,7 +2083,7 @@ fn require_fixture_readable(fixture: &Fixture) -> Result<()> {
             actor_id: ActorId::account(recipient.identity.account_id.clone()),
         };
         ensure!(fixture.snapshot.current_state_entries.iter().any(|row| matches!(row,
-            TypedCurrentRow::Value { selector, value, .. }
+            CurrentState::Value { selector, value, .. }
                 if selector == &member && value.get("membership").and_then(Value::as_str) == Some("join"))),
             "directed Invite fixture is not ordinarily readable before accepted join");
     }
@@ -1934,6 +2091,43 @@ fn require_fixture_readable(fixture: &Fixture) -> Result<()> {
 }
 
 pub(super) fn authority_bundle(input: Value) -> Result<Value> {
+    authority_bundle_with_nonce(
+        input,
+        Base64UrlString::new(base64url_encode([1; 32])).map_err(anyhow::Error::msg)?,
+    )
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AuthorityBundleInput {
+    fixture: Fixture,
+    request: arkret_wire::RealmAuthorityBundleRequestBody,
+}
+
+pub(super) fn authority_bundle_for_request(input: Value) -> Result<Value> {
+    let input: AuthorityBundleInput = serde_json::from_value(input)?;
+    input.request.validate()?;
+    ensure!(
+        input.fixture.snapshot.realm_id == input.request.realm_id,
+        "authority bundle Realm mismatch"
+    );
+    ensure!(
+        input
+            .fixture
+            .committed_events
+            .first()
+            .ok_or_else(|| anyhow::anyhow!("fixture has no genesis"))?
+            .event
+            .typed_payload::<event_spec::RealmCreate>()?
+            .object
+            .purpose
+            != arkret_sdk::RealmPurpose::PrincipalControl,
+        "fixture does not prove public PCR disclosure eligibility"
+    );
+    authority_bundle_with_nonce(serde_json::to_value(input.fixture)?, input.request.nonce)
+}
+
+fn authority_bundle_with_nonce(input: Value, nonce: Base64UrlString) -> Result<Value> {
     let fixture: Fixture = serde_json::from_value(input)?;
     let fixture = validate_fixture(&fixture)?;
     let authority = mock_service_authority()?;
@@ -1954,7 +2148,7 @@ pub(super) fn authority_bundle(input: Value) -> Result<Value> {
         current_service_id: authority.service_id.clone(),
         last_handoff_ref: None,
         realm_stream_head: head.clone(),
-        nonce: Base64UrlString::new(base64url_encode([1; 16])).map_err(anyhow::Error::msg)?,
+        nonce,
         expires_at: issued_at + chrono::Duration::minutes(5),
         signature: arkret_signatures::detached_object::sign_detached_object(
             &json!({}),
@@ -1997,9 +2191,66 @@ pub(super) fn authority_bundle(input: Value) -> Result<Value> {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct StreamsInput {
+    fixture: Fixture,
+    limit: u16,
+}
+
+pub(super) fn streams(input: Value) -> Result<Value> {
+    use arkret_state::AuthorityCommitStore as _;
+    let input: StreamsInput = serde_json::from_value(input)?;
+    ensure!(
+        (1..=500).contains(&input.limit),
+        "invalid stream enumeration limit"
+    );
+    let fixture = validate_fixture(&input.fixture)?;
+    require_fixture_readable(&fixture)?;
+    let store = arkret_state::MemoryAuthorityCommitStore::default();
+    for full in &fixture.committed_events {
+        store.append(&full.event, full.commit.clone())?;
+    }
+    let mut rows = Vec::new();
+    for head in &fixture.snapshot.visible_stream_heads {
+        let scan = store.scan(&StreamScanRequestBody {
+            realm_id: fixture.snapshot.realm_id.clone(),
+            stream_ref: head.stream_ref.clone(),
+            direction: arkret_wire::StreamScanDirection::After(None),
+            limit: 1,
+        })?;
+        let row = arkret_wire::RealmStreamView {
+            stream_ref: head.stream_ref.clone(),
+            head_commit_ref: head.commit_id.clone(),
+            next_position: head
+                .stream_position
+                .checked_add(1)
+                .ok_or_else(|| anyhow::anyhow!("fixture stream position exhausted"))?,
+            readable_floor: scan.readable_floor,
+        };
+        rows.push((
+            arkret_sdk::canonical::canonical_json_bytes(&row.stream_ref)?,
+            row,
+        ));
+    }
+    rows.sort_by(|left, right| left.0.cmp(&right.0));
+    ensure!(
+        rows.len() <= usize::from(input.limit),
+        "fixture requires paginated stream enumeration"
+    );
+    let page = arkret_wire::RealmStreamPage {
+        realm_id: fixture.snapshot.realm_id,
+        streams: rows.into_iter().map(|(_, row)| row).collect(),
+        next_cursor: None,
+        has_more: false,
+    };
+    page.validate()?;
+    serde_json::to_value(page).map_err(Into::into)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ScanInput {
     fixture: Fixture,
-    request: StreamScanRequest,
+    request: StreamScanRequestBody,
 }
 
 pub(super) fn scan(input: Value) -> Result<Value> {
@@ -2040,14 +2291,15 @@ pub(super) fn signer_keys(input: Value) -> Result<Value> {
         "signer query fixture Realm mismatch"
     );
     ensure!(
-        input.request.recipient_account_id
-            == fixture
-                .invite_recipient
-                .as_ref()
-                .map_or(&fixture.identity.account_id, |source| &source
-                    .identity
-                    .account_id)
-                .clone(),
+        input.request.recipient_account_id.as_ref()
+            == Some(
+                fixture
+                    .invite_recipient
+                    .as_ref()
+                    .map_or(&fixture.identity.account_id, |source| &source
+                        .identity
+                        .account_id)
+            ),
         "signer query fixture recipient Account mismatch"
     );
     let mut results = Vec::new();
@@ -2077,21 +2329,22 @@ pub(super) fn signer_keys(input: Value) -> Result<Value> {
                 _ => false,
             });
         results.push(match fact {
-            Some(fact) => SignerKeyQueryOutcome::HistoricalResolved {
+            Some(fact) => SignerKeyResolution::HistoricalResolved {
                 selector: selector.clone(),
                 key: fact.key.clone(),
                 accepted_at: fact.accepted_at,
             },
-            None => SignerKeyQueryOutcome::Unavailable {
+            None => SignerKeyResolution::Unavailable {
                 selector: selector.clone(),
             },
         });
     }
-    let outcome = SignerKeysQueryOutcome {
+    let outcome = SignerKeyQueryResponseBody {
+        recipient_actor_id: input.request.recipient_actor_id.clone(),
         request_id: input.request.request_id.clone(),
         realm_id: input.request.realm_id.clone(),
         recipient_account_id: input.request.recipient_account_id.clone(),
-        results,
+        resolutions: results,
     };
     outcome.validate_for_request(&input.request)?;
     serde_json::to_value(outcome).map_err(Into::into)
@@ -2101,12 +2354,121 @@ pub(super) fn signer_keys(input: Value) -> Result<Value> {
 #[serde(deny_unknown_fields)]
 struct ExactCurrentInput {
     fixture: Fixture,
-    request: arkret_models_collaboration::exact_current_results::ExactCurrentResultsReadRequestBody,
+    request: arkret_models_collaboration::exact_current_state::ExactCurrentStateReadRequestBody,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StrandWatchCurrentInput {
+    fixture: Fixture,
+    request: StrandWatchCurrentRequestBody,
+}
+
+pub(super) fn strand_watch_current(input: Value) -> Result<Value> {
+    let input: StrandWatchCurrentInput = serde_json::from_value(input)?;
+    input.request.validate()?;
+    let fixture = validate_fixture(&input.fixture)?;
+    require_fixture_readable(&fixture)?;
+    let account = fixture
+        .invite_recipient
+        .as_ref()
+        .map_or(&fixture.identity.account_id, |recipient| {
+            &recipient.identity.account_id
+        });
+    ensure!(
+        input.request.realm_id == fixture.snapshot.realm_id
+            && input.request.watcher_actor_id == ActorId::account(account.clone()),
+        "watch-current request does not name its complete authenticated Account and Realm"
+    );
+    ensure!(
+        fixture
+            .snapshot
+            .current_state_entries
+            .iter()
+            .any(|row| matches!(row,
+        CurrentState::Value { selector: CurrentSelector::Strand { strand_id }, value, .. }
+            if strand_id == &input.request.strand_id
+                && value.get("state").and_then(Value::as_str) == Some("active")
+                && value.get("scope_circle_id").is_none_or(Value::is_null))),
+        "watch-current requires an active Realm-default Strand"
+    );
+    let selector = StrandWatchCurrentSelector {
+        kind: StrandWatchSelectorKind::StrandWatch,
+        strand_id: input.request.strand_id.clone(),
+        watcher_actor_id: input.request.watcher_actor_id.clone(),
+    };
+    let stream = CommitStreamRef::Realm {
+        realm_id: input.request.realm_id.clone(),
+    };
+    let head = fixture
+        .snapshot
+        .visible_stream_heads
+        .iter()
+        .find(|head| head.stream_ref == stream)
+        .ok_or_else(|| anyhow::anyhow!("watch-current requires its complete Realm stream head"))?
+        .clone();
+    let current = fixture
+        .snapshot
+        .current_state_entries
+        .iter()
+        .find_map(|row| match row {
+            CurrentState::Value {
+                selector:
+                    CurrentSelector::StrandWatch {
+                        strand_id,
+                        watcher_actor_id,
+                    },
+                source_stream_ref,
+                revision,
+                value,
+            } if strand_id == &input.request.strand_id
+                && watcher_actor_id == &input.request.watcher_actor_id =>
+            {
+                Some((source_stream_ref, revision, value))
+            }
+            _ => None,
+        });
+    let outcome = match current {
+        Some((source_stream_ref, revision, value)) => StrandWatchCurrentResponseBody::Current {
+            realm_id: input.request.realm_id.clone(),
+            governance_generation: fixture.snapshot.governance_generation,
+            stream_head: head,
+            current_state: CurrentStrandWatch {
+                selector,
+                source_stream_ref: source_stream_ref.clone(),
+                revision: revision.clone(),
+                value: serde_json::from_value(value.clone())?,
+            },
+        },
+        None => {
+            // The entire signed accepted history has been replayed above;
+            // absence in an arbitrary snapshot alone cannot prove this branch.
+            ensure!(
+                !fixture.committed_events.iter().any(|full| full.event.kind
+                    == EventKind::StrandWatchSet
+                    && full.event.payload.get("strand_id")
+                        == Some(&json!(input.request.strand_id))
+                    && full.event.payload.get("watcher_actor_id")
+                        == Some(&json!(input.request.watcher_actor_id))),
+                "accepted watch history cannot become never_written"
+            );
+            StrandWatchCurrentResponseBody::NeverWritten {
+                realm_id: input.request.realm_id.clone(),
+                governance_generation: fixture.snapshot.governance_generation,
+                stream_head: head,
+                selector,
+            }
+        }
+    };
+    outcome
+        .validate_for_generation(&input.request, fixture.snapshot.governance_generation)
+        .map_err(anyhow::Error::msg)?;
+    serde_json::to_value(outcome).map_err(Into::into)
 }
 
 pub(super) fn exact_current(input: Value) -> Result<Value> {
-    use arkret_models_collaboration::exact_current_results::{
-        ExactCurrentResultSelector, ExactCurrentResultsReadOutcome,
+    use arkret_models_collaboration::exact_current_state::{
+        ExactCurrentStateReadResponseBody, ExactCurrentStateSelector,
         NeverWrittenExactCurrentSelector,
     };
     let input: ExactCurrentInput = serde_json::from_value(input)?;
@@ -2117,7 +2479,7 @@ pub(super) fn exact_current(input: Value) -> Result<Value> {
         input.request.realm_id == fixture.snapshot.realm_id,
         "exact current request belongs to another Realm"
     );
-    let ExactCurrentResultSelector::AgentInteraction(selector) = &input.request.selector else {
+    let ExactCurrentStateSelector::AgentInteraction(selector) = &input.request.selector else {
         bail!("restricted fixture only reads its managed Agent interaction selector");
     };
     ensure!(
@@ -2141,7 +2503,7 @@ pub(super) fn exact_current(input: Value) -> Result<Value> {
         .find(|head| head.stream_ref == stream)
         .ok_or_else(|| anyhow::anyhow!("fixture lacks the complete Realm stream head"))?
         .clone();
-    let outcome = ExactCurrentResultsReadOutcome::NeverWritten {
+    let outcome = ExactCurrentStateReadResponseBody::NeverWritten {
         realm_id: fixture.snapshot.realm_id.clone(),
         governance_generation: fixture.snapshot.governance_generation,
         effective_stream_head: head,
@@ -2161,7 +2523,7 @@ pub(super) fn exact_current(input: Value) -> Result<Value> {
 #[serde(deny_unknown_fields)]
 struct SubmitInput {
     fixture: Option<Fixture>,
-    request: arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest,
+    request: arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequestBody,
     #[serde(default = "default_seed")]
     seed_b64url: String,
     #[serde(default = "default_device")]
@@ -2181,6 +2543,8 @@ pub(super) fn submit(input: Value) -> Result<Value> {
         empty_board: true,
         encrypted: false,
         demo_notification: false,
+        demo_event_redaction: false,
+        demo_search_policy: None,
         directed_invite: false,
         plaintext_visible_services: None,
     };
@@ -2201,6 +2565,8 @@ pub(super) fn submit(input: Value) -> Result<Value> {
                 empty_board: true,
                 encrypted: false,
                 demo_notification: false,
+                demo_event_redaction: false,
+                demo_search_policy: None,
                 directed_invite: true,
                 plaintext_visible_services: None,
             };
@@ -2221,8 +2587,8 @@ pub(super) fn submit(input: Value) -> Result<Value> {
         builder.ids = fixture.ids;
     }
     let submissions = match &input.request {
-        SelfAuthoritySubmitRequest::Event(submission) => vec![submission.clone()],
-        SelfAuthoritySubmitRequest::OrdinaryRealmBootstrap(unit) => unit.events.clone(),
+        SelfAuthoritySubmitRequestBody::Event(submission) => vec![submission.clone()],
+        SelfAuthoritySubmitRequestBody::OrdinaryRealmBootstrap(unit) => unit.events.clone(),
         _ => bail!("fixture does not implement this registered atomic unit"),
     };
     let mut commits = Vec::new();
@@ -2241,12 +2607,18 @@ pub(super) fn submit(input: Value) -> Result<Value> {
             continue;
         }
         duplicate = false;
-        builder.append_signed(submission.event)?;
+        if let Err(error) = builder.append_signed(submission.event) {
+            if error.is::<FixtureWatchConflict>() {
+                let problem = Problem::from_code("failed_precondition", error.to_string());
+                return Ok(json!({ "fixture": builder.finish()?, "problem": problem }));
+            }
+            return Err(error);
+        }
         commits.push(builder.events.last().unwrap().commit.clone());
     }
     let outcome = match &input.request {
-        SelfAuthoritySubmitRequest::Event(_) => {
-            SelfAuthoritySubmitOutcome::Ordinary(AuthoritySubmitOutcome::Accepted {
+        SelfAuthoritySubmitRequestBody::Event(_) => {
+            SelfAuthoritySubmitResponseBody::Ordinary(AuthoritySubmitResponseBody::Accepted {
                 status: if duplicate {
                     AuthorityCommitStatus::Duplicate
                 } else {
@@ -2255,8 +2627,8 @@ pub(super) fn submit(input: Value) -> Result<Value> {
                 commit: commits.remove(0),
             })
         }
-        SelfAuthoritySubmitRequest::OrdinaryRealmBootstrap(_) => {
-            SelfAuthoritySubmitOutcome::OrdinaryRealmBootstrap(
+        SelfAuthoritySubmitRequestBody::OrdinaryRealmBootstrap(_) => {
+            SelfAuthoritySubmitResponseBody::OrdinaryRealmBootstrap(
                 OrdinaryRealmBootstrapAcceptanceOutcome {
                     unit_kind: OrdinaryRealmBootstrapUnitKind::OrdinaryRealmBootstrap,
                     status: if duplicate {
@@ -2289,7 +2661,7 @@ pub(super) fn current_principal(input: Value) -> Result<Value> {
         input.request.account_id == fixture.identity.account_id,
         "current principal fixture Account mismatch"
     );
-    let outcome = CurrentPrincipalOutcome {
+    let outcome = CurrentPrincipalResponseBody {
         request_id: input.request.request_id.clone(),
         account_id: fixture.identity.account_id,
         principal_control_realm_id: fixture.identity.principal_control_realm_id,
@@ -2306,6 +2678,234 @@ mod tests {
     };
 
     use super::*;
+
+    fn watch_builder(fixture: &Fixture) -> Result<Builder> {
+        let configuration: BuildInput = serde_json::from_value(json!({
+            "salt": 9, "title": "", "device_id": default_device(),
+        }))?;
+        let mut builder = Builder::new(&configuration)?;
+        for full in &fixture.committed_events {
+            builder.append_signed(full.event.clone())?;
+            assert_eq!(builder.events.last(), Some(full));
+        }
+        builder.ids = fixture.ids.clone();
+        Ok(builder)
+    }
+
+    #[test]
+    fn watch_current_keeps_original_cas_null_and_exact_retry_without_new_commits() -> Result<()> {
+        let initial: Fixture = serde_json::from_value(build(json!({
+            "salt": 9, "title": "Watch Realm", "board": true,
+        }))?)?;
+        let request = StrandWatchCurrentRequestBody {
+            realm_id: initial.snapshot.realm_id.clone(),
+            strand_id: initial.ids["review"].parse()?,
+            watcher_actor_id: ActorId::account(initial.identity.account_id.clone()),
+        };
+        let read = |fixture: &Fixture| -> Result<StrandWatchCurrentResponseBody> {
+            Ok(serde_json::from_value(strand_watch_current(
+                json!({"fixture":fixture,"request":request}),
+            )?)?)
+        };
+        assert!(matches!(
+            read(&initial)?,
+            StrandWatchCurrentResponseBody::NeverWritten { .. }
+        ));
+        let mut builder = watch_builder(&initial)?;
+        let first = builder.author::<event_spec::StrandWatchSet>(
+            &request.realm_id,
+            StrandWatchSetPayload::set(
+                request.strand_id.clone(),
+                request.watcher_actor_id.clone(),
+                StrandWatchLevel::All,
+                Some(true),
+            ),
+        )?;
+        let first_fixture = builder.finish()?;
+        validate_fixture(&first_fixture)?;
+        let StrandWatchCurrentResponseBody::Current {
+            current_state: result,
+            ..
+        } = read(&first_fixture)?
+        else {
+            bail!("accepted watch is not current");
+        };
+        assert_eq!(
+            result.revision.commit_id,
+            first_fixture
+                .committed_events
+                .last()
+                .unwrap()
+                .commit
+                .commit_id
+        );
+        assert_eq!(
+            result.value,
+            StrandWatchValue::Set(StrandWatchExpectedValue {
+                level: StrandWatchLevel::All,
+                level_public: Some(true)
+            })
+        );
+        let mut builder = watch_builder(&first_fixture)?;
+        let before = serde_json::to_value((&builder.events, &builder.rows, &builder.facts))?;
+        let conflict = builder.author::<event_spec::StrandWatchSet>(
+            &request.realm_id,
+            StrandWatchSetPayload::clear(
+                request.strand_id.clone(),
+                request.watcher_actor_id.clone(),
+            ),
+        );
+        assert!(conflict.unwrap_err().is::<FixtureWatchConflict>());
+        assert_eq!(
+            serde_json::to_value((&builder.events, &builder.rows, &builder.facts))?,
+            before
+        );
+        builder.author::<event_spec::StrandWatchSet>(
+            &request.realm_id,
+            StrandWatchSetPayload::clear(
+                request.strand_id.clone(),
+                request.watcher_actor_id.clone(),
+            )
+            .with_expected_value(result.value),
+        )?;
+        let cleared = builder.finish()?;
+        validate_fixture(&cleared)?;
+        let StrandWatchCurrentResponseBody::Current {
+            current_state: result,
+            ..
+        } = read(&cleared)?
+        else {
+            bail!("cleared watch became never_written");
+        };
+        assert_eq!(result.value, StrandWatchValue::Cleared(()));
+        let mut builder = watch_builder(&cleared)?;
+        let second = builder.author::<event_spec::StrandWatchSet>(
+            &request.realm_id,
+            StrandWatchSetPayload::set(
+                request.strand_id.clone(),
+                request.watcher_actor_id.clone(),
+                StrandWatchLevel::Muted,
+                None,
+            )
+            .with_expected_value(result.value),
+        )?;
+        let finished = builder.finish()?;
+        validate_fixture(&finished)?;
+        let replay = submit(json!({"fixture":finished,"request":{"event":first}}))?;
+        assert_eq!(replay["outcome"]["status"], "duplicate");
+        assert_eq!(replay["fixture"], serde_json::to_value(&finished)?);
+        let current = read(&finished)?;
+        let StrandWatchCurrentResponseBody::Current {
+            current_state: result,
+            ..
+        } = &current
+        else {
+            bail!("watch disappeared");
+        };
+        assert_eq!(
+            result.value,
+            StrandWatchValue::Set(StrandWatchExpectedValue {
+                level: StrandWatchLevel::Muted,
+                level_public: None
+            })
+        );
+        assert_eq!(finished.committed_events.last().unwrap().event, second);
+        let mut forged = finished.clone();
+        let row = forged
+            .snapshot
+            .current_state_entries
+            .iter_mut()
+            .find(|row| {
+                matches!(
+                    row,
+                    CurrentState::Value {
+                        selector: CurrentSelector::StrandWatch { .. },
+                        ..
+                    }
+                )
+            })
+            .unwrap();
+        let CurrentState::Value { value, .. } = row;
+        *value = json!({"level":"all"});
+        assert!(validate_fixture(&forged).is_err());
+        let mut foreign = request.clone();
+        let mut other = initial.identity.account_id.clone();
+        other.station_id = "ak:did_core:web:other.example".parse()?;
+        foreign.watcher_actor_id = ActorId::account(other);
+        assert!(strand_watch_current(json!({"fixture":finished,"request":foreign})).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn discovery_uses_the_accepted_head_and_the_same_floor_as_scan() -> Result<()> {
+        let fixture: Fixture = serde_json::from_value(build(json!({
+            "salt": 9, "title": "Discovery Realm", "board": true,
+        }))?)?;
+        let page: arkret_wire::RealmStreamPage = serde_json::from_value(streams(json!({
+            "fixture": fixture, "limit": 1,
+        }))?)?;
+        page.validate()?;
+        assert_eq!(page.realm_id, fixture.snapshot.realm_id);
+        assert_eq!(page.streams.len(), 1);
+        let row = &page.streams[0];
+        let head = &fixture.snapshot.visible_stream_heads[0];
+        assert_eq!(row.stream_ref, head.stream_ref);
+        assert_eq!(row.head_commit_ref, head.commit_id);
+        assert_eq!(row.next_position, head.stream_position + 1);
+        let floor = row
+            .readable_floor
+            .as_ref()
+            .expect("the fixture admits its readable prefix");
+        assert_eq!(floor.oldest_position, 0);
+        assert_eq!(
+            floor.floor_commit_id,
+            fixture.committed_events[0].commit.commit_id
+        );
+        assert_eq!(
+            floor.floor_reason,
+            arkret_wire::ReadableFloorReason::StreamStart
+        );
+        assert!(!page.has_more);
+        assert_eq!(page.next_cursor, None);
+        Ok(())
+    }
+
+    #[test]
+    fn discovery_does_not_disclose_a_directed_realm_before_join() -> Result<()> {
+        let fixture = build(json!({
+            "salt": 10, "title": "Invited Realm", "directed_invite": true,
+        }))?;
+        assert!(streams(json!({ "fixture": fixture, "limit": 500 })).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn message_fixture_delivers_exact_current_revision_carrier() -> Result<()> {
+        let fixture: Fixture = serde_json::from_value(build(json!({
+            "salt": 9, "title": "Demo Realm", "demo_notification": true,
+        }))?)?;
+        validate_fixture(&fixture)?;
+        let original = fixture
+            .committed_events
+            .iter()
+            .find(|full| full.event.kind == EventKind::MessageCreate)
+            .expect("message original");
+        let message_id = MessageId::from_event_id(&original.event.event_id);
+        let current = fixture.snapshot.current_state_entries.iter().find(|row| matches!(row,
+            CurrentState::Value { selector: CurrentSelector::MessageRevision { message_id: key }, .. } if key == &message_id
+        )).expect("message current");
+        let CurrentState::Value {
+            source_stream_ref,
+            revision,
+            value,
+            ..
+        } = current;
+        assert_eq!(source_stream_ref, &original.commit.stream_ref);
+        assert_eq!(revision.commit_id, original.commit.commit_id);
+        assert_eq!(revision.stream_position, original.commit.stream_position);
+        assert_eq!(value, &serde_json::to_value(&original.event.payload)?);
+        Ok(())
+    }
 
     fn invited_builder() -> Result<Builder> {
         let fixture: Fixture = serde_json::from_value(build(json!({
@@ -2395,10 +2995,10 @@ mod tests {
                 .iter()
                 .find(|row| {
                     matches!(row,
-                TypedCurrentRow::Value { selector: actual, .. } if actual == &selector)
+                CurrentState::Value { selector: actual, .. } if actual == &selector)
                 })
                 .ok_or_else(|| anyhow::anyhow!("atomic result missing"))?;
-            let TypedCurrentRow::Value {
+            let CurrentState::Value {
                 source_stream_ref,
                 revision,
                 value,
@@ -2442,10 +3042,7 @@ mod tests {
         assert!(builder.append(foreign_actor).is_err());
         assert_eq!(builder.rows, rows);
         assert_eq!(builder.events, events);
-        for (id, previous) in [
-            (missing, InvitePreviousState::Pending),
-            (invite.clone(), InvitePreviousState::Claimed),
-        ] {
+        for (id, previous) in [(missing, InvitePreviousState::Pending)] {
             let rows = builder.rows.clone();
             let events = builder.events.clone();
             assert!(

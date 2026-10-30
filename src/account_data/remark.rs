@@ -116,7 +116,7 @@ pub fn merge_contact_remark_account_data(
     account_data_key: &str,
     principal_id: &arkret_sdk::DidCoreId,
     edit: &ContactRemarkEdit,
-    current: Option<&arkret_sdk::AccountDataRow>,
+    current: Option<&arkret_sdk::AccountDataEntry>,
 ) -> anyhow::Result<ContactRemarkMerge> {
     let namespace_key = super::account_data_namespace_key(authority)?;
     let remote = match current {

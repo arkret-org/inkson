@@ -38,13 +38,13 @@ pub fn prepare_registration_checkpoint(
     let lease_fence = handoff
         .lease_fence
         .ok_or_else(|| anyhow!("account handoff has no lease fence"))?;
-    let draft = arkret_sdk::webvh::prepare_principal_inception(
+    let draft = arkret_sdk::webvh::prepare_portable_principal_inception(
         &arkret_sdk::webvh::PrincipalInceptionInput {
             provider_endpoint: &endpoint,
             principal_endpoint: &endpoint,
             local_id: &local_id,
             also_known_as: &[],
-            version_time: created_at,
+            version_created_at: created_at,
             root_seed: &key_material.root_seed,
             next_root_public_key_multibase: &key_material.next_root_public_key_multikey,
             witness_policy: None,
@@ -433,6 +433,15 @@ pub async fn complete_account_handoff_binding(
         trust_domain: arkret_sdk::TrustDomainId::new(handoff.trust_domain.clone())?,
     };
     let expected_principal_id = arkret_sdk::project_did_to_core_id(&checkpoint.did)?;
+    let expected_actor = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+        expected_principal_id.clone(),
+        handoff.audience_id.clone(),
+    ));
+    let verified_genesis = arkret_sdk::verify_pcr_genesis_events(
+        &unit,
+        &principal_registration_anchor,
+        &expected_actor,
+    )?;
     let prepared =
         crate::identity::account_auth::load_prepared_identity_creation_request(handoff, checkpoint)
             .await?;
@@ -529,7 +538,10 @@ pub async fn complete_account_handoff_binding(
         request
     };
     let (register_request, register_outcome) = match account_client
-        .account_register(&register_request)
+        .account_register(&arkret_sdk::VerifiedSubmission::from_verified_events(
+            register_request.clone(),
+            &verified_genesis,
+        )?)
         .await
     {
         Ok(outcome) => (register_request, outcome),
@@ -583,7 +595,12 @@ pub async fn complete_account_handoff_binding(
             )
             .await?;
             persist_register_request_prepared_checkpoint(checkpoint, state_store).await?;
-            let outcome = account_client.account_register(&request).await?;
+            let outcome = account_client
+                .account_register(&arkret_sdk::VerifiedSubmission::from_verified_events(
+                    request.clone(),
+                    &verified_genesis,
+                )?)
+                .await?;
             (request, outcome)
         }
     };
@@ -594,10 +611,7 @@ pub async fn complete_account_handoff_binding(
     {
         anyhow::bail!("Account Authority binding receipt does not match the frozen account or DID");
     }
-    let pcr_genesis_commits = register_outcome
-        .pcr_genesis_commits
-        .clone()
-        .context("Account Authority omitted PCR genesis commits")?;
+    let pcr_genesis_commits = register_outcome.pcr_genesis_commits.clone();
 
     // Preserve the exact response with the frozen request before installing
     // the session, so a restart resumes the same registration terminal.
@@ -613,9 +627,7 @@ pub async fn complete_account_handoff_binding(
     }
 
     check_registration_result_binding(checkpoint, &register_request, &binding_receipt)?;
-    let grant = register_outcome
-        .session_grant_outcome
-        .context("Account Authority omitted initial Standard grant")?;
+    let grant = register_outcome.issued_session;
     let session_grant =
         garth::SessionGrantState::from_initial_registration_outcome(&initial, grant, Utc::now())?;
     let session_private_key_pem = dpop.session_signing_key_pkcs8_pem()?.to_string();
@@ -668,7 +680,7 @@ async fn issue_identity_binding_challenge_with_retry(
     request: &arkret_sdk::IdentityBindingChallengeRequestBody,
     retry_deadline: DateTime<Utc>,
     on_rate_limit: &mut impl FnMut(Duration),
-) -> anyhow::Result<arkret_sdk::IdentityBindingChallengeOutcome> {
+) -> anyhow::Result<arkret_sdk::IdentityBindingChallengeResponseBody> {
     let started_at = Utc::now();
     let retry_window_deadline = started_at
         + chrono::Duration::from_std(arkret_retry::SPEC_RETRY_WINDOW)
@@ -768,6 +780,173 @@ fn check_registration_result_binding(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_registration_pair_enters_verified_submission_only_with_its_anchor() {
+        let device_id = "ak:device:019f0000-0000-7000-8000-000000000001";
+        let recovery_key = crate::recovery_crypto::generate_recovery_key().unwrap();
+        let mut handoff = handoff(device_id, 1);
+        handoff.station_url = "https://sdk-station.arkret.org".to_owned();
+        handoff.audience_id =
+            arkret_sdk::DidCoreId::new("ak:did_core:web:sdk-station.arkret.org").unwrap();
+        handoff.trust_domain = "ak:trust_domain:arkret.org".to_owned();
+        let checkpoint =
+            prepare_registration_checkpoint(&handoff, device_id, &recovery_key).unwrap();
+        let arkret_sdk::PrincipalRegistrationAnchor::WebvhRegistration { log_entries, .. } =
+            &checkpoint.principal_registration_anchor;
+        assert_eq!(log_entries[0]["parameters"]["portable"], true);
+        let material = validate_checkpoint_recovery_key(&checkpoint, &recovery_key).unwrap();
+        let signer = crate::event_signer::build_ed25519_device_signer(
+            [145; 32],
+            checkpoint.did.as_str(),
+            device_id,
+        );
+        let hpke_secret = x25519_dalek::StaticSecret::from([147; 32]);
+        let hpke_public = x25519_dalek::PublicKey::from(&hpke_secret);
+        let unit = crate::identity::principal_genesis::build_genesis_unit(
+            checkpoint.did.clone(),
+            handoff.audience_id.clone(),
+            arkret_sdk::GenesisSalt::new(checkpoint.genesis_salt.clone()).unwrap(),
+            arkret_sdk::TrustDomainId::new(handoff.trust_domain.clone()).unwrap(),
+            checkpoint.version_id.clone(),
+            arkret_sdk::identity::validate_principal_registration_anchor(
+                &checkpoint.principal_registration_anchor,
+            )
+            .unwrap()
+            .method_history_head
+            .to_string(),
+            checkpoint.genesis_created_at.parse().unwrap(),
+            &material.root_seed,
+            &checkpoint.root_public_key_multibase,
+            arkret_sdk::DeviceId::new(device_id).unwrap(),
+            format!("did:key:{}", signer.public_key_multibase().unwrap()),
+            crate::identity::did_key::encode_x25519_multibase(hpke_public.as_bytes()),
+            &signer,
+        )
+        .unwrap();
+        let actor = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            arkret_sdk::project_did_to_core_id(&checkpoint.did).unwrap(),
+            handoff.audience_id,
+        ));
+        let pair = arkret_sdk::verify_pcr_genesis_events(
+            &unit,
+            &checkpoint.principal_registration_anchor,
+            &actor,
+        )
+        .unwrap();
+        for (wire, verified) in unit.events.iter().zip(&pair) {
+            assert_eq!(
+                arkret_sdk::canonical::canonical_json_bytes(wire).unwrap(),
+                verified.canonical_bytes()
+            );
+        }
+        // Keep both real signatures valid while changing only the claimed anchor pin.
+        let mut wrong_payload: arkret_sdk::RealmCreatePayload =
+            serde_json::from_value(serde_json::to_value(&unit.create().payload).unwrap()).unwrap();
+        let head = &mut wrong_payload
+            .object
+            .initial_resolution
+            .as_mut()
+            .unwrap()
+            .method_history_head;
+        let replacement = if head.ends_with('1') { '2' } else { '1' };
+        head.pop();
+        head.push(replacement);
+        let at = unit.create().created_at;
+        let mut wrong_create =
+            arkret_sdk::TypedEventDraft::<arkret_sdk::event_spec::RealmCreate>::new(
+                arkret_sdk::ScopeRef::RealmGenesis,
+                actor.clone(),
+                wrong_payload,
+            )
+            .unwrap()
+            .with_semantic_refs(unit.create().semantic_refs.clone())
+            .author_with_digest_suite(at, arkret_sdk::DigestSuite::Sha256)
+            .unwrap();
+        let root_signer = arkret_sdk::Ed25519PayloadSigner::from_did_key_seed(
+            material.root_seed,
+            arkret_sdk::Did::new(format!("did:key:{}", checkpoint.root_public_key_multibase))
+                .unwrap(),
+            arkret_sdk::DidUrl::new(checkpoint.root_verification_method.clone()).unwrap(),
+        );
+        arkret_sdk::signatures::sign_event(
+            &mut wrong_create,
+            &root_signer,
+            arkret_sdk::signatures::SignEventOptions::new().with_created_at(at),
+        )
+        .unwrap();
+        let mut wrong_authorize = arkret_sdk::EventIntent::from_authored(unit.founding_authorize())
+            .with_scope_ref(arkret_sdk::ScopeRef::Realm {
+                realm_id: wrong_create.realm_id.clone(),
+            })
+            .unwrap()
+            .author_with_digest_suite(arkret_sdk::DigestSuite::Sha256)
+            .unwrap();
+        signer
+            .sign_sdk_event_with_context_at(
+                &mut wrong_authorize,
+                crate::event_signer::ProducerProofContext::for_native_unit(
+                    arkret_sdk::DigestSuite::Sha256,
+                ),
+                at,
+            )
+            .unwrap();
+        let wrong_unit = arkret_wire::PcrGenesisUnit::new(
+            wrong_create.into_event(),
+            wrong_authorize.into_event(),
+        )
+        .unwrap();
+        assert!(
+            arkret_sdk::verify_pcr_genesis_events(
+                &wrong_unit,
+                &checkpoint.principal_registration_anchor,
+                &actor
+            )
+            .is_err(),
+            "native producer verification accepted initial_resolution from another registration head"
+        );
+        let other_actor = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            actor.signing_principal_id().clone(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:other.arkret.org").unwrap(),
+        ));
+        assert!(
+            arkret_sdk::verify_pcr_genesis_events(
+                &unit,
+                &checkpoint.principal_registration_anchor,
+                &other_actor
+            )
+            .is_err()
+        );
+        let mut changed = unit.clone();
+        changed.events[1]
+            .producer_proof
+            .as_mut()
+            .unwrap()
+            .created_at += chrono::Duration::seconds(1);
+        assert!(
+            arkret_sdk::verify_pcr_genesis_events(
+                &changed,
+                &checkpoint.principal_registration_anchor,
+                &actor
+            )
+            .is_err()
+        );
+        let mut changed = unit;
+        changed.events[0]
+            .producer_proof
+            .as_mut()
+            .unwrap()
+            .jws
+            .push('A');
+        assert!(
+            arkret_sdk::verify_pcr_genesis_events(
+                &changed,
+                &checkpoint.principal_registration_anchor,
+                &actor
+            )
+            .is_err()
+        );
+    }
 
     #[test]
     fn identity_binding_challenge_retry_obeys_server_window_and_deadline_guards() {

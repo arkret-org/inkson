@@ -653,7 +653,7 @@ pub fn CirclesPanel(
                                                             .into_event(),
                                                     ),
                                                 };
-                                                let created = api.http().circle_create(&request).await?;
+                                                let created = api.http().circle_create(&submitter.verify_publication(request)?).await?;
                                                 // The Circle id only exists once the create Event is
                                                 // accepted, so the join Event is authored after it.
                                                 crate::transport::circle::submit_circle_member_with_parent_revision(

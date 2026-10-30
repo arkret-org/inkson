@@ -18,7 +18,7 @@
 //! - `authz/capabilities.md` §3.4 — audit trail.
 //! - `authz/capabilities.md` §10.4 — subject-only relinquish.
 
-use arkret_models_collaboration::governance::authorization::EffectiveCapabilityGrantRow;
+use arkret_models_collaboration::governance::authorization::EffectiveCapabilityGrantView;
 use arkret_models_collaboration::governance::grant_constraint::{
     CapabilitySubject, GrantConstraintKind, IssuerAuthorityRef,
 };
@@ -35,7 +35,7 @@ use crate::views::helpers::{actor_display_label, short_protocol_id};
 /// One row in the user's capability list. Backed by either the user
 /// being the subject (capability held) or the issuer (capability
 /// granted to someone else). Mapped from the authoritative SDK
-/// [`EffectiveCapabilityGrantRow`] values that
+/// [`EffectiveCapabilityGrantView`] values that
 /// `ak.self.authz.grants.read.effective.v1` returns. The row revision is the
 /// only valid authoring basis for a subject-signed relinquish.
 #[derive(Clone, Debug, PartialEq)]
@@ -70,9 +70,9 @@ struct RelinquishConfirmation {
 const CONFIRMED_ROW_CHANGED: &str = "capability row changed; reload and confirm relinquish again";
 
 /// Map one authoritative SDK row onto a display row without separating its
-/// grant value from the exact current-result revision read atomically with it.
+/// grant value from the exact current-state revision read atomically with it.
 fn decode_capability_row(
-    effective: &EffectiveCapabilityGrantRow,
+    effective: &EffectiveCapabilityGrantView,
     queried_realm_id: &str,
 ) -> CapabilityRow {
     let grant = &effective.grant;
@@ -173,7 +173,7 @@ pub fn CapabilitiesSettingsCard(principal_id: Signal<String>, token: Signal<Stri
     let mut status = use_signal(|| ("", Vec::<(&'static str, String)>::new()));
     let mut detail_for = use_signal(|| Option::<String>::None);
     // Subject-only relinquish confirmation binds the selected capability id
-    // and exact current-result revision. Any list refresh invalidates it.
+    // and exact current-state revision. Any list refresh invalidates it.
     let mut relinquish_for = use_signal(|| Option::<RelinquishConfirmation>::None);
     let mut relinquish_reason = use_signal(String::new);
     let mut refresh_nonce = use_signal(|| 0_u64);
@@ -670,7 +670,7 @@ mod tests {
 
     use super::*;
 
-    fn sample_effective_row(subject: serde_json::Value) -> EffectiveCapabilityGrantRow {
+    fn sample_effective_row(subject: serde_json::Value) -> EffectiveCapabilityGrantView {
         let value = json!({
             "grant": {
                 "id": "ak:grant:AfpU2UOijpNUdGOoAgQdaqV0xwreLXwLE3yXXHvB6n7X",
@@ -695,14 +695,14 @@ mod tests {
                 "issuer_authority_refs": [{
                     "kind": "realm_root",
                     "realm_id": "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
-                    "authority_generation": 0,
+                    "authority_generation": "0",
                     "authority_event_ref": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
                 }],
                 "authority_depth": 0,
                 "authority_root_refs": [{
                     "kind": "realm_root",
                     "realm_id": "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
-                    "authority_generation": 0,
+                    "authority_generation": "0",
                     "authority_event_ref": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
                 }]
             },
@@ -712,7 +712,7 @@ mod tests {
             }
         });
         serde_json::from_value(value)
-            .expect("sample row decodes as SDK EffectiveCapabilityGrantRow")
+            .expect("sample row decodes as SDK EffectiveCapabilityGrantView")
     }
 
     #[test]
@@ -815,7 +815,7 @@ mod tests {
         })))
         .unwrap();
         value.as_object_mut().unwrap().remove("revision");
-        assert!(serde_json::from_value::<EffectiveCapabilityGrantRow>(value).is_err());
+        assert!(serde_json::from_value::<EffectiveCapabilityGrantView>(value).is_err());
     }
 
     #[test]

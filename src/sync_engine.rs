@@ -27,7 +27,7 @@ use std::time::Duration;
 
 use arkret_models_collaboration::sync_frames::account_subscribe::{
     AccountFilter, AccountSubscribeBatch, AccountSubscribeDeviceListChanges, AccountSubscribeFrame,
-    AccountSubscribeFrameKind, SyncRequestBody,
+    AccountSubscribeFrameKind, AccountSubscribeParameters,
 };
 use arkret_sdk::EventPayloadExt as _;
 use arkret_wire::AccountDataKey;
@@ -220,6 +220,7 @@ struct AccountTransportProvider {
     ctx: SyncEngineContext,
     generation: crate::runtime::input::ValueReader<u64>,
     start_generation: u64,
+    session_generation: u64,
 }
 
 impl AccountTransportProvider {
@@ -227,7 +228,7 @@ impl AccountTransportProvider {
     ///
     /// `after` is owned by [`AccountSubscription`], which loads it from the
     /// durable cursor store and advances it only after the projector committed.
-    fn account_request(&self) -> SyncRequestBody {
+    fn account_request(&self) -> AccountSubscribeParameters {
         let filter = Some(selected_account_filter(&self.ctx));
         let (previous, selected_detail_invalidated, selected_current_pending) =
             self.ctx.state_store.read(|store| {
@@ -256,16 +257,16 @@ impl AccountTransportProvider {
         let replace_filter = (previous.is_some()
             && (previous != filter || selected_detail_invalidated || selected_current_pending))
             .then_some(true);
-        SyncRequestBody {
+        AccountSubscribeParameters {
             after: None,
             catchup: Some(true),
             filter,
-            realm_list: self
+            realm_list_parameters: self
                 .ctx
                 .state_store
                 .read(|store| store.sync_requested_realm_list_after())
                 .map(|after| {
-                    arkret_models_collaboration::sync_frames::account_subscribe::RealmListRequest {
+                    arkret_models_collaboration::sync_frames::account_subscribe::RealmListParameters {
                         after: Some(after),
                         limit: Some(20),
                     }
@@ -290,7 +291,10 @@ impl AccountTransportProvider {
             self.ctx.account.server_url.as_str(),
         )
         .await
-        .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+        .map_err(|error| {
+            self.invalidate_terminal_refresh(session_generation, &error);
+            garth::Error::Protocol(error.to_string())
+        })?;
         let selected_realm_id = self.ctx.selected_realm_id.get();
         if let Ok(realm_id) = arkret_sdk::RealmId::new(selected_realm_id.clone())
             && !self
@@ -316,30 +320,63 @@ impl AccountTransportProvider {
     }
 
     async fn recover_unauthorized(&self) -> garth::Result<bool> {
-        let session_generation = self.ctx.session.generation();
-        let result =
+        self.recover_unauthorized_with_refresh(|| async {
             crate::identity::session_refresh::refresh_authenticated_session_after_unauthorized(
                 self.ctx.account.server_url.as_str(),
             )
-            .await;
-        if self.ctx.session.generation() != session_generation || !self.is_active() {
+            .await
+            .map(|_| ())
+        })
+        .await
+    }
+
+    async fn recover_unauthorized_with_refresh<F, Fut>(&self, refresh: F) -> garth::Result<bool>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = anyhow::Result<()>>,
+    {
+        // The global provider reads the active secure account. Fence before
+        // invoking it: a late 401 must not rotate a replacement holder's grant.
+        if !self.is_active() || !self.owns_active_device_scope() {
+            return Ok(false);
+        }
+        let result = refresh().await;
+        if !self.is_active() || !self.owns_active_device_scope() {
             return Ok(false);
         }
         match result {
             Ok(_) => Ok(true),
-            Err(error) if is_terminal_session_grant_error(&error) => {
-                self.ctx
-                    .session
-                    .invalidate_if_generation(session_generation, error.to_string());
+            Err(error) if self.invalidate_terminal_refresh(self.session_generation, &error) => {
                 Ok(false)
             }
             Err(error) => Err(garth::Error::Http(error.to_string())),
         }
     }
 
+    fn owns_active_device_scope(&self) -> bool {
+        crate::secure_key_store::active_device_seed_scope().is_some_and(|scope| {
+            scope.authority == self.ctx.account.authority
+                && scope.device_id == self.ctx.account.device_id
+                && scope.device_id.as_str() == self.ctx.device_id
+        })
+    }
+
+    fn invalidate_terminal_refresh(&self, session_generation: u64, error: &anyhow::Error) -> bool {
+        if self.ctx.session.generation() != session_generation
+            || !self.is_active()
+            || !crate::api_error::is_terminal_session_grant_refresh_error(error)
+        {
+            return false;
+        }
+        self.ctx
+            .session
+            .invalidate_if_generation(session_generation, error.to_string())
+    }
+
     fn is_active(&self) -> bool {
-        self.generation.get() == self.start_generation
-            && !self.ctx.effect.is_cancelled()
+        !self.ctx.effect.is_cancelled()
+            && self.ctx.session.generation() == self.session_generation
+            && self.generation.get() == self.start_generation
             && !self.ctx.token.get().trim().is_empty()
     }
 }
@@ -358,6 +395,7 @@ struct InksonAccountProjector {
     ctx: SyncEngineContext,
     generation: crate::runtime::input::ValueReader<u64>,
     start_generation: u64,
+    session_generation: u64,
     /// The demand this run subscribed with. A navigation that changes it ends
     /// the run so the next attempt resubscribes with the current demand.
     request_filter: Option<AccountFilter>,
@@ -381,11 +419,74 @@ pub struct NativeAccountHost {
     http: arkret_sdk::http_client::Client,
     projector: InksonAccountProjector,
     store: std::sync::Arc<std::sync::Mutex<LocalStateStore>>,
-    request: SyncRequestBody,
+    request: AccountSubscribeParameters,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 impl NativeAccountHost {
+    pub(crate) fn call_http_client(&self) -> arkret_sdk::http_client::Client {
+        self.http.clone()
+    }
+    pub(crate) fn active_account_context(&self) -> crate::config::ActiveAccountContext {
+        self.projector.ctx.account.clone()
+    }
+
+    /// Same production producer and nonce persistence as the app call flow.
+    pub async fn send_call_invitation(
+        &self,
+        holder: arkret_sdk::AccountId,
+        scope: arkret_sdk::ScopeRef,
+        material: &crate::signal::SignalKeyMaterial,
+        payload: &crate::signal::SignalPayload,
+    ) -> anyhow::Result<arkret_sdk::CallInvitationSendResponseBody> {
+        let request = self
+            .prepare_call_invitation(holder, scope, material, payload)
+            .await?;
+        Ok(self.http.call_invitation_send(&request).await?)
+    }
+
+    /// Freeze a production envelope with the ordinary current source cut and
+    /// durable nonce reservation; no receiver admission is cached here.
+    pub async fn prepare_call_invitation(
+        &self,
+        holder: arkret_sdk::AccountId,
+        scope: arkret_sdk::ScopeRef,
+        material: &crate::signal::SignalKeyMaterial,
+        payload: &crate::signal::SignalPayload,
+    ) -> anyhow::Result<arkret_sdk::CallInvitationSendRequestBody> {
+        crate::event_submit::EventSubmitter::new(self.http.clone())
+            .prepare_call_invitation(
+                scope,
+                &self.projector.ctx.account.authority,
+                &self.projector.ctx.account.device_id,
+                holder,
+                material,
+                payload,
+                &self.state_store_handle(),
+            )
+            .await
+    }
+
+    /// Freeze a production envelope with the ordinary current source cut and
+    /// durable nonce reservation; no receiver admission is cached here.
+    pub async fn prepare_signal_envelope(
+        &self,
+        scope: arkret_sdk::ScopeRef,
+        material: &crate::signal::SignalKeyMaterial,
+        payload: &crate::signal::SignalPayload,
+    ) -> anyhow::Result<arkret_wire::SignalEnvelope> {
+        crate::event_submit::EventSubmitter::new(self.http.clone())
+            .prepare_signal_envelope(
+                scope,
+                &self.projector.ctx.account.authority,
+                &self.projector.ctx.account.device_id,
+                material,
+                payload,
+                &self.state_store_handle(),
+            )
+            .await
+    }
+
     /// Refresh this host's active endpoint through the ordinary signed keys
     /// directory before rebuilding author-bound private projections.
     pub async fn refresh_authoring_authority(&self) -> anyhow::Result<()> {
@@ -487,17 +588,18 @@ impl NativeAccountHost {
             effect,
             projection_sink: crate::runtime::projection::ProjectionRouter::default(),
         };
-        let request = SyncRequestBody {
+        let request = AccountSubscribeParameters {
             after: None,
             catchup: Some(true),
             filter: Some(selected_account_filter(&ctx)),
-            realm_list: None,
+            realm_list_parameters: None,
             replace_filter: None,
         };
         let selected_detail_invalidation_revision = ctx
             .state_store
             .read(|store| store.realm_detail_invalidation_revision(&ctx.selected_realm_id.get()));
         let projector = InksonAccountProjector {
+            session_generation: ctx.session.generation(),
             blocklist_catchup,
             ctx,
             generation: ValueReader::new(|| 1),
@@ -535,6 +637,49 @@ impl NativeAccountHost {
         self.projector.ctx.state_store.clone()
     }
 
+    /// Read the same verified local candidates as the application search hook.
+    /// The returned deadline bounds this read; a retained display also follows
+    /// this host's current publication and session invalidations.
+    pub async fn search_local_messages(
+        &self,
+        query: &str,
+        realm_ids: &[String],
+        limit: usize,
+    ) -> anyhow::Result<(
+        crate::models::IndexSearchView,
+        Option<chrono::DateTime<chrono::Utc>>,
+    )> {
+        let account = &self.projector.ctx.account;
+        let own = crate::identity::session_refresh::own_station_result_client_for_http(&self.http)
+            .await?;
+        let session = own.session()?;
+        anyhow::ensure!(
+            session.account_id() == &account.authority,
+            "native search belongs to another Account"
+        );
+        let secure = crate::secure_key_store::default_secure_key_store("inkson");
+        let grant = crate::identity::session_refresh::load_account_session_grant_with_secure_store(
+            account,
+            secure.as_ref(),
+        )?;
+        anyhow::ensure!(
+            grant.account_id == account.authority && grant.grant_id == session.grant_id().as_str(),
+            "native search grant differs from its live SDK session"
+        );
+        let result = crate::views::global_search::search_native_index(
+            self.state_store_handle(),
+            &self.projector.ctx.account.authority,
+            &self.projector.ctx.account.device_id,
+            &grant,
+            query,
+            realm_ids,
+            limit,
+        )
+        .await?;
+        own.check_session()?;
+        Ok(result)
+    }
+
     /// Use the ordinary production Signal sender with this host's account
     /// attempt and durable privacy state; no UI context is required.
     pub async fn send_scope_signal(
@@ -542,7 +687,7 @@ impl NativeAccountHost {
         scope: arkret_sdk::ScopeRef,
         material: &crate::signal::SignalKeyMaterial,
         payload: &crate::signal::SignalPayload,
-    ) -> anyhow::Result<arkret_sdk::SignalSubmitOutcome> {
+    ) -> anyhow::Result<arkret_sdk::SignalSubmitResponseBody> {
         self.send_scope_signal_with_transport_observation(scope, material, payload)
             .await
             .map(|(outcome, _observation)| outcome)
@@ -556,7 +701,7 @@ impl NativeAccountHost {
         material: &crate::signal::SignalKeyMaterial,
         payload: &crate::signal::SignalPayload,
     ) -> anyhow::Result<(
-        arkret_sdk::SignalSubmitOutcome,
+        arkret_sdk::SignalSubmitResponseBody,
         arkret_sdk::http_client::SignalSendTransportObservation,
     )> {
         crate::event_submit::EventSubmitter::new(self.http.clone())
@@ -578,7 +723,7 @@ impl NativeAccountHost {
         realm: &str,
         strand: &str,
         latest_cursor: &str,
-    ) -> anyhow::Result<Option<arkret_sdk::SignalSubmitOutcome>> {
+    ) -> anyhow::Result<Option<arkret_sdk::SignalSubmitResponseBody>> {
         self.send_automatic_read_receipt_using(
             &crate::event_submit::EventSubmitter::new(self.http.clone()),
             realm,
@@ -594,7 +739,7 @@ impl NativeAccountHost {
         realm: &str,
         strand: &str,
         latest_cursor: &str,
-    ) -> anyhow::Result<Option<arkret_sdk::SignalSubmitOutcome>> {
+    ) -> anyhow::Result<Option<arkret_sdk::SignalSubmitResponseBody>> {
         let account = &self.projector.ctx.account.authority;
         let device = &self.projector.ctx.account.device_id;
         let actor = arkret_sdk::ActorId::account(account.clone()).to_string();
@@ -620,9 +765,8 @@ impl NativeAccountHost {
         };
         submitter
             .send_scope_signal(
-                arkret_sdk::ScopeRef::Realm {
-                    realm_id: arkret_sdk::RealmId::new(realm)?,
-                },
+                plan.scope
+                    .ok_or_else(|| anyhow::anyhow!("receipt scope is unavailable"))?,
                 account,
                 device,
                 &material,
@@ -642,7 +786,10 @@ impl NativeAccountHost {
         self.catch_up_with_request(self.request.clone()).await
     }
 
-    async fn catch_up_with_request(&self, request: SyncRequestBody) -> garth::Result<()> {
+    async fn catch_up_with_request(
+        &self,
+        request: AccountSubscribeParameters,
+    ) -> garth::Result<()> {
         self.catch_up_with_transport(request, &self.projector.transport)
             .await
     }
@@ -661,7 +808,7 @@ impl NativeAccountHost {
 
     async fn catch_up_with_transport<T: garth::AccountSubscribeTransport>(
         &self,
-        request: SyncRequestBody,
+        request: AccountSubscribeParameters,
         transport: &T,
     ) -> garth::Result<()> {
         struct OneWindow<'a> {
@@ -811,7 +958,7 @@ impl AccountFrameStep {
         self.frame
             .to_device
             .as_ref()
-            .and_then(|container| container.ack_token.as_deref())
+            .and_then(|container| container.acknowledgement_token.as_deref())
     }
 
     /// The continuation cursor of a truncated or lost to-device window.
@@ -879,7 +1026,9 @@ fn to_device_window_safe_for_ingest_ack(window: Option<(bool, bool)>) -> bool {
 
 impl InksonAccountProjector {
     fn active(&self) -> bool {
-        self.generation.get() == self.start_generation && !self.ctx.effect.is_cancelled()
+        !self.ctx.effect.is_cancelled()
+            && self.ctx.session.generation() == self.session_generation
+            && self.generation.get() == self.start_generation
     }
 
     /// Stop the run when the session, the account, or the subscribed demand is
@@ -1041,6 +1190,7 @@ impl InksonAccountProjector {
                 &reset_frame,
                 &Default::default(),
                 &Default::default(),
+                None,
             )
             .await
             .map_err(|error| garth::Error::Protocol(error.to_string()))?;
@@ -1138,6 +1288,11 @@ impl InksonAccountProjector {
                 frame,
                 verified.resolved_preview_streams(),
                 verified.current_snapshots(),
+                Some(&|| {
+                    self.ctx
+                        .state_store
+                        .read(|store| store.account_scope_resets(frame))
+                }),
             )
             .await
             .map_err(crate::state::current_index::current_stage_error)?;
@@ -1153,82 +1308,96 @@ impl InksonAccountProjector {
         if !self.fence() {
             return Ok(());
         }
+        self.ctx
+            .state_store
+            .write(|store| -> anyhow::Result<()> {
+                for snapshot in verified.current_snapshots().values() {
+                    store.require_sidecar_current_not_superseded(snapshot.snapshot())?;
+                }
+                Ok(())
+            })
+            .map_err(crate::state::current_index::current_stage_error)?;
         current_stage.arm_account_commit();
         let local_account = self.ctx.account.authority.clone();
-        let (theme, changed) = self
-            .ctx
-            .state_store
-            .write(|store| {
-                verified.project_transaction(store, |store| {
-                    verified
-                        .check_session()
-                        .map_err(|error| error.to_string())?;
-                    for page in verified.own_pages() {
-                        store.ingest_verified_message_history(page)?;
-                        crate::identity::agent_signer_evidence::index_verified_committed_page(
-                            store, page,
-                        )?;
+        let installed = self.ctx.state_store.write(|store| {
+            verified.project_transaction(store, |store| {
+                verified
+                    .check_session()
+                    .map_err(|error| error.to_string())?;
+                for page in verified.own_pages() {
+                    store.ingest_verified_message_history(page)?;
+                    crate::identity::agent_signer_evidence::index_verified_committed_page(
+                        store, page,
+                    )?;
+                }
+                verified.stage_own_checkpoints(store)?;
+                if frame.kind == arkret_sdk::sync::AccountSubscribeFrameKind::ResyncRequired {
+                    store.invalidate_sidecar_current(None);
+                }
+                if let Some(invalidations) = &frame.realm_invalidations {
+                    for invalidation in invalidations {
+                        store.invalidate_sidecar_current(Some(invalidation.realm_id.as_str()));
                     }
-                    verified.stage_own_checkpoints(store)?;
-                    if frame.kind == arkret_sdk::sync::AccountSubscribeFrameKind::ResyncRequired {
-                        store.invalidate_sidecar_current(None);
+                }
+                for basis in verified.authority_bases() {
+                    if !store.record_realm_authority_basis(basis.clone()) {
+                        return Err("verified Account authority generation regressed".to_owned());
                     }
-                    if let Some(invalidations) = &frame.realm_invalidations {
-                        for invalidation in invalidations {
-                            store.invalidate_sidecar_current(Some(invalidation.realm_id.as_str()));
-                        }
-                    }
-                    for basis in verified.authority_bases() {
-                        if !store.record_realm_authority_basis(basis.clone()) {
-                            return Err(
-                                "verified Account authority generation regressed".to_owned()
-                            );
-                        }
-                    }
-                    for (realm, role) in verified.genesis_roles() {
-                        store.save_realm_collaboration_role(realm.clone(), *role);
-                    }
-                    for page in verified.pages() {
-                        store.ingest_verified_message_history(page)?;
-                        crate::identity::agent_signer_evidence::index_verified_committed_page(
-                            store, page,
-                        )?;
-                    }
-                    for snapshot in verified.current_snapshots().values() {
-                        // Retain the highest observed signed cut even when its
-                        // history is pending. Private fold remains fail-closed
-                        // until the exact prefix is complete; no older cut can
-                        // replace this watermark during recovery.
-                        store.install_verified_sidecar_current(snapshot)?;
-                    }
-                    let staged = store
-                        .prepare_account_demand_frame(
-                            current_stage
-                                .filtered_frame()
-                                .map_err(|error| error.to_string())?,
-                        )
-                        .map_err(|error| error.to_string())?;
-                    let effects = apply_account_frame_payload(store, &response, &self.ctx)
-                        .map_err(|error| format!("{error:#}"))?;
-                    if changed_device_accounts(&response.device_lists()).contains(&local_account) {
-                        store.set_local_device_refresh_pending(true);
-                    }
+                }
+                for (realm, role) in verified.genesis_roles() {
+                    store.save_realm_collaboration_role(realm.clone(), *role);
+                }
+                for page in verified.pages() {
+                    store.ingest_verified_message_history(page)?;
+                    crate::identity::agent_signer_evidence::index_verified_committed_page(
+                        store, page,
+                    )?;
+                }
+                for snapshot in verified.current_snapshots().values() {
+                    // Retain the highest observed signed cut even when its
+                    // history is pending. Private fold remains fail-closed
+                    // until the exact prefix is complete; no older cut can
+                    // replace this watermark during recovery.
+                    store.install_verified_sidecar_current(snapshot)?;
+                }
+                let staged = store
+                    .prepare_account_demand_frame(
+                        current_stage
+                            .filtered_frame()
+                            .map_err(|error| error.to_string())?,
+                    )
+                    .map_err(|error| error.to_string())?;
+                let effects = apply_account_frame_payload(store, &response, &self.ctx)
+                    .map_err(|error| format!("{error:#}"))?;
+                if changed_device_accounts(&response.device_lists()).contains(&local_account) {
+                    store.set_local_device_refresh_pending(true);
+                }
+                store
+                    .finish_account_demand_frame(&staged)
+                    .map_err(|error| error.to_string())?;
+                store.set_current_generation(current_stage.generation());
+                store
+                    .save_sync_demand_filter(self.request_filter.clone())
+                    .map_err(|error| error.to_string())?;
+                if let Some((scope, checkpoint)) = next_checkpoint {
                     store
-                        .finish_account_demand_frame(&staged)
+                        .save_account_checkpoint(scope, checkpoint.clone())
                         .map_err(|error| error.to_string())?;
-                    store.set_current_generation(current_stage.generation());
-                    store
-                        .save_sync_demand_filter(self.request_filter.clone())
-                        .map_err(|error| error.to_string())?;
-                    if let Some((scope, checkpoint)) = next_checkpoint {
-                        store
-                            .save_account_checkpoint(scope, checkpoint.clone())
-                            .map_err(|error| error.to_string())?;
-                    }
-                    Ok(effects)
-                })
+                }
+                Ok(effects)
             })
-            .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+        });
+        let (theme, changed) = match installed {
+            Ok(effects) => effects,
+            Err(error) => {
+                // The synchronous transaction restored the previous account.
+                // Re-prove its durable root before disarming this publication;
+                // a failed or ambiguous confirmation still poisons it on Drop.
+                self.confirm_current_pointer_durable(&current_index, previous_generation)
+                    .await?;
+                return Err(garth::Error::Protocol(error.to_string()));
+            }
+        };
         if let Err(error) = await_account_state_durable(&self.ctx, "account frame").await {
             self.rollback_current_pointer(&current_index, previous_generation)
                 .await?;
@@ -1274,48 +1443,60 @@ impl InksonAccountProjector {
     /// Invite-delivery recovery, MLS reconciliation, calls and to-device
     /// acknowledgement are not covered WebSocket operations, so they always use
     /// the canonical HTTPS client the rail keeps.
-    async fn post_commit(&self, response: &AccountFrameStep) -> garth::Result<()> {
-        let http = self.transport.http().http();
-        if !self
-            .drain_durable_outbound(
-                changed_device_accounts(&response.device_lists())
-                    .contains(&self.ctx.account.authority),
-            )
-            .await?
-        {
-            return Ok(());
-        }
+    fn post_commit<'a>(
+        &'a self,
+        response: &'a AccountFrameStep,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = garth::Result<()>> + 'a>> {
+        crate::runtime::boxed_future_from(|| async move {
+            let http = self.transport.http().http();
+            if !self
+                .drain_durable_outbound(
+                    changed_device_accounts(&response.device_lists())
+                        .contains(&self.ctx.account.authority),
+                )
+                .await?
+            {
+                return Ok(());
+            }
 
-        let agent_evidence_changed =
-            crate::identity::agent_signer_evidence::prefetch_durable_historical_agent_keys(
-                http,
-                &self.ctx.state_store,
-            )
-            .await;
+            let agent_evidence_changed =
+                crate::identity::agent_signer_evidence::prefetch_durable_historical_agent_keys(
+                    http,
+                    &self.ctx.state_store,
+                )
+                .await;
 
-        // A durable frame can contain only batch context. Product projection
-        // remains delta-driven after the outbound retry pass above.
-        if response.is_empty() {
-            self.reconcile_mls_scopes(response).await;
+            // A durable frame can contain only batch context. Product projection
+            // remains delta-driven after the outbound retry pass above.
+            if response.is_empty() {
+                crate::runtime::boxed_future_from(|| self.reconcile_mls_scopes(response)).await;
+                if agent_evidence_changed {
+                    refresh_projection_events_from_sync_response(response, &self.ctx);
+                }
+                return Ok(());
+            }
+            let api = TransportClient::from_http(
+                http.clone(),
+                crate::transport::RequestContext::new(self.ctx.token.get()),
+            );
             if agent_evidence_changed {
                 refresh_projection_events_from_sync_response(response, &self.ctx);
             }
-            return Ok(());
-        }
-        let api = TransportClient::from_http(
-            http.clone(),
-            crate::transport::RequestContext::new(self.ctx.token.get()),
-        );
-        if agent_evidence_changed {
-            refresh_projection_events_from_sync_response(response, &self.ctx);
-        }
-        prefetch_member_identity_proof_keys(&api, response, self.ctx.state_store.clone()).await;
-        if let Err(error) = process_to_device_delivery(&api, response, &self.ctx).await {
-            return self.defer(error);
-        }
+            crate::runtime::boxed_future_from(|| {
+                prefetch_member_identity_proof_keys(&api, response, self.ctx.state_store.clone())
+            })
+            .await;
+            if let Err(error) = crate::runtime::boxed_future_from(|| {
+                process_to_device_delivery(&api, response, &self.ctx)
+            })
+            .await
+            {
+                return self.defer(error);
+            }
 
-        self.reconcile_mls_scopes(response).await;
-        Ok(())
+            crate::runtime::boxed_future_from(|| self.reconcile_mls_scopes(response)).await;
+            Ok(())
+        })
     }
 
     /// Retry durable sends only while the account and local device remain current.
@@ -1341,10 +1522,12 @@ impl InksonAccountProjector {
         }
         let submitter = crate::event_submit::EventSubmitter::new(http.clone())
             .with_state_store(self.ctx.state_store.clone());
-        if let Err(error) = submitter.drain_outbound().await {
+        if let Err(error) = crate::runtime::boxed_future_from(|| submitter.drain_outbound()).await {
             tracing::debug!(?error, "account checkpoint deferred durable outbound drain");
         }
-        if let Err(error) = submitter.drain_mls_outbound().await {
+        if let Err(error) =
+            crate::runtime::boxed_future_from(|| submitter.drain_mls_outbound()).await
+        {
             tracing::debug!(?error, "account checkpoint deferred MLS outbound drain");
         }
 
@@ -1364,18 +1547,22 @@ impl InksonAccountProjector {
             || removal_schedule_lock(&self.removal_schedule)
                 .is_some_and(|schedule| schedule.has_pending())
         {
-            run_circle_scope_rotate_pass(
-                self.start_generation,
-                self.generation.clone(),
-                &self.ctx,
-                &realm_ids,
-                &self.removal_schedule,
-            )
+            crate::runtime::boxed_future_from(|| {
+                run_circle_scope_rotate_pass(
+                    self.start_generation,
+                    self.generation.clone(),
+                    &self.ctx,
+                    &realm_ids,
+                    &self.removal_schedule,
+                )
+            })
             .await;
             // This remains an opportunistic durability pass, driven by new
             // durable Realm work or an explicit pending reconciliation.
-            run_idle_self_update_pass(self.start_generation, self.generation.clone(), &self.ctx)
-                .await;
+            crate::runtime::boxed_future_from(|| {
+                run_idle_self_update_pass(self.start_generation, self.generation.clone(), &self.ctx)
+            })
+            .await;
         }
     }
 
@@ -1384,6 +1571,8 @@ impl InksonAccountProjector {
         &self,
         http: &arkret_sdk::http_client::Client,
     ) -> anyhow::Result<bool> {
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+        self.rotate_captured_transport_for_test(http).await?;
         let viewer = http.account_viewer().await?;
         if !self.fence() {
             return Ok(false);
@@ -1417,11 +1606,80 @@ impl InksonAccountProjector {
         Ok(true)
     }
 
-    /// Post-commit work is retried on the next bounded poll. A terminal
-    /// authorization failure ends the run instead.
+    /// Only the explicitly opted-in joint bundle contains this one-shot fault.
+    /// Pause after capturing `http`, before its request/DPoP is constructed; the
+    /// old transport then receives a genuine issuer-backed 401 after rotation.
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+    async fn rotate_captured_transport_for_test(
+        &self,
+        http: &arkret_sdk::http_client::Client,
+    ) -> anyhow::Result<()> {
+        const HOOK: &str = "__inkson_captured_transport_rotation_v1";
+        let Some(window) = web_sys::window() else {
+            return Ok(());
+        };
+        if js_sys::Reflect::get(&window, &HOOK.into()).ok().as_ref()
+            != Some(&wasm_bindgen::JsValue::TRUE)
+        {
+            return Ok(());
+        }
+        // Consume synchronously so concurrent readers cannot rotate twice.
+        js_sys::Reflect::set(&window, &HOOK.into(), &wasm_bindgen::JsValue::FALSE)
+            .map_err(|_| anyhow::anyhow!("could not consume the transport scheduling fault"))?;
+        let generation = self.ctx.session.generation();
+        let device = arkret_sdk::DeviceId::new(self.ctx.device_id.clone())?;
+        let result = crate::identity::session_refresh::rotate_captured_transport_for_test(
+            http.base_url().as_str(),
+            &self.ctx.account.authority,
+            &device,
+        )
+        .await;
+        let evidence = match &result {
+            Ok((previous, successor)) => serde_json::json!({
+                "phase": "rotated_before_request",
+                "predecessor_grant_id": previous,
+                "successor_grant_id": successor,
+                "account_id": self.ctx.account.authority,
+                "device_id": device,
+                "session_generation_before": generation,
+                "session_generation_after": self.ctx.session.generation(),
+            }),
+            Err(_) => serde_json::json!({"phase": "rotation_failed"}),
+        };
+        js_sys::Reflect::set(
+            &window,
+            &HOOK.into(),
+            &wasm_bindgen::JsValue::from_str(&evidence.to_string()),
+        )
+        .map_err(|_| anyhow::anyhow!("could not record the transport scheduling fault"))?;
+        result?;
+        anyhow::ensure!(
+            self.active() && self.ctx.session.generation() == generation,
+            "captured transport test outlived its account session"
+        );
+        Ok(())
+    }
+
+    /// Post-commit work is retried on the next bounded poll. A 401 retires
+    /// this transport attempt so the outer runner can reacquire the shared
+    /// session grant. Other typed terminal failures retain their existing gate.
     fn defer(&self, error: anyhow::Error) -> garth::Result<()> {
+        if let Some((status, envelope)) = crate::api_error::api_error_status_and_envelope(&error)
+            && status == reqwest::StatusCode::UNAUTHORIZED
+        {
+            // Another task may have refreshed the grant after this transport
+            // was created. Preserve the original typed denial for the outer
+            // Unauthorized recovery path instead of clearing its successor.
+            self.control.cancel();
+            return Err(garth::Error::Api {
+                status: status.as_u16(),
+                error: Box::new(envelope.clone()),
+            });
+        }
         if is_auth_expired_error(&error) || is_terminal_session_grant_error(&error) {
-            self.ctx.session.invalidate(error.to_string());
+            self.ctx
+                .session
+                .invalidate_if_generation(self.session_generation, error.to_string());
             self.control.cancel();
             return Err(garth::Error::Http(error.to_string()));
         }
@@ -1470,6 +1728,17 @@ impl AccountBatchProjector for InksonAccountProjector {
         // Their successful durable checkpoint is still the retry clock for
         // queued work after a transient submission failure or a client restart.
         if result.is_ok() && !reset && batch.frames.is_empty() {
+            if self.fence() {
+                self.ctx
+                    .projection_sink
+                    .sync_status(SyncStatusEvent::Online);
+                self.ctx
+                    .projection_sink
+                    .projection(ClientProjectionEvent::CursorCheckpoint {
+                        scope: "account".into(),
+                        cursor: batch.cursor.clone(),
+                    });
+            }
             self.drain_durable_outbound(false).await?;
         }
         // Garth keeps the request's demand fixed for this subscription. Once
@@ -1496,102 +1765,108 @@ impl AccountBatchProjector for InksonAccountProjector {
 }
 
 impl InksonAccountProjector {
-    async fn project_verified_batch(
-        &self,
-        batch: &AccountSubscribeBatch,
+    fn project_verified_batch<'a>(
+        &'a self,
+        batch: &'a AccountSubscribeBatch,
         next_checkpoint: Option<(garth::CursorScope, garth::AccountCursorCheckpoint)>,
-    ) -> garth::Result<()> {
-        let http = self.transport.http().http();
-        // Verification performs independent reads. A live Realm publisher can
-        // advance the shared pointer while those reads await their responses.
-        // Restart from the durable Account cursor instead of installing an old
-        // cut or classifying this local race as a Station protocol violation.
-        let mut generation = self
-            .ctx
-            .state_store
-            .read(LocalStateStore::current_generation);
-        let mut recovery = self
-            .recovery_history
-            .lock()
-            .await
-            .take()
-            .filter(|(saved_generation, _)| *saved_generation == generation)
-            .map(|(_, history)| history)
-            .unwrap_or_default();
-        let mut verified = Vec::with_capacity(batch.frames.len());
-        for frame in &batch.frames {
-            verified.push(
-                crate::realm_events_engine::verify_account_frame_recovering(
-                    http,
-                    frame,
-                    &mut recovery,
-                )
-                .await?,
-            );
-        }
-        if self
-            .ctx
-            .state_store
-            .read(LocalStateStore::current_generation)
-            != generation
-        {
-            return Err(garth::Error::AuthorityCutBehind);
-        }
-        self.validate_station_cas_batch(batch).await?;
-        let interruption = verified
-            .iter_mut()
-            .find_map(|proof| proof.take_stream_interruption());
-        if let Some(error) = interruption {
-            // Each independent verified prefix can advance its history without
-            // claiming a complete Account cut. Keep current, Account cursor,
-            // Station CAS and recipient ACK untouched until refetch succeeds.
-            if !self.fence() {
-                return Err(garth::Error::AuthorityCutBehind);
-            }
-            self.ctx
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = garth::Result<()>> + 'a>> {
+        crate::runtime::boxed_future_from(|| async move {
+            let http = self.transport.http().http();
+            // Verification performs independent reads. A live Realm publisher can
+            // advance the shared pointer while those reads await their responses.
+            // Restart from the durable Account cursor instead of installing an old
+            // cut or classifying this local race as a Station protocol violation.
+            let mut generation = self
+                .ctx
                 .state_store
-                .write(|store| {
-                    verified[0].project_transaction(store, |store| {
-                        if store.current_generation() != generation {
-                            return Err("current generation changed during stream recovery".into());
-                        }
-                        for proof in &verified {
-                            proof.stage_independent_public_history(store)?;
-                        }
-                        Ok(())
-                    })
-                })
-                .map_err(garth::Error::Storage)?;
-            await_account_state_durable(&self.ctx, "independent stream history")
+                .read(LocalStateStore::current_generation);
+            let mut recovery = self
+                .recovery_history
+                .lock()
                 .await
-                .map_err(|error| garth::Error::Storage(error.to_string()))?;
-            if !self.fence()
-                || self
-                    .ctx
-                    .state_store
-                    .read(LocalStateStore::current_generation)
-                    != generation
+                .take()
+                .filter(|(saved_generation, _)| *saved_generation == generation)
+                .map(|(_, history)| history)
+                .unwrap_or_default();
+            let mut verified = Vec::with_capacity(batch.frames.len());
+            for frame in &batch.frames {
+                verified.push(
+                    crate::runtime::boxed_future_from(|| {
+                        crate::realm_events_engine::verify_account_frame_recovering(
+                            http,
+                            frame,
+                            &mut recovery,
+                        )
+                    })
+                    .await?,
+                );
+            }
+            if self
+                .ctx
+                .state_store
+                .read(LocalStateStore::current_generation)
+                != generation
             {
                 return Err(garth::Error::AuthorityCutBehind);
             }
-            let mut history = crate::realm_events_engine::AccountRecoveryHistory::default();
-            for proof in &mut verified {
-                history.retain(proof)?;
+            self.validate_station_cas_batch(batch).await?;
+            let interruption = verified
+                .iter_mut()
+                .find_map(|proof| proof.take_stream_interruption());
+            if let Some(error) = interruption {
+                // Each independent verified prefix can advance its history without
+                // claiming a complete Account cut. Keep current, Account cursor,
+                // Station CAS and recipient ACK untouched until refetch succeeds.
+                if !self.fence() {
+                    return Err(garth::Error::AuthorityCutBehind);
+                }
+                self.ctx
+                    .state_store
+                    .write(|store| {
+                        verified[0].project_transaction(store, |store| {
+                            if store.current_generation() != generation {
+                                return Err(
+                                    "current generation changed during stream recovery".into()
+                                );
+                            }
+                            for proof in &verified {
+                                proof.stage_independent_public_history(store)?;
+                            }
+                            Ok(())
+                        })
+                    })
+                    .map_err(garth::Error::Storage)?;
+                await_account_state_durable(&self.ctx, "independent stream history")
+                    .await
+                    .map_err(|error| garth::Error::Storage(error.to_string()))?;
+                if !self.fence()
+                    || self
+                        .ctx
+                        .state_store
+                        .read(LocalStateStore::current_generation)
+                        != generation
+                {
+                    return Err(garth::Error::AuthorityCutBehind);
+                }
+                let mut history = crate::realm_events_engine::AccountRecoveryHistory::default();
+                for proof in &mut verified {
+                    history.retain(proof)?;
+                }
+                *self.recovery_history.lock().await = Some((generation, history));
+                return Err(error);
             }
-            *self.recovery_history.lock().await = Some((generation, history));
-            return Err(error);
-        }
-        for (index, (frame, proof)) in batch.frames.iter().zip(verified.iter()).enumerate() {
-            let final_checkpoint = (index + 1 == batch.frames.len())
-                .then_some(next_checkpoint.as_ref())
-                .flatten();
-            self.project_frame(frame, &batch.cursor, proof, final_checkpoint, generation)
-                .await?;
-            generation = generation
-                .checked_add(1)
-                .ok_or_else(|| garth::Error::Protocol("current generation exhausted".into()))?;
-        }
-        Ok(())
+            for (index, (frame, proof)) in batch.frames.iter().zip(verified.iter()).enumerate() {
+                let final_checkpoint = (index + 1 == batch.frames.len())
+                    .then_some(next_checkpoint.as_ref())
+                    .flatten();
+                self.project_frame(frame, &batch.cursor, proof, final_checkpoint, generation)
+                    .await?;
+                generation = generation
+                    .checked_add(1)
+                    .ok_or_else(|| garth::Error::Protocol("current generation exhausted".into()))?;
+            }
+            Ok(())
+        })
     }
 }
 
@@ -1612,6 +1887,7 @@ pub async fn run_sync_engine(
     ctx: SyncEngineContext,
 ) {
     let provider = AccountTransportProvider {
+        session_generation: ctx.session.generation(),
         ctx: ctx.clone(),
         generation: generation.clone(),
         start_generation,
@@ -1665,6 +1941,7 @@ pub async fn run_sync_engine(
         let subscription =
             AccountSubscription::new(ctx.client_runtime.executor(), ctx.client_runtime.cursors());
         let projector = InksonAccountProjector {
+            session_generation: ctx.session.generation(),
             blocklist_catchup,
             ctx: ctx.clone(),
             generation: generation.clone(),
@@ -1839,7 +2116,7 @@ fn selected_account_filter(ctx: &SyncEngineContext) -> AccountFilter {
 /// exact `RealmCommit` revision it holds at, so nothing here re-runs a reducer,
 /// replays Event order, or reads a Cell projection. The rows are read in
 /// bounded pages of the index the frame was just committed to and held only in
-/// memory; the account blob carries no copy of them.
+/// memory; account records carry no copy of them.
 async fn refresh_current_product_view(
     index: &crate::state::CurrentIndex,
     ctx: &SyncEngineContext,
@@ -2227,7 +2504,7 @@ mod removal_schedule_tests {
             arkret_sdk::EventId::new("ak:event:AZEvldDJcWI9IRHqP2BMibDDfc59Ax_LwrbsrQmeD6Ml")
                 .unwrap();
         let mut store = crate::state::isolated_store_for_tests("removal-empty-stamp");
-        let checkpoint = crate::mls::persistence::encrypt_state(
+        let checkpoint = garth::mls::checkpoint::encrypt_state(
             REALM,
             &group_id,
             1,
@@ -2248,7 +2525,7 @@ mod removal_schedule_tests {
         assert!(removal_scope_stamp(&store, &scope, &desired).is_some());
 
         let mut entries = store.realm_current_state_entries(REALM);
-        let arkret_wire::TypedCurrentRow::Value { value, .. } = &mut entries[0];
+        let arkret_wire::CurrentState::Value { value, .. } = &mut entries[0];
         value["covered_key_access_revision"] = serde_json::json!(6);
         crate::test_support::install_current_entries(&mut store, REALM, entries);
         assert!(removal_scope_stamp(&store, &scope, &desired).is_none());
@@ -2793,10 +3070,10 @@ async fn process_to_device_delivery(
     if durable_prefix
         && !response.to_device().is_empty()
         && to_device_window_safe_for_ingest_ack(response.to_device_window())
-        && let Some(ack_token) = response.to_device_ack_token()
+        && let Some(acknowledgement_token) = response.to_device_ack_token()
     {
         await_account_state_durable(ctx, "account to-device batch before ACK").await?;
-        keys.ack_device_messages(ack_token).await?;
+        keys.ack_device_messages(acknowledgement_token).await?;
     }
 
     let mut next_cursor = response.to_device_backfill_cursor();
@@ -2826,10 +3103,10 @@ async fn process_to_device_delivery(
                 page.lost.unwrap_or(false),
                 page.limited.unwrap_or(false),
             )))
-            && let Some(ack_token) = page.ack_token.as_deref()
+            && let Some(acknowledgement_token) = page.acknowledgement_token.as_deref()
         {
             await_account_state_durable(ctx, "paginated to-device batch before ACK").await?;
-            keys.ack_device_messages(ack_token).await?;
+            keys.ack_device_messages(acknowledgement_token).await?;
         }
         if !(page.has_more || page.limited.unwrap_or(false)) {
             break;
@@ -2850,7 +3127,7 @@ async fn process_to_device_delivery(
 
 /// Fold the realm's discussion timeline into the shared `raw_operations` log so
 /// the Discussion tab projects local-first — no per-open realm backfill /
-/// redecrypt — mirroring [`ingest_kanban_projection_events`].
+/// redecrypt — mirroring [`ingest_kanban_events`].
 /// Returns the number of newly inserted / changed records. Stores only
 /// ciphertext envelopes / tombstones (never decrypted plaintext); dedup is by
 /// the message event id via `upsert_raw_operation`.
@@ -2925,6 +3202,7 @@ pub(crate) fn ingest_message_events(
 /// dedupe through the same `operation_id` upsert. Events are the projection
 /// event JSON shape (`event_kind` / `payload` / `operation_id`), matching both
 /// `account.subscribe` `state.events[]` and `events/subscribe` Event frames.
+#[cfg(test)]
 pub(crate) fn ingest_kanban_projection_events(
     store: &mut LocalStateStore,
     realm_id: &str,
@@ -2978,6 +3256,7 @@ enum LocalMembershipEvent {
     MemberState(arkret_sdk::MembershipPayload),
     InviteCreate(arkret_sdk::InviteCreatePayload),
     InviteAccept(arkret_sdk::InviteAcceptPayload),
+    RealmInviteLinkAccept(arkret_sdk::RealmInviteLinkAcceptPayload),
 }
 
 impl LocalMembershipEvent {
@@ -2991,6 +3270,11 @@ impl LocalMembershipEvent {
             arkret_sdk::EventKind::InviteAccept => Self::InviteAccept(
                 event
                     .typed_payload::<arkret_wire::event_spec::InviteAccept>()
+                    .ok()?,
+            ),
+            arkret_sdk::EventKind::RealmInviteLinkAccept => Self::RealmInviteLinkAccept(
+                event
+                    .typed_payload::<arkret_wire::event_spec::RealmInviteLinkAccept>()
                     .ok()?,
             ),
             arkret_sdk::EventKind::InviteCreate => Self::InviteCreate(
@@ -3028,6 +3312,9 @@ impl LocalMembershipEvent {
             Self::MemberState(payload) => serialize_record!(MemberState, payload),
             Self::InviteCreate(payload) => serialize_record!(InviteCreate, payload),
             Self::InviteAccept(payload) => serialize_record!(InviteAccept, payload),
+            Self::RealmInviteLinkAccept(payload) => {
+                serialize_record!(RealmInviteLinkAccept, payload)
+            }
         }
     }
 }
@@ -3181,7 +3468,7 @@ fn device_summary_revokes_local_device(
     };
     let exact_committed_revocation = device.revocation_states.as_ref().is_some_and(|states| {
         states.iter().any(|state| {
-            let arkret_wire::DeviceRevocationGateRecord::Revoked(revoked) = state else {
+            let arkret_wire::AccountDeviceRevocationGateRecord::Revoked(revoked) = state else {
                 return false;
             };
             revoked.account_id == *account_id
@@ -3241,6 +3528,12 @@ pub(crate) fn apply_account_data_entries(
         let Some(account_data_key) = entry.payload.get("key").and_then(Value::as_str) else {
             continue;
         };
+        if arkret_sdk::notification_inbox_account_data_key_notification_id(account_data_key)
+            .is_some()
+        {
+            store.apply_notification_inbox_event(authority, entry)?;
+            continue;
+        }
         match crate::sidecar::ingest_sidecar_view_state_account_data(
             store,
             authority,
@@ -3450,6 +3743,481 @@ mod tests {
 
     use super::*;
 
+    fn retired_account_attempt() -> (InksonAccountProjector, AccountTransportProvider) {
+        use crate::runtime::input::{StateStoreHandle, ValueCell, ValueReader};
+        let store = crate::state::isolated_store_for_tests("retired-account-attempt");
+        let blocklist_catchup = store.begin_blocklist_catchup();
+        let shared = std::sync::Arc::new(std::sync::Mutex::new(store));
+        let read = shared.clone();
+        let write = shared.clone();
+        let state_store = StateStoreHandle::new(
+            move |read_fn| read_fn(&read.lock().unwrap()),
+            move |write_fn| write_fn(&mut write.lock().unwrap()),
+        );
+        let account =
+            crate::test_support::AccountFixture::new("ak:did_core:web:retired-sync.example")
+                .build();
+        let session =
+            crate::runtime::session::SessionCoordinator::new(|| Box::pin(std::future::pending()));
+        let effect = crate::runtime::effects::EffectRegistry::default().register(
+            crate::runtime::effects::EffectKey {
+                owner: crate::runtime::effects::EffectOwner::Session,
+                name: "retired-sync-reader".into(),
+                generation: 1,
+            },
+        );
+        let ctx = SyncEngineContext {
+            token: ValueReader::new(|| panic!("retired token reader was evaluated")),
+            state_store,
+            principal_id: account.principal_id().clone(),
+            device_id: account.device_id.to_string(),
+            account,
+            live_device_id: ValueCell::new(|| panic!("retired device"), |_| {}, |_| {}),
+            selected_realm_id: ValueReader::new(|| panic!("retired Realm")),
+            websocket_rail: Default::default(),
+            realm_live_epoch: ValueCell::new(|| panic!("retired epoch"), |_| {}, |_| {}),
+            session,
+            client_runtime: crate::client_core::InksonClientRuntime::from_state_adapter(
+                crate::client_core::InksonLocalStateStoreAdapter::from_shared_store(shared),
+            ),
+            effect,
+            projection_sink: Default::default(),
+        };
+        let provider = AccountTransportProvider {
+            session_generation: ctx.session.generation(),
+            ctx: ctx.clone(),
+            generation: ValueReader::new(|| panic!("disposed generation reader")),
+            start_generation: 1,
+        };
+        let http = TransportClient::unauthenticated("https://retired-sync.example")
+            .unwrap()
+            .sdk_http_client()
+            .unwrap();
+        let projector = InksonAccountProjector {
+            blocklist_catchup,
+            session_generation: ctx.session.generation(),
+            ctx,
+            generation: ValueReader::new(|| panic!("disposed generation reader")),
+            start_generation: 1,
+            request_filter: None,
+            selected_detail_invalidation_revision: 0,
+            control: SubscriptionControl::default(),
+            current_index: tokio::sync::Mutex::new(None),
+            station_cas_projection: std::sync::Arc::new(
+                tokio::sync::Mutex::new(Default::default()),
+            ),
+            removal_schedule: std::sync::Mutex::new(Default::default()),
+            recovery_history: tokio::sync::Mutex::new(None),
+            transport: crate::transport::websocket_rail::StreamRail::select(
+                &crate::transport::websocket_rail::WebSocketRail::default(),
+                crate::client_core::InksonAccountTransport::new(http),
+            ),
+        };
+        (projector, provider)
+    }
+
+    #[test]
+    fn cancelled_account_attempt_never_reads_disposed_view_signals() {
+        let (projector, provider) = retired_account_attempt();
+        projector.ctx.effect.cancel();
+        assert!(!projector.active());
+        assert!(!provider.is_active());
+    }
+
+    #[derive(Clone)]
+    struct PausedCheckpointStore {
+        inner: crate::client_core::InksonLocalStateStoreAdapter,
+        saved: std::sync::Arc<tokio::sync::Notify>,
+        resume: std::sync::Arc<tokio::sync::Notify>,
+        fail: bool,
+    }
+
+    impl garth::CursorStore for PausedCheckpointStore {
+        async fn load(&self, scope: garth::CursorScope) -> garth::Result<Option<String>> {
+            garth::CursorStore::load(&self.inner, scope).await
+        }
+        async fn save(&self, scope: garth::CursorScope, cursor: String) -> garth::Result<()> {
+            garth::CursorStore::save(&self.inner, scope, cursor).await
+        }
+        async fn clear(&self, scope: garth::CursorScope) -> garth::Result<()> {
+            garth::CursorStore::clear(&self.inner, scope).await
+        }
+        async fn load_account_checkpoint(
+            &self,
+            scope: garth::CursorScope,
+        ) -> garth::Result<Option<garth::AccountCursorCheckpoint>> {
+            garth::CursorStore::load_account_checkpoint(&self.inner, scope).await
+        }
+        async fn save_account_checkpoint(
+            &self,
+            scope: garth::CursorScope,
+            checkpoint: garth::AccountCursorCheckpoint,
+        ) -> garth::Result<()> {
+            if !self.fail {
+                // Retain the real adapter's filesystem write and flush barrier.
+                garth::CursorStore::save_account_checkpoint(&self.inner, scope, checkpoint).await?;
+            }
+            self.saved.notify_one();
+            self.resume.notified().await;
+            if self.fail {
+                return Err(garth::Error::Storage(
+                    "injected checkpoint save failure".into(),
+                ));
+            }
+            Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct CheckpointProjectionProbe {
+        status: RefCell<Vec<SyncStatusEvent>>,
+        events: RefCell<Vec<ClientProjectionEvent>>,
+    }
+
+    impl ProjectionSink for CheckpointProjectionProbe {
+        fn sync_status(&self, event: SyncStatusEvent) {
+            self.status.borrow_mut().push(event);
+        }
+        fn projection(&self, event: ClientProjectionEvent) {
+            self.events.borrow_mut().push(event);
+        }
+    }
+
+    #[tokio::test]
+    async fn empty_checkpoint_publishes_connection_only_after_durable_save_under_original_fence() {
+        use arkret_models_collaboration::sync_frames::account_subscribe::AccountSubscribeReadAction;
+        use garth::CursorStore;
+
+        use crate::runtime::input::ValueReader;
+
+        // Normal completion, failed storage, or a session/effect/demand/account
+        // replacement while the checkpoint future is pending.
+        for variant in 0..7 {
+            let (mut projector, _) = retired_account_attempt();
+            let generation = Rc::new(std::cell::Cell::new(1));
+            let read_generation = generation.clone();
+            projector.generation = ValueReader::new(move || read_generation.get());
+            let selected = Rc::new(RefCell::new(String::new()));
+            let read_selected = selected.clone();
+            projector.ctx.selected_realm_id =
+                ValueReader::new(move || read_selected.borrow().clone());
+            projector.ctx.state_store.write(|store| {
+                store.switch_active_account(&projector.ctx.account).unwrap();
+            });
+            projector.blocklist_catchup = projector
+                .ctx
+                .state_store
+                .read(LocalStateStore::begin_blocklist_catchup);
+            projector.request_filter = Some(selected_account_filter(&projector.ctx));
+            assert!(projector.fence());
+            let probe = Rc::new(CheckpointProjectionProbe::default());
+            projector.ctx.projection_sink.install(probe.clone());
+            let scope = garth::CursorScope::Account {
+                service_id: None,
+                actor_id: arkret_sdk::ActorId::account(projector.ctx.account.authority.clone()),
+                device_id: projector.ctx.account.device_id.clone(),
+            };
+            let request = AccountSubscribeParameters {
+                after: Some("ak:cursor:before-empty-checkpoint".into()),
+                catchup: Some(false),
+                filter: projector.request_filter.clone(),
+                realm_list_parameters: None,
+                replace_filter: None,
+            };
+            let mut folder = arkret_sdk::AccountSubscribeFolder::for_request(&request);
+            folder
+                .push(
+                    serde_json::from_value(json!({
+                        "kind": "checkpoint", "cursor": "ak:cursor:durable-empty-checkpoint"
+                    }))
+                    .unwrap(),
+                )
+                .unwrap();
+            let AccountSubscribeReadAction::Batch(batch) = folder.finish().unwrap() else {
+                panic!("validated checkpoint batch required")
+            };
+            assert!(batch.frames.is_empty());
+            let checkpoint = garth::AccountCursorCheckpoint {
+                cursor: batch.cursor.clone(),
+                station_cas: Default::default(),
+            };
+            let cursors = PausedCheckpointStore {
+                inner: projector.ctx.client_runtime.cursors(),
+                saved: Default::default(),
+                resume: Default::default(),
+                fail: variant == 1,
+            };
+            let replace_while_pending = async {
+                cursors.saved.notified().await;
+                assert!(probe.status.borrow().is_empty());
+                assert!(probe.events.borrow().is_empty());
+                match variant {
+                    2 => {
+                        projector.ctx.session.replace("replacement");
+                    }
+                    3 => projector.ctx.effect.cancel(),
+                    4 => generation.set(2),
+                    5 => *selected.borrow_mut() = sdk_realm_id().to_string(),
+                    6 => projector.ctx.state_store.write(|store| {
+                        store
+                            .switch_saved_account(
+                                &crate::test_support::AccountFixture::new(
+                                    "ak:did_core:web:retired-sync.example",
+                                )
+                                .station("ak:did_core:web:replacement-station.example")
+                                .profile_id("replacement-station".into())
+                                .build(),
+                            )
+                            .unwrap();
+                    }),
+                    _ => {}
+                }
+                cursors.resume.notify_one();
+            };
+            let (result, ()) = tokio::join!(
+                projector.project_and_checkpoint(
+                    &batch,
+                    scope.clone(),
+                    checkpoint.clone(),
+                    &cursors
+                ),
+                replace_while_pending
+            );
+            assert_eq!(
+                result.is_err(),
+                variant == 1,
+                "variant {variant}: {result:?}"
+            );
+            if variant == 0 {
+                assert_eq!(*probe.status.borrow(), vec![SyncStatusEvent::Online]);
+                assert_eq!(
+                    *probe.events.borrow(),
+                    vec![ClientProjectionEvent::CursorCheckpoint {
+                        scope: "account".into(),
+                        cursor: batch.cursor.clone()
+                    }]
+                );
+                assert_eq!(
+                    cursors.load_account_checkpoint(scope).await.unwrap(),
+                    Some(checkpoint)
+                );
+            } else {
+                assert!(probe.status.borrow().is_empty(), "variant {variant}");
+                assert!(probe.events.borrow().is_empty(), "variant {variant}");
+            }
+        }
+    }
+
+    fn terminal_refresh_refusal() -> anyhow::Error {
+        let mut problem = arkret_sdk::Problem::from_code(
+            arkret_sdk::error_codes::ErrorCode::SESSION_GRANT_REPLAY_TERMINAL,
+            "refresh refused",
+        );
+        problem.extensions.insert(
+            "session_grant_id".into(),
+            json!("ak:session_grant:AY6DJbBwavsGTQuBZZiqqw9MVcqPZ8QX8invQ3i2kpi7"),
+        );
+        problem.extensions.insert("state".into(), json!("revoked"));
+        anyhow::Error::new(garth::Error::Api {
+            status: 409,
+            error: Box::new(problem),
+        })
+        .context("session grant refresh")
+    }
+
+    fn active_refresh_test_provider() -> AccountTransportProvider {
+        let (_, mut provider) = retired_account_attempt();
+        provider.ctx.token = crate::runtime::input::ValueReader::new(|| "live".to_owned());
+        provider.generation = crate::runtime::input::ValueReader::new(|| 1);
+        provider.session_generation = provider.ctx.session.replace("live");
+        provider
+    }
+
+    #[tokio::test]
+    async fn retired_account_provider_never_invokes_the_refresh_exchange() {
+        for cancel_effect in [true, false] {
+            let provider = active_refresh_test_provider();
+            let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(Some((
+                &provider.ctx.account.authority,
+                &provider.ctx.account.device_id,
+            )));
+            if cancel_effect {
+                provider.ctx.effect.cancel();
+            } else {
+                // The outer UI generation has not propagated yet. The
+                // coordinator itself already belongs to another login.
+                provider.ctx.session.replace("replacement");
+            }
+            let calls = std::cell::Cell::new(0);
+            assert!(
+                !provider
+                    .recover_unauthorized_with_refresh(|| async {
+                        calls.set(calls.get() + 1);
+                        Ok(())
+                    })
+                    .await
+                    .unwrap()
+            );
+            assert_eq!(calls.get(), 0, "a retired attempt reached the issuer");
+        }
+    }
+
+    #[tokio::test]
+    async fn old_account_provider_cannot_refresh_the_new_same_station_holder() {
+        let provider = active_refresh_test_provider();
+        let replacement =
+            crate::test_support::AccountFixture::new("ak:did_core:web:replacement.example").build();
+        assert_eq!(
+            replacement.authority.station_id,
+            provider.ctx.account.authority.station_id
+        );
+        let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(Some((
+            &replacement.authority,
+            &replacement.device_id,
+        )));
+        let calls = std::cell::Cell::new(0);
+        assert!(
+            !provider
+                .recover_unauthorized_with_refresh(|| async {
+                    calls.set(calls.get() + 1);
+                    Ok(())
+                })
+                .await
+                .unwrap()
+        );
+        assert_eq!(calls.get(), 0);
+        assert_eq!(provider.ctx.session.credential().as_deref(), Some("live"));
+    }
+
+    #[tokio::test]
+    async fn account_refresh_still_fences_replacement_after_the_exchange() {
+        let provider = active_refresh_test_provider();
+        let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(Some((
+            &provider.ctx.account.authority,
+            &provider.ctx.account.device_id,
+        )));
+        let calls = std::cell::Cell::new(0);
+        assert!(
+            !provider
+                .recover_unauthorized_with_refresh(|| async {
+                    calls.set(calls.get() + 1);
+                    provider.ctx.session.replace("replacement");
+                    Err(terminal_refresh_refusal())
+                })
+                .await
+                .unwrap()
+        );
+        assert_eq!(calls.get(), 1);
+        assert_eq!(
+            provider.ctx.session.credential().as_deref(),
+            Some("replacement")
+        );
+    }
+
+    #[test]
+    fn active_account_refresh_retires_its_credential_only_for_a_typed_termination() {
+        let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
+        let (_, mut provider) = retired_account_attempt();
+        provider.ctx.token = crate::runtime::input::ValueReader::new(|| "live".to_owned());
+        provider.generation = crate::runtime::input::ValueReader::new(|| 1);
+        let session = provider.ctx.session.clone();
+        let generation = session.replace("live");
+        provider.session_generation = generation;
+        let unavailable = anyhow::Error::new(garth::Error::Http("session grant revoked".into()));
+        assert!(!provider.invalidate_terminal_refresh(generation, &unavailable));
+        assert_eq!(session.credential().as_deref(), Some("live"));
+        assert!(provider.invalidate_terminal_refresh(generation, &terminal_refresh_refusal()));
+        assert_eq!(session.credential(), None);
+        assert_ne!(session.generation(), generation);
+    }
+
+    #[test]
+    fn late_or_cancelled_account_refresh_cannot_retire_the_replacement() {
+        let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
+        let (_, provider) = retired_account_attempt();
+        let session = provider.ctx.session.clone();
+        let previous = session.generation();
+        let replacement = session.replace("replacement");
+        assert!(!provider.invalidate_terminal_refresh(previous, &terminal_refresh_refusal()));
+        provider.ctx.effect.cancel();
+        assert!(!provider.invalidate_terminal_refresh(replacement, &terminal_refresh_refusal()));
+        assert_eq!(session.credential().as_deref(), Some("replacement"));
+    }
+
+    #[test]
+    fn post_commit_unauthorized_retires_only_the_captured_transport() {
+        let (mut projector, _) = retired_account_attempt();
+        let session = projector.ctx.session.clone();
+        let generation = session.replace("current-session");
+        projector.session_generation = generation;
+        let original =
+            arkret_sdk::Problem::from_code("unauthenticated", "session grant is not active");
+        let error = anyhow::Error::new(arkret_sdk::http_client::Error::Api {
+            status: 401,
+            error: Box::new(original.clone()),
+        })
+        .context("refresh local device view after durable Account checkpoint");
+
+        let error = projector.defer(error).unwrap_err();
+        assert_eq!(
+            garth::classify_error(&error),
+            garth::RunErrorClass::Unauthorized
+        );
+        let garth::Error::Api { status, error } = error else {
+            panic!("the original structured denial was discarded");
+        };
+        assert_eq!(status, 401);
+        assert_eq!(
+            serde_json::to_value(error).unwrap(),
+            serde_json::to_value(original).unwrap()
+        );
+        assert!(projector.control.is_cancelled());
+        assert_eq!(session.generation(), generation);
+        assert_eq!(session.credential().as_deref(), Some("current-session"));
+    }
+
+    #[test]
+    fn wrapped_account_rail_unauthorized_keeps_the_same_session_generation() {
+        let (mut projector, _) = retired_account_attempt();
+        let session = projector.ctx.session.clone();
+        let generation = session.replace("current-session");
+        projector.session_generation = generation;
+        let error = anyhow::Error::new(garth::Error::Api {
+            status: 401,
+            error: Box::new(arkret_sdk::Problem::from_code(
+                "auth_expired",
+                "captured old grant",
+            )),
+        })
+        .context("post-commit Account work");
+
+        let error = projector.defer(error).unwrap_err();
+        assert_eq!(
+            garth::classify_error(&error),
+            garth::RunErrorClass::Unauthorized
+        );
+        assert!(projector.control.is_cancelled());
+        assert_eq!(session.generation(), generation);
+        assert_eq!(session.credential().as_deref(), Some("current-session"));
+    }
+
+    #[test]
+    fn delayed_post_commit_denial_cannot_invalidate_a_replacement_session() {
+        let (projector, _) = retired_account_attempt();
+        let session = projector.ctx.session.clone();
+        session.replace("replacement");
+        let error = anyhow::Error::new(arkret_sdk::http_client::Error::Api {
+            status: 401,
+            error: Box::new(arkret_sdk::Problem::from_code(
+                "auth_expired",
+                "old account denial",
+            )),
+        });
+        assert!(projector.defer(error).is_err());
+        assert_eq!(session.credential().as_deref(), Some("replacement"));
+        assert!(!projector.active());
+    }
+
     #[test]
     fn cancelled_sync_run_never_overwrites_the_replacement_connection_status() {
         assert_eq!(sync_exit_status(false, None), None);
@@ -3540,13 +4308,13 @@ mod tests {
     #[test]
     fn blocklist_folder_checkpoint_requires_durable_valid_batch() {
         use arkret_models_collaboration::sync_frames::account_subscribe::{
-            AccountSubscribeSnapshotResult, SyncRequestBody,
+            AccountSubscribeParameters, AccountSubscribeReadAction,
         };
-        let request = SyncRequestBody {
+        let request = AccountSubscribeParameters {
             after: None,
             catchup: Some(true),
             filter: None,
-            realm_list: None,
+            realm_list_parameters: None,
             replace_filter: None,
         };
         let mut folder = arkret_sdk::AccountSubscribeFolder::for_request(&request);
@@ -3566,7 +4334,7 @@ mod tests {
                 .unwrap(),
             )
             .unwrap();
-        let AccountSubscribeSnapshotResult::Batch(batch) = folder.finish().unwrap() else {
+        let AccountSubscribeReadAction::Batch(batch) = folder.finish().unwrap() else {
             panic!("validated batch required")
         };
         assert_eq!(batch.frames.len(), 1);
@@ -3706,22 +4474,8 @@ mod tests {
             Some(checkpoint.clone())
         );
         let before = serde_json::to_value(store.load()).unwrap();
-        let prefix = format!("{}.account.", path.file_stem().unwrap().to_string_lossy());
-        let account_path = std::fs::read_dir(path.parent().unwrap())
-            .unwrap()
-            .map(|entry| entry.unwrap().path())
-            .find(|path| {
-                path.file_name()
-                    .unwrap()
-                    .to_string_lossy()
-                    .starts_with(&prefix)
-                    && path.extension().is_some_and(|ext| ext == "json")
-            })
-            .expect("the real account-state shard must have been persisted");
-        let durable_bytes = std::fs::read(&account_path).unwrap();
-        let backup = account_path.with_extension("backup");
-        std::fs::rename(&account_path, &backup).unwrap();
-        std::fs::create_dir(&account_path).unwrap();
+        let durable_bytes = store.conformance_account_checkpoint_token().unwrap();
+        store.conformance_fail_account_commit(true).unwrap();
         let newer = garth::AccountCursorCheckpoint {
             cursor: "ak:cursor:newer-undurable-account-batch".to_owned(),
             ..checkpoint.clone()
@@ -3732,14 +4486,16 @@ mod tests {
                 .save_account_checkpoint(&scope, newer)
                 .map_err(|error| error.to_string())
         });
-        std::fs::remove_dir(&account_path).unwrap();
-        std::fs::rename(&backup, &account_path).unwrap();
+        store.conformance_fail_account_commit(false).unwrap();
         assert!(
             failed.is_err(),
-            "an actual filesystem failure must refuse the transaction"
+            "an actual account transaction failure must refuse the candidate"
         );
         assert_eq!(serde_json::to_value(store.load()).unwrap(), before);
-        assert_eq!(std::fs::read(&account_path).unwrap(), durable_bytes);
+        assert_eq!(
+            store.conformance_account_checkpoint_token().unwrap(),
+            durable_bytes
+        );
         let restored = LocalStateStore::with_path(&path);
         assert_eq!(serde_json::to_value(restored.load()).unwrap(), before);
         assert_eq!(
@@ -3747,7 +4503,6 @@ mod tests {
             Some(checkpoint)
         );
         let _ = std::fs::remove_file(path);
-        let _ = std::fs::remove_file(account_path);
     }
 
     fn sdk_realm_id() -> arkret_sdk::RealmId {
@@ -3779,9 +4534,17 @@ mod tests {
 
     #[tokio::test]
     async fn account_response_projects_client_events_and_decodes_realm_payloads() {
-        let realm_id = sdk_realm_id();
+        let realm_seed = sdk_realm_id();
+        let realm_id = crate::test_support::committed_event::verified_realm_fixture_as(
+            realm_seed.clone(),
+            Vec::new(),
+            "alice.example",
+            "ak:device:0196419b-0000-7000-8000-000000000001",
+        )
+        .0
+        .realm_id;
         let accepted = crate::test_support::committed_event::verified_realm_items(
-            realm_id.clone(),
+            realm_seed,
             vec![
                 (
                     arkret_sdk::EventKind::MessageCreate.as_str().to_owned(),
@@ -3799,7 +4562,15 @@ mod tests {
                             "schema": "ak.schema.space.v1",
                             "realm_id": realm_id.as_str(),
                             "kind": "board",
-                            "title": "Adapter Board"
+                            "title": "Adapter Board",
+                            "state": "active",
+                            "created_by": {"kind":"account","account_id":{
+                                "principal_id":"ak:did_core:web:alice.example",
+                                "station_id":"ak:did_core:web:station.example"
+                            }},
+                            "created_at": arkret_sdk::canonical::format_timestamp_canonical(
+                                crate::test_support::committed_event::fixture_time(3)
+                            )
                         }
                     }),
                 ),
@@ -3914,7 +4685,7 @@ mod tests {
         }
         cases.push(missing_key);
         let store = crate::state::isolated_store_for_tests("account-unverified-commits");
-        assert!(crate::realm_events_engine::require_exact_claimed_rows(&scanned, &scanned).is_ok());
+        assert!(garth::history_recovery::require_exact_claimed_rows(&scanned, &scanned).is_ok());
         for frame in cases {
             let claimed = frame.realms.as_ref().unwrap().entries[realm_id.as_str()]
                 .committed_events
@@ -3923,7 +4694,7 @@ mod tests {
                 .iter()
                 .collect::<Vec<_>>();
             assert!(
-                crate::realm_events_engine::require_exact_claimed_rows(&claimed, &scanned).is_err()
+                garth::history_recovery::require_exact_claimed_rows(&claimed, &scanned).is_err()
             );
             assert!(store.sync_cursor().is_none());
             assert!(store.load().raw_operations.is_empty());
@@ -3988,18 +4759,26 @@ mod tests {
         use arkret_models_collaboration::sync_frames::committed_event_subscribe::{
             CommittedEventSubscribeFrame, CommittedEventSubscribeFramePayload,
         };
-        let realm_id = sdk_realm_id();
+        let realm_seed = sdk_realm_id();
+        let realm_id = crate::test_support::committed_event::verified_realm_fixture_as(
+            realm_seed.clone(),
+            Vec::new(),
+            "alice.example",
+            "ak:device:0196419b-0000-7000-8000-000000000001",
+        )
+        .0
+        .realm_id;
         let object = arkret_sdk::Space::create_object(
             realm_id.clone(),
             "board",
             "Cross-member board",
             arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
-                sdk_actor_id(),
-                arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
+                arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap(),
+                arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
             )),
         );
         let accepted = crate::test_support::committed_event::verified_realm_item(
-            realm_id.clone(),
+            realm_seed,
             arkret_sdk::EventKind::SpaceCreate.as_str(),
             serde_json::to_value(arkret_sdk::SpaceCreatePayload::new(object)).unwrap(),
         );
@@ -4067,6 +4846,7 @@ mod tests {
                     arkret_sdk::EventKind::InviteAccept.as_str().to_owned(),
                     json!({
                         "invite_id": "ak:invite:AT75JCcnHexLP4y-Juac4pnRIpfUaiaat4XhL9W7g610",
+                        "invitee_account_id": {"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:station.example"},
                         "previous_state": "pending"
                     }),
                 ),
@@ -4105,6 +4885,7 @@ mod tests {
             arkret_sdk::EventKind::InviteAccept.as_str(),
             json!({
                 "invite_id": "ak:invite:AT75JCcnHexLP4y-Juac4pnRIpfUaiaat4XhL9W7g610",
+                        "invitee_account_id": {"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:station.example"},
                 "previous_state": "pending"
             }),
             "alice.example",
@@ -4274,7 +5055,7 @@ mod tests {
                     "device_id":device,"target_device_authorize_event_id":authorization_event,
                     "target_device_generation_ref":1,"proposal_event_id":proposal_event,
                     "accepted_at":"2026-09-22T00:00:00.000Z",
-                    "acceptance_seq":1,"status":"revoked",
+                    "acceptance_sequence":1,"status":"revoked",
                     "committed_at":"2026-09-22T00:00:01.000Z"
                 }]
             }]
@@ -4303,7 +5084,7 @@ mod tests {
             device
         ));
         let mut wrong_binding = viewer.clone();
-        let arkret_wire::DeviceRevocationGateRecord::Revoked(state) =
+        let arkret_wire::AccountDeviceRevocationGateRecord::Revoked(state) =
             &mut wrong_binding.devices[0].revocation_states.as_mut().unwrap()[0]
         else {
             panic!("fixture must contain a committed revoked record");
@@ -4315,11 +5096,11 @@ mod tests {
             device
         ));
         let mut wrong_record_station = viewer.clone();
-        let arkret_wire::DeviceRevocationGateRecord::Revoked(state) = &mut wrong_record_station
-            .devices[0]
-            .revocation_states
-            .as_mut()
-            .unwrap()[0]
+        let arkret_wire::AccountDeviceRevocationGateRecord::Revoked(state) =
+            &mut wrong_record_station.devices[0]
+                .revocation_states
+                .as_mut()
+                .unwrap()[0]
         else {
             panic!("fixture must contain a committed revoked record");
         };
@@ -4330,11 +5111,11 @@ mod tests {
             device
         ));
         let mut wrong_record_device = viewer.clone();
-        let arkret_wire::DeviceRevocationGateRecord::Revoked(state) = &mut wrong_record_device
-            .devices[0]
-            .revocation_states
-            .as_mut()
-            .unwrap()[0]
+        let arkret_wire::AccountDeviceRevocationGateRecord::Revoked(state) =
+            &mut wrong_record_device.devices[0]
+                .revocation_states
+                .as_mut()
+                .unwrap()[0]
         else {
             panic!("fixture must contain a committed revoked record");
         };
@@ -4385,7 +5166,7 @@ fn apply_account_frame_payload(
         realm_projection_changed = true;
         // Typed current rows and baseline progress are owned by the durable
         // current index, which installed this frame before the projection is
-        // folded. The account blob keeps no second copy of either.
+        // folded. Account records keep no second copy of either.
         let mut body = body.clone();
         if let Some(object) = body.as_object_mut() {
             object.remove("current");

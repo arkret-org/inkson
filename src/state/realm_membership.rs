@@ -3,31 +3,15 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use arkret_wire::event_kind_str;
+#[cfg(test)]
+pub(crate) use garth::mls::membership::MembershipCompleteness;
+pub(crate) use garth::mls::membership::{
+    MembershipFact, ProjectedRealmMembershipHint, validated_realm_roster_entries,
+};
 use serde_json::Value;
 
 use super::{LocalStateStore, RawOperationRecord};
 
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct MembershipFact {
-    pub(crate) actor_id: String,
-    pub(crate) membership: Option<String>,
-    pub(crate) invite_id: Option<String>,
-}
-impl MembershipFact {
-    fn bare(actor_id: impl Into<String>) -> Self {
-        Self {
-            actor_id: actor_id.into(),
-            membership: None,
-            invite_id: None,
-        }
-    }
-    pub(crate) fn normalized_membership(&self) -> Option<&str> {
-        self.membership
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-    }
-}
 pub(crate) fn trimmed_string(value: Option<&Value>) -> Option<String> {
     value
         .and_then(Value::as_str)
@@ -36,30 +20,6 @@ pub(crate) fn trimmed_string(value: Option<&Value>) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
-/// Validate canonical roster entries and retain the first duplicate ActorId.
-pub(crate) fn validated_realm_roster_entries(
-    projection: Option<&Value>,
-) -> Vec<arkret_sdk::sync::MemberRosterEntry> {
-    let Some(members) = projection
-        .and_then(|root| root.get("member_roster_entries"))
-        .and_then(Value::as_array)
-    else {
-        return Vec::new();
-    };
-    let mut rows = BTreeMap::new();
-    for member in members {
-        let Ok(entry) =
-            serde_json::from_value::<arkret_sdk::sync::MemberRosterEntry>(member.clone())
-        else {
-            continue;
-        };
-        if entry.validate().is_err() {
-            continue;
-        }
-        rows.entry(entry.actor_id.clone()).or_insert(entry);
-    }
-    rows.into_values().collect()
-}
 /// Only records whose Realm matches exactly are included; unknown ownership
 /// cannot become an admission or member projection fact.
 pub(crate) fn raw_operation_realm_matches_exact(
@@ -106,17 +66,48 @@ pub(crate) fn raw_operation_invite_ref(payload: &Value) -> Option<String> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct AcceptedInviteClaimRoute {
+pub(crate) struct MemberJoinKeyPackageRoute {
     pub(crate) destination_id: String,
     pub(crate) target_device_id: Option<String>,
 }
 
-pub(crate) fn accepted_invite_claim_route(
+pub(crate) fn member_join_key_package_route(
     store: &LocalStateStore,
     realm_id: &str,
     invitee_id: &str,
-) -> Option<AcceptedInviteClaimRoute> {
+) -> Option<MemberJoinKeyPackageRoute> {
     let state = store.load();
+    // Only an already accepted, exact-subject link Event can select a KeyPackage endpoint.
+    for record in state
+        .raw_operations
+        .iter()
+        .rev()
+        .filter(|r| raw_operation_realm_matches_exact(r, realm_id))
+    {
+        let raw = &record.payload;
+        if raw_operation_payload_kind(raw).as_deref()
+            != Some(event_kind_str::REALM_INVITE_LINK_ACCEPT)
+            || raw_operation_path_string(raw, &["write_state"]).as_deref() != Some("synced")
+            || raw_member_actor_id(raw).as_deref() != Some(invitee_id)
+        {
+            continue;
+        }
+        let body = raw.get("body").or_else(|| raw.get("payload"))?;
+        let body: arkret_sdk::RealmInviteLinkAcceptPayload =
+            serde_json::from_value(body.clone()).ok()?;
+        if arkret_sdk::ActorId::account(body.subject_account_id.clone()).to_string() != invitee_id {
+            return None;
+        }
+        return Some(MemberJoinKeyPackageRoute {
+            destination_id: body.subject_account_id.station_id.to_string(),
+            target_device_id: raw_operation_path_string(raw, &["signing_device_id"])
+                .map(arkret_sdk::DeviceId::new)
+                .transpose()
+                .ok()?
+                .map(|d| d.to_string()),
+        });
+    }
+
     let accepted = state
         .raw_operations
         .iter()
@@ -158,14 +149,14 @@ pub(crate) fn accepted_invite_claim_route(
         .transpose()
         .ok()?
         .map(|device| device.to_string());
-    Some(AcceptedInviteClaimRoute {
+    Some(MemberJoinKeyPackageRoute {
         destination_id,
         target_device_id,
     })
 }
 
 pub(crate) fn claim_target_device_id(
-    route: &AcceptedInviteClaimRoute,
+    route: &MemberJoinKeyPackageRoute,
 ) -> anyhow::Result<Option<&str>> {
     route.target_device_id.as_deref().map(Some).ok_or_else(|| {
         anyhow::anyhow!(
@@ -263,6 +254,25 @@ pub(crate) fn local_membership_fact_from_raw_operation(
             profile.invite_id = raw_operation_invite_ref(payload);
             Some(profile)
         }
+        event_kind_str::REALM_INVITE_LINK_ACCEPT => {
+            if raw_operation_path_string(payload, &["write_state"]).as_deref() != Some("synced") {
+                return None;
+            }
+            let body: arkret_sdk::RealmInviteLinkAcceptPayload = serde_json::from_value(
+                payload
+                    .get("body")
+                    .or_else(|| payload.get("payload"))?
+                    .clone(),
+            )
+            .ok()?;
+            let actor = arkret_sdk::ActorId::account(body.subject_account_id).to_string();
+            if raw_member_actor_id(payload).as_deref() != Some(actor.as_str()) {
+                return None;
+            }
+            let mut fact = MembershipFact::bare(actor);
+            fact.membership = Some("join".into());
+            Some(fact)
+        }
         event_kind_str::INVITE_ACCEPT => {
             let invite_id = raw_operation_invite_ref(payload);
             let actor_id = raw_member_actor_id(payload).or_else(|| {
@@ -279,20 +289,6 @@ pub(crate) fn local_membership_fact_from_raw_operation(
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) enum MembershipCompleteness {
-    #[default]
-    Unavailable,
-    Limited,
-    Complete,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct ProjectedRealmMembershipHint {
-    pub(crate) joined: BTreeSet<String>,
-    pub(crate) completeness: MembershipCompleteness,
-}
-
 /// Account-sync `members[]` is a current roster projection hint. It is more
 /// suitable than the bounded raw-operation cache for reconciliation wakeups,
 /// but it is not membership authority: the governance proof and server-side
@@ -301,34 +297,9 @@ pub(crate) fn projected_realm_membership_hint(
     store: &LocalStateStore,
     realm_id: &str,
 ) -> ProjectedRealmMembershipHint {
-    let state = store.load();
-    let Some(projection) = state.realm_tree_projections.get(realm_id) else {
-        return ProjectedRealmMembershipHint::default();
-    };
-    let Some(_) = projection
-        .get("member_roster_entries")
-        .and_then(Value::as_array)
-    else {
-        return ProjectedRealmMembershipHint::default();
-    };
-    let joined = validated_realm_roster_entries(Some(projection))
-        .into_iter()
-        .filter(|member| member.membership == arkret_sdk::sync::MemberRosterMembership::Join)
-        .map(|member| member.actor_id.to_string())
-        .collect();
-    let completeness = if projection
-        .get("member_roster_entries_limited")
-        .and_then(Value::as_bool)
-        == Some(false)
-    {
-        MembershipCompleteness::Complete
-    } else {
-        MembershipCompleteness::Limited
-    };
-    ProjectedRealmMembershipHint {
-        joined,
-        completeness,
-    }
+    garth::mls::membership::projected_membership_hint(
+        store.load().realm_tree_projections.get(realm_id),
+    )
 }
 
 pub(crate) fn accepted_membership_facts_for_realm(
@@ -378,20 +349,10 @@ pub(crate) fn admission_joined_members_for_realm(
     store: &LocalStateStore,
     realm_id: &str,
 ) -> BTreeSet<String> {
-    let hint = projected_realm_membership_hint(store, realm_id);
-    let mut joined = hint.joined;
-    for member in accepted_membership_facts_for_realm(store, realm_id) {
-        let actor_id = member.actor_id.trim();
-        if actor_id.is_empty() {
-            continue;
-        }
-        if member.normalized_membership() == Some("join") {
-            joined.insert(actor_id.to_owned());
-        } else {
-            joined.remove(actor_id);
-        }
-    }
-    joined
+    garth::mls::membership::admission_joined_members(
+        projected_realm_membership_hint(store, realm_id),
+        accepted_membership_facts_for_realm(store, realm_id),
+    )
 }
 
 pub(crate) fn principal_core_key(value: &str) -> Option<String> {

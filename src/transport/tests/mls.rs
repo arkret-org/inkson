@@ -12,7 +12,7 @@ fn keypackage_upload_endpoint_signature_is_raw_signature_tuple() {
     );
     let timestamp = Utc.timestamp_opt(1_774_310_400, 0).single().unwrap();
     let principal_id = crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap();
-    let unsigned = arkret_sdk::KeyPackagesUploadUnsignedRequest {
+    let unsigned = arkret_sdk::KeyPackagesUploadFields {
         actor_id: arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
             principal_id.clone(),
             arkret_sdk::DidCoreId::new("ak:did_core:web:station.example".to_owned()).unwrap(),
@@ -44,9 +44,9 @@ fn keypackage_upload_endpoint_signature_is_raw_signature_tuple() {
 
     assert_eq!(signature.signature_algorithm.as_deref(), Some("Ed25519"));
     assert_eq!(signature.kid.as_str(), "did:web:alice.example#device");
-    let sig = signature.sig.as_str();
-    assert_eq!(sig.len(), 86);
-    assert!(!sig.contains('='));
+    let signature = signature.signature.as_str();
+    assert_eq!(signature.len(), 86);
+    assert!(!signature.contains('='));
 }
 
 #[test]
@@ -110,7 +110,8 @@ fn keypackage_claim_request_carries_required_capabilities() {
                 &requester_device_authorize_event_id
             );
         }
-        arkret_sdk::PeerKeyPackageRequesterAuthorization::Agent { .. } => {
+        arkret_sdk::PeerKeyPackageRequesterAuthorization::Agent { .. }
+        | arkret_sdk::PeerKeyPackageRequesterAuthorization::RealmDevice { .. } => {
             panic!("human caller must author device authorization")
         }
     }

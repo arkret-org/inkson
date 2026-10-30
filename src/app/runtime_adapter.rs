@@ -173,3 +173,14 @@ impl LocalStateBackend for SignalLocalStateBackend {
             .map_err(|error| arkret_sdk::Error::Protocol(error.to_string()))
     }
 }
+
+/// Capture the product session once, before entering the authoring engine.
+pub(crate) fn event_submitter(
+    http: arkret_sdk::http_client::Client,
+) -> crate::event_submit::EventSubmitter {
+    let submitter = crate::event_submit::EventSubmitter::new(http);
+    match dioxus::prelude::try_consume_context::<crate::app::SessionContext>() {
+        Some(context) => submitter.with_state_store(state_store_handle(context.state_store)),
+        None => submitter,
+    }
+}

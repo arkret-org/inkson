@@ -54,7 +54,7 @@ fn pending_welcome_delivery(
             device_id: recipient_device,
         },
         keypackage_claim_ref: draft.keypackage_claim_ref.clone(),
-        ciphertext_b64: draft.ciphertext_b64.clone(),
+        ciphertext_base64url: draft.ciphertext_base64url.clone(),
         producer_proof: arkret_wire::DetachedObjectSignature {
             context: arkret_wire::DetachedSignatureContext::MlsWelcomeDelivery,
             signature_algorithm: arkret_wire::DetachedSignatureAlgorithm::Ed25519,
@@ -62,7 +62,7 @@ fn pending_welcome_delivery(
                 .unwrap(),
             signed_digest: arkret_sdk::Hash::new(format!("sha256:{}", "11".repeat(32))).unwrap(),
             created_at: "2026-09-22T00:00:00.000Z".parse().unwrap(),
-            sig: arkret_sdk::Base64UrlString::new("A".repeat(86)).unwrap(),
+            signature: arkret_sdk::Base64UrlString::new("A".repeat(86)).unwrap(),
         },
     };
     delivery.validate_shape().unwrap();
@@ -404,7 +404,6 @@ async fn kanban_write_does_not_consume_pending_welcome_without_checkpoint() {
 
     let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
     let bob_actor = "ak:did_core:web:bob.example";
-    let bob_principal_id = crate::mls_api_helpers::principal_core_id(bob_actor).unwrap();
     let bob_device = "ak:device:01904100-0000-7000-8000-0000000000b2";
     let _account_scope = active_account_scope(bob_actor, bob_device);
     let alice = ArkretMlsIdentity::new_test_human_device(
@@ -435,32 +434,13 @@ async fn kanban_write_does_not_consume_pending_welcome_without_checkpoint() {
     );
 
     let mut state = isolated_store_for_tests("pending-local-welcome");
-    state.ingest_to_device_messages(&[serde_json::from_value(json!({
-        "device_message_id": "ak:device_message:01904100-0000-7000-8000-0000000000e1",
-        "kind": "ak.mls.welcome",
-        "sender_account_id": {
-            "principal_id": crate::mls_api_helpers::principal_core_id(
-                "ak:did_core:web:alice.example"
-            ).unwrap(),
-            "station_id": "ak:did_core:web:station.example"
-        },
-        "sender_device_id": "ak:device:01904100-0000-7000-8000-0000000000a1",
-        "recipient_account_id": {
-            "principal_id": bob_principal_id,
-            "station_id": "ak:did_core:web:station.example"
-        },
-        "recipient_device_id": bob_device,
-        "sent_at": arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now()),
-        "expires_at": arkret_sdk::canonical::format_timestamp_canonical(
-            chrono::Utc::now() + chrono::Duration::hours(1)
-        ),
-        "content": serde_json::to_value(&pending_welcome).unwrap(),
-        "unsigned": {
-            "mls_welcome_id": "ak:mls_welcome:01904100-0000-7000-8000-0000000000ff",
-            "key_package_id": bob_key_package.keypackage_id.clone(),
-        },
-    }))
-    .unwrap()]);
+    state
+        .ingest_recipient_deliveries(&[
+            arkret_models_collaboration::device_messages::RecipientDelivery::MlsWelcome {
+                mls_welcome: pending_welcome,
+            },
+        ])
+        .unwrap();
     // Welcome validation and application belong to the MLS runtime sync path.
     // The Kanban writer consumes only checkpoint-proven active group state.
     assert!(crate::mls::runtime::has_pending_mls_welcome_for_endpoint(
@@ -518,7 +498,6 @@ async fn kanban_write_waits_for_runtime_to_apply_pending_welcome() {
 
     let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
     let bob_actor = "ak:did_core:web:bob.example";
-    let bob_principal_id = crate::mls_api_helpers::principal_core_id(bob_actor).unwrap();
     let bob_device = "ak:device:01904100-0000-7000-8000-0000000000b3";
     let _account_scope = active_account_scope(bob_actor, bob_device);
     let alice = ArkretMlsIdentity::new_test_human_device(
@@ -550,32 +529,13 @@ async fn kanban_write_waits_for_runtime_to_apply_pending_welcome() {
     );
 
     let mut state = isolated_store_for_tests("pending-local-welcome-with-state");
-    state.ingest_to_device_messages(&[serde_json::from_value(json!({
-        "device_message_id": "ak:device_message:01904100-0000-7000-8000-0000000000e2",
-        "kind": "ak.mls.welcome",
-        "sender_account_id": {
-            "principal_id": crate::mls_api_helpers::principal_core_id(
-                "ak:did_core:web:alice.example"
-            ).unwrap(),
-            "station_id": "ak:did_core:web:station.example"
-        },
-        "sender_device_id": "ak:device:01904100-0000-7000-8000-0000000000a1",
-        "recipient_account_id": {
-            "principal_id": bob_principal_id,
-            "station_id": "ak:did_core:web:station.example"
-        },
-        "recipient_device_id": bob_device,
-        "sent_at": arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now()),
-        "expires_at": arkret_sdk::canonical::format_timestamp_canonical(
-            chrono::Utc::now() + chrono::Duration::hours(1)
-        ),
-        "content": serde_json::to_value(&pending_welcome).unwrap(),
-        "unsigned": {
-            "mls_welcome_id": "ak:mls_welcome:01904100-0000-7000-8000-0000000000f1",
-            "key_package_id": bob_key_package.keypackage_id.clone(),
-        },
-    }))
-    .unwrap()]);
+    state
+        .ingest_recipient_deliveries(&[
+            arkret_models_collaboration::device_messages::RecipientDelivery::MlsWelcome {
+                mls_welcome: pending_welcome,
+            },
+        ])
+        .unwrap();
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
     crate::mls::runtime::store_account_mls_secret(
         &secure,
@@ -788,7 +748,7 @@ async fn encrypted_private_patch_with_ready_checkpoint_replaces_plaintext() {
         )
         .unwrap();
     let record = group.export_state_record().unwrap();
-    let mut envelope = crate::mls::persistence::encrypt_state(
+    let mut envelope = garth::mls::checkpoint::encrypt_state(
         realm,
         &record.group_id,
         record.epoch,
@@ -1112,7 +1072,7 @@ async fn sidecar_track_patch_encrypts_with_only_the_native_sidecar_snapshot() {
             .unwrap();
     let mut salt = [0_u8; 16];
     getrandom::fill(&mut salt).unwrap();
-    let snapshot = crate::mls::persistence::encrypt_state(
+    let snapshot = garth::mls::checkpoint::encrypt_state(
         realm,
         &post_state.group_id,
         post_state.epoch,
@@ -1133,7 +1093,7 @@ async fn sidecar_track_patch_encrypts_with_only_the_native_sidecar_snapshot() {
     let realm_serialized = serde_json::to_vec(&realm_state).unwrap();
     let mut realm_salt = [0_u8; 16];
     getrandom::fill(&mut realm_salt).unwrap();
-    let realm_snapshot = crate::mls::persistence::encrypt_state(
+    let realm_snapshot = garth::mls::checkpoint::encrypt_state(
         realm,
         &realm_state.group_id,
         realm_state.epoch,

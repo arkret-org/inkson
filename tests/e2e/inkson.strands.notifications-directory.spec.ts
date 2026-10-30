@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import {
   registerStrandsBeforeEach,
   DEMO_REALM,
@@ -6,9 +6,28 @@ import {
   openSettings,
   dismissBlockingRecoveryModal,
 } from "./strandsHarness";
-import { CURRENT_ACCOUNT_ACTOR_ID, CURRENT_ACCOUNT_ID, DEMO_INVITE_ID, INVITED_REALM } from "./mockArkretApi";
+import { CURRENT_ACCOUNT_ACTOR_ID, CURRENT_ACCOUNT_ID, DEMO_INVITE_ID, INVITED_REALM, validateMockSchema } from "./mockArkretApi";
 
-registerStrandsBeforeEach();
+const previewResponseGates = new WeakMap<Page, { wait: Promise<void>; release(): void }>();
+
+test.beforeEach(async ({ page }, testInfo) => {
+  if (testInfo.title.startsWith("invite preview disclosed")) {
+    let release!: () => void;
+    const wait = new Promise<void>((resolve) => { release = resolve; });
+    previewResponseGates.set(page, { wait, release });
+  }
+});
+
+registerStrandsBeforeEach({
+  beforeInvitePreviewResponse: async (page) => {
+    await previewResponseGates.get(page)?.wait;
+  },
+});
+
+test.afterEach(async ({ page }) => {
+  previewResponseGates.get(page)?.release();
+  previewResponseGates.delete(page);
+});
 
 async function openInviteNotification(page: import("@playwright/test").Page) {
   await dismissBlockingRecoveryModal(page);
@@ -37,6 +56,8 @@ test("invite preview disclosed stays loading then visible and only Accept joins"
 
   const item = await openInviteNotification(page);
   await expect(item.getByTestId("invite-preview-loading")).toBeVisible();
+  expect(writes).toEqual([]);
+  previewResponseGates.get(page)!.release();
   await expect(item.getByTestId("invite-preview-disclosed")).toBeVisible();
   await expect(item.getByTestId("invite-preview-name")).toHaveText(
     "Preview-only Realm",
@@ -48,7 +69,16 @@ test("invite preview disclosed stays loading then visible and only Accept joins"
   ).toHaveCount(0);
   expect(writes).toEqual([]);
 
+  const acceptedResponse = page.waitForResponse(response =>
+    new URL(response.url()).pathname === "/_arkret/self/events"
+    && response.request().method() === "POST"
+    && (response.request().postData() ?? "").includes("ak.invite.accept"),
+    { timeout: 60_000 });
   await item.getByTestId("notification-action").click();
+  const accepted = await acceptedResponse;
+  expect(accepted.status()).toBe(200);
+  const outcome = await accepted.json();
+  expect(outcome).toMatchObject({ status: "committed", commit: { realm_id: INVITED_REALM } });
   await expect
     .poll(() =>
       writes.some((request) =>
@@ -67,12 +97,14 @@ test("invite preview disclosed stays loading then visible and only Accept joins"
     .toBe(true);
   await expect(page.getByTestId("notifications-status")).toContainText(
     "Joined Realm",
+    { timeout: 90_000 },
   );
   const request = writes.find(request => request.path.endsWith("/events")
     && request.body.includes("ak.invite.accept"));
   expect(request).toBeDefined();
   const submission = JSON.parse(request!.body);
   const event = submission.event ?? submission;
+  expect(outcome.commit.event_ref).toBe(event.event_id);
   expect(event.actor_id).toEqual(CURRENT_ACCOUNT_ACTOR_ID);
   expect(event.realm_id).toBe(INVITED_REALM);
   expect(event.payload).toEqual({ invite_id: DEMO_INVITE_ID,
@@ -232,8 +264,13 @@ test("directory search refuses unindexed Realms and exposes only public Realm me
   page,
 }) => {
   const writes: string[] = [];
+  const directoryRequests: import("@playwright/test").Request[] = [];
   page.on("request", (request) => {
-    const path = new URL(request.url()).pathname;
+    const url = new URL(request.url());
+    const path = url.pathname;
+    if (url.hostname === "directory.example" || path.startsWith("/_arkret/find/directory/")) {
+      directoryRequests.push(request);
+    }
     if (request.method() === "POST" && (
       path === "/_arkret/self/realm-joins/prepare" ||
       path === "/_arkret/self/events" ||
@@ -245,9 +282,14 @@ test("directory search refuses unindexed Realms and exposes only public Realm me
   await page.getByTestId("global-search-input").press("Enter");
   await expect(page.getByTestId("directory-panel")).toBeVisible();
 
+  await expect(page.getByTestId("directory-address-input")).toHaveValue("");
+  await expect(page.getByTestId("directory-search-button")).toBeDisabled();
+  expect(directoryRequests).toEqual([]);
+  await page.getByTestId("directory-address-input").fill("https://directory.example");
   await page.getByTestId("directory-search-input").fill("demo");
   const response = page.waitForResponse((value) =>
     value.request().method() === "POST" &&
+    new URL(value.url()).hostname === "directory.example" &&
     new URL(value.url()).pathname === "/_arkret/find/directory/search-realms",
   );
   await page.getByTestId("directory-search-button").click();
@@ -262,6 +304,16 @@ test("directory search refuses unindexed Realms and exposes only public Realm me
   await expect(page.getByTestId("org-result")).toHaveCount(0);
   await expect(page.getByTestId("org-search-members")).toHaveCount(0);
   expect(writes).toEqual([]);
+  expect(directoryRequests.some((request) => new URL(request.url()).pathname === "/_arkret/find/directory/describe")).toBe(true);
+  expect(directoryRequests.some((request) => new URL(request.url()).pathname === "/.well-known/did.json")).toBe(true);
+  for (const request of directoryRequests) {
+    const url = new URL(request.url());
+    expect(url.hostname).toBe("directory.example");
+    expect(url.pathname).not.toMatch(/^\/_arkret\/open\/services\//);
+    for (const name of ["authorization", "dpop", "cookie", "signature", "signature-input", "source-service-id", "destination-service-id"]) {
+      expect(request.headers()[name], `Directory request leaked ${name}`).toBeUndefined();
+    }
+  }
 });
 
 test("command palette closes with Escape and outside click", async ({
@@ -330,9 +382,36 @@ test("notification feed controls and local mute feedback follow the active langu
       writes.push(path);
     }
   });
-  for (const language of ["en", "zh", "en"] as const) {
+  const uiStatePath = "/_arkret/self/account_data/ak.client.ui_state";
+  const languageWrites: string[] = [];
+  const selectLanguage = async (language: "en" | "zh") => {
+    const changed = await page.getByTestId("client-shell").getAttribute("data-locale") !== language;
+    const saved = changed ? page.waitForResponse(response => response.request().method() === "PUT"
+      && new URL(response.url()).pathname === uiStatePath) : undefined;
     await page.getByTestId(`language-${language}`).click();
     await expect(page.getByTestId("client-shell")).toHaveAttribute("data-locale", language);
+    if (!saved) return;
+    const response = await saved;
+    expect(response.status()).toBe(200);
+    expect(response.request().headers()["arkret-operation"]).toBe("ak.self.account_data.resource.replace.v1");
+    const request = response.request().postDataJSON();
+    validateMockSchema("schemas/account-data-operations.schema.json#/$defs/account_data_replace_request_body", request);
+    const event = request.set_event.event;
+    expect(event.kind).toBe("ak.account_data.set");
+    expect(event.actor_id).toEqual(CURRENT_ACCOUNT_ACTOR_ID);
+    expect(event.payload.key).toBe("ak.client.ui_state");
+    expect(event.payload.body).toBeUndefined();
+    expect(event.payload.encrypted_payload.aad.actor_id).toEqual(CURRENT_ACCOUNT_ACTOR_ID);
+    expect(event.payload.encrypted_payload.aad.account_data_key).toBe("ak.client.ui_state");
+    const stored = await response.json();
+    validateMockSchema("schemas/account-data-operations.schema.json#/$defs/account_data_entry", stored);
+    expect(stored.account_data_key).toBe("ak.client.ui_state");
+    expect(stored.revision).toBe(event.payload.expected_server_revision + 1);
+    expect(stored.content).toEqual(event.payload.encrypted_payload);
+    languageWrites.push(uiStatePath);
+  };
+  for (const language of ["en", "zh", "en"] as const) {
+    await selectLanguage(language);
     await page.getByTestId("topbar-notifications-button").click();
     const panel = page.getByTestId("notifications-panel");
     await expect(panel).toHaveAttribute(
@@ -356,7 +435,10 @@ test("notification feed controls and local mute feedback follow the active langu
     );
     await page.getByTestId("notifications-drawer-close").click();
   }
-  await page.getByTestId("language-zh").click();
+  await selectLanguage("zh");
+  // Language sync is the registered encrypted UI cell; mute stays local.
+  expect(writes).toEqual(languageWrites);
+  const beforeMute = writes.length;
   await page.getByTestId("topbar-notifications-button").click();
   const message = page.getByTestId("notification-item").filter({
     hasText: "Alice sent a message in Demo Realm",
@@ -364,5 +446,6 @@ test("notification feed controls and local mute feedback follow the active langu
   await message.getByTestId("mute-realm-button").click();
   await expect(message).toHaveCount(0);
   await expect(page.getByTestId("notifications-status")).toContainText("已静音");
-  expect(writes).toEqual([]);
+  expect(writes.slice(beforeMute)).toEqual([]);
+  expect(writes).toEqual(languageWrites);
 });

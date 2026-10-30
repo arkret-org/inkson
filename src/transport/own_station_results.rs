@@ -2,7 +2,7 @@
 //! distinct and are never manufactured from authenticated client responses.
 
 use arkret_sdk::CommittedEventView;
-use arkret_sdk::http_client::own_station_results::OwnStationResultClient;
+use arkret_sdk::http_client::own_station_results::OwnStationStateClient;
 
 mod sealed {
     pub trait Sealed {}
@@ -36,13 +36,119 @@ impl AcceptedPageRows for garth::own_station_results::OwnStationScanPage {
 
 pub(crate) async fn client_for_http(
     http: &arkret_sdk::http_client::Client,
-) -> garth::Result<OwnStationResultClient> {
+) -> garth::Result<OwnStationStateClient> {
     if let Some(client) = http.own_station_result_client()? {
         return Ok(client);
     }
     crate::identity::session_refresh::own_station_result_client_for_http(http)
         .await
         .map_err(|error| garth::Error::Protocol(error.to_string()))
+}
+
+/// Anchor this private assertion independently of the Consent response. Human
+/// tenure comes from the session's original registration; transferable PCRs
+/// use a fresh verified authority chain and its independently resolved route.
+pub(crate) async fn consent_current_authority(
+    http: &arkret_sdk::http_client::Client,
+    client: &OwnStationStateClient,
+    holder: &arkret_sdk::AccountId,
+    registered_pcr: &arkret_sdk::RealmId,
+) -> anyhow::Result<arkret_sdk::http_client::own_station_results::ConsentCurrentReadAuthority> {
+    use arkret_sdk::http_client::own_station_results::ConsentCurrentReadAuthority;
+
+    anyhow::ensure!(
+        client.session()?.account_id() == holder,
+        "Consent authority belongs to another Account"
+    );
+    // PCR originals use their authenticated own-Station disclosure, not the
+    // ordinary collaboration stream scan required by genesis_response.
+    let event_id = arkret_sdk::EventId::from_digest(
+        registered_pcr.digest_suite_code().digest_suite(),
+        registered_pcr.digest_bytes(),
+    );
+    let genesis = client.committed_event_get(&event_id).await?;
+    let CommittedEventView::Full(original) = genesis.value()? else {
+        anyhow::bail!("Consent authority requires the original registered PCR Genesis");
+    };
+    original.validate_shape()?;
+    original.commit.validate_content_address()?;
+    original
+        .event
+        .verify_event_id_matches_content_with_digest_suite(arkret_sdk::DigestSuite::Sha256)?;
+    anyhow::ensure!(
+        genesis.session() == client.session()?
+            && genesis.request() == &event_id
+            && original.event.event_id == event_id
+            && original.event.realm_id == *registered_pcr
+            && original.event.kind == arkret_sdk::EventKind::RealmCreate
+            && original.event.scope_ref == arkret_sdk::ScopeRef::RealmGenesis
+            && original.commit.realm_id == *registered_pcr
+            && original.commit.event_ref == event_id
+            && original.commit.stream_ref
+                == (arkret_sdk::CommitStreamRef::Realm {
+                    realm_id: registered_pcr.clone(),
+                })
+            && original.commit.stream_position == 0
+            && original.commit.previous_commit_ref.is_none()
+            && original.commit.governance_generation == 0,
+        "Consent authority original differs from the registered PCR Genesis"
+    );
+    let governance = arkret_sdk::GenesisGovernance::from_genesis(&original.event)?;
+    if governance.is_human() {
+        return Ok(ConsentCurrentReadAuthority::from_human_genesis(
+            holder,
+            registered_pcr,
+            &genesis,
+        )?);
+    }
+    anyhow::ensure!(
+        governance.is_principal_control(),
+        "Consent authority is not a PCR"
+    );
+    governance.require_transferable()?;
+    let request = arkret_sdk::RealmAuthorityBundleRequestBody {
+        realm_id: registered_pcr.clone(),
+        nonce: arkret_sdk::Base64UrlString::new(crate::random::base64url_token(
+            32,
+            "Consent authority nonce unavailable",
+        )?)
+        .map_err(anyhow::Error::msg)?,
+    };
+    let bundle = garth::AuthorityClient::new(http.clone())
+        .resolve_authority(&request)
+        .await?;
+    client.check_session()?;
+    anyhow::ensure!(
+        bundle.realm_id == *registered_pcr
+            && bundle.genesis_event == original.event
+            && bundle.genesis_commit == original.commit,
+        "Consent authority chain differs from the registered PCR original"
+    );
+    let keys = garth::fetch_historical_station_key_directory(http, &bundle, None, None).await?;
+    let freshness =
+        arkret_identity::RealmAuthorityFreshness::new(crate::clock::now_utc(), request.nonce);
+    let verified = arkret_identity::verify_realm_authority_bundle(&bundle, &freshness, &keys)?;
+    let route: arkret_sdk::AuthenticatedServiceResolution =
+        serde_json::from_value(bundle.current_route_record)?;
+    client.check_session()?;
+    genesis.value()?;
+    Ok(ConsentCurrentReadAuthority::from_verified_realm(
+        &verified, &route,
+    )?)
+}
+
+pub(crate) async fn verify_local_publication<T: arkret_sdk::PublicationRequest>(
+    http: &arkret_sdk::http_client::Client,
+    request: T,
+) -> anyhow::Result<arkret_sdk::VerifiedSubmission<T>> {
+    let client = client_for_http(http).await?;
+    let actor = arkret_sdk::ActorId::account(client.session()?.account_id().clone());
+    let signer = crate::event_signer::active_signer()
+        .ok_or_else(|| anyhow::anyhow!("producer signing context is unavailable"))?;
+    let context = signer.publication_context(&actor)?;
+    Ok(arkret_sdk::VerifiedSubmission::verify(request, |_| {
+        Ok(context.clone())
+    })?)
 }
 
 /// Read the immutable founding original only when the authenticated Station
@@ -62,7 +168,7 @@ pub(crate) async fn accepted_genesis(
 }
 
 pub(crate) async fn genesis_response(
-    client: &OwnStationResultClient,
+    client: &OwnStationStateClient,
     realm: &arkret_sdk::RealmId,
 ) -> garth::Result<
     arkret_sdk::http_client::own_station_results::BoundOwnStationResponse<
@@ -149,6 +255,74 @@ pub(crate) async fn holder_pcr_root_ref(
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
+mod consent_authority_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn cold_consent_authority_requires_the_actual_registered_genesis() {
+        let holder = crate::test_support::authority_at_station(
+            "ak:did_core:web:consent-holder.example",
+            "ak:did_core:web:station.example",
+        );
+        let realm = arkret_sdk::RealmId::from_event_id(&arkret_sdk::EventId::from_digest(
+            arkret_sdk::DigestSuite::Sha256,
+            [71; 32],
+        ));
+        let (client, server) = test_http::client_with_status(
+            &holder,
+            vec![(
+                404,
+                serde_json::json!({
+                    "type": "https://arkret.org/problems/not_found", "title": "Not Found", "status": 404
+                }),
+            )],
+        );
+        let http = arkret_sdk::http_client::ClientBuilder::new(
+            url::Url::parse(&client.session().unwrap().binding().base_url).unwrap(),
+        )
+        .allow_insecure_localhost()
+        .build()
+        .unwrap();
+        assert!(
+            consent_current_authority(&http, &client, &holder, &realm)
+                .await
+                .is_err(),
+            "an unavailable cold-start Genesis must not become Human generation zero"
+        );
+        server.join().unwrap();
+    }
+
+    #[tokio::test]
+    async fn consent_authority_rejects_another_complete_account_before_discovery() {
+        let holder = crate::test_support::authority_at_station(
+            "ak:did_core:web:consent-holder.example",
+            "ak:did_core:web:station.example",
+        );
+        let other = crate::test_support::authority_at_station(
+            "ak:did_core:web:consent-holder.example",
+            "ak:did_core:web:other-station.example",
+        );
+        let realm = arkret_sdk::RealmId::from_event_id(&arkret_sdk::EventId::from_digest(
+            arkret_sdk::DigestSuite::Sha256,
+            [72; 32],
+        ));
+        let (client, server) = test_http::client(&holder, vec![]);
+        let http = arkret_sdk::http_client::ClientBuilder::new(
+            url::Url::parse(&client.session().unwrap().binding().base_url).unwrap(),
+        )
+        .allow_insecure_localhost()
+        .build()
+        .unwrap();
+        let error = consent_current_authority(&http, &client, &other, &realm)
+            .await
+            .err()
+            .unwrap();
+        assert!(error.to_string().contains("another Account"));
+        server.join().unwrap();
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) mod test_http {
     use std::io::{Read, Write};
     use std::sync::Arc;
@@ -178,7 +352,7 @@ pub(crate) mod test_http {
     pub(crate) fn client(
         account: &arkret_sdk::AccountId,
         bodies: Vec<serde_json::Value>,
-    ) -> (OwnStationResultClient, std::thread::JoinHandle<()>) {
+    ) -> (OwnStationStateClient, std::thread::JoinHandle<()>) {
         client_with_status(
             account,
             bodies.into_iter().map(|body| (200, body)).collect(),
@@ -188,7 +362,7 @@ pub(crate) mod test_http {
     pub(crate) fn client_with_status(
         account: &arkret_sdk::AccountId,
         bodies: Vec<(u16, serde_json::Value)>,
-    ) -> (OwnStationResultClient, std::thread::JoinHandle<()>) {
+    ) -> (OwnStationStateClient, std::thread::JoinHandle<()>) {
         let (client, server, _) = revocable_client(account, bodies, false);
         (client, server)
     }
@@ -198,7 +372,7 @@ pub(crate) mod test_http {
         bodies: Vec<(u16, serde_json::Value)>,
         invalidate_on_response: bool,
     ) -> (
-        OwnStationResultClient,
+        OwnStationStateClient,
         std::thread::JoinHandle<()>,
         Arc<std::sync::atomic::AtomicBool>,
     ) {
@@ -209,7 +383,7 @@ pub(crate) mod test_http {
             base_url: base.clone(),
             trust_domain: arkret_sdk::TrustDomainId::new("ak:trust_domain:station.example")
                 .unwrap(),
-            auth_metadata: arkret_sdk::AuthMetadata::minimal(),
+            authentication_metadata: arkret_sdk::AuthenticationMetadata::minimal(),
         };
         let session = OwnStationSessionSnapshot::new(
             binding.clone(),
@@ -269,7 +443,7 @@ pub(crate) mod test_http {
             }
         });
         (
-            OwnStationResultClient::new(raw, binding, Arc::new(Source(session, active.clone())))
+            OwnStationStateClient::new(raw, binding, Arc::new(Source(session, active.clone())))
                 .unwrap(),
             server,
             active,

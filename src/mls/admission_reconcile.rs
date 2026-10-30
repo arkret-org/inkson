@@ -79,8 +79,11 @@ pub(crate) async fn submit_mls_admission_for_invitee(
         None
     };
     let claim_route = if target_agent.is_some() {
-        AcceptedInviteClaimRoute {
-            destination_id: invitee_actor.route_service_id().to_string(),
+        MemberJoinKeyPackageRoute {
+            destination_id: invitee_actor
+                .fixed_route_service_id()
+                .ok_or_else(|| anyhow::anyhow!("Account invitee lacks its fixed Station"))?
+                .to_string(),
             target_device_id: None,
         }
     } else if let Some(target_device_id) = target_device_id_override {
@@ -88,7 +91,7 @@ pub(crate) async fn submit_mls_admission_for_invitee(
             invitee_actor == arkret_sdk::ActorId::account(account.authority.clone()),
             "device-targeted MLS admission is restricted to the active Account ActorId"
         );
-        AcceptedInviteClaimRoute {
+        MemberJoinKeyPackageRoute {
             destination_id: account.authority.station_id.to_string(),
             target_device_id: Some(target_device_id),
         }
@@ -98,7 +101,7 @@ pub(crate) async fn submit_mls_admission_for_invitee(
         direct_contact_claim_route(&api.sdk_http_client()?, &invitee_actor).await?
     } else {
         let store = state_store.read();
-        accepted_invite_claim_route(&store, &realm_id, &invitee_id).ok_or_else(|| {
+        member_join_key_package_route(&store, &realm_id, &invitee_id).ok_or_else(|| {
             anyhow::anyhow!(
                 "accepted invite has no exact destination service and accepting-device route"
             )
@@ -152,17 +155,30 @@ pub(crate) async fn submit_mls_admission_for_invitee(
             == invitee_actor,
         "KeyPackage claim actor does not match the selected complete member ActorId"
     );
+    let scope = arkret_sdk::ScopeRef::Realm {
+        realm_id: arkret_sdk::RealmId::new(realm_id.clone())?,
+    };
+    let state_handle = crate::app::runtime_adapter::state_store_handle(state_store);
+    let current_input = crate::mls::send_gate::MlsSendGateInput::capture(&state_handle, &scope);
+    let current = crate::mls::send_gate::read_durable_mls_current(&current_input, &scope)
+        .await?
+        .context("MLS admission requires verified durable current")?;
+    // The product projection can lag the committed current index after a
+    // membership update. Pin one verified cut for the handshake and Event.
+    let binding = crate::mls::governance_proof::binding_for_current_transition(&current)
+        .map_err(anyhow::Error::msg)?;
     let local_state = state_store.read().clone();
-    let admission = crate::mls::admission::build_realm_mls_admission_events_from_claim(
+    let admission = crate::mls::admission::build_admission_events_with_binding(
         &local_state,
         secure_store.as_ref(),
-        &realm_id,
+        &scope,
         &account.authority,
         &mls_actor_id,
         &account.device_id,
         &claim,
         &claim_request_id,
         &claim_receipt,
+        Some(&binding),
     )
     .map_err(|err| anyhow::anyhow!(err))?;
     let next_epoch = admission.staged_checkpoint.epoch;
@@ -214,7 +230,7 @@ async fn current_owned_agent_endpoint(
                     .context("Agent runtime key state is unavailable")?;
                 anyhow::ensure!(
                     keys.controller_account_id == *controller
-                        && invitee_actor.route_service_id() == &controller.station_id,
+                        && invitee_actor.fixed_route_service_id() == Some(&controller.station_id),
                     "Agent claim does not belong to the current controller Account"
                 );
                 let key = keys
@@ -245,7 +261,7 @@ async fn current_owned_agent_endpoint(
 async fn direct_contact_claim_route(
     http: &arkret_sdk::http_client::Client,
     peer: &arkret_sdk::ActorId,
-) -> anyhow::Result<AcceptedInviteClaimRoute> {
+) -> anyhow::Result<MemberJoinKeyPackageRoute> {
     let account = peer.as_account_id().ok_or_else(|| {
         anyhow::anyhow!("Direct Conversation human admission requires an exact AccountId")
     })?;
@@ -260,7 +276,7 @@ async fn direct_contact_claim_route(
         anyhow::anyhow!("accepted Contact has no verified peer endpoint selector")
     })?;
     let device = &endpoint.device_id;
-    Ok(AcceptedInviteClaimRoute {
+    Ok(MemberJoinKeyPackageRoute {
         destination_id: account.station_id.to_string(),
         target_device_id: Some(device.to_string()),
     })
@@ -497,7 +513,7 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
             )
             .await?;
         resolved.validate_shape()?;
-        if let arkret_sdk::direct_conversation::DirectConversationResolveOutcome::Provisional {
+        if let arkret_sdk::direct_conversation::DirectConversationResolveResponseBody::Provisional {
             coordinates,
             peer_mls_admission,
             ..
@@ -548,9 +564,14 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
     if pending.is_empty() {
         let local_state = state_store.read().clone();
         crate::mls::direct_binding::diagnostic_stage("admission_binding", "entered");
-        let result =
-            crate::mls::direct_binding::ensure_binding(api, &local_state, &realm_id, &backfill)
-                .await;
+        let result = crate::mls::direct_binding::ensure_binding(
+            api,
+            &local_state,
+            &crate::app::runtime_adapter::state_store_handle(state_store),
+            &realm_id,
+            &backfill,
+        )
+        .await;
         crate::mls::direct_binding::diagnostic_stage(
             "admission_binding",
             if result.is_ok() {

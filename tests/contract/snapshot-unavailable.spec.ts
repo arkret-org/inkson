@@ -95,7 +95,7 @@ test("Snapshot unavailable validation rejects status, registry, content type and
     for (const wrongStatus of [200, 404, 500, 502]) {
       expect(() => validate(wrongStatus, canonical)).toThrow();
     }
-    expect(() => validate(404, { error: { code: "not_found" } }, "application/json")).toThrow("has no OpenAPI response");
+    expect(() => validate(404, { error: { code: "not_found" } }, "application/json")).toThrow("application/problem+json");
     for (const body of [
       { ...canonical, status: 404 },
       { ...canonical, type: "https://arkret.org/problems/unregistered_snapshot_failure" },
@@ -116,5 +116,5 @@ test("Snapshot unavailable validation rejects status, registry, content type and
   }
   const unrelated = operations.find((operation) => operation.operation_id !== HEAD && operation.operation_id !== BY_REF && !operation.responses["503"] && !operation.responses.default)!;
   expect(unrelated).toBeDefined();
-  expect(() => validateMockResponseForOperation(unrelated, 503, canonical, "application/problem+json")).toThrow("has no OpenAPI response");
+  expect(() => validateMockResponseForOperation(unrelated, 503, canonical, "application/problem+json")).toThrow("registered error surface");
 });

@@ -24,7 +24,7 @@ use arkret_models_collaboration::events_payloads::{
 };
 use arkret_models_collaboration::governance::realm_governance::{
     RealmOrganizationLifecyclePhase, RealmOrganizationRelationshipList,
-    RealmOrganizationRelationshipRow,
+    RealmOrganizationRelationshipView,
 };
 use dioxus::prelude::*;
 
@@ -234,7 +234,7 @@ fn enum_slug<T: serde::Serialize>(value: &T) -> String {
 }
 
 /// Build a display row from a projected verified / revoked relationship row.
-fn dto_from_row(row: &RealmOrganizationRelationshipRow) -> OrgRelationshipDto {
+fn dto_from_row(row: &RealmOrganizationRelationshipView) -> OrgRelationshipDto {
     let organization_id = row.organization_id.as_str().to_owned();
     OrgRelationshipDto {
         organization_name: short_protocol_id(&organization_id),

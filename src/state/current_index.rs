@@ -1,11 +1,11 @@
-//! Demand-loaded current selectors, staged independently of the account blob.
-use std::collections::BTreeMap;
+//! Demand-loaded current selectors published with the account record transaction.
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use arkret_sdk::AccountId;
 use arkret_sdk::sync::{AccountSubscribeFrame, RealmDetailBaseline};
-use arkret_wire::{CurrentRevision, CurrentSelector, TypedCurrentRow};
+use arkret_wire::{CurrentRevision, CurrentSelector, CurrentState};
 use serde::{Deserialize, Serialize};
 
 /// A competing local publisher committed while this reader was verifying its cut.
@@ -24,10 +24,13 @@ use tokio::sync::{Mutex, OwnedMutexGuard};
 
 #[cfg(not(target_arch = "wasm32"))]
 #[path = "current_index/native.rs"]
-mod platform;
+pub(super) mod platform;
+
 #[cfg(target_arch = "wasm32")]
 #[path = "current_index/wasm.rs"]
-mod platform;
+pub(super) mod platform;
+pub(super) mod publication_lock;
+pub(crate) mod search;
 
 // The browser regressions of this index are an integration test target, which
 // cannot reach a crate-private type; this is their only entry point.
@@ -36,6 +39,99 @@ mod platform;
 pub mod wasm_harness;
 
 pub(crate) const CURRENT_PREFIX: &str = "inkson.current.v1/";
+
+/// Holder-private blob parts share the authenticated on-demand KV backend.
+/// Their namespace is outside account current stages and the secret-cache scan.
+#[derive(Clone)]
+pub(crate) struct AttachmentChunkStore {
+    backend: platform::Backend,
+    prefix: String,
+}
+
+impl AttachmentChunkStore {
+    pub(crate) async fn open(
+        location: CurrentIndexLocation,
+        authority: &AccountId,
+        device: &arkret_sdk::DeviceId,
+        object_id: &str,
+    ) -> anyhow::Result<Self> {
+        let identity = arkret_sdk::canonical::canonical_sha256(&(authority, device, object_id))?;
+        Ok(Self {
+            backend: platform::Backend::open(location).await?,
+            prefix: format!("{CURRENT_PREFIX}attachment_objects/{identity}/"),
+        })
+    }
+
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    pub(crate) async fn for_test(path: std::path::PathBuf) -> anyhow::Result<Self> {
+        Ok(Self {
+            backend: platform::Backend::open_test(path).await?,
+            prefix: format!("{CURRENT_PREFIX}attachment_objects/test/"),
+        })
+    }
+
+    fn key(&self, kind: &str, index: u32) -> anyhow::Result<String> {
+        anyhow::ensure!(
+            matches!(kind, "input" | "ciphertext"),
+            "invalid attachment part domain"
+        );
+        Ok(format!("{}{kind}/{index:08x}", self.prefix))
+    }
+
+    pub(crate) async fn write_part(
+        &self,
+        kind: &str,
+        index: u32,
+        bytes: &[u8],
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            bytes.len() <= arkret_models_crypto::MAX_SEGMENT_SIZE as usize + 16,
+            "attachment part exceeds v1 bound"
+        );
+        let key = self.key(kind, index)?;
+        let encoded = arkret_sdk::canonical::base64url_encode(bytes).into_bytes();
+        if let Some(existing) = self.backend.get(&key).await? {
+            anyhow::ensure!(
+                existing == encoded,
+                "frozen attachment part cannot be replaced"
+            );
+            return Ok(());
+        }
+        self.backend.apply(Vec::new(), vec![(key, encoded)]).await
+    }
+
+    pub(crate) async fn read_part(
+        &self,
+        kind: &str,
+        index: u32,
+    ) -> anyhow::Result<zeroize::Zeroizing<Vec<u8>>> {
+        let key = self.key(kind, index)?;
+        let encoded = self
+            .backend
+            .get(&key)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("frozen attachment part is missing"))?;
+        let encoded = std::str::from_utf8(&encoded)?;
+        let bytes = arkret_sdk::canonical::base64url_decode(encoded)?;
+        anyhow::ensure!(
+            bytes.len() <= arkret_models_crypto::MAX_SEGMENT_SIZE as usize + 16
+                && arkret_sdk::canonical::base64url_encode(&bytes) == encoded,
+            "attachment part is malformed"
+        );
+        Ok(zeroize::Zeroizing::new(bytes))
+    }
+
+    pub(crate) async fn clear(&self, kind: &str) -> anyhow::Result<()> {
+        let prefix = format!("{}{kind}/", self.prefix);
+        loop {
+            let keys = self.backend.keys(&prefix, None, None, 100).await?;
+            if keys.is_empty() {
+                return Ok(());
+            }
+            self.backend.apply(keys, Vec::new()).await?;
+        }
+    }
+}
 const PAGE_LIMIT: usize = 100;
 
 /// Index grouping of one typed current selector.
@@ -113,7 +209,10 @@ fn target_of(selector: &CurrentSelector) -> CurrentTarget {
         | CurrentSelector::CalendarScheduleSource { strand_id } => CurrentTarget::Strand {
             strand_id: strand_id.clone(),
         },
-        CurrentSelector::CallState { call_id } => {
+        CurrentSelector::CallState { call_id }
+        | CurrentSelector::CallFocus { call_id }
+        | CurrentSelector::CallRoster { call_id }
+        | CurrentSelector::CallModeration { call_id } => {
             match arkret_sdk::EventId::from_token_bytes(call_id.token_bytes()) {
                 Ok(event_id) => CurrentTarget::Event { event_id },
                 Err(_) => CurrentTarget::Selector {
@@ -130,15 +229,15 @@ fn target_of(selector: &CurrentSelector) -> CurrentTarget {
     }
 }
 
-fn selector_of(entry: &TypedCurrentRow) -> &CurrentSelector {
+fn selector_of(entry: &CurrentState) -> &CurrentSelector {
     match entry {
-        TypedCurrentRow::Value { selector, .. } => selector,
+        CurrentState::Value { selector, .. } => selector,
     }
 }
 
-fn revision_of(entry: &TypedCurrentRow) -> &CurrentRevision {
+fn revision_of(entry: &CurrentState) -> &CurrentRevision {
     match entry {
-        TypedCurrentRow::Value { revision, .. } => revision,
+        CurrentState::Value { revision, .. } => revision,
     }
 }
 
@@ -172,6 +271,10 @@ pub(crate) struct SignedSnapshotCoverage {
     stream_heads: Vec<arkret_wire::CommitStreamHead>,
     #[serde(default)]
     original_digest: Option<String>,
+    #[serde(default)]
+    search_floor: Option<arkret_sdk::RetentionAndHistoryFloor>,
+    #[serde(default)]
+    search_policies: Option<Vec<arkret_sdk::PolicyId>>,
 }
 
 /// A concurrent own-Station read can install a newer cut while an Account
@@ -208,6 +311,45 @@ fn progress_is_complete_cut(
 }
 
 impl CurrentRealmProgress {
+    /// Keep independent authority watermarks when withdrawing a complete cut.
+    fn remember_current_watermarks(&mut self) -> anyhow::Result<()> {
+        let held_heads = self
+            .signed_snapshot
+            .as_ref()
+            .map(|cut| cut.stream_heads.clone())
+            .or_else(|| {
+                self.baseline
+                    .as_ref()
+                    .map(|baseline| baseline.coverage.stream_heads.clone())
+            })
+            .unwrap_or_default();
+        for held in held_heads {
+            match self
+                .observed_heads
+                .iter_mut()
+                .find(|old| old.stream_ref == held.stream_ref)
+            {
+                Some(old) if held.stream_position > old.stream_position => *old = held,
+                Some(old) if held.stream_position == old.stream_position => {
+                    anyhow::ensure!(
+                        old.commit_id == held.commit_id,
+                        "held current watermark forks its stream"
+                    );
+                }
+                Some(_) => {}
+                None => self.observed_heads.push(held),
+            }
+        }
+        if let Some(held) = self.governance_generation {
+            self.observed_governance_generation = Some(
+                self.observed_governance_generation
+                    .unwrap_or(held)
+                    .max(held),
+            );
+        }
+        Ok(())
+    }
+
     fn invalidate(&mut self, revision: u64) {
         if self.has_invalidation && revision <= self.invalidation_revision {
             return;
@@ -252,7 +394,7 @@ struct CurrentCoverageCleanup {
 #[derive(Clone, Debug)]
 struct CurrentInstallPlan {
     progress: CurrentRealmProgress,
-    writes: Vec<TypedCurrentRow>,
+    writes: Vec<CurrentState>,
     seen_selectors: Vec<String>,
     cleanup: Option<CurrentCoverageCleanup>,
     /// An invalidated snapshot must not reach secondary product projections.
@@ -264,8 +406,8 @@ struct CurrentInstallPlan {
 fn plan_current_entry(
     previous: &CurrentRealmProgress,
     baseline: Option<&RealmDetailBaseline>,
-    entry: &TypedCurrentRow,
-    old: Option<&TypedCurrentRow>,
+    entry: &CurrentState,
+    old: Option<&CurrentState>,
     verified_snapshot: bool,
 ) -> anyhow::Result<(bool, bool)> {
     let complete = baseline.is_some_and(|segment| {
@@ -282,11 +424,11 @@ fn plan_current_entry(
         );
         let old_revision = revision_of(old);
         let new_revision = revision_of(entry);
-        let TypedCurrentRow::Value {
+        let CurrentState::Value {
             source_stream_ref: old_source,
             ..
         } = old;
-        let TypedCurrentRow::Value {
+        let CurrentState::Value {
             source_stream_ref: new_source,
             ..
         } = entry;
@@ -326,13 +468,13 @@ fn plan_current_entry(
     Ok((!complete, seen))
 }
 
-fn cached_mls_value_valid(entry: &TypedCurrentRow) -> bool {
-    let TypedCurrentRow::Value {
+fn cached_mls_value_valid(entry: &CurrentState) -> bool {
+    let CurrentState::Value {
         selector, value, ..
     } = entry;
     match selector {
         CurrentSelector::MlsGroup { scope_ref } => {
-            serde_json::from_value::<arkret_wire::MlsGroupCurrent>(value.clone())
+            serde_json::from_value::<arkret_wire::MlsGroupValue>(value.clone())
                 .is_ok_and(|group| group.effective_scope == *scope_ref)
         }
         _ => true,
@@ -374,7 +516,7 @@ pub(crate) fn current_reads_any_stream(
             .iter()
             .any(|head| preview.contains(&head.stream_ref))
             || current.entries.iter().any(|row| {
-                let TypedCurrentRow::Value {
+                let CurrentState::Value {
                     source_stream_ref, ..
                 } = row;
                 preview.contains(source_stream_ref)
@@ -465,6 +607,8 @@ async fn complete_independently<T: 'static>(
 #[derive(Clone)]
 pub(crate) struct CurrentIndex {
     backend: platform::Backend,
+    location: CurrentIndexLocation,
+    account_scope: Option<String>,
     prefix: String,
     generation: Arc<AtomicU64>,
     lease: Arc<Mutex<()>>,
@@ -476,9 +620,23 @@ struct SharedGeneration {
     lease: Arc<Mutex<()>>,
     poisoned: AtomicBool,
     pending: AtomicU64,
+    publication: std::sync::Mutex<Option<AccountPublication>>,
 }
 static SHARED_INDICES: OnceLock<std::sync::Mutex<BTreeMap<String, Arc<SharedGeneration>>>> =
     OnceLock::new();
+
+struct CurrentLease {
+    _local: OwnedMutexGuard<()>,
+    _cross: Arc<publication_lock::PublicationLock>,
+}
+
+#[derive(Clone)]
+pub(super) struct AccountPublication {
+    pub _lease: Arc<publication_lock::PublicationLock>,
+    pub generation: u64,
+    pub deletes: Arc<Vec<String>>,
+    pub writes: Arc<Vec<(String, Vec<u8>)>>,
+}
 
 pub(crate) struct CurrentStage {
     index: CurrentIndex,
@@ -486,10 +644,24 @@ pub(crate) struct CurrentStage {
     generation: u64,
     filtered: Option<AccountSubscribeFrame>,
     changed: bool,
-    _lease: OwnedMutexGuard<()>,
+    _lease: CurrentLease,
+    publication: Option<AccountPublication>,
 }
 
 impl CurrentStage {
+    #[cfg(any(test, target_arch = "wasm32"))]
+    async fn persist_for_harness(&self) -> anyhow::Result<()> {
+        if let Some(publication) = &self.publication {
+            self.index
+                .backend
+                .apply(
+                    publication.deletes.as_ref().clone(),
+                    publication.writes.as_ref().clone(),
+                )
+                .await?;
+        }
+        Ok(())
+    }
     pub(crate) fn previous_generation(&self) -> u64 {
         self.previous_generation
     }
@@ -504,8 +676,16 @@ impl CurrentStage {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Account stage has no original frame"))
     }
+    #[cfg_attr(
+        not(test),
+        expect(
+            clippy::unwrap_used,
+            reason = "An infallible current publication transition must fail closed if its shared authority lock is poisoned."
+        )
+    )]
     pub(crate) fn arm_account_commit(&mut self) {
         if self.changed {
+            *self.index._shared.publication.lock().unwrap() = self.publication.clone();
             self.index
                 ._shared
                 .pending
@@ -513,18 +693,54 @@ impl CurrentStage {
         }
     }
     /// The caller must first durably commit this generation and account cursor together.
+    #[cfg_attr(
+        not(test),
+        expect(
+            clippy::unwrap_used,
+            reason = "An infallible current publication transition must fail closed if its shared authority lock is poisoned."
+        )
+    )]
     pub(crate) fn finish(self) {
+        #[cfg(all(test, not(target_arch = "wasm32")))]
+        if self.index.account_scope.is_none()
+            && let Some(publication) = &self.publication
+        {
+            self.index
+                .backend
+                .apply_checked_sync(
+                    None,
+                    publication.deletes.as_ref().clone(),
+                    publication.writes.as_ref().clone(),
+                )
+                .expect("index fixture publication");
+        }
+
         self.index
             .generation
             .store(self.generation, Ordering::Release);
         self.index._shared.pending.store(0, Ordering::Release);
+        self.index._shared.publication.lock().unwrap().take();
     }
 }
 
 impl Drop for CurrentStage {
+    #[cfg_attr(
+        not(test),
+        expect(
+            clippy::unwrap_used,
+            reason = "An infallible current publication transition must fail closed if its shared authority lock is poisoned."
+        )
+    )]
     fn drop(&mut self) {
         if self.changed && self.index._shared.pending.load(Ordering::Acquire) == self.generation {
             self.index.poison();
+            let mut publication = self.index._shared.publication.lock().unwrap();
+            if publication
+                .as_ref()
+                .is_some_and(|p| p.generation == self.generation)
+            {
+                publication.take();
+            }
         }
     }
 }
@@ -597,21 +813,29 @@ struct MetaPosition {
 
 /// Metadata whose historical versions answer no read once a newer committed
 /// version exists. Rotation gives each one a share of every maintenance pass.
-const META_STREAMS: [&str; 5] = ["progress/", "coverage/", "retired/", "refresh/", "reset/"];
+const META_STREAMS: [&str; 7] = [
+    "progress/",
+    "coverage/",
+    "retired/",
+    "refresh/",
+    "reset/",
+    "search/",
+    "search-withheld/",
+];
 /// Root streams of the mark phase: a realm's installed baseline and every
 /// coverage mark a reader can still reach through `strongest_mark`.
 const MARK_STREAMS: [&str; 2] = ["progress/", "coverage/"];
 
 #[derive(Clone, Debug)]
 pub(crate) struct CurrentTargetPage {
-    pub entries: Vec<TypedCurrentRow>,
+    pub entries: Vec<CurrentState>,
     pub next_cursor: Option<String>,
 }
 
 #[derive(Clone)]
 pub(crate) struct CurrentIndexLocation {
     #[cfg(not(target_arch = "wasm32"))]
-    path: std::path::PathBuf,
+    pub(super) path: std::path::PathBuf,
 }
 
 impl super::LocalStateStore {
@@ -734,6 +958,7 @@ impl CurrentIndex {
                         lease,
                         poisoned: AtomicBool::new(false),
                         pending: AtomicU64::new(0),
+                        publication: Default::default(),
                     });
                     registry.insert(registry_key, shared.clone());
                     (shared, Some((guard, committed)))
@@ -748,13 +973,28 @@ impl CurrentIndex {
             }
             (None, None) => unreachable!("committed generation was never read"),
         };
+        let _cross = publication_lock::PublicationLock::acquire(location.clone()).await?;
+        let backend = platform::Backend::open(location.clone()).await?;
+        let scope = super::account_storage_scope(authority)?;
+        let published = backend.get(&super::account_store::root_key(&scope)).await?;
+        if let Some(root) = published.as_ref() {
+            if super::account_store::published_generation(root)? != committed_generation {
+                return Err(CurrentGenerationChanged.into());
+            }
+            if !shared.poisoned.load(Ordering::Acquire)
+                && shared.generation.load(Ordering::Acquire) < committed_generation
+            {
+                shared
+                    .generation
+                    .store(committed_generation, Ordering::Release);
+            }
+        }
         anyhow::ensure!(
             shared.generation.load(Ordering::Acquire) == committed_generation
                 || (shared.poisoned.load(Ordering::Acquire)
                     && shared.pending.load(Ordering::Acquire) == committed_generation),
             "account current pointer differs from active durable generation"
         );
-        let backend = platform::Backend::open(location).await?;
         if committed_generation > 0
             && backend
                 .get(&format!("{prefix}stage/{}", version(committed_generation)))
@@ -772,13 +1012,68 @@ impl CurrentIndex {
                 "committed current generation {committed_generation} is missing its durable manifest ({prefix}); retained generations: {retained:?}"
             );
         }
+        #[cfg(test)]
+        let account_scope = published.as_ref().map(|_| scope.clone());
+        #[cfg(not(test))]
+        let account_scope = Some(scope);
         Ok(Self {
             backend,
+            location,
+            account_scope,
             prefix,
             generation: shared.generation.clone(),
             lease: shared.lease.clone(),
             _shared: shared.clone(),
         })
+    }
+
+    async fn acquire_lease(&self) -> anyhow::Result<CurrentLease> {
+        let local = self.lease.clone().lock_owned().await;
+        let cross = publication_lock::PublicationLock::acquire(self.location.clone()).await?;
+        if let Some(scope) = &self.account_scope {
+            let published = self
+                .backend
+                .get(&super::account_store::root_key(scope))
+                .await?;
+            let actual = published
+                .as_ref()
+                .map(|root| super::account_store::published_generation(root))
+                .transpose()?;
+            if actual.unwrap_or(0) != self.generation.load(Ordering::Acquire) {
+                return Err(CurrentGenerationChanged.into());
+            }
+        }
+
+        Ok(CurrentLease {
+            _local: local,
+            _cross: Arc::new(cross),
+        })
+    }
+
+    pub(super) fn account_publication(
+        location: CurrentIndexLocation,
+        authority: &AccountId,
+        generation: u64,
+    ) -> anyhow::Result<Option<AccountPublication>> {
+        #[cfg(not(target_arch = "wasm32"))]
+        let storage_id = std::fs::canonicalize(location.path)?
+            .to_string_lossy()
+            .to_string();
+        #[cfg(target_arch = "wasm32")]
+        let storage_id = {
+            let _ = location;
+            "inkson.secret.inkson/entries".to_owned()
+        };
+        let key = format!("{storage_id}/{}{}/", CURRENT_PREFIX, hash(authority)?);
+        let registry = SHARED_INDICES
+            .get_or_init(Default::default)
+            .lock()
+            .map_err(|_| anyhow::anyhow!("current registry poisoned"))?;
+        let result = registry
+            .get(&key)
+            .and_then(|shared| shared.publication.lock().ok()?.clone())
+            .filter(|batch| batch.generation == generation);
+        Ok(result)
     }
 
     pub(crate) fn poison(&self) {
@@ -798,6 +1093,11 @@ impl CurrentIndex {
         );
         self.generation.store(generation, Ordering::Release);
         self._shared.pending.store(0, Ordering::Release);
+        self._shared
+            .publication
+            .lock()
+            .map_err(|_| anyhow::anyhow!("current publication lock poisoned"))?
+            .take();
         self._shared.poisoned.store(false, Ordering::Release);
         Ok(())
     }
@@ -924,7 +1224,7 @@ impl CurrentIndex {
         realm: &str,
         selector: &CurrentSelector,
         generation: u64,
-    ) -> anyhow::Result<Option<TypedCurrentRow>> {
+    ) -> anyhow::Result<Option<CurrentState>> {
         let prefix = self.row_prefix(realm, selector)?;
         let row_generation = self.latest_generation(&prefix, generation).await?;
         if let Some(retired) = self.retired(realm, selector, generation).await?
@@ -951,12 +1251,27 @@ impl CurrentIndex {
         self.latest(&self.retired_prefix(realm, selector)?, generation)
             .await
     }
+    async fn require_consent_never_written(
+        &self,
+        realm: &str,
+        selector: &CurrentSelector,
+        generation: u64,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.raw_selector(realm, selector, generation)
+                .await?
+                .is_none()
+                && self.retired(realm, selector, generation).await?.is_none(),
+            "Consent present state cannot return to never_written"
+        );
+        Ok(())
+    }
     async fn visible_selector(
         &self,
         realm: &str,
         selector: &CurrentSelector,
         generation: u64,
-    ) -> anyhow::Result<Option<TypedCurrentRow>> {
+    ) -> anyhow::Result<Option<CurrentState>> {
         let Some(entry) = self.raw_selector(realm, selector, generation).await? else {
             return Ok(None);
         };
@@ -986,8 +1301,8 @@ impl CurrentIndex {
         &self,
         realm: &str,
         selector: &CurrentSelector,
-    ) -> anyhow::Result<Option<TypedCurrentRow>> {
-        let _lease = self.lease.lock().await;
+    ) -> anyhow::Result<Option<CurrentState>> {
+        let _lease = self.acquire_lease().await?;
         self.visible_selector(realm, selector, self.generation.load(Ordering::Acquire))
             .await
     }
@@ -998,7 +1313,7 @@ impl CurrentIndex {
         account: &AccountId,
         realms: &[String],
     ) -> anyhow::Result<(u64, std::collections::BTreeMap<String, Option<bool>>)> {
-        let _lease = self.lease.lock().await;
+        let _lease = self.acquire_lease().await?;
         anyhow::ensure!(
             self.prefix == format!("{}{}/", CURRENT_PREFIX, hash(account)?),
             "Realm security index account mismatch"
@@ -1019,8 +1334,8 @@ impl CurrentIndex {
             };
             let row = self.ready_selector(realm, &selector, generation).await?;
             let state = match row {
-                Some(TypedCurrentRow::Value { value, .. }) => {
-                    let group: arkret_wire::MlsGroupCurrent = serde_json::from_value(value)?;
+                Some(CurrentState::Value { value, .. }) => {
+                    let group: arkret_wire::MlsGroupValue = serde_json::from_value(value)?;
                     anyhow::ensure!(
                         group.effective_scope == scope_ref,
                         "MLS current belongs to another Realm"
@@ -1042,14 +1357,71 @@ impl CurrentIndex {
         &self,
         realm: &str,
         selector: &CurrentSelector,
-    ) -> anyhow::Result<Option<TypedCurrentRow>> {
-        let _lease = self.lease.lock().await;
+    ) -> anyhow::Result<Option<CurrentState>> {
+        let _lease = self.acquire_lease().await?;
         anyhow::ensure!(
             !self.is_poisoned(),
             "current pointer durability is unresolved"
         );
         let generation = self.generation.load(Ordering::Acquire);
         self.ready_selector(realm, selector, generation).await
+    }
+
+    /// Resolve receipt disclosure from the accepted current index at one
+    /// complete account cut. Missing delivery policy means the spec default
+    /// only when this cut proves absence, never while synchronizing.
+    pub(crate) async fn read_read_receipt_policy_ready(
+        &self,
+        scope: &arkret_sdk::ScopeRef,
+    ) -> anyhow::Result<arkret_sdk::ReadReceiptPolicy> {
+        let realm = scope
+            .realm_id_opt()
+            .ok_or_else(|| anyhow::anyhow!("receipt scope has no Realm"))?;
+        anyhow::ensure!(
+            matches!(
+                scope,
+                arkret_sdk::ScopeRef::Realm { .. } | arkret_sdk::ScopeRef::Circle { .. }
+            ),
+            "unsupported receipt scope"
+        );
+        let _lease = self.acquire_lease().await?;
+        anyhow::ensure!(
+            !self.is_poisoned(),
+            "current pointer durability is unresolved"
+        );
+        let generation = self.generation.load(Ordering::Acquire);
+        let progress = self.progress_at(realm.as_str(), generation).await?;
+        anyhow::ensure!(
+            progress_is_complete_cut(&progress, realm),
+            "receipt policy requires a complete verified cut"
+        );
+        let covered = progress
+            .signed_snapshot
+            .as_ref()
+            .map(|cut| &cut.stream_heads)
+            .or_else(|| {
+                progress
+                    .baseline
+                    .as_ref()
+                    .map(|baseline| &baseline.coverage.stream_heads)
+            });
+        anyhow::ensure!(
+            covered.is_some_and(|heads| heads
+                .iter()
+                .any(|head| head.stream_ref.scope_ref() == *scope)),
+            "receipt policy scope is not covered by this authorized cut"
+        );
+        let selector = CurrentSelector::ScopeReadReceiptPolicy {
+            scope_ref: scope.clone(),
+        };
+        let row = self
+            .ready_selector(realm.as_str(), &selector, generation)
+            .await?;
+        crate::current_projection::read_receipt_policy_from_current(
+            scope,
+            &row.into_iter().collect::<Vec<_>>(),
+            true,
+        )
     }
 
     /// The durable generation at which `realm` holds a complete verified cut:
@@ -1059,7 +1431,7 @@ impl CurrentIndex {
     /// read absence as an answer.
     pub(crate) async fn read_complete_cut(&self, realm: &str) -> anyhow::Result<Option<u64>> {
         let realm_id = arkret_sdk::RealmId::new(realm.trim().to_owned())?;
-        let _lease = self.lease.lock().await;
+        let _lease = self.acquire_lease().await?;
         anyhow::ensure!(
             !self.is_poisoned(),
             "current pointer durability is unresolved"
@@ -1091,11 +1463,11 @@ impl CurrentIndex {
         &self,
         scope_ref: &arkret_sdk::ScopeRef,
         actor: &arkret_sdk::ActorId,
-    ) -> anyhow::Result<Option<arkret_wire::MlsGroupCurrent>> {
+    ) -> anyhow::Result<Option<arkret_wire::MlsGroupValue>> {
         let realm_id = scope_ref
             .realm_id_opt()
             .ok_or_else(|| anyhow::anyhow!("MLS current scope has no Realm"))?;
-        let _lease = self.lease.lock().await;
+        let _lease = self.acquire_lease().await?;
         anyhow::ensure!(
             !self.is_poisoned(),
             "current pointer durability is unresolved"
@@ -1128,7 +1500,7 @@ impl CurrentIndex {
                 .ok_or_else(|| {
                     anyhow::anyhow!("Circle send requires an effective parent Realm join")
                 })?;
-            let TypedCurrentRow::Value {
+            let CurrentState::Value {
                 source_stream_ref: parent_source,
                 ..
             } = &parent;
@@ -1142,7 +1514,7 @@ impl CurrentIndex {
                 .ok_or_else(|| {
                     anyhow::anyhow!("Circle send requires a verified Circle member current")
                 })?;
-            let TypedCurrentRow::Value {
+            let CurrentState::Value {
                 source_stream_ref,
                 value,
                 ..
@@ -1155,7 +1527,7 @@ impl CurrentIndex {
                     },
                 "Circle member current belongs to another stream"
             );
-            let membership: arkret_wire::CircleMemberStateCurrent = serde_json::from_value(value)?;
+            let membership: arkret_wire::CircleMemberStateValue = serde_json::from_value(value)?;
             anyhow::ensure!(
                 membership.is_effective_under_parent(
                     realm_id,
@@ -1174,12 +1546,12 @@ impl CurrentIndex {
             .await?;
         match entry {
             None => Ok(None),
-            Some(TypedCurrentRow::Value {
+            Some(CurrentState::Value {
                 selector: found,
                 value,
                 ..
             }) if found == selector => {
-                let current: arkret_wire::MlsGroupCurrent = serde_json::from_value(value)?;
+                let current: arkret_wire::MlsGroupValue = serde_json::from_value(value)?;
                 anyhow::ensure!(
                     current.effective_scope == *scope_ref,
                     "MLS current result belongs to another scope"
@@ -1208,7 +1580,7 @@ impl CurrentIndex {
         realm: &arkret_sdk::RealmId,
         member: &arkret_sdk::ActorId,
     ) -> anyhow::Result<Option<arkret_wire::CurrentRevision>> {
-        let _lease = self.lease.lock().await;
+        let _lease = self.acquire_lease().await?;
         anyhow::ensure!(
             !self.is_poisoned(),
             "current pointer durability is unresolved"
@@ -1237,7 +1609,7 @@ impl CurrentIndex {
         realm: &arkret_sdk::RealmId,
         strand_id: &arkret_sdk::StrandId,
     ) -> anyhow::Result<Option<arkret_sdk::Strand>> {
-        let _lease = self.lease.lock().await;
+        let _lease = self.acquire_lease().await?;
         anyhow::ensure!(
             !self.is_poisoned(),
             "current pointer durability is unresolved"
@@ -1248,6 +1620,16 @@ impl CurrentIndex {
             progress_is_complete_cut(&progress, realm),
             "Strand current requires a complete verified cut"
         );
+        self.read_strand_at_generation(realm, strand_id, generation)
+            .await
+    }
+
+    async fn read_strand_at_generation(
+        &self,
+        realm: &arkret_sdk::RealmId,
+        strand_id: &arkret_sdk::StrandId,
+        generation: u64,
+    ) -> anyhow::Result<Option<arkret_sdk::Strand>> {
         let selector = CurrentSelector::Strand {
             strand_id: strand_id.clone(),
         };
@@ -1256,7 +1638,7 @@ impl CurrentIndex {
             .await?
         {
             None => Ok(None),
-            Some(TypedCurrentRow::Value {
+            Some(CurrentState::Value {
                 selector: found,
                 source_stream_ref,
                 value,
@@ -1293,6 +1675,96 @@ impl CurrentIndex {
         }
     }
 
+    /// Typing requires both endpoints to remain effective members at the
+    /// same complete cut as the decrypted target. This grants no action.
+    pub(crate) async fn read_typing_strand_ready(
+        &self,
+        scope: &arkret_sdk::ScopeRef,
+        strand_id: &arkret_sdk::StrandId,
+        sender: &arkret_sdk::ActorId,
+        recipient: &arkret_sdk::ActorId,
+    ) -> anyhow::Result<Option<arkret_sdk::Strand>> {
+        let _lease = self.acquire_lease().await?;
+        anyhow::ensure!(
+            !self.is_poisoned(),
+            "current pointer durability is unresolved"
+        );
+        let realm = scope.realm_id();
+        let generation = self.generation.load(Ordering::Acquire);
+        let progress = self.progress_at(realm.as_str(), generation).await?;
+        anyhow::ensure!(
+            progress_is_complete_cut(&progress, realm),
+            "Typing requires a complete verified cut"
+        );
+        for actor in [sender, recipient] {
+            let Some(parent) = self
+                .ready_selector(
+                    realm.as_str(),
+                    &CurrentSelector::MemberState {
+                        actor_id: actor.clone(),
+                    },
+                    generation,
+                )
+                .await?
+            else {
+                return Ok(None);
+            };
+            let Some(parent_revision) = parent.parent_membership_revision(realm, actor) else {
+                return Ok(None);
+            };
+            if let arkret_sdk::ScopeRef::Circle { circle_id, .. } = scope {
+                let Some(CurrentState::Value {
+                    source_stream_ref,
+                    value,
+                    ..
+                }) = self
+                    .ready_selector(
+                        realm.as_str(),
+                        &CurrentSelector::CircleMemberState {
+                            circle_id: circle_id.clone(),
+                            member_actor_id: actor.clone(),
+                        },
+                        generation,
+                    )
+                    .await?
+                else {
+                    return Ok(None);
+                };
+                anyhow::ensure!(
+                    source_stream_ref
+                        == arkret_sdk::CommitStreamRef::Circle {
+                            realm_id: realm.clone(),
+                            circle_id: circle_id.clone(),
+                        },
+                    "Typing Circle member belongs to another stream"
+                );
+                let membership: arkret_wire::CircleMemberStateValue =
+                    serde_json::from_value(value)?;
+                let CurrentState::Value {
+                    source_stream_ref: parent_stream,
+                    ..
+                } = &parent;
+                if !membership.is_effective_under_parent(
+                    realm,
+                    parent_stream,
+                    &parent_revision,
+                    arkret_sdk::MembershipState::Join,
+                ) {
+                    return Ok(None);
+                }
+            }
+        }
+        let current = self
+            .read_strand_at_generation(realm, strand_id, generation)
+            .await?;
+        Ok(current.filter(|strand| {
+            strand
+                .tracks
+                .get("discussion")
+                .is_some_and(|track| track.enabled != Some(false))
+        }))
+    }
+
     /// A Call selector derives from its accepted create Event. Only the installed
     /// verified current cut may establish its existence and exact scope.
     pub(crate) async fn read_call_state_ready(
@@ -1304,7 +1776,7 @@ impl CurrentIndex {
     > {
         let realm = scope.realm_id();
         let expected_stream = arkret_sdk::CommitStreamRef::from_scope(scope, None)?;
-        let _lease = self.lease.lock().await;
+        let _lease = self.acquire_lease().await?;
         anyhow::ensure!(
             !self.is_poisoned(),
             "current pointer durability is unresolved"
@@ -1323,7 +1795,7 @@ impl CurrentIndex {
             .await?
         {
             None => Ok(None),
-            Some(TypedCurrentRow::Value {
+            Some(CurrentState::Value {
                 selector: found,
                 source_stream_ref,
                 value,
@@ -1346,7 +1818,7 @@ impl CurrentIndex {
         realm: &str,
         selector: &CurrentSelector,
         generation: u64,
-    ) -> anyhow::Result<Option<TypedCurrentRow>> {
+    ) -> anyhow::Result<Option<CurrentState>> {
         anyhow::ensure!(
             !self.is_poisoned(),
             "current pointer durability is unresolved"
@@ -1406,11 +1878,58 @@ impl CurrentIndex {
         }
         Ok(Some(entry))
     }
+    /// A frame cannot overrule a newer locally verified governance observation.
+    pub(crate) async fn signal_product_cut_current(
+        &self,
+        material: &arkret_sdk::SignalProductAuthority,
+    ) -> anyhow::Result<bool> {
+        let _lease = self.acquire_lease().await?;
+        if self.is_poisoned() {
+            return Ok(false);
+        }
+        let realm = material.current_realm_head.stream_ref.realm_id();
+        let progress = self
+            .progress_at(realm.as_str(), self.generation.load(Ordering::Acquire))
+            .await?;
+        if !progress_is_complete_cut(&progress, realm) {
+            return Ok(false);
+        }
+        let installed = progress
+            .signed_snapshot
+            .as_ref()
+            .map(|c| &c.stream_heads)
+            .or_else(|| progress.baseline.as_ref().map(|b| &b.coverage.stream_heads));
+        let Some(installed) = installed else {
+            return Ok(false);
+        };
+        if ![&material.current_realm_head, &material.current_scope_head]
+            .into_iter()
+            .all(|head| installed.contains(head))
+        {
+            return Ok(false);
+        }
+        Ok(Some(installed)
+            .into_iter()
+            .flatten()
+            .chain(&progress.observed_heads)
+            .all(|known| {
+                [&material.current_realm_head, &material.current_scope_head]
+                    .into_iter()
+                    .all(|head| {
+                        head.stream_ref != known.stream_ref
+                            || known.stream_position < head.stream_position
+                            || (known.stream_position == head.stream_position
+                                && known.commit_id == head.commit_id)
+                    })
+            }))
+    }
+
     pub(crate) async fn read_progress(&self, realm: &str) -> anyhow::Result<CurrentRealmProgress> {
-        let _lease = self.lease.lock().await;
+        let _lease = self.acquire_lease().await?;
         self.progress_at(realm, self.generation.load(Ordering::Acquire))
             .await
     }
+
     #[cfg(test)]
     pub(crate) async fn read_target_page(
         &self,
@@ -1450,7 +1969,7 @@ impl CurrentIndex {
             (1..=PAGE_LIMIT).contains(&limit),
             "invalid current page limit"
         );
-        let _lease = self.lease.lock().await;
+        let _lease = self.acquire_lease().await?;
         anyhow::ensure!(
             !self.is_poisoned(),
             "current pointer durability is unresolved"
@@ -1537,6 +2056,7 @@ impl CurrentIndex {
             frame,
             resolved_preview_streams,
             snapshots,
+            None,
         )
         .await
     }
@@ -1549,6 +2069,7 @@ impl CurrentIndex {
         frame: &AccountSubscribeFrame,
         resolved_preview_streams: &std::collections::BTreeSet<arkret_sdk::CommitStreamRef>,
         snapshots: &BTreeMap<String, crate::realm_events_engine::VerifiedCurrentSnapshot>,
+        account_scope_changes: Option<&dyn Fn() -> anyhow::Result<BTreeSet<String>>>,
     ) -> anyhow::Result<CurrentStage> {
         let snapshots = snapshots
             .iter()
@@ -1562,6 +2083,8 @@ impl CurrentIndex {
             &snapshots,
             &|| Ok(()),
             None,
+            None,
+            account_scope_changes,
         )
         .await
     }
@@ -1582,6 +2105,7 @@ impl CurrentIndex {
             .await
     }
 
+    #[cfg(test)]
     pub(crate) async fn stage_committed_own_station_snapshot(
         &self,
         committed_generation: impl FnOnce() -> anyhow::Result<u64>,
@@ -1591,17 +2115,50 @@ impl CurrentIndex {
         >,
         guard: &dyn Fn() -> anyhow::Result<()>,
     ) -> anyhow::Result<CurrentStage> {
+        self.stage_committed_own_station_snapshot_with_history(
+            committed_generation,
+            response,
+            &[],
+            guard,
+        )
+        .await
+    }
+
+    pub(crate) async fn stage_committed_own_station_snapshot_with_history(
+        &self,
+        committed_generation: impl FnOnce() -> anyhow::Result<u64>,
+        response: &arkret_sdk::http_client::own_station_results::BoundOwnStationResponse<
+            arkret_sdk::RealmId,
+            arkret_sdk::RealmStateSnapshot,
+        >,
+        pages: &[garth::own_station_results::OwnStationScanPage],
+        guard: &dyn Fn() -> anyhow::Result<()>,
+    ) -> anyhow::Result<CurrentStage> {
+        guard()?;
+        // The authenticated carrier owns an immutable Snapshot. Validate its
+        // complete structure/content address once; every later guard still
+        // checks the live provider, session and caller's installation fence.
+        garth::own_station_results::consume_bound_snapshot(response, response.request())?;
         let check = || -> anyhow::Result<()> {
             guard()?;
-            garth::own_station_results::consume_bound_snapshot(response, response.request())?;
+            response.value()?;
             Ok(())
         };
         check()?;
         let snapshot = response.value()?;
         let realm = snapshot.realm_id.to_string();
+        let mut originals = Vec::new();
+        for page in pages {
+            anyhow::ensure!(
+                page.session() == response.session(),
+                "search replay belongs to another session"
+            );
+            originals.extend(page.rows()?.iter().cloned());
+        }
         let entry = arkret_sdk::sync::RealmSyncEntry {
+            committed_events: (!originals.is_empty()).then_some(originals),
             current: Some(
-                arkret_models_collaboration::sync_frames::current_results::AccountCurrentView {
+                arkret_models_collaboration::sync_frames::current_states::AccountStateView {
                     realm_id: snapshot.realm_id.clone(),
                     governance_generation: snapshot.governance_generation,
                     stream_heads: snapshot.visible_stream_heads.clone(),
@@ -1619,6 +2176,62 @@ impl CurrentIndex {
             &snapshots,
             &check,
             Some(response.clone()),
+            None,
+            None,
+        )
+        .await
+    }
+
+    pub(crate) async fn stage_consent_current(
+        &self,
+        committed_generation: impl FnOnce() -> anyhow::Result<u64>,
+        response: &arkret_sdk::http_client::own_station_results::BoundOwnStationResponse<
+            arkret_sdk::ConsentCurrentReadRequestBody,
+            arkret_sdk::ConsentCurrentReadResponseBody,
+        >,
+        guard: &dyn Fn() -> anyhow::Result<()>,
+    ) -> anyhow::Result<CurrentStage> {
+        let check = || -> anyhow::Result<()> {
+            guard()?;
+            // This unforgeable SDK response was bound only after verifying
+            // the independent PCR/authority tenure, assertion method and JWS.
+            // Recheck its short authority/assertion lease at each install cut.
+            response.value()?;
+            Ok(())
+        };
+        check()?;
+        let value = response.value()?;
+        let rows = match &value.current {
+            arkret_sdk::ConsentCurrentReadState::Present {
+                current_state: result,
+            } => {
+                vec![serde_json::from_value::<CurrentState>(
+                    serde_json::to_value(result)?,
+                )?]
+            }
+            arkret_sdk::ConsentCurrentReadState::NeverWritten => Vec::new(),
+        };
+        let entry = arkret_sdk::sync::RealmSyncEntry {
+            current: Some(
+                arkret_models_collaboration::sync_frames::current_states::AccountStateView {
+                    realm_id: value.realm_id.clone(),
+                    governance_generation: value.governance_generation,
+                    stream_heads: vec![value.effective_stream_head.clone()],
+                    entries: rows,
+                },
+            ),
+            ..Default::default()
+        };
+        self.stage_current_install(
+            committed_generation,
+            None,
+            Some((value.realm_id.to_string(), entry)),
+            &Default::default(),
+            &Default::default(),
+            &check,
+            None,
+            Some(response.clone()),
+            None,
         )
         .await
     }
@@ -1637,16 +2250,65 @@ impl CurrentIndex {
                 arkret_sdk::RealmStateSnapshot,
             >,
         >,
+        targeted_consent: Option<
+            arkret_sdk::http_client::own_station_results::BoundOwnStationResponse<
+                arkret_sdk::ConsentCurrentReadRequestBody,
+                arkret_sdk::ConsentCurrentReadResponseBody,
+            >,
+        >,
+        account_scope_changes: Option<&dyn Fn() -> anyhow::Result<BTreeSet<String>>>,
     ) -> anyhow::Result<CurrentStage> {
-        let lease = self.lease.clone().lock_owned().await;
+        let lease = self.acquire_lease().await?;
         guard()?;
+        if let Some(response) = &targeted_consent
+            && matches!(
+                response.value()?.current,
+                arkret_sdk::ConsentCurrentReadState::NeverWritten
+            )
+        {
+            let arkret_sdk::ConsentPeer::Actor { actor_id } = &response.request().peer;
+            let selector = CurrentSelector::Consent {
+                peer_id: actor_id.clone(),
+            };
+            anyhow::ensure!(
+                self.visible_selector(
+                    response.value()?.realm_id.as_str(),
+                    &selector,
+                    self.generation.load(Ordering::Acquire)
+                )
+                .await?
+                .is_none(),
+                "never-written Consent contradicts an installed accepted peer current"
+            );
+        }
         let expected_generation = committed_generation()?;
+        let account_scope_changes = account_scope_changes
+            .map(|read| read())
+            .transpose()?
+            .unwrap_or_default();
         anyhow::ensure!(
             !self.is_poisoned(),
             "current pointer durability is unresolved"
         );
         if self.generation.load(Ordering::Acquire) != expected_generation {
             return Err(CurrentGenerationChanged.into());
+        }
+        if let Some(response) = &targeted_consent
+            && matches!(
+                response.value()?.current,
+                arkret_sdk::ConsentCurrentReadState::NeverWritten
+            )
+        {
+            let selector = CurrentSelector::Consent {
+                peer_id: response.request().peer.actor_id().clone(),
+            };
+            self.require_consent_never_written(
+                response.value()?.realm_id.as_str(),
+                &selector,
+                expected_generation,
+            )
+            .await?;
+            guard()?;
         }
         let generation = expected_generation
             .checked_add(1)
@@ -1670,6 +2332,10 @@ impl CurrentIndex {
         let gc: GcState = self.load_state(&self.gc_state_key()).await?;
         guard()?;
         if frame.is_none()
+            && targeted_consent.is_none()
+            && standalone
+                .as_ref()
+                .is_none_or(|(_, entry)| entry.committed_events.as_ref().is_none_or(Vec::is_empty))
             && let Some((realm, _)) = &standalone
         {
             let snapshot = snapshots.get(realm).copied().ok_or_else(|| {
@@ -1691,11 +2357,22 @@ impl CurrentIndex {
                     filtered: None,
                     changed: false,
                     _lease: lease,
+                    publication: None,
                 });
             }
         }
         let mut filtered = frame.cloned();
         let mut progress_updates = BTreeMap::<String, CurrentRealmProgress>::new();
+        for realm in account_scope_changes {
+            let mut progress = self.progress_at(&realm, expected_generation).await?;
+            progress.remember_current_watermarks()?;
+            progress.reset();
+            progress_updates.insert(realm.clone(), progress);
+            writes.insert(
+                format!("{}refresh/{}/{suffix}", self.prefix, hash(&realm)?),
+                serde_json::to_vec(&generation)?,
+            );
+        }
         if frame.is_some_and(|frame| {
             frame.kind == arkret_sdk::sync::AccountSubscribeFrameKind::ResyncRequired
         }) {
@@ -1707,12 +2384,16 @@ impl CurrentIndex {
         if let Some(invalidations) = frame.and_then(|frame| frame.realm_invalidations.as_ref()) {
             for invalidation in invalidations {
                 let realm = invalidation.realm_id.as_str();
-                let mut progress = self.progress_at(realm, expected_generation).await?;
+                let mut progress = match progress_updates.get(realm) {
+                    Some(progress) => progress.clone(),
+                    None => self.progress_at(realm, expected_generation).await?,
+                };
                 if progress.has_invalidation
                     && invalidation.revision <= progress.invalidation_revision
                 {
                     continue;
                 }
+                progress.remember_current_watermarks()?;
                 progress.invalidate(invalidation.revision);
                 progress_updates.insert(realm.to_owned(), progress);
                 writes.insert(
@@ -1768,45 +2449,7 @@ impl CurrentIndex {
                         "complete current baseline has incomplete stream coverage"
                     );
                 }
-                // Older v1 progress already held authoritative baseline/cut
-                // heads. Seed the cumulative watermark before replacing that
-                // visible cut, including streams the next original omits.
-                let held_heads = previous
-                    .signed_snapshot
-                    .as_ref()
-                    .map(|cut| cut.stream_heads.clone())
-                    .or_else(|| {
-                        previous
-                            .baseline
-                            .as_ref()
-                            .map(|baseline| baseline.coverage.stream_heads.clone())
-                    })
-                    .unwrap_or_default();
-                for held in held_heads {
-                    match previous
-                        .observed_heads
-                        .iter_mut()
-                        .find(|old| old.stream_ref == held.stream_ref)
-                    {
-                        Some(old) if held.stream_position > old.stream_position => *old = held,
-                        Some(old) if held.stream_position == old.stream_position => {
-                            anyhow::ensure!(
-                                old.commit_id == held.commit_id,
-                                "held current watermark forks its stream"
-                            );
-                        }
-                        Some(_) => {}
-                        None => previous.observed_heads.push(held),
-                    }
-                }
-                if let Some(held) = previous.governance_generation {
-                    previous.observed_governance_generation = Some(
-                        previous
-                            .observed_governance_generation
-                            .unwrap_or(held)
-                            .max(held),
-                    );
-                }
+                previous.remember_current_watermarks()?;
                 if let Some(current) = &incoming.current {
                     anyhow::ensure!(
                         previous
@@ -1890,7 +2533,9 @@ impl CurrentIndex {
                         );
                         if current.governance_generation > installed {
                             anyhow::ensure!(
-                                incoming.baseline.is_some() || snapshot.is_some(),
+                                incoming.baseline.is_some()
+                                    || snapshot.is_some()
+                                    || targeted_consent.is_some(),
                                 "governance generation changed without a fresh baseline"
                             );
                             previous.begin_governance_generation(current.governance_generation);
@@ -1911,6 +2556,19 @@ impl CurrentIndex {
                         snapshot_id: snapshot.snapshot_id.clone(),
                         stream_heads: snapshot.visible_stream_heads.clone(),
                         original_digest: Some(hash(snapshot)?),
+                        search_floor: Some(snapshot.retention_and_history_floor.clone()),
+                        search_policies: Some(
+                            snapshot
+                                .current_state_entries
+                                .iter()
+                                .filter_map(|row| match selector_of(row) {
+                                    CurrentSelector::Policy { policy_id } => {
+                                        Some(policy_id.clone())
+                                    }
+                                    _ => None,
+                                })
+                                .collect(),
+                        ),
                     });
                     plan.progress.needs_refresh = false;
                     plan.cleanup = Some(CurrentCoverageCleanup {
@@ -1921,7 +2579,7 @@ impl CurrentIndex {
                 let mut accepted = Vec::new();
                 let mut delivered = std::collections::BTreeSet::new();
                 // `RealmSyncEntry::current` is the Station's typed
-                // `AccountCurrentView`; its entries are already selected and
+                // `AccountStateView`; its entries are already selected and
                 // signed, so nothing is re-decoded out of opaque JSON here.
                 let entries = incoming
                     .current
@@ -1929,7 +2587,7 @@ impl CurrentIndex {
                     .map(|current| current.entries.clone())
                     .unwrap_or_default();
                 anyhow::ensure!(
-                    snapshot.is_some() || entries.len() <= 100,
+                    snapshot.is_some() || targeted_consent.is_some() || entries.len() <= 100,
                     "current selector limit exceeded"
                 );
                 for entry in &entries {
@@ -2071,6 +2729,17 @@ impl CurrentIndex {
                         }
                     }
                 }
+                if !plan.discard_frame && incoming.unavailable.is_none() {
+                    self.stage_search_rows(
+                        incoming,
+                        snapshot,
+                        expected_generation,
+                        &suffix,
+                        &mut writes,
+                        &mut unversioned,
+                    )
+                    .await?;
+                }
                 progress_updates.insert(realm.clone(), plan.progress.clone());
             }
         }
@@ -2106,7 +2775,13 @@ impl CurrentIndex {
         }
         writes.insert(manifest_key, serde_json::to_vec(&manifest)?);
         writes.extend(unversioned);
-        let backend = self.backend.clone();
+        let writes: Vec<_> = writes.into_iter().collect();
+        let publication = AccountPublication {
+            _lease: lease._cross.clone(),
+            generation,
+            deletes: Arc::new(deletes.clone()),
+            writes: Arc::new(writes.clone()),
+        };
         let stage = CurrentStage {
             index: self.clone(),
             previous_generation: expected_generation,
@@ -2114,13 +2789,13 @@ impl CurrentIndex {
             filtered,
             changed: true,
             _lease: lease,
+            publication: Some(publication),
         };
         guard()?;
         let stage = complete_independently(async move {
-            if let Some(bound) = &bound {
+            if let Some(bound) = &targeted_consent {
                 bound.value()?;
             }
-            backend.apply(deletes, writes.into_iter().collect()).await?;
             if let Some(bound) = &bound {
                 bound.value()?;
             }
@@ -2434,7 +3109,7 @@ impl CurrentIndex {
     }
 
     async fn maintain_locked(&self) -> anyhow::Result<bool> {
-        let _lease = self.lease.lock().await;
+        let _lease = self.acquire_lease().await?;
         anyhow::ensure!(
             !self.is_poisoned(),
             "current pointer durability is unresolved"
@@ -2521,7 +3196,7 @@ impl CurrentIndex {
                     .get(key)
                     .await?
                     .ok_or_else(|| anyhow::anyhow!("current version disappeared"))?;
-                let entry: TypedCurrentRow = serde_json::from_slice(&bytes)?;
+                let entry: CurrentState = serde_json::from_slice(&bytes)?;
                 let row_generation = self.latest_generation(&row_prefix, generation).await?;
                 if self
                     .retired(&task.realm, &selector, generation)
@@ -2565,6 +3240,8 @@ impl CurrentIndex {
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
+    mod read_receipts;
+
     use serde_json::json;
 
     use super::*;
@@ -2617,6 +3294,24 @@ mod tests {
             .unwrap();
         assert_eq!(accepted.id.as_ref(), Some(&strand_id));
         assert_eq!(accepted.realm_id, realm);
+        let mut untitled = make_row(3);
+        let CurrentState::Value { value, .. } = &mut untitled;
+        value.as_object_mut().unwrap().remove("metadata");
+        store
+            .stage_frame(
+                2,
+                &frame(vec![untitled], Some(baseline(CURSORS[1], 3, true))),
+            )
+            .await
+            .unwrap()
+            .finish();
+        let accepted_untitled = store
+            .read_strand_ready(&realm, &strand_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(accepted_untitled.id.as_ref(), Some(&strand_id));
+        assert!(accepted_untitled.metadata.is_none());
         let unknown = arkret_sdk::StrandId::from_event_id(&arkret_sdk::EventId::from_digest(
             arkret_sdk::DigestSuite::Sha256,
             [32; 32],
@@ -2637,7 +3332,7 @@ mod tests {
         let forged_path = path();
         let forged_store = index(&forged_path, 0).await;
         let mut forged_row = make_row(1);
-        let TypedCurrentRow::Value { value, .. } = &mut forged_row;
+        let CurrentState::Value { value, .. } = &mut forged_row;
         value["scope_circle_id"] = json!(arkret_sdk::CircleId::from_event_id(&event));
         // A Realm source cannot assert a Circle-bound Strand, even at a
         // complete cut. This trusted-storage fixture claims no native signature.
@@ -2655,6 +3350,210 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn signal_product_material_is_cleared_when_installed_governance_advances() {
+        let storage_path = path();
+        let store = index(&storage_path, 0).await;
+        let head = arkret_wire::CommitStreamHead {
+            stream_ref: arkret_wire::CommitStreamRef::Realm {
+                realm_id: REALM.parse().unwrap(),
+            },
+            commit_id: COMMIT.parse().unwrap(),
+            stream_position: 1,
+        };
+        let material = arkret_sdk::SignalProductAuthority {
+            authority_commit_id: head.commit_id.clone(),
+            parent_realm_authority_commit_id: None,
+            current_realm_head: head.clone(),
+            current_scope_head: head,
+            sent_at: chrono::Utc::now(),
+            grants: vec![],
+            current_grants: vec![],
+            historical_product_policies: vec![],
+            current_product_policies: vec![],
+            owner_actions: vec![],
+            profile_actions: vec![],
+            agent: None,
+        };
+        assert!(!store.signal_product_cut_current(&material).await.unwrap());
+        store
+            .stage_frame(0, &frame(vec![], Some(baseline("ak:cursor:Yg", 1, true))))
+            .await
+            .unwrap()
+            .finish();
+        assert!(store.signal_product_cut_current(&material).await.unwrap());
+        store
+            .stage_frame(1, &frame(vec![], Some(baseline("ak:cursor:Yw", 2, true))))
+            .await
+            .unwrap()
+            .finish();
+        assert!(!store.signal_product_cut_current(&material).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn typing_target_requires_both_exact_members_and_active_discussion_at_one_cut() {
+        let realm: arkret_sdk::RealmId = REALM.parse().unwrap();
+        let strand_id = arkret_sdk::StrandId::from_event_id(&arkret_sdk::EventId::from_digest(
+            arkret_sdk::DigestSuite::Sha256,
+            [31; 32],
+        ));
+        let actor = |principal: &str, station: &str| {
+            arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+                principal.parse().unwrap(),
+                station.parse().unwrap(),
+            ))
+        };
+        let sender = actor(
+            "ak:did_core:web:alice.example",
+            "ak:did_core:web:station.example",
+        );
+        let recipient = actor(
+            "ak:did_core:web:bob.example",
+            "ak:did_core:web:station.example",
+        );
+        for scenario in [
+            "valid",
+            "missing",
+            "sender_leave",
+            "recipient_leave",
+            "other_station",
+            "missing_track",
+            "disabled_track",
+            "circle_valid",
+            "circle_rejoin",
+        ] {
+            let storage_path = path();
+            let store = index(&storage_path, 0).await;
+            let parent = |actor: &arkret_sdk::ActorId, membership: &str| CurrentState::Value {
+                selector: CurrentSelector::MemberState {
+                    actor_id: actor.clone(),
+                },
+                source_stream_ref: arkret_sdk::CommitStreamRef::Realm {
+                    realm_id: realm.clone(),
+                },
+                revision: arkret_wire::CurrentRevision {
+                    commit_id: COMMIT.parse().unwrap(),
+                    stream_position: 1,
+                },
+                value: json!({"membership":membership}),
+            };
+            let mut rows = vec![parent(
+                &recipient,
+                if scenario == "recipient_leave" {
+                    "leave"
+                } else {
+                    "join"
+                },
+            )];
+            if scenario != "missing" {
+                let joined_actor = if scenario == "other_station" {
+                    actor(
+                        "ak:did_core:web:alice.example",
+                        "ak:did_core:web:other.example",
+                    )
+                } else {
+                    sender.clone()
+                };
+                rows.push(parent(
+                    &joined_actor,
+                    if scenario == "sender_leave" {
+                        "leave"
+                    } else {
+                        "join"
+                    },
+                ));
+            }
+            let mut strand = arkret_sdk::Strand::discussion(
+                strand_id.clone(),
+                realm.clone(),
+                "Target",
+                sender.clone(),
+            );
+            if scenario == "missing_track" {
+                strand.tracks.remove("discussion");
+            }
+            if scenario == "disabled_track" {
+                strand.tracks.get_mut("discussion").unwrap().enabled = Some(false);
+                strand.tracks.get_mut("discussion").unwrap().is_primary = None;
+            }
+            let mut coverage = baseline(CURSORS[0], 1, true);
+            let scope = if scenario.starts_with("circle_") {
+                let circle_id = arkret_sdk::CircleId::from_event_id(
+                    &arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [32; 32]),
+                );
+                let stream = arkret_sdk::CommitStreamRef::Circle {
+                    realm_id: realm.clone(),
+                    circle_id: circle_id.clone(),
+                };
+                let revision = arkret_wire::CurrentRevision {
+                    commit_id: arkret_sdk::RealmCommitId::from_digest([42; 32]),
+                    stream_position: 1,
+                };
+                coverage["coverage"]["stream_heads"].as_array_mut().unwrap().push(json!({"stream_ref":stream, "stream_position":1, "commit_id":revision.commit_id}));
+                for member in [&sender, &recipient] {
+                    let parent_revision = arkret_wire::CurrentRevision {
+                        commit_id: if scenario == "circle_rejoin" && member == &sender {
+                            arkret_sdk::RealmCommitId::from_digest([43; 32])
+                        } else {
+                            COMMIT.parse().unwrap()
+                        },
+                        stream_position: 1,
+                    };
+                    rows.push(CurrentState::Value {
+                        selector: CurrentSelector::CircleMemberState { circle_id: circle_id.clone(), member_actor_id: member.clone() },
+                        source_stream_ref: stream.clone(), revision: revision.clone(),
+                        value: json!({"membership":"join", "parent_membership_revision":parent_revision, "effective_at":"2026-09-30T00:00:00.000Z"}),
+                    });
+                }
+                strand.scope_circle_id = Some(circle_id.clone());
+                rows.push(CurrentState::Value {
+                    selector: CurrentSelector::Strand {
+                        strand_id: strand_id.clone(),
+                    },
+                    source_stream_ref: stream,
+                    revision,
+                    value: serde_json::to_value(strand).unwrap(),
+                });
+                arkret_sdk::ScopeRef::Circle {
+                    realm_id: realm.clone(),
+                    circle_id,
+                }
+            } else {
+                rows.push(CurrentState::Value {
+                    selector: CurrentSelector::Strand {
+                        strand_id: strand_id.clone(),
+                    },
+                    source_stream_ref: arkret_sdk::CommitStreamRef::Realm {
+                        realm_id: realm.clone(),
+                    },
+                    revision: arkret_wire::CurrentRevision {
+                        commit_id: COMMIT.parse().unwrap(),
+                        stream_position: 1,
+                    },
+                    value: serde_json::to_value(strand).unwrap(),
+                });
+                arkret_sdk::ScopeRef::Realm {
+                    realm_id: realm.clone(),
+                }
+            };
+            store
+                .stage_frame(0, &frame(rows, Some(coverage)))
+                .await
+                .unwrap()
+                .finish();
+            let visible = store
+                .read_typing_strand_ready(&scope, &strand_id, &sender, &recipient)
+                .await
+                .unwrap()
+                .is_some();
+            assert_eq!(
+                visible,
+                matches!(scenario, "valid" | "circle_valid"),
+                "{scenario}"
+            );
+        }
     }
 
     #[tokio::test]
@@ -2707,6 +3606,8 @@ mod tests {
             governance_generation: Some(1),
             signed_snapshot: Some(SignedSnapshotCoverage {
                 original_digest: None,
+                search_floor: None,
+                search_policies: None,
                 snapshot_id: arkret_wire::RealmSnapshotId::from_digest([7; 32]),
                 stream_heads: vec![arkret_wire::CommitStreamHead {
                     stream_ref: arkret_wire::CommitStreamRef::Realm {
@@ -2753,7 +3654,7 @@ mod tests {
             CurrentTarget::Realm
         );
     }
-    fn row(revision: u64, removed: bool) -> TypedCurrentRow {
+    fn row(revision: u64, removed: bool) -> CurrentState {
         serde_json::from_value(json!({
             "selector":{"kind":"realm_profile"},
             "source_stream_ref":{"kind":"realm","realm_id":REALM},
@@ -2761,7 +3662,7 @@ mod tests {
             "value":if removed{json!({"status":"removed"})}else{json!({"status":"value","value":null})}
         })).unwrap()
     }
-    fn mls_group_row(realm: &str, revision: u64) -> TypedCurrentRow {
+    fn mls_group_row(realm: &str, revision: u64) -> CurrentState {
         serde_json::from_value(json!({
             "selector":{"kind":"mls_group","scope_ref":{"kind":"realm","realm_id":realm}},
             "source_stream_ref":{"kind":"realm","realm_id":realm},
@@ -2771,16 +3672,16 @@ mod tests {
                 "genesis_event_ref":arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [1; 32]),
                 "cipher_suite": "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519",
                 "current_mls_commit_event_ref":arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [2; 32]),
-                "epoch":1,
-                "current_key_access_revision":1,
-                "covered_key_access_revision":1,
+                "epoch":"1",
+                "current_key_access_revision":"1",
+                "covered_key_access_revision":"1",
                 "public_tree_ref":format!("ak:blob:sha256:{}", "3".repeat(64))
             }
         }))
         .unwrap()
     }
     fn frame(
-        entries: Vec<TypedCurrentRow>,
+        entries: Vec<CurrentState>,
         baseline: Option<serde_json::Value>,
     ) -> AccountSubscribeFrame {
         realm_frame(REALM, entries, baseline)
@@ -2815,15 +3716,20 @@ mod tests {
             "complete":complete
         })
     }
-    async fn index(path: &std::path::Path, generation: u64) -> CurrentIndex {
+    pub(super) async fn index(path: &std::path::Path, generation: u64) -> CurrentIndex {
         let shared = Arc::new(SharedGeneration {
             generation: Arc::new(AtomicU64::new(generation)),
             lease: Arc::new(Mutex::new(())),
             poisoned: AtomicBool::new(false),
             pending: AtomicU64::new(0),
+            publication: Default::default(),
         });
         CurrentIndex {
             backend: platform::Backend::open_test(path.to_owned()).await.unwrap(),
+            location: CurrentIndexLocation {
+                path: path.to_owned(),
+            },
+            account_scope: None,
             prefix: "inkson.current.v1/test/".into(),
             generation: shared.generation.clone(),
             lease: shared.lease.clone(),
@@ -2845,10 +3751,10 @@ mod tests {
         "ak:cursor:aw",
         "ak:cursor:bA",
     ];
-    fn realm_row(_realm: &str, revision: u64) -> TypedCurrentRow {
+    fn realm_row(_realm: &str, revision: u64) -> CurrentState {
         row(revision, false)
     }
-    fn member_row(_realm: &str, actor: &str, revision: u64) -> TypedCurrentRow {
+    fn member_row(_realm: &str, actor: &str, revision: u64) -> CurrentState {
         serde_json::from_value(json!({
             "selector":{"kind":"member_state","actor_id":{"kind":"service","service_id":actor}},
             "source_stream_ref":{"kind":"realm","realm_id":_realm},
@@ -2859,7 +3765,7 @@ mod tests {
     }
     fn realm_frame(
         realm: &str,
-        entries: Vec<TypedCurrentRow>,
+        entries: Vec<CurrentState>,
         baseline: Option<serde_json::Value>,
     ) -> AccountSubscribeFrame {
         let mut baseline = baseline;
@@ -2873,7 +3779,7 @@ mod tests {
             .unwrap_or_else(|| json!([]));
         let mut entry = json!({"current":{
             "realm_id":realm,
-            "governance_generation":1,
+            "governance_generation":"1",
             "stream_heads":stream_heads,
             "entries":entries
         }});
@@ -2956,7 +3862,7 @@ mod tests {
     async fn closed_selector_without_product_region_has_exact_durable_target() {
         let path = path();
         let index = index(&path, 0).await;
-        let entry = TypedCurrentRow::Value {
+        let entry = CurrentState::Value {
             selector: CurrentSelector::MimiRoomBinding {
                 mimi_room_uri: arkret_wire::MimiRoomUri::new(
                     "mimi://mimi.example.com/rooms/01JSMIMI",
@@ -3167,7 +4073,7 @@ mod tests {
         let index = index(&path, 0).await;
         let realm = arkret_sdk::RealmId::new(REALM).unwrap();
         let row = member_row(REALM, "ak:did_core:web:parent-member.example", 1);
-        let TypedCurrentRow::Value {
+        let CurrentState::Value {
             selector: CurrentSelector::MemberState { actor_id: member },
             revision,
             ..
@@ -3216,7 +4122,7 @@ mod tests {
                 .is_err()
         );
         let mut left = member_row(REALM, "ak:did_core:web:parent-member.example", 2);
-        let TypedCurrentRow::Value { value, .. } = &mut left;
+        let CurrentState::Value { value, .. } = &mut left;
         *value = json!({"membership":"leave"});
         index
             .stage_frame(2, &frame(vec![left], None))
@@ -3253,7 +4159,7 @@ mod tests {
             "ak:did_core:web:member.example".parse().unwrap(),
             "ak:did_core:web:station.example".parse().unwrap(),
         ));
-        let TypedCurrentRow::Value {
+        let CurrentState::Value {
             selector,
             revision: parent_revision,
             ..
@@ -3266,7 +4172,7 @@ mod tests {
             commit_id: arkret_sdk::RealmCommitId::from_digest([8; 32]),
             stream_position: 1,
         };
-        let circle_member = TypedCurrentRow::Value {
+        let circle_member = CurrentState::Value {
             selector: CurrentSelector::CircleMemberState {
                 circle_id,
                 member_actor_id: member.clone(),
@@ -3276,7 +4182,7 @@ mod tests {
             value: json!({"membership":"join", "parent_membership_revision":parent_revision, "effective_at":"2026-09-30T00:00:00.000Z"}),
         };
         let mut group = mls_group_row(REALM, 1);
-        let TypedCurrentRow::Value {
+        let CurrentState::Value {
             selector,
             source_stream_ref,
             revision,
@@ -3317,7 +4223,7 @@ mod tests {
         );
         for (generation, membership) in [(1, "leave"), (2, "ban"), (3, "join")] {
             let mut changed_parent = parent.clone();
-            let TypedCurrentRow::Value {
+            let CurrentState::Value {
                 revision, value, ..
             } = &mut changed_parent;
             revision.commit_id =
@@ -3345,7 +4251,7 @@ mod tests {
             );
         }
         let mut renewed = circle_member.clone();
-        let TypedCurrentRow::Value {
+        let CurrentState::Value {
             revision, value, ..
         } = &mut renewed;
         revision.commit_id = arkret_sdk::RealmCommitId::from_digest([20; 32]);
@@ -3453,7 +4359,7 @@ mod tests {
             .unwrap();
         let unknown = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19".to_owned();
         let realms = vec![REALM.to_owned(), OTHER_REALM.to_owned(), unknown.clone()];
-        index
+        let stage = index
             .stage_frame(
                 0,
                 &frame(
@@ -3462,8 +4368,8 @@ mod tests {
                 ),
             )
             .await
-            .unwrap()
-            .finish();
+            .unwrap();
+        store.commit_current_stage_for_test(stage).unwrap();
         store.set_current_generation(1);
         let (generation, first) = index
             .read_realm_mls_activations(&alice, &realms)
@@ -3479,14 +4385,14 @@ mod tests {
             .unwrap();
         assert_eq!(store.realm_security_states()[REALM], Some(true));
 
-        index
+        let stage = index
             .stage_frame(
                 1,
                 &realm_frame(OTHER_REALM, vec![], Some(baseline(CURSORS[1], 1, true))),
             )
             .await
-            .unwrap()
-            .finish();
+            .unwrap();
+        store.commit_current_stage_for_test(stage).unwrap();
         store.set_current_generation(2);
         assert!(
             store.realm_security_states().is_empty(),
@@ -3560,7 +4466,8 @@ mod tests {
             "A-B-A cannot revive an old presentation cache"
         );
         let reset = serde_json::from_value(json!({"kind":"resync_required"})).unwrap();
-        index.stage_frame(2, &reset).await.unwrap().finish();
+        let stage = index.stage_frame(2, &reset).await.unwrap();
+        store.commit_current_stage_for_test(stage).unwrap();
         store.set_current_generation(3);
         let (generation, reset_states) = index
             .read_realm_mls_activations(&alice, &realms)
@@ -3808,7 +4715,7 @@ mod tests {
     fn invalid_cached_mls_requires_verified_snapshot_and_preserves_fork_checks() {
         let fresh = mls_group_row(REALM, 7);
         let mut invalid = fresh.clone();
-        let TypedCurrentRow::Value { value, .. } = &mut invalid;
+        let CurrentState::Value { value, .. } = &mut invalid;
         value.as_object_mut().unwrap().remove("cipher_suite");
         let progress = CurrentRealmProgress::default();
         assert!(plan_current_entry(&progress, None, &fresh, Some(&invalid), false).is_err());
@@ -3818,16 +4725,16 @@ mod tests {
         );
         assert!(plan_current_entry(&progress, None, &invalid, Some(&fresh), true).is_err());
         let mut conflict = fresh.clone();
-        let TypedCurrentRow::Value { value, .. } = &mut conflict;
+        let CurrentState::Value { value, .. } = &mut conflict;
         value["epoch"] = json!(2);
         assert!(plan_current_entry(&progress, None, &conflict, Some(&fresh), true).is_err());
-        let TypedCurrentRow::Value { revision, .. } = &mut conflict;
+        let CurrentState::Value { revision, .. } = &mut conflict;
         revision.commit_id = "ak:realm_commit:Aaurq6urq6urq6urq6urq6urq6urq6urq6urq6urq6ur"
             .parse()
             .unwrap();
         assert!(plan_current_entry(&progress, None, &conflict, Some(&invalid), true).is_err());
         let mut foreign = fresh.clone();
-        let TypedCurrentRow::Value {
+        let CurrentState::Value {
             source_stream_ref, ..
         } = &mut foreign;
         *source_stream_ref = arkret_sdk::CommitStreamRef::Realm {
@@ -3853,7 +4760,7 @@ mod tests {
         let mut value = serde_json::to_value(row(7, false)).unwrap();
         value["revision"]["commit_id"] =
             json!("ak:realm_commit:Aaurq6urq6urq6urq6urq6urq6urq6urq6urq6urq6ur");
-        let fork: TypedCurrentRow = serde_json::from_value(value).unwrap();
+        let fork: CurrentState = serde_json::from_value(value).unwrap();
         assert!(
             plan_current_entry(
                 &CurrentRealmProgress::default(),
@@ -4059,12 +4966,7 @@ mod tests {
                 .is_some()
         );
     }
-    fn membership_row(
-        realm: &str,
-        actor: &str,
-        revision: u64,
-        membership: &str,
-    ) -> TypedCurrentRow {
+    fn membership_row(realm: &str, actor: &str, revision: u64, membership: &str) -> CurrentState {
         serde_json::from_value(json!({
             "selector":{"kind":"member_state","actor_id":{"kind":"service","service_id":actor}},
             "source_stream_ref":{"kind":"realm","realm_id":realm},
@@ -4082,7 +4984,7 @@ mod tests {
         index: &CurrentIndex,
         mut generation: u64,
         realm: &str,
-        rows: Vec<TypedCurrentRow>,
+        rows: Vec<CurrentState>,
         snapshot: &str,
         cut: u64,
     ) -> u64 {
@@ -4105,7 +5007,7 @@ mod tests {
         }
         generation
     }
-    async fn realm_rows(index: &CurrentIndex, realm: &str, limit: usize) -> Vec<TypedCurrentRow> {
+    async fn realm_rows(index: &CurrentIndex, realm: &str, limit: usize) -> Vec<CurrentState> {
         let mut rows = Vec::new();
         let mut after: Option<String> = None;
         loop {
@@ -4148,7 +5050,7 @@ mod tests {
         assert_eq!(read.len(), 151);
         assert_eq!(selectors.len(), 151, "a row was read twice");
         assert!(read.iter().all(|entry| {
-            let TypedCurrentRow::Value {
+            let CurrentState::Value {
                 source_stream_ref, ..
             } = entry;
             source_stream_ref
@@ -4339,6 +5241,63 @@ mod tests {
         );
     }
     #[tokio::test]
+    async fn consent_present_and_empty_cannot_become_never_written_after_gc_and_cold_open() {
+        for permissions in [json!([]), json!([{"consent_scope":"invite"}])] {
+            let path = path();
+            let store = index(&path, 0).await;
+            let entry: CurrentState = serde_json::from_value(json!({
+                "selector":{"kind":"consent","peer_id":{
+                    "kind":"account","account_id":{
+                        "principal_id":"ak:did_core:web:peer.example",
+                        "station_id":"ak:did_core:web:peer-station.example"
+                    }
+                }},
+                "source_stream_ref":{"kind":"realm","realm_id":REALM},
+                "revision":{"commit_id":COMMIT,"stream_position":7},
+                "value":{"permissions":permissions}
+            }))
+            .unwrap();
+            let selector = selector_of(&entry).clone();
+            store
+                .require_consent_never_written(REALM, &selector, 0)
+                .await
+                .unwrap();
+            store
+                .stage_frame(0, &frame(vec![entry], None))
+                .await
+                .unwrap()
+                .finish();
+            assert!(
+                store
+                    .require_consent_never_written(REALM, &selector, 1)
+                    .await
+                    .is_err()
+            );
+            store
+                .stage_frame(1, &frame(vec![], Some(baseline("ak:cursor:Yg", 8, true))))
+                .await
+                .unwrap()
+                .finish();
+            drive(&store, 80).await;
+            assert!(
+                store
+                    .raw_selector(REALM, &selector, 2)
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
+            assert!(store.retired(REALM, &selector, 2).await.unwrap().is_some());
+            drop(store);
+            let reopened = index(&path, 2).await;
+            assert!(
+                reopened
+                    .require_consent_never_written(REALM, &selector, 2)
+                    .await
+                    .is_err()
+            );
+        }
+    }
+    #[tokio::test]
     async fn unresolved_pointer_poison_prevents_failed_generation_reuse() {
         let path = path();
         let index = index(&path, 0).await;
@@ -4375,6 +5334,7 @@ mod tests {
             .await
             .unwrap();
         stage.arm_account_commit();
+        stage.persist_for_harness().await.unwrap();
         drop(stage);
         assert!(index.is_poisoned());
         assert!(
@@ -4477,6 +5437,7 @@ mod tests {
                             &next_frame,
                             &Default::default(),
                             &Default::default(),
+                            None,
                         )
                         .await
                         .unwrap();
@@ -4846,15 +5807,16 @@ mod tests {
                 .unwrap()
                 .finish();
         }
-        drop(
-            store
-                .stage_frame(
-                    2,
-                    &frame(vec![row(1, false)], Some(baseline(CURSORS[2], 5, true))),
-                )
-                .await
-                .unwrap(),
-        );
+        let prepared = store
+            .stage_frame(
+                2,
+                &frame(vec![row(1, false)], Some(baseline(CURSORS[2], 5, true))),
+            )
+            .await
+            .unwrap();
+        // Fixture host injects a durable future cut whose pointer was not confirmed.
+        prepared.persist_for_harness().await.unwrap();
+        drop(prepared);
         let future = store.seen_prefix(CURSORS[2], REALM, &selector).unwrap();
         let staged = store
             .backend
@@ -4995,7 +5957,7 @@ mod tests {
     async fn one_maintenance_pass_reclaims_at_most_one_bounded_page() {
         let path = path();
         let store = index(&path, 0).await;
-        let members: Vec<TypedCurrentRow> = (0..120)
+        let members: Vec<CurrentState> = (0..120)
             .map(|index| {
                 member_row(
                     REALM,
@@ -5102,7 +6064,7 @@ mod tests {
                         realm.clone(),
                         json!({"current": {
                             "realm_id": realm,
-                            "governance_generation": 1,
+                            "governance_generation": "1",
                             "stream_heads": [],
                             "entries": [row(1, false)]
                         }}),
@@ -5161,7 +6123,7 @@ mod tests {
         }
     }
 
-    fn selector_of(entry: &TypedCurrentRow) -> CurrentSelector {
+    fn selector_of(entry: &CurrentState) -> CurrentSelector {
         super::selector_of(entry).clone()
     }
 }

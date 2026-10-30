@@ -99,8 +99,8 @@ fn test_discovery() -> OidcDiscoveryDocument {
     }
 }
 
-fn test_oidc_method() -> arkret_sdk::AuthMethod {
-    arkret_sdk::AuthMethod {
+fn test_oidc_method() -> arkret_sdk::AuthenticationMethod {
+    arkret_sdk::AuthenticationMethod {
         method: arkret_sdk::AuthMethodKind::Oidc,
         issuer_uri: Some("https://issuer.example".to_owned()),
         provider_uri: None,
@@ -109,7 +109,7 @@ fn test_oidc_method() -> arkret_sdk::AuthMethod {
         ),
         client_id: Some("inkson-test".to_owned()),
         scopes: vec!["openid".to_owned(), "profile".to_owned()],
-        grant_exchange: arkret_sdk::AuthGrantExchange {
+        grant_exchange: arkret_sdk::AccountHandoffExchange {
             kind: arkret_sdk::AuthGrantExchangeKind::AccountHandoff,
             extra: Default::default(),
         },
@@ -183,7 +183,7 @@ fn persisted_scaffold_carries_returning_account_candidate() {
             service_id: principal_description().service_id,
             base_url: "https://principal.example/".into(),
             trust_domain: principal_description().trust_domain,
-            auth_metadata: principal_description().auth_metadata,
+            authentication_metadata: principal_description().authentication_metadata,
         },
         &bundle,
         "https://auth.example/_arkret/gate/account",
@@ -366,7 +366,7 @@ fn authorize_url_falls_back_to_native_client_id() {
 /// `gate_account_base_url` derivation uses the strong `account_authority`.
 #[test]
 fn resolve_gate_account_base_url_prefers_account_authority() {
-    let mut metadata = arkret_sdk::AuthMetadata::minimal();
+    let mut metadata = arkret_sdk::AuthenticationMetadata::minimal();
     metadata.account_authority = Some(arkret_sdk::AccountAuthority {
         origin: arkret_sdk::WebOrigin::new("https://aa.example").unwrap(),
         gate_account_base_url: "https://aa.example/_arkret/gate/account".to_owned(),
@@ -378,7 +378,7 @@ fn resolve_gate_account_base_url_prefers_account_authority() {
 
 #[test]
 fn resolve_gate_account_base_url_rejects_missing_published_base() {
-    let mut metadata = arkret_sdk::AuthMetadata::minimal();
+    let mut metadata = arkret_sdk::AuthenticationMetadata::minimal();
     metadata.account_authority = Some(arkret_sdk::AccountAuthority {
         origin: arkret_sdk::WebOrigin::new("https://aa.example").unwrap(),
         gate_account_base_url: String::new(),
@@ -389,12 +389,12 @@ fn resolve_gate_account_base_url_rejects_missing_published_base() {
 
 #[test]
 fn resolve_gate_account_base_url_fails_closed_without_account_authority() {
-    let metadata = arkret_sdk::AuthMetadata::minimal();
+    let metadata = arkret_sdk::AuthenticationMetadata::minimal();
     let error = resolve_gate_account_base_url("https://principal.example", &metadata).unwrap_err();
     assert!(
         error
             .to_string()
-            .contains("auth_metadata.account_authority")
+            .contains("authentication_metadata.account_authority")
     );
 }
 
@@ -412,7 +412,7 @@ fn principal_description() -> arkret_sdk::ServiceDescribe {
             extension_profile_required: (),
         }],
     );
-    description.auth_metadata.account_authority = Some(arkret_sdk::AccountAuthority {
+    description.authentication_metadata.account_authority = Some(arkret_sdk::AccountAuthority {
         origin: arkret_sdk::WebOrigin::new("https://auth.example").unwrap(),
         gate_account_base_url: "https://auth.example/_arkret/gate/account".to_owned(),
         extra: Default::default(),

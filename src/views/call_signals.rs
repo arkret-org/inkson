@@ -40,8 +40,8 @@ pub struct IncomingCallInfo {
 pub struct CallSignalInboxItem {
     pub realm_id: String,
     pub call_id: String,
-    pub seq: u64,
-    /// Sender actor DID (`envelope.actor_id`).
+    pub sequence: u64,
+    /// Canonical complete sender ActorId (`envelope.actor_id`).
     pub sender_actor: String,
     /// Sender device id (`envelope.device_id`).
     pub sender_device: String,
@@ -49,7 +49,7 @@ pub struct CallSignalInboxItem {
 }
 
 /// Dedup identity for a single inbound signal:
-/// `(realm, call, sender_actor, sender_device, seq)`. coland already delivers
+/// `(realm, call, sender_actor, sender_device, sequence)`. coland already delivers
 /// once; this is the client-side belt-and-braces guard so a redelivered sync
 /// frame (catchup overlap, reconnect replay) never double-drives the FSM.
 pub type SignalDedupKey = (String, String, String, String, u64);
@@ -64,11 +64,12 @@ pub struct CallSignalHub {
     /// Cleared by `CallPanel` once the ring is presented / answered, or when
     /// the call ends.
     pub incoming_call: Signal<Option<IncomingCallInfo>>,
+    pub invitation_contexts: Signal<BTreeMap<String, arkret_sdk::CallInvitationDeliveryView>>,
     /// Per-call FIFO inbox of non-invite signals awaiting `CallPanel`.
     pub inbox: Signal<BTreeMap<String, VecDeque<CallSignalInboxItem>>>,
     /// Processed-signal dedup set.
     pub seen: Signal<BTreeSet<SignalDedupKey>>,
-    /// Highest accepted seq per `(realm, call, sender_actor, sender_device)`.
+    /// Highest accepted sequence per `(realm, call, sender_actor, sender_device)`.
     pub last_seq: Signal<BTreeMap<SignalSeqKey, u64>>,
     /// Call ids the local client currently owns an active session for. An
     /// `invite` for a call already in this set is treated as a re-invite and
@@ -81,6 +82,7 @@ impl CallSignalHub {
     pub fn new() -> Self {
         Self {
             incoming_call: Signal::new(None),
+            invitation_contexts: Signal::new(BTreeMap::new()),
             inbox: Signal::new(BTreeMap::new()),
             seen: Signal::new(BTreeSet::new()),
             last_seq: Signal::new(BTreeMap::new()),
@@ -121,6 +123,7 @@ impl CallSignalHub {
     /// Drop all per-call state (inbox + active flag) when a call ends.
     pub fn forget_call(&mut self, call_id: &str) {
         self.inbox.write().remove(call_id);
+        self.invitation_contexts.write().remove(call_id);
         self.active_calls.write().remove(call_id);
         self.last_seq.write().retain(|key, _| key.1 != call_id);
         let clear = self
@@ -145,7 +148,7 @@ impl Default for CallSignalHub {
 pub struct DecodedCallSignal {
     pub realm_id: String,
     pub call_id: String,
-    pub seq: u64,
+    pub sequence: u64,
     pub sender_actor: String,
     pub sender_device: String,
     pub signal: arkret_sdk::CallSignalData,
@@ -164,18 +167,18 @@ pub fn decode_call_signal(signal: &AdmittedSignal) -> Option<DecodedCallSignal> 
     let arkret_sdk::SignalPlaintext::CallSignal(body) = &signal.payload else {
         return None;
     };
-    // Call routing addresses a human device; an Agent-key endpoint has no
-    // device coordinate to ring and is not a call participant.
-    let arkret_sdk::SignalSequenceEndpoint::AccountDevice { device_id } = signal.sender_endpoint()
-    else {
-        return None;
+    let sender_endpoint = match signal.sender_endpoint() {
+        arkret_sdk::SignalSequenceEndpoint::AccountDevice { device_id } => device_id.to_string(),
+        arkret_sdk::SignalSequenceEndpoint::AgentKey { public_key_digest } => {
+            public_key_digest.to_string()
+        }
     };
     Some(DecodedCallSignal {
         realm_id: signal.scope_ref().realm_id().as_str().to_owned(),
         call_id: body.call_id.as_str().to_owned(),
-        seq: body.seq,
-        sender_actor: signal.actor_id().signing_principal_id().as_str().to_owned(),
-        sender_device: device_id.as_str().to_owned(),
+        sequence: body.sequence,
+        sender_actor: signal.actor_id().to_string(),
+        sender_device: sender_endpoint,
         signal: body.signal.clone(),
     })
 }
@@ -184,8 +187,9 @@ pub fn decode_call_signal(signal: &AdmittedSignal) -> Option<DecodedCallSignal> 
 /// dedup → `invite` raises `incoming_call` (when no active session owns the
 /// call) → everything else queues into the per-call inbox.
 ///
-/// `local_actor` is this device's account DID; signals this client itself
-/// emitted (echoed back through sync) are skipped so we never self-drive.
+/// `local_actor` is this device's canonical complete ActorId; signals this client itself
+/// emitted on `local_device` are skipped. Other devices of the same Account
+/// still deliver multi-device stop-ring and peer state.
 ///
 /// Envelope admission belongs exclusively to [`garth::SignalReceiver`] and
 /// Inkson's verified-governance receive gate. In particular, moderation has
@@ -197,6 +201,7 @@ pub async fn route_decrypted_call_signals(
     hub: &mut CallSignalHub,
     signals: &[AdmittedSignal],
     local_actor: &str,
+    local_device: &str,
 ) {
     for signal in signals {
         let Some(decoded) = decode_call_signal(signal) else {
@@ -204,11 +209,35 @@ pub async fn route_decrypted_call_signals(
         };
         // Self-echo: skip verification + routing entirely (we trust our own
         // outbound frames and never resolve our own key here).
-        if !local_actor.is_empty() && decoded.sender_actor == local_actor {
+        if is_local_echo(&decoded, local_actor, local_device) {
             continue;
         }
-        route_verified_decoded_signal(hub, decoded, local_actor);
+        if matches!(&decoded.signal, arkret_sdk::CallSignalData::Invite(_)) {
+            let Some(delivery) = signal.call_invitation.as_deref() else {
+                continue;
+            };
+            if delivery
+                .validate_for_envelope(
+                    &delivery.request.envelope,
+                    &delivery.invitation.holder_account_id,
+                )
+                .is_err()
+            {
+                continue;
+            }
+            hub.invitation_contexts
+                .write()
+                .insert(decoded.call_id.clone(), delivery.clone());
+        }
+        route_verified_decoded_signal(hub, decoded, local_actor, local_device);
     }
+}
+
+fn is_local_echo(decoded: &DecodedCallSignal, local_actor: &str, local_device: &str) -> bool {
+    !local_actor.is_empty()
+        && !local_device.is_empty()
+        && decoded.sender_actor == local_actor
+        && decoded.sender_device == local_device
 }
 
 /// Current ring/active snapshot a routing decision is taken against. Pulled
@@ -242,10 +271,11 @@ pub enum RouteDecision {
 pub fn decide_route(
     decoded: &DecodedCallSignal,
     local_actor: &str,
+    local_device: &str,
     is_duplicate: bool,
     state: &RouteState,
 ) -> RouteDecision {
-    if !local_actor.is_empty() && decoded.sender_actor == local_actor {
+    if is_local_echo(decoded, local_actor, local_device) {
         return RouteDecision::Drop;
     }
     if is_duplicate {
@@ -290,7 +320,7 @@ pub fn decide_route(
     RouteDecision::Enqueue(CallSignalInboxItem {
         realm_id: decoded.realm_id.clone(),
         call_id: decoded.call_id.clone(),
-        seq: decoded.seq,
+        sequence: decoded.sequence,
         sender_actor: decoded.sender_actor.clone(),
         sender_device: decoded.sender_device.clone(),
         signal: decoded.signal.clone(),
@@ -301,19 +331,21 @@ fn route_verified_decoded_signal(
     hub: &mut CallSignalHub,
     decoded: DecodedCallSignal,
     local_actor: &str,
+    local_device: &str,
 ) {
-    if !advance_signal_seq(hub, &decoded, local_actor) {
+    if !advance_signal_seq(hub, &decoded, local_actor, local_device) {
         return;
     }
-    route_decoded_signal(hub, decoded, local_actor);
+    route_decoded_signal(hub, decoded, local_actor, local_device);
 }
 
 fn advance_signal_seq(
     hub: &mut CallSignalHub,
     decoded: &DecodedCallSignal,
     local_actor: &str,
+    local_device: &str,
 ) -> bool {
-    if !local_actor.is_empty() && decoded.sender_actor == local_actor {
+    if is_local_echo(decoded, local_actor, local_device) {
         return true;
     }
     let key: SignalSeqKey = (
@@ -323,10 +355,13 @@ fn advance_signal_seq(
         decoded.sender_device.clone(),
     );
     let mut last_seq = hub.last_seq.write();
-    if last_seq.get(&key).is_some_and(|prev| decoded.seq <= *prev) {
+    if last_seq
+        .get(&key)
+        .is_some_and(|prev| decoded.sequence <= *prev)
+    {
         return false;
     }
-    last_seq.insert(key, decoded.seq);
+    last_seq.insert(key, decoded.sequence);
     true
 }
 
@@ -336,18 +371,19 @@ pub fn route_decoded_signal(
     hub: &mut CallSignalHub,
     decoded: DecodedCallSignal,
     local_actor: &str,
+    local_device: &str,
 ) {
     let key: SignalDedupKey = (
         decoded.realm_id.clone(),
         decoded.call_id.clone(),
         decoded.sender_actor.clone(),
         decoded.sender_device.clone(),
-        decoded.seq,
+        decoded.sequence,
     );
     // Compute duplicate status and insert atomically: a self-echo never
     // reaches here as a duplicate (it is dropped first), so only genuine
     // routable signals consume a dedup slot.
-    let is_self_echo = !local_actor.is_empty() && decoded.sender_actor == local_actor;
+    let is_self_echo = is_local_echo(&decoded, local_actor, local_device);
     let is_duplicate = if is_self_echo {
         false
     } else {
@@ -364,7 +400,13 @@ pub fn route_decoded_signal(
         }
     };
 
-    match decide_route(&decoded, local_actor, is_duplicate, &ring_state) {
+    match decide_route(
+        &decoded,
+        local_actor,
+        local_device,
+        is_duplicate,
+        &ring_state,
+    ) {
         RouteDecision::Drop => {}
         RouteDecision::Ring(info) => hub.incoming_call.set(Some(info)),
         RouteDecision::ClearRing => hub.incoming_call.set(None),
@@ -394,7 +436,7 @@ mod tests {
     /// out of it.
     ///
     /// The pre-v1 fixture hand-wrote a plaintext wire envelope with
-    /// `payload.{call_id,signal_kind,seq}` on the header. That object no longer
+    /// `payload.{call_id,signal_kind,sequence}` on the header. That object no longer
     /// exists: `signal.md` §6 makes exactly those fields ciphertext, so the
     /// fixture now goes through the production sender path and the assertions
     /// move to the decrypted body.
@@ -441,7 +483,7 @@ mod tests {
         seed: u8,
         actor: &str,
         device: &str,
-        seq: u64,
+        sequence: u64,
         signal: arkret_sdk::CallSignalData,
     ) -> (arkret_wire::SignalEnvelope, Value) {
         let signer = std::sync::Arc::new(crate::event_signer::build_ed25519_device_signer(
@@ -451,13 +493,13 @@ mod tests {
             signer.as_ref(),
             &crate::signal::SignalPayload::CallSignal {
                 call_id: arkret_sdk::CallId::new(TEST_CALL).unwrap(),
-                seq,
+                sequence,
                 signal,
             },
             &arkret_sdk::RealmId::new(TEST_REALM).unwrap(),
             &crate::mls_api_helpers::principal_core_id(actor).unwrap(),
             &arkret_sdk::DeviceId::new(device).unwrap(),
-            crate::signal::SignalSequence::new(seq),
+            crate::signal::SignalSequence::new(sequence),
         )
         .expect("fixture signal must seal")
     }
@@ -471,6 +513,12 @@ mod tests {
     ) -> anyhow::Result<AdmittedSignal> {
         let bytes = arkret_sdk::canonical::canonical_json_bytes(&plaintext)?;
         Ok(AdmittedSignal {
+            call_invitation: None,
+            signer_verification_method: arkret_sdk::DidUrl::new("did:web:alice.example#device-1")
+                .unwrap(),
+            product_authority: None,
+            authority_commit_id: envelope.authority_commit_id.clone(),
+            parent_realm_authority_commit_id: envelope.parent_realm_authority_commit_id.clone(),
             domain: arkret_sdk::SignalSequenceDomain::from_verified_envelope(envelope, None)?,
             payload: garth::open_signal_plaintext(&bytes)?,
             expires_at: envelope.expires_at,
@@ -490,7 +538,7 @@ mod tests {
             arkret_sdk::CallSignalData::Invite(_)
         ));
         assert_eq!(decoded.call_id, TEST_CALL);
-        assert_eq!(decoded.sender_actor, "ak:did_core:web:bob.example");
+        assert_eq!(decoded.sender_actor, envelope.sender_actor_id.to_string());
         assert_eq!(decoded.sender_device, PEER_DEVICE);
         assert_eq!(decoded.realm_id, TEST_REALM);
         assert!(matches!(
@@ -513,7 +561,7 @@ mod tests {
             decoded.signal,
             arkret_sdk::CallSignalData::Candidate(_)
         ));
-        assert_eq!(decoded.seq, 2);
+        assert_eq!(decoded.sequence, 2);
         // The outer header exposes only the scope and the class — never the
         // call id or the signal kind (`signal.md` §6).
         let header = serde_json::to_value(&envelope).unwrap();
@@ -531,7 +579,7 @@ mod tests {
             &envelope,
             json!({
                 "kind": "ak.typing",
-                "payload_sequence": 1,
+                "payload_sequence": "1",
                 "strand_id": "ak:strand:Aa6k_ga4nHTT-mJwrlDP8oeaq3P1Wg9B6K8RtTXZyUY0",
                 "typing": true
             }),
@@ -547,18 +595,18 @@ mod tests {
                     "kind": "ak.call.signal",
                     "call_id": TEST_CALL,
                     "signal_kind": "sdp_offer",
-                    "payload_sequence": 1
+                    "payload_sequence": "1"
                 })
             )
             .is_err()
         );
     }
 
-    fn decoded(signal: arkret_sdk::CallSignalData, seq: u64) -> DecodedCallSignal {
+    fn decoded(signal: arkret_sdk::CallSignalData, sequence: u64) -> DecodedCallSignal {
         DecodedCallSignal {
             realm_id: "ak:realm:r".into(),
             call_id: "ak:call:1".into(),
-            seq,
+            sequence,
             sender_actor: "did:web:bob".into(),
             sender_device: "dev-b".into(),
             signal,
@@ -569,7 +617,7 @@ mod tests {
     fn invite_decides_ring_then_dedup_drops() {
         let d = decoded(invite(true), 1);
         let fresh = RouteState::default();
-        match decide_route(&d, "did:web:alice", false, &fresh) {
+        match decide_route(&d, "did:web:alice", "dev-a", false, &fresh) {
             RouteDecision::Ring(info) => {
                 assert_eq!(info.call_id, "ak:call:1");
                 assert_eq!(info.peer_actor, "did:web:bob");
@@ -579,7 +627,7 @@ mod tests {
         }
         // Duplicate (already in `seen`) → dropped even with fresh ring state.
         assert_eq!(
-            decide_route(&d, "did:web:alice", true, &fresh),
+            decide_route(&d, "did:web:alice", "dev-a", true, &fresh),
             RouteDecision::Drop
         );
     }
@@ -587,7 +635,7 @@ mod tests {
     #[test]
     fn non_invite_enqueues() {
         let d = decoded(candidate(), 2);
-        match decide_route(&d, "did:web:alice", false, &RouteState::default()) {
+        match decide_route(&d, "did:web:alice", "dev-a", false, &RouteState::default()) {
             RouteDecision::Enqueue(item) => {
                 assert!(matches!(
                     item.signal,
@@ -603,8 +651,42 @@ mod tests {
     fn self_echo_dropped() {
         let mut d = decoded(answer(), 1);
         d.sender_actor = "did:web:alice".into();
+        d.sender_device = "dev-a".into();
         assert_eq!(
-            decide_route(&d, "did:web:alice", false, &RouteState::default()),
+            decide_route(&d, "did:web:alice", "dev-a", false, &RouteState::default()),
+            RouteDecision::Drop
+        );
+    }
+
+    #[test]
+    fn full_account_echo_filter_keeps_other_devices_and_stations() {
+        let actor = |station: &str| {
+            arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+                "ak:did_core:web:alice.example".parse().unwrap(),
+                station.parse().unwrap(),
+            ))
+            .to_string()
+        };
+        let local = actor("ak:did_core:web:station-a.example");
+        let mut d = decoded(answer(), 1);
+        d.sender_actor = local.clone();
+        let state = RouteState {
+            ringing_call: Some(d.call_id.clone()),
+            ringing_answered_here: false,
+        };
+        assert_eq!(
+            decide_route(&d, &local, "dev-a", false, &state),
+            RouteDecision::ClearRing
+        );
+        d.sender_device = "dev-a".into();
+        d.sender_actor = actor("ak:did_core:web:station-b.example");
+        assert_eq!(
+            decide_route(&d, &local, "dev-a", false, &state),
+            RouteDecision::ClearRing
+        );
+        d.sender_actor = local.clone();
+        assert_eq!(
+            decide_route(&d, &local, "dev-a", false, &state),
             RouteDecision::Drop
         );
     }
@@ -617,7 +699,7 @@ mod tests {
             ringing_answered_here: true,
         };
         assert_eq!(
-            decide_route(&d, "did:web:alice", false, &state),
+            decide_route(&d, "did:web:alice", "dev-a", false, &state),
             RouteDecision::Drop
         );
     }
@@ -630,7 +712,7 @@ mod tests {
             ringing_answered_here: false,
         };
         assert_eq!(
-            decide_route(&d, "did:web:alice", false, &state),
+            decide_route(&d, "did:web:alice", "dev-a", false, &state),
             RouteDecision::ClearRing
         );
     }
@@ -645,9 +727,15 @@ mod tests {
         // already-opened body. Cryptographic admission was completed by garth.
         let admitted = admitted_signal(&envelope, plaintext).expect("admitted fixture");
         let decoded = decode_call_signal(&admitted).expect("decodes");
-        match decide_route(&decoded, "did:web:me", false, &RouteState::default()) {
+        match decide_route(
+            &decoded,
+            "did:web:me",
+            "dev-a",
+            false,
+            &RouteState::default(),
+        ) {
             RouteDecision::Ring(info) => {
-                assert_eq!(info.peer_actor, "ak:did_core:web:caller.example")
+                assert_eq!(info.peer_actor, envelope.sender_actor_id.to_string())
             }
             other => panic!("expected Ring, got {other:?}"),
         }
@@ -663,7 +751,7 @@ mod tests {
             ringing_answered_here: true,
         };
         assert!(matches!(
-            decide_route(&d, "did:web:alice", false, &state),
+            decide_route(&d, "did:web:alice", "dev-a", false, &state),
             RouteDecision::Enqueue(_)
         ));
     }

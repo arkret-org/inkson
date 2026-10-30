@@ -224,10 +224,10 @@ pub(super) async fn refresh_session_credential_for_active_context(
     mut token: Signal<String>,
     config_store: Signal<LocalConfigStore>,
     session_generation: Signal<u64>,
+    active_account: Signal<Option<crate::config::ActiveAccountContext>>,
 ) -> crate::runtime::session::CurrentSessionRefresh {
     let base = base_url();
     let generation = session_generation();
-    let active_account = SessionContext::get().active_account;
     let Some(account) = active_account.peek().clone() else {
         // A newly registered account writes its accepted grant durably before
         // publishing the matching ActiveAccountContext. That short commit
@@ -1035,22 +1035,23 @@ pub(super) fn connect(
                 }
                 let canonical_runtime_principal = Some(canonical_principal_id.clone());
                 let mut profiles = config_store.read().load_profiles();
-                let profile_id =
-                    match profiles.upsert_and_activate(crate::config::AccountProfile::new(
-                        accepted_account.clone(),
-                        session_credential.clone(),
-                    )) {
-                        Ok(profile_id) => profile_id,
-                        Err(error) => {
-                            invalidate_bootstrap_session(
-                                &session,
-                                format!("accepted account profile update rejected: {error}"),
-                                session_boot_state,
-                                sync_bootstrap_complete,
-                            );
-                            return;
-                        }
-                    };
+                let mut accepted_profile = crate::config::AccountProfile::new(
+                    accepted_account.clone(),
+                    session_credential.clone(),
+                );
+                accepted_profile.label = account_personal_handle.clone().unwrap_or_default();
+                let profile_id = match profiles.upsert_and_activate(accepted_profile) {
+                    Ok(profile_id) => profile_id,
+                    Err(error) => {
+                        invalidate_bootstrap_session(
+                            &session,
+                            format!("accepted account profile update rejected: {error}"),
+                            session_boot_state,
+                            sync_bootstrap_complete,
+                        );
+                        return;
+                    }
+                };
                 accepted_account.profile_id = profile_id;
                 {
                     let mut store = config_store.write();
@@ -1222,7 +1223,7 @@ pub(super) fn connect(
                     &mut session_credential,
                     &mut authed,
                 );
-                let Some(device_authorization_result) = session_scoped_bootstrap_request(
+                let Some(current_device_authorization) = session_scoped_bootstrap_request(
                     "device authorization check",
                     &session,
                     bootstrap_session_generation,
@@ -1232,7 +1233,7 @@ pub(super) fn connect(
                 else {
                     return;
                 };
-                match device_authorization_result {
+                match current_device_authorization {
                     Ok((needs_authorization, has_other)) => {
                         account_has_other_devices.set(has_other);
                         needs_device_authorization.set(needs_authorization);

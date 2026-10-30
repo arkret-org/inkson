@@ -14,8 +14,8 @@ fn accepted_mls_base_current(
     genesis_event_ref: arkret_sdk::EventId,
     current_event_ref: arkret_sdk::EventId,
     epoch: u64,
-) -> arkret_wire::MlsGroupCurrent {
-    arkret_wire::MlsGroupCurrent {
+) -> arkret_wire::MlsGroupValue {
+    arkret_wire::MlsGroupValue {
         effective_scope: effective_scope.clone(),
         genesis_event_ref,
         cipher_suite: arkret_wire::NonEmptyString::new(
@@ -85,7 +85,10 @@ fn coverage_commit_pins_durable_revision_when_product_view_lags() {
         operation.payload()["governance_binding"],
         serde_json::to_value(&binding).unwrap()
     );
-    assert_eq!(operation.payload()["covers_key_access_revision"], json!(7));
+    assert_eq!(
+        operation.payload()["covers_key_access_revision"],
+        json!("7")
+    );
     assert_eq!(state.mls_checkpoint_for_scope(&scope), Some(before));
 }
 
@@ -462,6 +465,7 @@ fn direct_epoch_zero_send_requires_exact_verified_founder_bootstrap_context() {
         authority_event_ref: arkret_sdk::EventId::new(realm.replace("ak:realm:", "ak:event:"))
             .unwrap(),
         group_state_ref: reference.clone(),
+        structure_only: false,
     };
     state.set_direct_message_context(realm.into(), Some(context.clone()));
     assert_eq!(ready(&state), Some(true));
@@ -766,7 +770,7 @@ fn encrypted_write_blocks_complete_roster_ahead_of_local_group() {
 }
 
 /// An accepted MLS group is the content-scheme authority. A legacy projection
-/// field must not be required once that typed current result is installed.
+/// field must not be required once that current state is installed.
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn encrypted_write_uses_accepted_mls_group_without_legacy_scheme_projection() {
@@ -924,7 +928,7 @@ fn two_member_group_with_bob_snapshot(
     let serialized = serde_json::to_vec(&post_state).unwrap();
     let mut salt = [0u8; 16];
     getrandom::fill(&mut salt).unwrap();
-    let envelope = crate::mls::persistence::encrypt_state(
+    let envelope = garth::mls::checkpoint::encrypt_state(
         realm,
         &post_state.group_id,
         post_state.epoch,
@@ -978,7 +982,7 @@ fn committed_sender_credential_reconstructs_real_standard_mls_content_aad() {
     )
     .unwrap()
     .expect_verifiable();
-    let sender = crate::views::chat::verified_chat_sender_domain_for_realm(
+    let sender = crate::identity::committed_sender::verified_chat_sender_domain_for_realm(
         realm,
         &serde_json::to_value(&event).unwrap(),
         None,
@@ -1109,7 +1113,7 @@ fn historical_author_view_survives_epoch_rotation() {
     let serialized = serde_json::to_vec(&post_state).unwrap();
     let mut salt = [0u8; 16];
     getrandom::fill(&mut salt).unwrap();
-    let epoch_two_snapshot = crate::mls::persistence::encrypt_state(
+    let epoch_two_snapshot = garth::mls::checkpoint::encrypt_state(
         realm,
         &post_state.group_id,
         post_state.epoch,
@@ -1194,7 +1198,7 @@ fn sidecar_author_leaf_view_preserves_exact_scope_and_historical_epoch() {
     let secret = load_or_create_account_mls_secret(&secure, &authority).unwrap();
     let checkpoint = |group: &arkret_sdk::ArkretMlsGroup| {
         let record = group.export_state_record().unwrap();
-        crate::mls::persistence::encrypt_state(
+        garth::mls::checkpoint::encrypt_state(
             realm.as_str(),
             &record.group_id,
             record.epoch,
@@ -1671,7 +1675,7 @@ fn encrypted_write_without_current_mls_group_is_fail_closed() {
 fn encrypted_write_with_snapshot_requires_existing_device_secret() {
     let mut state = temp_state_store("missing-secret");
     let store = MemorySecureKeyStore::new();
-    let envelope = crate::mls::persistence::encrypt_state(
+    let envelope = garth::mls::checkpoint::encrypt_state(
         "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
         "group-for-missing-secret-test",
         1,
@@ -1738,7 +1742,7 @@ fn encrypted_write_uses_device_key_snapshot_when_ready() {
         .unwrap();
     let record = group.export_state_record().unwrap();
     let bytes = serde_json::to_vec(&record).unwrap();
-    let envelope = crate::mls::persistence::encrypt_state(
+    let envelope = garth::mls::checkpoint::encrypt_state(
         realm,
         &record.group_id,
         record.epoch,
@@ -1836,12 +1840,16 @@ async fn frozen_message_real_mls_retry_and_durable_reopen_preserve_sender_state(
         "real encryption must advance sender state"
     );
     let envelope = arkret_sdk::mls::encrypted_envelope_from_payload(&encrypted).unwrap();
+    let strand_id = arkret_sdk::StrandId::from_event_id(&arkret_sdk::EventId::from_digest(
+        arkret_sdk::DigestSuite::Sha256,
+        [0x31; 32],
+    ));
     let unsigned = arkret_test_kit::signed_event::SignedEventFixtureBuilder::new(
         arkret_sdk::EventKind::MessageCreate.as_str(),
         header.effective_scope.clone(),
         fixture::account_actor("did:web:alice.example"),
         json!({
-            "strand_id": "ak:strand:ALH536fxXVv9EDZIoWa7sN1gzbTVJQ02x6AugHURwkvE",
+            "strand_id": strand_id,
             "track_name": "discussion", "encrypted_content": envelope,
         }),
     )
@@ -1892,7 +1900,7 @@ async fn frozen_message_real_mls_retry_and_durable_reopen_preserve_sender_state(
                     detail: "transport response lost after sending frozen ciphertext".to_owned(),
                 })
             } else {
-                Ok(crate::models::SubmitEventResult::queued(
+                Ok(crate::models::EventSubmissionProgress::queued(
                     queued.event_id.to_string(),
                 ))
             };
@@ -1969,7 +1977,7 @@ fn calendar_current_source_opens_metadata_without_old_events_or_plaintext_cache(
         arkret_sdk::EventContentRoutingContext::None,
     )
     .unwrap();
-    let plaintext = json!({"title":"Cold calendar","fields":{"calendar":{"start":"2026-10-07","end":"2026-10-08","timezone":"UTC","tzdb_version":"2025b","all_day":true,"status":"confirmed"}}});
+    let plaintext = json!({"title":"Cold calendar","fields":{"calendar":{"start":"2026-10-07","end":"2026-10-08","timezone":"UTC","tzdb_version":"2025b","all_day":true,"status":"confirmed","location":{"title":"Community entrance desk"}}}});
     let encrypted = alice
         .encrypt_payload(header, &serde_json::to_vec(&plaintext).unwrap())
         .unwrap();
@@ -2008,7 +2016,7 @@ fn calendar_current_source_opens_metadata_without_old_events_or_plaintext_cache(
         }),
     };
     let rows = vec![
-        arkret_wire::TypedCurrentRow::Value {
+        arkret_wire::CurrentState::Value {
             selector: arkret_wire::CurrentSelector::Strand {
                 strand_id: strand_id.clone(),
             },
@@ -2016,7 +2024,7 @@ fn calendar_current_source_opens_metadata_without_old_events_or_plaintext_cache(
             revision: revision.clone(),
             value: serde_json::to_value(strand).unwrap(),
         },
-        arkret_wire::TypedCurrentRow::Value {
+        arkret_wire::CurrentState::Value {
             selector: arkret_wire::CurrentSelector::CalendarScheduleSource {
                 strand_id: strand_id.clone(),
             },
@@ -2024,7 +2032,7 @@ fn calendar_current_source_opens_metadata_without_old_events_or_plaintext_cache(
             revision: revision.clone(),
             value: serde_json::to_value(source).unwrap(),
         },
-        arkret_wire::TypedCurrentRow::Value {
+        arkret_wire::CurrentState::Value {
             selector: arkret_wire::CurrentSelector::MlsGroup {
                 scope_ref: scope.clone(),
             },
@@ -2047,7 +2055,7 @@ fn calendar_current_source_opens_metadata_without_old_events_or_plaintext_cache(
             .is_none()
     );
     let open = |state: &crate::state::LocalStateStore, keys: &MemorySecureKeyStore| {
-        crate::views::metadata::open_metadata_with_secure_store(
+        crate::identity::metadata::open_metadata_with_secure_store(
             state,
             realm,
             strand_id.as_str(),
@@ -2058,7 +2066,7 @@ fn calendar_current_source_opens_metadata_without_old_events_or_plaintext_cache(
         )
     };
     let mut bad = rows.clone();
-    let arkret_wire::TypedCurrentRow::Value { value, .. } = &mut bad[1];
+    let arkret_wire::CurrentState::Value { value, .. } = &mut bad[1];
     value["metadata_context"]["signer_id"] =
         json!(fixture::account_actor("did:web:mallory.example"));
     fixture::install_current_entries(&mut state, realm, bad);
@@ -2103,7 +2111,7 @@ fn ordinary_recovery_refreezes_received_private_base_after_proof() {
     // A legitimate receive runs while the bounded source proof is in flight.
     assert_eq!(bob.decrypt_payload(&second).unwrap(), b"second");
     let received_state = bob.export_state_record().unwrap();
-    let mut received = crate::mls::persistence::encrypt_state(
+    let mut received = garth::mls::checkpoint::encrypt_state(
         realm,
         &received_state.group_id,
         received_state.epoch,
@@ -2120,7 +2128,7 @@ fn ordinary_recovery_refreezes_received_private_base_after_proof() {
     // The newer provider retains its skipped receive key after serialization.
     assert_eq!(recovered.decrypt_payload(&first).unwrap(), b"first");
     let changed_state = recovered.export_state_record().unwrap();
-    let mut changed = crate::mls::persistence::encrypt_state(
+    let mut changed = garth::mls::checkpoint::encrypt_state(
         realm,
         &changed_state.group_id,
         changed_state.epoch,

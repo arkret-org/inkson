@@ -21,8 +21,8 @@ pub(super) async fn relay_local_signals(
 ) {
     let signals = transport.borrow_mut().drain_local_signals();
     for signal in signals {
-        let seq = call_seq() + 1;
-        call_seq.set(seq);
+        let sequence = call_seq() + 1;
+        call_seq.set(sequence);
         let signal = match signal {
             LocalSignal::Offer { sdp } => {
                 let offer = arkret_sdk::SessionDescription {
@@ -76,7 +76,7 @@ pub(super) async fn relay_local_signals(
             call_id,
             actor,
             device,
-            seq,
+            sequence,
             signal,
             state_store,
         )
@@ -195,15 +195,18 @@ pub(super) fn apply_inbox_items(
                 let target = data.target_actor_id.as_ref();
                 let self_targeted = match data.action {
                     arkret_sdk::CallModerationAction::Kick => {
-                        target.is_some_and(|target| target.as_str() == actor)
-                            && data
-                                .target_device_id
-                                .as_ref()
-                                .is_some_and(|target| target.as_str() == device)
+                        target.is_some_and(|target| {
+                            crate::mls_api_helpers::local_account_actor_id(&actor)
+                                .is_ok_and(|local| *target == local)
+                        }) && data
+                            .target_device_id
+                            .as_ref()
+                            .is_some_and(|target| target.as_str() == device)
                     }
-                    arkret_sdk::CallModerationAction::Ban => {
-                        target.is_some_and(|target| target.as_str() == actor)
-                    }
+                    arkret_sdk::CallModerationAction::Ban => target.is_some_and(|target| {
+                        crate::mls_api_helpers::local_account_actor_id(&actor)
+                            .is_ok_and(|local| *target == local)
+                    }),
                     arkret_sdk::CallModerationAction::EndForAll => true,
                 };
                 if self_targeted {
@@ -215,7 +218,7 @@ pub(super) fn apply_inbox_items(
                 } else if let Some(target) = target {
                     // A peer was kicked/banned — drop their roster tile.
                     let mut roster = participants();
-                    roster.retain(|p| p.actor_id != target.as_str());
+                    roster.retain(|p| p.actor_id != target.to_string());
                     participants.set(roster);
                 }
             }
@@ -257,13 +260,7 @@ fn apply_peer_state(
     participants: &mut Signal<Vec<CallParticipantView>>,
     item: &CallSignalInboxItem,
 ) {
-    let target = match &item.signal {
-        arkret_sdk::CallSignalData::MuteState(data) => data
-            .target_actor_id
-            .as_ref()
-            .map_or(item.sender_actor.as_str(), arkret_sdk::DidCoreId::as_str),
-        _ => item.sender_actor.as_str(),
-    };
+    let target = item.sender_actor.as_str();
     let mut roster = participants();
     let mut changed = false;
     for p in &mut roster {
@@ -309,8 +306,8 @@ pub(super) fn emit_async(
     if call_id.trim().is_empty() || realm_id.trim().is_empty() {
         return;
     }
-    let seq = call_seq() + 1;
-    call_seq.set(seq);
+    let sequence = call_seq() + 1;
+    call_seq.set(sequence);
     let (base, api_token, realm_id, call_id, actor, device) = (
         base.to_owned(),
         api_token.to_owned(),
@@ -327,7 +324,7 @@ pub(super) fn emit_async(
             &call_id,
             &actor,
             &device,
-            seq,
+            sequence,
             signal.clone(),
             &state_store,
         )
@@ -358,7 +355,7 @@ pub(super) async fn emit_signal(
     call_id: &str,
     actor: &str,
     device: &str,
-    seq: u64,
+    sequence: u64,
     signal: arkret_sdk::CallSignalData,
     state_store: &crate::runtime::input::StateStoreHandle,
 ) -> Result<(), String> {
@@ -381,7 +378,7 @@ pub(super) async fn emit_signal(
     let payload = crate::signal::SignalPayload::CallSignal {
         call_id: arkret_sdk::CallId::new(call_id)
             .map_err(|error| format!("invalid call_id: {error}"))?,
-        seq,
+        sequence,
         signal,
     };
     let authority = account.authority;
@@ -389,15 +386,34 @@ pub(super) async fn emit_signal(
     let material = material.clone();
     let state_store = state_store.clone();
     with_event_submitter(base, api_token.to_owned(), |sub| async move {
-        sub.send_scope_signal(
-            scope_ref,
-            &authority,
-            &device,
-            &material,
+        if matches!(
             &payload,
-            &state_store,
-        )
-        .await
+            crate::signal::SignalPayload::CallSignal {
+                signal: arkret_sdk::CallSignalData::Invite(_),
+                ..
+            }
+        ) {
+            sub.send_call_invitation(
+                scope_ref,
+                &authority,
+                &device,
+                &material,
+                &payload,
+                &state_store,
+            )
+            .await
+        } else {
+            sub.send_scope_signal(
+                scope_ref,
+                &authority,
+                &device,
+                &material,
+                &payload,
+                &state_store,
+            )
+            .await
+            .map(|_| ())
+        }
     })
     .await
     .map(|_| ())

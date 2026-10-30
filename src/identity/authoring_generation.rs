@@ -133,7 +133,7 @@ enum PrincipalGenerationResolution {
 
 /// Derive evidence without installing it before the caller's async fence.
 pub(crate) fn principal_authoring_generation_from_keys(
-    outcome: &arkret_models_crypto::KeysQueryOutcome,
+    outcome: &arkret_models_crypto::KeysQueryResponseBody,
     account_id: &arkret_sdk::AccountId,
     device_id: &str,
 ) -> anyhow::Result<Option<AuthoringGeneration>> {
@@ -149,7 +149,7 @@ pub(crate) fn principal_authoring_generation_from_keys(
 }
 
 fn resolve_principal_authoring_generation_from_keys(
-    outcome: &arkret_models_crypto::KeysQueryOutcome,
+    outcome: &arkret_models_crypto::KeysQueryResponseBody,
     account_id: &arkret_sdk::AccountId,
     device_id: &str,
 ) -> anyhow::Result<PrincipalGenerationResolution> {
@@ -286,7 +286,7 @@ mod tests {
         // The self row carries the Station-verified projection; no origin
         // proof shell reaches the client, and the projection repeats neither
         // account nor device.
-        let record: arkret_models_crypto::QueryDeviceRecord = serde_json::from_value(
+        let record: arkret_models_crypto::DeviceKeyView = serde_json::from_value(
             serde_json::json!({
                 "signer_evidence_ref":
                     "ak:signer_evidence:sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
@@ -308,7 +308,7 @@ mod tests {
             }),
         )
         .unwrap();
-        let outcome = arkret_models_crypto::KeysQueryOutcome {
+        let outcome = arkret_models_crypto::KeysQueryResponseBody {
             device_keys: vec![arkret_models_crypto::QueryAccountDeviceEntry {
                 account_id: account_id.clone(),
                 device_keys: BTreeMap::from([(device.clone(), record)]),

@@ -192,6 +192,7 @@ pub struct InksonEventSigner {
     /// over canonical JSON bytes. Event proofs still go through the SDK
     /// detached-JWS signer held in `inner`.
     raw_signing_key: Option<SigningKey>,
+    verification_public_key: arkret_sdk::signatures::PublicKeyMaterial,
     /// Wall-clock timestamp of the most recent successful sign call.
     /// `None` until the first sign succeeds. Exposed for the UI
     /// freshness indicator.
@@ -312,13 +313,15 @@ impl InksonEventSigner {
     }
 
     /// Wrap an arbitrary SDK [`SdkEventSigner`] (HSM, WebAuthn,
-    /// external host-bridge). `signer_did` is the DID receivers will
+    /// external host-bridge). Supply its independently trusted public key;
+    /// never use a key copied from an unverified Event. `signer_did` is the DID receivers will
     /// resolve to fetch the verifying key. The verification method
     /// defaults to `<signer_did>#device` if the SDK signer returns an
     /// empty string.
     pub fn from_dyn_signer(
         inner: Arc<dyn SdkEventSigner + Send + Sync>,
         signer_did: impl Into<String>,
+        verification_public_key: arkret_sdk::signatures::PublicKeyMaterial,
     ) -> Self {
         let signer_did = signer_did.into();
         let verification_method = {
@@ -336,6 +339,7 @@ impl InksonEventSigner {
             device_id: None,
             mode_tag: "external",
             raw_signing_key: None,
+            verification_public_key,
             last_signed_at: Mutex::new(None),
         }
     }
@@ -351,25 +355,49 @@ impl InksonEventSigner {
         &self.verification_method
     }
 
+    /// Bind local producer verification to the host's independently captured actor.
+    pub(crate) fn publication_context(
+        &self,
+        actor: &arkret_sdk::ActorId,
+    ) -> anyhow::Result<arkret_sdk::ProducerVerificationContext> {
+        let principal = arkret_sdk::project_did_to_core_id(&arkret_sdk::Did::new(
+            self.signer_did().to_owned(),
+        )?)?;
+        anyhow::ensure!(
+            &principal == actor.signing_principal_id(),
+            "producer signing context differs from the captured actor"
+        );
+        Ok(arkret_sdk::ProducerVerificationContext {
+            actor: actor.clone(),
+            verification_method: arkret_sdk::DidUrl::new(self.verification_method().to_owned())
+                .map_err(anyhow::Error::msg)?,
+            public_key: self.verification_public_key.clone(),
+            digest_suite: arkret_sdk::DigestSuite::Sha256,
+        })
+    }
+
     /// Protocol `ak:device:*` id bound into ordinary Event proof fragments.
     pub fn device_id(&self) -> Option<&str> {
         self.device_id.as_deref()
     }
 
-    /// Local seed-backed signer's Ed25519 public key in multibase form.
+    /// The independently captured Ed25519 public key, without exporting a seed.
     pub fn public_key_multibase(&self) -> Option<String> {
-        self.raw_signing_key.as_ref().map(|key| {
-            crate::identity::did_key::encode_ed25519_did_key_multibase(&key.verifying_key())
-        })
+        self.verification_public_key
+            .ed25519_bytes()
+            .ok()
+            .and_then(|bytes| ed25519_dalek::VerifyingKey::from_bytes(&bytes).ok())
+            .map(|key| crate::identity::did_key::encode_ed25519_did_key_multibase(&key))
     }
 
-    /// Local seed-backed signer's raw 32-byte Ed25519 public key as
+    /// The captured raw 32-byte Ed25519 public key as
     /// unpadded base64url. Device-pairing `PublicKey.key` uses this encoding,
     /// rather than the multibase encoding used by device directory records.
     pub fn public_key_base64url(&self) -> Option<String> {
-        self.raw_signing_key
-            .as_ref()
-            .map(|key| URL_SAFE_NO_PAD.encode(key.verifying_key().as_bytes()))
+        self.verification_public_key
+            .ed25519_bytes()
+            .ok()
+            .map(|bytes| URL_SAFE_NO_PAD.encode(bytes))
     }
 
     /// JWS algorithm name (e.g. `"Ed25519"`).
@@ -379,7 +407,7 @@ impl InksonEventSigner {
 
     /// Produce a raw Ed25519 signature over `bytes` (not a detached JWS).
     /// Used for protocol control-plane proofs such as key backup
-    /// `auth_data.signature` and recovery proofs, whose wire form is a
+    /// `signature_proof.signature` and recovery proofs, whose wire form is a
     /// single base64url token over canonical JSON bytes.
     pub fn sign_raw(&self, bytes: &[u8]) -> Result<Vec<u8>, EventSignerError> {
         let Some(signing_key) = &self.raw_signing_key else {
@@ -543,7 +571,7 @@ impl InksonEventSigner {
         Ok(())
     }
 
-    /// Produce a detached JWS (`<b64u header>..<b64u sig>`) over `bytes`
+    /// Produce a detached JWS (`<b64u header>..<b64u signature>`) over `bytes`
     /// using the active backend, matching the alg-only protected header
     /// shape [`Self::sign_envelope_with_context`] uses. Control-plane
     /// signatures that are NOT [`Event`] proofs — notably the
@@ -581,7 +609,7 @@ impl InksonEventSigner {
             .map_err(|error| EventSignerError::Encoding(error.to_string()))
     }
 
-    /// Produce a detached compact JWS (`<b64u header>..<b64u sig>`) with a
+    /// Produce a detached compact JWS (`<b64u header>..<b64u signature>`) with a
     /// `kid` protected-header claim. Unlike [`Self::detached_jws_over`], this
     /// follows RFC 7515 signing input rules and signs
     /// `b64u(header) "." b64u(payload)`. The session-grant refresh endpoint
@@ -784,6 +812,9 @@ pub fn build_ed25519_signer_with_verification_method(
         verification_method,
         device_id: None,
         mode_tag: "ed25519",
+        verification_public_key: arkret_sdk::signatures::PublicKeyMaterial::Ed25519Raw {
+            bytes: raw_signing_key.verifying_key().to_bytes().to_vec(),
+        },
         raw_signing_key: Some(raw_signing_key),
         last_signed_at: Mutex::new(None),
     }
@@ -812,6 +843,7 @@ pub fn bind_active_signer_device_id(
         device_id: Some(device_id),
         mode_tag: active.mode_tag,
         raw_signing_key: active.raw_signing_key.clone(),
+        verification_public_key: active.verification_public_key.clone(),
         last_signed_at: Mutex::new(active.last_signed_at_snapshot()),
     });
     let _ = replace_active_signer(Some(rebound.clone()));
@@ -855,6 +887,7 @@ pub fn bind_active_signer_principal_device_id(
         device_id: Some(device_id),
         mode_tag: active.mode_tag,
         raw_signing_key: active.raw_signing_key.clone(),
+        verification_public_key: active.verification_public_key.clone(),
         last_signed_at: Mutex::new(active.last_signed_at_snapshot()),
     });
     let _ = replace_active_signer(Some(rebound.clone()));
@@ -1119,6 +1152,67 @@ mod tests {
     }
 
     #[test]
+    fn opaque_signer_publication_uses_its_captured_public_key_without_seed_export() {
+        let did = "did:web:opaque.arkret.org";
+        let actor = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            arkret_sdk::DidCoreId::new("ak:did_core:web:opaque.arkret.org").unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:station.arkret.org").unwrap(),
+        ));
+        let method = format!("{did}#{TEST_DEVICE_ID}");
+        let key = SigningKey::from_bytes(&[153; 32]);
+        let public_key = arkret_sdk::signatures::PublicKeyMaterial::Ed25519Raw {
+            bytes: key.verifying_key().to_bytes().to_vec(),
+        };
+        let signer = InksonEventSigner::from_dyn_signer(
+            Arc::new(arkret_sdk::signatures::proof::Ed25519DetachedJwsSigner::new(key, method)),
+            did,
+            public_key,
+        );
+        assert!(signer.raw_signing_key.is_none());
+        assert!(signer.public_key_multibase().is_some());
+        let at = crate::clock::now_utc_millis();
+        let mut event = arkret_sdk::TypedEventDraft::<arkret_sdk::event_spec::MessageCreate>::new(
+            arkret_sdk::ScopeRef::Realm {
+                realm_id: TEST_REALM_ID.parse().unwrap(),
+            },
+            actor.clone(),
+            arkret_sdk::MessageCreatePayload::with_content(
+                arkret_sdk::StrandId::new("ak:strand:AXA352XtBodUhnMN_nDxOloEHVn0_yAotxiYxbyU38Df")
+                    .unwrap(),
+                "discussion",
+                arkret_sdk::ContentBlock::text("opaque producer"),
+            ),
+        )
+        .unwrap()
+        .author_with_digest_suite(at, arkret_sdk::DigestSuite::Sha256)
+        .unwrap();
+        signer
+            .sign_sdk_event_with_context_at(
+                &mut event,
+                ProducerProofContext::new().with_digest_suite(arkret_sdk::DigestSuite::Sha256),
+                at,
+            )
+            .unwrap();
+        let request = arkret_sdk::EventAdmissionSubmission::new(event.into_event());
+        let context = signer.publication_context(&actor).unwrap();
+        let verified =
+            arkret_sdk::VerifiedSubmission::verify(request.clone(), |_| Ok(context.clone()))
+                .unwrap();
+        assert_eq!(
+            arkret_sdk::canonical::canonical_json_bytes(&verified).unwrap(),
+            arkret_sdk::canonical::canonical_json_bytes(&request).unwrap()
+        );
+        let mut wrong = context;
+        wrong.public_key = arkret_sdk::signatures::PublicKeyMaterial::Ed25519Raw {
+            bytes: SigningKey::from_bytes(&[154; 32])
+                .verifying_key()
+                .to_bytes()
+                .to_vec(),
+        };
+        assert!(arkret_sdk::VerifiedSubmission::verify(request, |_| Ok(wrong.clone())).is_err());
+    }
+
+    #[test]
     fn build_ed25519_signer_sets_did_and_verification_method() {
         let _g = reset();
         let signer = build_ed25519_signer([7u8; 32], "did:web:alice.example");
@@ -1233,8 +1327,8 @@ mod tests {
         }))
         .unwrap();
 
-        let sig = signer.sign_raw(&bytes).expect("raw sign");
-        let signature = Signature::from_slice(&sig).expect("64-byte signature");
+        let signature = signer.sign_raw(&bytes).expect("raw sign");
+        let signature = Signature::from_slice(&signature).expect("64-byte signature");
         let verifying_key = SigningKey::from_bytes(&seed).verifying_key();
 
         verifying_key
@@ -1260,7 +1354,7 @@ mod tests {
         let _g = reset();
         let seed = [11u8; 32];
         let signer = build_ed25519_signer(seed, "did:web:history.example");
-        let binding = br#"{"context":"ak.history_key_response_proof.v1","fixture":"response"}"#;
+        let binding = br#"{"context":"org.arkret.inkson.test.proof.v1","fixture":"response"}"#;
         let key = PublicKeyMaterial::Ed25519Raw {
             bytes: ed25519_dalek::SigningKey::from_bytes(&seed)
                 .verifying_key()
@@ -1530,11 +1624,11 @@ mod tests {
         use base64::engine::general_purpose::URL_SAFE_NO_PAD;
         let parts: Vec<&str> = proof.jws.split('.').collect();
         assert_eq!(parts.len(), 3);
-        let sig = URL_SAFE_NO_PAD.decode(parts[2]).expect("sig b64");
+        let signature = URL_SAFE_NO_PAD.decode(parts[2]).expect("signature b64");
 
         let verifier = Ed25519DetachedJwsVerifier::new();
         verifier
-            .verify(&proof_binding_bytes, &sig, &public_key)
+            .verify(&proof_binding_bytes, &signature, &public_key)
             .expect("SDK verifier accepts the proof");
     }
 
@@ -1587,9 +1681,9 @@ mod tests {
         use base64::Engine;
         use base64::engine::general_purpose::URL_SAFE_NO_PAD;
         let parts: Vec<&str> = proof.jws.split('.').collect();
-        let sig = URL_SAFE_NO_PAD.decode(parts[2]).expect("sig b64");
+        let signature = URL_SAFE_NO_PAD.decode(parts[2]).expect("signature b64");
         Ed25519DetachedJwsVerifier::new()
-            .verify(&proof_binding_bytes, &sig, &public_key)
+            .verify(&proof_binding_bytes, &signature, &public_key)
             .expect("SDK verifier accepts domain/audience-bound proof");
     }
 

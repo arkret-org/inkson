@@ -122,7 +122,7 @@ impl LocalStateStore {
     /// edit list; callers MUST NOT publish this map to other Realm
     /// members — it is actor-private per §3.7.
     pub fn realm_remarks(&self) -> BTreeMap<String, crate::account_data::RealmRemark> {
-        self.load().realm_remarks
+        self.load().realm_remarks.into_iter().collect()
     }
 
     /// Upsert a remark for `realm_id`. Passing a remark whose
@@ -174,7 +174,7 @@ impl LocalStateStore {
         };
         let mut restored = 0;
         for event in self.current_account_data_events() {
-            if event.kind.as_str() != "ak.account_data.set"
+            if event.kind.as_str() != arkret_wire::event_kind_str::ACCOUNT_DATA_SET
                 || event.actor_id != arkret_sdk::ActorId::account(authority.clone())
             {
                 continue;
@@ -203,7 +203,7 @@ impl LocalStateStore {
             }
             // A local writer may have accepted a newer value before its Account
             // delta arrives. Retained older evidence cannot overwrite it.
-            if let std::collections::btree_map::Entry::Vacant(slot) = self
+            if let imbl::ordmap::Entry::Vacant(slot) = self
                 .cached
                 .contact_remarks
                 .entry(remark.subject.principal_id.to_string())
@@ -221,12 +221,12 @@ impl LocalStateStore {
     }
 
     pub fn contact_remarks(&self) -> BTreeMap<String, crate::account_data::ContactRemark> {
-        self.load().contact_remarks
+        self.load().contact_remarks.into_iter().collect()
     }
 
     /// Replace the transient eligibility projection used by live labels.
     /// Only accepted human Contacts contribute a canonical principal.
-    pub fn replace_accepted_human_contacts(&mut self, contacts: &[crate::models::ContactListRow]) {
+    pub fn replace_accepted_human_contacts(&mut self, contacts: &[crate::models::ContactView]) {
         self.ensure_cached_loaded();
         let mut changed = false;
         for contact in contacts {
@@ -383,7 +383,7 @@ impl LocalStateStore {
     pub fn client_blocklist(
         &self,
     ) -> Vec<arkret_models_collaboration::objects::productivity::AccountBlocklistEntry> {
-        self.load().client_blocklist
+        self.load().client_blocklist.into_inner()
     }
 
     pub fn client_blocklist_revision(&self) -> u64 {
@@ -578,11 +578,11 @@ impl LocalStateStore {
         self.ensure_cached_loaded();
         if revision < self.cached.client_blocklist_revision
             || (revision == self.cached.client_blocklist_revision
-                && self.cached.client_blocklist != entries)
+                && *self.cached.client_blocklist != entries)
         {
             return;
         }
-        self.cached.client_blocklist = entries;
+        *self.cached.client_blocklist = entries;
         self.cached.client_blocklist_revision = revision;
         self.reconcile_personal_block_sagas_after_accepted_write();
         self.invalidate_blocklist_projection_cache();
@@ -590,11 +590,17 @@ impl LocalStateStore {
     }
 
     pub fn pending_personal_block_sagas(&self) -> BTreeSet<String> {
-        self.load().pending_personal_block_sagas
+        self.load()
+            .pending_personal_block_sagas
+            .into_iter()
+            .collect()
     }
 
     pub fn committed_personal_block_sagas(&self) -> BTreeSet<String> {
-        self.load().committed_personal_block_sagas
+        self.load()
+            .committed_personal_block_sagas
+            .into_iter()
+            .collect()
     }
 
     pub fn personal_blocklist_write_pending(&self) -> bool {
@@ -640,7 +646,7 @@ impl LocalStateStore {
         self.ensure_cached_loaded();
         let pending_removed = self.cached.pending_personal_block_sagas.remove(peer_id);
         let committed_removed = self.cached.committed_personal_block_sagas.remove(peer_id);
-        if pending_removed || committed_removed {
+        if pending_removed.is_some() || committed_removed.is_some() {
             let _ = self.flush();
         }
     }
@@ -694,7 +700,7 @@ impl LocalStateStore {
     /// Every commit-stream cursor this device holds, keyed by
     /// [`commit_stream_key`]. There is deliberately no aggregate position.
     pub fn stream_heads(&self) -> BTreeMap<String, arkret_wire::CommitStreamHead> {
-        self.load().stream_cursors
+        self.load().stream_cursors.into_iter().collect()
     }
 
     /// Verified current governance authority for a Realm, when one has been
@@ -766,7 +772,7 @@ mod blocklist_freshness_tests {
     #[test]
     fn malformed_blocklist_prevents_catchup_from_authorizing_signals() {
         use arkret_models_collaboration::sync_frames::account_subscribe::{
-            AccountSubscribeSnapshotResult, SyncRequestBody,
+            AccountSubscribeParameters, AccountSubscribeReadAction,
         };
         use base64::Engine as _;
         let (directory, mut store) = store();
@@ -812,11 +818,11 @@ mod blocklist_freshness_tests {
                 Some(old.clone())
             );
             let catchup = store.begin_blocklist_catchup();
-            let request = SyncRequestBody {
+            let request = AccountSubscribeParameters {
                 after: Some(old.cursor.clone()),
                 catchup: Some(true),
                 filter: None,
-                realm_list: None,
+                realm_list_parameters: None,
                 replace_filter: None,
             };
             if repaired {
@@ -831,7 +837,7 @@ mod blocklist_freshness_tests {
             let mut folder = arkret_sdk::AccountSubscribeFolder::for_request(&request);
             folder.push(serde_json::from_value(serde_json::json!({"kind":"delta","cursor":"ak:cursor:repair-delta","partial":false,"account_data":{"events":[entry.clone()]}})).unwrap()).unwrap();
             folder.push(serde_json::from_value(serde_json::json!({"kind":"catchup_complete","cursor":"ak:cursor:repair-complete"})).unwrap()).unwrap();
-            let AccountSubscribeSnapshotResult::Batch(batch) = folder.finish().unwrap() else {
+            let AccountSubscribeReadAction::Batch(batch) = folder.finish().unwrap() else {
                 panic!("validated batch required")
             };
             let checkpoint = garth::AccountCursorCheckpoint {

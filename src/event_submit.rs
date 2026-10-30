@@ -4,7 +4,7 @@
 //! content-bound `event_id` exactly once: there is no chain position, no
 //! predecessor, no basis and no precondition to resolve, so nothing after the
 //! authoring boundary can change the identity. The frozen
-//! [`arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest`] is what the
+//! [`arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequestBody`] is what the
 //! durable queue stores, and the current governance Station's authority-signed
 //! [`arkret_wire::RealmCommit`] is the only finality signal.
 //!
@@ -26,20 +26,23 @@ use garth::{
 use serde_json::Value;
 use tokio::sync::OnceCell;
 
-use crate::ephemeral::{ensure_authority_accepted, validate_outgoing_registered_event_payload};
+use crate::ephemeral::ensure_authority_accepted;
 use crate::identity::authoring_generation::{
     GenerationFenceDecision, ResolvedQueueGenerationFence,
 };
-use crate::models::{BackfillView, ServiceDescribe, SubmitEventResult};
+use crate::models::{BackfillView, EventSubmissionProgress, ServiceDescribe};
 use crate::operation::{EventIntent, LocalOperation};
 use crate::outbound_store::{InksonOutboundStore, OutboundLane};
 
 mod authoring_unit;
 mod authority;
+mod card_placement;
+#[cfg(all(not(target_arch = "wasm32"), feature = "spec-conformance"))]
+pub(crate) mod conformance_transport;
 mod message_authoring;
 mod metadata;
 mod outbound_recovery;
-
+mod strand_watch;
 #[cfg(test)]
 pub(crate) use authoring_unit::author_event_unit_for_test;
 use authoring_unit::{UnitAuthoringChain, validate_authored_unit_shape};
@@ -52,6 +55,7 @@ pub(crate) use authority::{original_creator_checkpoint_secret, restored_creator_
 #[cfg(test)]
 pub(crate) use message_authoring::retry_frozen_message;
 pub(crate) use message_authoring::{MessageSendAttempt, drive_message_send};
+pub(crate) use strand_watch::ensure_strand_watch_settled;
 #[cfg(test)]
 pub(crate) use tests::queue_message_operation_for_test;
 
@@ -73,8 +77,11 @@ impl garth::HostClock for InksonHostClock {
 }
 
 type InksonOutboundEngine = OutboundEngine<InksonOutboundStore, InksonHostClock>;
+#[cfg(not(all(not(target_arch = "wasm32"), feature = "spec-conformance")))]
 type InksonAuthorityClient =
-    garth::AuthorityClient<arkret_sdk::http_client::own_station_results::OwnStationResultClient>;
+    garth::AuthorityClient<arkret_sdk::http_client::own_station_results::OwnStationStateClient>;
+#[cfg(all(not(target_arch = "wasm32"), feature = "spec-conformance"))]
+type InksonAuthorityClient = garth::AuthorityClient<conformance_transport::ObservedTransport>;
 
 /// The write is safely persisted and will be retried.
 ///
@@ -113,7 +120,7 @@ pub(crate) async fn scan_stream_with(
     after_position: Option<u64>,
     limit: u16,
 ) -> anyhow::Result<BackfillView> {
-    let request = arkret_wire::StreamScanRequest {
+    let request = arkret_wire::StreamScanRequestBody {
         realm_id: stream_ref.realm_id().clone(),
         stream_ref: stream_ref.clone(),
         direction: arkret_wire::StreamScanDirection::After(after_position),
@@ -440,6 +447,116 @@ pub(crate) async fn retained_sidecar_control_request(
     Ok(false)
 }
 
+/// A Direct confirmation has one durable authoring attempt until its terminal
+/// outcome is known; a lost response cannot produce a second bound Event.
+async fn ensure_direct_confirmation_settled(
+    authority: &arkret_sdk::AccountId,
+    realm: &arkret_sdk::RealmId,
+) -> anyhow::Result<()> {
+    let outbound = OutboundEngine::new(
+        InksonOutboundStore::open(authority, OutboundLane::Standard)?,
+        InksonHostClock,
+    );
+    for item in &outbound.snapshot().await?.items {
+        let event = queued_event(item);
+        if event.kind == arkret_sdk::EventKind::DirectConversationBound
+            && &event.realm_id == realm
+            && item.status != SendQueueStatus::Committed
+            && !mls_submission_definitively_rejected(item)
+        {
+            return Err(DurablyQueuedError {
+                operation_id: event.event_id.to_string(),
+                reason: Some(
+                    "original Direct confirmation awaits its exact terminal outcome".to_owned(),
+                ),
+            }
+            .into());
+        }
+    }
+    Ok(())
+}
+
+fn pending_consent_replacement_from_snapshot(
+    snapshot: &garth::SendQueueSnapshot,
+    authority: &arkret_sdk::AccountId,
+    peer: &arkret_sdk::ConsentPeer,
+) -> anyhow::Result<Option<arkret_sdk::EventId>> {
+    for item in &snapshot.items {
+        let event = queued_event(item);
+        if event.kind != arkret_sdk::EventKind::ConsentReplace
+            || event.actor_id.as_account_id() != Some(authority)
+            || item.status == SendQueueStatus::Committed
+            || mls_submission_definitively_rejected(item)
+        {
+            continue;
+        }
+        let payload: arkret_sdk::ConsentReplacePayload =
+            serde_json::from_value(serde_json::to_value(&event.payload)?)?;
+        if &payload.peer == peer {
+            return Ok(Some(event.event_id.clone()));
+        }
+    }
+    Ok(None)
+}
+
+fn requeue_original_consent(
+    queue: &mut garth::SendQueue,
+    authority: &arkret_sdk::AccountId,
+    peer: &arkret_sdk::ConsentPeer,
+    original: &QueuedSubmission,
+    now: chrono::DateTime<chrono::Utc>,
+    check: impl Fn() -> anyhow::Result<()>,
+) -> garth::Result<bool> {
+    let invalid = |error: anyhow::Error| garth::Error::Protocol(error.to_string());
+    check().map_err(invalid)?;
+    original.validate_queued_request()?;
+    let event = original.primary_event();
+    if event.kind != arkret_sdk::EventKind::ConsentReplace
+        || event.actor_id.as_account_id() != Some(authority)
+    {
+        return Err(garth::Error::Protocol(
+            "Consent recovery original belongs to another Account or Event kind".into(),
+        ));
+    }
+    let payload: arkret_sdk::ConsentReplacePayload =
+        serde_json::from_value(serde_json::to_value(&event.payload)?)?;
+    if &payload.peer != peer {
+        return Err(garth::Error::Protocol(
+            "Consent recovery original belongs to another peer".into(),
+        ));
+    }
+    let current = queue
+        .get(&original.event_id)
+        .ok_or_else(|| garth::Error::Storage("pending Consent original disappeared".into()))?;
+    ensure_exact_queued_request(&current.submission, original).map_err(invalid)?;
+    check().map_err(invalid)?;
+    queue.retry_unknown(&original.event_id, now)
+}
+
+/// An unknown replacement retains its original Event across editor remounts
+/// and process restart. The ordinary queue must settle before a new edit.
+pub(crate) async fn ensure_consent_replacement_settled(
+    authority: &arkret_sdk::AccountId,
+    peer: &arkret_sdk::ConsentPeer,
+) -> anyhow::Result<()> {
+    let outbound = OutboundEngine::new(
+        InksonOutboundStore::open(authority, OutboundLane::Standard)?,
+        InksonHostClock,
+    );
+    if let Some(event) =
+        pending_consent_replacement_from_snapshot(&outbound.snapshot().await?, authority, peer)?
+    {
+        return Err(DurablyQueuedError {
+            operation_id: event.to_string(),
+            reason: Some(
+                "previous Consent replacement awaits its exact terminal outcome".to_owned(),
+            ),
+        }
+        .into());
+    }
+    Ok(())
+}
+
 fn pending_chat_event_ids_from_snapshot(
     snapshot: &garth::SendQueueSnapshot,
     realm_id: &str,
@@ -681,6 +798,18 @@ fn reconcile_settled_outbound_item(
                     .to_owned(),
             ),
         ),
+        // A typed API refusal is a definite holder-local failure even when
+        // it is not an authority-submit Rejected response. Preserve the
+        // frozen submission; only its local display metadata changes. Without
+        // an API answer the acceptance outcome remains unknown.
+        SendQueueStatus::Failed if item.last_problem.is_some() => (
+            "rejected",
+            item.last_error.clone().or_else(|| {
+                item.last_problem
+                    .as_ref()
+                    .map(|problem| problem.code().to_owned())
+            }),
+        ),
         _ => return false,
     };
     let operation_id = local_operation_for_event(&state_store.load(), &event_id);
@@ -720,14 +849,14 @@ fn reconcile_settled_outbound_item(
 
 /// Turn one settled queue item into the caller-facing result, or into the
 /// typed authority refusal.
-fn settled_outbound_result(item: &garth::SendQueueItem) -> anyhow::Result<SubmitEventResult> {
+fn settled_outbound_result(item: &garth::SendQueueItem) -> anyhow::Result<EventSubmissionProgress> {
     match &item.submission.state {
         garth::SubmissionState::Committed { status, commit } => {
-            ensure_authority_accepted(arkret_wire::AuthoritySubmitOutcome::Accepted {
+            ensure_authority_accepted(arkret_wire::AuthoritySubmitResponseBody::Accepted {
                 status: *status,
                 commit: (**commit).clone(),
             })
-            .map(|commit| SubmitEventResult::committed(item.event_id().to_string(), commit))
+            .map(|commit| EventSubmissionProgress::committed(item.event_id().to_string(), commit))
         }
         garth::SubmissionState::UnitCommitted { .. } => Err(anyhow::anyhow!(
             "aggregate unit requires its complete Commit result"
@@ -735,11 +864,11 @@ fn settled_outbound_result(item: &garth::SendQueueItem) -> anyhow::Result<Submit
         garth::SubmissionState::Rejected {
             status,
             reason_code,
-        } => ensure_authority_accepted(arkret_wire::AuthoritySubmitOutcome::Rejected {
+        } => ensure_authority_accepted(arkret_wire::AuthoritySubmitResponseBody::Rejected {
             status: *status,
             reason_code: reason_code.clone(),
         })
-        .map(|commit| SubmitEventResult::committed(item.event_id().to_string(), commit)),
+        .map(|commit| EventSubmissionProgress::committed(item.event_id().to_string(), commit)),
         garth::SubmissionState::Queued => Err(DurablyQueuedError {
             operation_id: item.event_id().to_string(),
             reason: item.last_error.clone(),
@@ -833,9 +962,9 @@ impl VerifiedRelationCurrent {
 /// against the locally installed governance generation.
 #[derive(Clone, Debug)]
 pub(crate) struct VerifiedModerationCurrent {
-    target_ref: arkret_models_collaboration::exact_current_results::ExactModerationTargetRef,
+    target_ref: arkret_models_collaboration::exact_current_state::ExactModerationTargetRef,
     revision: arkret_wire::CurrentRevision,
-    assertions: Vec<arkret_models_collaboration::exact_current_results::ModerationDecisionEntry>,
+    assertions: Vec<arkret_models_collaboration::exact_current_state::ModerationDecisionEntry>,
 }
 
 impl VerifiedModerationCurrent {
@@ -843,13 +972,11 @@ impl VerifiedModerationCurrent {
     pub(crate) fn for_test(
         target_ref: &str,
         revision: arkret_wire::CurrentRevision,
-        assertions: Vec<
-            arkret_models_collaboration::exact_current_results::ModerationDecisionEntry,
-        >,
+        assertions: Vec<arkret_models_collaboration::exact_current_state::ModerationDecisionEntry>,
     ) -> Self {
         Self {
             target_ref:
-                arkret_models_collaboration::exact_current_results::ExactModerationTargetRef::new(
+                arkret_models_collaboration::exact_current_state::ExactModerationTargetRef::new(
                     target_ref.to_owned(),
                 )
                 .unwrap(),
@@ -871,7 +998,7 @@ impl VerifiedModerationCurrent {
             assertion.tag_id.event_id() == decision_ref
                 && matches!(
                     &assertion.value,
-                    arkret_models_collaboration::exact_current_results::ModerationAssertionValue::Decision(_)
+                    arkret_models_collaboration::exact_current_state::ModerationAssertionValue::Decision(_)
                 )
         });
         anyhow::ensure!(
@@ -912,21 +1039,6 @@ impl EventSubmitter {
         self
     }
 
-    pub(crate) fn from_current_session(http: arkret_sdk::http_client::Client) -> Self {
-        match dioxus::prelude::try_consume_context::<crate::app::SessionContext>() {
-            Some(context) => {
-                // Accepted onboarding promotes the secure authoring scope and
-                // account store before publishing the runtime account. The UI
-                // may still retain the previous account until recovery is ready;
-                // it must not replace the exact scope captured by `new`.
-                Self::new(http).with_state_store(crate::app::runtime_adapter::state_store_handle(
-                    context.state_store,
-                ))
-            }
-            None => Self::new(http),
-        }
-    }
-
     pub(crate) fn authority(&self) -> anyhow::Result<&arkret_sdk::AccountId> {
         self.authority.as_ref().ok_or_else(|| {
             anyhow::anyhow!(
@@ -940,11 +1052,11 @@ impl EventSubmitter {
         &self.http
     }
 
-    async fn exact_current_result(
+    async fn exact_current_state(
         &self,
-        request: &arkret_models_collaboration::exact_current_results::ExactCurrentResultsReadRequestBody,
+        request: &arkret_models_collaboration::exact_current_state::ExactCurrentStateReadRequestBody,
     ) -> anyhow::Result<
-        arkret_models_collaboration::exact_current_results::ExactCurrentResultsReadOutcome,
+        arkret_models_collaboration::exact_current_state::ExactCurrentStateReadResponseBody,
     > {
         let authority = self.authority()?.clone();
         let state_store = self.state_store.as_ref().ok_or_else(|| {
@@ -985,7 +1097,7 @@ impl EventSubmitter {
             anyhow::anyhow!("exact current read lacks a verified governance generation")
         })?;
         self.http
-            .exact_current_result(request, governance_generation)
+            .exact_current_state(request, governance_generation)
             .await
             .map_err(anyhow::Error::from)
     }
@@ -995,31 +1107,31 @@ impl EventSubmitter {
         realm_id: arkret_sdk::RealmId,
         primary_conflict_domain: arkret_sdk::RelationPrimaryConflictDomain,
     ) -> anyhow::Result<VerifiedRelationCurrent> {
-        use arkret_models_collaboration::exact_current_results::{
-            ExactCurrentResultEntry, ExactCurrentResultSelector, ExactCurrentResultsReadOutcome,
-            ExactCurrentResultsReadRequestBody, RelationExactCurrentSelector,
+        use arkret_models_collaboration::exact_current_state::{
+            ExactCurrentState, ExactCurrentStateReadRequestBody, ExactCurrentStateReadResponseBody,
+            ExactCurrentStateSelector, RelationExactCurrentSelector,
         };
 
         let selector = RelationExactCurrentSelector::new(primary_conflict_domain.clone())?;
-        let request = ExactCurrentResultsReadRequestBody {
+        let request = ExactCurrentStateReadRequestBody {
             realm_id,
-            selector: ExactCurrentResultSelector::Relation(selector),
+            selector: ExactCurrentStateSelector::Relation(selector),
         };
-        match self.exact_current_result(&request).await? {
-            ExactCurrentResultsReadOutcome::NeverWritten { .. } => Ok(VerifiedRelationCurrent {
+        match self.exact_current_state(&request).await? {
+            ExactCurrentStateReadResponseBody::NeverWritten { .. } => Ok(VerifiedRelationCurrent {
                 primary_conflict_domain,
                 revision: None,
                 value: None,
             }),
-            ExactCurrentResultsReadOutcome::Present {
-                entry: ExactCurrentResultEntry::Relation(entry),
+            ExactCurrentStateReadResponseBody::Present {
+                current_state: ExactCurrentState::Relation(entry),
                 ..
             } => Ok(VerifiedRelationCurrent {
                 primary_conflict_domain,
                 revision: Some(entry.revision),
                 value: Some(entry.value),
             }),
-            ExactCurrentResultsReadOutcome::Present { .. } => {
+            ExactCurrentStateReadResponseBody::Present { .. } => {
                 anyhow::bail!("exact Relation current read returned another result family")
             }
         }
@@ -1030,44 +1142,58 @@ impl EventSubmitter {
         realm_id: arkret_sdk::RealmId,
         target_ref: &str,
     ) -> anyhow::Result<VerifiedModerationCurrent> {
-        use arkret_models_collaboration::exact_current_results::{
-            ExactCurrentResultEntry, ExactCurrentResultSelector, ExactCurrentResultsReadOutcome,
-            ExactCurrentResultsReadRequestBody, ExactModerationTargetRef,
+        use arkret_models_collaboration::exact_current_state::{
+            ExactCurrentState, ExactCurrentStateReadRequestBody, ExactCurrentStateReadResponseBody,
+            ExactCurrentStateSelector, ExactModerationTargetRef,
             ModerationStateExactCurrentSelector, ModerationStateExactCurrentSelectorKind,
         };
 
         let target_ref = ExactModerationTargetRef::new(target_ref.to_owned())?;
-        let request = ExactCurrentResultsReadRequestBody {
+        let request = ExactCurrentStateReadRequestBody {
             realm_id,
-            selector: ExactCurrentResultSelector::ModerationState(
+            selector: ExactCurrentStateSelector::ModerationState(
                 ModerationStateExactCurrentSelector {
                     kind: ModerationStateExactCurrentSelectorKind::ModerationState,
                     target_ref: target_ref.clone(),
                 },
             ),
         };
-        match self.exact_current_result(&request).await? {
-            ExactCurrentResultsReadOutcome::Present {
-                entry: ExactCurrentResultEntry::ModerationState(entry),
+        match self.exact_current_state(&request).await? {
+            ExactCurrentStateReadResponseBody::Present {
+                current_state: ExactCurrentState::ModerationState(entry),
                 ..
             } => Ok(VerifiedModerationCurrent {
                 target_ref,
                 revision: entry.revision,
                 assertions: entry.value.assertions,
             }),
-            ExactCurrentResultsReadOutcome::Present { .. } => {
+            ExactCurrentStateReadResponseBody::Present { .. } => {
                 anyhow::bail!("exact moderation current read returned another result family")
             }
-            ExactCurrentResultsReadOutcome::NeverWritten { .. } => anyhow::bail!(
+            ExactCurrentStateReadResponseBody::NeverWritten { .. } => anyhow::bail!(
                 "governing Station returned never_written for moderation current; that branch is Relation-only"
             ),
         }
     }
 
     async fn authority_client(&self) -> anyhow::Result<InksonAuthorityClient> {
-        Ok(garth::AuthorityClient::new(
-            crate::transport::own_station_results::client_for_http(&self.http).await?,
-        ))
+        let transport = crate::transport::own_station_results::client_for_http(&self.http).await?;
+        #[cfg(all(not(target_arch = "wasm32"), feature = "spec-conformance"))]
+        let transport = conformance_transport::ObservedTransport(transport);
+        Ok(garth::AuthorityClient::new(transport))
+    }
+
+    pub(crate) fn verify_publication<T: arkret_sdk::PublicationRequest>(
+        &self,
+        request: T,
+    ) -> anyhow::Result<arkret_sdk::VerifiedSubmission<T>> {
+        let actor = arkret_sdk::ActorId::account(self.authority()?.clone());
+        let signer = crate::event_signer::active_signer()
+            .context("outbound producer signing context is unavailable")?;
+        let context = signer.publication_context(&actor)?;
+        Ok(arkret_sdk::VerifiedSubmission::verify(request, |_| {
+            Ok(context.clone())
+        })?)
     }
 
     fn outbound(&self, lane: OutboundLane) -> anyhow::Result<InksonOutboundEngine> {
@@ -1418,7 +1544,13 @@ impl EventSubmitter {
             arkret_sdk::EventKind::MessageCreate | arkret_sdk::EventKind::StrandWatchSet
         ) {
             let context = store
-                .read(|state| state.direct_message_context(realm.as_str(), intent.actor_id()))
+                .read(|state| {
+                    if intent.kind() == &arkret_sdk::EventKind::StrandWatchSet {
+                        state.direct_structure_context(realm.as_str(), intent.actor_id())
+                    } else {
+                        state.direct_message_context(realm.as_str(), intent.actor_id())
+                    }
+                })
                 .ok_or_else(|| {
                     anyhow::anyhow!("Direct message current authority is unavailable")
                 })?;
@@ -1459,7 +1591,7 @@ impl EventSubmitter {
                 "retired minimal-metadata Realm marker requires verified current governance genesis and schema"
             );
         }
-        sign_event_through_message_seam(event, |unsigned| {
+        sign_finalized_event(event, |unsigned| {
             crate::event_signer::sign_sdk_event_with_active_context(unsigned, proof_context)
                 .map_err(|error| anyhow::anyhow!("sign SDK Event: {error}"))
         })
@@ -1574,8 +1706,8 @@ impl EventSubmitter {
     pub(crate) async fn submit_sdk_event(
         &self,
         operation: &LocalOperation,
-    ) -> anyhow::Result<SubmitEventResult> {
-        let result = self.submit_sdk_event_inner(operation).await;
+    ) -> anyhow::Result<EventSubmissionProgress> {
+        let result = self.submit_sdk_event_inner(operation, None).await;
         #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
         if let Err(error) = &result {
             tracing::warn!(kind = %operation.intent().kind().as_str(), error = %error,
@@ -1587,7 +1719,8 @@ impl EventSubmitter {
     async fn submit_sdk_event_inner(
         &self,
         operation: &LocalOperation,
-    ) -> anyhow::Result<SubmitEventResult> {
+        card_placement: Option<crate::outbound_store::card_placement::CardPlacement>,
+    ) -> anyhow::Result<EventSubmissionProgress> {
         let intent = operation.intent().clone();
         self.ensure_recovery_material_ready(&intent).await?;
         self.await_application_current(&intent).await?;
@@ -1596,6 +1729,32 @@ impl EventSubmitter {
         self.refresh_direct_message_authority(&intent, None).await?;
         let local_operation_id = operation.local_operation_id().to_string();
         let _single_writer = outbound_submit_lock().lock().await;
+        if intent.kind() == &arkret_sdk::EventKind::DirectConversationBound {
+            ensure_direct_confirmation_settled(
+                self.authority()?,
+                intent
+                    .realm_id_opt()
+                    .ok_or_else(|| anyhow::anyhow!("Direct confirmation omits Realm"))?,
+            )
+            .await?;
+        }
+        if intent.kind() == &arkret_sdk::EventKind::ConsentReplace {
+            let replacement = intent.typed_payload::<arkret_sdk::event_spec::ConsentReplace>()?;
+            ensure_consent_replacement_settled(self.authority()?, &replacement.peer).await?;
+        }
+        if intent.kind() == &arkret_sdk::EventKind::StrandWatchSet {
+            let payload = intent.typed_payload::<arkret_sdk::event_spec::StrandWatchSet>()?;
+            let request = arkret_sdk::StrandWatchCurrentRequestBody {
+                realm_id: intent
+                    .realm_id_opt()
+                    .ok_or_else(|| anyhow::anyhow!("watch write omits Realm"))?
+                    .clone(),
+                strand_id: payload.strand_id,
+                watcher_actor_id: payload.watcher_actor_id,
+            };
+            ensure_strand_watch_settled(self.authority()?, &request).await?;
+        }
+
         #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
         let trace = OutboundWriterTrace::acquired("submit_event");
         let event = self.author_intent(&intent).await?;
@@ -1609,6 +1768,14 @@ impl EventSubmitter {
             "producer Event authored; enqueueing durable submission"
         );
         let submission = event_submission(&event)?;
+        let outbound = self.outbound(OutboundLane::Standard)?;
+        let continue_card_placement = card_placement.is_some();
+        if let Some(placement) = card_placement {
+            outbound
+                .store()
+                .freeze_card_create(submission.clone(), placement)
+                .await?;
+        }
         let item = self
             .enqueue_and_drive(QueuedWrite {
                 lane: OutboundLane::Standard,
@@ -1618,7 +1785,35 @@ impl EventSubmitter {
                 retry_scope: InteractiveRetryScope::Ordinary,
             })
             .await?;
-        settled_outbound_result(&item)
+        let result = settled_outbound_result(&item)?;
+        // Product continuation is owned by the durable writer, even if the
+        // component is gone or the create was recovered by another drain.
+        let pending = if continue_card_placement {
+            match self.resume_card_placements(&outbound).await {
+                Ok(pending) => pending,
+                Err(error) => {
+                    tracing::warn!(%error, "accepted card retains its durable placement intent");
+                    Vec::new()
+                }
+            }
+        } else {
+            Vec::new()
+        };
+        for submission in pending {
+            if let Err(error) = self
+                .enqueue_and_drive(QueuedWrite {
+                    lane: OutboundLane::Standard,
+                    local_operation_id: submission.event_id.to_string(),
+                    submission,
+                    post_accept: PostAccept::None,
+                    retry_scope: InteractiveRetryScope::Ordinary,
+                })
+                .await
+            {
+                tracing::debug!(%error, "card placement retained for background recovery");
+            }
+        }
+        Ok(result)
     }
 
     /// Create an explicitly encrypted Circle. Freeze the signed creation
@@ -1718,10 +1913,10 @@ impl EventSubmitter {
         &self,
         event: &arkret_sdk::Event,
         approvals: Vec<arkret_sdk::ApprovalSignature>,
-    ) -> anyhow::Result<SubmitEventResult> {
+        check_session: impl Fn() -> anyhow::Result<()>,
+    ) -> anyhow::Result<EventSubmissionProgress> {
         let account = self.authority()?.clone();
-        let generation = (crate::app::SessionContext::get().session_generation)();
-        crate::transport::management_review::check_session(&account, generation)?;
+        check_session()?;
         anyhow::ensure!(
             event.actor_id == arkret_sdk::ActorId::account(account.clone())
                 && event.executed_by.is_none(),
@@ -1739,6 +1934,7 @@ impl EventSubmitter {
             anyhow::bail!("Reviewed Event requires management approvals")
         };
         let request = arkret_sdk::ManagementReviewRequestBody {
+            configuration_ref: None,
             request_id: request_id.clone(),
             effective_scope: effective_scope.clone(),
             management_operation: *management_operation,
@@ -1762,7 +1958,8 @@ impl EventSubmitter {
                 signature.input.approval_context == first.input.approval_context
                     && matches!(&signature.input.approval_target, arkret_sdk::ApprovalTarget::Event { event_id } if event_id == &event.event_id)
                     && signature.input.request_canonical_digest.as_str() == digest
-                    && signature.input.operation == "ak.self.events.command.submit.v1"
+                    && signature.input.operation
+                        == arkret_wire::ServiceOperationId::SELF_EVENTS_COMMAND_SUBMIT_V1
                     && signature.input.action == action
                     && signature.input.realm_id == event.realm_id
                     && signature.input.initiating_actor_id == event.actor_id,
@@ -1780,10 +1977,10 @@ impl EventSubmitter {
         let _single_writer = outbound_submit_lock().lock().await;
         self.ensure_realm_detail_current(event.realm_id.as_str())
             .await?;
-        crate::transport::management_review::check_session(&account, generation)?;
+        check_session()?;
         // Original Event/proof and approval set are retained byte-for-byte.
         // Unknown delivery retries this queue item; it never reauthors intent.
-        let submission = QueuedSubmission::new(arkret_wire::AuthoritySubmitRequest::Event(
+        let submission = QueuedSubmission::new(arkret_wire::AuthoritySubmitRequestBody::Event(
             arkret_wire::EventAdmissionSubmission {
                 event: event.clone(),
                 approval_signatures: Some(approvals),
@@ -1798,7 +1995,7 @@ impl EventSubmitter {
                 retry_scope: InteractiveRetryScope::Ordinary,
             })
             .await?;
-        crate::transport::management_review::check_session(&account, generation)?;
+        check_session()?;
         settled_outbound_result(&item)
     }
 
@@ -1811,7 +2008,7 @@ impl EventSubmitter {
     pub(crate) async fn submit_signed_sdk_events_in_order(
         &self,
         sdk_events: &[arkret_sdk::AuthoredEvent],
-    ) -> anyhow::Result<Vec<SubmitEventResult>> {
+    ) -> anyhow::Result<Vec<EventSubmissionProgress>> {
         let first = sdk_events
             .first()
             .ok_or_else(|| anyhow::anyhow!("an ordered submission must not be empty"))?;
@@ -1890,7 +2087,7 @@ impl EventSubmitter {
             settled_outbound_result(&item)?;
             anyhow::bail!("Realm bootstrap completed without its aggregate outcome");
         };
-        let arkret_models_collaboration::authority_commit::SelfAuthoritySubmitOutcome::OrdinaryRealmBootstrap(outcome) = outcome.as_ref() else {
+        let arkret_models_collaboration::authority_commit::SelfAuthoritySubmitResponseBody::OrdinaryRealmBootstrap(outcome) = outcome.as_ref() else {
             anyhow::bail!("Realm bootstrap returned a different aggregate unit");
         };
         outcome.validate()?;
@@ -2022,7 +2219,7 @@ impl EventSubmitter {
     pub(crate) async fn submit_direct_conversation_founding_durable(
         &self,
         events: Vec<arkret_sdk::AuthoredEvent>,
-    ) -> anyhow::Result<Vec<SubmitEventResult>> {
+    ) -> anyhow::Result<Vec<EventSubmissionProgress>> {
         let _single_writer = outbound_submit_lock().lock().await;
         #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
         let _trace = OutboundWriterTrace::acquired("found_direct");
@@ -2049,14 +2246,14 @@ impl EventSubmitter {
             settled_outbound_result(&item)?;
             anyhow::bail!("Direct Conversation founding completed without its aggregate outcome");
         };
-        let arkret_models_collaboration::authority_commit::SelfAuthoritySubmitOutcome::DirectConversationFounding(outcome) = outcome.as_ref() else {
+        let arkret_models_collaboration::authority_commit::SelfAuthoritySubmitResponseBody::DirectConversationFounding(outcome) = outcome.as_ref() else {
             anyhow::bail!("Direct Conversation founding returned a different aggregate unit");
         };
         Ok(events
             .iter()
             .zip(&outcome.commits)
             .map(|(event, commit)| {
-                SubmitEventResult::committed(event.event_id().to_string(), commit.clone())
+                EventSubmissionProgress::committed(event.event_id().to_string(), commit.clone())
             })
             .collect())
     }
@@ -2068,7 +2265,7 @@ impl EventSubmitter {
         &self,
         scheduled_send_id: arkret_identifiers::ScheduledSendId,
         submission: QueuedSubmission,
-    ) -> anyhow::Result<SubmitEventResult> {
+    ) -> anyhow::Result<EventSubmissionProgress> {
         let _single_writer = outbound_submit_lock().lock().await;
         #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
         let _trace = OutboundWriterTrace::acquired("dispatch_scheduled");
@@ -2104,8 +2301,8 @@ impl EventSubmitter {
         device_id: arkret_sdk::DeviceId,
         authority_hints: Vec<crate::mls::governance_proof::MlsLeafAuthorityHint>,
         state_store: &crate::runtime::input::StateStoreHandle,
-        mut staged_checkpoint: crate::mls::persistence::MlsLocalCheckpointEnvelope,
-    ) -> anyhow::Result<SubmitEventResult> {
+        mut staged_checkpoint: garth::mls::checkpoint::MlsLocalCheckpointEnvelope,
+    ) -> anyhow::Result<EventSubmissionProgress> {
         anyhow::ensure!(
             commit.kind == arkret_sdk::EventKind::MlsCommit,
             "the MLS commit lane carries only ak.mls.commit"
@@ -2117,7 +2314,7 @@ impl EventSubmitter {
         validate_signed_sdk_event_for_submit(commit.event(), commit.digest_suite())?;
         let mut welcomes = welcomes;
         welcomes.sort_by(|left, right| left.welcome_id.cmp(&right.welcome_id));
-        let submission = QueuedSubmission::new(arkret_wire::AuthoritySubmitRequest::MlsCommit(
+        let submission = QueuedSubmission::new(arkret_wire::AuthoritySubmitRequestBody::MlsCommit(
             arkret_wire::MlsCommitSubmission {
                 commit_event: commit.event().clone(),
                 welcomes,
@@ -2201,14 +2398,14 @@ impl EventSubmitter {
         )?;
         let group = crate::mls::persistence::restore_envelope(&local, &secret, local.epoch)?;
         let frozen: arkret_models_crypto::MlsGroupStateRecord = serde_json::from_slice(
-            &crate::mls::persistence::decrypt_envelope(&checkpoint, &secret)?,
+            &garth::mls::checkpoint::decrypt_envelope(&checkpoint, &secret)?,
         )?;
         let resumed =
             group.resume_frozen_pending_commit(&frozen, &payload.commit_envelope()?, binding)?;
         let record = resumed.export_state_record()?;
         let mut salt = [0_u8; 16];
         getrandom::fill(&mut salt)?;
-        let mut checkpoint = crate::mls::persistence::encrypt_state(
+        let mut checkpoint = garth::mls::checkpoint::encrypt_state(
             &checkpoint.realm_id,
             &record.group_id,
             record.epoch,
@@ -2303,7 +2500,7 @@ impl EventSubmitter {
             decisions.insert(
                 item.event_id().clone(),
                 match item.request() {
-                    arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest::OrdinaryRealmBootstrap(unit) => {
+                    arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequestBody::OrdinaryRealmBootstrap(unit) => {
                         let mut decision = GenerationFenceDecision::Current;
                         for submission in &unit.events {
                             let candidate = queued_event_generation_decision(&submission.event)?;
@@ -2314,7 +2511,7 @@ impl EventSubmitter {
                         }
                         decision
                     }
-                    arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest::DirectConversationFounding(unit) => {
+                    arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequestBody::DirectConversationFounding(unit) => {
                         let mut decision = GenerationFenceDecision::Current;
                         for submission in &unit.events {
                             let candidate = queued_event_generation_decision(&submission.event)?;
@@ -2360,19 +2557,22 @@ impl EventSubmitter {
 
     async fn ensure_creator_quarantine_replay_fence(
         &self,
-        request: &arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest,
+        request: &arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequestBody,
     ) -> anyhow::Result<()> {
-        use arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest;
+        use arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequestBody;
         let events: Vec<&arkret_sdk::Event> = match request {
-            SelfAuthoritySubmitRequest::Event(value) => vec![&value.event],
-            SelfAuthoritySubmitRequest::MlsCommit(value) => vec![&value.commit_event],
-            SelfAuthoritySubmitRequest::OrdinaryRealmBootstrap(value) => {
+            SelfAuthoritySubmitRequestBody::Event(value) => vec![&value.event],
+            SelfAuthoritySubmitRequestBody::MlsCommit(value) => vec![&value.commit_event],
+            SelfAuthoritySubmitRequestBody::OrdinaryRealmBootstrap(value) => {
                 value.events.iter().map(|event| &event.event).collect()
             }
-            SelfAuthoritySubmitRequest::DirectConversationFounding(value) => {
+            SelfAuthoritySubmitRequestBody::DirectConversationFounding(value) => {
                 value.events.iter().map(|event| &event.event).collect()
             }
-            SelfAuthoritySubmitRequest::MembershipCompensation(value) => {
+            SelfAuthoritySubmitRequestBody::AuditPairedEvent(value) => {
+                value.events.iter().map(|event| &event.event).collect()
+            }
+            SelfAuthoritySubmitRequestBody::MembershipCompensation(value) => {
                 vec![&value.event_submission.event]
             }
         };
@@ -2418,6 +2618,17 @@ impl EventSubmitter {
         write: &QueuedWrite,
         outbound: &InksonOutboundEngine,
     ) -> anyhow::Result<Option<garth::SendQueueItem>> {
+        self.persist_queued_write_checked(write, outbound, &|| Ok(()))
+            .await
+    }
+
+    async fn persist_queued_write_checked(
+        &self,
+        write: &QueuedWrite,
+        outbound: &InksonOutboundEngine,
+        check: &(impl Fn() -> anyhow::Result<()> + garth::MaybeSendSync),
+    ) -> anyhow::Result<Option<garth::SendQueueItem>> {
+        check()?;
         let event_id = &write.submission.event_id;
         let event = write.submission.primary_event();
         let existing = outbound
@@ -2426,6 +2637,7 @@ impl EventSubmitter {
             .items
             .into_iter()
             .find(|item| item.event_id() == event_id);
+        check()?;
         if let Some(item) = &existing {
             ensure_exact_queued_request(&item.submission, &write.submission)?;
         }
@@ -2449,6 +2661,7 @@ impl EventSubmitter {
                     .map_err(anyhow::Error::from)?;
             }
         }
+        check()?;
         if let Some(state_store) = self.state_store.as_ref() {
             state_store.write(|store| {
                 record_queued_operation_identity(store, &write.local_operation_id, event);
@@ -2463,6 +2676,7 @@ impl EventSubmitter {
             .items
             .into_iter()
             .find(|item| item.event_id() == event_id && item.status.is_terminal());
+        check()?;
         if let (Some(state_store), Some(item)) = (self.state_store.as_ref(), settled.as_ref()) {
             state_store.write(|store| {
                 reconcile_settled_outbound_item(store, item);
@@ -2472,8 +2686,21 @@ impl EventSubmitter {
     }
 
     async fn enqueue_and_drive(&self, write: QueuedWrite) -> anyhow::Result<garth::SendQueueItem> {
+        self.enqueue_and_drive_checked(write, || Ok(())).await
+    }
+
+    async fn enqueue_and_drive_checked(
+        &self,
+        write: QueuedWrite,
+        check: impl Fn() -> anyhow::Result<()> + garth::MaybeSendSync,
+    ) -> anyhow::Result<garth::SendQueueItem> {
+        check()?;
         let outbound = self.outbound(write.lane)?;
-        if let Some(item) = self.persist_queued_write(&write, &outbound).await? {
+        if let Some(item) = self
+            .persist_queued_write_checked(&write, &outbound, &check)
+            .await?
+        {
+            check()?;
             return Ok(item);
         }
         let QueuedWrite {
@@ -2486,18 +2713,27 @@ impl EventSubmitter {
         let event_id = submission.event_id;
 
         self.cancel_quarantined_creator_items(&outbound).await?;
+        check()?;
         let authority_client = self.authority_client().await?;
+        check()?;
         let options = arkret_sdk::http_client::ClientRequestOptions::new()
             .request_id(event_id.to_string())
             .idempotency_key(event_id.to_string());
         let mut interactive_retries = 0_u8;
         loop {
-            self.recover_accepted_application_items(&outbound).await?;
+            check()?;
+            self.recover_accepted_application_items_checked(&outbound, &check)
+                .await?;
+            check()?;
             let fence = self.resolve_queue_generation_fence(&outbound).await?;
+            check()?;
             self.quarantine_superseded_items(&outbound, &fence).await?;
+            check()?;
             let replay_store = outbound.store().clone();
+            let check_send = &check;
             match outbound
                 .submit_next_checked(&authority_client, &options, |request| async move {
+                    check_send().map_err(|error| error.to_string())?;
                     self.ensure_creator_quarantine_replay_fence(&request)
                         .await
                         .map_err(|error| error.to_string())?;
@@ -2515,6 +2751,9 @@ impl EventSubmitter {
                     }
                     self.ensure_queued_application_send_gate(&request)
                         .await
+                        .map_err(|error| error.to_string())?;
+                    check_send().map_err(|error| error.to_string())?;
+                    self.verify_publication(request)
                         .map_err(|error| error.to_string())
                 })
                 .await
@@ -2523,7 +2762,9 @@ impl EventSubmitter {
                 OutboundEngineOutcome::Committed { item, commit }
                     if item.event_id() == &event_id =>
                 {
+                    check()?;
                     self.run_post_accept(&post_accept, &item, &commit).await?;
+                    check()?;
                     if let Some(state_store) = self.state_store.as_ref() {
                         state_store.write(|store| {
                             reconcile_settled_outbound_item(store, &item);
@@ -2532,6 +2773,7 @@ impl EventSubmitter {
                     return Ok(*item);
                 }
                 OutboundEngineOutcome::Rejected { item, .. } if item.event_id() == &event_id => {
+                    check()?;
                     if let Some(state_store) = self.state_store.as_ref() {
                         state_store.write(|store| {
                             reconcile_settled_outbound_item(store, &item);
@@ -2544,6 +2786,8 @@ impl EventSubmitter {
                     error,
                     problem,
                 } if item.event_id() == &event_id => {
+                    check()?;
+                    self.settle_other_item(&item);
                     #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
                     if let Some(problem) = problem.as_ref() {
                         let wire_code = problem
@@ -2613,6 +2857,7 @@ impl EventSubmitter {
                 OutboundEngineOutcome::Committed { item, .. }
                 | OutboundEngineOutcome::Rejected { item, .. }
                 | OutboundEngineOutcome::Failed { item, .. } => {
+                    check()?;
                     self.settle_other_item(&item);
                 }
                 OutboundEngineOutcome::Retry { item, delay } => {
@@ -2709,13 +2954,113 @@ impl EventSubmitter {
         self.drain_lane(OutboundLane::Standard).await
     }
 
+    /// Explicitly resume one peer's original Consent write after a local
+    /// failure. No current read, Event authoring or signing occurs here.
+    pub(crate) async fn recover_pending_consent(
+        &self,
+        peer: &arkret_sdk::ConsentPeer,
+    ) -> anyhow::Result<Option<EventSubmissionProgress>> {
+        let authority = self.authority()?.clone();
+        let epoch = crate::identity::device_directory::session_cache_epoch();
+        let fence = crate::transport::auth::AuthoringSessionFence::capture()?;
+        let device = arkret_sdk::DeviceId::new(
+            fence
+                .signer
+                .device_id()
+                .ok_or_else(|| anyhow::anyhow!("Consent recovery requires an active device"))?
+                .to_owned(),
+        )?;
+        let _single_writer = outbound_submit_lock().lock().await;
+        let outbound = self.outbound(OutboundLane::Standard)?;
+        let check = || -> anyhow::Result<()> {
+            fence.check()?;
+            self.ensure_device_authoring_fence(&authority, &device, &fence.signer, epoch)?;
+            anyhow::ensure!(
+                self.state_store.is_some(),
+                "Consent recovery requires the active account store"
+            );
+            anyhow::ensure!(
+                outbound.store().account_id() == Some(&authority),
+                "Consent recovery queue belongs to another Account"
+            );
+            if let Some(client) = self.http.own_station_result_client()? {
+                anyhow::ensure!(
+                    client.session()?.account_id() == &authority,
+                    "Consent recovery HTTP session names another Account"
+                );
+            }
+            Ok(())
+        };
+        check()?;
+        let snapshot = outbound.snapshot().await?;
+        let Some(event_id) =
+            pending_consent_replacement_from_snapshot(&snapshot, self.authority()?, peer)?
+        else {
+            return Ok(None);
+        };
+        let original = snapshot
+            .items
+            .into_iter()
+            .find(|item| item.event_id() == &event_id)
+            .ok_or_else(|| anyhow::anyhow!("pending Consent original disappeared"))?;
+        check()?;
+        let now = crate::clock::now_utc();
+        let retained = original.submission.clone();
+        outbound
+            .store()
+            .mutate_outbound(|queue| {
+                requeue_original_consent(queue, &authority, peer, &retained, now, check)
+            })
+            .await?;
+        check()?;
+        let pending = outbound
+            .snapshot()
+            .await?
+            .items
+            .into_iter()
+            .find(|item| item.event_id() == &event_id)
+            .ok_or_else(|| anyhow::anyhow!("pending Consent original disappeared"))?;
+        let source = crate::transport::own_station_results::client_for_http(&self.http).await?;
+        check()?;
+        // An accepted historical original settles even after a device change;
+        // recovery never tries to re-sign it with the replacement device.
+        if let Some(settled) = outbound_recovery::recover_disclosed_event_item(
+            &outbound, &authority, &source, &pending, &check,
+        )
+        .await?
+        {
+            check()?;
+            if let Some(state) = &self.state_store {
+                state.write(|store| {
+                    reconcile_settled_outbound_item(store, &settled);
+                });
+            }
+            return Ok(Some(settled_outbound_result(&settled)?));
+        }
+        check()?;
+        let item = self
+            .enqueue_and_drive_checked(
+                QueuedWrite {
+                    lane: OutboundLane::Standard,
+                    submission: original.submission,
+                    local_operation_id: event_id.to_string(),
+                    post_accept: PostAccept::None,
+                    retry_scope: InteractiveRetryScope::Ordinary,
+                },
+                &check,
+            )
+            .await?;
+        check()?;
+        Ok(Some(settled_outbound_result(&item)?))
+    }
+
     /// Resume queued `ak.mls.commit` submissions.
     ///
     /// Once authority acceptance is durable, merge the exact staged own
     /// Commit and recover leaf attribution from the signed historical roster.
     pub(crate) async fn drain_mls_outbound(&self) -> anyhow::Result<usize> {
         let completed = self.drain_lane(OutboundLane::MlsCommit).await?;
-        self.recover_committed_mls_outbound().await?;
+        crate::runtime::boxed_future_from(|| self.recover_committed_mls_outbound()).await?;
         Ok(completed)
     }
 
@@ -2839,7 +3184,7 @@ impl EventSubmitter {
         getrandom::fill(&mut salt)
             .map_err(|error| anyhow::anyhow!("MLS checkpoint salt: {error}"))?;
         let record = group.export_state_record()?;
-        let mut checkpoint = crate::mls::persistence::encrypt_state(
+        let mut checkpoint = garth::mls::checkpoint::encrypt_state(
             &local.realm_id,
             &local.group_id,
             local.epoch,
@@ -2892,104 +3237,143 @@ impl EventSubmitter {
         Ok(())
     }
 
-    async fn drain_lane(&self, lane: OutboundLane) -> anyhow::Result<usize> {
-        let _single_writer = outbound_submit_lock().lock().await;
-        #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
-        let trace = OutboundWriterTrace::acquired(match lane {
-            OutboundLane::Standard => "drain_standard",
-            OutboundLane::MlsCommit => "drain_mls",
-        });
-        let outbound = self.outbound(lane)?;
-        if lane == OutboundLane::MlsCommit {
-            let now = crate::clock::now_utc();
-            outbound
-                .store()
-                .mutate_outbound(move |queue| {
-                    for item in queue.snapshot().items {
-                        if queued_event(&item).kind == arkret_sdk::EventKind::MlsCommit {
-                            queue.retry_unknown(&item.submission.event_id, now)?;
+    fn drain_lane(
+        &self,
+        lane: OutboundLane,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<usize>> + '_>> {
+        crate::runtime::boxed_future_from(|| async move {
+            let _single_writer = outbound_submit_lock().lock().await;
+            #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+            let trace = OutboundWriterTrace::acquired(match lane {
+                OutboundLane::Standard => "drain_standard",
+                OutboundLane::MlsCommit => "drain_mls",
+            });
+            let outbound = self.outbound(lane)?;
+            if lane == OutboundLane::MlsCommit {
+                let now = crate::clock::now_utc();
+                outbound
+                    .store()
+                    .mutate_outbound(move |queue| {
+                        for item in queue.snapshot().items {
+                            if queued_event(&item).kind == arkret_sdk::EventKind::MlsCommit {
+                                queue.retry_unknown(&item.submission.event_id, now)?;
+                            }
                         }
-                    }
-                    Ok(())
-                })
-                .await?;
-        }
-        if lane == OutboundLane::MlsCommit
-            && let Some(state) = self.state_store.as_ref()
-        {
-            for item in outbound.snapshot().await?.items {
-                if is_unsettled(item.status) || item.status == SendQueueStatus::Committed {
-                    self.prepare_frozen_mls_checkpoint(
-                        outbound.store(),
-                        queued_event(&item),
-                        state,
-                    )
+                        Ok(())
+                    })
                     .await?;
+            }
+            if lane == OutboundLane::MlsCommit
+                && let Some(state) = self.state_store.as_ref()
+            {
+                for item in outbound.snapshot().await?.items {
+                    if is_unsettled(item.status) || item.status == SendQueueStatus::Committed {
+                        crate::runtime::boxed_future_from(|| {
+                            self.prepare_frozen_mls_checkpoint(
+                                outbound.store(),
+                                queued_event(&item),
+                                state,
+                            )
+                        })
+                        .await?;
+                    }
                 }
             }
-        }
-        // A previous task can be dropped after the queue durably records a
-        // commit but before the caller updates its optimistic row. Replay that
-        // join before draining active work.
-        if let Some(state_store) = self.state_store.as_ref() {
-            let snapshot = outbound.snapshot().await?;
-            state_store.write(|store| {
-                for item in &snapshot.items {
-                    reconcile_settled_outbound_item(store, item);
-                }
-            });
-        }
-        let authority_client = self.authority_client().await?;
-        let mut completed = 0usize;
-        loop {
-            #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
-            trace.stage("preparing");
-            completed =
-                completed.saturating_add(self.cancel_quarantined_creator_items(&outbound).await?);
-            completed =
-                completed.saturating_add(self.recover_accepted_application_items(&outbound).await?);
-            let fence = self.resolve_queue_generation_fence(&outbound).await?;
-            completed = completed
-                .saturating_add(self.quarantine_superseded_items(&outbound, &fence).await?);
-            let options = arkret_sdk::http_client::ClientRequestOptions::new();
-            let replay_store = outbound.store().clone();
-            #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
-            trace.stage("submitting");
-            match outbound
-                .submit_next_checked(&authority_client, &options, |request| async move {
-                    self.ensure_creator_quarantine_replay_fence(&request)
-                        .await
-                        .map_err(|error| error.to_string())?;
-                    if let Some(decision) = self
-                        .ensure_creator_genesis_replay_gate(&request)
-                        .await
-                        .map_err(|error| error.to_string())?
-                    {
-                        replay_store
-                            .remember_creator_absence_guarded(
-                                (decision.0, decision.1),
-                                Some(decision.2),
-                            )
-                            .map_err(|error| error.to_string())?;
+            // A previous task can be dropped after the queue durably records a
+            // commit but before the caller updates its optimistic row. Replay that
+            // join before draining active work.
+            if let Some(state_store) = self.state_store.as_ref() {
+                let snapshot = outbound.snapshot().await?;
+                state_store.write(|store| {
+                    for item in &snapshot.items {
+                        reconcile_settled_outbound_item(store, item);
                     }
-                    self.ensure_queued_application_send_gate(&request)
-                        .await
-                        .map_err(|error| error.to_string())
+                });
+            }
+            let authority_client =
+                crate::runtime::boxed_future_from(|| self.authority_client()).await?;
+            let mut completed = 0usize;
+            loop {
+                #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+                trace.stage("preparing");
+                completed = completed.saturating_add(
+                    crate::runtime::boxed_future_from(|| {
+                        self.cancel_quarantined_creator_items(&outbound)
+                    })
+                    .await?,
+                );
+                completed = completed.saturating_add(
+                    crate::runtime::boxed_future_from(|| {
+                        self.recover_accepted_application_items(&outbound)
+                    })
+                    .await?,
+                );
+                if lane == OutboundLane::Standard {
+                    crate::runtime::boxed_future_from(|| self.resume_card_placements(&outbound))
+                        .await?;
+                }
+                let fence = crate::runtime::boxed_future_from(|| {
+                    self.resolve_queue_generation_fence(&outbound)
+                })
+                .await?;
+                completed = completed.saturating_add(
+                    crate::runtime::boxed_future_from(|| {
+                        self.quarantine_superseded_items(&outbound, &fence)
+                    })
+                    .await?,
+                );
+                let options = arkret_sdk::http_client::ClientRequestOptions::new();
+                let replay_store = outbound.store().clone();
+                #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+                trace.stage("submitting");
+                match crate::runtime::boxed_future_from(|| {
+                    outbound.submit_next_checked(
+                        &authority_client,
+                        &options,
+                        |request| async move {
+                            crate::runtime::boxed_future_from(|| {
+                                self.ensure_creator_quarantine_replay_fence(&request)
+                            })
+                            .await
+                            .map_err(|error| error.to_string())?;
+                            if let Some(decision) = crate::runtime::boxed_future_from(|| {
+                                self.ensure_creator_genesis_replay_gate(&request)
+                            })
+                            .await
+                            .map_err(|error| error.to_string())?
+                            {
+                                replay_store
+                                    .remember_creator_absence_guarded(
+                                        (decision.0, decision.1),
+                                        Some(decision.2),
+                                    )
+                                    .map_err(|error| error.to_string())?;
+                            }
+                            crate::runtime::boxed_future_from(|| {
+                                self.ensure_queued_application_send_gate(&request)
+                            })
+                            .await
+                            .map_err(|error| error.to_string())?;
+                            self.verify_publication(request)
+                                .map_err(|error| error.to_string())
+                        },
+                    )
                 })
                 .await
                 .map_err(anyhow::Error::from)?
-            {
-                OutboundEngineOutcome::Committed { item, .. }
-                | OutboundEngineOutcome::Rejected { item, .. }
-                | OutboundEngineOutcome::Failed { item, .. } => {
-                    self.settle_other_item(&item);
-                    completed = completed.saturating_add(1);
-                }
-                OutboundEngineOutcome::Idle | OutboundEngineOutcome::Retry { .. } => {
-                    return Ok(completed);
+                {
+                    OutboundEngineOutcome::Committed { item, .. }
+                    | OutboundEngineOutcome::Rejected { item, .. }
+                    | OutboundEngineOutcome::Failed { item, .. } => {
+                        self.settle_other_item(&item);
+                        completed = completed.saturating_add(1);
+                    }
+                    OutboundEngineOutcome::Idle | OutboundEngineOutcome::Retry { .. } => {
+                        return Ok(completed);
+                    }
                 }
             }
-        }
+        })
     }
 
     // ------------------------------------------------------------- authoring
@@ -3132,7 +3516,7 @@ impl EventSubmitter {
                 accepted_principal_control = true;
             }
         }
-        let policy: arkret_models_crypto::RecoveryPolicyActiveOutcome = self
+        let policy: arkret_models_crypto::RecoveryPolicyStatusView = self
             .http
             .get("/_arkret/root/identity/recovery-policy")
             .await
@@ -3158,9 +3542,11 @@ impl EventSubmitter {
         if intent.kind() == &arkret_sdk::EventKind::MlsGenesis {
             return Ok(true);
         }
-        let is_join = intent.kind().as_str() == event_kind_str::INVITE_ACCEPT
-            || (intent.kind().as_str() == event_kind_str::MEMBER_STATE
-                && intent.payload().get("membership").and_then(Value::as_str) == Some("join"));
+        let is_join = matches!(
+            intent.kind().as_str(),
+            event_kind_str::INVITE_ACCEPT | event_kind_str::REALM_INVITE_LINK_ACCEPT
+        ) || (intent.kind().as_str() == event_kind_str::MEMBER_STATE
+            && intent.payload().get("membership").and_then(Value::as_str) == Some("join"));
         if !is_join {
             return Ok(false);
         }
@@ -3234,7 +3620,7 @@ impl EventSubmitter {
                     "controller is not in an accepted ordinary joined generation"
                 );
             }
-            arkret_sdk::EventKind::InviteAccept => {
+            arkret_sdk::EventKind::InviteAccept | arkret_sdk::EventKind::RealmInviteLinkAccept => {
                 anyhow::ensure!(
                     event.actor_id == member,
                     "accepted Invite names another controller"
@@ -3287,9 +3673,9 @@ impl EventSubmitter {
 
     async fn ensure_queued_application_send_gate(
         &self,
-        request: &arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest,
+        request: &arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequestBody,
     ) -> anyhow::Result<()> {
-        let arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest::Event(
+        let arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequestBody::Event(
             submission,
         ) = request
         else {
@@ -3475,7 +3861,7 @@ impl EventSubmitter {
         material: &crate::signal::SignalKeyMaterial,
         payload: &crate::signal::SignalPayload,
         state_store: &crate::runtime::input::StateStoreHandle,
-    ) -> anyhow::Result<arkret_sdk::SignalSubmitOutcome> {
+    ) -> anyhow::Result<arkret_sdk::SignalSubmitResponseBody> {
         self.send_scope_signal_with_transport_observation(
             scope_ref,
             authority,
@@ -3498,7 +3884,7 @@ impl EventSubmitter {
         payload: &crate::signal::SignalPayload,
         state_store: &crate::runtime::input::StateStoreHandle,
     ) -> anyhow::Result<(
-        arkret_sdk::SignalSubmitOutcome,
+        arkret_sdk::SignalSubmitResponseBody,
         arkret_sdk::http_client::SignalSendTransportObservation,
     )> {
         state_store.read(|store| store.require_blocklist_signal_freshness(payload))?;
@@ -3545,7 +3931,7 @@ impl EventSubmitter {
         material: &crate::signal::SignalKeyMaterial,
         payload: &crate::signal::SignalPayload,
         state_store: &crate::runtime::input::StateStoreHandle,
-    ) -> anyhow::Result<arkret_sdk::SignalSubmitOutcome> {
+    ) -> anyhow::Result<arkret_sdk::SignalSubmitResponseBody> {
         self.send_signal_with_transport_observation(
             authority,
             header,
@@ -3565,9 +3951,24 @@ impl EventSubmitter {
         payload: &crate::signal::SignalPayload,
         state_store: &crate::runtime::input::StateStoreHandle,
     ) -> anyhow::Result<(
-        arkret_sdk::SignalSubmitOutcome,
+        arkret_sdk::SignalSubmitResponseBody,
         arkret_sdk::http_client::SignalSendTransportObservation,
     )> {
+        let envelope = self
+            .seal_signal_for_scope(authority, header, material, payload, state_store)
+            .await?;
+        self.submit_signal_envelope_with_transport_observation(&envelope)
+            .await
+    }
+
+    async fn seal_signal_for_scope(
+        &self,
+        authority: &arkret_sdk::AccountId,
+        header: crate::signal::SignalHeader,
+        material: &crate::signal::SignalKeyMaterial,
+        payload: &crate::signal::SignalPayload,
+        state_store: &crate::runtime::input::StateStoreHandle,
+    ) -> anyhow::Result<arkret_wire::SignalEnvelope> {
         state_store.read(|store| store.require_blocklist_signal_freshness(payload))?;
         if header.sender_actor_id.as_account_id() != Some(authority) {
             anyhow::bail!("Signal sender does not match the encryption authority");
@@ -3594,9 +3995,31 @@ impl EventSubmitter {
             &header.scope_ref,
         )
         .await?;
+        if matches!(payload, crate::signal::SignalPayload::Presence { .. }) {
+            crate::runtime::boxed_future_from(|| {
+                self.require_presence_send(authority, &header.scope_ref, state_store)
+            })
+            .await?;
+        }
+        if let crate::signal::SignalPayload::ReadReceipt {
+            strand_id,
+            event_id,
+        } = payload
+        {
+            state_store.read(|store| {
+                store.require_read_receipt_send(&header.scope_ref, strand_id, event_id)
+            })?;
+        }
         let plaintext = payload.to_plaintext(&header.sender_actor_id, sequence)?;
         let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
         let encrypted_payload = state_store.write(|store| {
+            if let crate::signal::SignalPayload::ReadReceipt {
+                strand_id,
+                event_id,
+            } = payload
+            {
+                store.require_read_receipt_send(&header.scope_ref, strand_id, event_id)?;
+            }
             store.signal_sequence_store_context(&header.sender_actor_id)?;
             crate::signal::encrypt_signal_payload_with_store(
                 store,
@@ -3608,15 +4031,284 @@ impl EventSubmitter {
             )
         })?;
         let envelope = crate::signal::seal_signal_envelope(header, encrypted_payload)?;
-        self.submit_signal_envelope_with_transport_observation(&envelope)
-            .await
+        Ok(envelope)
+    }
+
+    async fn require_presence_send(
+        &self,
+        holder: &arkret_sdk::AccountId,
+        scope: &arkret_sdk::ScopeRef,
+        store: &crate::runtime::input::StateStoreHandle,
+    ) -> anyhow::Result<()> {
+        let visibility = store.read(|s| s.presence_visibility());
+        anyhow::ensure!(
+            visibility.allows_presence_send(),
+            "Presence is hidden by the holder"
+        );
+        if visibility == arkret_sdk::PresenceVisibility::Public {
+            return Ok(());
+        }
+        let view = store
+            .read(|s| s.current_product_view())
+            .ok_or_else(|| anyhow::anyhow!("Presence requires a complete current audience"))?;
+        let members = view
+            .complete_joined_members_for_scope(scope)?
+            .ok_or_else(|| anyhow::anyhow!("Presence audience is incomplete"))?;
+        let own_actor = arkret_sdk::ActorId::account(holder.clone());
+        anyhow::ensure!(
+            members.contains(&own_actor),
+            "Presence sender is outside its current scope"
+        );
+        let epoch = crate::identity::device_directory::session_cache_epoch();
+        let guard = || -> anyhow::Result<()> {
+            anyhow::ensure!(
+                store.read(|s| s.active_authority()) == Some(holder.clone())
+                    && !store.read(|s| s.current_reset_required())
+                    && store.read(|s| s.presence_visibility()) == visibility
+                    && store.read(|s| s.current_product_view()).as_ref() == Some(&view)
+                    && crate::identity::device_directory::session_cache_epoch() == epoch,
+                "Presence audience, visibility or Device session changed"
+            );
+            Ok(())
+        };
+        guard()?;
+        if visibility == arkret_sdk::PresenceVisibility::ContactsOnly {
+            let contacts = self.http.contacts_list().await?;
+            guard()?;
+            anyhow::ensure!(
+                members
+                    .iter()
+                    .filter(|peer| *peer != &own_actor)
+                    .all(|peer| contacts.contacts.iter().any(|row| row.state
+                        == arkret_sdk::contact_operations::ContactState::Accepted
+                        && row.peer.contact_actor_id() == *peer
+                        && row.validate_shape().is_ok()
+                        && row
+                            .granted_to_peer_scopes
+                            .contains(&arkret_sdk::contact_operations::ContactScope::Presence)
+                        && row.tombstone_event_ref.is_none())),
+                "Presence scope contains a peer without accepted Contact facts"
+            );
+            return Ok(());
+        }
+        anyhow::ensure!(
+            visibility == arkret_sdk::PresenceVisibility::ConsentOnly,
+            "unknown Presence authorization mode"
+        );
+        let principal =
+            crate::transport::account::current_principal_for_authority(&self.http, holder).await?;
+        let registered = crate::config::LocalConfigStore::default()
+            .known_account_context(holder)
+            .ok_or_else(|| {
+                anyhow::anyhow!("Presence Consent requires the registered Account PCR pin")
+            })?;
+        anyhow::ensure!(
+            principal.principal_control_realm_id == registered.principal_control_realm_id,
+            "Presence Consent current principal differs from the registered PCR"
+        );
+        let pcr = &registered.principal_control_realm_id;
+        guard()?;
+        let client = crate::transport::own_station_results::client_for_http(&self.http).await?;
+        let authority = crate::transport::own_station_results::consent_current_authority(
+            &self.http, &client, holder, pcr,
+        )
+        .await?;
+        let mut responses = Vec::new();
+        for peer in members.iter().filter(|peer| *peer != &own_actor) {
+            guard()?;
+            let response = client
+                .consent_current(
+                    &arkret_sdk::ConsentCurrentReadRequestBody {
+                        holder_account_id: holder.clone(),
+                        peer: arkret_sdk::ConsentPeer::Actor {
+                            actor_id: peer.clone(),
+                        },
+                        audience_actor_id: arkret_sdk::ActorId::service(holder.station_id.clone()),
+                        nonce: crate::random::base64url_token(
+                            32,
+                            "Presence Consent nonce unavailable",
+                        )?,
+                    },
+                    pcr,
+                    &authority,
+                )
+                .await?;
+            anyhow::ensure!(
+                crate::signal_receive_engine::install_consent_current_for_holder(
+                    store,
+                    holder,
+                    pcr,
+                    &response,
+                    arkret_sdk::ConsentScope::Presence,
+                    epoch,
+                    &guard
+                )
+                .await?,
+                "Presence scope contains an unauthorized peer"
+            );
+            responses.push(response);
+        }
+        // Recheck every original response against the final durable high water.
+        // A later peer read may have observed a revoke affecting an earlier peer.
+        let index = crate::state::CurrentIndex::open_committed(
+            holder,
+            store.read(|s| s.current_index_location()),
+            || Ok(store.read(|s| s.current_generation())),
+        )
+        .await?;
+        let progress = index.read_progress(pcr.as_str()).await?;
+        for response in &responses {
+            let value = response.value()?;
+            anyhow::ensure!(
+                progress.observed_governance_generation == Some(value.governance_generation)
+                    && progress
+                        .observed_heads
+                        .contains(&value.effective_stream_head)
+                    && value.permits(
+                        response.request(),
+                        arkret_sdk::ConsentScope::Presence,
+                        crate::clock::now_utc()
+                    ),
+                "Presence Consent cut became stale before sealing"
+            );
+        }
+        guard()
+    }
+
+    /// Submit an independent exact invitation to each current known holder.
+    pub async fn send_call_invitation(
+        &self,
+        scope_ref: arkret_sdk::ScopeRef,
+        authority: &arkret_sdk::AccountId,
+        device: &arkret_sdk::DeviceId,
+        material: &crate::signal::SignalKeyMaterial,
+        payload: &crate::signal::SignalPayload,
+        state_store: &crate::runtime::input::StateStoreHandle,
+    ) -> anyhow::Result<()> {
+        let holders = state_store
+            .read(|store| {
+                store.complete_joined_member_hint_for_realm(scope_ref.realm_id().as_str())
+            })?
+            .ok_or_else(|| anyhow::anyhow!("complete holder membership is unavailable"))?;
+        for actor in holders {
+            let Some(holder) = actor.as_account_id() else {
+                continue;
+            };
+            if holder == authority {
+                continue;
+            }
+            let request = self
+                .prepare_call_invitation(
+                    scope_ref.clone(),
+                    authority,
+                    device,
+                    holder.clone(),
+                    material,
+                    payload,
+                    state_store,
+                )
+                .await?;
+            self.http.call_invitation_send(&request).await?;
+        }
+        Ok(())
+    }
+
+    /// Freeze actual sealed bytes after durably burning their nonce. Sending
+    /// later still requires each receiver's fresh admission cut.
+    pub(crate) async fn prepare_call_invitation(
+        &self,
+        scope_ref: arkret_sdk::ScopeRef,
+        authority: &arkret_sdk::AccountId,
+        device: &arkret_sdk::DeviceId,
+        holder: arkret_sdk::AccountId,
+        material: &crate::signal::SignalKeyMaterial,
+        payload: &crate::signal::SignalPayload,
+        state_store: &crate::runtime::input::StateStoreHandle,
+    ) -> anyhow::Result<arkret_sdk::CallInvitationSendRequestBody> {
+        let crate::signal::SignalPayload::CallSignal {
+            call_id,
+            signal: arkret_sdk::CallSignalData::Invite(invite),
+            ..
+        } = payload
+        else {
+            anyhow::bail!("call invitation producer requires an invite plaintext");
+        };
+        let envelope = self
+            .prepare_signal_envelope(
+                scope_ref.clone(),
+                authority,
+                device,
+                material,
+                payload,
+                state_store,
+            )
+            .await?;
+        let signer = crate::event_signer::active_signer()
+            .ok_or_else(|| anyhow::anyhow!("call invitation signer is unavailable"))?;
+        anyhow::ensure!(
+            signer.verification_method() == envelope.proof.verification_method.as_str(),
+            "call invitation signer changed during encryption"
+        );
+        let mut invitation = arkret_sdk::CallInvitationEnvelope {
+            inviter_actor_id: envelope.sender_actor_id.clone(),
+            holder_account_id: holder,
+            scope_ref,
+            call_id: call_id.clone(),
+            media: arkret_sdk::CallInvitationMedia::from_selection(&invite.media),
+            envelope_digest: arkret_sdk::call_invitation_envelope_digest(&envelope)?,
+            expires_at: envelope.expires_at,
+            proof: arkret_sdk::CallInvitationProof {
+                verification_method: envelope.proof.verification_method.to_string(),
+                jws: String::new(),
+            },
+        };
+        invitation.proof.jws = signer.detached_jws_over_payload(&invitation.signature_input()?)?;
+        Ok(arkret_sdk::CallInvitationSendRequestBody {
+            invitation,
+            envelope,
+        })
+    }
+
+    pub(crate) async fn prepare_signal_envelope(
+        &self,
+        scope_ref: arkret_sdk::ScopeRef,
+        authority: &arkret_sdk::AccountId,
+        device: &arkret_sdk::DeviceId,
+        material: &crate::signal::SignalKeyMaterial,
+        payload: &crate::signal::SignalPayload,
+        state_store: &crate::runtime::input::StateStoreHandle,
+    ) -> anyhow::Result<arkret_wire::SignalEnvelope> {
+        let stream_head_ref = self.current_stream_head_for(&scope_ref).await?;
+        let parent = if matches!(&scope_ref, arkret_sdk::ScopeRef::Circle { .. }) {
+            Some(
+                self.current_stream_head_for(&arkret_sdk::ScopeRef::Realm {
+                    realm_id: scope_ref.realm_id().clone(),
+                })
+                .await?,
+            )
+        } else {
+            None
+        };
+        let header = crate::signal::SignalHeader::new(
+            scope_ref.clone(),
+            arkret_sdk::ActorId::account(authority.clone()),
+            device.clone(),
+            stream_head_ref,
+            parent,
+            payload.signal_class(),
+            crate::clock::now_utc(),
+        );
+        let envelope = self
+            .seal_signal_for_scope(authority, header, material, payload, state_store)
+            .await?;
+        Ok(envelope)
     }
 
     /// `POST /_arkret/self/signal` — `ak.self.signal.command.send.v1`.
     pub async fn submit_signal_envelope(
         &self,
         envelope: &arkret_wire::SignalEnvelope,
-    ) -> anyhow::Result<arkret_sdk::SignalSubmitOutcome> {
+    ) -> anyhow::Result<arkret_sdk::SignalSubmitResponseBody> {
         self.submit_signal_envelope_with_transport_observation(envelope)
             .await
             .map(|(outcome, _observation)| outcome)
@@ -3626,7 +4318,7 @@ impl EventSubmitter {
         &self,
         envelope: &arkret_wire::SignalEnvelope,
     ) -> anyhow::Result<(
-        arkret_sdk::SignalSubmitOutcome,
+        arkret_sdk::SignalSubmitResponseBody,
         arkret_sdk::http_client::SignalSendTransportObservation,
     )> {
         envelope
@@ -3643,7 +4335,8 @@ impl EventSubmitter {
     pub(crate) async fn agent_key_pair(
         &self,
         body: &arkret_models_collaboration::agent_operations::AgentKeyPairRequestBody,
-    ) -> anyhow::Result<arkret_models_collaboration::agent_operations::AgentKeyPairOutcome> {
+    ) -> anyhow::Result<arkret_models_collaboration::agent_operations::AgentKeyPairResponseBody>
+    {
         let station_url = self.http.base_url().as_str();
         let authority =
             crate::identity::account_auth::AuthorityResolver::discover(station_url).await?;
@@ -3651,7 +4344,7 @@ impl EventSubmitter {
         let authority_origin = gate_account_base_url.origin().ascii_serialization();
         let authority_http = account_authority_http_client(&authority_origin)?;
         authority_http
-            .agent_key_pair(body)
+            .agent_key_pair(&self.verify_publication(body.clone())?)
             .await
             .map_err(anyhow::Error::from)
             .with_context(|| format!("pair Agent key at {authority_origin}"))
@@ -3750,52 +4443,19 @@ fn ensure_exact_queued_request(
     Ok(())
 }
 
-/// Every message producer, including poll, scheduled and confirmed Sidecar
-/// writes, enters the same consuming proof-only session. Other Event kinds
-/// retain their domain-specific signing path.
-fn sign_event_through_message_seam(
+/// The host supplies the signer; the shared engine freezes every Event kind.
+fn sign_finalized_event(
     event: &mut arkret_sdk::AuthoredEvent,
     sign: impl FnOnce(&mut arkret_sdk::AuthoredEvent) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
-    if event.kind != arkret_sdk::EventKind::MessageCreate {
-        return sign(event);
-    }
-    let frozen = garth::MessageAuthoringSession::from_authored_event(event.clone())?.sign_with(
-        |unsigned| sign(unsigned).map_err(|error| garth::Error::Protocol(error.to_string())),
-    )?;
-    event.attach_proof(
-        frozen
-            .request()
-            .submission
-            .event
-            .producer_proof
-            .clone()
-            .ok_or_else(|| anyhow::anyhow!("message signer produced no producer proof"))?,
-    );
+    *event =
+        garth::event_authoring::EventAuthoringSession::new(event.clone())?.sign_with(|event| {
+            sign(event).map_err(|error| garth::Error::Protocol(error.to_string()))
+        })?;
     Ok(())
 }
 
-/// Freeze one signed producer Event as an authority submission.
-pub(crate) fn event_submission(
-    event: &arkret_sdk::AuthoredEvent,
-) -> anyhow::Result<QueuedSubmission> {
-    validate_signed_sdk_event_for_submit(event.event(), event.digest_suite())?;
-    let request = arkret_wire::EventAdmissionSubmission {
-        event: event.event().clone(),
-        approval_signatures: None,
-    };
-    if event.kind == arkret_sdk::EventKind::MessageCreate {
-        return garth::FrozenMessageSubmission::from_signed_request(
-            garth::MessageSubmitRequestBody {
-                submission: request,
-            },
-        )
-        .map(garth::FrozenMessageSubmission::into_queued_submission)
-        .map_err(anyhow::Error::from);
-    }
-    QueuedSubmission::new(arkret_wire::AuthoritySubmitRequest::Event(request))
-        .map_err(anyhow::Error::from)
-}
+pub(crate) use garth::event_authoring::event_submission;
 
 fn account_authority_http_client(
     authority_origin: &str,
@@ -3831,24 +4491,7 @@ pub(crate) fn validate_capability_grant_payload(intent: &EventIntent) -> anyhow:
     Ok(())
 }
 
-fn validate_signed_sdk_event_for_submit(
-    event: &arkret_sdk::Event,
-    digest_suite: arkret_sdk::DigestSuite,
-) -> anyhow::Result<()> {
-    let Some(_producer) = event.producer_proof.as_ref() else {
-        anyhow::bail!(
-            "submit requires exactly one producer proof (event_id={}, kind={})",
-            event.event_id,
-            event.kind.as_str()
-        );
-    };
-    event
-        .validate_proof_bindings_with_digest_suite(digest_suite)
-        .map_err(|err| {
-            anyhow::anyhow!("event proof binding invalid for {}: {err}", event.event_id)
-        })?;
-    validate_outgoing_registered_event_payload(event.kind.as_str(), &event.payload)
-}
+use garth::event_authoring::validate_signed_event as validate_signed_sdk_event_for_submit;
 
 fn mls_genesis_event_id_from_events(
     events: &[arkret_sdk::Event],

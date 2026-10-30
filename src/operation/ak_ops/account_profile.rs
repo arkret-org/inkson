@@ -32,6 +32,7 @@ pub fn account_profile_update(
             target_ref: profile_id,
             patch,
             expected_state_digest: None,
+            expected_revision: None,
         },
     )
     .build_sdk_event("inkson")

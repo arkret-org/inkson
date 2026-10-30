@@ -141,7 +141,7 @@ pub(super) fn ManagementReviewPanel(realm_id: String, token: Signal<String>) -> 
                 input { value: "{station}", disabled: busy() || unresolved, oninput: move |e| { station.set(e.value()); loaded.set(None); confirmed.set(false); } }
             }
             label { "原管理意图"
-                select { value: "{operation}", disabled: busy() || unresolved, onchange: move |e| { operation.set(e.value()); loaded.set(None); confirmed.set(false); },
+                select { "aria-label": "原管理意图", value: "{operation}", disabled: busy() || unresolved, onchange: move |e| { operation.set(e.value()); loaded.set(None); confirmed.set(false); },
                     option { value: "join", "加入当前 Realm" }
                     option { value: "publish", "公开当前 Realm 的 Agent interaction" }
                 }

@@ -47,7 +47,7 @@ pub(crate) fn prepare_rotation_backup_material(
     recovery_words: &str,
     snapshots: &std::collections::BTreeMap<
         String,
-        crate::mls::persistence::MlsLocalCheckpointEnvelope,
+        garth::mls::checkpoint::MlsLocalCheckpointEnvelope,
     >,
     list_payload: &Value,
     signer: &std::sync::Arc<crate::event_signer::InksonEventSigner>,
@@ -131,15 +131,15 @@ pub(crate) async fn execute_device_revoke_security_rotation(
     secure_store: std::sync::Arc<dyn SecureKeyStore + Send + Sync>,
     state_store: &crate::runtime::input::StateStoreHandle,
     authority: &arkret_sdk::AccountId,
-    actor_id: &str,
     current_device_id: &str,
     target_device_id: &str,
     recovery_words: &str,
     snapshots: &std::collections::BTreeMap<
         String,
-        crate::mls::persistence::MlsLocalCheckpointEnvelope,
+        garth::mls::checkpoint::MlsLocalCheckpointEnvelope,
     >,
 ) -> Result<CompletedSecurityRotation> {
+    let actor_id = authority.principal_id.as_str();
     if current_device_id == target_device_id {
         return Err(anyhow!("a device cannot revoke itself"));
     }
@@ -166,9 +166,9 @@ pub(crate) async fn execute_device_revoke_security_rotation(
     let list_payload = super::restore::fetch_mls_restore_payload(api, actor_id).await?;
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow!("active device signer is required"))?;
-    let principal = Did::new(actor_id.to_owned())?;
     let control_realm =
-        crate::identity::principal_control::resolve_accepted(&http, &principal).await?;
+        crate::identity::principal_control::resolve_accepted_for_authority(&http, authority)
+            .await?;
     let expected_pointer = super::current_basis::state_from_payload(&list_payload)?;
     let basis = super::current_basis::ConfirmedBackupBasis::read(
         api,
@@ -194,7 +194,7 @@ pub(crate) async fn execute_device_revoke_security_rotation(
     let source_realm_commit_id = basis.state()?.authority_commit_id.clone();
     let revoke = crate::operation::ak_ops::device_revoke(
         control_realm.as_str(),
-        actor_id,
+        authority,
         target_device_id,
         current_device_id,
         "user_request",
@@ -251,12 +251,6 @@ pub(crate) async fn execute_device_revoke_security_rotation(
         .collect();
     let transaction_id =
         TransactionId::new(format!("ak:transaction:{}", crate::operation::uuid_v7()))?;
-    let principal = crate::mls_api_helpers::principal_core_id(principal.as_str())?;
-    if principal != authority.principal_id {
-        return Err(anyhow!(
-            "security rotation actor does not match the supplied account"
-        ));
-    }
     let create = crate::fresh_device_recovery::SecurityRotationDraft {
         transaction_id: transaction_id.clone(),
         account_id: authority.clone(),
@@ -305,8 +299,9 @@ pub(crate) async fn execute_device_revoke_security_rotation(
     );
     let workflow = crate::fresh_device_recovery::DeviceRevokeSecurityRotation::new(engine);
     basis.check()?;
+    let context = signer.publication_context(&arkret_sdk::ActorId::account(authority.clone()))?;
     let mut transaction = workflow
-        .create_or_resume(create, staged_ref)
+        .create_or_resume(create, staged_ref, &context)
         .await
         .map_err(anyhow::Error::from)?;
     basis.check()?;
@@ -453,21 +448,21 @@ async fn drive_security_rotation(
         transaction_request_digest: transaction.request_digest.clone(),
         prepared_plan_digest: transaction.prepared_plan_digest.clone(),
         artifact,
-        auth_data: arkret_models_crypto::ClientStepAttestationAuthData {
+        signature_proof: arkret_models_crypto::ClientStepAttestationSignatureProof {
             verification_method: arkret_sdk::DidUrl::new(signer.verification_method().to_owned())
                 .map_err(anyhow::Error::msg)?,
             signature_algorithm: "Ed25519".to_owned(),
             signature: Base64UrlString::new("AA".to_owned()).map_err(anyhow::Error::msg)?,
         },
     };
-    attestation.auth_data.signature = Base64UrlString::new(
+    attestation.signature_proof.signature = Base64UrlString::new(
         URL_SAFE_NO_PAD.encode(signer.sign_raw(&attestation.signing_bytes()?)?),
     )
     .map_err(anyhow::Error::msg)?;
     let completed = workflow
         .continue_with_signed_local_commit(
             &transaction.transaction_id,
-            &arkret_models_crypto::SecurityTransactionContinueRequest {
+            &arkret_models_crypto::SecurityTransactionContinueRequestBody {
                 request_digest: transaction.request_digest.clone(),
                 prepared_plan_digest: transaction.prepared_plan_digest.clone(),
                 expected_accepted_step_count: transaction.accepted_steps.len().try_into()?,
@@ -504,7 +499,7 @@ struct StagedRotationSecret {
     new_version: u32,
     new_secret: String,
     rewrapped_checkpoints:
-        std::collections::BTreeMap<String, crate::mls::persistence::MlsLocalCheckpointEnvelope>,
+        std::collections::BTreeMap<String, garth::mls::checkpoint::MlsLocalCheckpointEnvelope>,
 }
 
 impl StagedRotationSecret {
@@ -864,8 +859,8 @@ mod rotation_resume_tests {
             &arkret_sdk::ActorId::account(account_id.clone())
         );
         assert_eq!(
-            operation.actor_id().route_service_id(),
-            &account_id.station_id
+            operation.actor_id().fixed_route_service_id(),
+            Some(&account_id.station_id)
         );
         assert_eq!(
             operation.payload()["source_commit_ref"]["realm_commit_id"],

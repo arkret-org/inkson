@@ -22,7 +22,7 @@ pub(super) async fn join_and_build_transport(
     join: &MediaJoinRequest,
     authority: &arkret_sdk::AccountId,
     device: &arkret_sdk::DeviceId,
-    realm_mls_checkpoint: Option<crate::mls::persistence::MlsLocalCheckpointEnvelope>,
+    realm_mls_checkpoint: Option<garth::mls::checkpoint::MlsLocalCheckpointEnvelope>,
 ) -> Result<(JoinedMediaSession, SharedTransport, Rc<PerSenderFrameKeys>), RtcClientError> {
     let (session, per_sender_keys) = join_via_api(
         base,
@@ -61,7 +61,7 @@ async fn join_via_api(
     join: &MediaJoinRequest,
     authority: &arkret_sdk::AccountId,
     device: &arkret_sdk::DeviceId,
-    realm_mls_checkpoint: Option<crate::mls::persistence::MlsLocalCheckpointEnvelope>,
+    realm_mls_checkpoint: Option<garth::mls::checkpoint::MlsLocalCheckpointEnvelope>,
 ) -> Result<(JoinedMediaSession, PerSenderFrameKeys), RtcClientError> {
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let exporter = crate::media::rtc::RealmMlsExporter::for_realm(
@@ -130,6 +130,15 @@ pub(super) async fn submit_call_state_participant(
     session: &JoinedMediaSession,
 ) -> Result<(), String> {
     let call_id = arkret_sdk::CallId::new(call_id.to_owned()).map_err(|err| err.to_string())?;
+    let authenticated_actor =
+        crate::mls_api_helpers::local_account_actor_id(actor).map_err(|err| err.to_string())?;
+    if session.actor_id != authenticated_actor
+        || session.device_id != device
+        || session.realm_id != realm_id
+        || session.call_id != call_id.as_str()
+    {
+        return Err("call participant session differs from the authenticated leg".to_owned());
+    }
     let state_transition = arkret_sdk::CallStateTransition {
         from: match target_state {
             arkret_sdk::CallLifecycleState::Connecting => arkret_sdk::CallLifecycleState::Ringing,
@@ -137,14 +146,14 @@ pub(super) async fn submit_call_state_participant(
             _ => return Err("call participant submission requires connecting or active".to_owned()),
         },
         to: target_state,
+        failure_reason_code: None,
     };
     let (focus, roster_delta) = if target_state == arkret_sdk::CallLifecycleState::Connecting {
         let binding = &session.participant_binding;
         let participant_binding = binding.clone();
         let participant = arkret_sdk::CallParticipant {
-            actor_id: crate::mls_api_helpers::local_account_actor_id(actor)
-                .map_err(|err| err.to_string())?,
-            device_id: device.to_owned(),
+            actor_id: session.actor_id.clone(),
+            device_id: session.device_id.clone(),
             joined_at: None,
             foci_preferred: Some(vec![session.focus_id.clone()]),
             participant_id: Some(session.participant_id.clone()),
@@ -187,11 +196,19 @@ pub(super) async fn submit_call_state_participant(
     .build_sdk_event("inkson")
     .map_err(|err| err.to_string())?;
     with_authed_api(base, api_token.to_owned(), move |api| async move {
-        api.event_submitter()?.submit_sdk_event(&op).await?;
+        let accepted = api.event_submitter()?.submit_sdk_event(&op).await?;
+        anyhow::ensure!(
+            accepted
+                .commit
+                .as_ref()
+                .is_some_and(|commit| commit.event_ref.as_str() == accepted.event_id),
+            "Call roster submission has no accepted Commit"
+        );
         Ok(())
     })
     .await
-    .map_err(|err| err.display())
+    .map_err(|err| err.display())?;
+    Ok(())
 }
 
 pub(super) fn media_error_label(err: RtcClientError) -> String {

@@ -8,8 +8,103 @@ use super::*;
 // monolithic `kanban/mod.rs`; re-added here after the structural split since
 // the component-only parent no longer brings them into scope.
 use super::{StrandPositionEffect, StrandPositionExpectation, strand_position_queue_key};
+use crate::components::WriteState;
 use crate::rank::RankError;
 use crate::state::MoveSubmissionState;
+
+/// Reconcile the actual API result into the holder-local operation record.
+/// The enqueue owner has already retained the exact Event identity and queued
+/// status. A retryable answer must leave that record intact, including a newer
+/// acceptance the root queue worker may have consumed before this callback.
+pub(super) fn reconcile_kanban_operation_submission(
+    store: &mut LocalStateStore,
+    operation_id: &str,
+    result: &Result<crate::models::EventSubmissionProgress, crate::transport::auth::ApiCallError>,
+) {
+    let retained_event = store
+        .load()
+        .raw_operations
+        .iter()
+        .find(|record| record.operation_id == operation_id)
+        .and_then(|record| record.payload.get("event_id").and_then(Value::as_str))
+        .map(str::to_owned);
+    match result {
+        Ok(response) => {
+            let exact_commit = response.commit.as_ref().is_some_and(|commit| {
+                commit.event_ref.as_str() == response.event_id
+                    && retained_event.as_deref() == Some(response.event_id.as_str())
+            });
+            let state_and_error = match response.status {
+                garth::SendQueueStatus::Committed if exact_commit => ("accepted", None),
+                garth::SendQueueStatus::Queued | garth::SendQueueStatus::Forwarding
+                    if response.commit.is_none() =>
+                {
+                    return;
+                }
+                garth::SendQueueStatus::Rejected if response.commit.is_none() => {
+                    ("rejected", response.rejection_reason_code.clone())
+                }
+                garth::SendQueueStatus::Failed if response.commit.is_none() => {
+                    ("failed", response.rejection_reason_code.clone())
+                }
+                garth::SendQueueStatus::Cancelled if response.commit.is_none() => {
+                    ("cancelled", None)
+                }
+                _ => (
+                    "failed",
+                    Some("submission result has no exact covering Commit".to_owned()),
+                ),
+            };
+            store.update_raw_operation_write_state(
+                operation_id,
+                state_and_error.0,
+                retained_event,
+                state_and_error.1,
+            );
+        }
+        Err(error) if crate::event_submit::is_durably_queued_error(error.inner()) => {}
+        Err(error) => {
+            store.update_raw_operation_write_state(
+                operation_id,
+                "failed",
+                retained_event,
+                Some(error.display()),
+            );
+        }
+    }
+}
+
+/// Cancel only archive intents that never reached the durable enqueue owner.
+/// Previously accepted, queued and rejected writes already carry their exact
+/// Event identity and must retain their own outcome after a partial cascade.
+pub(super) fn drop_unsubmitted_archive_operations(
+    store: &mut LocalStateStore,
+    operation_ids: &[String],
+    error: &str,
+) {
+    let snapshot = store.load();
+    for operation_id in operation_ids {
+        let has_event = snapshot
+            .raw_operations
+            .iter()
+            .find(|record| &record.operation_id == operation_id)
+            .is_some_and(|record| {
+                record
+                    .payload
+                    .get("event_id")
+                    .and_then(Value::as_str)
+                    .is_some()
+            });
+        if !has_event {
+            store.update_raw_operation_write_state(
+                operation_id,
+                "dropped",
+                None,
+                Some(error.to_owned()),
+            );
+        }
+    }
+}
 
 /// Closed set of operation bodies `submit_kanban_operation_event` enqueues:
 /// board (container Space) creation and list patches (column order, rename).
@@ -235,8 +330,8 @@ pub(super) fn submit_kanban_operation_event(
     let operation_id_for_status = operation_id.clone();
     let operation_id_for_reconcile = operation_id.clone();
     // `spawn_forever` executes at the Dioxus root and therefore has no current
-    // component scope from which `EventSubmitter::from_current_session` can
-    // consume SessionContext. Carry the governance store explicitly across
+    // component scope for the app's session adapter to consume SessionContext.
+    // Carry the governance store explicitly across
     // that lifetime boundary; otherwise a perfectly pinned checkpoint is
     // reported as absent before the Event ever reaches the durable queue.
     let submit_state_store = crate::app::runtime_adapter::state_store_handle(state_store);
@@ -269,6 +364,11 @@ pub(super) fn submit_kanban_operation_event(
                 .await
         })
         .await;
+        reconcile_kanban_operation_submission(
+            &mut state_store.write(),
+            &operation_id_for_reconcile,
+            &result,
+        );
         match result {
             Ok(resp) => {
                 // `build_sdk_event` names an event-derived create from its
@@ -278,27 +378,19 @@ pub(super) fn submit_kanban_operation_event(
                 // migrate the temporary object id, and backfill can then merge
                 // the canonical Event into this row instead of appending a
                 // duplicate List/Board.
-                state_store.write().update_raw_operation_write_state(
-                    &operation_id_for_reconcile,
-                    "accepted",
-                    Some(resp.event_id.clone()),
-                    None,
-                );
                 tracing::debug!(
                     operation_id = %short_protocol_id(&operation_id_for_status),
                     event_id = %short_protocol_id(&resp.event_id),
                     kind = %kind,
-                    "detached kanban operation accepted"
+                    status = ?resp.status,
+                    "detached kanban operation result reconciled"
                 );
+            }
+            Err(err) if crate::event_submit::is_durably_queued_error(err.inner()) => {
+                tracing::debug!(operation_id = %operation_id_for_reconcile, "kanban operation remains durably queued");
             }
             Err(err) => {
                 let error = err.display().to_string();
-                state_store.write().update_raw_operation_write_state(
-                    &operation_id_for_reconcile,
-                    "failed",
-                    None,
-                    Some(error.clone()),
-                );
                 tracing::warn!(
                     operation_id = %short_protocol_id(&operation_id_for_status),
                     kind = %kind,
@@ -573,10 +665,28 @@ pub(super) fn submit_kanban_card_create(
     ));
     let api_token = token();
     let realm_for_record = realm_id.clone();
-    let board_for_position = command.board_space_id.clone();
-    let list_for_position = command.list_space_id.clone();
-    let rank_for_position = command.rank.clone();
-    let actor_for_position = actor_id.clone();
+    let (board_space_id, list_space_id) = match (
+        arkret_sdk::SpaceId::new(command.board_space_id),
+        arkret_sdk::SpaceId::new(command.list_space_id),
+    ) {
+        (Ok(board), Ok(list)) => (board, list),
+        (Err(error), _) | (_, Err(error)) => {
+            board_status.set(error.to_string());
+            return;
+        }
+    };
+    let placement = match crate::outbound_store::card_placement::CardPlacement::new(
+        board_space_id,
+        list_space_id,
+        command.rank,
+        op_id.clone(),
+    ) {
+        Ok(placement) => placement,
+        Err(error) => {
+            board_status.set(error.to_string());
+            return;
+        }
+    };
     let kind_for_record = kind.to_owned();
     let op_for_track = op_id.clone();
     let submit_event = event;
@@ -593,7 +703,7 @@ pub(super) fn submit_kanban_card_create(
         let result = with_authed_api(&base_url, api_token.clone(), |api| async move {
             api.event_submitter()?
                 .with_state_store(submit_state_store)
-                .submit_sdk_event(&submit_event)
+                .submit_card_create(&submit_event, placement)
                 .await
         })
         .await;
@@ -630,106 +740,9 @@ pub(super) fn submit_kanban_card_create(
                     kind = %kind_for_record,
                     "detached kanban card create accepted"
                 );
-
-                let accepted_event_id = match arkret_sdk::EventId::new(resp.event_id.clone()) {
-                    Ok(event_id) => event_id,
-                    Err(error) => {
-                        tracing::error!(%error, "accepted card create returned an invalid Event id");
-                        return;
-                    }
-                };
-                let strand_id =
-                    arkret_sdk::StrandId::from_event_id(&accepted_event_id).into_string();
-                let move_event = match crate::operation::ak_ops::strand_position_update(
-                    &realm_for_record,
-                    &actor_for_position,
-                    event_kind_str::STRAND_MOVE,
-                    &board_for_position,
-                    &strand_id,
-                    serde_json::Value::Null,
-                    json!({"list_space_id": list_for_position, "rank": rank_for_position}),
-                )
-                .and_then(|builder| builder.build_sdk_event("inkson"))
-                {
-                    Ok(event) => event,
-                    Err(error) => {
-                        tracing::error!(%error, %strand_id, "card created without placement; move authoring failed");
-                        return;
-                    }
-                };
-                let move_id = move_event.local_operation_id().to_string();
-                let move_body = match queued_strand_position_body(
-                    &move_event,
-                    event_kind_str::STRAND_MOVE,
-                ) {
-                    Ok(body) => body,
-                    Err(error) => {
-                        tracing::error!(%error, %strand_id, "card created without placement; move payload failed");
-                        return;
-                    }
-                };
-                let move_record = match serde_json::to_value(QueuedStrandPositionRecord {
-                    kind: event_kind_str::STRAND_MOVE,
-                    move_id: &move_id,
-                    cell: strand_position_queue_key(&board_for_position, &strand_id),
-                    board_space_id: &board_for_position,
-                    strand_id: &strand_id,
-                    expected_position: serde_json::Value::Null,
-                    target_position: json!({"list_space_id": list_for_position, "rank": rank_for_position}),
-                    body: move_body,
-                    write_state: "submitted",
-                }) {
-                    Ok(record) => record,
-                    Err(error) => {
-                        tracing::error!(%error, %strand_id, "card created without placement; move queue encoding failed");
-                        return;
-                    }
-                };
-                state_store.write().enqueue_local_projection_command(
-                    move_id.clone(),
-                    Some(realm_for_record.clone()),
-                    move_record,
-                );
-                let move_submit_state_store =
-                    crate::app::runtime_adapter::state_store_handle(state_store);
-                let move_result = with_authed_api(&base_url, api_token, |api| async move {
-                    api.event_submitter()?
-                        .with_state_store(move_submit_state_store)
-                        .submit_sdk_event(&move_event)
-                        .await
-                })
-                .await;
-                match move_result {
-                    Ok(move_response) => {
-                        let state =
-                            MoveSubmissionState::from_send_queue_status(move_response.status);
-                        state_store.write().update_raw_operation_write_state(
-                            &move_id,
-                            state.slug(),
-                            Some(move_response.event_id.clone()),
-                            move_response.rejection_reason_code.clone(),
-                        );
-                        state_store.write().record_move_submission_with_event_id(
-                            move_id.clone(),
-                            Some(move_response.event_id),
-                            realm_for_record,
-                            event_kind_str::STRAND_MOVE.to_owned(),
-                            state,
-                            move_response.rejection_reason_code,
-                            None,
-                        );
-                    }
-                    Err(error) => {
-                        let error = error.display().to_string();
-                        state_store.write().update_raw_operation_write_state(
-                            &move_id,
-                            "soft_failed",
-                            None,
-                            Some(error.clone()),
-                        );
-                        tracing::warn!(%error, %strand_id, "card create accepted; placement move remains retryable");
-                    }
-                }
+            }
+            Err(err) if crate::event_submit::is_durably_queued_error(err.inner()) => {
+                tracing::debug!(operation_id = %op_for_track, "card create remains durably queued");
             }
             Err(err) => {
                 let error = err.display().to_string();
@@ -960,6 +973,9 @@ pub(super) fn dispatch_space_container_lifecycle(
                 }
                 board_status.set(format!("{kind} accepted; list state = {target:?}"));
             }
+            Err(err) if crate::event_submit::is_durably_queued_error(err.inner()) => {
+                board_status.set(WriteState::Queued.localized_explanation());
+            }
             Err(err) => {
                 // Revert the optimistic flip by dropping the op from the log.
                 if let Ok(mut store) = state_store.try_write() {
@@ -1051,6 +1067,9 @@ pub(super) fn dispatch_strand_lifecycle(
                 }
                 board_status.set(format!("{kind} accepted; card lifecycle = {target:?}"));
             }
+            Err(err) if crate::event_submit::is_durably_queued_error(err.inner()) => {
+                board_status.set(WriteState::Queued.localized_explanation());
+            }
             Err(err) => {
                 if let Ok(mut store) = state_store.try_write() {
                     store.update_raw_operation_write_state(
@@ -1135,8 +1154,8 @@ pub(super) fn dispatch_board_archive_cascade(
         }
     }
 
-    // Append all archive ops so the board empties immediately via the memo;
-    // a partial-cascade failure reverts every op by marking it `dropped`.
+    // Retain each archive separately. An earlier accepted or durably queued
+    // operation cannot be rolled back by a later submission failure.
     // Serialize every queued record up front so a typing failure aborts
     // before any optimistic op is appended.
     let mut records: Vec<serde_json::Value> = Vec::with_capacity(events.len());
@@ -1171,46 +1190,41 @@ pub(super) fn dispatch_board_archive_cascade(
     let base = base_url.clone();
     let api_token = token();
     spawn(async move {
-        let events_for_submit = events;
         let outcome = with_authed_api(&base, api_token, |api| async move {
-            for event in &events_for_submit {
-                api.event_submitter()?.submit_sdk_event(event).await?;
+            let mut has_queued = false;
+            for event in &events {
+                let operation_id = event.local_operation_id().to_string();
+                match api.event_submitter()?.submit_sdk_event(event).await {
+                    Ok(response) => {
+                        state_store.write().update_raw_operation_write_state(
+                            &operation_id,
+                            "accepted",
+                            Some(response.event_id),
+                            None,
+                        );
+                    }
+                    Err(error) if crate::event_submit::is_durably_queued_error(&error) => {
+                        has_queued = true;
+                    }
+                    Err(error) => return Err(error),
+                }
             }
-            Ok::<(), anyhow::Error>(())
+            Ok(has_queued)
         })
         .await;
-
         match outcome {
-            Ok(()) => {
-                if let Ok(mut store) = state_store.try_write() {
-                    for operation_id in &operation_ids {
-                        store.update_raw_operation_write_state(
-                            operation_id,
-                            "accepted",
-                            None,
-                            None,
-                        );
-                    }
-                }
-                board_status.set(crate::i18n::tr("kanban.archive_board_done"));
-            }
-            Err(err) => {
-                // Revert the optimistic cascade so a partial archive does not
-                // leave a half-archived board.
-                if let Ok(mut store) = state_store.try_write() {
-                    for operation_id in &operation_ids {
-                        store.update_raw_operation_write_state(
-                            operation_id,
-                            "dropped",
-                            None,
-                            Some(err.display().to_string()),
-                        );
-                    }
-                }
+            Ok(true) => board_status.set(WriteState::Queued.localized_explanation()),
+            Ok(false) => board_status.set(crate::i18n::tr("kanban.archive_board_done")),
+            Err(error) => {
+                drop_unsubmitted_archive_operations(
+                    &mut state_store.write(),
+                    &operation_ids,
+                    &error.display(),
+                );
                 board_status.set(format!(
                     "{} {}",
                     crate::i18n::tr("kanban.archive_board_action"),
-                    err.display()
+                    error.display()
                 ));
             }
         }
@@ -1372,6 +1386,9 @@ pub(super) fn submit_strand_position_move(
                         submission_state.slug()
                     ));
                 }
+            }
+            Err(err) if crate::event_submit::is_durably_queued_error(err.inner()) => {
+                board_status.set(WriteState::Queued.localized_explanation());
             }
             Err(err) => {
                 let err_text = err.display();

@@ -20,6 +20,7 @@ pub(crate) mod management_review;
 pub mod media;
 pub mod moderation;
 pub mod own_station_results;
+pub(crate) mod realm_invite_link;
 pub mod realm_read;
 pub mod realm_write;
 pub(crate) mod strand_watch;

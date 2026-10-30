@@ -3,6 +3,7 @@ import {
   assertRealmTreeSeeded,
   dismissBlockingRecoveryModal,
   openSettings,
+  openKanban,
   refreshServer,
   registerStrandsBeforeEach,
 } from "./strandsHarness";
@@ -68,15 +69,17 @@ test("global search empty and no-match states follow the active language", async
 });
 
 test("global search results preserve local text and routes across language changes", async ({ page }) => {
-  test.fail(true, "0540: GlobalSearch still consumes retired timeline.events instead of an authorized committed local message projection; migrate with exact Commit and current read authorization before removing this annotation.");
   const requests = searchSideEffects(page);
-  await refreshServer(page);
-  await assertRealmTreeSeeded(page);
+  // The account list deliberately requests no Realm details. Load this
+  // authorized Realm through the normal product route before searching its
+  // local history; a notification preview is not an accepted message index.
+  await openKanban(page);
   const originalBody = "Alice sent a message in Demo Realm";
   const query = `  ${originalBody}  `;
   let originalHref: string | null = null;
   let originalRealm: string | null = null;
   let originalSeal: string | null = null;
+  let originalCommit: string | null = null;
   for (const language of ["en", "zh", "en"] as const) {
     await setLanguage(page, language);
     const panel = page.getByTestId("global-search-panel");
@@ -90,22 +93,40 @@ test("global search results preserve local text and routes across language chang
     await expect(row.locator(".event-head > span").first()).toHaveText(language === "zh" ? "消息" : "Message");
     const link = row.getByTestId("global-search-result-link");
     const seal = row.getByTestId("global-search-result-seal");
+    await expect(row).toHaveAttribute("data-commit-id", /^ak:realm_commit:/);
     const realm = row.getByTestId("global-search-result-realm");
     if (originalHref === null) {
       originalHref = await link.getAttribute("href");
       originalRealm = await realm.getAttribute("title");
       originalSeal = await seal.getAttribute("data-seal");
+      originalCommit = await row.getAttribute("data-commit-id");
       expect(originalRealm).toMatch(/^ak:realm:/);
       expect(originalSeal).toMatch(/^ak:event:/);
+      await expect(row).toHaveAttribute("data-event-id", originalSeal!);
       const route = new URL(originalHref!, page.url());
       expect(decodeURIComponent(route.pathname)).toBe(`/chat/${originalRealm}`);
       expect(route.searchParams.get("message")).toBe(originalSeal);
     }
+    await expect(row).toHaveAttribute("data-commit-id", originalCommit!);
     await expect(link).toHaveAttribute("href", originalHref!);
     await expect(realm).toHaveAttribute("title", originalRealm!);
     await expect(seal).toHaveAttribute("data-seal", originalSeal!);
     await expect(seal).toHaveText(`${language === "zh" ? "打开消息" : "Open message"}: ${originalSeal}`);
   }
+  // A new Wasm instance must hydrate the committed account records and current
+  // cut before the existing local history can authorize this same result.
+  await page.reload();
+  await expect(page.getByTestId("client-shell")).toBeVisible();
+  await openSearch(page);
+  const recovered = page.getByTestId("global-search-panel");
+  await recovered.getByTestId("global-search-input").fill(query);
+  await recovered.getByTestId("global-search-submit").click();
+  const recoveredRow = recovered.getByTestId("global-search-result-item");
+  await expect(recoveredRow).toHaveCount(1);
+  await expect(recoveredRow).toHaveAttribute("data-event-id", originalSeal!);
+  await expect(recoveredRow).toHaveAttribute("data-commit-id", originalCommit!);
+  await expect(recoveredRow.getByTestId("global-search-result-snippet")).toHaveText(originalBody);
+  await expect(recoveredRow.getByTestId("global-search-result-link")).toHaveAttribute("href", originalHref!);
   const destination = new URL(originalHref!, page.url()).toString();
   await page.getByTestId("global-search-result-link").click();
   await expect(page).toHaveURL(destination);

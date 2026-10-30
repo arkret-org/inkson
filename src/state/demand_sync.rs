@@ -7,6 +7,16 @@ use arkret_wire::Cursor;
 
 use super::*;
 
+mod realm_list;
+pub(crate) use realm_list::RealmListReadFence;
+
+#[cfg(any(test, target_arch = "wasm32"))]
+pub(in crate::state) fn initial_account_scope_resets(
+    frame: &AccountSubscribeFrame,
+) -> anyhow::Result<BTreeSet<String>> {
+    realm_list::initial_resets(frame)
+}
+
 /// Baseline delivery channels of the account stream.
 ///
 /// The wire baseline segment is an opaque JSON value; this is the host's typed
@@ -137,7 +147,7 @@ impl FrameViews {
 }
 
 fn realm_row(
-    row: &arkret_models_collaboration::sync_frames::demand_sync::RealmListRow,
+    row: &arkret_models_collaboration::sync_frames::demand_sync::AccountRealmView,
 ) -> RealmRow {
     RealmRow {
         realm_id: row.realm_id.clone(),
@@ -176,22 +186,24 @@ pub(crate) struct DemandSyncState {
     list_snapshot: Option<String>,
     list_revision: u64,
     list_complete: bool,
-    list_seen: BTreeSet<String>,
-    summaries: BTreeMap<String, RealmRow>,
-    summary_removals: BTreeMap<String, u64>,
+    list_seen: imbl::OrdSet<String>,
+    summaries: imbl::OrdMap<String, RealmRow>,
+    // Last negative Account-list revision, retained across a newer joined row.
+    // It fences old requests across leave/rejoin; it is never a stream position.
+    summary_removals: imbl::OrdMap<String, u64>,
     global_snapshot: Option<String>,
-    channels: BTreeMap<Channel, BaselineChannelState>,
-    account_events: BTreeMap<String, Event>,
-    device_ids: BTreeSet<String>,
+    channels: imbl::OrdMap<Channel, BaselineChannelState>,
+    account_events: imbl::OrdMap<String, Box<Event>>,
+    device_ids: imbl::OrdSet<String>,
     #[serde(default)]
-    agent_draft_pending_intents: BTreeMap<String, StoredAgentDraftPendingIntent>,
+    agent_draft_pending_intents: imbl::OrdMap<String, StoredAgentDraftPendingIntent>,
     #[serde(default)]
     agent_draft_pending_projection_position: Option<u64>,
     #[serde(default)]
     agent_draft_pending_delta_fingerprint: Option<String>,
     #[serde(default)]
     agent_draft_pending_baseline: Option<AgentDraftPendingBaselineState>,
-    details: BTreeMap<String, DetailState>,
+    details: imbl::OrdMap<String, DetailState>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -212,8 +224,8 @@ struct AgentDraftPendingBaselineState {
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 struct BaselineChannelState {
-    seen: BTreeSet<String>,
-    mutated: BTreeSet<String>,
+    seen: imbl::OrdSet<String>,
+    mutated: imbl::OrdSet<String>,
     complete: bool,
 }
 
@@ -307,7 +319,7 @@ fn pending_intent_change_parts(
 }
 
 fn install_pending_intent_change(
-    records: &mut BTreeMap<String, StoredAgentDraftPendingIntent>,
+    records: &mut imbl::OrdMap<String, StoredAgentDraftPendingIntent>,
     key: String,
     value: Value,
     removed: bool,
@@ -423,11 +435,11 @@ impl LocalStateStore {
         state.agent_draft_pending_projection_position = None;
         state.agent_draft_pending_delta_fingerprint = None;
         state.agent_draft_pending_baseline = None;
-        for detail in state.details.values_mut() {
+        state.details.for_each_mut(|_, detail| {
             detail.invalidated = true;
             detail.complete = false;
             detail.invalidated_snapshot = detail.snapshot.clone();
-        }
+        });
         self.clear_current_product_view();
     }
     /// Already delivered holder-private Events from the active Account's state.
@@ -436,7 +448,73 @@ impl LocalStateStore {
             .demand_sync
             .account_events
             .into_values()
+            .map(|event| *event)
             .collect()
+    }
+
+    /// Install an accepted inbox Event, including our own confirmed DELETE,
+    /// into the existing account current and its derived local disposition.
+    pub(crate) fn apply_notification_inbox_event(
+        &mut self,
+        authority: &arkret_sdk::AccountId,
+        event: &Event,
+    ) -> anyhow::Result<bool> {
+        self.install_notification_inbox_event(authority, event, false)
+    }
+
+    pub(crate) fn apply_confirmed_notification_inbox_delete(
+        &mut self,
+        authority: &arkret_sdk::AccountId,
+        event: &Event,
+    ) -> anyhow::Result<bool> {
+        anyhow::ensure!(
+            event.payload.get("tombstone").and_then(Value::as_bool) == Some(true),
+            "confirmed inbox deletion is not a tombstone"
+        );
+        self.install_notification_inbox_event(authority, event, true)
+    }
+
+    fn install_notification_inbox_event(
+        &mut self,
+        authority: &arkret_sdk::AccountId,
+        event: &Event,
+        live_confirmation: bool,
+    ) -> anyhow::Result<bool> {
+        self.ensure_cached_loaded();
+        let Some((id, archived)) =
+            crate::account_data::notification_inbox_update(authority, event)?
+        else {
+            return Ok(false);
+        };
+        let revision = crate::account_data::notification_inbox_event_revision(event)?
+            .ok_or_else(|| anyhow::anyhow!("notification inbox Event has no revision"))?;
+        let key = event
+            .payload
+            .get("key")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("notification inbox Event has no key"))?;
+        if let Some(current) = self.cached.demand_sync.account_events.get(key) {
+            let previous = crate::account_data::notification_inbox_event_revision(current)?
+                .ok_or_else(|| anyhow::anyhow!("inbox current has no revision"))?;
+            if previous > revision {
+                return Ok(false);
+            }
+            anyhow::ensure!(
+                previous != revision || current.event_id == event.event_id,
+                "inbox Event changed at the same revision"
+            );
+        }
+        if live_confirmation {
+            self.cached
+                .demand_sync
+                .accepts(Channel::AccountDataEvents, key, false);
+        }
+        self.cached
+            .demand_sync
+            .account_events
+            .insert(key.to_owned(), Box::new(event.clone()));
+        self.set_notification_archived(id, archived);
+        Ok(true)
     }
     /// Dedicated controller-private Agent draft projection. Values have already
     /// passed the SDK's closed live | terminal-redacted decoder; removal
@@ -460,7 +538,12 @@ impl LocalStateStore {
         crate::models::AccountSyncStep {
             cursor: self.cached.sync_cursor.clone().unwrap_or_default(),
             realm_entries: BTreeMap::new(),
-            realm_projections: self.cached.realm_tree_projections.clone(),
+            realm_projections: self
+                .cached
+                .realm_tree_projections
+                .clone()
+                .into_iter()
+                .collect(),
         }
     }
     pub(crate) fn sync_demand_filter(&self) -> Option<AccountFilter> {
@@ -487,6 +570,18 @@ impl LocalStateStore {
     }
     pub(crate) fn sync_realm_list_after(&self) -> Option<Cursor> {
         self.cached.demand_sync.list_after.clone()
+    }
+
+    /// Current joined rows from the accepted account list, independent of
+    /// navigation projections and retained holder-private preferences.
+    pub(crate) fn sync_joined_realm_ids(&self) -> std::collections::BTreeSet<String> {
+        self.load()
+            .demand_sync
+            .summaries
+            .iter()
+            .filter(|(_, row)| row.membership == arkret_wire::MembershipState::Join)
+            .map(|(id, _)| id.clone())
+            .collect()
     }
     pub(crate) fn realm_detail_invalidated(&self, realm_id: &str) -> bool {
         if self.current_product_view_ready(realm_id) {
@@ -529,6 +624,45 @@ impl LocalStateStore {
         frame.validate()?;
         self.ensure_cached_loaded();
         let views = FrameViews::decode(frame)?;
+        let mut stale_inbox = std::collections::BTreeSet::new();
+        let mut inbox_heads = std::collections::BTreeMap::new();
+        for event in frame
+            .account_data
+            .as_ref()
+            .into_iter()
+            .flat_map(|data| &data.events)
+        {
+            let Some(revision) = crate::account_data::notification_inbox_event_revision(event)?
+            else {
+                continue;
+            };
+            let key = event
+                .payload
+                .get("key")
+                .and_then(Value::as_str)
+                .ok_or_else(|| anyhow::anyhow!("notification inbox Event has no key"))?;
+            let current = inbox_heads.get(key).or_else(|| {
+                self.cached
+                    .demand_sync
+                    .account_events
+                    .get(key)
+                    .map(Box::as_ref)
+            });
+            if let Some(current) = current
+                && let Some(previous) =
+                    crate::account_data::notification_inbox_event_revision(current)?
+            {
+                anyhow::ensure!(
+                    previous != revision || current.event_id == event.event_id,
+                    "inbox Event changed at the same revision"
+                );
+                if previous > revision {
+                    stale_inbox.insert(event.event_id.clone());
+                    continue;
+                }
+            }
+            inbox_heads.insert(key.to_owned(), event.clone());
+        }
         // Validate every conflict before mutating the cache: LocalStateStore::batch coalesces
         // writes but does not roll back a returned error.
         if let Some(page) = &views.realm_list
@@ -576,52 +710,7 @@ impl LocalStateStore {
                 .as_ref()
                 .is_some_and(|segment| segment.channels.contains(&channel))
         };
-        if let Some(page) = &views.realm_list {
-            let state = &mut self.cached.demand_sync;
-            if state.list_snapshot.as_ref() != Some(&page.snapshot_cursor) {
-                state.list_snapshot = Some(page.snapshot_cursor.clone());
-                state.list_revision = page.snapshot_revision;
-                state.list_seen.clear();
-                state.list_complete = false;
-            }
-            anyhow::ensure!(
-                state.list_revision == page.snapshot_revision,
-                "Realm list snapshot changed revision"
-            );
-            for row in &page.items {
-                state.list_seen.insert(row.realm_id.to_string());
-            }
-            for row in &page.items {
-                self.apply_demand_summary(row)?;
-            }
-            self.cached.demand_sync.list_after = page.next_cursor.clone();
-            self.cached.demand_sync.requested_list_after = None;
-            self.cached.demand_sync.list_complete = page.complete;
-            if page.complete {
-                let stale = self
-                    .cached
-                    .demand_sync
-                    .summaries
-                    .iter()
-                    .filter(|(id, row)| {
-                        row.revision <= page.snapshot_revision
-                            && !self.cached.demand_sync.list_seen.contains(*id)
-                    })
-                    .map(|(id, _)| id.clone())
-                    .collect::<Vec<_>>();
-                for id in stale {
-                    self.remove_demand_summary(&id, page.snapshot_revision);
-                }
-            }
-        }
-        if let Some(changes) = &views.realm_list_changes {
-            for row in &changes.upserts {
-                self.apply_demand_summary(row)?;
-            }
-            for row in &changes.removals {
-                self.remove_demand_summary(row.realm_id.as_str(), row.revision);
-            }
-        }
+        self.apply_realm_list_views(&views)?;
         if let Some(invalidations) = &frame.realm_invalidations {
             for invalidation in invalidations {
                 let state = self
@@ -710,10 +799,13 @@ impl LocalStateStore {
                 ) {
                     return false;
                 }
+                if stale_inbox.contains(&event.event_id) {
+                    return false;
+                }
                 self.cached
                     .demand_sync
                     .account_events
-                    .insert(key.to_owned(), event.clone());
+                    .insert(key.to_owned(), Box::new(event.clone()));
                 true
             });
             if let Some(cas) = &mut data.station_cas {
@@ -975,6 +1067,25 @@ impl LocalStateStore {
                             self.cached.realm_remarks.remove(realm);
                         }
                     }
+                    // Absence is authoritative only after this complete channel
+                    // baseline. Keep runtime approval's local dismiss separate.
+                    let absent_inbox = self
+                        .cached
+                        .notification_client_state
+                        .keys()
+                        .filter_map(|id| {
+                            id.parse::<arkret_wire::NotificationProjectionId>().ok()?;
+                            let key = crate::account_data::notification_inbox_account_data_key(id)
+                                .ok()?;
+                            (!self.cached.demand_sync.account_events.contains_key(&key))
+                                .then(|| id.clone())
+                        })
+                        .collect::<Vec<_>>();
+                    for id in absent_inbox {
+                        if let Some(state) = self.cached.notification_client_state.get_mut(&id) {
+                            state.archived = false;
+                        }
+                    }
                 }
                 Channel::Notifications => {
                     self.cached.notification_projection.retain(|item| {
@@ -1017,8 +1128,9 @@ impl LocalStateStore {
                         .map(|state| {
                             state
                                 .seen
-                                .union(&state.mutated)
-                                .cloned()
+                                .clone()
+                                .union(state.mutated.clone())
+                                .into_iter()
                                 .collect::<BTreeSet<_>>()
                         })
                         .unwrap_or_default();
@@ -1051,30 +1163,10 @@ impl LocalStateStore {
         Ok(())
     }
 
-    fn apply_demand_summary(&mut self, row: &RealmRow) -> anyhow::Result<()> {
+    fn project_demand_summary(&mut self, row: &RealmRow) -> anyhow::Result<()> {
         let id = row.realm_id.to_string();
-        let state = &mut self.cached.demand_sync;
-        if state
-            .summary_removals
-            .get(&id)
-            .is_some_and(|revision| *revision >= row.revision)
-        {
-            return Ok(());
-        }
-        if let Some(previous) = state.summaries.get(&id) {
-            if previous.revision > row.revision {
-                return Ok(());
-            }
-            anyhow::ensure!(
-                previous.revision != row.revision || previous == row,
-                "Realm summary changed at same revision"
-            );
-        }
-        state.summary_removals.remove(&id);
-        state.summaries.insert(id.clone(), row.clone());
         if row.membership != arkret_wire::MembershipState::Join {
-            self.cached.realm_tree_projections.remove(&id);
-            self.cached.realm_collaboration_roles.remove(&id);
+            self.project_demand_removal(&id);
         }
         let projection = self
             .cached
@@ -1098,27 +1190,16 @@ impl LocalStateStore {
         }
         Ok(())
     }
-    fn remove_demand_summary(&mut self, id: &str, revision: u64) {
-        if self
-            .cached
-            .demand_sync
-            .summaries
-            .get(id)
-            .is_some_and(|row| row.revision > revision)
-            || self
-                .cached
-                .demand_sync
-                .summary_removals
-                .get(id)
-                .is_some_and(|previous| *previous > revision)
+    fn project_demand_removal(&mut self, id: &str) {
+        super::realm_tree_snapshot::invalidate_current_view(&self.current_view, id);
+        if let Some(view) = self
+            .realm_security_view
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .as_mut()
         {
-            return;
+            view.states.remove(id);
         }
-        self.cached.demand_sync.summaries.remove(id);
-        self.cached
-            .demand_sync
-            .summary_removals
-            .insert(id.to_owned(), revision);
         self.cached.realm_tree_projections.remove(id);
         self.cached.realm_collaboration_roles.remove(id);
         let detail = self
@@ -1130,6 +1211,144 @@ impl LocalStateStore {
         detail.invalidated = true;
         detail.complete = false;
         detail.invalidated_snapshot = detail.snapshot.clone();
+    }
+}
+
+impl DemandSyncState {
+    pub(super) fn durable_changes(
+        &self,
+        old: &Self,
+        changes: &mut super::account_items::Changes,
+    ) -> anyhow::Result<()> {
+        changes.scalar(
+            vec!["demand_sync".into(), "filter".into()],
+            Some(&old.filter),
+            Some(&self.filter),
+        )?;
+        changes.scalar(
+            vec!["demand_sync".into(), "list_after".into()],
+            Some(&old.list_after),
+            Some(&self.list_after),
+        )?;
+        changes.scalar(
+            vec!["demand_sync".into(), "requested_list_after".into()],
+            Some(&old.requested_list_after),
+            Some(&self.requested_list_after),
+        )?;
+        changes.scalar(
+            vec!["demand_sync".into(), "list_snapshot".into()],
+            Some(&old.list_snapshot),
+            Some(&self.list_snapshot),
+        )?;
+        changes.scalar(
+            vec!["demand_sync".into(), "list_revision".into()],
+            Some(&old.list_revision),
+            Some(&self.list_revision),
+        )?;
+        changes.scalar(
+            vec!["demand_sync".into(), "list_complete".into()],
+            Some(&old.list_complete),
+            Some(&self.list_complete),
+        )?;
+        changes.set(
+            vec!["demand_sync".into(), "list_seen".into()],
+            &old.list_seen,
+            &self.list_seen,
+        )?;
+        changes.map(
+            vec!["demand_sync".into(), "summaries".into()],
+            Some(&old.summaries),
+            Some(&self.summaries),
+            |changes, p, a, b| {
+                changes.scalar(p, a, b)?;
+                Ok(())
+            },
+        )?;
+        changes.map(
+            vec!["demand_sync".into(), "summary_removals".into()],
+            Some(&old.summary_removals),
+            Some(&self.summary_removals),
+            |changes, p, a, b| {
+                changes.scalar(p, a, b)?;
+                Ok(())
+            },
+        )?;
+        changes.scalar(
+            vec!["demand_sync".into(), "global_snapshot".into()],
+            Some(&old.global_snapshot),
+            Some(&self.global_snapshot),
+        )?;
+        changes.map(
+            vec!["demand_sync".into(), "channels".into()],
+            Some(&old.channels),
+            Some(&self.channels),
+            |changes, p, a, b| {
+                let mut seen = p.clone();
+                seen.push("seen".into());
+                changes.set_optional(seen, a.map(|s| &s.seen), b.map(|s| &s.seen))?;
+                let mut mutated = p.clone();
+                mutated.push("mutated".into());
+                changes.set_optional(mutated, a.map(|s| &s.mutated), b.map(|s| &s.mutated))?;
+                let mut complete = p;
+                complete.push("complete".into());
+                changes.scalar(complete, a.map(|s| &s.complete), b.map(|s| &s.complete))?;
+                Ok(())
+            },
+        )?;
+        changes.map(
+            vec!["demand_sync".into(), "account_events".into()],
+            Some(&old.account_events),
+            Some(&self.account_events),
+            |changes, p, a, b| {
+                changes.scalar(p, a, b)?;
+                Ok(())
+            },
+        )?;
+        changes.set(
+            vec!["demand_sync".into(), "device_ids".into()],
+            &old.device_ids,
+            &self.device_ids,
+        )?;
+        changes.map(
+            vec!["demand_sync".into(), "agent_draft_pending_intents".into()],
+            Some(&old.agent_draft_pending_intents),
+            Some(&self.agent_draft_pending_intents),
+            |changes, p, a, b| {
+                changes.scalar(p, a, b)?;
+                Ok(())
+            },
+        )?;
+        changes.scalar(
+            vec![
+                "demand_sync".into(),
+                "agent_draft_pending_projection_position".into(),
+            ],
+            Some(&old.agent_draft_pending_projection_position),
+            Some(&self.agent_draft_pending_projection_position),
+        )?;
+        changes.scalar(
+            vec![
+                "demand_sync".into(),
+                "agent_draft_pending_delta_fingerprint".into(),
+            ],
+            Some(&old.agent_draft_pending_delta_fingerprint),
+            Some(&self.agent_draft_pending_delta_fingerprint),
+        )?;
+        changes.scalar(
+            vec!["demand_sync".into(), "agent_draft_pending_baseline".into()],
+            Some(&old.agent_draft_pending_baseline),
+            Some(&self.agent_draft_pending_baseline),
+        )?;
+        changes.map(
+            vec!["demand_sync".into(), "details".into()],
+            Some(&old.details),
+            Some(&self.details),
+            |changes, p, a, b| {
+                changes.scalar(p, a, b)?;
+                Ok(())
+            },
+        )?;
+        Ok(())
     }
 }
 
@@ -1168,6 +1387,241 @@ mod tests {
                     .unwrap()
                     .as_nanos()
             )))
+    }
+    fn inbox_fixture() -> (arkret_sdk::AccountId, String, String) {
+        use base64::Engine as _;
+        let authority = crate::test_support::authority(&format!(
+            "ak:did_core:web:inbox-{}.example",
+            crate::operation::uuid_v7()
+        ));
+        let secret = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([39; 32]);
+        let secure = crate::secure_key_store::default_secure_key_store("inkson");
+        crate::mls::runtime::store_account_mls_secret(secure.as_ref(), &authority, &secret)
+            .unwrap();
+        let id = arkret_sdk::derive_notification_projection_id(
+            &authority,
+            &REALM.parse().unwrap(),
+            &EVENT.parse().unwrap(),
+            arkret_sdk::OrdinaryNotificationKind::Message,
+        )
+        .unwrap()
+        .to_string();
+        let key = crate::account_data::notification_inbox_account_data_key(&id).unwrap();
+        (authority, id, key)
+    }
+    fn inbox_event(
+        authority: &arkret_sdk::AccountId,
+        key: &str,
+        revision: u64,
+        deleted: bool,
+    ) -> Event {
+        let mut payload = json!({"key":key,"expected_server_revision":revision-1});
+        if deleted {
+            payload["tombstone"] = json!(true);
+        } else {
+            let id = arkret_sdk::notification_inbox_account_data_key_notification_id(key).unwrap();
+            let value = crate::account_data::notification_inbox_value(
+                id.as_str(),
+                arkret_sdk::NotificationInboxState::Archived,
+                "01970e589d21-0001-a13f9c2e",
+                "ak:device:01904100-0000-7000-8000-000000000001",
+            )
+            .unwrap();
+            payload["encrypted_payload"] = crate::account_data::encrypt_account_data_value(
+                authority,
+                key,
+                &serde_json::to_value(value).unwrap(),
+            )
+            .unwrap();
+        }
+        arkret_wire::test_support::raw_event_for_actor_at(
+            "ak.account_data.set",
+            arkret_wire::ScopeRef::Realm {
+                realm_id: REALM.parse().unwrap(),
+            },
+            arkret_sdk::ActorId::account(authority.clone()),
+            payload,
+            "2026-10-19T00:00:00.000Z".parse().unwrap(),
+        )
+        .unwrap()
+    }
+    fn apply_inbox_frame(
+        store: &mut LocalStateStore,
+        authority: &arkret_sdk::AccountId,
+        input: Value,
+    ) -> anyhow::Result<AccountSubscribeFrame> {
+        let incoming = frame(input);
+        let accepted = store.prepare_account_demand_frame(&incoming)?;
+        if let Some(data) = &accepted.account_data {
+            crate::sync_engine::apply_account_data_entries(store, &data.events, authority)?;
+        }
+        store.finish_account_demand_frame(&accepted)?;
+        store.flush()?;
+        Ok(accepted)
+    }
+    #[inline(never)]
+    fn inbox_store() -> Box<LocalStateStore> {
+        Box::new(store())
+    }
+    #[inline(never)]
+    fn inbox_flags(device: &LocalStateStore, id: &str) -> (bool, bool) {
+        let state = device.load();
+        let disposition = &state.notification_client_state[id];
+        (disposition.read, disposition.archived)
+    }
+    fn inbox_baseline(complete: bool) -> Value {
+        json!({"kind":"delta","cursor":"ak:cursor:YQ","baseline":{"snapshot_cursor":"ak:cursor:cw","channels":["account_data_events"],"completed_channels":if complete {json!(["account_data_events"])} else {json!([])}},"account_data":{"events":[]}})
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn notification_inbox_delete_recovers_two_devices_and_cold_restart_without_changing_read() {
+        let (authority, id, key) = inbox_fixture();
+        let archive = inbox_event(&authority, &key, 1, false);
+        let deletion = inbox_event(&authority, &key, 2, true);
+        let mut first = inbox_store();
+        let mut second = inbox_store();
+        let second_path = second.path.clone();
+        for device in [&mut first, &mut second] {
+            device.set_notification_read(id.clone(), true);
+            apply_inbox_frame(
+                device,
+                &authority,
+                json!({"kind":"delta","cursor":"ak:cursor:YQ","account_data":{"events":[archive]}}),
+            )
+            .unwrap();
+            assert!(inbox_flags(device, &id).1);
+        }
+        assert!(
+            first
+                .apply_confirmed_notification_inbox_delete(&authority, &deletion)
+                .unwrap()
+        );
+        apply_inbox_frame(
+            &mut second,
+            &authority,
+            json!({"kind":"delta","cursor":"ak:cursor:Yg","account_data":{"events":[deletion]}}),
+        )
+        .unwrap();
+        drop(second);
+        let second = Box::new(LocalStateStore::with_path(second_path));
+        for device in [&first, &second] {
+            let state = device.load();
+            assert!(!state.notification_client_state[&id].archived);
+            assert!(state.notification_client_state[&id].read);
+            assert!(
+                state.notification_projection.is_empty(),
+                "an inbox deletion cannot recreate content"
+            );
+            assert_eq!(
+                device.current_account_data_events()[0].event_id,
+                deletion.event_id
+            );
+        }
+    }
+    #[test]
+    fn notification_inbox_old_archive_cannot_replace_delete_but_new_archive_can() {
+        let (authority, id, key) = inbox_fixture();
+        let mut device = inbox_store();
+        let deletion = inbox_event(&authority, &key, 2, true);
+        device
+            .apply_confirmed_notification_inbox_delete(&authority, &deletion)
+            .unwrap();
+        let old = inbox_event(&authority, &key, 1, false);
+        let accepted = apply_inbox_frame(
+            &mut device,
+            &authority,
+            json!({"kind":"delta","cursor":"ak:cursor:YQ","account_data":{"events":[old]}}),
+        )
+        .unwrap();
+        assert!(accepted.account_data.unwrap().events.is_empty());
+        assert!(!inbox_flags(&device, &id).1);
+        let new = inbox_event(&authority, &key, 3, false);
+        apply_inbox_frame(
+            &mut device,
+            &authority,
+            json!({"kind":"delta","cursor":"ak:cursor:Yg","account_data":{"events":[new]}}),
+        )
+        .unwrap();
+        assert!(inbox_flags(&device, &id).1);
+        assert!(
+            !device
+                .apply_confirmed_notification_inbox_delete(&authority, &deletion)
+                .unwrap()
+        );
+        assert!(inbox_flags(&device, &id).1);
+    }
+    #[test]
+    fn notification_inbox_baseline_absence_only_clears_on_completion() {
+        let (authority, id, key) = inbox_fixture();
+        let mut device = inbox_store();
+        device.set_notification_read(id.clone(), true);
+        device
+            .apply_notification_inbox_event(&authority, &inbox_event(&authority, &key, 1, false))
+            .unwrap();
+        let approval = "ak:notification:01904100-0000-7000-8000-848727f328fe";
+        device.set_notification_archived(approval, true);
+        apply_inbox_frame(&mut device, &authority, inbox_baseline(false)).unwrap();
+        assert!(inbox_flags(&device, &id).1);
+        apply_inbox_frame(&mut device, &authority, inbox_baseline(true)).unwrap();
+        assert_eq!(inbox_flags(&device, &id), (true, false));
+        assert!(inbox_flags(&device, approval).1);
+    }
+    #[test]
+    fn notification_inbox_live_delete_survives_inflight_baseline() {
+        let (authority, _, key) = inbox_fixture();
+        let mut another = inbox_store();
+        apply_inbox_frame(&mut another, &authority, inbox_baseline(false)).unwrap();
+        let deletion = inbox_event(&authority, &key, 2, true);
+        another
+            .apply_confirmed_notification_inbox_delete(&authority, &deletion)
+            .unwrap();
+        apply_inbox_frame(&mut another, &authority, inbox_baseline(true)).unwrap();
+        assert_eq!(
+            another.current_account_data_events()[0].event_id,
+            deletion.event_id
+        );
+    }
+    #[test]
+    fn notification_inbox_foreign_corrupt_and_same_revision_updates_do_not_unhide() {
+        let (authority, id, key) = inbox_fixture();
+        let mut device = inbox_store();
+        let archive = inbox_event(&authority, &key, 1, false);
+        device
+            .apply_notification_inbox_event(&authority, &archive)
+            .unwrap();
+        let other = crate::test_support::authority("ak:did_core:web:other-inbox.example");
+        assert!(
+            device
+                .apply_confirmed_notification_inbox_delete(
+                    &other,
+                    &inbox_event(&authority, &key, 2, true)
+                )
+                .is_err()
+        );
+        let mut corrupt = inbox_event(&authority, &key, 2, false);
+        corrupt
+            .payload
+            .insert("encrypted_payload".into(), json!({"ciphertext":"invalid"}));
+        assert!(
+            device
+                .apply_notification_inbox_event(&authority, &corrupt)
+                .is_err()
+        );
+        let conflict = inbox_event(&authority, &key, 1, true);
+        let before = device.current_account_data_events();
+        assert!(
+            apply_inbox_frame(
+                &mut device,
+                &authority,
+                json!({"kind":"delta","cursor":"ak:cursor:YQ","account_data":{"events":[conflict]}})
+            )
+            .is_err()
+        );
+        assert_eq!(
+            device.current_account_data_events()[0].event_id,
+            before[0].event_id
+        );
+        assert!(inbox_flags(&device, &id).1);
     }
     fn apply(store: &mut LocalStateStore, frame: &AccountSubscribeFrame) -> AccountSubscribeFrame {
         let accepted = store.prepare_account_demand_frame(frame).unwrap();
@@ -1440,7 +1894,7 @@ mod tests {
                 "kind":"delta",
                 "cursor":"ak:cursor:other-carriers",
                 "notifications":{"items":[]},
-                "to_device":{"messages":[]}
+                "to_device":{"deliveries":[]}
             })),
         );
         assert!(store.agent_draft_pending_intents().is_empty());
@@ -1489,19 +1943,19 @@ mod tests {
         apply(
             &mut store,
             &frame(
-                json!({"kind":"delta","cursor":"ak:cursor:YQ","baseline":{"snapshot_cursor":"ak:cursor:cw","channels":["station_cas"],"completed_channels":[]},"account_data":{"station_cas":{"upserts":[],"removals":[]}}}),
+                json!({"kind":"delta","cursor":"ak:cursor:YQ","baseline":{"snapshot_cursor":"ak:cursor:cw","channels":["station_cas"],"completed_channels":[]},"account_data":{"events":[],"station_cas":{"upserts":[],"removals":[]}}}),
             ),
         );
         apply(
             &mut store,
             &frame(
-                json!({"kind":"delta","cursor":"ak:cursor:Yg","account_data":{"station_cas":{"upserts":[row(8,"new")],"removals":[]}}}),
+                json!({"kind":"delta","cursor":"ak:cursor:Yg","account_data":{"events":[],"station_cas":{"upserts":[row(8,"new")],"removals":[]}}}),
             ),
         );
         let accepted = apply(
             &mut store,
             &frame(
-                json!({"kind":"delta","cursor":"ak:cursor:Yw","baseline":{"snapshot_cursor":"ak:cursor:cw","channels":["station_cas"],"completed_channels":["station_cas"]},"account_data":{"station_cas":{"upserts":[row(7,"old")],"removals":[]}}}),
+                json!({"kind":"delta","cursor":"ak:cursor:Yw","baseline":{"snapshot_cursor":"ak:cursor:cw","channels":["station_cas"],"completed_channels":["station_cas"]},"account_data":{"events":[],"station_cas":{"upserts":[row(7,"old")],"removals":[]}}}),
             ),
         );
         assert!(
@@ -1521,7 +1975,7 @@ mod tests {
     /// Install a product view carrying the Realm's required current values.
     fn install_ready_view(store: &mut LocalStateStore) {
         let row = |selector: arkret_wire::CurrentSelector, value: Value| {
-            serde_json::from_value::<arkret_wire::TypedCurrentRow>(json!({
+            serde_json::from_value::<arkret_wire::CurrentState>(json!({
                 "selector": selector,
                 "source_stream_ref": {"kind":"realm","realm_id":REALM},
                 "revision": {

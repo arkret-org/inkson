@@ -37,7 +37,7 @@ fn value_is_mls_envelope_detects_encrypted_patch_values() {
         "ciphertext": "AAAA",
         "content_type": KANBAN_STRAND_PATCH_VALUE_CONTENT_TYPE,
         "group_id": "g",
-        "epoch": 0,
+        "epoch": "0",
     })));
     // Minimal envelope detected via ciphertext + content_type.
     assert!(value_is_mls_envelope(&json!({
@@ -87,7 +87,7 @@ fn private_strand_display_text_blanks_undecryptable_envelope() {
         "ciphertext": "AAAA",
         "content_type": KANBAN_STRAND_PATCH_VALUE_CONTENT_TYPE,
         "group_id": "g",
-        "epoch": 0,
+        "epoch": "0",
     });
     // Envelope + no ctx must render blank rather than leaking the raw
     // envelope JSON through strand_body_display_text.

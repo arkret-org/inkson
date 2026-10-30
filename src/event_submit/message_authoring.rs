@@ -26,7 +26,6 @@ use super::*;
 /// can change it, and no retry it makes can consume another MLS sender
 /// counter.
 pub(crate) struct MessageAuthoringPlan {
-    realm_id: arkret_sdk::RealmId,
     scope: arkret_sdk::ScopeRef,
     actor_id: arkret_sdk::ActorId,
     intent: MessageAuthoringIntent,
@@ -99,7 +98,6 @@ impl EventSubmitter {
             return Err(failure("the message scope belongs to another Realm"));
         }
         Ok(MessageAuthoringPlan {
-            realm_id,
             scope,
             actor_id: arkret_sdk::ActorId::account(account),
             intent,
@@ -113,11 +111,11 @@ impl EventSubmitter {
         attempt: &MessageSendAttempt,
     ) -> std::result::Result<QueuedSubmission, MessageAuthoringFailure> {
         let plan = &attempt.session;
-        let operation = crate::operation::TypedOperationBuilder::new::<
+        let operation = crate::operation::TypedOperationBuilder::new_for_actor::<
             arkret_sdk::event_spec::MessageCreate,
         >(
-            plan.realm_id.as_str(),
-            plan.actor_id.signing_principal_id().as_str(),
+            plan.scope.clone(),
+            plan.actor_id.clone(),
             plan.intent.payload(),
         )
         .target_ref(plan.intent.strand_id.as_str())
@@ -126,9 +124,6 @@ impl EventSubmitter {
         .with_local_operation_id(crate::operation::LocalOperationId::from_holder_key(
             attempt.local_operation_id.clone(),
         ));
-        let operation = operation
-            .with_effective_scope(plan.scope.clone())
-            .map_err(failure)?;
         let event_intent = operation.intent().clone().with_created_at(plan.created_at);
         self.ensure_recovery_material_ready(&event_intent)
             .await
@@ -155,7 +150,7 @@ impl EventSubmitter {
         &self,
         submission: QueuedSubmission,
         local_operation_id: &str,
-    ) -> std::result::Result<SubmitEventResult, MessageAuthoringFailure> {
+    ) -> std::result::Result<EventSubmissionProgress, MessageAuthoringFailure> {
         let write = QueuedWrite {
             lane: OutboundLane::Standard,
             submission,
@@ -189,7 +184,7 @@ impl EventSubmitter {
         tracing::warn!(stage = "settled", "ordinary message outbound stage");
         match item.rejection_reason_code() {
             Some(reason_code) => Err(garth::classify_authority_rejection(reason_code)),
-            None => Ok(SubmitEventResult::from(&item)),
+            None => Ok(EventSubmissionProgress::from(&item)),
         }
     }
 }
@@ -220,7 +215,7 @@ pub(crate) fn message_attempt_may_retry(failure: &MessageAuthoringFailure) -> bo
 pub(crate) async fn drive_message_send(
     submitter: &EventSubmitter,
     attempt: MessageSendAttempt,
-) -> std::result::Result<SubmitEventResult, MessageAuthoringFailure> {
+) -> std::result::Result<EventSubmissionProgress, MessageAuthoringFailure> {
     #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
     tracing::warn!(stage = "freezing", "ordinary message pre-submit stage");
     let submission = submitter.freeze_authored_message(&attempt).await?;
@@ -235,11 +230,11 @@ pub(crate) async fn drive_message_send(
 pub(crate) async fn retry_frozen_message<F, Fut>(
     submission: QueuedSubmission,
     mut send: F,
-) -> std::result::Result<SubmitEventResult, MessageAuthoringFailure>
+) -> std::result::Result<EventSubmissionProgress, MessageAuthoringFailure>
 where
     F: FnMut(QueuedSubmission) -> Fut,
     Fut: std::future::Future<
-            Output = std::result::Result<SubmitEventResult, MessageAuthoringFailure>,
+            Output = std::result::Result<EventSubmissionProgress, MessageAuthoringFailure>,
         >,
 {
     const MAX_RETRIES: usize = 1;
@@ -306,7 +301,7 @@ mod tests {
             "ak:device:01904100-0000-7000-8000-000000000001",
         );
         let mut signs = 0;
-        sign_event_through_message_seam(&mut event, |unsigned| {
+        sign_finalized_event(&mut event, |unsigned| {
             signs += 1;
             signer
                 .sign_sdk_event_with_context(
@@ -330,7 +325,9 @@ mod tests {
                     detail: "response lost".to_owned(),
                 })
             } else {
-                Ok(SubmitEventResult::queued(submission.event_id.to_string()))
+                Ok(EventSubmissionProgress::queued(
+                    submission.event_id.to_string(),
+                ))
             };
             std::future::ready(answer)
         })

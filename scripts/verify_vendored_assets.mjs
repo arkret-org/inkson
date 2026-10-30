@@ -7,7 +7,7 @@ const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const manifestPath = resolve(repositoryRoot, "assets/vendor/manifest.json");
 const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
 
-if (manifest.schema !== "inkson.vendored-assets.v1" || !Array.isArray(manifest.assets)) {
+if (!Array.isArray(manifest.assets)) {
   throw new Error("invalid vendored asset manifest");
 }
 

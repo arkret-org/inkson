@@ -29,7 +29,7 @@ fn accepted_commit() -> arkret_wire::RealmCommit {
             .unwrap(),
             signed_digest: arkret_wire::Hash::new(format!("sha256:{}", "a".repeat(64))).unwrap(),
             created_at: chrono::Utc.with_ymd_and_hms(2026, 9, 22, 0, 0, 0).unwrap(),
-            sig: arkret_wire::Base64UrlString::new("AA".to_owned()).unwrap(),
+            signature: arkret_wire::Base64UrlString::new("AA".to_owned()).unwrap(),
         },
     }
 }
@@ -37,13 +37,13 @@ fn accepted_commit() -> arkret_wire::RealmCommit {
 #[test]
 fn authority_submit_outcome_preserves_accepted_commit_or_typed_rejection() {
     let commit = accepted_commit();
-    let accepted = arkret_wire::AuthoritySubmitOutcome::Accepted {
+    let accepted = arkret_wire::AuthoritySubmitResponseBody::Accepted {
         status: arkret_wire::AuthorityCommitStatus::Committed,
         commit: commit.clone(),
     };
     assert_eq!(ensure_authority_accepted(accepted).unwrap(), commit);
 
-    let rejected = arkret_wire::AuthoritySubmitOutcome::Rejected {
+    let rejected = arkret_wire::AuthoritySubmitResponseBody::Rejected {
         status: arkret_wire::AuthorityRejectionStatus::Rejected,
         reason_code: "permission_denied".to_owned(),
     };

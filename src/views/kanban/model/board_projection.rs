@@ -1,7 +1,7 @@
 //! Kanban presentation and pending local-operation overlays.
 //!
 //! Complete object content and its authority-signed revision come from the
-//! Realm snapshot's typed current result for each Strand. The projection rows
+//! Realm snapshot's current state for each Strand. The projection rows
 //! and the folded Event stream supply placement, lifecycle and audit context;
 //! they are never a substitute for that current result. The production caller
 //! installs current before applying pending UI overlays.
@@ -389,6 +389,14 @@ pub(crate) fn strand_views_from_projection_and_ops(
     ops: &[RawOperationRecord],
 ) -> Vec<crate::state::projection_views::StrandProjectionView> {
     let aliases = event_derived_target_aliases(ops);
+    strand_views_with_aliases(projected, ops, &aliases)
+}
+
+fn strand_views_with_aliases(
+    projected: &[crate::state::projection_views::StrandProjectionView],
+    ops: &[RawOperationRecord],
+    aliases: &BTreeMap<String, String>,
+) -> Vec<crate::state::projection_views::StrandProjectionView> {
     // Preserve first-seen (create) order for stable output; placement/sort is
     // applied by `columns_from_lifecycle_projection`.
     let mut order = projected
@@ -411,7 +419,7 @@ pub(crate) fn strand_views_from_projection_and_ops(
         match kind.as_str() {
             event_kind_str::STRAND_CREATE => {
                 if let Some(mut view) = strand_view_from_create_op(record) {
-                    view.strand_id = resolve_event_derived_target_alias(&aliases, &view.strand_id);
+                    view.strand_id = resolve_event_derived_target_alias(aliases, &view.strand_id);
                     if let Some(current) = by_id.get_mut(&view.strand_id) {
                         // The endpoint row is the authoritative current
                         // structural/metadata view. It intentionally omits
@@ -443,39 +451,39 @@ pub(crate) fn strand_views_from_projection_and_ops(
             }
             event_kind_str::STRAND_MOVE => {
                 if let Some(id) = op_strand_target_id(record)
-                    .map(|id| resolve_event_derived_target_alias(&aliases, &id))
+                    .map(|id| resolve_event_derived_target_alias(aliases, &id))
                     && let Some(view) = by_id.get_mut(&id)
                 {
                     apply_move_to_view(view, record);
                     view.board_space_id = view
                         .board_space_id
                         .as_deref()
-                        .map(|id| resolve_event_derived_target_alias(&aliases, id));
+                        .map(|id| resolve_event_derived_target_alias(aliases, id));
                     view.list_space_id = view
                         .list_space_id
                         .as_deref()
-                        .map(|id| resolve_event_derived_target_alias(&aliases, id));
+                        .map(|id| resolve_event_derived_target_alias(aliases, id));
                 }
             }
             event_kind_str::STRAND_REORDER => {
                 if let Some(id) = op_strand_target_id(record)
-                    .map(|id| resolve_event_derived_target_alias(&aliases, &id))
+                    .map(|id| resolve_event_derived_target_alias(aliases, &id))
                     && let Some(view) = by_id.get_mut(&id)
                 {
                     apply_reorder_to_view(view, record);
                     view.board_space_id = view
                         .board_space_id
                         .as_deref()
-                        .map(|id| resolve_event_derived_target_alias(&aliases, id));
+                        .map(|id| resolve_event_derived_target_alias(aliases, id));
                     view.list_space_id = view
                         .list_space_id
                         .as_deref()
-                        .map(|id| resolve_event_derived_target_alias(&aliases, id));
+                        .map(|id| resolve_event_derived_target_alias(aliases, id));
                 }
             }
             event_kind_str::STRAND_ARCHIVE => {
                 if let Some(id) = op_strand_target_id(record)
-                    .map(|id| resolve_event_derived_target_alias(&aliases, &id))
+                    .map(|id| resolve_event_derived_target_alias(aliases, &id))
                     && let Some(view) = by_id.get_mut(&id)
                 {
                     view.state = arkret_sdk::ObjectState::Archived;
@@ -483,7 +491,7 @@ pub(crate) fn strand_views_from_projection_and_ops(
             }
             event_kind_str::STRAND_RESTORE => {
                 if let Some(id) = op_strand_target_id(record)
-                    .map(|id| resolve_event_derived_target_alias(&aliases, &id))
+                    .map(|id| resolve_event_derived_target_alias(aliases, &id))
                     && let Some(view) = by_id.get_mut(&id)
                 {
                     view.state = arkret_sdk::ObjectState::Active;
@@ -491,7 +499,7 @@ pub(crate) fn strand_views_from_projection_and_ops(
             }
             event_kind_str::STRAND_UPDATE => {
                 if let Some(id) = op_strand_target_id(record)
-                    .map(|id| resolve_event_derived_target_alias(&aliases, &id))
+                    .map(|id| resolve_event_derived_target_alias(aliases, &id))
                     && let Some(view) = by_id.get_mut(&id)
                     && op_body(record)
                         .and_then(|body| body.get("patch"))
@@ -504,7 +512,7 @@ pub(crate) fn strand_views_from_projection_and_ops(
             event_kind_str::RSVP_SET => {
                 if let Some(id) = op_body(record)
                     .and_then(|body| json_path_string(Some(body), &["event_ref"]))
-                    .map(|id| resolve_event_derived_target_alias(&aliases, &id))
+                    .map(|id| resolve_event_derived_target_alias(aliases, &id))
                     && let Some(view) = by_id.get_mut(&id)
                 {
                     apply_rsvp_set_to_view(view, record);
@@ -538,7 +546,7 @@ pub(crate) fn space_container_views_from_projection_and_ops(
     projected: &[crate::state::projection_views::SpaceContainerProjectionView],
     ops: &[RawOperationRecord],
     realm_id: &str,
-    current_entries: &[arkret_wire::TypedCurrentRow],
+    current_entries: &[arkret_wire::CurrentState],
 ) -> Vec<crate::state::projection_views::SpaceContainerProjectionView> {
     let terminal_ids = terminal_space_ids_from_current(current_entries, realm_id);
     let aliases = event_derived_target_aliases(ops);
@@ -699,6 +707,7 @@ pub(crate) fn project_board_with_projection(
     )
 }
 
+#[cfg(test)]
 pub(crate) fn project_board_with_projection_for_actor(
     ops: &[RawOperationRecord],
     projected_containers: &[crate::state::projection_views::SpaceContainerProjectionView],
@@ -707,7 +716,31 @@ pub(crate) fn project_board_with_projection_for_actor(
     realm_id: &str,
     decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
     self_actor_id: &str,
-    current_entries: &[arkret_wire::TypedCurrentRow],
+    current_entries: &[arkret_wire::CurrentState],
+) -> (Vec<KanbanColumn>, Vec<BoardSpaceOption>, Option<String>) {
+    project_board_with_current_inventory_for_actor(
+        ops,
+        projected_containers,
+        projected_strands,
+        preferred_board_id,
+        realm_id,
+        decrypt_ctx,
+        self_actor_id,
+        current_entries,
+        false,
+    )
+}
+
+pub(crate) fn project_board_with_current_inventory_for_actor(
+    ops: &[RawOperationRecord],
+    projected_containers: &[crate::state::projection_views::SpaceContainerProjectionView],
+    projected_strands: &[crate::state::projection_views::StrandProjectionView],
+    preferred_board_id: &str,
+    realm_id: &str,
+    decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
+    self_actor_id: &str,
+    current_entries: &[arkret_wire::CurrentState],
+    complete_current: bool,
 ) -> (Vec<KanbanColumn>, Vec<BoardSpaceOption>, Option<String>) {
     let aliases = event_derived_target_aliases(ops);
     let preferred_board_id = resolve_event_derived_target_alias(&aliases, preferred_board_id);
@@ -717,6 +750,19 @@ pub(crate) fn project_board_with_projection_for_actor(
         realm_id,
         current_entries,
     );
+    if complete_current {
+        let mut visible = projected_containers
+            .iter()
+            .map(|view| view.space_id.clone())
+            .collect::<BTreeSet<_>>();
+        visible.extend(
+            ops.iter()
+                .filter(|record| kanban_operation_is_pending(record))
+                .filter_map(local_space_create_from_raw_operation)
+                .map(|local| resolve_event_derived_target_alias(&aliases, &local.id)),
+        );
+        containers.retain(|view| visible.contains(&view.space_id));
+    }
     if let Some(ctx) = decrypt_ctx
         && let Some((account, device)) = ctx.identity
         && let Ok(device) = arkret_sdk::DeviceId::new(device.to_owned())
@@ -733,7 +779,64 @@ pub(crate) fn project_board_with_projection_for_actor(
             }
         }
     }
-    let strands = strand_views_from_projection_and_ops(projected_strands, ops);
+    let pending: Cow<'_, [RawOperationRecord]> = if complete_current {
+        Cow::Owned(kanban_pending_operations(ops))
+    } else {
+        Cow::Borrowed(ops)
+    };
+    // RSVP history retains its authenticated source Event identity. Current
+    // object inventory never comes from replaying historical creates/moves.
+    let structural: Cow<'_, [RawOperationRecord]> = if complete_current {
+        Cow::Owned(
+            ops.iter()
+                .filter(|record| {
+                    kanban_operation_is_pending(record)
+                        || raw_operation_kind_matches(&record.payload, event_kind_str::RSVP_SET)
+                })
+                .cloned()
+                .collect(),
+        )
+    } else {
+        Cow::Borrowed(ops)
+    };
+    let mut strands = strand_views_with_aliases(projected_strands, &structural, &aliases);
+    // A current-only lifecycle change must render without a projection-list
+    // fetch or a historical Event. Local pending writes are overlaid below.
+    for view in &mut strands {
+        if let Ok(id) = arkret_sdk::StrandId::new(view.strand_id.clone())
+            && let Some(current) = current_strand_value(current_entries, &id)
+            && current.realm_id.as_str() == realm_id
+        {
+            view.state = current.state.unwrap_or(arkret_sdk::ObjectState::Active);
+        }
+    }
+    let indexes = strands
+        .iter()
+        .enumerate()
+        .map(|(index, view)| (view.strand_id.clone(), index))
+        .collect::<BTreeMap<_, _>>();
+    for record in ordered_operations(ops) {
+        if !matches!(
+            record.payload.get("write_state").and_then(Value::as_str),
+            Some(
+                "queued" | "submitting" | "forwarding" | "submitted" | "pending" | "pending_commit"
+            )
+        ) {
+            continue;
+        }
+        let Some(index) = op_strand_target_id(record)
+            .map(|id| resolve_event_derived_target_alias(&aliases, &id))
+            .and_then(|id| indexes.get(&id))
+        else {
+            continue;
+        };
+        let view = &mut strands[*index];
+        match op_kind(record).as_deref() {
+            Some(event_kind_str::STRAND_ARCHIVE) => view.state = arkret_sdk::ObjectState::Archived,
+            Some(event_kind_str::STRAND_RESTORE) => view.state = arkret_sdk::ObjectState::Active,
+            _ => {}
+        }
+    }
     let (columns, board_options, board_id) = columns_from_lifecycle_projection_for_actor(
         &containers,
         &strands,
@@ -748,14 +851,17 @@ pub(crate) fn project_board_with_projection_for_actor(
     // overlay reads the write's holder-local `effect` — see
     // [`local_card_create_from_raw_operation`] — never a placement smuggled
     // into the create payload.
-    let columns =
-        overlay_local_card_create_records(columns, ops, board_id.as_deref().unwrap_or_default());
-    let columns = overlay_local_card_update_records(columns, ops, decrypt_ctx);
-    let columns = overlay_local_card_assignment_records(columns, ops);
+    let columns = overlay_local_card_create_records(
+        columns,
+        &pending,
+        board_id.as_deref().unwrap_or_default(),
+    );
+    let columns = overlay_local_card_update_records(columns, &pending, decrypt_ctx);
+    let columns = overlay_local_card_assignment_records(columns, &pending);
     (columns, board_options, board_id)
 }
 
-/// Readiness of the Station's typed current result for one Strand.
+/// Readiness of the Station's current state for one Strand.
 ///
 /// The snapshot carries the whole Strand object under
 /// `CurrentSelector::Strand`, signed at an exact `RealmCommit` revision, so
@@ -773,19 +879,19 @@ pub(crate) enum StrandCurrentBasis {
 }
 
 pub(crate) fn strand_current_basis(
-    entries: &[arkret_wire::TypedCurrentRow],
+    entries: &[arkret_wire::CurrentState],
     strand_id: &arkret_sdk::StrandId,
 ) -> StrandCurrentBasis {
     let selector = arkret_wire::CurrentSelector::Strand {
         strand_id: strand_id.clone(),
     };
     let mut matching = entries.iter().filter(|entry| {
-        let arkret_wire::TypedCurrentRow::Value {
+        let arkret_wire::CurrentState::Value {
             selector: found, ..
         } = entry;
         *found == selector
     });
-    let Some(arkret_wire::TypedCurrentRow::Value { revision, .. }) = matching.next() else {
+    let Some(arkret_wire::CurrentState::Value { revision, .. }) = matching.next() else {
         return StrandCurrentBasis::Missing;
     };
     if matching.next().is_some() {
@@ -809,7 +915,7 @@ fn clear_unavailable_card_content(card: &mut KanbanCard) {
     card.state = CardState::Quarantined;
 }
 
-/// The Strand ids whose typed current result the board should demand, bounded
+/// The Strand ids whose current state the board should demand, bounded
 /// to the protocol's per-request target budget.
 pub(crate) fn card_current_page(
     columns: &[KanbanColumn],
@@ -848,7 +954,7 @@ pub(crate) fn card_current_page(
 /// this card was folded from; they are not re-derived here.
 pub(crate) fn install_current_card_sources(
     columns: &mut [KanbanColumn],
-    entries: &[arkret_wire::TypedCurrentRow],
+    entries: &[arkret_wire::CurrentState],
     projected: &[crate::state::projection_views::StrandProjectionView],
     operations: &[RawOperationRecord],
     decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
@@ -898,7 +1004,7 @@ pub(crate) fn install_current_card_sources(
                 let (account, device) = ctx.identity?;
                 let device = arkret_sdk::DeviceId::new(device.to_owned()).ok()?;
                 let envelope = strand.encrypted_metadata.as_ref()?;
-                let value = crate::views::metadata::open_metadata(
+                let value = crate::identity::metadata::open_metadata(
                     ctx.state_store,
                     ctx.realm_id,
                     &card.id,
@@ -935,13 +1041,13 @@ pub(crate) fn install_current_card_sources(
             view.rsvps = card.calendar_rsvp_cells.clone();
             view.schedule_revision_source = decrypt_ctx.and_then(|ctx| {
                 let source_stream = entries.iter().find_map(|entry| {
-                    let arkret_sdk::TypedCurrentRow::Value { selector, source_stream_ref, .. } = entry;
+                    let arkret_sdk::CurrentState::Value { selector, source_stream_ref, .. } = entry;
                     matches!(selector, arkret_sdk::CurrentSelector::Strand { strand_id: id } if id == &strand_id)
                         .then_some(source_stream_ref)
                 })?;
                 let _ = ctx;
                 let mut sources = entries.iter().filter_map(|entry| {
-                    let arkret_sdk::TypedCurrentRow::Value { selector, source_stream_ref, revision: paired_revision, value } = entry;
+                    let arkret_sdk::CurrentState::Value { selector, source_stream_ref, revision: paired_revision, value } = entry;
                     matches!(selector, arkret_sdk::CurrentSelector::CalendarScheduleSource { strand_id: id } if id == &strand_id)
                         .then_some((source_stream_ref, paired_revision, value))
                 });
@@ -985,6 +1091,20 @@ pub(crate) fn install_current_card_sources(
                         *locked = false;
                     }
                 }
+                if complete.calendar.location_locked
+                    && let Some(calendar) = operations.iter().rev().find_map(|record| {
+                        let event = record.payload.get("event")?;
+                        let calendar = calendar_fields_from_metadata_and_event(
+                            &view.fields,
+                            Some(ctx),
+                            &card.id,
+                            Some(event),
+                        );
+                        (!calendar.location_locked).then_some(calendar)
+                    })
+                {
+                    complete.calendar = calendar;
+                }
             }
             complete.rank = card.rank.clone();
             complete.state = card.state;
@@ -999,7 +1119,7 @@ pub(crate) fn install_current_card_sources(
 
 /// Decode the Strand object the Station selected as current for `strand_id`.
 fn current_strand_value(
-    entries: &[arkret_wire::TypedCurrentRow],
+    entries: &[arkret_wire::CurrentState],
     strand_id: &arkret_sdk::StrandId,
 ) -> Option<arkret_sdk::Strand> {
     crate::current_projection::current_strand(entries, strand_id)
@@ -1375,6 +1495,72 @@ mod tests {
                 .all(|card| card.lifecycle != StrandLifecycleState::Active),
             "archived card remains available to the drawer but leaves active board rendering"
         );
+    }
+
+    #[test]
+    fn current_only_lifecycle_wins_over_history_and_preserves_pending_restore() {
+        let strand_id = "ak:strand:AdVU7b0NwVjyucaE-ZRGksbrifDFqHbytR9znwTjsAwy";
+        let mut events = vec![
+            space_create_event(BOARD, "board", "Board", None),
+            space_create_event(LIST_A, "list", "List", Some(BOARD)),
+        ];
+        events.extend(strand_create_and_place_events(
+            strand_id,
+            "ak:did_core:web:alice.example",
+            "Card",
+            BOARD,
+            LIST_A,
+            "U",
+            "2026-06-28T00:01:00.000Z",
+        ));
+        let mut ops = kanban_operations_from_events(&events);
+        let id = arkret_sdk::StrandId::new(strand_id).unwrap();
+        let mut strand = arkret_sdk::Strand::new(
+            id.clone(),
+            arkret_sdk::RealmId::new(REALM).unwrap(),
+            "Card",
+            crate::test_support::account_actor("ak:did_core:web:alice.example"),
+        );
+        strand.state = Some(arkret_sdk::ObjectState::Archived);
+        let entries = vec![arkret_wire::CurrentState::Value {
+            selector: arkret_wire::CurrentSelector::Strand { strand_id: id },
+            source_stream_ref: arkret_wire::CommitStreamRef::Realm {
+                realm_id: arkret_sdk::RealmId::new(REALM).unwrap(),
+            },
+            revision: arkret_wire::CurrentRevision {
+                commit_id: arkret_wire::RealmCommitId::from_digest([9; 32]),
+                stream_position: 9,
+            },
+            value: serde_json::to_value(strand).unwrap(),
+        }];
+        let (columns, ..) = project_board_with_projection_for_actor(
+            &ops,
+            &[],
+            &[],
+            BOARD,
+            REALM,
+            None,
+            "",
+            &entries,
+        );
+        assert_eq!(
+            columns[0].cards[0].lifecycle,
+            StrandLifecycleState::Archived
+        );
+        ops.push(local_op("pending-restore", "2026-06-28T03:00:00.000Z", json!({
+            "kind": "ak.strand.restore", "write_state": "queued", "body": { "target_ref": strand_id }
+        })));
+        let (columns, ..) = project_board_with_projection_for_actor(
+            &ops,
+            &[],
+            &[],
+            BOARD,
+            REALM,
+            None,
+            "",
+            &entries,
+        );
+        assert_eq!(columns[0].cards[0].lifecycle, StrandLifecycleState::Active);
     }
 
     /// Build a locally-appended optimistic op record directly (the shape

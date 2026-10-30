@@ -15,7 +15,7 @@ pub(crate) use super::member_display::{account_display_label, actor_display_labe
 /// falls back to the principal-only ladder.
 pub(crate) fn contact_peer_label(
     store: &crate::state::LocalStateStore,
-    contact: &crate::models::ContactListRow,
+    contact: &crate::models::ContactView,
 ) -> String {
     match crate::models::contact_peer_account_id(contact) {
         Some(account_id) => account_display_label(store, &account_id),
@@ -226,11 +226,11 @@ pub(crate) fn verified_handle_claim(
         schema: HandleClaim::SCHEMA.to_owned(),
         claim: core,
         status: HandleClaimStatus::Verified,
-        as_of: issued_at,
+        evaluated_at: issued_at,
         verifier_id: issuer_id,
         verified_at: Some(issued_at),
         revocation: None,
-        fresh_until: issued_at + chrono::Duration::minutes(5),
+        cache_expires_at: issued_at + chrono::Duration::minutes(5),
         status_proof: proof(PayloadProofPurpose::StatusAttestation, placeholder),
     };
     claim.status_proof.domain = Some(arkret_models_identity::HANDLE_CLAIM_STATUS_DOMAIN.to_owned());
@@ -284,7 +284,7 @@ pub(crate) fn realm_mls_activation(
 /// resolves through its stored body's home Realm rather than pretending to
 /// carry a scope of its own.
 pub(crate) fn scope_mls_activation(
-    projections: &std::collections::BTreeMap<String, serde_json::Value>,
+    projections: &impl crate::state::account_items::ReadMap<serde_json::Value>,
     current: Option<&crate::current_projection::RealmCurrentView>,
     scope_id: &str,
 ) -> Option<bool> {
@@ -366,7 +366,7 @@ mod tests {
             "alice:acme.example",
             alice.clone(),
             crate::mls_api_helpers::principal_core_id("did:web:issuer.acme.example").unwrap(),
-            // `verified_handle_claim` freezes `fresh_until` at issued_at + 5
+            // `verified_handle_claim` freezes `cache_expires_at` at issued_at + 5
             // minutes, and §3.2.1 rejects any candidate whose freshness window
             // has closed. An issued_at outside that window would test the
             // stale ladder, not the verified tier this case is about.

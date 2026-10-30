@@ -20,7 +20,7 @@ impl crate::transport::TransportClient {
         &self,
         backup_id: &str,
         record: arkret_sdk::KeyBackup,
-    ) -> anyhow::Result<arkret_sdk::KeysBackupsReplaceOutcome> {
+    ) -> anyhow::Result<arkret_sdk::KeysBackupsReplaceResponseBody> {
         let backup_id = arkret_sdk::BackupId::new(backup_id.to_owned())
             .map_err(|err| anyhow::anyhow!("invalid key backup id: {err}"))?;
         if record.backup_id != backup_id {
@@ -39,7 +39,10 @@ impl crate::transport::TransportClient {
         &self,
         backup_id: &str,
         record: arkret_sdk::KeyBackup,
-    ) -> anyhow::Result<(arkret_sdk::KeysBackupsReplaceOutcome, arkret_sdk::KeyBackup)> {
+    ) -> anyhow::Result<(
+        arkret_sdk::KeysBackupsReplaceResponseBody,
+        arkret_sdk::KeyBackup,
+    )> {
         let backup_id = arkret_sdk::BackupId::new(backup_id.to_owned())
             .map_err(|err| anyhow::anyhow!("invalid key backup id: {err}"))?;
         if record.backup_id != backup_id {
@@ -110,7 +113,7 @@ impl crate::transport::TransportClient {
         })
     }
 
-    pub async fn list_key_backups(&self) -> anyhow::Result<arkret_sdk::KeysBackupsList> {
+    pub async fn list_key_backups(&self) -> anyhow::Result<arkret_sdk::KeysBackupsPage> {
         self.list_key_backups_page(&arkret_sdk::KeyBackupsListQuery {
             series_id: None,
             backup_kind: None,
@@ -123,7 +126,7 @@ impl crate::transport::TransportClient {
     pub async fn list_key_backups_page(
         &self,
         query: &arkret_sdk::KeyBackupsListQuery,
-    ) -> anyhow::Result<arkret_sdk::KeysBackupsList> {
+    ) -> anyhow::Result<arkret_sdk::KeysBackupsPage> {
         self.sdk_http_client()?
             .list_key_backups(query)
             .await
@@ -136,7 +139,7 @@ impl crate::transport::TransportClient {
     /// Returns `{ "active_policy": <policy summary | null> }`.
     pub async fn get_recovery_policy(
         &self,
-    ) -> anyhow::Result<arkret_sdk::RecoveryPolicyActiveOutcome> {
+    ) -> anyhow::Result<arkret_sdk::RecoveryPolicyStatusView> {
         self.sdk_http_client()?
             .get("/_arkret/root/identity/recovery-policy")
             .await
@@ -148,13 +151,19 @@ impl crate::transport::TransportClient {
     /// The request is the canonical `ak.policy.set` single-Event commit
     /// submission required by
     /// `ak.root.identity.recovery_policy.command.publish.v1`
-    /// (`recovery-policy.schema.json#/$defs/recovery_policy_publish_request`).
+    /// (`recovery-policy.schema.json#/$defs/recovery_policy_publish_request_body`).
     pub async fn put_recovery_policy(
         &self,
         body: &arkret_wire::EventAdmissionSubmission,
-    ) -> anyhow::Result<arkret_sdk::RecoveryPolicyPublishOutcome> {
+    ) -> anyhow::Result<arkret_sdk::RecoveryPolicyPublishResponseBody> {
         self.sdk_http_client()?
-            .post("/_arkret/root/identity/recovery-policy", body)
+            .publish_recovery_policy(
+                &super::own_station_results::verify_local_publication(
+                    &self.sdk_http_client()?,
+                    body.clone(),
+                )
+                .await?,
+            )
             .await
             .map_err(anyhow::Error::from)
     }
@@ -170,7 +179,7 @@ impl crate::transport::TransportClient {
         body: &arkret_models_crypto::RecoverySessionCreateRequestBody,
     ) -> anyhow::Result<arkret_sdk::RecoverySession> {
         self.sdk_http_client()?
-            .post("/_arkret/root/identity/recovery-sessions", body)
+            .create_recovery_session(body)
             .await
             .map_err(anyhow::Error::from)
     }
@@ -195,12 +204,9 @@ impl crate::transport::TransportClient {
         &self,
         recovery_session_id: &str,
         body: &arkret_models_crypto::RecoverySessionProofSubmitRequestBody,
-    ) -> anyhow::Result<arkret_sdk::RecoverySessionProofSubmitOutcome> {
+    ) -> anyhow::Result<arkret_sdk::RecoverySessionProofSubmitResponseBody> {
         self.sdk_http_client()?
-            .post(
-                &format!("/_arkret/root/identity/recovery-sessions/{recovery_session_id}/proofs"),
-                body,
-            )
+            .submit_recovery_proof(recovery_session_id, body)
             .await
             .map_err(anyhow::Error::from)
     }

@@ -137,7 +137,7 @@ pub(super) fn use_direct_authority(
                             )
                             .await?;
                         let retry_delay = match &outcome {
-                            arkret_sdk::direct_conversation::DirectConversationResolveOutcome::TemporarilyUnavailable { retry_after_ms } => {
+                            arkret_sdk::direct_conversation::DirectConversationResolveResponseBody::TemporarilyUnavailable { retry_after_ms } => {
                                 Some(std::time::Duration::from_millis(
                                     retry_after_ms.unwrap_or(500).clamp(250, 30_000),
                                 ))
@@ -146,7 +146,7 @@ pub(super) fn use_direct_authority(
                         };
                         #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
                         {
-                            use arkret_sdk::direct_conversation::DirectConversationResolveOutcome as Outcome;
+                            use arkret_sdk::direct_conversation::DirectConversationResolveResponseBody as Outcome;
                             let (variant, blockers, group_present) = match &outcome {
                                 Outcome::Found { send_blockers, .. } =>
                                     ("found", send_blockers.len(), true),

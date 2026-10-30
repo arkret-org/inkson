@@ -10,6 +10,7 @@ type Handles = (
     Signal<String>,
     Signal<String>,
     Signal<std::collections::BTreeMap<String, String>>,
+    Signal<Vec<crate::attachments::DraftAttachment>>,
 );
 
 #[derive(Clone)]
@@ -73,6 +74,7 @@ fn command_harness(control: Control) -> Element {
         controller.status_msg,
         controller.draft,
         controller.pending_drafts,
+        controller.attachments,
     ));
     rsx! { div { "{calls}:{sentinel}:{controller.status_msg}" } }
 }
@@ -95,7 +97,7 @@ async fn production_command_callback_does_not_allocate_hooks_and_survives_rerend
         for _ in 0..8 {
             dom.render_immediate_to_vec();
         }
-        let (_, current_sentinel, calls, status, draft, pending_drafts) =
+        let (_, current_sentinel, calls, status, draft, pending_drafts, _) =
             control.handles.borrow().unwrap();
         assert_eq!(current_sentinel, sentinel);
         dom.in_runtime(|| {
@@ -111,7 +113,7 @@ async fn production_command_callback_does_not_allocate_hooks_and_survives_rerend
     }
     dom.in_runtime(|| {
         use futures_util::FutureExt;
-        let (_, _, _, _, mut draft, mut pending) = control.handles.borrow().unwrap();
+        let (_, _, _, _, mut draft, mut pending, _) = control.handles.borrow().unwrap();
         for (status, new_text, expected_text) in [
             (garth::SendQueueStatus::Committed, "", ""),
             (garth::SendQueueStatus::Queued, "", ""),
@@ -124,6 +126,8 @@ async fn production_command_callback_does_not_allocate_hooks_and_survives_rerend
                 .write()
                 .insert("guard-fixture".to_owned(), "submitted text".to_owned());
             let mut guard = PendingComposerDraft {
+                attachments: control.handles.borrow().unwrap().6,
+                attachment_ids: Vec::new(),
                 draft,
                 pending,
                 operation: "guard-fixture".to_owned(),
@@ -144,6 +148,8 @@ async fn production_command_callback_does_not_allocate_hooks_and_survives_rerend
         draft.set(String::new());
         pending.write().insert("unknown-fixture".to_owned(), "submitted text".to_owned());
         let mut guard = PendingComposerDraft {
+            attachments: control.handles.borrow().unwrap().6,
+            attachment_ids: Vec::new(),
             draft,
             pending,
             operation: "unknown-fixture".to_owned(),
@@ -219,7 +225,9 @@ fn upload_command_harness(control: UploadControl) -> Element {
             controller,
             target.clone(),
             "fixture-session".to_owned(),
-            realm.to_owned(),
+            Some(arkret_sdk::ScopeRef::Realm {
+                realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
+            }),
             vec![file],
         );
     });
@@ -252,9 +260,7 @@ async fn dropped_attachment_with_unknown_current_sends_no_http_and_preserves_dra
     }
     dom.in_runtime(|| {
         assert!(
-            status
-                .peek()
-                .starts_with("Attachment upload requires verified conversation security:"),
+            status.peek().starts_with("Attachment upload:"),
             "{}",
             status.peek()
         );
@@ -283,7 +289,7 @@ async fn private_sidecar_file_drop_never_inherits_verified_plaintext_parent() {
     let frame: arkret_sdk::sync::AccountSubscribeFrame = serde_json::from_value(serde_json::json!({
         "kind":"delta","cursor":"ak:cursor:YQ",
         "realms":{realm:{
-            "current":{"realm_id":realm,"governance_generation":1,"stream_heads":[head.clone()],"entries":[]},
+            "current":{"realm_id":realm,"governance_generation":"1","stream_heads":[head.clone()],"entries":[]},
             "baseline":{"snapshot_cursor":"ak:cursor:YQ","cut_revision":1,"complete":true,
                 "coverage":{"realm_id":realm,"stream_heads":[head],"complete_for_authorized_streams":true}}
         }}
@@ -292,7 +298,8 @@ async fn private_sidecar_file_drop_never_inherits_verified_plaintext_parent() {
         crate::state::CurrentIndex::open(&account.authority, 0, state.current_index_location())
             .await
             .unwrap();
-    index.stage_frame(0, &frame).await.unwrap().finish();
+    let stage = index.stage_frame(0, &frame).await.unwrap();
+    state.commit_current_stage_for_test(stage).unwrap();
     state.set_current_generation(1);
     state.flush().unwrap();
     let scope = arkret_sdk::ScopeRef::Realm {

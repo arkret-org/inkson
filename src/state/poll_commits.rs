@@ -225,7 +225,7 @@ impl LocalStateStore {
     /// That last case establishes no historical prefix or displayed history.
     pub(crate) fn stage_own_station_commit_stream_checkpoint(
         &mut self,
-        client: &arkret_sdk::http_client::own_station_results::OwnStationResultClient,
+        client: &arkret_sdk::http_client::own_station_results::OwnStationStateClient,
         replica: &garth::own_station_results::OwnStationReplica,
         stream_ref: &arkret_sdk::CommitStreamRef,
         pages: &[garth::own_station_results::OwnStationScanPage],
@@ -253,7 +253,7 @@ impl LocalStateStore {
                     && commit.stream_position == head.stream_position
                     && commit.commit_id == head.commit_id
                 {
-                    anchor = Some(commit.clone());
+                    anchor = Some(commit.clone().into());
                 }
             }
         }
@@ -292,7 +292,7 @@ impl LocalStateStore {
         Ok(())
     }
 
-    /// Stage verified coordinates in the existing account-state blob. On wasm,
+    /// Stage verified coordinates in the account record transaction. On wasm,
     /// the caller must await `begin_durable_flush()` before ACKing the scan
     /// cursor: `flush()` alone only enqueues the IndexedDB write.
     pub(crate) fn ingest_verified_message_commits(
@@ -490,7 +490,7 @@ impl LocalStateStore {
     }
 
     pub(crate) fn verified_poll_inputs(&self) -> Vec<VerifiedPollInput> {
-        self.load().verified_poll_inputs
+        self.load().verified_poll_inputs.into_inner()
     }
 
     /// Unread ordinary Chat messages come from accepted stream coordinates,
@@ -584,7 +584,7 @@ impl LocalStateStore {
 // and conflict handling without constructing a public trust-token shortcut.
 fn merge_verified_poll_page(
     inputs: &mut Vec<VerifiedPollInput>,
-    prefixes: &mut BTreeMap<String, VerifiedPollPrefix>,
+    prefixes: &mut imbl::OrdMap<String, VerifiedPollPrefix>,
     rows: &[arkret_sdk::CommittedEventView],
 ) -> Result<(), String> {
     let mut next_inputs = inputs.clone();
@@ -693,7 +693,7 @@ mod tests {
         use std::io::{Read, Write};
 
         use arkret_sdk::http_client::own_station_results::{
-            OwnStationResultClient, OwnStationSessionSnapshot, OwnStationSessionSource,
+            OwnStationSessionSnapshot, OwnStationSessionSource, OwnStationStateClient,
         };
         struct Source(OwnStationSessionSnapshot);
         impl OwnStationSessionSource for Source {
@@ -741,7 +741,7 @@ mod tests {
                     signed_digest: arkret_sdk::Hash::new(format!("sha256:{}", "a".repeat(64)))
                         .unwrap(),
                     created_at: at,
-                    sig: arkret_sdk::Base64UrlString::new("AA").unwrap(),
+                    signature: arkret_sdk::Base64UrlString::new("AA").unwrap(),
                 },
             };
             let mut unsigned = serde_json::to_value(&commit).unwrap();
@@ -770,7 +770,7 @@ mod tests {
             base_url: base.clone(),
             trust_domain: arkret_sdk::TrustDomainId::new("ak:trust_domain:station.example")
                 .unwrap(),
-            auth_metadata: arkret_sdk::AuthMetadata::minimal(),
+            authentication_metadata: arkret_sdk::AuthenticationMetadata::minimal(),
         };
         let session = OwnStationSessionSnapshot::new(
             binding.clone(),
@@ -789,8 +789,7 @@ mod tests {
             .build()
             .unwrap();
         let client =
-            OwnStationResultClient::new(raw, binding, std::sync::Arc::new(Source(session)))
-                .unwrap();
+            OwnStationStateClient::new(raw, binding, std::sync::Arc::new(Source(session))).unwrap();
         let server = std::thread::spawn(move || {
             for body in bodies {
                 let (mut connection, _) = listener.accept().unwrap();
@@ -826,7 +825,7 @@ mod tests {
                 connection.write_all(&bytes).unwrap();
             }
         });
-        let request = arkret_sdk::StreamScanRequest {
+        let request = arkret_sdk::StreamScanRequestBody {
             realm_id: realm.clone(),
             stream_ref: stream_ref.clone(),
             direction: arkret_sdk::StreamScanDirection::After(None),
@@ -919,7 +918,8 @@ mod tests {
             "bob.example",
             "ak:device:0196419b-0000-7000-8000-000000000001",
         );
-        let request = arkret_sdk::AuthorityBundleRequest {
+        let realm = bundle.realm_id.clone();
+        let request = arkret_sdk::RealmAuthorityBundleRequestBody {
             realm_id: realm.clone(),
             nonce: bundle.current_assertion.nonce.clone(),
         };
@@ -936,13 +936,13 @@ mod tests {
             .unwrap();
         let page = replica
             .apply_verified_scan(
-                &arkret_sdk::StreamScanRequest {
+                &arkret_sdk::StreamScanRequestBody {
                     realm_id: realm.clone(),
                     stream_ref: stream.clone(),
                     direction: arkret_sdk::StreamScanDirection::After(None),
                     limit: 3,
                 },
-                arkret_sdk::StreamScanOutcome {
+                arkret_sdk::StreamScanResponseBody {
                     committed_events: std::iter::once(arkret_sdk::CommittedEventView::Full(
                         arkret_sdk::CommittedEventFullView {
                             commit: bundle.genesis_commit.clone(),
@@ -1077,7 +1077,8 @@ mod tests {
             "bob.example",
             "ak:device:0196419b-0000-7000-8000-000000000001",
         );
-        let request = arkret_sdk::AuthorityBundleRequest {
+        let realm = bundle.realm_id.clone();
+        let request = arkret_sdk::RealmAuthorityBundleRequestBody {
             realm_id: realm.clone(),
             nonce: bundle.current_assertion.nonce.clone(),
         };
@@ -1094,13 +1095,13 @@ mod tests {
             .unwrap();
         let page = replica
             .apply_verified_scan(
-                &arkret_sdk::StreamScanRequest {
+                &arkret_sdk::StreamScanRequestBody {
                     realm_id: realm.clone(),
                     stream_ref: stream,
                     direction: arkret_sdk::StreamScanDirection::After(None),
                     limit: 4,
                 },
-                arkret_sdk::StreamScanOutcome {
+                arkret_sdk::StreamScanResponseBody {
                     committed_events: std::iter::once(arkret_sdk::CommittedEventView::Full(
                         arkret_sdk::CommittedEventFullView {
                             commit: bundle.genesis_commit.clone(),
@@ -1151,7 +1152,7 @@ mod tests {
             1
         );
         store
-            .apply_read_cursor_outcome(arkret_sdk::ReadMarkerOutcome {
+            .apply_read_cursor_outcome(arkret_sdk::ReadMarkerResponseBody {
                 realm_id: realm.clone(),
                 actor_id: actor.clone(),
                 device_id: arkret_sdk::DeviceId::new(
@@ -1199,7 +1200,10 @@ mod tests {
             .unwrap();
             let signer = arkret_test_kit::keys::seeded_signer(
                 arkret_sdk::Did::new("did:web:alice.example").unwrap(),
-                arkret_sdk::DidUrl::new("did:web:alice.example#device").unwrap(),
+                arkret_sdk::DidUrl::new(
+                    "did:web:alice.example#ak:device:0196419b-0000-7000-8000-000000000001",
+                )
+                .unwrap(),
             );
             let actor = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
                 arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap(),
@@ -1220,10 +1224,9 @@ mod tests {
                 realm_id: realm.clone(),
             };
             let (mut bundle, keys, _) =
-                crate::test_support::committed_event::verified_realm_fixture_signed_by(
+                crate::test_support::committed_event::verified_realm_fixture_from_genesis(
                     &station,
-                    realm.clone(),
-                    serde_json::json!({}),
+                    event.clone(),
                     Vec::new(),
                     "alice.example",
                     "ak:device:0196419b-0000-7000-8000-000000000001",
@@ -1237,7 +1240,7 @@ mod tests {
             bundle.current_assertion.realm_stream_head = bundle.realm_stream_head.clone();
             let nonce = bundle.current_assertion.nonce.clone();
             station.reassert_for_nonce(&mut bundle, nonce.clone(), fixture_time(50));
-            let request = arkret_sdk::AuthorityBundleRequest {
+            let request = arkret_sdk::RealmAuthorityBundleRequestBody {
                 realm_id: realm.clone(),
                 nonce: nonce.clone(),
             };
@@ -1246,7 +1249,7 @@ mod tests {
             replica
                 .install_verified_authority(&request, bundle.clone(), &freshness, &keys)
                 .unwrap();
-            let scan = arkret_sdk::StreamScanRequest {
+            let scan = arkret_sdk::StreamScanRequestBody {
                 realm_id: realm.clone(),
                 stream_ref: stream,
                 direction: arkret_sdk::StreamScanDirection::After(None),
@@ -1255,7 +1258,7 @@ mod tests {
             let page = replica
                 .apply_verified_scan(
                     &scan,
-                    arkret_sdk::StreamScanOutcome {
+                    arkret_sdk::StreamScanResponseBody {
                         committed_events: vec![arkret_sdk::CommittedEventView::Full(
                             arkret_sdk::CommittedEventFullView {
                                 commit: bundle.genesis_commit.clone(),
@@ -1331,11 +1334,12 @@ mod tests {
             "bob.example",
             "ak:device:0196419b-0000-7000-8000-000000000001",
         );
+        let realm = bundle.realm_id.clone();
         assert_eq!(items[0].event.event_id, first.event.event_id);
         let stream_ref = arkret_sdk::CommitStreamRef::Realm {
             realm_id: realm.clone(),
         };
-        let request = arkret_sdk::AuthorityBundleRequest {
+        let request = arkret_sdk::RealmAuthorityBundleRequestBody {
             realm_id: realm.clone(),
             nonce: bundle.current_assertion.nonce.clone(),
         };
@@ -1347,13 +1351,13 @@ mod tests {
         replica
             .install_verified_authority(&request, bundle.clone(), &freshness, &keys)
             .unwrap();
-        let first_scan = arkret_sdk::StreamScanRequest {
+        let first_scan = arkret_sdk::StreamScanRequestBody {
             realm_id: realm.clone(),
             stream_ref: stream_ref.clone(),
             direction: arkret_sdk::StreamScanDirection::After(None),
             limit: 3,
         };
-        let first_outcome = arkret_sdk::StreamScanOutcome {
+        let first_outcome = arkret_sdk::StreamScanResponseBody {
             committed_events: std::iter::once(arkret_sdk::CommittedEventView::Full(
                 arkret_sdk::CommittedEventFullView {
                     commit: bundle.genesis_commit.clone(),
@@ -1377,7 +1381,7 @@ mod tests {
         let first_page = replica
             .apply_verified_scan(&first_scan, first_outcome, &freshness, &keys)
             .unwrap();
-        let later_scan = arkret_sdk::StreamScanRequest {
+        let later_scan = arkret_sdk::StreamScanRequestBody {
             realm_id: realm.clone(),
             stream_ref: stream_ref.clone(),
             direction: arkret_sdk::StreamScanDirection::After(Some(2)),
@@ -1386,7 +1390,7 @@ mod tests {
         let later_page = replica
             .apply_verified_scan(
                 &later_scan,
-                arkret_sdk::StreamScanOutcome {
+                arkret_sdk::StreamScanResponseBody {
                     committed_events: vec![arkret_sdk::CommittedEventView::Full(items[2].clone())],
                     readable_floor: Some(arkret_sdk::ReadableFloor {
                         oldest_position: 0,
@@ -1434,9 +1438,9 @@ mod tests {
             .accepted_ref
             .stream_position;
         assert!(target_position > 0);
-        for prefix in since_join.verified_poll_prefixes.values_mut() {
+        since_join.verified_poll_prefixes.for_each_mut(|_, prefix| {
             prefix.start_position = target_position;
-        }
+        });
         assert_eq!(
             crate::views::chat::model::chat_messages_from_local_state_with_sidecar(
                 &since_join,
@@ -1447,9 +1451,9 @@ mod tests {
             first_messages[0].reactions,
             "a complete target-to-reaction chain does not require pre-join genesis history"
         );
-        for prefix in since_join.verified_poll_prefixes.values_mut() {
+        since_join.verified_poll_prefixes.for_each_mut(|_, prefix| {
             prefix.start_position = target_position + 1;
-        }
+        });
         assert!(
             crate::views::chat::model::chat_messages_from_local_state_with_sidecar(
                 &since_join,
@@ -1502,9 +1506,11 @@ mod tests {
             .accepted_ref
             .stream_position;
         assert!(target_position > 0);
-        for prefix in joined_suffix.verified_poll_prefixes.values_mut() {
-            prefix.start_position = target_position;
-        }
+        joined_suffix
+            .verified_poll_prefixes
+            .for_each_mut(|_, prefix| {
+                prefix.start_position = target_position;
+            });
         assert_eq!(
             crate::views::chat::model::chat_messages_from_local_state_with_sidecar(
                 &joined_suffix,
@@ -1515,9 +1521,11 @@ mod tests {
             first_messages[0].reactions,
             "a contiguous authorized suffix covering the target includes all possible reactions"
         );
-        for prefix in joined_suffix.verified_poll_prefixes.values_mut() {
-            prefix.start_position = target_position + 1;
-        }
+        joined_suffix
+            .verified_poll_prefixes
+            .for_each_mut(|_, prefix| {
+                prefix.start_position = target_position + 1;
+            });
         assert!(
             crate::views::chat::model::chat_messages_from_local_state_with_sidecar(
                 &joined_suffix,
@@ -1529,9 +1537,9 @@ mod tests {
             "a suffix starting after the target cannot establish complete reaction membership"
         );
         let mut incomplete = first_state;
-        for prefix in incomplete.verified_poll_prefixes.values_mut() {
+        incomplete.verified_poll_prefixes.for_each_mut(|_, prefix| {
             prefix.contiguous = false;
-        }
+        });
         assert!(
             crate::views::chat::model::chat_messages_from_local_state_with_sidecar(
                 &incomplete,

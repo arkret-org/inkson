@@ -63,7 +63,8 @@ test("Member sections and local invite drafts follow the active language without
     await expect(dialog).toBeVisible();
     await expect(dialog.getByTestId("invite-modal-close")).toHaveAttribute("aria-label", zh ? "关闭" : "Close");
     const target = dialog.getByTestId("invite-target-input");
-    await expect(target).toHaveAttribute("placeholder", "alice:example.com");
+    await expect(dialog.getByRole("textbox", { name: zh ? "邀请地址" : "Invitation address", exact: true })).toHaveAttribute("data-testid", "invite-target-input");
+    await expect(target).toHaveAttribute("placeholder", zh ? "粘贴个人邀请链接" : "Paste a personal invitation link");
     await expect(dialog.getByTestId("send-invite-button")).toHaveText(zh ? "发送邀请" : "Send Invite");
     const contact = dialog.getByTestId("realm-invite-from-contacts").getByRole("checkbox").first();
     await expect(contact).toBeEnabled();

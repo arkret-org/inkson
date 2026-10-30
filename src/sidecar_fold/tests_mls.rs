@@ -90,7 +90,7 @@ impl MlsFixture {
             .unwrap();
         let accepted =
             fixture::accepted_mls_commit_with_binding(agent.clone(), &add.commit, binding, 22);
-        let current = arkret_wire::MlsGroupCurrent {
+        let current = arkret_wire::MlsGroupValue {
             effective_scope: scope.clone(),
             genesis_event_ref: base.clone(),
             cipher_suite: arkret_sdk::NonEmptyString::new(
@@ -126,7 +126,7 @@ impl MlsFixture {
         let secret =
             crate::mls::runtime::load_or_create_account_mls_secret(&secure, &controller).unwrap();
         let record = receiver.export_state_record().unwrap();
-        let checkpoint = crate::mls::persistence::encrypt_state(
+        let checkpoint = garth::mls::checkpoint::encrypt_state(
             scope.realm_id_opt().unwrap().as_str(),
             &record.group_id,
             record.epoch,
@@ -219,6 +219,12 @@ impl MlsFixture {
                 ),
             ),
             AGENT_DID.to_owned(),
+            arkret_sdk::signatures::PublicKeyMaterial::Ed25519Raw {
+                bytes: ed25519_dalek::SigningKey::from_bytes(&proof_seed)
+                    .verifying_key()
+                    .to_bytes()
+                    .to_vec(),
+            },
         );
         signer.sign_envelope(&mut authored).unwrap();
         let event = authored.into_event();
@@ -263,11 +269,13 @@ impl MlsFixture {
                 accepted_at,
                 actor: self.agent.clone(),
                 verification_method: method,
-                public_key_b64u: arkret_sdk::Base64UrlString::new(arkret_sdk::base64url_encode(
-                    ed25519_dalek::SigningKey::from_bytes(&AGENT_SEED)
-                        .verifying_key()
-                        .to_bytes(),
-                ))
+                public_key_base64url: arkret_sdk::Base64UrlString::new(
+                    arkret_sdk::base64url_encode(
+                        ed25519_dalek::SigningKey::from_bytes(&AGENT_SEED)
+                            .verifying_key()
+                            .to_bytes(),
+                    ),
+                )
                 .unwrap(),
                 authorization_ref: arkret_wire::CommittedEventRef {
                     event_id: id(31),
@@ -408,7 +416,8 @@ fn warm_mls_cache_does_not_borrow_another_epoch_state_reference_or_scope() {
     assert_eq!(cache.authors.len(), 1);
 
     let mut wrong_epoch = serde_json::to_value(&envelope).unwrap();
-    wrong_epoch["encryption_context"]["epoch"] = serde_json::json!(fixture.sender.epoch() + 1);
+    wrong_epoch["encryption_context"]["epoch"] =
+        serde_json::json!((fixture.sender.epoch() + 1).to_string());
     let wrong_epoch: EncryptedEnvelope = serde_json::from_value(wrong_epoch).unwrap();
     assert!(
         fixture

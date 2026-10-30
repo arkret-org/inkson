@@ -172,20 +172,16 @@ pub fn station_options_for(current_server_url: &str, configured_stations: &[Url]
 /// (P3B.4.2) calls into the multi-profile API to enumerate / switch /
 /// add profiles.
 ///
-/// Profile switching is fully event-driven now. Callers (sync engine,
-/// push registration, offline drain) react to
-/// [`ProfileSwitchEvent`] instead of peeking at `ClientConfig`
-/// directly. The shell publishes the active
-/// [`MultiProfileConfig`] through a `Signal` so subsystems can pick
-/// up the rotation atomically without the previous per-subsystem
-/// peek pattern.
+/// The root session owns account switching. Its generation fences retired
+/// work while a metadata-only [`MultiProfileConfig`] snapshot lets the existing
+/// synchronization loops observe profile rotation.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AccountProfile {
     #[serde(flatten)]
     pub account: ActiveAccountContext,
-    /// Optional human label (e.g. "Work", "Personal"). Falls back to
-    /// the stable principal identifier's last segment when empty.
+    /// Human label or the accepted account's verified handle. Older entries
+    /// can be unnamed until the account is restored successfully.
     #[serde(default)]
     pub label: String,
     #[serde(default, skip_serializing)]
@@ -199,20 +195,6 @@ impl AccountProfile {
             label: String::new(),
             session_credential,
         }
-    }
-
-    /// Human label used by the avatar dropdown switcher. Falls back to the
-    /// stable principal identifier's last `:` segment when no label is set.
-    pub fn display_label(&self) -> &str {
-        if !self.label.is_empty() {
-            return self.label.as_str();
-        }
-        self.account
-            .principal_id()
-            .as_str()
-            .rsplit(':')
-            .next()
-            .unwrap_or(self.account.principal_id().as_str())
     }
 }
 
@@ -304,8 +286,8 @@ impl MultiProfileConfig {
 }
 
 /// SecureKeyStore key for the current session credential of `principal_id`.
-/// The namespace is per-DID — two profiles for the same DID on different
-/// servers share one slot, matching the existing single-active-profile model.
+/// The namespace binds the full AccountId and actual DeviceId. Profiles with
+/// the same principal on different Stations never share a credential slot.
 fn session_credential_secret_key(account: &ActiveAccountContext) -> anyhow::Result<String> {
     Ok(format!(
         "coauth.session_credential.v1.{}.{}",
@@ -771,6 +753,78 @@ impl LocalConfigStore {
         MultiProfileConfig::default()
     }
 
+    /// Metadata only. Reading an account chooser must not hydrate other users' secrets.
+    pub fn load_profile_metadata(&self) -> anyhow::Result<MultiProfileConfig> {
+        #[cfg(not(target_arch = "wasm32"))]
+        let raw = match fs::read_to_string(self.profiles_path()) {
+            Ok(raw) => Some(raw),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error.into()),
+        };
+        #[cfg(target_arch = "wasm32")]
+        let raw = crate::browser_storage::browser_storage()
+            .ok_or_else(|| anyhow::anyhow!("profile storage is unavailable"))?
+            .get_item(PROFILES_STORAGE_KEY)
+            .map_err(|error| anyhow::anyhow!("read profile metadata: {error:?}"))?;
+        let mut profiles = raw
+            .map(|raw| serde_json::from_str::<MultiProfileConfig>(&raw))
+            .transpose()?
+            .unwrap_or_default();
+        let mut ids = std::collections::BTreeSet::new();
+        let mut accounts = std::collections::BTreeSet::new();
+        for profile in &mut profiles.profiles {
+            anyhow::ensure!(
+                ids.insert(profile.account.profile_id.clone()),
+                "duplicate profile id"
+            );
+            anyhow::ensure!(
+                accounts.insert(profile.account.authority.clone()),
+                "duplicate account profile"
+            );
+            profile.session_credential.clear();
+        }
+        Ok(profiles)
+    }
+
+    /// Persist a local selection without touching any account's credential slot.
+    /// In particular, `save_profiles` is intentionally not used here: its
+    /// credential-redaction writer would clear secrets from metadata-only rows.
+    pub(crate) fn save_account_selection(
+        &mut self,
+        account: Option<ActiveAccountContext>,
+        profiles: &MultiProfileConfig,
+    ) -> anyhow::Result<()> {
+        let old = self.load_profile_metadata()?;
+        let mut config = self
+            .cached
+            .clone()
+            .or_else(|| self.read_persisted_config())
+            .unwrap_or_default();
+        config.active_account = account;
+        config.session_credential.clear();
+        self.write_profiles_blob(profiles)?;
+        if let Err(error) = self.write_config_blob(&config) {
+            let rollback = self.write_profiles_blob(&old);
+            self.record_persist_result(&Err(anyhow::anyhow!("{error}")));
+            return match rollback {
+                Ok(()) => Err(error),
+                Err(rollback) => Err(anyhow::anyhow!(
+                    "selection failed: {error}; metadata rollback failed: {rollback}"
+                )),
+            };
+        }
+        self.cached = Some(config);
+        self.record_persist_result(&Ok(()));
+        Ok(())
+    }
+
+    pub(crate) fn selected_authority(&self) -> Option<arkret_sdk::AccountId> {
+        self.cached
+            .clone()
+            .or_else(|| self.read_persisted_config())
+            .and_then(|config| config.active_account.map(|account| account.authority))
+    }
+
     /// Profile-store analogue of [`Self::rehydrate_config`]: reattach
     /// each profile's credential from the SecureKeyStore.
     fn rehydrate_profiles(&self, mut profiles: MultiProfileConfig) -> MultiProfileConfig {
@@ -813,7 +867,7 @@ impl LocalConfigStore {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        fs::write(path, serde_json::to_vec_pretty(profiles)?)?;
+        write_selection_file(&path, &serde_json::to_vec_pretty(profiles)?)?;
         Ok(())
     }
 
@@ -826,9 +880,8 @@ impl LocalConfigStore {
 
     #[cfg(target_arch = "wasm32")]
     fn write_profiles_blob(&self, profiles: &MultiProfileConfig) -> anyhow::Result<()> {
-        let Some(storage) = crate::browser_storage::browser_storage() else {
-            return Ok(());
-        };
+        let storage = crate::browser_storage::browser_storage()
+            .ok_or_else(|| anyhow::anyhow!("local storage is unavailable"))?;
         storage
             .set_item(PROFILES_STORAGE_KEY, &serde_json::to_string(profiles)?)
             .map_err(|error| anyhow::anyhow!("localStorage profiles write failed: {error:?}"))?;
@@ -861,15 +914,14 @@ impl LocalConfigStore {
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent)?;
         }
-        fs::write(&self.path, serde_json::to_vec_pretty(config)?)?;
+        write_selection_file(&self.path, &serde_json::to_vec_pretty(config)?)?;
         Ok(())
     }
 
     #[cfg(target_arch = "wasm32")]
     fn write_config_blob(&self, config: &ClientConfig) -> anyhow::Result<()> {
-        let Some(storage) = crate::browser_storage::browser_storage() else {
-            return Ok(());
-        };
+        let storage = crate::browser_storage::browser_storage()
+            .ok_or_else(|| anyhow::anyhow!("local storage is unavailable"))?;
         storage
             .set_item(CONFIG_STORAGE_KEY, &serde_json::to_string(config)?)
             .map_err(|error| anyhow::anyhow!("localStorage write failed: {error:?}"))?;
@@ -892,6 +944,23 @@ fn app_data_dir() -> PathBuf {
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))
         .join("inkson")
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn write_selection_file(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
+    use std::io::Write;
+    let temporary = path.with_extension("json.tmp");
+    let result = (|| {
+        let mut file = fs::File::create(&temporary)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        fs::rename(&temporary, path)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
 }
 
 #[cfg(test)]

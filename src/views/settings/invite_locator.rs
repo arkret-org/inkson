@@ -1,5 +1,16 @@
 //! Server-issued invite-locator URL and QR helpers.
 
+use super::controller::SettingsSessionStamp;
+
+#[derive(Clone, Default, PartialEq)]
+pub(super) struct InviteLocatorState {
+    pub session: Option<SettingsSessionStamp>,
+    pub id: String,
+    pub token: String,
+    pub status: String,
+    pub busy: bool,
+}
+
 pub(super) fn build_invite_locator_url(base_url: &str, locator_token: &str) -> String {
     let base = base_url.trim_end_matches('/');
     format!("{base}/_arkret/open/invite-locators/resolve#token={locator_token}")
@@ -7,16 +18,13 @@ pub(super) fn build_invite_locator_url(base_url: &str, locator_token: &str) -> S
 
 pub(super) async fn issue_invite_locator(
     client: arkret_sdk::http_client::Client,
-) -> anyhow::Result<arkret_sdk::InviteLocatorIssueOutcome> {
+) -> anyhow::Result<arkret_sdk::InviteLocatorIssueResponseBody> {
     client
-        .post(
-            arkret_sdk::INVITE_LOCATOR_ISSUE_PATH,
-            &arkret_sdk::InviteLocatorIssueRequestBody {
-                ttl_seconds: Some(arkret_sdk::INVITE_LOCATOR_DEFAULT_TTL_SECONDS),
-                one_time_use: Some(false),
-                display_hint: None,
-            },
-        )
+        .issue_invite_locator(&arkret_sdk::InviteLocatorIssueRequestBody {
+            ttl_seconds: Some(arkret_sdk::INVITE_LOCATOR_DEFAULT_TTL_SECONDS),
+            one_time_use: Some(false),
+            display_hint: None,
+        })
         .await
         .map_err(anyhow::Error::from)
 }
@@ -24,17 +32,14 @@ pub(super) async fn issue_invite_locator(
 pub(super) async fn rotate_invite_locator(
     client: arkret_sdk::http_client::Client,
     locator_id: String,
-) -> anyhow::Result<arkret_sdk::InviteLocatorIssueOutcome> {
+) -> anyhow::Result<arkret_sdk::InviteLocatorIssueResponseBody> {
     let result = client
-        .post(
-            arkret_sdk::INVITE_LOCATOR_ROTATE_PATH,
-            &arkret_sdk::InviteLocatorRotateRequestBody {
-                locator_id: arkret_identifiers::InviteLocatorId::new(locator_id)?,
-                ttl_seconds: Some(arkret_sdk::INVITE_LOCATOR_DEFAULT_TTL_SECONDS),
-                one_time_use: Some(false),
-                display_hint: None,
-            },
-        )
+        .rotate_invite_locator(&arkret_sdk::InviteLocatorRotateRequestBody {
+            locator_id: arkret_identifiers::InviteLocatorId::new(locator_id)?,
+            ttl_seconds: None,
+            one_time_use: None,
+            display_hint: None,
+        })
         .await;
     match result {
         // Expired/revoked locators cannot be rotated. Issue a fresh one only
@@ -94,8 +99,13 @@ mod tests {
                         if request.len() >= end + 4 + length {
                             assert!(headers.starts_with(&format!("post /{path} http/1.1")));
                             let body: serde_json::Value = serde_json::from_slice(&request[end + 4..]).unwrap();
-                            assert_eq!(body["ttl_seconds"], 900);
-                            assert_eq!(body["one_time_use"], false);
+                            if path == arkret_sdk::INVITE_LOCATOR_ISSUE_PATH {
+                                assert_eq!(body["ttl_seconds"], 900);
+                                assert_eq!(body["one_time_use"], false);
+                            } else {
+                                assert!(body.get("ttl_seconds").is_none());
+                                assert!(body.get("one_time_use").is_none());
+                            }
                             break;
                         }
                     }
@@ -115,5 +125,74 @@ mod tests {
         server.join().unwrap();
         assert_eq!(outcome.locator_token, "fresh-token");
         assert!(!outcome.one_time_use);
+    }
+}
+
+use dioxus::prelude::*;
+
+use crate::components::{QrSharePanel, UiIcon};
+use crate::ui::button::{Button, ButtonSize, ButtonVariant};
+
+/// The production invite controls; URL/QR exist only while shareable evidence is held.
+#[component]
+pub fn InviteLocatorCard(
+    has_session: bool,
+    url: String,
+    status: String,
+    busy: bool,
+    has_locator: bool,
+    onrefresh: EventHandler<()>,
+    onrevoke: EventHandler<()>,
+) -> Element {
+    let qr = render_invite_locator_qr_svg(&url);
+    rsx! {
+        div { class: "event settings-card-span-2 invite-locator-card", "data-testid": "settings-invite-locator-card",
+            div { class: "event-head invite-locator-head",
+                span { {crate::i18n::tr("settings.invite_locator.title")} }
+                if has_session {
+                    div { class: "invite-locator-head-actions",
+                        span { class: "invite-locator-expiry", {crate::i18n::tr("settings.invite_locator.expiry")} }
+                        Button {
+                            variant: ButtonVariant::Secondary, size: ButtonSize::Sm,
+                            class: "btn invite-locator-action",
+                            "data-testid": "settings-invite-locator-refresh",
+                            disabled: busy,
+                            onclick: move |_| onrefresh.call(()),
+                            UiIcon { name: "refresh" }
+                            span { {crate::i18n::tr(if has_locator { "common.refresh" } else { "settings.invite_locator.generate" })} }
+                        }
+                        Button {
+                            variant: ButtonVariant::Secondary, size: ButtonSize::Sm,
+                            "data-testid": "settings-invite-locator-revoke",
+                            disabled: busy || !has_locator,
+                            onclick: move |_| onrevoke.call(()),
+                            {crate::i18n::tr("settings.invite_locator.revoke")}
+                        }
+                    }
+                }
+            }
+            if has_session {
+                div { class: "muted", {crate::i18n::tr("settings.invite_locator.scope")} }
+                if !status.is_empty() {
+                    div { class: "muted", "data-testid": "settings-invite-locator-status", "{status}" }
+                }
+                if !url.is_empty() {
+                    div { "data-testid": "settings-invite-locator-url-pane",
+                        QrSharePanel {
+                            qr_svg: qr, url,
+                            qr_aria_label: crate::i18n::tr("settings.invite_locator.qr_aria"),
+                            url_aria_label: crate::i18n::tr("settings.invite_locator.url_aria"),
+                            qr_test_id: "settings-invite-locator-qr".to_owned(),
+                            url_test_id: "settings-invite-locator-url".to_owned(),
+                            copy_test_id: "settings-invite-locator-copy".to_owned(), url_rows: 4,
+                        }
+                    }
+                }
+            } else {
+                div { class: "muted", "data-testid": "settings-invite-locator-signed-out",
+                    {crate::i18n::tr("settings.invite_locator.sign_in")}
+                }
+            }
+        }
     }
 }

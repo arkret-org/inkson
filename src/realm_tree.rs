@@ -596,13 +596,17 @@ pub(crate) fn realm_tree_node_is_direct_conversation(node: &RealmTreeNode) -> bo
 }
 
 #[cfg(test)]
-pub fn realm_tree_nodes_from_sync_realms(realms: &BTreeMap<String, Value>) -> Vec<RealmTreeNode> {
+pub fn realm_tree_nodes_from_sync_realms(
+    realms: &impl crate::state::account_items::ReadMap<Value>,
+) -> Vec<RealmTreeNode> {
     realm_tree_nodes_from_sync_realms_with_roles(realms, &BTreeMap::new())
 }
 
 /// A missing or terminal parent cannot produce a navigation edge. The
 /// canonical projection remains intact so an explicit reparent can use it.
-fn unavailable_space_navigation_ids(realms: &BTreeMap<String, Value>) -> BTreeSet<String> {
+fn unavailable_space_navigation_ids(
+    realms: &impl crate::state::account_items::ReadMap<Value>,
+) -> BTreeSet<String> {
     let spaces = realms
         .iter()
         .filter(|(id, body)| {
@@ -636,8 +640,8 @@ fn unavailable_space_navigation_ids(realms: &BTreeMap<String, Value>) -> BTreeSe
 }
 
 pub fn realm_tree_nodes_from_sync_realms_with_roles(
-    realms: &BTreeMap<String, Value>,
-    collaboration_roles: &BTreeMap<String, arkret_sdk::CollaborationRealmRole>,
+    realms: &impl crate::state::account_items::ReadMap<Value>,
+    collaboration_roles: &impl crate::state::account_items::ReadMap<arkret_sdk::CollaborationRealmRole>,
 ) -> Vec<RealmTreeNode> {
     let unavailable = unavailable_space_navigation_ids(realms);
     let mut previews: Vec<RealmTreeNode> = realms
@@ -647,7 +651,7 @@ pub fn realm_tree_nodes_from_sync_realms_with_roles(
                 && !unavailable.contains(*id)
                 && !projection_looks_like_strand(body)
                 && !realm_projection_is_principal_control(body)
-                && collaboration_roles.get(*id)
+                && collaboration_roles.get(id)
                     != Some(&arkret_sdk::CollaborationRealmRole::DirectConversation)
         })
         .map(|(id, body)| {

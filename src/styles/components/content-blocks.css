@@ -6,6 +6,11 @@
 .content-blocks { display: flex; flex-direction: column; gap: 6px; }
 .content-block-text { margin: 0; line-height: 1.55; white-space: pre-wrap; }
 
+/* Keep page changes inside the reader. A large text page must not move the
+   virtual timeline window and dispose its verified download capability. */
+.verified-long-text-viewport { block-size: min(24rem, 50vh); overflow: auto; overscroll-behavior: contain; }
+.verified-long-text-viewport pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+
 /* Markdown — typography for headings, lists, blockquotes within a
    message. Uses the same surface tokens as the doc page but at a
    slightly tighter rhythm because messages are denser. */

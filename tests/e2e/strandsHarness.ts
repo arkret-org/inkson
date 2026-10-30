@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import {
   CURRENT_STATION_ID,
   CURRENT_PRINCIPAL_DID,
@@ -77,8 +77,28 @@ const signerKeyDiagnostics = new WeakMap<import("@playwright/test").Page, Signer
 const pendingSignerKeyCaptures = new WeakMap<import("@playwright/test").Page, Promise<void>[]>();
 const scenarioRealms = new WeakMap<
   import("@playwright/test").Page,
-  { demoRealm: string; demoBoardSpace: string }
+  Awaited<ReturnType<typeof mockArkretApi>>
 >();
+
+const accountSubscribeDeliveries = new WeakMap<Page, Array<{ body: string; url: string }>>();
+
+export function observedAccountSubscribeDeliveries(page: Page) {
+  const deliveries = accountSubscribeDeliveries.get(page);
+  if (!deliveries) throw new Error("Strands mock scenario has not been installed");
+  return deliveries as ReadonlyArray<{ body: string; url: string }>;
+}
+
+export function strandWatchControls(page: Page) {
+  const scenario = scenarioRealms.get(page);
+  if (!scenario) throw new Error("Strands mock scenario has not been installed");
+  return scenario.watchReads;
+}
+
+export function strandWatchTargets(page: Page) {
+  const scenario = scenarioRealms.get(page);
+  if (!scenario) throw new Error("Strands mock scenario has not been installed");
+  return { realmId: scenario.demoRealm, strands: scenario.demoStrands };
+}
 
 function diagnosticText(value: string): string {
   return value
@@ -374,6 +394,8 @@ function sessionInjectionRecord(
 ) {
   return {
     grant_jwt: DEFAULT_SESSION_CREDENTIAL,
+    expires_at: new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString(),
+    granted_scope: [],
     grant_id: "ak:session_grant:AY6DJbBwavsGTQuBZZiqqw9MVcqPZ8QX8invQ3i2kpi7",
     audience: DEFAULT_SERVER_AUDIENCE,
     account_id: {
@@ -532,8 +554,10 @@ export async function dismissMlsBackupModal(
   }
 }
 
-export function registerStrandsBeforeEach() {
+export function registerStrandsBeforeEach(apiOptions: Parameters<typeof mockArkretApi>[1] = {}) {
   test.beforeEach(async ({ page }, testInfo) => {
+    const accountDeliveries: Array<{ body: string; url: string }> = [];
+    accountSubscribeDeliveries.set(page, accountDeliveries);
     const observations: ApiObservation[] = [];
     apiObservations.set(page, observations);
     const requestObservations = new WeakMap<import("@playwright/test").Request, ApiObservation>();
@@ -707,11 +731,11 @@ export function registerStrandsBeforeEach() {
         ? "failed" : testInfo.title.startsWith("contact request rejects tampered receipt")
           ? "tampered" : undefined,
       invitePreview,
-      invitePreviewDelayMs: testInfo.title.startsWith(
-        "invite preview disclosed",
-      )
-        ? 750
-        : undefined,
+      ...apiOptions,
+      observeAccountSubscribe: (body, url) => {
+        accountDeliveries.push({ body, url: url.href });
+        apiOptions?.observeAccountSubscribe?.(body, url);
+      },
     });
     scenarioRealms.set(page, scenario);
     if (testInfo.title.startsWith("login page")) {

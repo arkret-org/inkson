@@ -131,7 +131,7 @@ impl TransportClient {
     }
 
     pub(crate) fn event_submitter(&self) -> anyhow::Result<crate::event_submit::EventSubmitter> {
-        Ok(crate::event_submit::EventSubmitter::from_current_session(
+        Ok(crate::app::runtime_adapter::event_submitter(
             self.http.clone(),
         ))
     }

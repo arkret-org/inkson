@@ -28,10 +28,10 @@ pub(crate) struct E2eePlaintextCacheUsage {
 pub(crate) struct PendingE2eePlaintextClear {
     key: String,
     json: String,
-    previous_private: BTreeMap<String, BTreeMap<String, BTreeMap<String, String>>>,
-    previous_decrypted: BTreeMap<String, BTreeMap<String, String>>,
-    previous_identity_links: BTreeMap<String, LocallyAuthenticatedIdentityLink>,
-    previous_drafts: BTreeMap<String, BTreeMap<String, BTreeMap<String, String>>>,
+    previous_private: imbl::OrdMap<String, imbl::OrdMap<String, imbl::OrdMap<String, String>>>,
+    previous_decrypted: imbl::OrdMap<String, imbl::OrdMap<String, String>>,
+    previous_identity_links: imbl::OrdMap<String, LocallyAuthenticatedIdentityLink>,
+    previous_drafts: imbl::OrdMap<String, imbl::OrdMap<String, imbl::OrdMap<String, String>>>,
     hydration_fence: Arc<CacheClearFence>,
     lifecycle_epoch: Arc<()>,
     registry: Arc<Mutex<CacheClearFences>>,
@@ -241,22 +241,22 @@ struct E2eePlaintextCacheV1 {
     // Persisted key, unchanged: this entry is already written in every
     // device's secure store, and an at-rest key is not a wire name.
     #[serde(default, rename = "mls_snapshots")]
-    mls_local_checkpoints: BTreeMap<String, crate::mls::persistence::MlsLocalCheckpointEnvelope>,
+    mls_local_checkpoints: imbl::OrdMap<String, garth::mls::checkpoint::MlsLocalCheckpointEnvelope>,
     #[serde(default)]
-    private_plaintext: BTreeMap<String, BTreeMap<String, BTreeMap<String, String>>>,
+    private_plaintext: imbl::OrdMap<String, imbl::OrdMap<String, imbl::OrdMap<String, String>>>,
     #[serde(default)]
-    decrypted_plaintext: BTreeMap<String, BTreeMap<String, String>>,
+    decrypted_plaintext: imbl::OrdMap<String, imbl::OrdMap<String, String>>,
     #[serde(default)]
-    authenticated_identity_links: BTreeMap<String, LocallyAuthenticatedIdentityLink>,
+    authenticated_identity_links: imbl::OrdMap<String, LocallyAuthenticatedIdentityLink>,
     #[serde(default)]
-    composer_drafts: BTreeMap<String, BTreeMap<String, BTreeMap<String, String>>>,
+    composer_drafts: imbl::OrdMap<String, imbl::OrdMap<String, imbl::OrdMap<String, String>>>,
 }
 
 impl E2eePlaintextCacheV1 {
     fn retain_committed_fields(&mut self, current: &Self) {
         fn nested(
-            old: &mut BTreeMap<String, BTreeMap<String, BTreeMap<String, String>>>,
-            current: &BTreeMap<String, BTreeMap<String, BTreeMap<String, String>>>,
+            old: &mut imbl::OrdMap<String, imbl::OrdMap<String, imbl::OrdMap<String, String>>>,
+            current: &imbl::OrdMap<String, imbl::OrdMap<String, imbl::OrdMap<String, String>>>,
         ) {
             old.retain(|outer, middle| {
                 let Some(now) = current.get(outer) else {
@@ -360,9 +360,9 @@ impl E2eePlaintextCacheV1 {
                 self.decrypted_plaintext.remove(realm);
                 self.authenticated_identity_links
                     .retain(|_, entry| entry.identity_link.realm_id.as_str() != realm);
-                for realms in self.composer_drafts.values_mut() {
+                self.composer_drafts.for_each_mut(|_, realms| {
                     realms.remove(realm);
-                }
+                });
             }
         }
     }
@@ -447,11 +447,11 @@ impl E2eePlaintextCacheV1 {
         let mut changed = false;
         for (realm_id, snapshot) in self.mls_local_checkpoints {
             match state.mls_local_checkpoints.entry(realm_id.clone()) {
-                std::collections::btree_map::Entry::Vacant(entry) => {
+                imbl::ordmap::Entry::Vacant(entry) => {
                     entry.insert(snapshot);
                     changed = true;
                 }
-                std::collections::btree_map::Entry::Occupied(mut entry) => {
+                imbl::ordmap::Entry::Occupied(mut entry) => {
                     let current = entry.get();
                     let keep_live = live_receive_snapshot_keys.contains(&realm_id);
                     let secure_checkpoint_is_authoritative =
@@ -1001,9 +1001,9 @@ impl LocalStateStore {
                     .authenticated_identity_links
                     .retain(|_, entry| entry.identity_link.realm_id.as_str() != realm_id);
                 let mut removed_draft = false;
-                for realms in self.cached.composer_drafts.values_mut() {
+                self.cached.composer_drafts.for_each_mut(|_, realms| {
                     removed_draft |= realms.remove(realm_id).is_some();
-                }
+                });
                 removed_private
                     || removed_draft
                     || removed_decrypted
@@ -1053,9 +1053,9 @@ impl LocalStateStore {
             previous_decrypted.retain(|id, _| id == realm);
             previous_identity_links
                 .retain(|_, entry| entry.identity_link.realm_id.as_str() == realm);
-            for realms in previous_drafts.values_mut() {
+            previous_drafts.for_each_mut(|_, realms| {
                 realms.retain(|id, _| id == realm);
-            }
+            });
         }
         let realm = match scope {
             E2eePlaintextCacheClearScope::All => None,
@@ -1121,7 +1121,7 @@ impl LocalStateStore {
         let id = pending.hydration_fence.id.clone();
         // A mutation may already have absorbed the independently published
         // backup and then legitimately removed a field. Never restore twice.
-        if self.e2ee_cache_reconciliations_seen.insert(id) {
+        if self.e2ee_cache_reconciliations_seen.insert(id).is_none() {
             pending.recovery().backup.merge_into(
                 &mut self.cached,
                 &BTreeSet::new(),
@@ -1432,6 +1432,7 @@ impl CacheClearRecovery {
             )
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn reconcile(&self, json: &Option<String>) -> Result<Option<String>, String> {
         // A later draft or an explicit empty-string tombstone wins. Restore
         // only fields removed by the failed clear, never MLS checkpoints.
@@ -1554,6 +1555,7 @@ impl CachePersistQueue {
     /// authored fields and provenance; failed-clear recovery may fill missing
     /// old fields before activation. A newer capture never satisfies an older
     /// waiter, and stale provenance is rejected instead of reporting success.
+    #[cfg(test)]
     fn enqueue(
         &mut self,
         key: String,

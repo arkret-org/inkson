@@ -2,7 +2,7 @@
 
 use std::sync::{Arc, LazyLock, Mutex, Weak};
 
-use arkret_sdk::contact_operations::{ContactCommitRequestBody, ContactOperationOutcome};
+use arkret_sdk::contact_operations::{ContactCommitRequestBody, ContactOperationResponseBody};
 use serde::{Deserialize, Serialize};
 
 use super::{AuthoringSessionFence, ContactCommitContext};
@@ -29,16 +29,16 @@ fn operation_lock(scope: &UserLocalStore) -> Arc<tokio::sync::Mutex<()>> {
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct PendingContactCommit {
+struct PendingRecord {
     authority: arkret_sdk::AccountId,
     device_id: arkret_sdk::DeviceId,
     verification_method: String,
     signer_key: String,
     intent_digest: String,
-    commit: ContactCommitRequestBody,
+    request: Box<ContactCommitRequestBody>,
 }
 
-impl PendingContactCommit {
+impl PendingRecord {
     fn validate(
         &self,
         scope: &UserLocalStore,
@@ -52,15 +52,15 @@ impl PendingContactCommit {
                 && signer.public_key_base64url().as_ref() == Some(&self.signer_key),
             "Contact journal belongs to another account/device signer"
         );
+        let commit = &self.request;
         anyhow::ensure!(
-            self.commit.signed_event.actor_id
-                == arkret_sdk::ActorId::account(self.authority.clone()),
+            commit.signed_event.actor_id == arkret_sdk::ActorId::account(self.authority.clone()),
             "Contact journal changed its full account actor"
         );
-        self.commit
+        commit
             .signed_event
             .verify_event_id_matches_content_with_digest_suite(
-                self.commit
+                commit
                     .signed_event
                     .event_id
                     .digest_suite_code()
@@ -80,11 +80,11 @@ impl PendingContactCommit {
 pub(super) struct Journal {
     scope: UserLocalStore,
     store: Arc<dyn SecureKeyStore + Send + Sync>,
-    record: Arc<Mutex<PendingContactCommit>>,
+    record: Arc<Mutex<PendingRecord>>,
 }
 
 impl Journal {
-    fn snapshot(&self) -> PendingContactCommit {
+    fn snapshot(&self) -> PendingRecord {
         self.record
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -138,7 +138,7 @@ impl PendingOperation {
         let pending = scope
             .load_secret(store.as_ref(), SECRET_KEY)?
             .map(|raw| -> anyhow::Result<Journal> {
-                let record: PendingContactCommit = serde_json::from_str(&raw)?;
+                let record: PendingRecord = serde_json::from_str(&raw)?;
                 record.validate(&scope, &fence.signer, intent_digest.as_ref())?;
                 Ok(Journal {
                     scope: scope.clone(),
@@ -160,18 +160,19 @@ impl PendingOperation {
     pub(crate) async fn resume(
         &self,
         http: &arkret_sdk::http_client::Client,
-    ) -> anyhow::Result<Option<ContactOperationOutcome>> {
+    ) -> anyhow::Result<Option<ContactOperationResponseBody>> {
         let Some(journal) = &self.pending else {
             return Ok(None);
         };
         let record = journal.snapshot();
+        let commit = &record.request;
         let context = ContactCommitContext {
-            actor_id: record.commit.signed_event.actor_id.clone(),
-            control_realm: record.commit.signed_event.realm_id.clone(),
+            actor_id: commit.signed_event.actor_id.clone(),
+            control_realm: commit.signed_event.realm_id.clone(),
             fence: self.fence.clone(),
             journal: Some(journal.clone()),
         };
-        let outcome = super::run_contact_commit(http, context, &record.commit).await?;
+        let outcome = super::run_contact_commit(http, context, commit).await?;
         self.fence.check()?;
         journal.clear().await?;
         Ok(Some(outcome))
@@ -188,25 +189,39 @@ impl PendingOperation {
                 == arkret_sdk::ActorId::account(self.scope.authority().clone()),
             "Contact commit actor differs from the active full account"
         );
-        let journal = Journal {
-            scope: self.scope.clone(),
-            store: self.store.clone(),
-            record: Arc::new(Mutex::new(PendingContactCommit {
-                authority: self.scope.authority().clone(),
-                device_id: self.scope.device_id().clone(),
-                verification_method: self.fence.signer.verification_method().to_owned(),
-                signer_key: self.fence.signer.public_key_base64url().ok_or_else(|| {
-                    anyhow::anyhow!("Contact journal requires the exact active signer public key")
-                })?,
-                intent_digest: self.intent_digest.clone().ok_or_else(|| {
-                    anyhow::anyhow!("new Contact commit omitted its local intent")
-                })?,
-                commit: commit.clone(),
-            })),
-        };
+        let journal = self.stage_request(Box::new(commit.clone())).await?;
+        context.journal = Some(journal.clone());
+        Ok(journal)
+    }
+    async fn stage_request(
+        &self,
+        request: Box<ContactCommitRequestBody>,
+    ) -> anyhow::Result<Journal> {
+        let journal =
+            Journal {
+                scope: self.scope.clone(),
+                store: self.store.clone(),
+                record: Arc::new(Mutex::new(PendingRecord {
+                    authority: self.scope.authority().clone(),
+                    device_id: self.scope.device_id().clone(),
+                    verification_method: self.fence.signer.verification_method().to_owned(),
+                    signer_key: self.fence.signer.public_key_base64url().ok_or_else(|| {
+                        anyhow::anyhow!("Contact journal requires signer public key")
+                    })?,
+                    intent_digest: self
+                        .intent_digest
+                        .clone()
+                        .ok_or_else(|| anyhow::anyhow!("new Contact request omitted intent"))?,
+                    request,
+                })),
+            };
+        journal.snapshot().validate(
+            &self.scope,
+            &self.fence.signer,
+            self.intent_digest.as_ref(),
+        )?;
         journal.save().await?;
         self.fence.check()?;
-        context.journal = Some(journal.clone());
         Ok(journal)
     }
 }
@@ -218,10 +233,11 @@ pub(crate) async fn resume_pending_contact(
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(any(test, all(target_arch = "wasm32", feature = "spec-conformance")))]
 mod tests {
     use super::*;
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn fixture() -> (Journal, crate::event_signer::InksonEventSigner) {
         let event = super::super::tests::event(arkret_wire::event_kind_str::CONTACT_REQUESTED);
         let authority = event.actor_id.as_account_id().unwrap().clone();
@@ -233,20 +249,20 @@ mod tests {
             device_id.as_str(),
         );
         let scope = UserLocalStore::new(authority.clone(), device_id.clone()).unwrap();
-        let record = PendingContactCommit {
+        let record = PendingRecord {
             authority,
             device_id,
             verification_method: signer.verification_method().to_owned(),
             signer_key: signer.public_key_base64url().unwrap(),
             intent_digest: "original-user-intent".into(),
-            commit: ContactCommitRequestBody {
+            request: Box::new(ContactCommitRequestBody {
                 phase: arkret_sdk::contact_operations::ContactCommitPhase::Commit,
                 operation_id: super::super::tests::operation_id(),
                 idempotency_key: arkret_sdk::IdempotencyKey::new("same-exact-attempt").unwrap(),
                 reservation_handle: arkret_sdk::ReservationHandle::new("opaque-reservation")
                     .unwrap(),
                 signed_event: event,
-            },
+            }),
         };
         (
             Journal {
@@ -258,12 +274,13 @@ mod tests {
         )
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn journal_restart_preserves_exact_contact_commit() {
         let (journal, signer) = fixture();
         let original = journal.snapshot();
         journal.save().await.unwrap();
-        let restored: PendingContactCommit = serde_json::from_str(
+        let restored: PendingRecord = serde_json::from_str(
             &journal
                 .scope
                 .load_secret(journal.store.as_ref(), SECRET_KEY)
@@ -275,8 +292,8 @@ mod tests {
             .validate(&journal.scope, &signer, Some(&original.intent_digest))
             .unwrap();
         assert_eq!(
-            serde_json::to_value(&restored.commit).unwrap(),
-            serde_json::to_value(&original.commit).unwrap()
+            serde_json::to_value(&restored.request).unwrap(),
+            serde_json::to_value(&original.request).unwrap()
         );
         journal.clear().await.unwrap();
         assert!(
@@ -288,6 +305,7 @@ mod tests {
         );
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn recovery_rejects_same_principal_other_station_device_key_or_intent() {
         let (journal, signer) = fixture();

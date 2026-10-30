@@ -1,14 +1,14 @@
 //! Holder-private backup projection provenance, separate from collaboration snapshots.
 
 use anyhow::{Result, anyhow};
-use arkret_sdk::http_client::own_station_results::OwnStationResultClient;
+use arkret_sdk::http_client::own_station_results::OwnStationStateClient;
 
 use super::rotation_transaction::{
     ControllerBackupTrustAnchor, current_controller_backup_trust_anchor,
 };
 
 pub(super) struct ConfirmedBackupBasis {
-    source: OwnStationResultClient,
+    source: OwnStationStateClient,
     state: arkret_sdk::BackupActiveSeriesState,
     trust_anchor: ControllerBackupTrustAnchor,
     signer: std::sync::Arc<crate::event_signer::InksonEventSigner>,
@@ -104,7 +104,7 @@ impl ConfirmedBackupBasis {
 
 pub(super) async fn read_list_with_source(
     http: &arkret_sdk::http_client::Client,
-    source: &OwnStationResultClient,
+    source: &OwnStationStateClient,
     authority: &arkret_sdk::AccountId,
     control_realm: &arkret_sdk::RealmId,
     expected: Option<&arkret_sdk::BackupActiveSeriesState>,
@@ -168,7 +168,7 @@ fn validate_basis(
 
 pub(super) async fn verify_envelope_source(
     http: &arkret_sdk::http_client::Client,
-    source: &OwnStationResultClient,
+    source: &OwnStationStateClient,
     authority: &arkret_sdk::AccountId,
     body: &arkret_sdk::KeyBackup,
 ) -> Result<()> {
@@ -181,19 +181,22 @@ pub(super) async fn verify_envelope_source(
         source.session()?.account_id() == authority,
         "backup envelope source has another Account"
     );
-    let outcome =
-        crate::transport::keys::query_keys(http, authority, body.auth_data.device_id.as_str())
-            .await?;
+    let outcome = crate::transport::keys::query_keys(
+        http,
+        authority,
+        body.signature_proof.device_id.as_str(),
+    )
+    .await?;
     source.check_session()?;
     let anchor = arkret_sdk::resolve_controller_backup_trust_anchor(
         &outcome,
         authority,
-        &body.auth_data.device_id,
+        &body.signature_proof.device_id,
     )
     .map_err(|_| anyhow!("backup envelope accepted authorization is unavailable"))?;
     let row = outcome
         .devices_for(authority)
-        .and_then(|devices| devices.get(&body.auth_data.device_id))
+        .and_then(|devices| devices.get(&body.signature_proof.device_id))
         .ok_or_else(|| anyhow!("backup envelope device projection is unavailable"))?;
     verify_envelope_projection(
         body,
@@ -216,7 +219,7 @@ pub(super) fn verify_envelope_projection(
     body.validate()?;
     anyhow::ensure!(
         body.actor_id == arkret_sdk::ActorId::account(authority.clone())
-            && body.device_id.as_ref() == Some(&body.auth_data.device_id),
+            && body.device_id.as_ref() == Some(&body.signature_proof.device_id),
         "backup envelope complete Account/device differs"
     );
     anyhow::ensure!(
@@ -227,7 +230,7 @@ pub(super) fn verify_envelope_projection(
         "backup envelope device projection is not current"
     );
     anyhow::ensure!(
-        body.auth_data.device_authorize_event_id == projection.device_authorize_event_id,
+        body.signature_proof.device_authorize_event_id == projection.device_authorize_event_id,
         "backup envelope historical authorization is not proved by this projection"
     );
     if let Some(checkpoint) = body.source_commit_ref.as_ref() {
@@ -246,22 +249,23 @@ pub(super) fn verify_envelope_projection(
     let multibase = key_did
         .strip_prefix("did:key:")
         .ok_or_else(|| anyhow!("backup signing key is not a registered did:key"))?;
-    let method = body.auth_data.verification_method.as_str();
+    let method = body.signature_proof.verification_method.as_str();
     let (controller, fragment) = method
         .split_once('#')
         .ok_or_else(|| anyhow!("backup verification method has no exact selector"))?;
     anyhow::ensure!(
         crate::mls_api_helpers::principal_core_id(controller)? == authority.principal_id
-            && fragment == body.auth_data.device_id.as_str(),
+            && fragment == body.signature_proof.device_id.as_str(),
         "backup verification method differs from its complete Account/device"
     );
     anyhow::ensure!(
-        body.auth_data.signature_algorithm == arkret_sdk::KeyBackupSignatureAlgorithm::Ed25519,
+        body.signature_proof.signature_algorithm
+            == arkret_sdk::KeyBackupSignatureAlgorithm::Ed25519,
         "backup envelope signature algorithm is unsupported"
     );
     let public = arkret_sdk::decode_ed25519_multibase(multibase)?;
     let key = ed25519_dalek::VerifyingKey::from_bytes(&public)?;
-    let bytes = arkret_sdk::base64url_decode(body.auth_data.signature.as_str())?;
+    let bytes = arkret_sdk::base64url_decode(body.signature_proof.signature.as_str())?;
     let signature = ed25519_dalek::Signature::from_slice(&bytes)?;
     key.verify_strict(&body.signing_payload_bytes()?, &signature)
         .map_err(|_| anyhow!("backup envelope signature is invalid"))?;
@@ -312,7 +316,7 @@ mod tests {
         replace: bool,
     ) -> (
         arkret_sdk::http_client::Client,
-        OwnStationResultClient,
+        OwnStationStateClient,
         std::thread::JoinHandle<()>,
     ) {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -323,7 +327,7 @@ mod tests {
             base_url: base.clone(),
             trust_domain: arkret_sdk::TrustDomainId::new("ak:trust_domain:station.example")
                 .unwrap(),
-            auth_metadata: arkret_sdk::AuthMetadata::minimal(),
+            authentication_metadata: arkret_sdk::AuthenticationMetadata::minimal(),
         };
         let source = Arc::new(Source(Mutex::new(
             OwnStationSessionSnapshot::new(
@@ -344,7 +348,7 @@ mod tests {
             ))
             .build()
             .unwrap();
-        let own = OwnStationResultClient::new(raw.clone(), binding, source.clone()).unwrap();
+        let own = OwnStationStateClient::new(raw.clone(), binding, source.clone()).unwrap();
         let server = std::thread::spawn(move || {
             let (mut socket, _) = listener.accept().unwrap();
             socket
@@ -380,7 +384,7 @@ mod tests {
         (raw, own, server)
     }
     fn body(state: &arkret_sdk::BackupActiveSeriesState) -> serde_json::Value {
-        serde_json::to_value(arkret_sdk::KeysBackupsList {
+        serde_json::to_value(arkret_sdk::KeysBackupsPage {
             backups: vec![],
             active_series: state.clone(),
             next_cursor: None,

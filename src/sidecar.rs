@@ -367,7 +367,7 @@ const SIDECAR_EXCHANGE_FOLD_CACHE_PREFIX: &str = "sidecar_exchange_fold";
 /// Client-local pre-submission intent records (`zh/models/sidecar.md` §7.2.4:
 /// a rejected request has no durable exchange; retries of the same intent
 /// MUST reuse the same `exchange_id`).
-const SIDECAR_PENDING_SUBMISSION_PREFIX: &str = "ak.local.sidecar_pending_submission.v1";
+const SIDECAR_PENDING_SUBMISSION_PREFIX: &str = "org.arkret.inkson.sidecar_pending_submission.v1";
 /// Older local records are still considered by the privacy gate so their
 /// identifiers are not exposed through shared surfaces. No producer remains.
 const SIDECAR_EXCHANGE_REQUEST_FACT_PREFIX: &str = "sidecar_exchange_request_fact";
@@ -494,13 +494,13 @@ impl SidecarPrivacyGate {
     ) -> Self {
         let mut private_identifiers = std::collections::BTreeSet::new();
         let mut verified_publish_targets = std::collections::BTreeSet::new();
-        let state = store.load();
+        store.with_unoverlaid_account_fields(|state| {
         if let Some(local) = &state.device_authoring_authority
             && local.account_id.principal_id.as_str() == controller_principal_id
         {
             for (realm, snapshot) in &state.verified_sidecar_current {
                 for row in &snapshot.current_state_entries {
-                    if let arkret_sdk::TypedCurrentRow::Value {
+                    if let arkret_sdk::CurrentState::Value {
                         selector: arkret_sdk::CurrentSelector::Sidecar { sidecar_id },
                         value,
                         ..
@@ -540,6 +540,7 @@ impl SidecarPrivacyGate {
                 }
             }
         }
+        });
         for key in store.plain_local_data_keys() {
             let belongs_to_controller = [
                 SIDECAR_EXCHANGE_FOLD_CACHE_PREFIX,
@@ -1221,7 +1222,7 @@ mod tests {
             store
                 .plain_local_data_keys()
                 .iter()
-                .any(|key| { key.starts_with("ak.local.sidecar_pending_submission.v1:") })
+                .any(|key| { key.starts_with("org.arkret.inkson.sidecar_pending_submission.v1:") })
         );
         assert!(
             cached_sidecar_exchange_projections(

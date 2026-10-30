@@ -143,6 +143,71 @@ impl Backend {
         deletes: Vec<String>,
         writes: Vec<(String, Vec<u8>)>,
     ) -> anyhow::Result<()> {
+        self.apply_checked(None, deletes, writes).await
+    }
+    pub(crate) async fn raw(&self, key: &str) -> anyhow::Result<Option<Vec<u8>>> {
+        Store::idb_get_value(&self.db.0, Store::OBJECT_STORE_ENTRIES, key)
+            .await?
+            .as_ref()
+            .map(Store::packed_entry)
+            .transpose()
+            .map_err(Into::into)
+    }
+    pub(crate) async fn apply_checked(
+        &self,
+        check: Option<(String, Option<Vec<u8>>)>,
+        deletes: Vec<String>,
+        writes: Vec<(String, Vec<u8>)>,
+    ) -> anyhow::Result<()> {
+        self.apply_condition(check, deletes, writes, false).await
+    }
+    pub(crate) async fn apply_raw_checked(
+        &self,
+        check: (String, Option<Vec<u8>>),
+        deletes: Vec<String>,
+        writes: Vec<(String, Vec<u8>)>,
+    ) -> anyhow::Result<()> {
+        self.apply_condition(Some(check), deletes, writes, true)
+            .await
+    }
+    async fn apply_condition(
+        &self,
+        check: Option<(String, Option<Vec<u8>>)>,
+        deletes: Vec<String>,
+        writes: Vec<(String, Vec<u8>)>,
+        raw_check: bool,
+    ) -> anyhow::Result<()> {
+        #[cfg(feature = "wasm-localstorage-secrets-test")]
+        let abort_for_test = check.as_ref().is_some_and(|(key, _)| {
+            let mut fault = ACCOUNT_ABORT_FOR_TEST.lock().unwrap();
+            if fault.as_deref() == Some(key) {
+                fault.take();
+                true
+            } else {
+                false
+            }
+        });
+        #[cfg(not(feature = "wasm-localstorage-secrets-test"))]
+        let abort_for_test = false;
+        let checked = if let Some((key, expected)) = check {
+            let raw = Store::idb_get_value(&self.db.0, Store::OBJECT_STORE_ENTRIES, &key).await?;
+            let snapshot = raw.as_ref().map(Store::packed_entry).transpose()?;
+            let actual = if raw_check {
+                snapshot.clone()
+            } else {
+                match raw.clone() {
+                    Some(value) => Some(self.unpack(&key, value).await?),
+                    None => None,
+                }
+            };
+            anyhow::ensure!(
+                actual == expected,
+                "account checkpoint changed before transaction"
+            );
+            Some((key, snapshot))
+        } else {
+            None
+        };
         // WebCrypto must finish before opening the IDB transaction: awaiting a
         // non-IDB promise inside it would allow the browser to auto-commit.
         let mut encrypted = Vec::with_capacity(writes.len());
@@ -180,27 +245,68 @@ impl Backend {
                 let _ = sender.send(Ok(()));
             }
         });
+        let reason = std::rc::Rc::new(std::cell::RefCell::new(None::<String>));
+        let failed_reason = reason.clone();
         let failed = Closure::<dyn FnMut(web_sys::Event)>::new(move |_| {
             if let Some(sender) = sender.borrow_mut().take() {
-                let _ = sender.send(Err("current transaction aborted".into()));
+                let _ = sender.send(Err(failed_reason
+                    .borrow_mut()
+                    .take()
+                    .unwrap_or_else(|| "current transaction aborted".into())));
             }
         });
         tx.set_oncomplete(Some(done.as_ref().unchecked_ref()));
         tx.set_onabort(Some(failed.as_ref().unchecked_ref()));
-        tx.set_onerror(Some(failed.as_ref().unchecked_ref()));
-        let guard = TransactionGuard {
+        // Error defaults abort the transaction; only the terminal abort event resolves failure.
+        let mut guard = TransactionGuard {
             tx: tx.clone(),
             _done: done,
             _failed: failed,
+            checked: None,
         };
         let store = tx.object_store(Store::OBJECT_STORE_ENTRIES).map_err(js)?;
-        for key in deletes {
-            store.delete(&JsValue::from_str(&key)).map_err(js)?;
-        }
-        for (key, value) in encrypted {
-            store
-                .put_with_key(value.as_ref(), &JsValue::from_str(&key))
-                .map_err(js)?;
+        let abort_tx = tx.clone();
+        let enqueue = move |store: &web_sys::IdbObjectStore| -> Result<(), JsValue> {
+            for key in &deletes {
+                store.delete(&JsValue::from_str(key))?;
+            }
+            for (index, (key, value)) in encrypted.iter().enumerate() {
+                store.put_with_key(value.as_ref(), &JsValue::from_str(key))?;
+                if abort_for_test && index == 0 {
+                    abort_tx.abort()?;
+                    return Err(JsValue::from_str("injected account transaction abort"));
+                }
+            }
+            Ok(())
+        };
+        if let Some((key, snapshot)) = checked {
+            let request = store.get(&JsValue::from_str(&key)).map_err(js)?;
+            let read = request.clone();
+            let checked_tx = tx.clone();
+            let callback = Closure::<dyn FnMut(web_sys::Event)>::new(move |_| {
+                let outcome = (|| -> anyhow::Result<()> {
+                    let value = read.result().map_err(js)?;
+                    let current = if value.is_null() || value.is_undefined() {
+                        None
+                    } else {
+                        Some(Store::packed_entry(&value)?)
+                    };
+                    anyhow::ensure!(
+                        current == snapshot,
+                        "account checkpoint changed in transaction"
+                    );
+                    enqueue(&store).map_err(js)?;
+                    Ok(())
+                })();
+                if let Err(error) = outcome {
+                    *reason.borrow_mut() = Some(error.to_string());
+                    let _ = checked_tx.abort();
+                }
+            });
+            request.set_onsuccess(Some(callback.as_ref().unchecked_ref()));
+            guard.checked = Some((request, callback));
+        } else {
+            enqueue(&store).map_err(js)?;
         }
         let result = tokio::select! {
             result=receiver=>result.map_err(|_|anyhow::anyhow!("current transaction channel closed"))?.map_err(anyhow::Error::msg),
@@ -215,12 +321,28 @@ struct TransactionGuard {
     tx: web_sys::IdbTransaction,
     _done: Closure<dyn FnMut(web_sys::Event)>,
     _failed: Closure<dyn FnMut(web_sys::Event)>,
+    checked: Option<(web_sys::IdbRequest, Closure<dyn FnMut(web_sys::Event)>)>,
 }
 impl Drop for TransactionGuard {
     fn drop(&mut self) {
+        if let Some((request, _)) = &self.checked {
+            request.set_onsuccess(None);
+        }
         self.tx.set_oncomplete(None);
         self.tx.set_onabort(None);
         self.tx.set_onerror(None);
         let _ = self.tx.abort();
+    }
+}
+
+#[cfg(feature = "wasm-localstorage-secrets-test")]
+static ACCOUNT_ABORT_FOR_TEST: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+#[cfg(feature = "wasm-localstorage-secrets-test")]
+impl Backend {
+    pub(crate) fn abort_account_transaction_for_test(key: String) {
+        *ACCOUNT_ABORT_FOR_TEST.lock().unwrap() = Some(key);
+    }
+    pub(crate) fn close_for_test(&self) {
+        self.db.0.close();
     }
 }

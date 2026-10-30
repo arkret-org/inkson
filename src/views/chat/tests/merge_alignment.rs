@@ -19,6 +19,7 @@ mod merge_duplicate_create_message_alignment_tests {
 
     fn msg(id: &str, body: &str, created_at: Option<chrono::DateTime<chrono::Utc>>) -> ChatMessage {
         ChatMessage {
+            protocol_content: None,
             local_scope: None,
             realm_id: "ak:realm:ARqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0".to_owned(),
             id: id.to_owned(),

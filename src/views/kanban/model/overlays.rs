@@ -171,7 +171,9 @@ pub(crate) fn raw_operation_allows_overlay(payload: &Value) -> bool {
         write_state.as_str(),
         "queued"
             | "submitting"
+            | "forwarding"
             | "submitted"
+            | "pending"
             | "pending_commit"
             | "accepted"
             | "effective"
@@ -203,65 +205,13 @@ pub(crate) fn raw_operation_strand_update_target_id(payload: &Value) -> Option<S
         .or_else(|| json_path_string(Some(body), &["target_ref"]))
 }
 
-#[cfg(test)]
-pub(crate) fn local_operation_state_for_target(
-    raw_operations: &[RawOperationRecord],
-    kind: &str,
-    target_id: &str,
-) -> Option<CardState> {
-    raw_operations.iter().rev().find_map(|record| {
-        if !raw_operation_kind_matches(&record.payload, kind) {
-            return None;
-        }
-        let payload = &record.payload;
-        let body = payload.get("body").or_else(|| payload.get("payload"));
-        let effect = payload.get("effect");
-        let matches_target = json_path_string(body, &["object", "id"])
-            .or_else(|| json_path_string(body, &["strand_id"]))
-            .or_else(|| json_path_string(body, &["target_ref"]))
-            .or_else(|| json_path_string(effect, &["strand_id"]))
-            .or_else(|| json_path_string(Some(payload), &["strand_id"]))
-            .as_deref()
-            == Some(target_id);
-        matches_target.then(|| raw_operation_card_state(payload))
-    })
-}
-
-#[cfg(test)]
-pub(crate) fn local_space_create_state_for_target(
-    raw_operations: &[RawOperationRecord],
-    projected_space_container_ids: &BTreeSet<String>,
-    target_id: &str,
-) -> Option<CardState> {
-    let state =
-        local_operation_state_for_target(raw_operations, event_kind_str::SPACE_CREATE, target_id)?;
-    if projected_space_container_ids.contains(target_id) {
-        Some(CardState::Synced)
-    } else {
-        Some(state)
-    }
-}
-
-pub(crate) fn displayed_card_state(
-    card: &KanbanCard,
-    projected_strand_ids: &BTreeSet<String>,
-) -> CardState {
-    if projected_strand_ids.contains(&card.id)
-        || projected_strand_ids.contains(&card.primary_strand_id)
-    {
-        CardState::Synced
-    } else {
-        card.state
-    }
-}
-
 /// Re-apply locally-queued `ak.strand.update` patches on top of the
 /// server projection. Without this overlay, optimistic edits to a
 /// card's title / summary / body / fields would vanish on page reload
 /// because the server projection is refetched but the local mutation
-/// lived only in the in-memory `columns` signal. The reducer copy of
-/// each Move is the source of truth once the server confirms, but in
-/// the meantime we keep the user's edit visible by replaying the
+/// lived only in the in-memory `columns` signal. The accepted current result
+/// takes over once it covers the write's exact revision. Until then,
+/// we keep the user's edit visible by replaying the
 /// queued payload here. Ops marked as terminally-failed are skipped
 /// so a rejected edit doesn't keep clobbering the projection.
 pub(crate) fn overlay_local_card_update_records(
@@ -291,13 +241,15 @@ pub(crate) fn overlay_local_card_update_records(
 pub(crate) fn overlay_pending_card_updates(
     mut columns: Vec<KanbanColumn>,
     operations: &[RawOperationRecord],
-    entries: &[arkret_wire::TypedCurrentRow],
+    entries: &[arkret_wire::CurrentState],
     decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
 ) -> Vec<KanbanColumn> {
     for record in operations {
         let state = record.payload.get("write_state").and_then(Value::as_str);
         let waiting = match state {
-            Some("queued" | "submitting" | "submitted" | "pending_commit") => true,
+            Some(
+                "queued" | "submitting" | "forwarding" | "submitted" | "pending" | "pending_commit",
+            ) => true,
             Some("accepted" | "effective" | "synced") => {
                 let Some(marker) = record.payload.get("card_display_commit") else {
                     continue;
@@ -321,14 +273,14 @@ pub(crate) fn overlay_pending_card_updates(
                     strand_id: strand.clone(),
                 };
                 let mut matching = entries.iter().filter(|entry| {
-                    let arkret_wire::TypedCurrentRow::Value {
+                    let arkret_wire::CurrentState::Value {
                         selector: found, ..
                     } = entry;
                     found == &selector
                 });
                 match matching.next() {
                     None => true,
-                    Some(arkret_wire::TypedCurrentRow::Value {
+                    Some(arkret_wire::CurrentState::Value {
                         source_stream_ref,
                         revision,
                         value,
@@ -669,8 +621,14 @@ pub(crate) fn local_card_update_from_raw_operation(
         .as_ref()
         .and_then(Value::as_object)
         .and_then(|fields| {
-            fields_have_calendar_keys(fields)
-                .then(|| calendar_fields_from_metadata(fields, decrypt_ctx, &strand_id))
+            fields_have_calendar_keys(fields).then(|| {
+                calendar_fields_from_metadata_and_event(
+                    fields,
+                    decrypt_ctx,
+                    &strand_id,
+                    payload.get("event"),
+                )
+            })
         });
     Some(LocalCardUpdate {
         strand_id,
@@ -873,6 +831,21 @@ pub(crate) fn overlay_local_card_create_records(
         else {
             continue;
         };
+        // This is the holder's intended placement, not a committed position.
+        // A refused follow-up remains visible as a failed local action and
+        // cannot turn the accepted, unplaced create into a completed card.
+        if let Some(placement) = raw_operations.iter().rev().find(|row| {
+            raw_operation_kind_matches(&row.payload, event_kind_str::STRAND_MOVE)
+                && row.payload.get("board_space_id").and_then(Value::as_str)
+                    == Some(board_space_id.as_str())
+                && row.payload.get("strand_id").and_then(Value::as_str)
+                    == Some(local_create.card.id.as_str())
+        }) && matches!(
+            placement.payload.get("write_state").and_then(Value::as_str),
+            Some("rejected" | "failed" | "cancelled")
+        ) {
+            local_create.card.state = CardState::SoftFailed;
+        }
         existing_card_ids.insert(local_create.card.id.clone());
         column.cards.push(local_create.card);
         sort_kanban_cards(&mut column.cards);
@@ -925,7 +898,10 @@ pub(crate) fn local_card_create_from_raw_operation(
             title,
             rank,
             description,
-            raw_operation_card_state(payload),
+            match raw_operation_card_state(payload) {
+                CardState::Accepted | CardState::Synced => CardState::Queued,
+                state => state,
+            },
         ),
     })
 }
@@ -943,7 +919,9 @@ pub(crate) fn holder_local_pending_card_create(
         let payload = &record.payload;
         if !matches!(
             payload.get("write_state").and_then(Value::as_str),
-            Some("queued" | "submitting" | "submitted" | "pending_commit")
+            Some(
+                "queued" | "submitting" | "forwarding" | "submitted" | "pending" | "pending_commit"
+            )
         ) {
             return false;
         }
@@ -1306,21 +1284,29 @@ pub(crate) fn patch_op_for_private_path<'a>(
     if let Some(op) = patch.get(path) {
         return Some(Cow::Borrowed(op));
     }
-    let mut segments = path.split('.');
-    let first = segments.next()?;
-    let parent_op = patch.get(first)?;
-    if parent_op.get("$op").and_then(Value::as_str) != Some("set") {
-        return None;
+    // A canonical patch may replace an entire dotted subtree, such as
+    // metadata.fields.calendar. Bind to the nearest actual parent operation,
+    // then traverse only its signed value; never combine unrelated patches.
+    let mut prefix = path;
+    while let Some((parent, _)) = prefix.rsplit_once('.') {
+        prefix = parent;
+        let Some(parent_op) = patch.get(parent) else {
+            continue;
+        };
+        if parent_op.get("$op").and_then(Value::as_str) != Some("set") {
+            return None;
+        }
+        let mut current = parent_op.get("value")?;
+        for segment in path[parent.len() + 1..].split('.') {
+            current = current.get(segment)?;
+        }
+        return if current.get("$op").and_then(Value::as_str).is_some() {
+            Some(Cow::Owned(current.clone()))
+        } else {
+            Some(Cow::Owned(
+                json!({ "$op": "set", "value": current.clone() }),
+            ))
+        };
     }
-    let mut current = parent_op.get("value")?;
-    for segment in segments {
-        current = current.get(segment)?;
-    }
-    if current.get("$op").and_then(Value::as_str).is_some() {
-        Some(Cow::Owned(current.clone()))
-    } else {
-        Some(Cow::Owned(
-            json!({ "$op": "set", "value": current.clone() }),
-        ))
-    }
+    None
 }

@@ -168,38 +168,95 @@ impl LocalStateStore {
         &mut self,
         account: &crate::config::ActiveAccountContext,
     ) -> anyhow::Result<bool> {
+        self.activate_account_scope(account, true)
+    }
+
+    /// Select an existing profile without promoting an unfinished login's keys.
+    pub(crate) fn switch_saved_account(
+        &mut self,
+        account: &crate::config::ActiveAccountContext,
+    ) -> anyhow::Result<bool> {
+        let old_root = self.read_root();
+        let old_store = self.clone();
+        match self.activate_account_scope(account, false) {
+            Ok(changed) => Ok(changed),
+            Err(error) => {
+                let rollback = self.write_root(&old_root);
+                *self = old_store;
+                rollback.map_err(|rollback| {
+                    anyhow::anyhow!(
+                        "account activation failed: {error}; root rollback failed: {rollback}"
+                    )
+                })?;
+                Err(error)
+            }
+        }
+    }
+
+    pub(crate) async fn prepare_saved_account(
+        &self,
+        account: &crate::config::ActiveAccountContext,
+    ) -> anyhow::Result<()> {
+        let namespace = account_storage_scope(&account.authority)?;
+        #[cfg(target_arch = "wasm32")]
+        account_store::browser::hydrate(&namespace).await?;
+        let _ = self.read_account_state(&namespace);
+        anyhow::ensure!(
+            !self
+                .corrupt_account_scopes
+                .lock()
+                .map_err(|_| anyhow::anyhow!("account quarantine lock poisoned"))?
+                .contains(&namespace),
+            "selected account storage is quarantined"
+        );
+        Ok(())
+    }
+
+    fn activate_account_scope(
+        &mut self,
+        account: &crate::config::ActiveAccountContext,
+        promote_pending_login: bool,
+    ) -> anyhow::Result<bool> {
         self.ensure_cached_loaded();
         let namespace = account_storage_scope(&account.authority)?;
-        let root = self.read_root();
+        let incoming = self.read_account_state(&namespace);
+        anyhow::ensure!(
+            !self
+                .corrupt_account_scopes
+                .lock()
+                .map_err(|_| anyhow::anyhow!("account quarantine lock poisoned"))?
+                .contains(&namespace),
+            "selected account storage is quarantined"
+        );
+        let mut root = self.read_root();
         let same_authority = root
             .active_entry()
             .is_some_and(|entry| entry.authority == account.authority);
         if same_authority && root.pending_login.is_none() {
-            self.mutate_root(|root| {
-                root.active_profile_id = Some(account.profile_id.clone());
-                root.note_known_profile(AccountIndexEntry {
-                    profile_id: account.profile_id.clone(),
-                    authority: account.authority.clone(),
-                });
-            });
-            return Ok(false);
-        }
-
-        self.invalidate_e2ee_cache_clear_rollback();
-        let pending = root.pending_login.is_some().then(|| self.cached.clone());
-        let _ = self.flush();
-        *self.lock_mls_receive_overlay() = MlsReceiveOverlay::default();
-        self.mutate_root(|root| {
-            root.pending_login = None;
             root.active_profile_id = Some(account.profile_id.clone());
             root.note_known_profile(AccountIndexEntry {
                 profile_id: account.profile_id.clone(),
                 authority: account.authority.clone(),
             });
+            self.write_root(&root)?;
+            return Ok(false);
+        }
+
+        self.invalidate_e2ee_cache_clear_rollback();
+        let pending =
+            (promote_pending_login && root.pending_login.is_some()).then(|| self.cached.clone());
+        self.flush()?;
+        *self.lock_mls_receive_overlay() = MlsReceiveOverlay::default();
+        root.pending_login = None;
+        root.active_profile_id = Some(account.profile_id.clone());
+        root.note_known_profile(AccountIndexEntry {
+            profile_id: account.profile_id.clone(),
+            authority: account.authority.clone(),
         });
+        self.write_root(&root)?;
 
         self.clear_current_product_view();
-        let mut incoming = self.read_account_state(&namespace).unwrap_or_default();
+        let mut incoming = incoming.unwrap_or_default();
         if let Some(mut staged) = pending {
             incoming.session_grant = staged.session_grant.take().or(incoming.session_grant);
             incoming.dpop_device_key = staged.dpop_device_key.take().or(incoming.dpop_device_key);
@@ -230,7 +287,27 @@ impl LocalStateStore {
         device_id: &arkret_sdk::DeviceId,
         dpop_jkt: Option<&str>,
     ) {
-        self.begin_pending_login_inner(device_id, dpop_jkt, false);
+        let result = self.begin_pending_login_inner(device_id, dpop_jkt, false);
+        self.record_persist_result(&result);
+    }
+
+    /// A menu-driven account transition must be able to refuse persistence
+    /// failures without replacing the retained account with anonymous state.
+    pub(crate) fn begin_account_switch_login(
+        &mut self,
+        device_id: &arkret_sdk::DeviceId,
+    ) -> anyhow::Result<()> {
+        let old_root = self.read_root();
+        let old_store = self.clone();
+        if let Err(error) = self.begin_pending_login_inner(device_id, None, false) {
+            let rollback = self.write_root(&old_root);
+            *self = old_store;
+            rollback.map_err(|rollback| {
+                anyhow::anyhow!("pending login failed: {error}; root rollback failed: {rollback}")
+            })?;
+            return Err(error);
+        }
+        Ok(())
     }
 
     /// Whether this exact pending device still holds its authentication key.
@@ -275,8 +352,9 @@ impl LocalStateStore {
             None
         };
         let can_resume = pending_jkt.is_some();
-        self.begin_pending_login_inner(device_id, pending_jkt.as_deref(), can_resume);
-        can_resume
+        let result = self.begin_pending_login_inner(device_id, pending_jkt.as_deref(), can_resume);
+        self.record_persist_result(&result);
+        can_resume && result.is_ok()
     }
 
     /// Record the pre-DID owner and pin the pending secure-store namespace.
@@ -287,7 +365,7 @@ impl LocalStateStore {
         device_id: &arkret_sdk::DeviceId,
         dpop_jkt: Option<&str>,
         preserve_onboarding: bool,
-    ) {
+    ) -> anyhow::Result<()> {
         self.invalidate_e2ee_cache_clear_rollback();
         self.ensure_cached_loaded();
 
@@ -302,7 +380,20 @@ impl LocalStateStore {
         // Persist the outgoing account before changing the root owner. On a
         // fresh login its checkpoint remains account-scoped; on a verified
         // resume the two fields were intentionally removed for re-homing.
-        let _ = self.flush();
+        let anonymous_was_quarantined = !preserve_onboarding
+            && self
+                .corrupt_account_scopes
+                .lock()
+                .map_err(|_| anyhow::anyhow!("account quarantine lock poisoned"))?
+                .contains(ANONYMOUS_ACCOUNT_NAMESPACE);
+        // A quarantined anonymous incarnation is deliberately preserved by
+        // the reset below. It cannot be flushed; every ordinary outgoing
+        // account must still pass the normal persistence barrier.
+        if !(anonymous_was_quarantined
+            && self.effective_account_key() == ANONYMOUS_ACCOUNT_NAMESPACE)
+        {
+            self.flush()?;
+        }
 
         *self.lock_mls_receive_overlay() = MlsReceiveOverlay::default();
         let anonymous = ClientLocalState {
@@ -317,7 +408,9 @@ impl LocalStateStore {
         // rehydrates the exact pending signer from durable storage before it
         // signs or resumes a prepared registration request.
         crate::event_signer::clear_active_device_signer();
+        let reset_incarnation = anonymous_was_quarantined.then(crate::operation::uuid_v7);
         let pending = PendingLogin {
+            anonymous_storage_incarnation: reset_incarnation.clone(),
             device_id: device_id.clone(),
             dpop_jkt: dpop_jkt
                 .map(str::trim)
@@ -327,39 +420,18 @@ impl LocalStateStore {
         // Publish the transaction marker before flushing its anonymous state.
         // The last-selected account remains intact; effective_account_key()
         // gives pending_login precedence and prevents cross-account writes.
-        self.mutate_root(|root| {
-            root.pending_login = Some(pending);
-        });
+        let mut root = self.read_root();
+        root.pending_login = Some(pending);
+        self.write_root(&root)?;
         self.cached = anonymous;
         self.cached_account_key = Some(self.effective_account_key());
         self.loaded.store(true, Ordering::Relaxed);
-        let anonymous_was_quarantined = !preserve_onboarding
-            && self
-                .corrupt_account_scopes
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .contains(ANONYMOUS_ACCOUNT_NAMESPACE);
-        if anonymous_was_quarantined {
-            // A fresh sign-in is an explicit reset of the pre-DID scratch
-            // namespace. `read_account_state` has already preserved the
-            // undecodable payload under the sibling `.corrupt` entry, so it is
-            // safe to replace only the active anonymous blob here. Keep real
-            // account namespaces fail-closed, and keep the quarantine latched
-            // if even this replacement write fails.
-            let result = self.write_account_state(
-                ANONYMOUS_ACCOUNT_NAMESPACE,
-                self.effective_state_for_persist(),
-            );
-            if result.is_ok() {
-                self.corrupt_account_scopes
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner())
-                    .remove(ANONYMOUS_ACCOUNT_NAMESPACE);
-            }
-            self.record_persist_result(&result);
+        if let Some(incarnation) = reset_incarnation {
+            self.reset_quarantined_anonymous_records(&incarnation)?;
         } else {
-            let _ = self.flush();
+            self.flush()?;
         }
+        Ok(())
     }
 
     /// The in-flight pre-DID login material, if any. Read through storage so a

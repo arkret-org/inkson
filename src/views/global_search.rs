@@ -28,7 +28,6 @@ use crate::i18n::tr;
 use crate::models::IndexSearchView;
 use crate::routes::Route;
 use crate::state::LocalStateStore;
-use crate::state::projection::projection_events_from_sync_realms;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::input::Input;
 use crate::views::helpers::{actor_display_label, short_protocol_id};
@@ -36,6 +35,15 @@ use crate::views::helpers::{actor_display_label, short_protocol_id};
 /// Type alias for the panel's result list to keep the component
 /// signature compact.
 type ResultRows = Vec<Value>;
+type SearchRequest = (String, arkret_sdk::AccountId, arkret_sdk::DeviceId, u64);
+type SearchDeadline = Option<chrono::DateTime<chrono::Utc>>;
+
+fn earliest_deadline(left: SearchDeadline, right: SearchDeadline) -> SearchDeadline {
+    match (left, right) {
+        (Some(left), Some(right)) => Some(left.min(right)),
+        (left, right) => left.or(right),
+    }
+}
 
 /// Extract literal snippet text without interpreting it as a translation key.
 /// `None` marks metadata-only rows; explicit empty text remains `Some`.
@@ -73,7 +81,12 @@ fn render_result_kind(result: &Value) -> String {
 }
 
 pub fn result_actor_id(result: &Value) -> String {
-    string_field(result, &["actor_id", "source_actor_id"]).unwrap_or_default()
+    result
+        .get("actor_id")
+        .and_then(|actor| serde_json::from_value::<arkret_sdk::ActorId>(actor.clone()).ok())
+        .map(|actor| actor.signing_principal_id().to_string())
+        .or_else(|| string_field(result, &["actor_id", "source_actor_id"]))
+        .unwrap_or_default()
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -83,8 +96,83 @@ pub struct SearchDestination {
     pub label_key: &'static str,
 }
 
-pub fn local_decrypted_index_search(
-    realms: &std::collections::BTreeMap<String, Value>,
+enum SearchSource<'a> {
+    #[allow(dead_code)]
+    Borrowed(&'a LocalStateStore),
+    Live(SyncSignal<LocalStateStore>),
+    #[cfg(not(target_arch = "wasm32"))]
+    Host(
+        crate::runtime::input::StateStoreHandle,
+        &'a crate::state::PersistedSessionGrant,
+    ),
+}
+
+impl SearchSource<'_> {
+    fn with_store<R>(&self, read: impl FnOnce(&LocalStateStore) -> R) -> R {
+        match self {
+            Self::Borrowed(store) => read(store),
+            Self::Live(store) => read(&store.peek()),
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::Host(store, _) => store.read(read),
+        }
+    }
+
+    fn holder_deadline(
+        &self,
+        account: &arkret_sdk::AccountId,
+        device: &arkret_sdk::DeviceId,
+    ) -> SearchDeadline {
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Self::Host(_, grant) = self {
+            return self.with_store(|store| {
+                store.search_valid_until_with_grant(
+                    account,
+                    device,
+                    chrono::Utc::now(),
+                    Some(grant),
+                )
+            });
+        }
+        self.with_store(|store| {
+            store.search_session_valid_until(account, device, chrono::Utc::now())
+        })
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) async fn search_native_index(
+    store: crate::runtime::input::StateStoreHandle,
+    authority: &arkret_sdk::AccountId,
+    device_id: &arkret_sdk::DeviceId,
+    grant: &crate::state::PersistedSessionGrant,
+    query: &str,
+    realm_ids: &[String],
+    limit: usize,
+) -> anyhow::Result<(IndexSearchView, SearchDeadline)> {
+    let (mut view, policy_deadline) = search_local(
+        SearchSource::Host(store.clone(), grant),
+        authority,
+        device_id,
+        query,
+        realm_ids,
+        Some(&["message"]),
+        limit,
+    )
+    .await?;
+    let holder_deadline = SearchSource::Host(store, grant).holder_deadline(authority, device_id);
+    let deadline = earliest_deadline(holder_deadline, policy_deadline);
+    if holder_deadline.is_none() || deadline.is_some_and(|value| value <= chrono::Utc::now()) {
+        view.results.clear();
+    }
+    Ok((view, deadline))
+}
+
+fn search_blocked_actors(store: &LocalStateStore) -> std::collections::BTreeSet<String> {
+    crate::account_data::blocked_message_actor_ids(&store.client_blocklist())
+}
+
+#[cfg(test)]
+async fn local_decrypted_index_search(
     store: &LocalStateStore,
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
@@ -92,83 +180,149 @@ pub fn local_decrypted_index_search(
     realm_ids: &[String],
     object_kinds: Option<&[&str]>,
     limit: usize,
-) -> IndexSearchView {
-    let query_trimmed = query.trim();
-    if query_trimmed.is_empty()
+) -> anyhow::Result<IndexSearchView> {
+    search_local(
+        SearchSource::Borrowed(store),
+        authority,
+        device_id,
+        query,
+        realm_ids,
+        object_kinds,
+        limit,
+    )
+    .await
+    .map(|(view, _)| view)
+}
+
+async fn search_local(
+    source: SearchSource<'_>,
+    authority: &arkret_sdk::AccountId,
+    device_id: &arkret_sdk::DeviceId,
+    query: &str,
+    realm_ids: &[String],
+    object_kinds: Option<&[&str]>,
+    limit: usize,
+) -> anyhow::Result<(IndexSearchView, SearchDeadline)> {
+    let query = query.trim();
+    let mut response = IndexSearchView {
+        query: query.to_owned(),
+        results: Vec::new(),
+        next_cursor: None,
+    };
+    if query.is_empty()
         || limit == 0
         || object_kinds.is_some_and(|kinds| !kinds.contains(&"message"))
+        || source.holder_deadline(authority, device_id).is_none()
     {
-        return IndexSearchView {
-            query: query_trimmed.to_owned(),
-            results: Vec::new(),
-            next_cursor: None,
-        };
+        return Ok((response, None));
     }
+    let index = crate::state::CurrentIndex::open_committed(
+        authority,
+        source.with_store(|store| store.current_index_location()),
+        || source.with_store(|store| Ok(store.current_generation())),
+    )
+    .await?;
+    let generation = source.with_store(|store| store.current_generation());
+    let needle = query.to_lowercase();
+    let actor = arkret_sdk::ActorId::account(authority.clone());
+    let blocked = source.with_store(search_blocked_actors);
 
-    let query_lc = query_trimmed.to_lowercase();
-    let realm_filter = realm_ids
-        .iter()
-        .filter(|realm_id| !realm_id.trim().is_empty())
-        .cloned()
-        .collect::<std::collections::BTreeSet<_>>();
-    let events =
-        projection_events_from_sync_realms(realms, Some(store), Some((authority, device_id)));
-    let sidecar_privacy =
-        crate::sidecar::SidecarPrivacyGate::from_store(store, authority.principal_id.as_str());
-    let mut results = Vec::new();
-    for event in events {
-        if results.len() >= limit {
+    let mut after = None;
+    let mut recheck_at = None;
+    loop {
+        let page = index
+            .read_search_page(&actor, after.as_deref(), chrono::Utc::now())
+            .await?;
+        if page.generation != generation
+            || source.holder_deadline(authority, device_id).is_none()
+            || source.with_store(search_blocked_actors) != blocked
+        {
+            response.results.clear();
+            return Ok((response, None));
+        }
+        recheck_at = earliest_deadline(recheck_at, page.recheck_at);
+        let (messages, privacy) = source.with_store(|store| {
+            (
+                crate::views::chat::model::chat_messages_from_search_originals(
+                    &page.rows, store, authority, device_id,
+                ),
+                crate::sidecar::SidecarPrivacyGate::from_store(
+                    store,
+                    authority.principal_id.as_str(),
+                ),
+            )
+        });
+        for message in messages {
+            let Some(original) = page
+                .rows
+                .iter()
+                .find(|full| full.event.event_id.as_str() == message.id)
+            else {
+                continue;
+            };
+            // Personal filtering uses the authenticated complete sender ActorId,
+            // independently of membership and the shared Message lifecycle.
+            if crate::account_data::message_actor_is_blocked(&original.event.actor_id, &blocked) {
+                continue;
+            }
+            if message.crypto_state != crate::views::chat::model::MessageCryptoState::Plaintext
+                || source.with_store(|store| store.account_scope_read_denied(&message.realm_id))
+                || message.pending
+                || message.failed
+                || message.redacted
+                || (!realm_ids.is_empty() && !realm_ids.contains(&message.realm_id))
+            {
+                continue;
+            }
+            let Some(body) = searchable_message_body(&message.body, message.redacted) else {
+                continue;
+            };
+            let probe =
+                json!({"event_id": message.id, "strand_id": message.strand_id, "body": body});
+            if !privacy.allows_strand(
+                crate::sidecar::SidecarDisclosureSurface::Search,
+                &message.strand_id,
+            ) || !privacy
+                .allows_serialized(crate::sidecar::SidecarDisclosureSurface::Search, &probe)
+                || !body.to_lowercase().contains(&needle)
+            {
+                continue;
+            }
+            let body_source = message
+                .protocol_content
+                .as_ref()
+                .and_then(|content| {
+                    page.rows
+                        .iter()
+                        .find(|row| row.event.event_id == content.source)
+                })
+                .unwrap_or(original);
+            response.results.push(json!({
+                "realm_id": message.realm_id, "strand_id": message.strand_id,
+                "kind": "message", "surface": "message", "event_id": message.id,
+                "message_id": message.id, "actor_id": original.event.actor_id,
+                "covering_commit": original.commit, "content": {"body": body},
+                "source_event_id": body_source.event.event_id, "source_commit": body_source.commit,
+                "index_profile": arkret_sdk::ProfileId::SEARCH_CLIENT_INDEX_V1,
+                "index_source": "local_decrypted_client_index"
+            }));
+            if response.results.len() >= limit.min(100) {
+                break;
+            }
+        }
+        if response.results.len() >= limit.min(100) || page.next.is_none() {
             break;
         }
-        let Some(realm_id) = event.realm_id.as_deref() else {
-            continue;
-        };
-        if !realm_filter.is_empty() && !realm_filter.contains(realm_id) {
-            continue;
-        }
-        let disclosure_probe = serde_json::json!({
-            "event_id": event.event_id.as_deref(),
-            "strand_id": event.strand_id.as_deref(),
-            "body": event.body.as_str(),
-        });
-        if event.strand_id.as_ref().is_some_and(|strand_id| {
-            !sidecar_privacy
-                .allows_strand(crate::sidecar::SidecarDisclosureSurface::Search, strand_id)
-        }) || !sidecar_privacy.allows_serialized(
-            crate::sidecar::SidecarDisclosureSurface::Search,
-            &disclosure_probe,
-        ) {
-            continue;
-        }
-        let Some(body) = searchable_message_body(&event.body, event.redacted) else {
-            continue;
-        };
-        if !body.to_lowercase().contains(&query_lc) {
-            continue;
-        }
-        let event_ref = event
-            .event_id
-            .as_deref()
-            .or(Some(event.id.as_str()))
-            .unwrap_or_default();
-        results.push(json!({
-            "realm_id": realm_id,
-            "kind": "message",
-            "surface": "message",
-            "event_id": event_ref,
-            "message_id": event_ref,
-            "actor_id": event.sender,
-            "content": { "body": body },
-            "index_profile": arkret_sdk::ProfileId::SEARCH_CLIENT_INDEX_V1,
-            "index_source": "local_decrypted_client_index"
-        }));
+        after = page.next;
     }
-
-    IndexSearchView {
-        query: query_trimmed.to_owned(),
-        results,
-        next_cursor: None,
+    if source.with_store(|store| store.current_generation()) != generation
+        || source.holder_deadline(authority, device_id).is_none()
+        || source.with_store(search_blocked_actors) != blocked
+        || recheck_at.is_some_and(|deadline| deadline <= chrono::Utc::now())
+    {
+        response.results.clear()
     }
+    Ok((response, recheck_at))
 }
 
 fn searchable_message_body(body: &str, redacted: bool) -> Option<&str> {
@@ -241,22 +395,129 @@ pub fn result_destination(result: &Value) -> Option<SearchDestination> {
 // lives in `crate::realm_tree`.
 use crate::realm_tree::string_field;
 
-#[component]
-pub fn GlobalSearchPanel(
-    principal_id: Signal<Option<arkret_sdk::DidCoreId>>,
-    device_id: Signal<String>,
-    initial_query: String,
-) -> Element {
+#[derive(Clone, Copy)]
+struct LocalSearchState {
+    results: Signal<ResultRows>,
+    loading: Signal<bool>,
+    search_epoch: Signal<u64>,
+    last_search: Signal<Option<SearchRequest>>,
+    error_key: Signal<Option<&'static str>>,
+    has_searched: Signal<bool>,
+    recheck_at: Signal<SearchDeadline>,
+}
+
+fn search_holder_ready(session: crate::app::SessionContext) -> bool {
+    session
+        .active_account
+        .read()
+        .as_ref()
+        .is_some_and(|account| {
+            session
+                .state_store
+                .read()
+                .search_session_matches(&account.authority, &account.device_id)
+        })
+}
+
+fn use_local_search(initial_query: String) -> LocalSearchState {
     // A4 — state_store from session context instead of a prop.
     let session = crate::app::SessionContext::get();
     let state_store = session.state_store;
     let active_account = session.active_account;
-    let mut query = use_signal(|| initial_query.clone());
-    let results = use_signal(ResultRows::new);
-    let loading = use_signal(|| false);
+    let mut results = use_signal(ResultRows::new);
+    let mut loading = use_signal(|| false);
+    let mut search_epoch = use_signal(|| 0u64);
+    let mut last_search = use_signal(|| None::<SearchRequest>);
     let mut error_key = use_signal(|| None::<&'static str>);
-    let has_searched = use_signal(|| false);
-    let navigator = use_navigator();
+    let mut has_searched = use_signal(|| false);
+    let mut clock_revision = use_signal(|| 0_u64);
+    let mut recheck_at = use_signal(|| None);
+    let security_fence = use_memo(move || {
+        let clock = *clock_revision.read();
+        // A query after not_before must both release the now-valid result and
+        // arm its expiry task, even when persisted evidence has not changed.
+        let _ = search_epoch.read();
+        let store = state_store.read();
+        let account = active_account
+            .read()
+            .as_ref()
+            .map(|account| (account.authority.clone(), account.device_id.clone()));
+        let valid_until = account.as_ref().and_then(|(account, device)| {
+            store.search_session_valid_until(account, device, chrono::Utc::now())
+        });
+        (
+            account,
+            *session.session_generation.read(),
+            store.current_generation(),
+            store.current_reset_required(),
+            store.session_grant(),
+            valid_until,
+            // Local edits do not advance the accepted account-data revision or
+            // current generation. Compare the actual private view predicate.
+            search_blocked_actors(&store),
+            clock,
+        )
+    });
+    // Resource dependencies cancel the previous timer when holder evidence is
+    // renewed or replaced. Recheck wall time after waking, including suspend.
+    let _expiry = use_resource(move || {
+        let valid_until = earliest_deadline(security_fence.read().5, *recheck_at.read());
+        async move {
+            if let Some(expiry) = valid_until {
+                loop {
+                    let remaining = expiry.signed_duration_since(chrono::Utc::now());
+                    if remaining <= chrono::TimeDelta::zero() {
+                        results.clear();
+                        loading.set(true);
+                        // Consume this deadline before invalidating the query;
+                        // its next evaluation will discover the next boundary.
+                        recheck_at.set(None);
+                        clock_revision.with_mut(|revision| *revision = revision.wrapping_add(1));
+                        break;
+                    }
+                    crate::runtime_helpers::sleep_for(
+                        remaining
+                            .to_std()
+                            .unwrap_or(std::time::Duration::ZERO)
+                            .min(std::time::Duration::from_secs(60)),
+                    )
+                    .await;
+                }
+            }
+        }
+    });
+    use_effect(move || {
+        let _ = security_fence.read();
+        search_epoch.with_mut(|epoch| *epoch = epoch.wrapping_add(1));
+        results.clear();
+        loading.set(false);
+        let retained_request = last_search.peek().clone();
+        if let Some((q, owner, device, epoch)) = retained_request {
+            let same_owner =
+                active_account.peek().as_ref().is_some_and(|account| {
+                    account.authority == owner && account.device_id == device
+                }) && *session.session_generation.peek() == epoch;
+            if same_owner {
+                run_search(
+                    q,
+                    state_store,
+                    owner,
+                    device,
+                    results,
+                    loading,
+                    error_key,
+                    has_searched,
+                    search_epoch,
+                    last_search,
+                    recheck_at,
+                );
+            } else {
+                last_search.set(None);
+                has_searched.set(false);
+                recheck_at.set(None);
+            }
+        }
+    });
 
     // Auto-run the search when the panel is opened with a pre-filled
     // query (e.g. `/search?q=…`).
@@ -277,9 +538,73 @@ pub fn GlobalSearchPanel(
                 loading,
                 error_key,
                 has_searched,
+                search_epoch,
+                last_search,
+                recheck_at,
             );
         }
     });
+
+    LocalSearchState {
+        results,
+        loading,
+        search_epoch,
+        last_search,
+        error_key,
+        has_searched,
+        recheck_at,
+    }
+}
+
+#[component]
+pub fn GlobalSearchPanel(
+    principal_id: Signal<Option<arkret_sdk::DidCoreId>>,
+    device_id: Signal<String>,
+    initial_query: String,
+) -> Element {
+    let session = crate::app::SessionContext::get();
+    let state_store = session.state_store;
+    let active_account = session.active_account;
+    let mut query = use_signal(|| initial_query.clone());
+    let navigator = use_navigator();
+    let LocalSearchState {
+        results,
+        loading,
+        search_epoch,
+        last_search,
+        mut error_key,
+        has_searched,
+        recheck_at,
+    } = use_local_search(initial_query);
+    // Rendering must use current wall time too: a new query can become valid
+    // after not_before without changing any persisted holder evidence.
+    let ready = search_holder_ready(session)
+        && recheck_at
+            .read()
+            .is_none_or(|deadline| deadline > chrono::Utc::now());
+    let blocked = search_blocked_actors(&state_store.read());
+    // Apply the current private view during rendering too, before the effect
+    // invalidates a retained result or an asynchronous query can finish.
+    let visible_results: ResultRows = results
+        .read()
+        .iter()
+        .filter(|result| {
+            if result
+                .get("realm_id")
+                .and_then(Value::as_str)
+                .is_none_or(|realm| state_store.read().account_scope_read_denied(realm))
+            {
+                return false;
+            }
+            result
+                .get("actor_id")
+                .and_then(|value| serde_json::from_value::<arkret_sdk::ActorId>(value.clone()).ok())
+                .is_some_and(|actor| {
+                    !crate::account_data::message_actor_is_blocked(&actor, &blocked)
+                })
+        })
+        .cloned()
+        .collect();
 
     rsx! {
         div { class: "timeline", "data-testid": "global-search-panel", role: "region", "aria-label": tr("search.title"),
@@ -306,6 +631,9 @@ pub fn GlobalSearchPanel(
                             loading,
                             error_key,
                             has_searched,
+                            search_epoch,
+                            last_search,
+                            recheck_at,
                         );
                     },
                     div { class: "actions", style: "gap: 8px;",
@@ -343,13 +671,13 @@ pub fn GlobalSearchPanel(
                 div { class: "event", "data-testid": "global-search-results-empty",
                     div { class: "muted", {tr("search.results.empty")} }
                 }
-            } else if results().is_empty() {
+            } else if !ready || visible_results.is_empty() {
                 div { class: "event", "data-testid": "global-search-results-no-results",
                     div { class: "muted", {tr("search.no_results")} }
                 }
             } else {
                 div { "data-testid": "global-search-results",
-                    for (idx, result) in results().into_iter().enumerate() {
+                    for (idx, result) in visible_results.into_iter().enumerate() {
                         {
                             let snippet = render_result_snippet(&result);
                             let destination = result_destination(&result);
@@ -369,6 +697,8 @@ pub fn GlobalSearchPanel(
                                     key: "{idx}",
                                     class: "event",
                                     "data-testid": "global-search-result-item",
+                                    "data-event-id": result.get("event_id").and_then(Value::as_str).unwrap_or_default(),
+                                    "data-commit-id": result.pointer("/covering_commit/commit_id").and_then(Value::as_str).unwrap_or_default(),
                                     div { class: "event-head",
                                         span { "{kind}" }
                                         span {
@@ -436,6 +766,9 @@ fn run_search(
     mut loading: Signal<bool>,
     mut error_key: Signal<Option<&'static str>>,
     mut has_searched: Signal<bool>,
+    mut search_epoch: Signal<u64>,
+    mut last_search: Signal<Option<SearchRequest>>,
+    mut recheck_at: Signal<SearchDeadline>,
 ) {
     let query_trimmed = q.trim().to_owned();
     if query_trimmed.is_empty() {
@@ -444,21 +777,61 @@ fn run_search(
     loading.set(true);
     error_key.set(None);
     has_searched.set(true);
-    let realm_ids: Vec<String> = Vec::new();
-    let store = state_store.read();
-    let state = store.load();
-    let response = local_decrypted_index_search(
-        &state.realm_tree_projections,
-        &store,
-        &authority,
-        &device_id,
-        &query_trimmed,
-        &realm_ids,
-        Some(&["message"]),
-        50,
-    );
-    results.set(response.results);
-    loading.set(false);
+    results.clear();
+    let request_epoch = search_epoch.with_mut(|epoch| {
+        *epoch = epoch.wrapping_add(1);
+        *epoch
+    });
+    let generation = state_store.peek().current_generation();
+    let blocked = search_blocked_actors(&state_store.peek());
+    let session_generation = crate::app::SessionContext::get().session_generation;
+    let session_epoch = *session_generation.peek();
+    last_search.set(Some((
+        q,
+        authority.clone(),
+        device_id.clone(),
+        session_epoch,
+    )));
+    spawn(async move {
+        let response = search_local(
+            SearchSource::Live(state_store),
+            &authority,
+            &device_id,
+            &query_trimmed,
+            &[],
+            Some(&["message"]),
+            50,
+        )
+        .await;
+        if *search_epoch.peek() != request_epoch {
+            return;
+        }
+        let current = state_store.peek();
+        if *session_generation.peek() != session_epoch
+            || current.current_generation() != generation
+            || !current.search_session_matches(&authority, &device_id)
+            || search_blocked_actors(&current) != blocked
+        {
+            results.clear();
+            recheck_at.set(None);
+        } else {
+            match response {
+                Ok((mut response, deadline)) => {
+                    if deadline.is_some_and(|deadline| deadline <= chrono::Utc::now()) {
+                        response.results.clear();
+                    }
+                    recheck_at.set(deadline);
+                    results.set(response.results);
+                }
+                Err(error) => {
+                    recheck_at.set(None);
+                    tracing::warn!(%error, "local committed search failed closed");
+                    error_key.set(Some("search.account_unavailable"));
+                }
+            }
+        }
+        loading.set(false);
+    });
 }
 
 #[cfg(test)]
@@ -568,223 +941,27 @@ mod tests {
         }
     }
 
-    #[test]
-    fn local_index_search_returns_decrypted_projection_message() {
-        let realm_id = "ak:realm:AXvyk2cSPhfYUHVSaDoVqdjSO3t5IXRAqpG-6hQjjUAx".to_owned();
-        let event_id = "ak:event:AR9_0Dn3PqKpHpxvh0C4oIGwx_MZWw6y7PjVc300c93v";
-        let realms = std::collections::BTreeMap::from([(
-            realm_id.clone(),
-            json!({
-                "summary": {"summary": "Searchable Realm"},
-                "timeline": {"events": [{
-                    "kind": "ak.message.create",
-                    "event_id": event_id,
-                    "actor_id": "ak:did_core:web:alice.example",
-                    "created_at": "2026-06-19T00:00:00.000Z",
-                    "content": {
-                        "realm_id": realm_id,
-                        "message_id": "ak:message:AW8-c0F9KfRq5YWdUYT1ilfjIDzjU3jCt-GT8KmVIeCA",
-                        "body": "alpha local body"
-                    }
-                }]}
-            }),
-        )]);
+    #[tokio::test]
+    async fn local_index_search_without_current_holder_evidence_is_empty() {
         let store = LocalStateStore::default();
-
         let response = local_decrypted_index_search(
-            &realms,
             &store,
             &fixture::authority("did:web:alice.example"),
             &fixture::device_id("ak:device:01904100-0000-7000-8000-000000000904"),
-            "LOCAL",
+            "needle",
             &[],
             Some(&["message"]),
             10,
-        );
-
-        assert_eq!(response.query, "LOCAL");
-        assert_eq!(response.results.len(), 1);
-        assert_eq!(
-            response.results[0]["realm_id"].as_str(),
-            realms.keys().next().map(String::as_str)
-        );
-        assert_eq!(response.results[0]["event_id"], event_id);
-        assert_eq!(response.results[0]["content"]["body"], "alpha local body");
-        assert_eq!(
-            response.results[0]["index_profile"],
-            arkret_sdk::ProfileId::SEARCH_CLIENT_INDEX_V1
-        );
-        assert_eq!(
-            response.results[0]["index_source"],
-            "local_decrypted_client_index"
-        );
-    }
-
-    #[test]
-    fn local_index_search_skips_encrypted_placeholders_without_plaintext() {
-        let realm_id = "ak:realm:AUDoMj48Sty9R0GpFRg5qxBDzi-E7jGXZGe_mi0yHbpJ".to_owned();
-        let realms = std::collections::BTreeMap::from([(
-            realm_id.clone(),
-            json!({
-                "summary": {"summary": "Encrypted Realm"},
-                "timeline": {"events": [{
-                    "kind": "ak.message.create",
-                    "event_id": "ak:event:AXJBg5RPw2O28Q_GeztGzhWf2jDciYN15ub4OYYpJ1tQ",
-                    "actor_id": "ak:did_core:web:alice.example",
-                    "created_at": "2026-06-19T00:00:00.000Z",
-                    "content": {
-                        "realm_id": realm_id,
-                        "message_id": "ak:message:ATHkwzVL1fX0caFp7tHaPiGqpGaXLOTd3HKGEy34sduZ",
-                        "encrypted_content": {"schema": "ak.schema.encrypted_envelope.v1"}
-                    }
-                }]}
-            }),
-        )]);
-        let store = LocalStateStore::default();
-
-        let response = local_decrypted_index_search(
-            &realms,
-            &store,
-            &fixture::authority("did:web:alice.example"),
-            &fixture::device_id("ak:device:01904100-0000-7000-8000-000000000914"),
-            "message",
-            &[],
-            Some(&["message"]),
-            10,
-        );
-
+        )
+        .await
+        .unwrap();
         assert!(response.results.is_empty());
     }
-
-    #[test]
-    fn local_index_search_does_not_hide_a_native_sidecar_source_strand() {
-        let actor_id = "ak:did_core:web:alice.example";
-        let realm_id = "ak:realm:Af2ZEitZ_Nla84KWtbRYoWWmZopTUKtZlKf7sz4QHbfy".to_owned();
-        let source_strand_id = "ak:strand:AavbN9CgiOJRw5dWi7yMN2_jReUUAXLb-_EF2y2WL8lz".to_owned();
-        let mut store = LocalStateStore::default();
-        let pending = crate::sidecar::PendingSidecarSubmission {
-            controller_account_id: arkret_sdk::AccountId::new(
-                crate::mls_api_helpers::principal_core_id(actor_id).unwrap(),
-                arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned()).unwrap(),
-            ),
-            sidecar_id: arkret_sdk::SidecarId::new(
-                "ak:sidecar:AW550jUB3z2wKhAvnsOXRVZTrs8UAJgTHWF5sxYI7TyI",
-            )
-            .unwrap(),
-            source_strand_id: source_strand_id.clone(),
-            exchange_id: "SearchPrivateStrand001".to_owned(),
-            request_context: arkret_sdk::AgentSidecarExchangeRequestContext {
-                source_track_ref: arkret_sdk::SidecarSourceTrackRef {
-                    realm_id: arkret_sdk::RealmId::new(realm_id.clone()).unwrap(),
-                    strand_id: arkret_sdk::StrandId::new(source_strand_id.clone()).unwrap(),
-                    track_name: "discussion".to_owned(),
-                },
-                source_hlc: arkret_sdk::Hlc::new("01970e589d21-0001-a13f9c2e").unwrap(),
-                client_order_key: "device-1-1".to_owned(),
-                addressed_agent_ids: vec![
-                    crate::mls_api_helpers::principal_core_id("did:web:assistant.agents.example")
-                        .unwrap(),
-                ],
-                coordinator_agent_id: None,
-                source_checkpoint_anchor_id: None,
-            },
-            message_id: "ak:message:ASiSP84x2Juep0Q8j2fao1vAfdzqs8Y728RHY5FFyKDb".to_owned(),
-            local_operation_id: "local-sidecar-search-test".to_owned(),
-        };
-        crate::sidecar::save_pending_sidecar_submission(&mut store, "search-test", &pending)
-            .unwrap();
-        let realms = std::collections::BTreeMap::from([(
-            realm_id,
-            json!({
-                "summary": {"summary": "Search containment Realm"},
-                "timeline": {"events": [{
-                    "kind": "ak.message.create",
-                    "event_id": "ak:event:AYE4Fy6EKDe_TOXKws3PPuPKjL-Qf6okkHXSc94b3s2b",
-                    "actor_id": actor_id,
-                    "created_at": "2026-07-29T00:00:00.000Z",
-                    "content": {
-                        "strand_id": source_strand_id,
-                        "body": "sidecar-secret-search-needle"
-                    }
-                }]}
-            }),
-        )]);
-
-        let response = local_decrypted_index_search(
-            &realms,
-            &store,
-            &fixture::authority(actor_id),
-            &fixture::device_id("ak:device:01904100-0000-7000-8000-000000000938"),
-            "sidecar-secret-search-needle",
-            &[],
-            Some(&["message"]),
-            10,
-        );
-
-        assert_eq!(response.results.len(), 1);
-    }
-
-    #[test]
-    fn local_index_search_respects_realm_kind_and_limit_filters() {
-        let first_realm_id = "ak:realm:AbPEQpgBpoYJaOBy6gq9_f6CcaazIEyAHgl0qdlWisCQ".to_owned();
-        let second_realm_id = "ak:realm:ATGx6cCE_Pkzu-zRPgFdc43Tfv-MY96fKCW_fBBM3N1_".to_owned();
-        let realms = std::collections::BTreeMap::from([
-            (
-                first_realm_id.clone(),
-                json!({
-                    "summary": {"summary": "First Realm"},
-                    "timeline": {"events": [{
-                        "kind": "ak.message.create",
-                        "event_id": "ak:event:Ae8oasaCa8YvwE4_ULb5-ictCSzTCZoyn5KqQ81wpvDG",
-                        "actor_id": "ak:did_core:web:alice.example",
-                        "created_at": "2026-06-19T00:00:00.000Z",
-                        "content": {"realm_id": first_realm_id, "body": "needle first"}
-                    }]}
-                }),
-            ),
-            (
-                second_realm_id.clone(),
-                json!({
-                    "summary": {"summary": "Second Realm"},
-                    "timeline": {"events": [{
-                        "kind": "ak.message.create",
-                        "event_id": "ak:event:AatXc8rOoiOfXgpJeRROJV9yNH3ydNHDDoc6VbiwNThT",
-                        "actor_id": "ak:did_core:web:bob.example",
-                        "created_at": "2026-06-19T00:00:00.000Z",
-                        "content": {"realm_id": second_realm_id, "body": "needle second"}
-                    }]}
-                }),
-            ),
-        ]);
-        let store = LocalStateStore::default();
-
-        let not_messages = local_decrypted_index_search(
-            &realms,
-            &store,
-            &fixture::authority("did:web:alice.example"),
-            &fixture::device_id("ak:device:01904100-0000-7000-8000-000000000925"),
-            "needle",
-            &[],
-            Some(&["realm"]),
-            10,
-        );
-        assert!(not_messages.results.is_empty());
-
-        let filtered = local_decrypted_index_search(
-            &realms,
-            &store,
-            &fixture::authority("did:web:alice.example"),
-            &fixture::device_id("ak:device:01904100-0000-7000-8000-000000000925"),
-            "needle",
-            std::slice::from_ref(&second_realm_id),
-            Some(&["message"]),
-            1,
-        );
-        assert_eq!(filtered.results.len(), 1);
-        assert_eq!(filtered.results[0]["realm_id"], second_realm_id);
-        assert_eq!(filtered.results[0]["content"]["body"], "needle second");
-    }
 }
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[path = "global_search/session_tests.rs"]
+mod session_tests;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod locale_tests {

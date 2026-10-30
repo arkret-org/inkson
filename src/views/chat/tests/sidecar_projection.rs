@@ -120,7 +120,7 @@ fn ordinary_accepted_event_appears_without_cursor_or_controller_update() {
         dom.in_runtime(|| {
             let mut state = signals.store.peek().load();
             state.sync_cursor = Some(format!("cursor-only-{update}"));
-            state.presence_projection = vec![json!({"presence":update})];
+            state.presence_projection = vec![json!({"presence":update})].into();
             signals.store.write().save(state);
         });
         settle(&mut dom);
@@ -217,7 +217,7 @@ fn sidecar_projection_ignores_ui_repaints_but_invalidates_security_inputs() {
         dom.in_runtime(|| {
             let mut state = signals.store.peek().load();
             state.sync_cursor = Some(format!("opaque-resume-{update}"));
-            state.presence_projection = vec![json!({"presence": update})];
+            state.presence_projection = vec![json!({"presence": update})].into();
             signals.store.write().save(state);
         });
         settle(&mut dom);

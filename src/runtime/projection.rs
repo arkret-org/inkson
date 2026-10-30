@@ -76,13 +76,20 @@ type LocalBoxFuture<'a> = std::pin::Pin<Box<dyn std::future::Future<Output = ()>
 /// producer proof, the AEAD and the per-endpoint sequence, then hands back the
 /// typed closed profile plus the verified sender domain. This carrier is the
 /// host-side pairing of the two, with the envelope instants the TTL projections
-/// need: the rail carries no durable coordinates, so there is nothing else to
-/// retain.
+/// need, and the original governance basis required by product authorization.
 #[derive(Clone, Debug, PartialEq)]
 pub struct AdmittedSignal {
     /// The verified sender actor, endpoint and scope the sequence high-water
     /// was enforced against.
     pub domain: arkret_sdk::SignalSequenceDomain,
+    /// Accepted exact method; never reconstructed from an opaque identity core.
+    pub signer_verification_method: arkret_sdk::DidUrl,
+    /// The scope authorization basis retained from the verified envelope.
+    pub product_authority: Option<Box<arkret_sdk::SignalProductAuthority>>,
+    pub call_invitation: Option<Box<arkret_sdk::CallInvitationDeliveryView>>,
+    pub authority_commit_id: arkret_sdk::RealmCommitId,
+    /// Circle authorization separately binds its parent Realm basis.
+    pub parent_realm_authority_commit_id: Option<arkret_sdk::RealmCommitId>,
     /// The registered closed profile this plaintext parsed as. Consumers match
     /// this union; hand-parsing a Signal body by field name is forbidden.
     pub payload: arkret_sdk::SignalPlaintext,
@@ -142,7 +149,7 @@ pub trait SignalProductSink {
     /// UI hint whose only gate is the envelope admission that already ran, and
     /// `read-receipts.md` §2.4 makes rendering it depend on a local display
     /// preference rather than on any further authorization round trip.
-    /// `policy` is the Realm's accepted `ak.realm.read_receipt_policy`.
+    /// `policy` is the exact scope's accepted `ak.scope.read_receipt_policy`.
     /// `read-receipts.md` §2.5 makes the `disclosure="disabled"` /
     /// `visibility="private"` discard a **client** obligation — the receipt is
     /// Signal plaintext, so no service can apply it — which is why the sink
@@ -153,6 +160,11 @@ pub trait SignalProductSink {
     /// marks a preview stalled after 30 seconds without a valid frame and
     /// discards it after ten minutes. A producer that goes quiet emits nothing
     /// to drive that, so the rail's own keepalive cadence drives it instead.
+    fn retained_message_streams(&self) -> Vec<AdmittedSignal> {
+        Vec::new()
+    }
+    fn retain_message_streams(&self, _eligible: &[AdmittedSignal]) {}
+
     fn advance_clock(&self, now: chrono::DateTime<chrono::Utc>);
 }
 
@@ -215,6 +227,13 @@ impl SignalProductSink for SignalProductRouter {
 
     fn read_receipt(&self, plaintext: &AdmittedSignal, policy: &arkret_sdk::ReadReceiptPolicy) {
         self.sink.borrow().read_receipt(plaintext, policy);
+    }
+
+    fn retained_message_streams(&self) -> Vec<AdmittedSignal> {
+        self.sink.borrow().retained_message_streams()
+    }
+    fn retain_message_streams(&self, eligible: &[AdmittedSignal]) {
+        self.sink.borrow().retain_message_streams(eligible);
     }
 
     fn advance_clock(&self, now: chrono::DateTime<chrono::Utc>) {
