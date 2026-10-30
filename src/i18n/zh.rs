@@ -2357,6 +2357,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("chat.composer.search_members", "搜索成员");
     dict.set("chat.composer.mention_member", "提及成员");
     dict.set("chat.composer.add_attachment", "添加附件");
+    dict.set("chat.composer.choose_files", "选择文件");
     dict.set("chat.composer.schedule_message", "定时发送消息");
     dict.set("chat.composer.poll_question", "问题");
     dict.set("chat.composer.poll_option", "选项 {number}");
