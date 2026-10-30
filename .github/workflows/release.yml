@@ -55,47 +55,29 @@ jobs:
         with:
           repository: ${{ github.repository_owner }}/arkret-rust-sdk
           path: arkret-org/arkret-rust-sdk
-          ref: 1abbf74976504a00903282f5aa9a5edf3750f291
+          ref: 4b12edf50ce465c9d27296ef7249376342d6c2a7
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
       - name: Checkout arkret-spec
         uses: actions/checkout@v6
         with:
           repository: ${{ github.repository_owner }}/arkret-spec
           path: arkret-org/arkret-spec
-          ref: 0ac6a6eaed76129caab0c9817fac9722e2d96461
+          ref: 127c6442e5585b25a6c6596e76a0bb8cfe796991
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
       - name: Checkout garth
         uses: actions/checkout@v6
         with:
           repository: ${{ github.repository_owner }}/garth
           path: arkret-org/garth
-          ref: 22be3c9765ba0bad21deb06923a09347a0ef5718
+          ref: 213a2c6fbb2fdd1ef8ff81d4b6dcb5024eb3060c
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
       - name: Checkout chime
         uses: actions/checkout@v6
         with:
           repository: ${{ github.repository_owner }}/chime
           path: arkret-org/chime
-          ref: 82411cdb0481cf22896bd499c99823bd8c3c3e4e
+          ref: 5704645f6a0e0fb1c2bb1423afd0eb75bcfbcf92
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
-      - name: Checkout Glory and Sapid
-        shell: bash
-        working-directory: arkret-org/inkson
-        run: bash .ci/checkout-ui-dependencies.sh
-
-      - name: Use D drive build storage on Windows
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $cache = "D:/BuildCache/inkson-glory"
-          New-Item -ItemType Directory -Force -Path "$cache/tmp", "D:/BuildCache/cargo", "D:/BuildCache/npm" | Out-Null
-          "CARGO_TARGET_DIR=$cache/target" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "CARGO_HOME=D:/BuildCache/cargo" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "TEMP=$cache/tmp" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "TMP=$cache/tmp" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "PYTHONPYCACHEPREFIX=$cache/pycache" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "npm_config_cache=D:/BuildCache/npm" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
@@ -106,15 +88,17 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev libsoup-3.0-dev pulseaudio-utils libfontconfig1-dev libfreetype6-dev libxkbcommon-dev libudev-dev libdbus-1-dev pkg-config cmake ninja-build nasm
+          sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev libdbus-1-dev libxdo-dev librsvg2-dev pkg-config
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: arkret-org/inkson
           key: release-${{ matrix.target }}
+      - name: Install Dioxus CLI
+        run: cargo install dioxus-cli --version 0.7.10 --locked
       - name: Build desktop application and assets
-        run: python scripts/build_desktop.py --release --target ${{ matrix.target }}
+        run: dx build --release --platform desktop --features desktop --target ${{ matrix.target }} --locked
       - name: Package desktop application
-        run: python .ci/package-release.py --target ${{ matrix.target }} --desktop-platform ${{ matrix.platform }} --app inkson
+        run: python .ci/package-release.py --target ${{ matrix.target }} --dx ${{ matrix.platform }} --app inkson
       - name: Upload release assets
         uses: actions/upload-artifact@v4
         with:
