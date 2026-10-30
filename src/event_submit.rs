@@ -1078,24 +1078,8 @@ impl EventSubmitter {
         })
         .await?;
         let progress = index.read_progress(request.realm_id.as_str()).await?;
-        anyhow::ensure!(
-            !progress.needs_refresh,
-            "exact current read requires a refreshed Realm current baseline"
-        );
-        let baseline = progress.baseline.as_ref().ok_or_else(|| {
-            anyhow::anyhow!("exact current read requires an installed Realm current baseline")
-        })?;
-        anyhow::ensure!(
-            baseline.complete && baseline.coverage.complete_for_authorized_streams,
-            "exact current read requires complete authorized-stream coverage"
-        );
-        anyhow::ensure!(
-            baseline.coverage.realm_id == request.realm_id,
-            "exact current read baseline belongs to another Realm"
-        );
-        let governance_generation = progress.governance_generation.ok_or_else(|| {
-            anyhow::anyhow!("exact current read lacks a verified governance generation")
-        })?;
+        let governance_generation =
+            progress.exact_current_governance_generation(&request.realm_id)?;
         self.http
             .exact_current_state(request, governance_generation)
             .await
