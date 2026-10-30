@@ -55,28 +55,28 @@ jobs:
         with:
           repository: ${{ github.repository_owner }}/arkret-rust-sdk
           path: arkret-org/arkret-rust-sdk
-          ref: db0f5b44dec117b6b316690650efd0adb3a0f990
+          ref: 4b12edf50ce465c9d27296ef7249376342d6c2a7
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
       - name: Checkout arkret-spec
         uses: actions/checkout@v6
         with:
           repository: ${{ github.repository_owner }}/arkret-spec
           path: arkret-org/arkret-spec
-          ref: 8ae6fd0f14c630310a524e38b950b191918295e3
+          ref: 127c6442e5585b25a6c6596e76a0bb8cfe796991
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
       - name: Checkout garth
         uses: actions/checkout@v6
         with:
           repository: ${{ github.repository_owner }}/garth
           path: arkret-org/garth
-          ref: 8cfc6775b84528ff75c1ce37e6f879bfb1bfaf33
+          ref: 213a2c6fbb2fdd1ef8ff81d4b6dcb5024eb3060c
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
       - name: Checkout chime
         uses: actions/checkout@v6
         with:
           repository: ${{ github.repository_owner }}/chime
           path: arkret-org/chime
-          ref: 830f0143d3d9c3f42546ec287be7c6f68abd66b3
+          ref: 5704645f6a0e0fb1c2bb1423afd0eb75bcfbcf92
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
       - uses: actions/setup-python@v6
         with:
