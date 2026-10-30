@@ -1091,6 +1091,20 @@ pub(crate) fn install_current_card_sources(
                         *locked = false;
                     }
                 }
+                if complete.calendar.location_locked
+                    && let Some(calendar) = operations.iter().rev().find_map(|record| {
+                        let event = record.payload.get("event")?;
+                        let calendar = calendar_fields_from_metadata_and_event(
+                            &view.fields,
+                            Some(ctx),
+                            &card.id,
+                            Some(event),
+                        );
+                        (!calendar.location_locked).then_some(calendar)
+                    })
+                {
+                    complete.calendar = calendar;
+                }
             }
             complete.rank = card.rank.clone();
             complete.state = card.state;

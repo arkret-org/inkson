@@ -14,7 +14,7 @@
     "release:web-image-evidence": "powershell -ExecutionPolicy Bypass -File scripts/web-image-evidence.ps1",
     "release:lighthouse": "powershell -ExecutionPolicy Bypass -File scripts/lighthouse-local.ps1",
     "release:check": "powershell -ExecutionPolicy Bypass -File scripts/release-gate.ps1",
-    "precontract": "python tools/check_mock_operation_inventory.py --check && python tools/check_mock_operation_review.py && npm run test:mock-gates",
+    "precontract": "python tools/check_mock_operation_inventory.py --check && python tools/check_native_read_evidence.py && python tools/check_mock_operation_review.py && npm run test:mock-gates",
     "test:mock-gates": "python -m unittest discover -s tools -p test_mock*.py"
   },
   "devDependencies": {

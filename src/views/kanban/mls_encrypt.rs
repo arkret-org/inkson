@@ -491,6 +491,60 @@ pub(super) async fn dispatch_card_detail_update(
         }
     };
 
+    // Seal metadata at the shared producer boundary before recording the
+    // optimistic operation. In particular, a calendar location must remain
+    // plaintext inside this one authenticated metadata envelope, rather than
+    // acquiring an inner ciphertext with no independently retained sender.
+    let sealed_patch = if sealed_patch.as_object().is_some_and(|patch| {
+        patch.keys().any(|path| {
+            path == "metadata" || path.starts_with("metadata.") || path == "schema_refs"
+        })
+    }) {
+        let prepared = async {
+            let operation = build_card_detail_update_operation(
+                &realm_id,
+                &actor_id,
+                &current.id,
+                sealed_patch,
+            )?
+            .with_effective_scope(source_scope.clone())?;
+            let authority = crate::app::SessionContext::get()
+                .active_account
+                .read()
+                .as_ref()
+                .map(|account| account.authority.clone())
+                .ok_or_else(|| anyhow::anyhow!("active account authority is unavailable"))?;
+            let store = crate::app::runtime_adapter::state_store_handle(state_store);
+            let intent = with_authed_api(&base_url, api_token.clone(), |api| async move {
+                api.event_submitter()?
+                    .with_state_store(store)
+                    .with_authority(authority)
+                    .prepare_metadata(operation.into_intent())
+                    .await
+            })
+            .await
+            .map_err(|error| anyhow::Error::msg(error.display()))?;
+            if let Some(reason) = kanban_plaintext_block_reason(
+                guard_security_state,
+                &crate::operation::LocalOperation::new(intent.clone()),
+            ) {
+                anyhow::bail!(reason);
+            }
+            let payload = intent.typed_payload::<arkret_wire::event_spec::StrandUpdate>()?;
+            Ok::<Value, anyhow::Error>(serde_json::to_value(payload.patch)?)
+        }
+        .await;
+        match prepared {
+            Ok(patch) => patch,
+            Err(error) => {
+                board_status.set(format!("cannot seal card metadata: {error:#}"));
+                return false;
+            }
+        }
+    } else {
+        sealed_patch
+    };
+
     // Do not mutate the detail signal before acceptance. The durable queued
     // record drives the board overlay; terminal failures are excluded there,
     // so a rejected Event cannot leave UI state that never existed remotely.

@@ -18,6 +18,7 @@ pub(super) fn SessionShell(
     children: Element,
 ) -> Element {
     rsx! {
+        crate::views::realm_admin::invite_links::RealmInviteLinkLanding {token}
         GlobalEffects {
             locale,
             i18n_signal,

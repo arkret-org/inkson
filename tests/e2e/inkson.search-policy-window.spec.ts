@@ -2,8 +2,14 @@ import { expect, test } from "@playwright/test";
 import { DEMO_REALM, dismissBlockingRecoveryModal, openKanban, registerStrandsBeforeEach } from "./strandsHarness";
 
 let active = false;
-registerStrandsBeforeEach({ demoNotification: true, demoSearchPolicy: () => active });
-test.beforeEach(() => { active = false; });
+let policyBody: string | undefined;
+registerStrandsBeforeEach({
+  demoNotification: true, demoSearchPolicy: () => active,
+  observeAccountSubscribe: body => {
+    if (body.includes('"policy_kind":"retention"')) policyBody = body;
+  },
+});
+test.beforeEach(() => { active = false; policyBody = undefined; });
 
 test("current retention Policy withdraws and restores the same search body at its validity boundaries", async ({ page }, testInfo) => {
   test.setTimeout(300_000);
@@ -29,29 +35,21 @@ test("current retention Policy withdraws and restores the same search body at it
   await expect(row).toHaveCount(1);
   const original = await row.getAttribute("data-event-id");
   const commit = await row.getAttribute("data-commit-id");
-  const update = page.waitForResponse(async response =>
-    new URL(response.url()).pathname === "/_arkret/self/account/subscribe"
-    && response.status() === 200
-    && (await response.text()).includes('"policy_kind":"retention"'));
   active = true;
-  const response = await update;
-  const frame = (await response.text()).trim().split("\n").map(line => JSON.parse(line))
+  await expect.poll(() => policyBody, { timeout: 60_000 }).toBeDefined();
+  const frame = policyBody!.trim().split("\n").map(line => JSON.parse(line))
     .find(frame => frame.realms?.[DEMO_REALM]);
   const entry = frame.realms[DEMO_REALM];
-  const lastEvent = entry.committed_events.at(-1).commit.event_ref;
-  await page.waitForResponse(response =>
-    new URL(response.url()).pathname === "/_arkret/self/signer-keys/query"
-    && response.status() === 200
-    && response.request().postDataJSON().queries.some((query: any) =>
-      query.committed_event_ref?.event_id === lastEvent), { timeout: 60_000 });
   const policy = entry.current.entries.find((row: any) => row.selector.kind === "policy").value;
-  const observed: Record<string, unknown> = { policy, proofsAt: Date.now(), original, commit };
+  const observed: Record<string, unknown> = { policy, preparedCutAt: Date.now(), original, commit };
   // This source exists only in the new cut and a different Strand. The Policy
   // must neither poison the entire index nor broaden its exact resource.
   await input.fill(control);
   await submit.click();
+  await expect(row.getByTestId("global-search-result-snippet"))
+    .toHaveText(control, { timeout: 60_000 });
   await expect(row).toHaveCount(1);
-  await expect(row.getByTestId("global-search-result-snippet")).toHaveText(control);
+  observed.proofsAt = Date.now();
   await input.fill(body);
   await submit.click();
   await expect(row).toHaveCount(1);

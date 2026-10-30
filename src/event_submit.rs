@@ -798,6 +798,18 @@ fn reconcile_settled_outbound_item(
                     .to_owned(),
             ),
         ),
+        // A typed API refusal is a definite holder-local failure even when
+        // it is not an authority-submit Rejected response. Preserve the
+        // frozen submission; only its local display metadata changes. Without
+        // an API answer the acceptance outcome remains unknown.
+        SendQueueStatus::Failed if item.last_problem.is_some() => (
+            "rejected",
+            item.last_error.clone().or_else(|| {
+                item.last_problem
+                    .as_ref()
+                    .map(|problem| problem.code().to_owned())
+            }),
+        ),
         _ => return false,
     };
     let operation_id = local_operation_for_event(&state_store.load(), &event_id);
@@ -2774,6 +2786,8 @@ impl EventSubmitter {
                     error,
                     problem,
                 } if item.event_id() == &event_id => {
+                    check()?;
+                    self.settle_other_item(&item);
                     #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
                     if let Some(problem) = problem.as_ref() {
                         let wire_code = problem
@@ -3528,9 +3542,11 @@ impl EventSubmitter {
         if intent.kind() == &arkret_sdk::EventKind::MlsGenesis {
             return Ok(true);
         }
-        let is_join = intent.kind().as_str() == event_kind_str::INVITE_ACCEPT
-            || (intent.kind().as_str() == event_kind_str::MEMBER_STATE
-                && intent.payload().get("membership").and_then(Value::as_str) == Some("join"));
+        let is_join = matches!(
+            intent.kind().as_str(),
+            event_kind_str::INVITE_ACCEPT | event_kind_str::REALM_INVITE_LINK_ACCEPT
+        ) || (intent.kind().as_str() == event_kind_str::MEMBER_STATE
+            && intent.payload().get("membership").and_then(Value::as_str) == Some("join"));
         if !is_join {
             return Ok(false);
         }
@@ -3604,7 +3620,7 @@ impl EventSubmitter {
                     "controller is not in an accepted ordinary joined generation"
                 );
             }
-            arkret_sdk::EventKind::InviteAccept => {
+            arkret_sdk::EventKind::InviteAccept | arkret_sdk::EventKind::RealmInviteLinkAccept => {
                 anyhow::ensure!(
                     event.actor_id == member,
                     "accepted Invite names another controller"

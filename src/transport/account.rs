@@ -403,9 +403,11 @@ async fn submit_contact_response(
         }
         session.check()?;
         let signed_event = crate::transport::contacts::sign_prepared_contact_event(
+            http,
             &event_draft,
             arkret_wire::event_kind_str::CONTACT_ACCEPTED,
-        )?;
+        )
+        .await?;
         let commit_context =
             crate::transport::contacts::freeze_contact_commit_context(&signed_event)?;
         let commit = ContactAcceptRequestBody::Commit(ContactCommitRequestBody {
@@ -472,9 +474,11 @@ async fn submit_contact_response(
         }
         session.check()?;
         let signed_event = crate::transport::contacts::sign_prepared_contact_event(
+            http,
             &event_draft,
             arkret_wire::event_kind_str::CONTACT_REJECTED,
-        )?;
+        )
+        .await?;
         let commit_context =
             crate::transport::contacts::freeze_contact_commit_context(&signed_event)?;
         let commit = ContactRejectRequestBody::Commit(ContactCommitRequestBody {
@@ -1064,9 +1068,11 @@ pub async fn update_contact_scopes(
     }
     session.check()?;
     let signed_event = crate::transport::contacts::sign_prepared_contact_event(
+        http,
         &event_draft,
         arkret_wire::event_kind_str::CONTACT_SCOPE_UPDATE,
-    )?;
+    )
+    .await?;
     let commit_context = crate::transport::contacts::freeze_contact_commit_context(&signed_event)?;
     let commit = ContactScopeUpdateRequestBody::Commit(ContactCommitRequestBody {
         phase: ContactCommitPhase::Commit,
@@ -1170,9 +1176,11 @@ pub async fn tombstone_contact(
     }
     session.check()?;
     let signed_event = crate::transport::contacts::sign_prepared_contact_event(
+        http,
         &event_draft,
         arkret_wire::event_kind_str::CONTACT_TOMBSTONE,
-    )?;
+    )
+    .await?;
     let commit_context = crate::transport::contacts::freeze_contact_commit_context(&signed_event)?;
     let commit = ContactTombstoneRequestBody::Commit(ContactCommitRequestBody {
         phase: ContactCommitPhase::Commit,
@@ -2122,9 +2130,9 @@ mod tests {
                     "third_party_mention_delivery_allowed": false,
                     "acting_on_behalf_allowed": false
                 },
-                "version": 1,
+                "version": "1",
                 "next_replace_input": {
-                    "expected_version": 1
+                    "expected_version": "1"
                 }
             }]
         }))

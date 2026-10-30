@@ -621,8 +621,14 @@ pub(crate) fn local_card_update_from_raw_operation(
         .as_ref()
         .and_then(Value::as_object)
         .and_then(|fields| {
-            fields_have_calendar_keys(fields)
-                .then(|| calendar_fields_from_metadata(fields, decrypt_ctx, &strand_id))
+            fields_have_calendar_keys(fields).then(|| {
+                calendar_fields_from_metadata_and_event(
+                    fields,
+                    decrypt_ctx,
+                    &strand_id,
+                    payload.get("event"),
+                )
+            })
         });
     Some(LocalCardUpdate {
         strand_id,
@@ -1278,21 +1284,29 @@ pub(crate) fn patch_op_for_private_path<'a>(
     if let Some(op) = patch.get(path) {
         return Some(Cow::Borrowed(op));
     }
-    let mut segments = path.split('.');
-    let first = segments.next()?;
-    let parent_op = patch.get(first)?;
-    if parent_op.get("$op").and_then(Value::as_str) != Some("set") {
-        return None;
+    // A canonical patch may replace an entire dotted subtree, such as
+    // metadata.fields.calendar. Bind to the nearest actual parent operation,
+    // then traverse only its signed value; never combine unrelated patches.
+    let mut prefix = path;
+    while let Some((parent, _)) = prefix.rsplit_once('.') {
+        prefix = parent;
+        let Some(parent_op) = patch.get(parent) else {
+            continue;
+        };
+        if parent_op.get("$op").and_then(Value::as_str) != Some("set") {
+            return None;
+        }
+        let mut current = parent_op.get("value")?;
+        for segment in path[parent.len() + 1..].split('.') {
+            current = current.get(segment)?;
+        }
+        return if current.get("$op").and_then(Value::as_str).is_some() {
+            Some(Cow::Owned(current.clone()))
+        } else {
+            Some(Cow::Owned(
+                json!({ "$op": "set", "value": current.clone() }),
+            ))
+        };
     }
-    let mut current = parent_op.get("value")?;
-    for segment in segments {
-        current = current.get(segment)?;
-    }
-    if current.get("$op").and_then(Value::as_str).is_some() {
-        Some(Cow::Owned(current.clone()))
-    } else {
-        Some(Cow::Owned(
-            json!({ "$op": "set", "value": current.clone() }),
-        ))
-    }
+    None
 }

@@ -906,10 +906,7 @@ impl SettingsController {
                     state_store
                         .write()
                         .save_push_registration(outcome.state.clone());
-                    let label = outcome.response.registration_id.map_or_else(
-                        || "registered".to_owned(),
-                        arkret_sdk::OpaqueLocalId::into_string,
-                    );
+                    let label = outcome.response.registration_id.into_string();
                     push_state.set(label.clone());
                     crate::components::feedback::toast_success(
                         "feedback.push_registered",

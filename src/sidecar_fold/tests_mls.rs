@@ -416,7 +416,8 @@ fn warm_mls_cache_does_not_borrow_another_epoch_state_reference_or_scope() {
     assert_eq!(cache.authors.len(), 1);
 
     let mut wrong_epoch = serde_json::to_value(&envelope).unwrap();
-    wrong_epoch["encryption_context"]["epoch"] = serde_json::json!(fixture.sender.epoch() + 1);
+    wrong_epoch["encryption_context"]["epoch"] =
+        serde_json::json!((fixture.sender.epoch() + 1).to_string());
     let wrong_epoch: EncryptedEnvelope = serde_json::from_value(wrong_epoch).unwrap();
     assert!(
         fixture

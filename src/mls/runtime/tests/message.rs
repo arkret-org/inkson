@@ -85,7 +85,10 @@ fn coverage_commit_pins_durable_revision_when_product_view_lags() {
         operation.payload()["governance_binding"],
         serde_json::to_value(&binding).unwrap()
     );
-    assert_eq!(operation.payload()["covers_key_access_revision"], json!(7));
+    assert_eq!(
+        operation.payload()["covers_key_access_revision"],
+        json!("7")
+    );
     assert_eq!(state.mls_checkpoint_for_scope(&scope), Some(before));
 }
 
@@ -1974,7 +1977,7 @@ fn calendar_current_source_opens_metadata_without_old_events_or_plaintext_cache(
         arkret_sdk::EventContentRoutingContext::None,
     )
     .unwrap();
-    let plaintext = json!({"title":"Cold calendar","fields":{"calendar":{"start":"2026-10-07","end":"2026-10-08","timezone":"UTC","tzdb_version":"2025b","all_day":true,"status":"confirmed"}}});
+    let plaintext = json!({"title":"Cold calendar","fields":{"calendar":{"start":"2026-10-07","end":"2026-10-08","timezone":"UTC","tzdb_version":"2025b","all_day":true,"status":"confirmed","location":{"title":"Community entrance desk"}}}});
     let encrypted = alice
         .encrypt_payload(header, &serde_json::to_vec(&plaintext).unwrap())
         .unwrap();

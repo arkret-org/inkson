@@ -80,6 +80,14 @@ const scenarioRealms = new WeakMap<
   Awaited<ReturnType<typeof mockArkretApi>>
 >();
 
+const accountSubscribeDeliveries = new WeakMap<Page, Array<{ body: string; url: string }>>();
+
+export function observedAccountSubscribeDeliveries(page: Page) {
+  const deliveries = accountSubscribeDeliveries.get(page);
+  if (!deliveries) throw new Error("Strands mock scenario has not been installed");
+  return deliveries as ReadonlyArray<{ body: string; url: string }>;
+}
+
 export function strandWatchControls(page: Page) {
   const scenario = scenarioRealms.get(page);
   if (!scenario) throw new Error("Strands mock scenario has not been installed");
@@ -548,6 +556,8 @@ export async function dismissMlsBackupModal(
 
 export function registerStrandsBeforeEach(apiOptions: Parameters<typeof mockArkretApi>[1] = {}) {
   test.beforeEach(async ({ page }, testInfo) => {
+    const accountDeliveries: Array<{ body: string; url: string }> = [];
+    accountSubscribeDeliveries.set(page, accountDeliveries);
     const observations: ApiObservation[] = [];
     apiObservations.set(page, observations);
     const requestObservations = new WeakMap<import("@playwright/test").Request, ApiObservation>();
@@ -721,12 +731,11 @@ export function registerStrandsBeforeEach(apiOptions: Parameters<typeof mockArkr
         ? "failed" : testInfo.title.startsWith("contact request rejects tampered receipt")
           ? "tampered" : undefined,
       invitePreview,
-      invitePreviewDelayMs: testInfo.title.startsWith(
-        "invite preview disclosed",
-      )
-        ? 750
-        : undefined,
       ...apiOptions,
+      observeAccountSubscribe: (body, url) => {
+        accountDeliveries.push({ body, url: url.href });
+        apiOptions?.observeAccountSubscribe?.(body, url);
+      },
     });
     scenarioRealms.set(page, scenario);
     if (testInfo.title.startsWith("login page")) {

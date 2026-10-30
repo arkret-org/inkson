@@ -40,16 +40,16 @@ pub fn invite_create_structured(
 
 /// Build `ak.invite.accept`.
 ///
-/// `invitee_account_id` is present exactly for a directed invite, where it is
+/// `invitee_account_id` is required for every directed invite. It is
 /// the only signed source the live-target release write can derive its subject
 /// from — the projection grammar cannot turn the envelope ActorId into an
 /// AccountId. It MUST equal the accepting actor's own account and never widens
-/// who may accept; a third-party invite omits it.
+/// who may accept.
 pub fn invite_accept(
     realm_id: &str,
     actor: &str,
     invite_id: &str,
-    invitee_account_id: Option<arkret_sdk::AccountId>,
+    invitee_account_id: arkret_sdk::AccountId,
     previous_state: arkret_sdk::InvitePreviousState,
 ) -> anyhow::Result<TypedOperationBuilder> {
     let invite_id_typed = arkret_sdk::InviteId::new(invite_id.to_owned())
@@ -156,17 +156,15 @@ pub fn invite_cancel_for_station(
     )
 }
 
-/// Build the high-risk `ak.invite.revoke` path used by token/3PID invites.
-/// A directed invite may also use this path, but then its frozen invitee
-/// binding must be supplied so the reducer can atomically close member.state.
+/// Build the high-risk `ak.invite.revoke` path with the frozen directed invitee
+/// binding so the reducer can atomically close member.state.
 pub fn invite_revoke(
     realm_id: &str,
     actor: &str,
     invite_id: &str,
-    // The complete account the Invite stores, for the directed branch that
-    // releases the live-target slot; `None` for a token / 3PID Invite.
-    invitee: Option<&arkret_sdk::AccountId>,
-    previous_state: arkret_sdk::InviteRevokePreviousState,
+    // The complete account the Invite stores, releasing its live-target slot.
+    invitee: &arkret_sdk::AccountId,
+    previous_state: arkret_sdk::InvitePreviousState,
     target_state: &str,
     reason_code: &str,
 ) -> anyhow::Result<TypedOperationBuilder> {
@@ -179,14 +177,8 @@ pub fn invite_revoke(
     let invite_id = arkret_sdk::InviteId::new(invite_id.to_owned())
         .map_err(|err| anyhow::anyhow!("invite_id not canonical: {err}"))?;
     let invite_id_ref = invite_id.to_string();
-    let invitee_account_id = invitee
-        .map(|account| {
-            account
-                .validate()
-                .map(|()| account.clone())
-                .map_err(|err| anyhow::anyhow!("invitee account is not closed: {err}"))
-        })
-        .transpose()?;
+    invitee.validate()?;
+    let invitee_account_id = invitee.clone();
     let target_state = match target_state {
         "revoked" => arkret_sdk::InviteRevokeTargetState::Revoked,
         "expired" => arkret_sdk::InviteRevokeTargetState::Expired,

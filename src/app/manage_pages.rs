@@ -50,6 +50,7 @@ pub(super) fn RealmsManagePage(
 
     rsx! {
         div { class: "settings realm-manage-page", "data-testid": "realms-manage-page",
+            crate::views::realm_admin::invite_links::RealmInviteLinks {token,realm_id:None,initial_input:None}
             div { class: "settings-shell realm-manage-shell",
                 section { class: "settings-content-stack realm-manage-main",
                     div { class: "event realm-manage-list-card",

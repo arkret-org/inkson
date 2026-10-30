@@ -1,4 +1,5 @@
 import { additionalOperationProbe } from "./remainingOperationProbes";
+import { nativeReadProbe } from "./nativeReadEvidence";
 import { expect } from "@playwright/test";
 import {
   BOB_ACCOUNT_ID, CURRENT_ACCOUNT_ACTOR_ID, CURRENT_ACCOUNT_ID, CURRENT_ASSISTANT_ACCOUNT_ID, CURRENT_ASSISTANT_CORE_ID,
@@ -20,6 +21,8 @@ export const VALID_REQUEST_OPERATIONS = new Set([
 ]);
 
 export async function operationProbe(operation: MockOperation, handler: Handler): Promise<ProbeRequest> {
+  const archival = nativeReadProbe(operation);
+  if (archival) return archival;
   if (operation.operation_id === "ak.self.blob.resource.get.v1") return { method: "GET", url: "https://local.host/_arkret/self/blob/get?blob_ref=ak:blob:sha256:431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460" };
   const additional = await additionalOperationProbe(operation, handler);
   if (additional) return additional;
@@ -106,6 +109,9 @@ export async function operationProbe(operation: MockOperation, handler: Handler)
     case "ak.self.committed_event.read.scan.v1":
       cachedNative ??= native();
       request.postData = { realm_id: DEMO_REALM, stream_ref: cachedNative.committed_events[0].commit.stream_ref, after_position: null, limit: 100 };
+      break;
+    case "ak.self.committed_event.stream.subscribe.v1":
+      request.url += `?realm_ids=${encodeURIComponent(DEMO_REALM)}`;
       break;
     case "ak.self.strand.watch.read.current.v1":
       cachedNative ??= native();

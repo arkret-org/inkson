@@ -565,7 +565,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("realm_admin.members_no_match", "没有匹配的成员。");
     dict.set(
         "realm_admin.invite_hint",
-        "最稳妥的方式是使用对方分享给你的邀请链接。如果对方允许被发现,也可以输入其用户名或身份地址,以及对方所在的服务器。",
+        "请使用对方主动分享的个人邀请链接，或完整邀请地址。单独的用户名、账号标识或 DID 不能作为完整邀请地址。",
     );
 
     // F-NOTIF-VLIST-1: pagination button copy synced with the en dict.
@@ -2357,6 +2357,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("chat.composer.search_members", "搜索成员");
     dict.set("chat.composer.mention_member", "提及成员");
     dict.set("chat.composer.add_attachment", "添加附件");
+    dict.set("chat.composer.choose_files", "选择文件");
     dict.set("chat.composer.schedule_message", "定时发送消息");
     dict.set("chat.composer.poll_question", "问题");
     dict.set("chat.composer.poll_option", "选项 {number}");
@@ -2592,7 +2593,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("realm_admin.roster.invite_member", "邀请成员");
     dict.set(
         "realm_admin.roster.invite_target_placeholder",
-        "alice:example.com",
+        "粘贴个人邀请链接",
     );
     dict.set("realm_admin.roster.send_invite", "发送邀请");
     dict.set("realm_admin.roster.pending_count", "{total} 个待处理");
@@ -2860,12 +2861,12 @@ fn add_contacts_keys_zh(dict: &mut TranslationDict) {
     dict.set("contacts.new.subtitle", "需对方同意");
     dict.set(
         "contacts.new.intro",
-        "输入对方的邀请链接、handle 或完整账号标识发送好友请求。默认允许全部联系人权限，添加后可在设置中修改。",
+        "输入对方的邀请链接或完整账号标识发送好友请求。默认允许全部联系人权限，添加后可在设置中修改。",
     );
-    dict.set("contacts.new.target_label", "对方邀请链接、handle 或账号");
+    dict.set("contacts.new.target_label", "对方邀请链接或完整账号标识");
     dict.set(
         "contacts.new.target_placeholder",
-        "粘贴邀请链接或输入 alice:example.com",
+        "粘贴邀请链接或完整账号标识",
     );
     dict.set("contacts.new.message_label", "附言(可选)");
     dict.set("contacts.new.message_placeholder", "打个招呼…");
@@ -3192,10 +3193,10 @@ fn add_contacts_keys_zh(dict: &mut TranslationDict) {
         "已邀请 {ok}/{total} 位联系人;部分失败:{error}",
     );
     dict.set("realm_admin.invite_selected", "邀请所选联系人");
-    dict.set("realm_admin.invite_divider", "或通过 handle 添加");
-    dict.set("realm_admin.invite_by_handle", "通过 handle 添加");
-    dict.set("realm_admin.invite_handle_opt_in", "需对方允许");
-    dict.set("realm_admin.invite_target_label", "Handle 或邀请地址");
+    dict.set("realm_admin.invite_divider", "或使用邀请地址");
+    dict.set("realm_admin.invite_by_address", "使用邀请地址");
+    dict.set("realm_admin.invite_link_recommended", "推荐个人邀请链接");
+    dict.set("realm_admin.invite_target_label", "邀请地址");
     dict.set("realm_admin.invite_bad_server", "无效的服务器地址:{error}");
 }
 

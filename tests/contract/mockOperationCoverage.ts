@@ -1,6 +1,8 @@
 import { IMPLEMENTED_REMAINING_OPERATIONS } from "./remainingOperationProbes";
-// Operations with no response producer in this browser UI mock. Each must
-// fail before fulfill; implementing a producer requires a valid scenario.
+import { NATIVE_READ_OPERATIONS } from "./nativeReadEvidence";
+// Operations with no implemented contract in this browser UI mock. Each must
+// fail before fulfill except the named registered refusals below; implementing
+// a positive producer still requires a valid scenario.
 export const UNIMPLEMENTED_OPERATIONS = new Set<string>(
 [
   "ak.edge.applet.actor.read.resolve.v1",
@@ -32,10 +34,6 @@ export const UNIMPLEMENTED_OPERATIONS = new Set<string>(
   "ak.open.agent_pairing.read.runtime_key_request_status.v1",
   "ak.open.identity.read.resolution.v1",
   "ak.open.realm_authority.read.bundle.v1",
-  "ak.open.third_party_invite.command.activate.v1",
-  "ak.open.third_party_invite.command.present_token.v1",
-  "ak.open.third_party_invite.command.provision.v1",
-  "ak.open.third_party_invite.read.provisioning_status.v1",
   "ak.peer.account_status.command.submit.v1",
   "ak.peer.account_status.read.resolve.v1",
   "ak.peer.applet.configuration.command.submit.v1",
@@ -132,12 +130,18 @@ export const UNIMPLEMENTED_OPERATIONS = new Set<string>(
   "ak.self.security_transaction.resource.get.v1",
   "ak.self.security_transaction.command.continue.v1",
   "ak.self.strand.watch.command.audit_read.v1",
-  "ak.self.third_party_invite.read.acceptance_attestation.v1"
+]);
+
+// This deployment-level refusal is observed without exercising native authority.
+// Keep these operations unimplemented and excluded from positive coverage.
+export const UNIMPLEMENTED_PROBLEM_OPERATIONS = new Set([
+  "ak.self.keys.backups.command.issue_unlock_challenge.v1",
 ]);
 
 // Provider-authenticated traffic requires native fixtures not executed by this suite.
 // A client mock must fail before emitting an invented provider response.
 for (const operation of IMPLEMENTED_REMAINING_OPERATIONS) UNIMPLEMENTED_OPERATIONS.delete(operation);
+for (const operation of NATIVE_READ_OPERATIONS) UNIMPLEMENTED_OPERATIONS.delete(operation);
 
 export const PROVIDER_FIXTURE_OPERATIONS = new Set<string>(
 [

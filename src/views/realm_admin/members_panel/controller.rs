@@ -672,32 +672,21 @@ impl RealmMembersController {
         } = context;
         let request_realm = realm_id.clone();
         let request_invite_id = invite_id.clone();
-        let request_invitee = direct_invitee.clone();
-        let is_direct = request_invitee.is_some();
+        let Some(request_invitee) = direct_invitee.clone() else {
+            self.status_msg.set("The accepted directed invitation target is unavailable; refresh before cancelling.".into());
+            return;
+        };
         match crate::transport::auth::with_event_submitter(&base_url, api_token, |sub| async move {
-            if let Some(invitee) = request_invitee {
-                crate::transport::realm_write::cancel_realm_invite(
-                    &sub,
-                    &request_realm,
-                    &actor_id,
-                    &request_invite_id,
-                    &invitee,
-                    "revoked",
-                    Some("admin_cancel"),
-                )
-                .await
-            } else {
-                crate::transport::realm_write::revoke_realm_invite(
-                    &sub,
-                    &request_realm,
-                    &actor_id,
-                    &request_invite_id,
-                    None,
-                    "revoked",
-                    "admin_revoke",
-                )
-                .await
-            }
+            crate::transport::realm_write::cancel_realm_invite(
+                &sub,
+                &request_realm,
+                &actor_id,
+                &request_invite_id,
+                &request_invitee,
+                "revoked",
+                Some("admin_cancel"),
+            )
+            .await
         })
         .await
         {
@@ -707,11 +696,7 @@ impl RealmMembersController {
                     format!("ak:operation:{}", crate::operation::uuid_v7()),
                     Some(realm_id),
                     json!({
-                        "kind": if is_direct {
-                            event_kind_str::INVITE_CANCEL
-                        } else {
-                            event_kind_str::INVITE_REVOKE
-                        },
+                        "kind": event_kind_str::INVITE_CANCEL,
                         "invite_id": invite_id.clone(),
                         "invitee_id": direct_invitee,
                         "state": "revoked",
@@ -724,10 +709,8 @@ impl RealmMembersController {
                         && !(profile.actor_id == member_id && profile.is_pending_invite())
                 });
                 self.members.set(next_members);
-                self.status_msg.set(format!(
-                    "{} invite for {member_label}",
-                    if is_direct { "cancelled" } else { "revoked" }
-                ));
+                self.status_msg
+                    .set(format!("{} invite for {member_label}", "cancelled"));
             }
             Err(err) => self
                 .status_msg

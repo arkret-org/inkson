@@ -206,6 +206,9 @@ pub fn RealmAdminPanel(
                     }
                 }
                 section { class: "settings-content-column realm-settings-content",
+                    if active_section == RealmAdminSection::Access {
+                        super::invite_links::RealmInviteLinks {token,realm_id:Some(selected_realm_id.clone()),initial_input:None}
+                    }
                     div { class: "event settings-content-hero",
                         div { class: "settings-content-title-row",
                             h2 { class: "settings-content-title", "{active_section.label()}" }
