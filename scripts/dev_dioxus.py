@@ -12,7 +12,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 from pathlib import Path
 import re
 import shutil
@@ -47,7 +46,6 @@ SDK_EVENT_KINDS = (
 REBUILD_STAMP = PROJECT_ROOT / "src" / "dev_dependency_rebuild.stamp"
 REBUILD_STAMP_CONTENT = "inkson-dioxus-local-dependency-rebuild-bridge\n"
 WATCHED_SUFFIXES = {".json", ".lock", ".rs", ".toml", ".yaml", ".yml"}
-IGNORED_DIRECTORIES = {".git", "node_modules", "target"}
 REGISTRY_DIGEST_PATTERN = re.compile(
     r'pub const EVENT_KIND_REGISTRY_SHA256: &str\s*=\s*"([0-9a-f]{64})";'
 )
@@ -154,14 +152,10 @@ def local_dependency_roots(metadata: dict) -> list[Path]:
 
 
 def build_directories(metadata: dict) -> set[Path]:
-    """Directories cargo writes artifacts into, excluded from the watch walk.
+    """Exclude Cargo output using its actual paths, including custom targets.
 
-    `IGNORED_DIRECTORIES` only knows the name `target`, which was enough while
-    every repository built into its own `target/`. The workspace-level
-    `../.cargo/config.toml` now points `build.target-dir` at one shared tree,
-    so ask cargo where it writes rather than assuming the name. Walking a
-    hundred-gigabyte artifact tree twice a second would stall the rebuild
-    bridge without ever producing a useful change event.
+    Git normally ignores these files, but a tracked output must not become a
+    build input merely because its target directory has an unusual name.
     """
     directories: set[Path] = set()
     for key in ("target_directory", "build_directory"):
@@ -176,23 +170,27 @@ def watched_files(
 ) -> dict[Path, tuple[int, int]]:
     snapshot: dict[Path, tuple[int, int]] = {}
     for root in roots:
-        for directory, child_directories, files in os.walk(root):
-            directory_path = Path(directory)
-            child_directories[:] = [
-                name
-                for name in child_directories
-                if name not in IGNORED_DIRECTORIES
-                and directory_path / name not in build_dirs
-            ]
-            for name in files:
-                path = directory_path / name
-                if path.suffix.lower() not in WATCHED_SUFFIXES:
-                    continue
-                try:
-                    stat = path.stat()
-                except FileNotFoundError:
-                    continue
-                snapshot[path] = (stat.st_mtime_ns, stat.st_size)
+        # Git includes tracked normative artifacts even under ignored directory
+        # names, and nonignored new source files, without scanning local proof
+        # logs, dependency caches or build products as source inputs.
+        listed = subprocess.run(
+            ['git', '-C', str(root), 'ls-files', '-z', '--cached', '--others', '--exclude-standard'],
+            check=True,
+            stdout=subprocess.PIPE,
+        ).stdout.decode('utf-8')
+        for name in listed.split('\0'):
+            if not name:
+                continue
+            path = root / name
+            if path.suffix.lower() not in WATCHED_SUFFIXES:
+                continue
+            if any(path.is_relative_to(directory) for directory in build_dirs):
+                continue
+            try:
+                stat = path.stat()
+            except FileNotFoundError:
+                continue
+            snapshot[path] = (stat.st_mtime_ns, stat.st_size)
     try:
         stat = SPEC_REGISTRY.stat()
         snapshot[SPEC_REGISTRY] = (stat.st_mtime_ns, stat.st_size)

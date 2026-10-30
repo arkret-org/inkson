@@ -2,6 +2,7 @@
 
 import hashlib
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
@@ -117,6 +118,39 @@ class RegistryRepairTests(unittest.TestCase):
 
 
 class DependencyWatchTests(unittest.TestCase):
+    def test_only_git_source_inputs_trigger_dependency_rebuilds(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            subprocess.run(['git', 'init', '--quiet', str(root)], check=True)
+            (root / '.gitignore').write_text('artifacts/\nbuild-output/\n', encoding='utf-8')
+            source = root / 'src' / 'lib.rs'
+            source.parent.mkdir()
+            source.write_text('pub fn original() {}\n', encoding='utf-8')
+            manifest = root / 'Cargo.toml'
+            manifest.write_text('[workspace]\n', encoding='utf-8')
+            registry = root / 'spec' / 'v1' / 'artifacts' / 'registry.json'
+            registry.parent.mkdir(parents=True)
+            registry.write_text('{}\n', encoding='utf-8')
+            build = root / 'build-output'
+            build.mkdir()
+            generated = build / 'generated.rs'
+            generated.write_text('// build output\n', encoding='utf-8')
+            subprocess.run(['git', '-C', str(root), 'add', '-f', str(source), str(manifest), str(registry), str(generated)], check=True)
+            new_source = source.with_name('new module.rs')
+            new_source.write_text('pub fn added() {}\n', encoding='utf-8')
+            ignored = root / 'artifacts' / 'audit.json'
+            ignored.parent.mkdir()
+            ignored.write_text('{"run":1}\n', encoding='utf-8')
+            with patch.object(dev, 'SPEC_REGISTRY', registry):
+                before = dev.watched_files([root], {build})
+                self.assertEqual(set(before), {source, new_source, manifest, registry})
+                ignored.write_text('{"run":2,"status":"done"}\n', encoding='utf-8')
+                self.assertEqual(dev.watched_files([root], {build}), before)
+                source.write_text('pub fn changed() {}\n', encoding='utf-8')
+                self.assertNotEqual(dev.watched_files([root], {build}), before)
+                source.unlink()
+                self.assertNotIn(source, dev.watched_files([root], {build}))
+
     def test_repair_requests_one_rebuild_and_failure_withholds_it(self):
         for failure in (None, RuntimeError("generation failed")):
             with self.subTest(failure=failure):
