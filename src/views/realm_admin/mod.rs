@@ -9,6 +9,7 @@
 
 mod admin_panel;
 mod capabilities;
+pub(crate) mod invite_links;
 mod members_panel;
 mod metadata;
 mod organization;

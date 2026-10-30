@@ -43,14 +43,13 @@ fn build_register_request_with_gateway(
     )?)
 }
 
-fn register_outcome(registration_id: Option<&str>) -> PushRegisterDeviceResponseBody {
+fn register_outcome(registration_id: &str) -> PushRegisterDeviceResponseBody {
     PushRegisterDeviceResponseBody {
         push_target_id: arkret_wire::PushTargetId::new(
             "ak:pseudonym:push:kosc9iQ4gVct1OB-b6X364WIFIsJFVbVzn7BMBs1sm8".to_owned(),
         )
         .unwrap(),
-        registration_id: registration_id
-            .map(|value| arkret_sdk::OpaqueLocalId::new(value.to_owned()).unwrap()),
+        registration_id: arkret_sdk::PushRegistrationId::new(registration_id).unwrap(),
         expires_at: None,
     }
 }
@@ -80,10 +79,13 @@ fn register_request_rejects_an_empty_gateway_without_a_development_fallback() {
 #[test]
 fn builds_persistable_registration_state() {
     let request = build_register_request("dev_inkson").unwrap();
-    let response = register_outcome(Some("push:test"));
+    let response = register_outcome("registration-test-inkson-001");
     let state = registration_state_from_response(&request, &response);
 
-    assert_eq!(state.registration_id.as_deref(), Some("push:test"));
+    assert_eq!(
+        state.registration_id.as_deref(),
+        Some("registration-test-inkson-001")
+    );
     assert_eq!(state.device_id, "dev_inkson");
     assert!(state.push_key_hash.starts_with("sha256:"));
     assert!(!state.push_key_hash.contains("placeholder"));
@@ -92,12 +94,15 @@ fn builds_persistable_registration_state() {
 #[test]
 fn builds_unregister_request_from_existing_state() {
     let request = build_register_request("dev_inkson").unwrap();
-    let response = register_outcome(Some("push:test"));
+    let response = register_outcome("registration-test-inkson-001");
     let state = registration_state_from_response(&request, &response);
     let unregister = build_unregister_request("dev_inkson", Some(&state)).unwrap();
 
     assert_eq!(unregister.device_id, "dev_inkson");
-    assert_eq!(unregister.registration_id.as_deref(), Some("push:test"));
+    assert_eq!(
+        unregister.registration_id.as_deref(),
+        Some("registration-test-inkson-001")
+    );
     assert_eq!(unregister.app_id.as_deref(), Some("inkson"));
 }
 
@@ -160,8 +165,10 @@ fn blind_wakeup_payload_lint_rejects_stable_identifiers() {
 #[test]
 fn push_status_label_treats_state_without_registration_id_as_registered() {
     let request = build_register_request("dev_inkson").unwrap();
-    let response = register_outcome(None);
-    let state = registration_state_from_response(&request, &response);
+    let response = register_outcome("registration-test-inkson-001");
+    let mut state = registration_state_from_response(&request, &response);
+    // Local incomplete state is not a successful protocol response.
+    state.registration_id = None;
 
     assert_eq!(push_status_label(Some(&state)), "registered");
     assert_eq!(push_status_label(None), "Not registered");

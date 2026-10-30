@@ -4,6 +4,139 @@ use crate::state::projection_views::{RsvpCellProjectionView, RsvpWinnerProjectio
 const TEST_CALENDAR_STRAND_ID: &str = "ak:strand:Ac_zaRRyp7i2guabQjAsFr7CdWBbP2ULfqGAcp4_we-V";
 
 #[test]
+fn authenticated_structured_location_survives_an_unrelated_schedule_edit() {
+    let location = json!({
+        "title":"Community entrance desk",
+        "address":"Simulated community room",
+        "geo_uri":"geo:0,0",
+        "uri":"https://example.invalid/community"
+    });
+    let authenticated: arkret_sdk::CalendarLocation =
+        serde_json::from_value(location.clone()).unwrap();
+    authenticated.validate().unwrap();
+    let fields = json!({"calendar":{
+        "start":"2026-10-31T13:20:00", "end":"2026-10-31T16:30:00",
+        "timezone":"Asia/Shanghai", "tzdb_version":"2025b",
+        "all_day":false, "status":"confirmed",
+        "location":{"ciphertext":"verified-envelope", "content_type":"application/json"}
+    }});
+    let mut current =
+        calendar_fields_from_metadata(fields.as_object().unwrap(), None, TEST_CALENDAR_STRAND_ID);
+    assert!(current.location_locked);
+    // Exercise the production transition after the original Event's sender,
+    // envelope and decrypted closed location have been authenticated.
+    install_authenticated_calendar_location(&mut current, authenticated);
+    assert!(!current.location_locked);
+    assert_eq!(current.location, "Community entrance desk");
+    let mut draft = current.clone();
+    draft.end = "2026-10-31T17:00:00".to_owned();
+    let mut patch = serde_json::Map::new();
+    calendar_patch_entries(&mut patch, &current, &draft).unwrap();
+    assert_eq!(patch[CALENDAR_SUBTREE_PATH]["value"]["location"], location);
+}
+
+#[test]
+fn calendar_location_uses_the_shared_metadata_encryption_boundary_once() {
+    let current = test_card(TEST_CALENDAR_STRAND_ID, "U");
+    let mut draft = card_detail_draft_from_card(&current);
+    draft.calendar = CalendarCardFields {
+        start: "2026-10-31T13:20:00".to_owned(),
+        end: "2026-10-31T16:30:00".to_owned(),
+        timezone: "Asia/Shanghai".to_owned(),
+        location: "Community entrance desk".to_owned(),
+        ..CalendarCardFields::default()
+    };
+    let patch = card_detail_update_patch(&current, &draft).unwrap();
+    assert!(
+        collect_encryptable_private_patch_values(&patch)
+            .unwrap()
+            .is_empty(),
+        "metadata must not acquire an inner ciphertext whose producer context disappears when EventSubmitter seals the whole metadata"
+    );
+    let event = build_card_detail_update_operation(
+        TEST_REALM_ID,
+        "ak:did_core:web:alice.example",
+        TEST_CALENDAR_STRAND_ID,
+        patch,
+    )
+    .unwrap();
+    for security in [Some(true), None] {
+        assert!(
+            kanban_plaintext_block_reason(security, &event).is_some(),
+            "the unchanged guard must reject metadata until the shared boundary seals it"
+        );
+    }
+}
+
+#[test]
+fn calendar_location_is_bound_to_its_signed_subtree_patch() {
+    let envelope = json!({"ciphertext": "opaque", "content_type": "application/json"});
+    let patch = json!({
+        CALENDAR_SUBTREE_PATH: {"$op": "set", "value": {
+            "start": "2026-10-31T13:20:00",
+            "location": envelope.clone()
+        }}
+    });
+    let op = patch_op_for_private_path(patch.as_object().unwrap(), CALENDAR_LOCATION_PRIVATE_PATH)
+        .expect("the signed calendar subtree contains the exact encrypted location");
+    assert_eq!(op.as_ref(), &json!({"$op": "set", "value": envelope}));
+}
+
+#[test]
+fn calendar_location_without_a_signed_parent_value_stays_unavailable() {
+    for patch in [
+        json!({CALENDAR_SUBTREE_PATH: {"$op": "unset"}}),
+        json!({CALENDAR_SUBTREE_PATH: {"$op": "set", "value": {"start": "2026-10-31T13:20:00"}}}),
+        json!({"metadata.fields.calendar_elsewhere": {"$op": "set", "value": {"location": "unrelated"}}}),
+    ] {
+        assert!(
+            patch_op_for_private_path(patch.as_object().unwrap(), CALENDAR_LOCATION_PRIVATE_PATH,)
+                .is_none()
+        );
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn unverified_calendar_update_cannot_reuse_an_unrelated_location_cache() {
+    let mut store = isolated_store_for_tests("calendar-unverified-location");
+    store.save_private_plaintext(
+        TEST_REALM_ID,
+        TEST_CALENDAR_STRAND_ID,
+        CALENDAR_LOCATION_PRIVATE_PATH,
+        "{\"title\":\"old author-only location\"}",
+    );
+    let authority =
+        fixture::authority_at_station("ak:did_core:web:alice.example", fixture::SERVER_STATION_ID);
+    let ctx = MlsDecryptCtx {
+        state_store: &store,
+        realm_id: TEST_REALM_ID,
+        identity: Some((&authority, "ak:device:01904100-0000-7000-8000-0000000000a1")),
+    };
+    let fields = json!({"calendar": {"location": {
+        "ciphertext": "unverified", "content_type": "application/json"
+    }}});
+    let fields = fields.as_object().unwrap();
+    assert!(
+        !calendar_fields_from_metadata(fields, Some(&ctx), TEST_CALENDAR_STRAND_ID).location_locked
+    );
+    for actor in [
+        serde_json::to_value(fixture::account_actor("ak:did_core:web:alice.example")).unwrap(),
+        serde_json::to_value(fixture::account_actor("ak:did_core:web:bob.example")).unwrap(),
+    ] {
+        let unverified_event = json!({"actor_id": actor});
+        let result = calendar_fields_from_metadata_and_event(
+            fields,
+            Some(&ctx),
+            TEST_CALENDAR_STRAND_ID,
+            Some(&unverified_event),
+        );
+        assert!(result.location_locked);
+        assert!(result.location.is_empty());
+    }
+}
+
+#[test]
 fn calendar_patch_writes_one_activation_pair() {
     let current = test_card(TEST_CALENDAR_STRAND_ID, "U");
     let mut draft = card_detail_draft_from_card(&current);
@@ -44,8 +177,8 @@ fn calendar_patch_writes_one_activation_pair() {
     // child patch path.
     assert_eq!(calendar["location"], json!({ "title": "Board room" }));
 
-    // The activation pair plus the encrypted `location` child are the only
-    // schedule entries: no flat field or profile-id impostor is ever written.
+    // The activation pair owns the complete schedule. Metadata is sealed at
+    // the shared producer boundary; no flat field or profile-id impostor enters.
     for path in [
         "metadata.fields.profile",
         "metadata.fields.profile_refs",
@@ -59,25 +192,14 @@ fn calendar_patch_writes_one_activation_pair() {
         assert!(patch.get(path).is_none(), "{path} must not be written");
     }
 
-    let private_values = collect_encryptable_private_patch_values(&patch).unwrap();
-    assert_eq!(private_values.len(), 1);
-    assert_eq!(private_values[0].0, CALENDAR_LOCATION_PRIVATE_PATH);
-
-    let mut encrypted_patch = patch.clone();
-    replace_private_patch_values(
-        &mut encrypted_patch,
-        &[CALENDAR_LOCATION_PRIVATE_PATH.to_owned()],
-        vec![json!({"ciphertext": "calendar-location"})],
-    )
-    .unwrap();
     assert!(
-        encrypted_patch
-            .get(CALENDAR_LOCATION_PRIVATE_PATH)
-            .is_none()
+        collect_encryptable_private_patch_values(&patch)
+            .unwrap()
+            .is_empty()
     );
     assert_eq!(
-        encrypted_patch[CALENDAR_SUBTREE_PATH]["value"]["location"]["ciphertext"],
-        "calendar-location"
+        patch[CALENDAR_SUBTREE_PATH]["value"]["location"]["title"],
+        "Board room"
     );
 }
 
@@ -291,7 +413,7 @@ fn calendar_editor_round_trips_the_complete_v1_schedule() {
             "title": "Planning room",
             "address": "1 Example Street",
             "geo_uri": "geo:31.2304,121.4737",
-            "url": "https://meet.example/room"
+            "uri": "https://meet.example/room"
         },
         "call_id": "ak:call:AWXbZ-mBelWXBOM1haN1Q6WcwR_RscrylSZph2icMZ6y",
         "attendees": [

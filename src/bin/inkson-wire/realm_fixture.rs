@@ -1263,8 +1263,7 @@ impl Builder {
                             == (ScopeRef::Realm {
                                 realm_id: full.event.realm_id.clone()
                             })
-                        && payload.invitee_account_id.as_ref()
-                            == Some(&recipient.identity.account_id)
+                        && payload.invitee_account_id == recipient.identity.account_id
                         && payload.previous_state == InvitePreviousState::Pending,
                     "directed Invite acceptance differs from its registered recipient/prestate"
                 );
@@ -3043,10 +3042,7 @@ mod tests {
         assert!(builder.append(foreign_actor).is_err());
         assert_eq!(builder.rows, rows);
         assert_eq!(builder.events, events);
-        for (id, previous) in [
-            (missing, InvitePreviousState::Pending),
-            (invite.clone(), InvitePreviousState::Claimed),
-        ] {
+        for (id, previous) in [(missing, InvitePreviousState::Pending)] {
             let rows = builder.rows.clone();
             let events = builder.events.clone();
             assert!(

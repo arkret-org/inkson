@@ -295,7 +295,6 @@ def generate() -> dict[str, Any]:
             )
     operations.sort(key=lambda row: (row["path_template"], row["method"]))
     return {
-        "format_version": 1,
         "generated_from": {
             "openapi_sha256": hashlib.sha256(openapi_bytes).hexdigest(),
             "operation_registry_sha256": hashlib.sha256(operation_registry_bytes).hexdigest(),

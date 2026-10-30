@@ -756,10 +756,10 @@ pub fn RealmMembersPanel(
 
                                 div { class: "invite-divider muted", "data-testid": "realm-invite-divider", {crate::i18n::tr("realm_admin.invite_divider")} }
 
-                                div { class: "invite-by-handle", "data-testid": "realm-invite-by-handle",
+                                div { class: "invite-by-address", "data-testid": "realm-invite-by-address",
                                     div { class: "event-head",
-                                        span { {crate::i18n::tr("realm_admin.invite_by_handle")} }
-                                        span { {crate::i18n::tr("realm_admin.invite_handle_opt_in")} }
+                                        span { {crate::i18n::tr("realm_admin.invite_by_address")} }
+                                        span { {crate::i18n::tr("realm_admin.invite_link_recommended")} }
                                     }
                                     Label { html_for: "invite-target-input", {crate::i18n::tr("realm_admin.invite_target_label")} }
                                     Input {

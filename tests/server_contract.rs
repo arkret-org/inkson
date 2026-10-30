@@ -322,11 +322,13 @@ fn inkson_accepts_server_contract_payloads() {
 
     let push: inkson::models::PushRegisterDeviceResponseBody = serde_json::from_value(json!({
         "push_target_id": "ak:pseudonym:push:kosc9iQ4gVct1OB-b6X364WIFIsJFVbVzn7BMBs1sm8",
-        "registration_id": "push:dev_alice",
-        "expires_at": null
+        "registration_id": "registration-test-inkson-alice"
     }))
     .unwrap();
-    assert_eq!(push.registration_id.as_deref(), Some("push:dev_alice"));
+    assert_eq!(
+        push.registration_id.as_str(),
+        "registration-test-inkson-alice"
+    );
 
     let ok: inkson::models::AcknowledgementResponseBody =
         serde_json::from_value(json!({"ok": true})).unwrap();
@@ -500,6 +502,8 @@ fn directory_preview_and_join_locator_keep_separate_authority_boundaries() {
             endpoint_url: Some("https://server.local/_arkret".to_owned()),
             source: arkret_sdk::AuthorityLocatorSource::Directory,
         }],
+
+        realm_invite_link_id: None,
     };
     target.validate().expect("closed join locator target");
     assert_eq!(

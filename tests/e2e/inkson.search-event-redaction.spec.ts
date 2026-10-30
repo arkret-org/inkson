@@ -2,8 +2,14 @@ import { expect, test } from "@playwright/test";
 import { DEMO_REALM, dismissBlockingRecoveryModal, openKanban, registerStrandsBeforeEach } from "./strandsHarness";
 
 let cropped = false;
-registerStrandsBeforeEach({ demoNotification: true, demoEventRedaction: () => cropped });
-test.beforeEach(() => { cropped = false; });
+let croppedBody: string | undefined;
+registerStrandsBeforeEach({
+  demoNotification: true, demoEventRedaction: () => cropped,
+  observeAccountSubscribe: body => {
+    if (body.includes('"object_redaction"')) croppedBody = body;
+  },
+});
+test.beforeEach(() => { cropped = false; croppedBody = undefined; });
 
 test("current Event cropping withdraws a visible search body and survives reload", async ({ page }) => {
   // Two cold bootstraps plus signed fixture transport; individual UI
@@ -32,29 +38,29 @@ test("current Event cropping withdraws a visible search body and survives reload
   const originalId = await row.getAttribute("data-event-id");
   // The next ordinary Account poll carries an independently signed newer cut.
   // It still retains the old Full source, so only the current crop can hide it.
-  const croppedCut = page.waitForResponse(async response =>
-    new URL(response.url()).pathname === "/_arkret/self/account/subscribe"
-    && response.status() === 200
-    && (await response.text()).includes('"object_redaction"'));
   cropped = true;
-  const response = await croppedCut;
-  const frame = (await response.text()).trim().split("\n").map(line => JSON.parse(line))
+  await expect.poll(() => croppedBody, { timeout: 60_000 }).toBeDefined();
+  const frame = croppedBody!.trim().split("\n").map(line => JSON.parse(line))
     .find(frame => frame.realms?.[DEMO_REALM]);
-  const lastEvent = frame.realms[DEMO_REALM].committed_events.at(-1).commit.event_ref;
-  // A received frame is not installed until all historical signer material
-  // arrives. The fixture CLI validates each proof independently on Windows.
-  await page.waitForResponse(response =>
-    new URL(response.url()).pathname === "/_arkret/self/signer-keys/query"
-    && response.status() === 200
-    && response.request().postDataJSON().queries.some((query: any) =>
-      query.committed_event_ref?.event_id === lastEvent), { timeout: 60_000 });
+  expect(frame.realms[DEMO_REALM].committed_events.length).toBeGreaterThan(0);
+  // Fixture observation alone does not prove delivery or verification. This
+  // source exists only in the new cut, so require its verified UI publication
+  // before checking withdrawal of the old body.
+  const control = "Independent current control needle";
+  await panel.getByTestId("global-search-input").fill(control);
+  await panel.getByTestId("global-search-submit").click();
+  await expect(row.getByTestId("global-search-result-snippet"))
+    .toHaveText(control, { timeout: 60_000 });
+  await expect(row).toHaveCount(1);
+  await expect(row).not.toHaveAttribute("data-event-id", originalId!);
+  await panel.getByTestId("global-search-input").fill(body);
+  await panel.getByTestId("global-search-submit").click();
   await expect(row).toHaveCount(0);
   await expect(panel.getByTestId("global-search-results-no-results")).toBeVisible();
   await panel.getByTestId("global-search-submit").click();
   await expect(row).toHaveCount(0);
   // A source created only in the new cut must remain readable. A poisoned
   // store, lost holder or rejected frame cannot satisfy this positive control.
-  const control = "Independent current control needle";
   await panel.getByTestId("global-search-input").fill(control);
   await panel.getByTestId("global-search-submit").click();
   await expect(row).toHaveCount(1);

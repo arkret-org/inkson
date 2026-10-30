@@ -9,7 +9,7 @@
 use super::*;
 #[cfg(test)]
 pub(super) use crate::state::realm_membership::{
-    AcceptedInviteClaimRoute, accepted_invite_claim_route, claim_target_device_id,
+    MemberJoinKeyPackageRoute, claim_target_device_id, member_join_key_package_route,
 };
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -335,6 +335,15 @@ pub(super) fn push_unique(out: &mut Vec<String>, value: impl Into<String>) {
 }
 
 pub(super) fn merge_member_profile(target: &mut MemberProfile, incoming: MemberProfile) {
+    // A live invitation is independent of the actor's historical membership.
+    // The caller has already excluded terminal invitation ids.
+    if incoming.pending_invite {
+        target.pending_invite = true;
+        if incoming.invite_id.is_some() {
+            target.invite_id = incoming.invite_id.clone();
+            target.invite_is_direct = incoming.invite_is_direct;
+        }
+    }
     if target.subject_id.is_none() {
         target.subject_id = incoming.subject_id;
     }
@@ -476,6 +485,29 @@ pub(super) fn projected_member_profiles_for_realm(
                 continue;
             }
             upsert_member_profile(&mut rows, profile);
+        }
+    }
+    // A complete installed cut is the membership source. The optional roster
+    // display projection and bounded Event history may both lag or be absent
+    // after a cold navigation; neither may replace current joined membership.
+    if store.current_product_cut_generation(realm_id).is_some()
+        && let Ok(Some(joined)) = store.complete_joined_member_hint_for_realm(realm_id)
+    {
+        let joined: BTreeSet<String> = joined.into_iter().map(|actor| actor.to_string()).collect();
+        for profile in rows.values_mut() {
+            if joined.contains(&profile.actor_id) {
+                profile.membership = Some("join".to_owned());
+                profile.pending_invite = false;
+            } else if profile.normalized_membership() == Some("join") {
+                profile.membership = None;
+            }
+        }
+        for actor in joined {
+            let profile = rows
+                .entry(actor.clone())
+                .or_insert_with(|| MemberProfile::bare(actor));
+            profile.membership = Some("join".to_owned());
+            profile.pending_invite = false;
         }
     }
     let mut out: Vec<MemberProfile> = rows.into_values().collect();
@@ -632,10 +664,12 @@ pub(super) fn split_member_profiles(
     let mut active_members = Vec::new();
     let mut pending_invites = Vec::new();
     for member in members {
-        if member.is_pending_invite() {
-            pending_invites.push(member);
-        } else {
-            active_members.push(member);
+        match member.normalized_membership() {
+            Some("join") => active_members.push(member),
+            _ if member.is_pending_invite() => {
+                pending_invites.push(member);
+            }
+            _ => {}
         }
     }
     (active_members, pending_invites)
@@ -684,15 +718,10 @@ pub(super) fn upsert_pending_invite_profile(
         .find(|profile| profile.actor_id.trim() == actor_id)
     {
         existing.pending_invite = existing.normalized_membership() != Some("join");
-        if existing.invite_id.is_none() {
-            existing.invite_id = invite_id
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToOwned::to_owned);
+        if let Some(invite_id) = invite_id.map(str::trim).filter(|value| !value.is_empty()) {
+            existing.invite_id = Some(invite_id.to_owned());
         }
-        if existing.invite_is_direct.is_none() {
-            existing.invite_is_direct = Some(true);
-        }
+        existing.invite_is_direct = Some(true);
         apply_label(existing);
         return;
     }

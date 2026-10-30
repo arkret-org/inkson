@@ -101,17 +101,17 @@ mod tests {
         assert_eq!(op.payload()["mode"], "audio_video");
         assert_eq!(op.payload()["visible_notice"], true);
         assert!(
-            op.payload()["result"]
+            op.payload()["capture_metadata"]
                 .get("recording_start_event_id")
                 .is_none()
         );
         assert!(
-            op.payload()["result"]
+            op.payload()["capture_metadata"]
                 .get("transcript_start_event_id")
                 .is_none()
         );
         assert_eq!(
-            op.payload()["result"]["retention"]["consent_confirmed"],
+            op.payload()["capture_metadata"]["retention"]["consent_confirmed"],
             true
         );
         assert!(!op.payload().contains_key("consent_actors"));
@@ -134,12 +134,12 @@ mod tests {
         assert_eq!(op.payload()["capture_kind"], "transcript");
         assert_eq!(op.payload()["mode"], "audio");
         assert!(
-            op.payload()["result"]
+            op.payload()["capture_metadata"]
                 .get("recording_start_event_id")
                 .is_none()
         );
         assert!(
-            op.payload()["result"]
+            op.payload()["capture_metadata"]
                 .get("transcript_start_event_id")
                 .is_none()
         );
