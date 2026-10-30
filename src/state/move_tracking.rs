@@ -5,7 +5,7 @@ impl LocalStateStore {
 
     /// Record a freshly-submitted Move and its initial state. The
     /// caller records local progress separately from verified effectiveness.
-    /// `kind` is a free-form classifier (e.g. `ak.consent.grant`,
+    /// `kind` is a free-form classifier (e.g. `ak.consent.replace`,
     /// `ak.message.create`, `mls_commit`) the UI uses to decorate
     /// pills + icons.
     pub fn record_move_submission(
@@ -52,7 +52,9 @@ impl LocalStateStore {
             reason,
             observed_stream_head,
         };
-        self.cached.move_submissions.insert(move_id, record.clone());
+        self.cached
+            .move_submissions
+            .insert(move_id, Box::new(record.clone()));
         let _ = self.flush();
         record
     }
@@ -77,7 +79,7 @@ impl LocalStateStore {
     /// send-gate, not a submission verdict.
     pub fn apply_move_submission_result(
         &mut self,
-        result: &crate::models::SubmitEventResult,
+        result: &crate::models::EventSubmissionProgress,
     ) -> bool {
         self.ensure_cached_loaded();
         let Some(record_key) = self.move_submission_lookup_key(&result.event_id) else {
@@ -115,6 +117,7 @@ impl LocalStateStore {
             .move_submissions
             .into_values()
             .filter(|record| record.realm_id == realm_id)
+            .map(|record| *record)
             .collect();
         out.sort_by_key(|r| std::cmp::Reverse(r.submitted_at));
         out
@@ -123,8 +126,12 @@ impl LocalStateStore {
     /// Read all tracked Moves regardless of Space — used by the
     /// dashboard "everything failing" banner and the recovery flow.
     pub fn all_move_submissions(&self) -> Vec<MoveSubmissionRecord> {
-        let mut out: Vec<MoveSubmissionRecord> =
-            self.load().move_submissions.into_values().collect();
+        let mut out: Vec<MoveSubmissionRecord> = self
+            .load()
+            .move_submissions
+            .into_values()
+            .map(|record| *record)
+            .collect();
         out.sort_by_key(|r| std::cmp::Reverse(r.submitted_at));
         out
     }
@@ -163,7 +170,7 @@ impl LocalStateStore {
     pub fn resolve_member_remove_mls_bindings(&mut self, realm_id: &str) -> usize {
         self.ensure_cached_loaded();
         let mut updated = 0;
-        for record in self.cached.move_submissions.values_mut() {
+        self.cached.move_submissions.for_each_mut(|_, record| {
             if record.realm_id == realm_id
                 && record.kind == "mls_member_remove"
                 && record.state == MoveSubmissionState::PendingMlsBinding
@@ -172,7 +179,7 @@ impl LocalStateStore {
                 record.reason = None;
                 updated += 1;
             }
-        }
+        });
         if updated > 0 {
             let _ = self.flush();
         }
@@ -186,7 +193,7 @@ impl LocalStateStore {
     pub fn resolve_member_add_mls_bindings(&mut self, realm_id: &str) -> usize {
         self.ensure_cached_loaded();
         let mut updated = 0;
-        for record in self.cached.move_submissions.values_mut() {
+        self.cached.move_submissions.for_each_mut(|_, record| {
             if record.realm_id == realm_id
                 && record.kind == "mls_member_add"
                 && record.state == MoveSubmissionState::PendingMlsBinding
@@ -195,7 +202,7 @@ impl LocalStateStore {
                 record.reason = None;
                 updated += 1;
             }
-        }
+        });
         if updated > 0 {
             let _ = self.flush();
         }

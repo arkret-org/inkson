@@ -1,7 +1,7 @@
 //! Capability grant / revoke builders.
 
 use arkret_models_collaboration::governance::authorization::{
-    EffectiveCapabilityGrantRow, GrantList,
+    EffectiveCapabilityGrantView, EffectiveGrantSnapshot,
 };
 use arkret_models_integration::AppletCapabilityRevokeIntent;
 use arkret_wire::{CurrentRevision, event_kind_str};
@@ -21,17 +21,17 @@ pub struct IssuerRealmAuthorityBasis {
 /// Narrow choices registered for the controller-owned Agent source. This is
 /// a presentation/authoring allowlist, never a local authorization decision.
 pub const OWNED_AGENT_ACTIONS: &[&str] = &[
-    "ak.event.read",
-    "ak.message.create",
-    "ak.message.redact.own",
-    "ak.message.revise.own",
-    "ak.object.read",
-    "ak.object.read_content",
-    "ak.object.read_history",
-    "ak.object.read_metadata",
-    "ak.reaction.add",
-    "ak.reaction.remove",
-    "ak.strand.read",
+    arkret_wire::CapabilityActionId::EVENT_READ,
+    arkret_wire::CapabilityActionId::MESSAGE_CREATE,
+    arkret_wire::CapabilityActionId::MESSAGE_REDACT_OWN,
+    arkret_wire::CapabilityActionId::MESSAGE_REVISE_OWN,
+    arkret_wire::CapabilityActionId::OBJECT_READ,
+    arkret_wire::CapabilityActionId::OBJECT_READ_CONTENT,
+    arkret_wire::CapabilityActionId::OBJECT_READ_HISTORY,
+    arkret_wire::CapabilityActionId::OBJECT_READ_METADATA,
+    arkret_wire::CapabilityActionId::REACTION_ADD,
+    arkret_wire::CapabilityActionId::REACTION_REMOVE,
+    arkret_wire::CapabilityActionId::STRAND_READ,
 ];
 
 /// Explicit controller confirmation carries exactly the two accepted join
@@ -111,7 +111,7 @@ pub fn capability_revoke(
 ) -> anyhow::Result<TypedOperationBuilder> {
     anyhow::bail!(
         "capability revoke blocked: exact accepted CurrentRevision is unavailable; read an \
-         EffectiveCapabilityGrantRow or use an Applet revoke preview intent"
+         EffectiveCapabilityGrantView or use an Applet revoke preview intent"
     )
 }
 
@@ -141,9 +141,9 @@ fn capability_revoke_exact(
 /// The surrounding list digest, local projection and historical Event ids are
 /// deliberately not accepted as authoring inputs.
 pub fn effective_grant_row_for_revoke<'a>(
-    list: &'a GrantList,
+    list: &'a EffectiveGrantSnapshot,
     grant_id: &str,
-) -> anyhow::Result<&'a EffectiveCapabilityGrantRow> {
+) -> anyhow::Result<&'a EffectiveCapabilityGrantView> {
     let grant_id = arkret_sdk::GrantId::new(grant_id.to_owned())
         .map_err(|error| anyhow::anyhow!("capability revoke grant_id {grant_id:?}: {error}"))?;
     let mut matches = list.grants.iter().filter(|row| row.grant.id == grant_id);
@@ -167,7 +167,7 @@ pub fn effective_grant_row_for_revoke<'a>(
 pub fn capability_revoke_from_effective_row(
     realm_id: &str,
     actor: &str,
-    row: &EffectiveCapabilityGrantRow,
+    row: &EffectiveCapabilityGrantView,
     reason: Option<&str>,
 ) -> anyhow::Result<TypedOperationBuilder> {
     let realm_id = arkret_sdk::RealmId::new(trim_realm_id(realm_id))?;
@@ -191,7 +191,7 @@ pub fn capability_revoke_from_effective_row(
 pub fn capability_revoke_from_owned_current(
     realm_id: &str,
     actor: &str,
-    row: &arkret_sdk::exact_current_results::CapabilityGrantExactCurrentRow,
+    row: &arkret_sdk::exact_current_state::CurrentCapabilityGrant,
     reason: Option<&str>,
 ) -> anyhow::Result<TypedOperationBuilder> {
     let realm = arkret_sdk::RealmId::new(trim_realm_id(realm_id))?;
@@ -427,7 +427,7 @@ mod tests {
         );
         for actions in [
             vec!["ak.realm.admin"],
-            vec!["act_on_behalf"],
+            vec!["acting_on_behalf_allowed"],
             vec!["ak.capability.grant"],
             vec!["ak.message.create", "ak.message.create"],
             vec![],
@@ -482,7 +482,7 @@ mod tests {
             json!([{
                 "kind": "realm_root",
                 "realm_id": "ak:realm:AV1bzsPGpTD74Cq12d9EOrCkieTddiSndS0kDtK1W2hM",
-                "authority_generation": 1,
+                "authority_generation": "1",
                 "authority_event_ref": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
             }])
         );

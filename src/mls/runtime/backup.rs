@@ -12,7 +12,7 @@
 //! The selection half is host runtime logic rather than protocol judgement:
 //! `garth::mls::backup_selection` owns the shared rule (the Station's
 //! active-series pointer narrows the eligible series and the tail is ordered by
-//! `(series_seq, created_at)`), and what stays here is the item-kind and
+//! `(series_sequence, created_at)`), and what stays here is the item-kind and
 //! recipient-method narrowing that only a client restoring its own material
 //! needs.
 
@@ -23,7 +23,7 @@ use serde_json::Value;
 pub(crate) fn select_recovery_backup_candidate(
     payload: &Value,
 ) -> Option<arkret_sdk::KeyBackupSummary> {
-    let mut list: arkret_sdk::KeysBackupsList = serde_json::from_value(payload.clone()).ok()?;
+    let mut list: arkret_sdk::KeysBackupsPage = serde_json::from_value(payload.clone()).ok()?;
     if list.has_more || list.next_cursor.is_some() {
         return None;
     }
@@ -41,7 +41,7 @@ pub(crate) fn select_recovery_backup_candidate(
 ///
 /// Takes the higher of the scope's accepted current MLS epoch and this device's
 /// own installed epoch, so a rolled-back or overwritten local checkpoint is
-/// refused by [`crate::mls::persistence::decrypt_with_epoch_check`].
+/// refused by [`garth::mls::checkpoint::decrypt_with_epoch_check`].
 pub fn mls_restore_epoch_floor(state_store: &crate::state::LocalStateStore, realm_id: &str) -> u64 {
     let accepted = accepted_mls_epoch_floor(state_store, realm_id);
     let local = state_store
@@ -110,11 +110,13 @@ fn backup_series_id(body: &Value) -> &str {
         .unwrap_or_default()
 }
 
-/// The `series_seq` an envelope body claims. A missing value reads as the
+/// The `series_sequence` an envelope body claims. A missing value reads as the
 /// genesis link rather than as "unknown", so an envelope that hides its
 /// position can never outrank a real tail.
 pub(crate) fn backup_series_seq_of(body: &Value) -> u64 {
-    body.get("series_seq").and_then(Value::as_u64).unwrap_or(0)
+    body.get("series_sequence")
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
 }
 
 /// Adapter for callers that still name the backup class explicitly. There is
@@ -205,7 +207,7 @@ fn in_active_series<'a>(
 }
 
 /// The active-series pointer has already selected the canonical series.
-/// Within it the chain's `series_seq` decides the tail; timestamp is only a
+/// Within it the chain's `series_sequence` decides the tail; timestamp is only a
 /// tie break for malformed duplicate sequence numbers (rejected on restore).
 fn account_secret_order(body: &Value) -> (u64, &str) {
     (backup_series_seq_of(body), backup_created_at(body))
@@ -259,8 +261,13 @@ mod tests {
 
     use super::*;
 
-    fn body(seq: u64, series: &str, item_kind: &str, recipient_method: &str) -> Value {
-        crate::test_support::key_backup_envelope_fixture(seq, series, item_kind, recipient_method)
+    fn body(sequence: u64, series: &str, item_kind: &str, recipient_method: &str) -> Value {
+        crate::test_support::key_backup_envelope_fixture(
+            sequence,
+            series,
+            item_kind,
+            recipient_method,
+        )
     }
 
     fn list(active: Option<&str>, backups: Vec<Value>) -> Value {
@@ -332,7 +339,7 @@ mod tests {
             ],
         );
         let selected = select_mls_account_secret_backup(&payload).unwrap();
-        assert_eq!(selected["series_seq"], json!(2));
+        assert_eq!(selected["series_sequence"], json!(2));
         assert_eq!(selected["series_id"], json!(SERIES));
     }
 
@@ -347,15 +354,15 @@ mod tests {
             ],
         );
         assert_eq!(
-            select_mls_account_secret_backup(&payload).unwrap()["series_seq"],
+            select_mls_account_secret_backup(&payload).unwrap()["series_sequence"],
             json!(1)
         );
         assert_eq!(
-            select_preferred_mls_account_secret_backup(&payload).unwrap()["series_seq"],
+            select_preferred_mls_account_secret_backup(&payload).unwrap()["series_sequence"],
             json!(2)
         );
         assert_eq!(
-            select_mls_private_plaintext_backup(&payload).unwrap()["series_seq"],
+            select_mls_private_plaintext_backup(&payload).unwrap()["series_sequence"],
             json!(3)
         );
         assert_eq!(all_secret_storage_backups(&payload).len(), 3);
@@ -367,7 +374,7 @@ mod tests {
             "backup_id": "ak:backup:0196419b-0000-7000-8000-00000000003f",
             "backup_kind": "secret_storage",
             "series_id": "ak:backup_series:0196419b-0000-7000-8000-00000000000a",
-            "series_seq": 1,
+            "series_sequence": 1,
             "created_at": "2026-09-27T00:00:00.000Z",
             "contents": [{ "item_kind": "mls_account_secret" }],
             "encryption": { "recipient_method": "recovery_public_key" }
@@ -385,6 +392,6 @@ mod tests {
             vec![old, body(2, SERIES, "mls_account_secret", "passphrase_kdf")],
         );
         let selected = select_mls_account_secret_backup(&payload).unwrap();
-        assert_eq!(selected["series_seq"], json!(2));
+        assert_eq!(selected["series_sequence"], json!(2));
     }
 }

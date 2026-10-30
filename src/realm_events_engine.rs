@@ -35,10 +35,15 @@ use arkret_sdk::EventPayloadExt;
 use garth::AuthorityClient;
 #[cfg(test)]
 use garth::RealmReplica;
-use garth::{
-    ClientEvent, CommitStreamRef, CommittedDelta, CommittedEventView, DecodedInbound,
-    InboundDecoder, RetrySchedule, StreamScanRequest,
-};
+#[cfg(test)]
+use garth::StreamScanRequestBody;
+use garth::current_ingest::committed_views_to_client_events;
+#[cfg(test)]
+use garth::current_ingest::validate_floor_product_rows;
+#[cfg(test)]
+use garth::history_recovery::above_genesis_without_basis;
+use garth::history_recovery::{require_exact_claimed_rows, snapshot_window_basis};
+use garth::{ClientEvent, CommitStreamRef, CommittedEventView, RetrySchedule};
 pub(crate) use own_station::{
     refresh_accepted_sidecar, refresh_joined_realm, refresh_sidecar_history,
 };
@@ -64,6 +69,7 @@ const SUBSCRIBE_CANCEL_POLL: Duration = Duration::from_millis(250);
 
 /// Rows requested per scan. The Station may return fewer and flag `truncated`,
 /// which this engine drains before moving to the next stream.
+#[cfg(test)]
 const SCAN_LIMIT: u16 = 200;
 
 /// Runtime inputs consumed by the realm events engine. UI frameworks are
@@ -114,34 +120,6 @@ fn ingest_realm_batch(
         + crate::sync_engine::ingest_moderation_events(store, batch)
 }
 
-/// Fan one stream's scanned commits into the ordered [`ClientEvent`] batch the
-/// product projections consume.
-///
-/// Every row carries its own [`arkret_wire::CommitStreamRef`] and
-/// `stream_position` inside [`CommittedDelta`], so nothing here has to invent a
-/// cross-stream ordering to represent them.
-fn committed_views_to_client_events(
-    realm_id: &arkret_sdk::RealmId,
-    committed_events: Vec<CommittedEventView>,
-) -> garth::Result<Vec<ClientEvent>> {
-    let decoder = InboundDecoder::new();
-    let mut batch = Vec::with_capacity(committed_events.len());
-    for item in committed_events {
-        let delta = CommittedDelta::from_committed_event_view(realm_id.clone(), item)?;
-        // Every verified reducer input reaches the product ingests: message
-        // families decoded, all other kinds (Space, Strand, membership,
-        // moderation, RSVP) as the Event itself.
-        if let Some(event) = delta.event() {
-            match decoder.decode_event(event.clone()) {
-                DecodedInbound::Message(message) => batch.push(ClientEvent::Message(message)),
-                DecodedInbound::Event(event) => batch.push(ClientEvent::Event(event)),
-            }
-        }
-        batch.push(ClientEvent::Committed(delta));
-    }
-    Ok(batch)
-}
-
 /// Extract the verified sender endpoint from a service-accepted direct Message Event.
 ///
 /// The Realm stream contains the canonical Event only after the Station's
@@ -165,7 +143,7 @@ pub(crate) fn accepted_direct_message_final<'a>(
     {
         return None;
     }
-    if event.human_device_producer().ok().flatten().is_none() {
+    if event.account_device_producer().ok().flatten().is_none() {
         let endpoint =
             crate::identity::agent_signer_evidence::verified_cached_agent_event_endpoint(
                 event, store,
@@ -198,8 +176,8 @@ fn realm_live_digest_suite(realm_id: &arkret_sdk::RealmId) -> arkret_sdk::Digest
 #[cfg(test)]
 fn stage_verified_page(
     replica: &mut RealmReplica,
-    request: &StreamScanRequest,
-    outcome: arkret_sdk::StreamScanOutcome,
+    request: &StreamScanRequestBody,
+    outcome: arkret_sdk::StreamScanResponseBody,
     freshness: &arkret_identity::RealmAuthorityFreshness,
     keys: &arkret_identity::RealmAuthorityKeyMap,
     pages: &mut Vec<garth::VerifiedScanPage>,
@@ -258,11 +236,11 @@ pub async fn run_realm_events_engine_with_transport<P, F>(
         }
     };
     let is_active = || {
-        generation.get() == start_generation
+        !ctx.effect.is_cancelled()
+            && generation.get() == start_generation
             && ctx.profiles.get().active_profile_id == start_profile_id
             && ctx.selected_realm_id.get() == realm_id
             && ctx.route_enabled.get()
-            && !ctx.effect.is_cancelled()
             && !ctx.base_url.get().trim().is_empty()
             && !ctx.token.get().trim().is_empty()
     };
@@ -282,7 +260,7 @@ pub async fn run_realm_events_engine_with_transport<P, F>(
         let http = match provide(ctx.base_url.get()).await {
             Ok(http) => http,
             Err(error) => {
-                if !retry_after(&mut backoff, is_active(), &error.to_string()).await {
+                if !retry_after(&mut backoff, &is_active, &error.to_string()).await {
                     break;
                 }
                 continue;
@@ -291,7 +269,7 @@ pub async fn run_realm_events_engine_with_transport<P, F>(
         let own = match crate::transport::own_station_results::client_for_http(&http).await {
             Ok(own) => own,
             Err(error) => {
-                if !retry_after(&mut backoff, is_active(), &error.to_string()).await {
+                if !retry_after(&mut backoff, &is_active, &error.to_string()).await {
                     break;
                 }
                 continue;
@@ -300,7 +278,7 @@ pub async fn run_realm_events_engine_with_transport<P, F>(
         let session = match own.session() {
             Ok(session) => session.clone(),
             Err(error) => {
-                if !retry_after(&mut backoff, is_active(), &error.to_string()).await {
+                if !retry_after(&mut backoff, &is_active, &error.to_string()).await {
                     break;
                 }
                 continue;
@@ -335,12 +313,12 @@ pub async fn run_realm_events_engine_with_transport<P, F>(
                     {
                         Ok(_) => continue,
                         Err(refresh_error)
-                            if crate::api_error::is_terminal_session_grant_error(&refresh_error) =>
+                            if crate::api_error::is_terminal_session_grant_refresh_error(&refresh_error) =>
                         {
                             break;
                         }
                         Err(refresh_error) => {
-                            if !retry_after(&mut backoff, is_active(), &refresh_error.to_string())
+                            if !retry_after(&mut backoff, &is_active, &refresh_error.to_string())
                                 .await
                             {
                                 break;
@@ -349,7 +327,7 @@ pub async fn run_realm_events_engine_with_transport<P, F>(
                         }
                     }
                 }
-                if !retry_after(&mut backoff, is_active(), &error.to_string()).await {
+                if !retry_after(&mut backoff, &is_active, &error.to_string()).await {
                     break;
                 }
             }
@@ -357,8 +335,12 @@ pub async fn run_realm_events_engine_with_transport<P, F>(
     }
 }
 
-async fn retry_after(backoff: &mut RetrySchedule, active: bool, reason: &str) -> bool {
-    let Some(delay) = crate::runtime_helpers::next_reconnect_delay(active, backoff) else {
+async fn retry_after<F: Fn() -> bool>(
+    backoff: &mut RetrySchedule,
+    is_active: &F,
+    reason: &str,
+) -> bool {
+    let Some(delay) = crate::runtime_helpers::next_reconnect_delay(is_active(), backoff) else {
         return false;
     };
     tracing::warn!(
@@ -366,8 +348,19 @@ async fn retry_after(backoff: &mut RetrySchedule, active: bool, reason: &str) ->
         retry_delay_ms = delay.as_millis(),
         "Realm stream follow interrupted; retrying"
     );
-    crate::runtime_helpers::sleep_for(delay).await;
-    true
+    let mut waiting = Box::pin(crate::runtime_helpers::sleep_for(delay));
+    while is_active() {
+        match futures_util::future::select(
+            &mut waiting,
+            Box::pin(crate::runtime_helpers::sleep_for(SUBSCRIBE_CANCEL_POLL)),
+        )
+        .await
+        {
+            futures_util::future::Either::Left(_) => return is_active(),
+            futures_util::future::Either::Right(_) => {}
+        }
+    }
+    false
 }
 
 /// Read the private scope's MLS current from a complete authority-signed cut.
@@ -376,8 +369,8 @@ pub(crate) async fn verified_sidecar_mls_current(
     api: &crate::transport::TransportClient,
     scope: &arkret_sdk::ScopeRef,
 ) -> garth::Result<(
-    arkret_wire::MlsGroupCurrent,
-    arkret_sdk::http_client::own_station_results::OwnStationResultClient,
+    arkret_wire::MlsGroupValue,
+    arkret_sdk::http_client::own_station_results::OwnStationStateClient,
 )> {
     if !matches!(scope, arkret_sdk::ScopeRef::Sidecar { .. }) {
         return Err(protocol(
@@ -453,7 +446,7 @@ pub(crate) async fn verified_creator_create(
 ) -> garth::Result<(
     arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapAcceptedCreate,
     arkret_sdk::RealmStateSnapshot,
-    arkret_sdk::http_client::own_station_results::OwnStationResultClient,
+    arkret_sdk::http_client::own_station_results::OwnStationStateClient,
 )> {
     for attempt in 0..3 {
         let result = verified_creator_create_at_cut(http, intent).await;
@@ -477,7 +470,7 @@ async fn verified_creator_create_at_cut(
 ) -> garth::Result<(
     arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapAcceptedCreate,
     arkret_sdk::RealmStateSnapshot,
-    arkret_sdk::http_client::own_station_results::OwnStationResultClient,
+    arkret_sdk::http_client::own_station_results::OwnStationStateClient,
 )> {
     let (client, response, cut) = creator_own_station_cut(http, intent).await?;
     let full_response = client
@@ -521,7 +514,7 @@ async fn creator_own_station_cut(
     http: &arkret_sdk::http_client::Client,
     intent: &arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapIntent,
 ) -> garth::Result<(
-    arkret_sdk::http_client::own_station_results::OwnStationResultClient,
+    arkret_sdk::http_client::own_station_results::OwnStationStateClient,
     CreatorOwnSnapshot,
     arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapAuthority,
 )> {
@@ -544,7 +537,7 @@ async fn creator_own_station_cut(
         .current_state_entries
         .iter()
         .find_map(|row| match row {
-            arkret_wire::TypedCurrentRow::Value {
+            arkret_wire::CurrentState::Value {
                 source_stream_ref: stream_ref,
                 selector: arkret_wire::CurrentSelector::RealmGenesis,
                 value,
@@ -585,7 +578,7 @@ async fn creator_own_station_cut(
 }
 
 async fn creator_own_station_unchanged(
-    client: &arkret_sdk::http_client::own_station_results::OwnStationResultClient,
+    client: &arkret_sdk::http_client::own_station_results::OwnStationStateClient,
     before: &CreatorOwnSnapshot,
 ) -> garth::Result<()> {
     let after = client.snapshot_head(&before.value()?.realm_id).await?;
@@ -610,7 +603,7 @@ pub(crate) async fn verified_creator_genesis(
     arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapAuthority,
     arkret_sdk::RealmStateSnapshot,
     Option<arkret_sdk::CommittedEventFullView>,
-    arkret_sdk::http_client::own_station_results::OwnStationResultClient,
+    arkret_sdk::http_client::own_station_results::OwnStationStateClient,
 )> {
     for attempt in 0..3 {
         let result = verified_creator_genesis_at_cut(http, intent, pinned_create).await;
@@ -632,7 +625,7 @@ async fn verified_creator_genesis_at_cut(
     arkret_models_collaboration::mls_creator_bootstrap::MlsCreatorBootstrapAuthority,
     arkret_sdk::RealmStateSnapshot,
     Option<arkret_sdk::CommittedEventFullView>,
-    arkret_sdk::http_client::own_station_results::OwnStationResultClient,
+    arkret_sdk::http_client::own_station_results::OwnStationStateClient,
 )> {
     let realm = intent.effective_scope().realm_id();
     let stream = CommitStreamRef::from_scope(intent.effective_scope(), Some(realm.clone()))?;
@@ -707,7 +700,7 @@ async fn refresh_verified_realm<T: garth::AuthorityTransport>(
     let mut nonce = [0_u8; 32];
     getrandom::fill(&mut nonce)
         .map_err(|error| garth::Error::Protocol(format!("authority nonce: {error}")))?;
-    let request = arkret_sdk::AuthorityBundleRequest {
+    let request = arkret_sdk::RealmAuthorityBundleRequestBody {
         realm_id: realm_id.clone(),
         nonce: arkret_sdk::Base64UrlString::new(arkret_sdk::base64url_encode(nonce))
             .map_err(|error| garth::Error::Protocol(error.to_string()))?,
@@ -877,7 +870,7 @@ async fn verified_stream_pages<T: garth::AuthorityTransport>(
         let limit = remaining.map_or(SCAN_LIMIT, |count| {
             count.min(u64::from(SCAN_LIMIT)).max(1) as u16
         });
-        let request = StreamScanRequest {
+        let request = StreamScanRequestBody {
             realm_id: realm_id.clone(),
             stream_ref: stream_ref.clone(),
             direction: arkret_wire::StreamScanDirection::After(after_position),
@@ -906,13 +899,22 @@ async fn verified_stream_pages<T: garth::AuthorityTransport>(
                     freshness.expected_nonce.clone(),
                 );
                 // Every declared dependency has an exact verified scan.
+                // This legacy native adapter is fixture-only. Production binds
+                // the expected Account through OwnStationStateClient.
+                let fixture_account = &snapshot
+                    .history_basis
+                    .as_ref()
+                    .ok_or_else(|| {
+                        garth::Error::Protocol("fixture history has no Account binding".into())
+                    })?
+                    .account_id;
                 verified_floor_snapshot = Some(replica.install_verified_floor_predecessor(
+                    fixture_account,
                     stream_ref,
                     basis,
                     floor,
                     snapshot,
-                    (&snapshot_freshness, &snapshot_keys),
-                    &dependency_pages,
+                    (&snapshot_freshness, &snapshot_keys, &dependency_pages),
                 )?);
             }
         } else if matches!(start, ReplayStart::Genesis)
@@ -989,14 +991,10 @@ impl StreamPages {
     }
 }
 
-fn above_genesis_without_basis() -> garth::Error {
-    garth::Error::Protocol(
-        "verified stream requires a signed readable-floor snapshot anchor".to_owned(),
-    )
-}
-
 #[cfg(test)]
-fn require_genesis_readable_floor(outcome: &arkret_sdk::StreamScanOutcome) -> garth::Result<()> {
+fn require_genesis_readable_floor(
+    outcome: &arkret_sdk::StreamScanResponseBody,
+) -> garth::Result<()> {
     if outcome
         .readable_floor
         .as_ref()
@@ -1016,7 +1014,7 @@ pub struct VerifiedAccountFrame {
     pages: Vec<garth::VerifiedScanPage>,
     own_pages: Vec<garth::own_station_results::OwnStationScanPage>,
     own_replicas: BTreeMap<CommitStreamRef, garth::own_station_results::OwnStationReplica>,
-    own_client: Option<arkret_sdk::http_client::own_station_results::OwnStationResultClient>,
+    own_client: Option<arkret_sdk::http_client::own_station_results::OwnStationStateClient>,
     own_windows: Vec<(
         arkret_models_collaboration::sync_frames::account_sync::RealmStreamWindow,
         usize,
@@ -1109,7 +1107,7 @@ impl VerifiedCurrentSnapshot {
 
 pub(crate) fn snapshot_covers_account_cut(
     snapshot: &arkret_wire::RealmStateSnapshot,
-    current: &arkret_models_collaboration::sync_frames::current_results::AccountCurrentView,
+    current: &arkret_models_collaboration::sync_frames::current_states::AccountStateView,
 ) -> bool {
     snapshot.realm_id == current.realm_id
         && snapshot.governance_generation >= current.governance_generation
@@ -1126,7 +1124,7 @@ pub(crate) fn snapshot_covers_account_cut(
 impl VerifiedAccountFrame {
     #[cfg(test)]
     pub(crate) fn test_own_context(
-        client: arkret_sdk::http_client::own_station_results::OwnStationResultClient,
+        client: arkret_sdk::http_client::own_station_results::OwnStationStateClient,
     ) -> Self {
         Self {
             own_client: Some(client),
@@ -1330,101 +1328,17 @@ impl VerifiedAccountFrame {
     }
 }
 
-fn row_source(row: &arkret_wire::TypedCurrentRow) -> &CommitStreamRef {
+#[cfg(test)]
+fn row_source(row: &arkret_wire::CurrentState) -> &CommitStreamRef {
     match row {
-        arkret_wire::TypedCurrentRow::Value {
+        arkret_wire::CurrentState::Value {
             source_stream_ref, ..
         } => source_stream_ref,
     }
 }
 
-fn closed_discovery_value(payload: serde_json::Value) -> garth::Result<serde_json::Value> {
-    let discovery: arkret_sdk::RealmDiscoveryPayload = serde_json::from_value(payload.clone())
-        .map_err(|error| garth::Error::Protocol(error.to_string()))?;
-    if discovery
-        .to_value()
-        .map_err(|error| garth::Error::Protocol(error.to_string()))?
-        != payload
-    {
-        return Err(garth::Error::Protocol(
-            "floor discovery is not the closed payload".to_owned(),
-        ));
-    }
-    payload
-        .get("value")
-        .cloned()
-        .ok_or_else(|| garth::Error::Protocol("floor discovery omits its value".to_owned()))
-}
-
-fn closed_join_rule_value(
-    policy: Option<&serde_json::Value>,
-    payload: serde_json::Value,
-) -> garth::Result<serde_json::Value> {
-    let Some(policy) = policy else {
-        return Err(garth::Error::Protocol(
-            "floor join rule has no verified policy bundle predecessor".to_owned(),
-        ));
-    };
-    let rule: arkret_sdk::RealmJoinRulePayload = serde_json::from_value(payload.clone())
-        .map_err(|error| garth::Error::Protocol(error.to_string()))?;
-    if rule
-        .to_value()
-        .map_err(|error| garth::Error::Protocol(error.to_string()))?
-        != payload
-    {
-        return Err(garth::Error::Protocol(
-            "floor join rule is not the closed payload".to_owned(),
-        ));
-    }
-    let value = payload
-        .get("value")
-        .cloned()
-        .ok_or_else(|| garth::Error::Protocol("floor join rule omits its value".to_owned()))?;
-    // join-policy.md §2: a restricted entry mode needs at least one automatic
-    // gate in the same signed cut's policy bundle. The Station evaluated the
-    // gates at admission; the client only checks the signed rows agree.
-    if value == "restricted" || value == "knock_restricted" {
-        let bundle: arkret_sdk::RealmPolicyBundlePayload =
-            serde_json::from_value(policy.clone()).map_err(protocol)?;
-        let automatic = bundle.join_policy.is_some_and(|join_policy| {
-            join_policy.gates.iter().any(|gate| {
-                matches!(
-                    gate,
-                    arkret_models_collaboration::events_payloads::join_policy::JoinPolicyGate::ClaimRequired { .. }
-                        | arkret_models_collaboration::events_payloads::join_policy::JoinPolicyGate::ChallengeResponse { .. }
-                        | arkret_models_collaboration::events_payloads::join_policy::JoinPolicyGate::ParentMembership { .. }
-                )
-            })
-        });
-        if !automatic {
-            return Err(garth::Error::Protocol(
-                "floor restricted join rule has no automatic join gate in the signed cut"
-                    .to_owned(),
-            ));
-        }
-    }
-    Ok(value)
-}
-
 fn protocol(error: impl std::fmt::Display) -> garth::Error {
     garth::Error::Protocol(error.to_string())
-}
-
-/// Parse `value` as the closed type `T` and require the canonical
-/// re-serialization to be the same JSON: unknown members, defaulted members
-/// and non-canonical encodings all fail closed.
-fn closed_value<T>(value: &serde_json::Value, family: &str) -> garth::Result<T>
-where
-    T: serde::de::DeserializeOwned + serde::Serialize,
-{
-    let parsed: T = serde_json::from_value(value.clone())
-        .map_err(|error| protocol(format!("signed {family} row: {error}")))?;
-    if serde_json::to_value(&parsed).map_err(protocol)? != *value {
-        return Err(protocol(format!(
-            "signed {family} row is not its closed value"
-        )));
-    }
-    Ok(parsed)
 }
 
 /// Strictly parse every current row of an exact signed single-stream
@@ -1444,7 +1358,7 @@ where
 ///   member state, Realm-scoped Strand and the default-Strand pointer, which must name a Strand in
 ///   the same signed cut, the `message_revision` of each message (a create carrier's Strand must be
 ///   present in the cut; its mutable current revision is not its creation Commit), and the
-///   `object_redaction` of a redacted Message, whose every assertion redacts that Message.
+///   `object_redaction` of a Message or Event, whose every assertion names that exact subject.
 ///
 /// MLS, Space structural siblings, placement, Invite registers and grants
 /// use their existing SDK value types and retain their exact Realm subjects.
@@ -1456,7 +1370,7 @@ fn validate_signed_floor_rows(
     bundle: &arkret_sdk::RealmAuthorityBundle,
     signed_head: &arkret_wire::CommitStreamHead,
     history_access: arkret_sdk::HistoryAccess,
-    rows: &[arkret_wire::TypedCurrentRow],
+    rows: &[arkret_wire::CurrentState],
 ) -> garth::Result<()> {
     let realm_stream = CommitStreamRef::Realm {
         realm_id: realm_id.clone(),
@@ -1489,557 +1403,6 @@ fn validate_signed_floor_rows(
         object,
         &bundle.genesis_event.actor_id,
     )
-}
-
-fn validate_floor_product_rows(
-    realm_id: &arkret_sdk::RealmId,
-    signed_head: &arkret_wire::CommitStreamHead,
-    history_access: arkret_sdk::HistoryAccess,
-    rows: &[arkret_wire::TypedCurrentRow],
-    genesis_revision: &arkret_wire::CurrentRevision,
-    genesis_object: &serde_json::Value,
-    genesis_actor: &arkret_sdk::ActorId,
-) -> garth::Result<()> {
-    arkret_models_collaboration::exact_current_results::validate_calendar_current_pairs(
-        realm_id, rows,
-    )
-    .map_err(protocol)?;
-    use arkret_wire::CurrentSelector;
-    let realm_stream = CommitStreamRef::Realm {
-        realm_id: realm_id.clone(),
-    };
-    let policy = rows.iter().find_map(|row| match row {
-        arkret_wire::TypedCurrentRow::Value {
-            selector: CurrentSelector::RealmPolicyBundle,
-            value,
-            ..
-        } => Some(value),
-        _ => None,
-    });
-    let mut genesis = false;
-    let mut direct_conversation = false;
-    let mut history_at_genesis = false;
-    let mut bindings = Vec::new();
-    let mut root = false;
-    let mut strands = BTreeMap::new();
-    let mut default_strand = None;
-    let mut messages = Vec::new();
-    let mut spaces = BTreeMap::new();
-    let mut space_parents = BTreeMap::new();
-    let mut space_policies = BTreeSet::new();
-    let mut positions = Vec::new();
-    let mut selectors = BTreeSet::new();
-    for row in rows {
-        let arkret_wire::TypedCurrentRow::Value {
-            selector,
-            source_stream_ref,
-            revision,
-            value,
-        } = row;
-        if !selectors
-            .insert(arkret_sdk::canonical::canonical_json_bytes(selector).map_err(protocol)?)
-        {
-            return Err(protocol("signed floor repeats a current selector"));
-        }
-        if source_stream_ref != &realm_stream
-            || revision.stream_position > signed_head.stream_position
-            || (revision.stream_position == signed_head.stream_position
-                && revision.commit_id != signed_head.commit_id)
-        {
-            return Err(protocol(
-                "signed floor row source is not the signed Realm stream prefix",
-            ));
-        }
-        let genesis_projection = matches!(selector, CurrentSelector::RealmGenesis);
-        let authority_root = matches!(selector, CurrentSelector::RealmAuthorityRoot);
-        // A Direct Conversation genesis also writes `realm_history_access`
-        // `null -> since_join` in its own covering Commit
-        // (`models/realm-and-space.md` 2.5.1 step 5).
-        let genesis_history =
-            matches!(selector, CurrentSelector::RealmHistoryAccess) && revision == genesis_revision;
-        if !genesis_history
-            && !authority_root
-            && genesis_projection != (revision == genesis_revision)
-        {
-            return Err(protocol(
-                "signed floor row revision differs from its genesis covering Commit",
-            ));
-        }
-        match selector {
-            CurrentSelector::RealmGenesis => {
-                let parsed: arkret_sdk::RealmGenesis = closed_value(value, "realm_genesis")?;
-                parsed.validate().map_err(protocol)?;
-                // A Collaboration Realm is founded with genesis purpose
-                // `collaboration` or `direct_conversation`
-                // (`models/realm-and-space.md` 2.8.2).
-                if !matches!(
-                    parsed.purpose,
-                    arkret_sdk::RealmPurpose::Collaboration
-                        | arkret_sdk::RealmPurpose::DirectConversation
-                ) || genesis_object != value
-                {
-                    return Err(protocol(
-                        "signed genesis row is not the verified collaboration genesis object",
-                    ));
-                }
-                direct_conversation =
-                    parsed.purpose == arkret_sdk::RealmPurpose::DirectConversation;
-                genesis = true;
-            }
-            CurrentSelector::RealmAuthorityRoot => {
-                let parsed: arkret_wire::RealmAuthorityRootValue =
-                    closed_value(value, "realm_authority_root")?;
-                parsed.validate().map_err(protocol)?;
-                if revision.stream_position == 0 && revision != genesis_revision {
-                    return Err(protocol(
-                        "signed authority root has a different genesis covering Commit",
-                    ));
-                }
-                // Owner transfers and authority resets update this current value;
-                // only its genesis revision fixes the initial creator and counters.
-                if revision == genesis_revision
-                    && *value
-                        != serde_json::json!({
-                                    "controller_actor_id": genesis_actor,
-                                    "controller_epoch": 0,
-                                    "authority_generation": 0,
-                        "authority_event_ref": realm_id.event_id(),
-                                })
-                {
-                    return Err(protocol(
-                        "signed authority root is not the generation-zero creator controller",
-                    ));
-                }
-                root = true;
-            }
-            CurrentSelector::RealmReadReceiptPolicy => {
-                closed_value::<
-                    arkret_models_collaboration::events_payloads::ReadReceiptPolicyPayload,
-                >(value, "realm_read_receipt_policy")?
-                .validate()
-                .map_err(protocol)?;
-            }
-            CurrentSelector::RealmProfile => {
-                let parsed: arkret_sdk::RealmProfile = closed_value(value, "realm_profile")?;
-                if parsed.to_value().map_err(protocol)? != *value {
-                    return Err(protocol("signed Realm profile is not its closed value"));
-                }
-            }
-            CurrentSelector::RealmPolicyBundle => {
-                let parsed: arkret_sdk::RealmPolicyBundlePayload =
-                    closed_value(value, "realm_policy_bundle")?;
-                if parsed.policy_revision == 0 {
-                    return Err(protocol("signed policy bundle has no policy revision"));
-                }
-            }
-            CurrentSelector::RealmJoinRule => {
-                closed_join_rule_value(policy, serde_json::json!({ "value": value }))?;
-            }
-            CurrentSelector::RealmHistoryAccess => {
-                let parsed: arkret_sdk::HistoryAccess =
-                    closed_value(value, "realm_history_access")?;
-                if parsed != history_access {
-                    return Err(protocol(
-                        "signed history access differs from the signed history floor",
-                    ));
-                }
-                if genesis_history {
-                    if parsed != arkret_sdk::HistoryAccess::SinceJoin {
-                        return Err(protocol(
-                            "genesis history access is not the Direct Conversation since_join",
-                        ));
-                    }
-                    history_at_genesis = true;
-                }
-            }
-            CurrentSelector::RealmDiscovery => {
-                closed_discovery_value(serde_json::json!({ "value": value }))?;
-            }
-            CurrentSelector::RealmAlias => {
-                closed_value::<
-                    arkret_models_collaboration::governance::realm_governance::RealmAliasPayload,
-                >(value, "realm_alias")?
-                .validate()
-                .map_err(protocol)?;
-            }
-            CurrentSelector::RealmPlaintextVisibleServices => {
-                closed_value::<
-                    arkret_models_collaboration::governance::plaintext_visibility::PlaintextVisibleServicesPayload,
-                >(value, "realm_plaintext_visible_services")?;
-            }
-            CurrentSelector::MessageRevision { message_id } => {
-                // The chain's current carrier: its create, or the revise that
-                // replaced it, which must name this same Message.
-                if value.get("message_id").is_some() {
-                    let parsed: arkret_models_collaboration::events_payloads::message::MessageRevisePayload =
-                        closed_value(value, "message_revision")?;
-                    if &parsed.message_id != message_id {
-                        return Err(protocol("signed message revision names another Message"));
-                    }
-                } else {
-                    let parsed: arkret_sdk::MessageCreatePayload =
-                        closed_value(value, "message_revision")?;
-                    messages.push((parsed.strand_id, revision.stream_position));
-                }
-            }
-            CurrentSelector::Pin { pin_scope } => {
-                // Assertions retain payloads, not the effective roster. Event
-                // kinds and causal history still determine add/remove/reorder.
-                closed_value::<
-                    arkret_models_collaboration::objects::productivity::PinCurrentValue,
-                >(value, "pin")?
-                .validate_for_scope(pin_scope)
-                .map_err(protocol)?;
-            }
-            CurrentSelector::MessageReactions { target_ref } => {
-                // This row retains assertions, not actor membership. The chat
-                // fold still requires signed Events in a verified prefix.
-                arkret_sdk::MessageId::new(target_ref.as_str()).map_err(protocol)?;
-                closed_value::<
-                    arkret_models_collaboration::events_payloads::reaction::MessageReactionsCurrentValue,
-                >(value, "message_reactions")?
-                .validate_for_target(target_ref)
-                .map_err(protocol)?;
-            }
-            CurrentSelector::ObjectRedaction { target_ref } => {
-                // Only a Message redaction has a product installer; its
-                // assertions all redact exactly the selected Message.
-                if arkret_sdk::MessageId::new(target_ref.as_str()).is_err() {
-                    return Err(protocol(
-                        "signed object redaction subject has no product installer",
-                    ));
-                }
-                closed_value::<
-                    arkret_models_collaboration::events_payloads::redaction::ObjectRedactionCurrentValue,
-                >(value, "object_redaction")?
-                .validate_for_subject(target_ref)
-                .map_err(protocol)?;
-            }
-            CurrentSelector::MemberIdentityUpdates { member_id, segment } => {
-                // This family is Realm-local; the enclosing stream gate rejects
-                // a Circle source. Preserve every exact signed update payload.
-                closed_value::<arkret_models_identity::MemberIdentityUpdatesCurrentValue>(
-                    value,
-                    "member_identity_updates",
-                )?
-                .validate_for_tuple(realm_id, member_id, *segment)
-                .map_err(protocol)?;
-            }
-            CurrentSelector::AppletRegistration { applet_id } => {
-                let registration = closed_value::<
-                    arkret_models_integration::AppletRegistrationPayload,
-                >(value, "applet_registration")?;
-                if &registration.applet_id != applet_id {
-                    return Err(protocol(
-                        "signed Applet registration differs from its selector",
-                    ));
-                }
-            }
-            CurrentSelector::MemberState { .. } => {
-                closed_value::<arkret_wire::MemberStateCurrent>(value, "member_state")?;
-            }
-            CurrentSelector::Sidecar { sidecar_id } => {
-                // The Sidecar object is created in the parent Realm stream;
-                // its private context, exchanges and MLS retain their own stream.
-                let sidecar: arkret_sdk::AgentSidecar = closed_value(value, "sidecar")?;
-                sidecar.validate_shape().map_err(protocol)?;
-                if sidecar.id != *sidecar_id || sidecar.realm_id != *realm_id {
-                    return Err(protocol(
-                        "signed Sidecar differs from its parent Realm subject",
-                    ));
-                }
-            }
-            CurrentSelector::Circle { circle_id } => {
-                // Circle configuration is created in the parent Realm stream.
-                // Membership and MLS state retain their own Circle stream.
-                let circle: arkret_sdk::Circle = closed_value(value, "circle")?;
-                if circle.id.as_ref() != Some(circle_id)
-                    || circle.realm_id != *realm_id
-                    || circle.schema != arkret_wire::SchemaId::CIRCLE_V1
-                {
-                    return Err(protocol(
-                        "signed Circle differs from its parent Realm subject",
-                    ));
-                }
-            }
-            CurrentSelector::Strand { strand_id } => {
-                let parsed: arkret_models_collaboration::objects::strand::Strand =
-                    closed_value(value, "strand")?;
-                if parsed.id.as_ref() != Some(strand_id)
-                    || parsed.schema != arkret_wire::SchemaId::STRAND_V1
-                    || parsed.realm_id != *realm_id
-                    || parsed.scope_circle_id.is_some()
-                {
-                    return Err(protocol(
-                        "signed Strand row is not a Realm-scoped Strand of this Realm",
-                    ));
-                }
-                strands.insert(strand_id.clone(), revision.stream_position);
-            }
-            CurrentSelector::CalendarScheduleSource { .. } => {
-                let parsed: arkret_wire::CalendarScheduleSourceValue =
-                    closed_value(value, "calendar_schedule_source")?;
-                parsed
-                    .validate_for_current(realm_id, source_stream_ref, revision)
-                    .map_err(protocol)?;
-            }
-            CurrentSelector::Relation {
-                primary_conflict_domain,
-            } => {
-                let relation: arkret_wire::relation::Relation = closed_value(value, "relation")?;
-                relation
-                    .validate_current_for_domain(realm_id, primary_conflict_domain)
-                    .map_err(protocol)?;
-                if relation.scope_circle_id.is_some() {
-                    return Err(protocol("signed Realm floor contains a Circle Relation"));
-                }
-            }
-            CurrentSelector::MlsGroup { scope_ref } => {
-                let group: arkret_wire::MlsGroupCurrent = closed_value(value, "mls_group")?;
-                if scope_ref
-                    != &(arkret_sdk::ScopeRef::Realm {
-                        realm_id: realm_id.clone(),
-                    })
-                    || group.effective_scope != *scope_ref
-                    || group.covered_key_access_revision > group.current_key_access_revision
-                {
-                    return Err(protocol(
-                        "signed MLS group differs from its Realm selector or key-access cut",
-                    ));
-                }
-            }
-            CurrentSelector::Space { space_id } => {
-                let space: arkret_models_collaboration::objects::space::Space =
-                    closed_value(value, "space")?;
-                space.validate().map_err(protocol)?;
-                if space.id.as_ref() != Some(space_id)
-                    || space.schema != arkret_wire::SchemaId::SPACE_V1
-                    || space.realm_id != *realm_id
-                    || space.scope_circle_id.is_some()
-                    || space.parent_space_id.is_some()
-                    || space.child_scope_policy.is_some()
-                {
-                    return Err(protocol(
-                        "signed Space metadata differs from its registered Realm subject",
-                    ));
-                }
-                spaces.insert(space_id.clone(), space);
-            }
-            CurrentSelector::SpaceParent { space_id } => {
-                let parent = value
-                    .as_object()
-                    .filter(|object| object.len() == 1)
-                    .and_then(|object| object.get("parent_space_id"))
-                    .ok_or_else(|| {
-                        protocol("signed Space parent is not its one-member closed value")
-                    })?;
-                let parent: Option<arkret_sdk::SpaceId> =
-                    serde_json::from_value(parent.clone()).map_err(protocol)?;
-                space_parents.insert(space_id.clone(), parent);
-            }
-            CurrentSelector::SpaceChildScopePolicy { space_id } => {
-                closed_value::<
-                    Option<arkret_models_collaboration::objects::space::ChildScopePolicy>,
-                >(value, "space_child_scope_policy")?;
-                space_policies.insert(space_id.clone());
-            }
-            CurrentSelector::StrandPosition {
-                board_space_id,
-                strand_id,
-            } => {
-                let position: Option<
-                    arkret_models_collaboration::objects::strand::StrandPositionCurrent,
-                > = closed_value(value, "strand_position")?;
-                if position.as_ref().is_some_and(|position| {
-                    !(1..=128).contains(&position.rank.len())
-                        || !position
-                            .rank
-                            .bytes()
-                            .all(|byte| byte.is_ascii_alphanumeric())
-                }) {
-                    return Err(protocol(
-                        "signed Strand position has an invalid canonical rank",
-                    ));
-                }
-                positions.push((board_space_id.clone(), strand_id.clone(), position));
-            }
-            CurrentSelector::InviteLifecycle { .. } => {
-                closed_value::<arkret_wire::InviteState>(value, "invite_lifecycle")?;
-            }
-            CurrentSelector::InviteDirectedInvitee { .. } => {
-                closed_value::<arkret_models_collaboration::governance::membership_invite::InviteDirectedInviteeValue>(
-                    value, "invite_directed_invitee",
-                )?;
-            }
-            CurrentSelector::InviteLiveTarget { .. } => {
-                closed_value::<arkret_models_collaboration::governance::membership_invite::InviteLiveTargetValue>(
-                    value, "invite_live_target",
-                )?;
-            }
-            CurrentSelector::CapabilityGrant { grant_id } => {
-                let grant: arkret_models_collaboration::governance::grant_constraint::CapabilityGrant =
-                    closed_value(value, "capability_grant")?;
-                if &grant.id != grant_id
-                    || grant.realm_id.as_ref() != Some(realm_id)
-                    || grant.schema != arkret_wire::SchemaId::CAPABILITY_V1
-                {
-                    return Err(protocol(
-                        "signed Capability Grant differs from its registered Realm subject",
-                    ));
-                }
-            }
-            CurrentSelector::RealmSetDefaultStrand => {
-                let member = value
-                    .as_object()
-                    .filter(|object| object.len() == 1)
-                    .and_then(|object| object.get("default_strand_id"))
-                    .ok_or_else(|| {
-                        protocol("signed default Strand is not its one-member closed value")
-                    })?;
-                let pointer: Option<arkret_sdk::StrandId> =
-                    serde_json::from_value(member.clone()).map_err(protocol)?;
-                default_strand = Some((pointer, revision.stream_position));
-            }
-            CurrentSelector::StrandWatch { .. } => {
-                // This authenticated snapshot row remains typed current state.
-                // Only the separate exact read can supply a self-watch CAS preimage.
-                closed_value::<arkret_sdk::StrandWatchCurrentValue>(value, "strand_watch")?;
-            }
-            CurrentSelector::Rsvp { occurrence, .. } => {
-                let entry: arkret_sdk::RsvpEntry = closed_value(value, "rsvp")?;
-                entry.validate().map_err(protocol)?;
-                if let Some(occurrence) = occurrence {
-                    arkret_models_collaboration::objects::productivity::validate_canonical_occurrence_key(
-                        occurrence,
-                    )
-                    .map_err(protocol)?;
-                }
-            }
-            CurrentSelector::AgentInteraction { .. } => {
-                // The signed Realm cut authenticates this registered mode row.
-                // Ownership and mode authorization remain exact-read decisions.
-                closed_value::<arkret_sdk::AgentInteractionCurrentValue>(
-                    value,
-                    "agent_interaction",
-                )?;
-            }
-            CurrentSelector::CallState { .. } => {
-                // Install the authenticated lifecycle axis as current state.
-                // Its create null predecessor is distinct from an Event delta;
-                // current readiness still requires the complete signed cut.
-                let current: arkret_models_collaboration::events_payloads::call::CallStateCurrentValue =
-                    closed_value(value, "call_state")?;
-                current.validate().map_err(protocol)?;
-            }
-            CurrentSelector::ModerationFrankingProof { event_id } => {
-                // This is authenticated current state of the receipt, not an
-                // independently verified moderation evidence package. Garth
-                // has already verified the Station's signed snapshot cut.
-                let proof: arkret_models_collaboration::events_payloads::moderation::FrankingProof =
-                    closed_value(value, "moderation_franking_proof")?;
-                if proof.realm_id != *realm_id
-                    || proof.event_id != *event_id
-                    || !(16..=256).contains(&proof.replay_nonce.len())
-                    || !proof
-                        .replay_nonce
-                        .bytes()
-                        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
-                    || proof.signature.is_empty()
-                {
-                    return Err(protocol(
-                        "signed franking receipt differs from its Realm, target Event or closed proof shape",
-                    ));
-                }
-            }
-            CurrentSelector::DirectConversationBinding { pair_key } => {
-                // The pair's endorsement set: one binding digest, and every
-                // endorsement binds this pair inside this Realm
-                // (`identity/contact-and-direct-conversation.md` 8.3).
-                let binding: arkret_models_collaboration::events_payloads::direct_conversation::DirectConversationBindingCurrentValue =
-                    closed_value(value, "direct_conversation_binding")?;
-                binding.binding_digest().map_err(protocol)?;
-                if binding.endorsements.iter().any(|entry| {
-                    &entry.value.pair_key != pair_key || entry.value.realm_id != *realm_id
-                }) {
-                    return Err(protocol(
-                        "signed Direct Conversation binding names another pair or Realm",
-                    ));
-                }
-                bindings.push(pair_key.clone());
-            }
-            _ => {
-                return Err(protocol(format!(
-                    "signed floor current family {selector:?} has no product installer"
-                )));
-            }
-        }
-    }
-    if spaces.keys().collect::<BTreeSet<_>>() != space_parents.keys().collect::<BTreeSet<_>>()
-        || spaces.keys().collect::<BTreeSet<_>>() != space_policies.iter().collect::<BTreeSet<_>>()
-    {
-        return Err(protocol(
-            "signed Space cut omits a registered structural sibling",
-        ));
-    }
-    for space_id in spaces.keys() {
-        let mut parent = space_parents.get(space_id).and_then(Option::as_ref);
-        let mut visited = BTreeSet::from([space_id]);
-        while let Some(id) = parent {
-            if !visited.insert(id) || !spaces.contains_key(id) {
-                return Err(protocol("signed Space parent chain is missing or cyclic"));
-            }
-            parent = space_parents.get(id).and_then(Option::as_ref);
-        }
-    }
-    for (board_id, strand_id, position) in positions {
-        if !strands.contains_key(&strand_id)
-            || spaces
-                .get(&board_id)
-                .is_none_or(|space| space.kind != "board")
-            || position.as_ref().is_some_and(|position| {
-                spaces
-                    .get(&position.list_space_id)
-                    .is_none_or(|space| space.kind != "list")
-            })
-        {
-            return Err(protocol(
-                "signed Strand position has no matching Board, List or Strand in its Realm cut",
-            ));
-        }
-    }
-    if let Some((Some(strand_id), _)) = &default_strand
-        && !strands.contains_key(strand_id)
-    {
-        return Err(protocol(
-            "signed default Strand names no Strand in the signed cut",
-        ));
-    }
-    // A later metadata/lifecycle update legitimately advances Strand current
-    // beyond older messages and the default pointer. Creation order belongs
-    // to verified original Commits, not this mutable current row's revision.
-    if messages
-        .iter()
-        .any(|(strand_id, _)| !strands.contains_key(strand_id))
-    {
-        return Err(protocol("signed message names no Strand in the signed cut"));
-    }
-    if history_at_genesis && !direct_conversation {
-        return Err(protocol(
-            "signed history access at genesis belongs only to a Direct Conversation genesis",
-        ));
-    }
-    if !bindings.is_empty() && (!direct_conversation || bindings.len() > 1) {
-        return Err(protocol(
-            "signed Direct Conversation binding is not the one binding of a Direct Conversation Realm",
-        ));
-    }
-    if genesis && root {
-        Ok(())
-    } else {
-        Err(protocol(
-            "signed floor snapshot omits collaboration genesis current",
-        ))
-    }
 }
 
 /// The account aggregate's committed rows are claims until an independent
@@ -2327,7 +1690,7 @@ fn require_verified_window_head(
 /// preview so the cut stays out of the product current).
 #[cfg(test)]
 fn require_floor_current_cut(
-    current: &arkret_models_collaboration::sync_frames::current_results::AccountCurrentView,
+    current: &arkret_models_collaboration::sync_frames::current_states::AccountStateView,
     floor_snapshots: &[&garth::VerifiedFloorSnapshot],
     current_generation: u64,
     replica: &RealmReplica,
@@ -2506,18 +1869,6 @@ fn resolve_full_history_window(
     Ok(WindowResolution::Exact(pages))
 }
 
-/// The exact signed-snapshot basis of one stream window. A preview window
-/// never reaches the by-ref read or the product installer. A position-0 window
-/// has no basis and is verified by a complete genesis scan.
-fn snapshot_window_basis(
-    window: &arkret_models_collaboration::sync_frames::account_sync::RealmStreamWindow,
-) -> Option<&arkret_models_collaboration::sync_frames::account_sync::StreamWindowStartBasis> {
-    if window.preview_only == Some(true) {
-        return None;
-    }
-    window.window_start_basis.as_ref()
-}
-
 /// The first verified row of a snapshot-anchored window starts right after
 /// the committed-prefix anchor the basis names (Garth has already bound the
 /// first row's predecessor to that signed head); the tail may be empty.
@@ -2554,29 +1905,6 @@ fn require_genesis_window_basis(
     Ok(())
 }
 
-pub(crate) fn require_exact_claimed_rows(
-    claimed_rows: &[&CommittedEventView],
-    scanned: &[&CommittedEventView],
-) -> garth::Result<()> {
-    for claimed in claimed_rows {
-        let exact = scanned
-            .iter()
-            .find(|item| item.commit().stream_position == claimed.commit().stream_position);
-        if exact.is_none_or(|item| *item != *claimed) {
-            return Err(garth::Error::Protocol(format!(
-                "account frame Commit differs from verified stream row: stream={:?}, position={}, scanned={}, commit_matches={}, claimed_disclosed={}, scanned_disclosed={}",
-                claimed.commit().stream_ref,
-                claimed.commit().stream_position,
-                exact.is_some(),
-                exact.is_some_and(|item| item.commit() == claimed.commit()),
-                claimed.reducer_input().is_some(),
-                exact.is_some_and(|item| item.reducer_input().is_some()),
-            )));
-        }
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 fn require_exact_window_head(
     window: &arkret_models_collaboration::sync_frames::account_sync::RealmStreamWindow,
@@ -2598,11 +1926,29 @@ fn require_exact_window_head(
 
 #[cfg(test)]
 mod tests {
-    use arkret_wire::TypedCurrentRow;
+    use arkret_wire::CurrentState;
     use garth::CursorScope;
     use serde_json::json;
 
     use super::*;
+
+    #[tokio::test]
+    async fn retry_backoff_stops_after_route_cancellation() {
+        let active = std::cell::Cell::new(true);
+        let mut backoff = RetrySchedule::new(Duration::from_secs(10), Duration::from_secs(10));
+        let waiting =
+            async { retry_after(&mut backoff, &|| active.get(), "cancelled route").await };
+        let cancel = async {
+            crate::runtime_helpers::sleep_for(Duration::from_millis(25)).await;
+            active.set(false);
+        };
+        let (continued, ()) = tokio::time::timeout(Duration::from_secs(2), async {
+            futures_util::future::join(waiting, cancel).await
+        })
+        .await
+        .expect("route cancellation must not wait for a ten-second reconnect backoff");
+        assert!(!continued);
+    }
 
     const REALM_ID: &str = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
     const STRAND_ID: &str = "ak:strand:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1";
@@ -2627,6 +1973,19 @@ mod tests {
     }
 
     const GENESIS_SALT: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+
+    fn collaboration_fixture_realm_id() -> arkret_sdk::RealmId {
+        crate::test_support::committed_event::verified_realm_fixture_signed_by(
+            &crate::test_support::committed_event::FixtureStation::did_web(),
+            arkret_sdk::RealmId::new(REALM_ID).unwrap(),
+            json!({"object": collaboration_genesis(GENESIS_SALT)}),
+            Vec::new(),
+            "alice.example",
+            DEVICE_ID,
+        )
+        .0
+        .realm_id
+    }
 
     #[test]
     fn holder_pcr_root_is_exact_immutable_genesis_and_never_collaboration_owner() {
@@ -2669,12 +2028,14 @@ mod tests {
         .unwrap()
         .expect_verifiable();
         let realm = event.realm_id.clone();
-        let (mut bundle, ..) = crate::test_support::committed_event::verified_realm_fixture_as(
-            realm.clone(),
-            Vec::new(),
-            "alice.example",
-            DEVICE_ID,
-        );
+        let (mut bundle, ..) =
+            crate::test_support::committed_event::verified_realm_fixture_from_genesis(
+                &crate::test_support::committed_event::FixtureStation::did_web(),
+                event.clone(),
+                Vec::new(),
+                "alice.example",
+                DEVICE_ID,
+            );
         bundle.genesis_event = event.clone();
         bundle.genesis_commit.event_ref = event.event_id.clone();
         assert_eq!(
@@ -2706,15 +2067,15 @@ mod tests {
         assert!(holder_pcr_root_authorization(&collaboration, &realm, &actor).is_err());
     }
 
-    fn set_row_value(row: &mut TypedCurrentRow, next: serde_json::Value) {
-        let TypedCurrentRow::Value { value, .. } = row;
+    fn set_row_value(row: &mut CurrentState, next: serde_json::Value) {
+        let CurrentState::Value { value, .. } = row;
         *value = next;
     }
 
     #[test]
     fn signed_floor_watch_rows_admit_written_null_and_closed_object_but_reject_open_value() {
         use crate::test_support::committed_event::FixtureStation;
-        let realm_id = arkret_sdk::RealmId::new(REALM_ID).unwrap();
+        let realm_id = collaboration_fixture_realm_id();
         let creator = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
             arkret_sdk::DidCoreId::new(ACTOR_ID).unwrap(),
             arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
@@ -2758,7 +2119,7 @@ mod tests {
             ]);
             let mut snapshot = snapshot_at(&bundle, &items, bundle.bundle_issued_at);
             station.sign_snapshot(&mut snapshot);
-            let request = arkret_sdk::AuthorityBundleRequest {
+            let request = arkret_sdk::RealmAuthorityBundleRequestBody {
                 realm_id: realm_id.clone(),
                 nonce: bundle.current_assertion.nonce.clone(),
             };
@@ -2787,14 +2148,14 @@ mod tests {
                 .find(|row| {
                     matches!(
                         row,
-                        TypedCurrentRow::Value {
+                        CurrentState::Value {
                             selector: arkret_sdk::CurrentSelector::StrandWatch { .. },
                             ..
                         }
                     )
                 })
                 .unwrap();
-            let TypedCurrentRow::Value { value, .. } = watch_row;
+            let CurrentState::Value { value, .. } = watch_row;
             assert_eq!(
                 *value,
                 if level.is_some() {
@@ -2810,7 +2171,7 @@ mod tests {
                 .find(|row| {
                     matches!(
                         row,
-                        TypedCurrentRow::Value {
+                        CurrentState::Value {
                             selector: arkret_sdk::CurrentSelector::StrandWatch { .. },
                             ..
                         }
@@ -2858,6 +2219,7 @@ mod tests {
                 "alice.example",
                 DEVICE_ID,
             );
+        let realm_id = bundle.realm_id.clone();
         let snapshot = snapshot_at(&bundle, &items, bundle.bundle_issued_at);
         let head = &snapshot.visible_stream_heads[0];
         let space_id = arkret_sdk::SpaceId::from_event_id(&items[0].event.event_id);
@@ -2868,7 +2230,7 @@ mod tests {
             "Board",
             bundle.genesis_event.actor_id.clone(),
         );
-        let row = |selector, value| TypedCurrentRow::Value {
+        let row = |selector, value| CurrentState::Value {
             selector,
             source_stream_ref: head.stream_ref.clone(),
             revision: arkret_wire::CurrentRevision {
@@ -2898,7 +2260,7 @@ mod tests {
                 json!(null),
             ),
         ]);
-        let validate = |rows: &[TypedCurrentRow]| {
+        let validate = |rows: &[CurrentState]| {
             validate_signed_floor_rows(
                 &realm_id,
                 &bundle,
@@ -2956,6 +2318,7 @@ mod tests {
                 "alice.example",
                 DEVICE_ID,
             );
+        let realm_id = bundle.realm_id.clone();
         let created = items.last().unwrap();
         let head = arkret_wire::CommitStreamHead {
             stream_ref: created.commit.stream_ref.clone(),
@@ -2963,7 +2326,7 @@ mod tests {
             commit_id: created.commit.commit_id.clone(),
         };
         let rows = coland_bootstrap_rows(&bundle, &items);
-        let validate = |rows: &[TypedCurrentRow]| {
+        let validate = |rows: &[CurrentState]| {
             validate_signed_floor_rows(
                 &realm_id,
                 &bundle,
@@ -2990,12 +2353,12 @@ mod tests {
             ("extra", json!(true)),
         ] {
             let mut forged = rows.clone();
-            let TypedCurrentRow::Value { value, .. } = forged.last_mut().unwrap();
+            let CurrentState::Value { value, .. } = forged.last_mut().unwrap();
             value[field] = invalid;
             assert!(validate(&forged).is_err(), "accepted invalid {field}");
         }
         let mut private_source = rows.clone();
-        let TypedCurrentRow::Value {
+        let CurrentState::Value {
             source_stream_ref, ..
         } = private_source.last_mut().unwrap();
         *source_stream_ref = CommitStreamRef::Sidecar {
@@ -3007,7 +2370,7 @@ mod tests {
 
     #[test]
     fn signed_parent_floor_installs_exact_circle_configuration_without_child_state() {
-        let realm_id = arkret_sdk::RealmId::new(REALM_ID).unwrap();
+        let realm_id = collaboration_fixture_realm_id();
         let creator = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
             arkret_sdk::DidCoreId::new(ACTOR_ID).unwrap(),
             arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
@@ -3030,6 +2393,7 @@ mod tests {
                 "alice.example",
                 DEVICE_ID,
             );
+        let realm_id = bundle.realm_id.clone();
         let head_commit = &items.last().unwrap().commit;
         let head = arkret_wire::CommitStreamHead {
             stream_ref: head_commit.stream_ref.clone(),
@@ -3037,7 +2401,7 @@ mod tests {
             commit_id: head_commit.commit_id.clone(),
         };
         let rows = coland_bootstrap_rows(&bundle, &items);
-        let validate = |rows: &[TypedCurrentRow]| {
+        let validate = |rows: &[CurrentState]| {
             validate_signed_floor_rows(
                 &realm_id,
                 &bundle,
@@ -3049,21 +2413,21 @@ mod tests {
         validate(&rows).unwrap();
         let index = rows.len() - 1;
         let mut substituted = rows.clone();
-        let TypedCurrentRow::Value { value, .. } = &mut substituted[index];
+        let CurrentState::Value { value, .. } = &mut substituted[index];
         value["id"] = json!(arkret_sdk::CircleId::from_event_id(
             &items[0].event.event_id
         ));
         assert!(validate(&substituted).is_err());
         let mut foreign = rows.clone();
-        let TypedCurrentRow::Value { value, .. } = &mut foreign[index];
+        let CurrentState::Value { value, .. } = &mut foreign[index];
         value["realm_id"] = json!(arkret_sdk::RealmId::from_event_id(&items[0].event.event_id));
         assert!(validate(&foreign).is_err());
         let mut open = rows.clone();
-        let TypedCurrentRow::Value { value, .. } = &mut open[index];
+        let CurrentState::Value { value, .. } = &mut open[index];
         value["unregistered"] = json!(true);
         assert!(validate(&open).is_err());
         let mut child_source = rows.clone();
-        let TypedCurrentRow::Value {
+        let CurrentState::Value {
             source_stream_ref,
             selector,
             ..
@@ -3094,6 +2458,7 @@ mod tests {
                 "alice.example",
                 DEVICE_ID,
             );
+        let realm_id = bundle.realm_id.clone();
         let stream_ref = CommitStreamRef::Realm {
             realm_id: realm_id.clone(),
         };
@@ -3106,20 +2471,20 @@ mod tests {
             commit_id: bundle.genesis_commit.commit_id.clone(),
             stream_position: 0,
         };
-        let row = TypedCurrentRow::Value {
+        let row = CurrentState::Value {
             selector: arkret_wire::CurrentSelector::RealmGenesis,
             source_stream_ref: stream_ref.clone(),
             revision: genesis_revision.clone(),
             value: serde_json::to_value(&genesis).unwrap(),
         };
-        let root = TypedCurrentRow::Value {
+        let root = CurrentState::Value {
             selector: arkret_wire::CurrentSelector::RealmAuthorityRoot,
             source_stream_ref: stream_ref.clone(),
             revision: genesis_revision,
             value: json!({
                 "controller_actor_id": bundle.genesis_event.actor_id,
                 "controller_epoch": 0,
-                "authority_generation": 0,
+                "authority_generation": "0",
                 "authority_event_ref": realm_id.event_id(),
             }),
         };
@@ -3129,11 +2494,11 @@ mod tests {
 
         let mut forged_rows = Vec::new();
         let mut bad_value = row.clone();
-        let TypedCurrentRow::Value { value, .. } = &mut bad_value;
+        let CurrentState::Value { value, .. } = &mut bad_value;
         value.as_object_mut().unwrap().remove("schema");
         forged_rows.push(vec![bad_value, root.clone()]);
         let mut extra_member = row.clone();
-        let TypedCurrentRow::Value { value, .. } = &mut extra_member;
+        let CurrentState::Value { value, .. } = &mut extra_member;
         value["unknown"] = json!(true);
         forged_rows.push(vec![extra_member, root.clone()]);
         let mut other_genesis = row.clone();
@@ -3146,11 +2511,11 @@ mod tests {
         );
         forged_rows.push(vec![other_genesis, root.clone()]);
         let mut unsupported = row.clone();
-        let TypedCurrentRow::Value { selector, .. } = &mut unsupported;
+        let CurrentState::Value { selector, .. } = &mut unsupported;
         *selector = arkret_wire::CurrentSelector::DeviceGeneration;
         forged_rows.push(vec![unsupported, root.clone()]);
         let mut wrong_source = row.clone();
-        let TypedCurrentRow::Value {
+        let CurrentState::Value {
             source_stream_ref, ..
         } = &mut wrong_source;
         *source_stream_ref = CommitStreamRef::Realm {
@@ -3161,7 +2526,7 @@ mod tests {
         };
         forged_rows.push(vec![wrong_source, root.clone()]);
         let mut readable_revision = row.clone();
-        let TypedCurrentRow::Value { revision, .. } = &mut readable_revision;
+        let CurrentState::Value { revision, .. } = &mut readable_revision;
         revision.stream_position = 1;
         revision.commit_id = items[0].commit.commit_id.clone();
         forged_rows.push(vec![readable_revision, root.clone()]);
@@ -3171,7 +2536,7 @@ mod tests {
             json!({
                 "controller_actor_id": {"kind":"service", "service_id":"ak:did_core:web:wrong.example"},
                 "controller_epoch": 0,
-                "authority_generation": 0,
+                "authority_generation": "0",
                 "authority_event_ref": realm_id.event_id(),
             }),
         );
@@ -3182,7 +2547,7 @@ mod tests {
             json!({
                 "controller_actor_id": bundle.genesis_event.actor_id,
                 "controller_epoch": 1,
-                "authority_generation": 0,
+                "authority_generation": "0",
                 "authority_event_ref": realm_id.event_id(),
             }),
         );
@@ -3204,7 +2569,7 @@ mod tests {
         };
         for (epoch, generation) in [(1, 0), (0, 1)] {
             let mut advanced = root.clone();
-            let TypedCurrentRow::Value {
+            let CurrentState::Value {
                 revision, value, ..
             } = &mut advanced;
             *revision = arkret_wire::CurrentRevision {
@@ -3212,7 +2577,7 @@ mod tests {
                 stream_position: later_head.stream_position,
             };
             value["controller_epoch"] = json!(epoch);
-            value["authority_generation"] = json!(generation);
+            value["authority_generation"] = json!(generation.to_string());
             validate_signed_floor_rows(
                 &realm_id,
                 &bundle,
@@ -3221,7 +2586,7 @@ mod tests {
                 &[row.clone(), advanced.clone()],
             )
             .unwrap();
-            let TypedCurrentRow::Value { value, .. } = &mut advanced;
+            let CurrentState::Value { value, .. } = &mut advanced;
             value["controller_epoch"] = json!(9_007_199_254_740_992_u64);
             assert!(
                 validate_signed_floor_rows(
@@ -3271,7 +2636,7 @@ mod tests {
             .unwrap();
             let signer = arkret_test_kit::keys::seeded_signer(
                 arkret_sdk::Did::new("did:web:alice.example").unwrap(),
-                arkret_sdk::DidUrl::new("did:web:alice.example#device").unwrap(),
+                arkret_sdk::DidUrl::new(format!("did:web:alice.example#{DEVICE_ID}")).unwrap(),
             );
             let actor = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
                 arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap(),
@@ -3289,10 +2654,9 @@ mod tests {
             .expect_verifiable();
             let realm = event.realm_id.clone();
             let (mut bundle, keys, _) =
-                crate::test_support::committed_event::verified_realm_fixture_signed_by(
+                crate::test_support::committed_event::verified_realm_fixture_from_genesis(
                     &station,
-                    realm.clone(),
-                    json!({}),
+                    event.clone(),
                     Vec::new(),
                     "alice.example",
                     DEVICE_ID,
@@ -3388,6 +2752,7 @@ mod tests {
                     "alice.example",
                     DEVICE_ID,
                 );
+            let realm_id = bundle.realm_id.clone();
             let stream_ref = CommitStreamRef::Realm {
                 realm_id: realm_id.clone(),
             };
@@ -3401,20 +2766,20 @@ mod tests {
                 stream_position: 0,
             };
             let rows = vec![
-                TypedCurrentRow::Value {
+                CurrentState::Value {
                     selector: arkret_wire::CurrentSelector::RealmGenesis,
                     source_stream_ref: stream_ref.clone(),
                     revision: revision.clone(),
                     value: serde_json::to_value(&genesis).unwrap(),
                 },
-                TypedCurrentRow::Value {
+                CurrentState::Value {
                     selector: arkret_wire::CurrentSelector::RealmAuthorityRoot,
                     source_stream_ref: stream_ref,
                     revision,
                     value: json!({
                             "controller_actor_id": bundle.genesis_event.actor_id,
                             "controller_epoch": 0,
-                            "authority_generation": 0,
+                            "authority_generation": "0",
                     "authority_event_ref": realm_id.event_id(),
                         }),
                 },
@@ -3434,12 +2799,12 @@ mod tests {
             // Only a Direct Conversation genesis writes history access in
             // its own covering Commit.
             let mut with_history = rows.clone();
-            let TypedCurrentRow::Value {
+            let CurrentState::Value {
                 source_stream_ref,
                 revision,
                 ..
             } = rows[0].clone();
-            with_history.push(TypedCurrentRow::Value {
+            with_history.push(CurrentState::Value {
                 selector: arkret_wire::CurrentSelector::RealmHistoryAccess,
                 source_stream_ref,
                 revision,
@@ -3466,7 +2831,7 @@ mod tests {
     /// a Strand present in the same signed cut, including after later updates.
     #[test]
     fn signed_floor_rows_admit_bootstrap_facets_and_messages_of_earlier_strands() {
-        let realm_id = arkret_sdk::RealmId::new(REALM_ID).unwrap();
+        let realm_id = collaboration_fixture_realm_id();
         let creator = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
             arkret_sdk::DidCoreId::new(ACTOR_ID).unwrap(),
             arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
@@ -3509,7 +2874,7 @@ mod tests {
             stream_position: head_commit.stream_position,
             commit_id: head_commit.commit_id.clone(),
         };
-        let facet = |selector, value| TypedCurrentRow::Value {
+        let facet = |selector, value| CurrentState::Value {
             selector,
             source_stream_ref: items[0].commit.stream_ref.clone(),
             revision: arkret_wire::CurrentRevision {
@@ -3519,6 +2884,19 @@ mod tests {
             value,
         };
         let mut rows = coland_bootstrap_rows(&bundle, &items[..items.len() - 1]);
+        let media_index = rows.len();
+        rows.push(facet(
+            arkret_wire::CurrentSelector::RealmMediaService,
+            json!({
+                "service_id": "ak:did_core:web:station.example",
+                "foci": [{
+                    "focus_id": "call-focus",
+                    "focus_kind": "livekit",
+                    "token_endpoint": "https://station.example/token",
+                    "connect_url": "wss://station.example/rtc"
+                }]
+            }),
+        ));
         rows.push(facet(
             arkret_wire::CurrentSelector::RealmPlaintextVisibleServices,
             json!({"services": [{
@@ -3538,9 +2916,9 @@ mod tests {
 
         let mut updated = rows.clone();
         let row = updated.iter_mut().find(|row| matches!(row,
-            TypedCurrentRow::Value { selector: arkret_wire::CurrentSelector::Strand { strand_id: id }, .. } if id == &strand_id
+            CurrentState::Value { selector: arkret_wire::CurrentSelector::Strand { strand_id: id }, .. } if id == &strand_id
         )).unwrap();
-        let TypedCurrentRow::Value {
+        let CurrentState::Value {
             revision, value, ..
         } = row;
         *revision = arkret_wire::CurrentRevision {
@@ -3555,7 +2933,7 @@ mod tests {
             .position(|row| {
                 matches!(
                     row,
-                    TypedCurrentRow::Value {
+                    CurrentState::Value {
                         selector: arkret_wire::CurrentSelector::MessageRevision { .. },
                         ..
                     }
@@ -3563,18 +2941,30 @@ mod tests {
             })
             .unwrap();
         let mut forged = Vec::new();
+        for invalid in [
+            json!({"service_id": "ak:did_core:web:station.example", "foci": []}),
+            json!({"service_id": "ak:did_core:web:station.example", "foci": [], "unknown": true}),
+        ] {
+            let mut invalid_media = rows.clone();
+            set_row_value(&mut invalid_media[media_index], invalid);
+            forged.push(invalid_media);
+        }
+        let mut insecure_media = rows.clone();
+        let CurrentState::Value { value, .. } = &mut insecure_media[media_index];
+        value["foci"][0]["token_endpoint"] = json!("http://station.example/token");
+        forged.push(insecure_media);
         let mut unknown_strand = rows.clone();
-        let TypedCurrentRow::Value { value, .. } = &mut unknown_strand[message_index];
+        let CurrentState::Value { value, .. } = &mut unknown_strand[message_index];
         value["strand_id"] = json!(arkret_sdk::StrandId::from_event_id(
             &bundle.genesis_event.event_id
         ));
         forged.push(unknown_strand);
         let mut open_message = rows.clone();
-        let TypedCurrentRow::Value { value, .. } = &mut open_message[message_index];
+        let CurrentState::Value { value, .. } = &mut open_message[message_index];
         value["unknown"] = json!(true);
         forged.push(open_message);
         let mut future_message = rows.clone();
-        let TypedCurrentRow::Value { revision, .. } = &mut future_message[message_index];
+        let CurrentState::Value { revision, .. } = &mut future_message[message_index];
         revision.stream_position = head.stream_position + 1;
         forged.push(future_message);
         let mut open_alias = rows.clone();
@@ -3608,6 +2998,7 @@ mod tests {
                 "alice.example",
                 DEVICE_ID,
             );
+        let realm_id = bundle.realm_id.clone();
         let commit = &items.last().unwrap().commit;
         let head = arkret_wire::CommitStreamHead {
             stream_ref: commit.stream_ref.clone(),
@@ -3616,7 +3007,7 @@ mod tests {
         };
         let rows_with = |value| {
             let mut rows = coland_bootstrap_rows(&bundle, &items);
-            rows.push(TypedCurrentRow::Value {
+            rows.push(CurrentState::Value {
                 selector: arkret_wire::CurrentSelector::CallState {
                     call_id: arkret_sdk::CallId::from_event_id(&items[1].event.event_id),
                 },
@@ -3652,7 +3043,7 @@ mod tests {
             );
         }
         let mut foreign = rows_with(json!({"from":null,"to":"ringing"}));
-        let TypedCurrentRow::Value {
+        let CurrentState::Value {
             source_stream_ref, ..
         } = foreign.last_mut().unwrap();
         *source_stream_ref = CommitStreamRef::Realm {
@@ -3674,6 +3065,7 @@ mod tests {
                 "alice.example",
                 DEVICE_ID,
             );
+        let realm_id = bundle.realm_id.clone();
         let commit = &items.last().unwrap().commit;
         let head = arkret_wire::CommitStreamHead {
             stream_ref: commit.stream_ref.clone(),
@@ -3681,7 +3073,7 @@ mod tests {
             commit_id: commit.commit_id.clone(),
         };
         let mut rows = coland_bootstrap_rows(&bundle, &items[..items.len() - 1]);
-        rows.push(TypedCurrentRow::Value {
+        rows.push(CurrentState::Value {
             selector: arkret_wire::CurrentSelector::Rsvp {
                 event_ref: arkret_sdk::StrandId::from_event_id(&items[1].event.event_id),
                 occurrence: None,
@@ -3706,21 +3098,21 @@ mod tests {
             ("scope_ref", json!({"realm_id": realm_id})),
         ] {
             let mut forged = rows.clone();
-            let TypedCurrentRow::Value { value, .. } = forged.last_mut().unwrap();
+            let CurrentState::Value { value, .. } = forged.last_mut().unwrap();
             value[key] = invalid;
             assert!(
                 validate_signed_floor_rows(&realm_id, &bundle, &head, access, &forged).is_err()
             );
         }
         let mut foreign = rows.clone();
-        let TypedCurrentRow::Value {
+        let CurrentState::Value {
             source_stream_ref, ..
         } = foreign.last_mut().unwrap();
         *source_stream_ref = CommitStreamRef::Realm {
             realm_id: arkret_sdk::RealmId::from_event_id(&items[2].event.event_id),
         };
         assert!(validate_signed_floor_rows(&realm_id, &bundle, &head, access, &foreign).is_err());
-        let TypedCurrentRow::Value { selector, .. } = rows.last_mut().unwrap();
+        let CurrentState::Value { selector, .. } = rows.last_mut().unwrap();
         let arkret_wire::CurrentSelector::Rsvp { occurrence, .. } = selector else {
             unreachable!()
         };
@@ -3745,6 +3137,7 @@ mod tests {
                 "alice.example",
                 DEVICE_ID,
             );
+        let realm_id = bundle.realm_id.clone();
         let commit = &items.last().unwrap().commit;
         let head = arkret_wire::CommitStreamHead {
             stream_ref: commit.stream_ref.clone(),
@@ -3756,7 +3149,7 @@ mod tests {
             controller.station_id.clone(),
         );
         let mut rows = coland_bootstrap_rows(&bundle, &items);
-        rows.push(TypedCurrentRow::Value {
+        rows.push(CurrentState::Value {
             selector: arkret_wire::CurrentSelector::AgentInteraction {
                 agent_account_id: agent,
             },
@@ -3772,7 +3165,7 @@ mod tests {
         });
         let access = arkret_sdk::HistoryAccess::SinceJoin;
         for mode in ["public", "private"] {
-            let TypedCurrentRow::Value { value, .. } = rows.last_mut().unwrap();
+            let CurrentState::Value { value, .. } = rows.last_mut().unwrap();
             value["interaction_mode"] = json!(mode);
             validate_signed_floor_rows(&realm_id, &bundle, &head, access, &rows).unwrap();
         }
@@ -3783,14 +3176,14 @@ mod tests {
             ("scope_ref", json!({"realm_id": realm_id})),
         ] {
             let mut forged = rows.clone();
-            let TypedCurrentRow::Value { value, .. } = forged.last_mut().unwrap();
+            let CurrentState::Value { value, .. } = forged.last_mut().unwrap();
             value[key] = invalid;
             assert!(
                 validate_signed_floor_rows(&realm_id, &bundle, &head, access, &forged).is_err()
             );
         }
         let mut foreign = rows.clone();
-        let TypedCurrentRow::Value {
+        let CurrentState::Value {
             source_stream_ref, ..
         } = foreign.last_mut().unwrap();
         *source_stream_ref = CommitStreamRef::Realm {
@@ -3815,6 +3208,7 @@ mod tests {
                 "alice.example",
                 DEVICE_ID,
             );
+        let realm_id = bundle.realm_id.clone();
         let commit = &items.last().unwrap().commit;
         let head = arkret_wire::CommitStreamHead {
             stream_ref: commit.stream_ref.clone(),
@@ -3832,7 +3226,7 @@ mod tests {
             "signature": "signed-receipt"
         });
         let mut rows = coland_bootstrap_rows(&bundle, &items);
-        rows.push(TypedCurrentRow::Value {
+        rows.push(CurrentState::Value {
             selector: arkret_wire::CurrentSelector::ModerationFrankingProof {
                 event_id: proven_event,
             },
@@ -3869,7 +3263,7 @@ mod tests {
 
     #[test]
     fn signed_floor_reactions_admit_the_closed_set_and_reject_subject_or_dot_drift() {
-        let realm_id = arkret_sdk::RealmId::new(REALM_ID).unwrap();
+        let realm_id = collaboration_fixture_realm_id();
         let creator = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
             arkret_sdk::DidCoreId::new(ACTOR_ID).unwrap(),
             arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
@@ -3914,7 +3308,7 @@ mod tests {
             commit_id: accepted.commit.commit_id.clone(),
         };
         let mut rows = coland_bootstrap_rows(&bundle, &items[..items.len() - 1]);
-        rows.push(TypedCurrentRow::Value {
+        rows.push(CurrentState::Value {
             selector: arkret_wire::CurrentSelector::MessageReactions {
                 target_ref: message.to_string(),
             },
@@ -3944,7 +3338,7 @@ mod tests {
             json!({"assertions":[],"count":1}),
         ] {
             let mut forged = rows.clone();
-            let TypedCurrentRow::Value { value, .. } = forged.last_mut().unwrap();
+            let CurrentState::Value { value, .. } = forged.last_mut().unwrap();
             *value = invalid;
             assert!(
                 validate_signed_floor_rows(
@@ -3961,7 +3355,7 @@ mod tests {
 
     #[test]
     fn signed_floor_pins_admit_the_closed_set_and_reject_scope_or_dot_drift() {
-        let realm_id = arkret_sdk::RealmId::new(REALM_ID).unwrap();
+        let realm_id = collaboration_fixture_realm_id();
         let creator = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
             arkret_sdk::DidCoreId::new(ACTOR_ID).unwrap(),
             arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
@@ -4006,7 +3400,7 @@ mod tests {
             commit_id: accepted.commit.commit_id.clone(),
         };
         let mut rows = coland_bootstrap_rows(&bundle, &items[..items.len() - 1]);
-        rows.push(TypedCurrentRow::Value {
+        rows.push(CurrentState::Value {
             selector: arkret_wire::CurrentSelector::Pin {
                 pin_scope: arkret_sdk::PinScope::Realm {
                     id: realm_id.clone(),
@@ -4038,7 +3432,7 @@ mod tests {
             json!({"assertions":[],"count":1}),
         ] {
             let mut forged = rows.clone();
-            let TypedCurrentRow::Value { value, .. } = forged.last_mut().unwrap();
+            let CurrentState::Value { value, .. } = forged.last_mut().unwrap();
             *value = invalid;
             assert!(
                 validate_signed_floor_rows(
@@ -4057,11 +3451,12 @@ mod tests {
     /// Message's `message_revision` is the revise carrier naming that Message,
     /// and a retracted Message is disclosed as its `object_redaction` row, each
     /// assertion redacting exactly that Message. A revise naming another
-    /// Message, an open or foreign redaction and a non-Message redaction
-    /// subject reject the whole snapshot.
+    /// Message, an open or foreign redaction and an unsupported object
+    /// subject reject the whole snapshot. Event crops remain independent of
+    /// the Message lifecycle and preserve their exact assertion.
     #[test]
     fn signed_floor_snapshot_installs_message_revise_and_redaction() {
-        let realm_id = arkret_sdk::RealmId::new(REALM_ID).unwrap();
+        let realm_id = collaboration_fixture_realm_id();
         let creator = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
             arkret_sdk::DidCoreId::new(ACTOR_ID).unwrap(),
             arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
@@ -4103,14 +3498,14 @@ mod tests {
             .position(|row| {
                 matches!(
                     row,
-                    TypedCurrentRow::Value {
+                    CurrentState::Value {
                         selector: arkret_wire::CurrentSelector::MessageRevision { .. },
                         ..
                     }
                 )
             })
             .unwrap();
-        let TypedCurrentRow::Value {
+        let CurrentState::Value {
             selector: arkret_wire::CurrentSelector::MessageRevision { message_id },
             ..
         } = rows[message_index].clone()
@@ -4126,7 +3521,7 @@ mod tests {
         );
         let retracted = arkret_sdk::MessageId::from_event_id(&items[5].event.event_id);
         let redaction_tag = format!("{}:0", items.last().unwrap().event.event_id);
-        let redaction = |target: &str, value: serde_json::Value| TypedCurrentRow::Value {
+        let redaction = |target: &str, value: serde_json::Value| CurrentState::Value {
             selector: arkret_wire::CurrentSelector::ObjectRedaction {
                 target_ref: target.to_owned(),
             },
@@ -4150,11 +3545,11 @@ mod tests {
         let redaction_index = rows.len() - 1;
         let mut forged = Vec::new();
         let mut foreign_revision = rows.clone();
-        let TypedCurrentRow::Value { value, .. } = &mut foreign_revision[message_index];
+        let CurrentState::Value { value, .. } = &mut foreign_revision[message_index];
         value["message_id"] = json!(retracted);
         forged.push(foreign_revision);
         let mut open_revision = rows.clone();
-        let TypedCurrentRow::Value { value, .. } = &mut open_revision[message_index];
+        let CurrentState::Value { value, .. } = &mut open_revision[message_index];
         value["unknown"] = json!(true);
         forged.push(open_revision);
         let mut foreign_redaction = rows.clone();
@@ -4190,7 +3585,32 @@ mod tests {
                 "value": {"target_ref": event_target}
             }]}),
         );
-        forged.push(event_subject);
+        validate_signed_floor_rows(&realm_id, &bundle, &head, since_join, &event_subject).unwrap();
+        let mut wrong_event_target = event_subject.clone();
+        set_row_value(
+            &mut wrong_event_target[redaction_index],
+            json!({"assertions":[{
+                "tag_id":redaction_tag,"value":{"target_ref":items[4].event.event_id}
+            }]}),
+        );
+        forged.push(wrong_event_target);
+        let mut event_with_message_payload = event_subject.clone();
+        set_row_value(
+            &mut event_with_message_payload[redaction_index],
+            json!({"assertions":[{
+                "tag_id":redaction_tag,"value":{"message_id":retracted}
+            }]}),
+        );
+        forged.push(event_with_message_payload);
+        let mut unsupported_subject = event_subject;
+        let target = arkret_wire::MorphId::from_event_id(&items[5].event.event_id).to_string();
+        unsupported_subject[redaction_index] = redaction(
+            &target,
+            json!({"assertions":[{
+                "tag_id":redaction_tag,"value":{"target_ref":target}
+            }]}),
+        );
+        forged.push(unsupported_subject);
         for rows in forged {
             assert!(
                 validate_signed_floor_rows(&realm_id, &bundle, &head, since_join, &rows).is_err(),
@@ -4215,6 +3635,7 @@ mod tests {
                 "alice.example",
                 DEVICE_ID,
             );
+        let realm_id = bundle.realm_id.clone();
         let commit = &items.last().unwrap().commit;
         let head = arkret_wire::CommitStreamHead {
             stream_ref: commit.stream_ref.clone(),
@@ -4226,7 +3647,7 @@ mod tests {
         let assertion = json!({"tag_id": tag, "value": {"target_ref": target, "key": "+1"}});
         let value = json!({"assertions": [assertion]});
         let mut rows = coland_bootstrap_rows(&bundle, &items);
-        rows.push(TypedCurrentRow::Value {
+        rows.push(CurrentState::Value {
             selector: arkret_wire::CurrentSelector::MessageReactions {
                 target_ref: target.to_string(),
             },
@@ -4237,7 +3658,7 @@ mod tests {
             },
             value: value.clone(),
         });
-        let validate = |rows: &[TypedCurrentRow]| {
+        let validate = |rows: &[CurrentState]| {
             validate_signed_floor_rows(
                 &realm_id,
                 &bundle,
@@ -4248,7 +3669,7 @@ mod tests {
         };
         validate(&rows).unwrap();
         let mut foreign_anchor = rows.clone();
-        let TypedCurrentRow::Value { value, .. } = &mut foreign_anchor[1];
+        let CurrentState::Value { value, .. } = &mut foreign_anchor[1];
         value["authority_event_ref"] = json!(items[2].event.event_id);
         assert!(validate(&foreign_anchor).is_err());
         for bad in [
@@ -4263,7 +3684,7 @@ mod tests {
             assert!(validate(&forged).is_err());
         }
         let mut unsupported = rows.clone();
-        let TypedCurrentRow::Value { selector, .. } = unsupported.last_mut().unwrap();
+        let CurrentState::Value { selector, .. } = unsupported.last_mut().unwrap();
         *selector = arkret_wire::CurrentSelector::MessageReactions {
             target_ref: items[1].event.event_id.to_string(),
         };
@@ -4289,6 +3710,7 @@ mod tests {
                 "alice.example",
                 DEVICE_ID,
             );
+        let realm_id = bundle.realm_id.clone();
         let commit = &items.last().unwrap().commit;
         let head = arkret_wire::CommitStreamHead {
             stream_ref: commit.stream_ref.clone(),
@@ -4298,7 +3720,7 @@ mod tests {
         let event_id = &items[2].event.event_id;
         let target = arkret_sdk::MessageId::from_event_id(&items[1].event.event_id);
         let tag = format!("{event_id}:0");
-        let validate = |rows: &[TypedCurrentRow]| {
+        let validate = |rows: &[CurrentState]| {
             validate_signed_floor_rows(
                 &realm_id,
                 &bundle,
@@ -4325,7 +3747,7 @@ mod tests {
                 "pin_scope": scope, "target_ref": target, "rank": "a0"
             }});
             let mut rows = coland_bootstrap_rows(&bundle, &items);
-            rows.push(TypedCurrentRow::Value {
+            rows.push(CurrentState::Value {
                 selector: arkret_wire::CurrentSelector::Pin {
                     pin_scope: scope.clone(),
                 },
@@ -4363,7 +3785,7 @@ mod tests {
                 assert!(validate(&forged).is_err());
             }
             let mut foreign = rows.clone();
-            let TypedCurrentRow::Value { selector, .. } = foreign.last_mut().unwrap();
+            let CurrentState::Value { selector, .. } = foreign.last_mut().unwrap();
             *selector = arkret_wire::CurrentSelector::Pin {
                 pin_scope: arkret_wire::PinScope::Realm {
                     id: arkret_sdk::RealmId::from_event_id(&items[3].event.event_id),
@@ -4395,6 +3817,7 @@ mod tests {
                 "alice.example",
                 DEVICE_ID,
             );
+        let realm_id = bundle.realm_id.clone();
         let head_commit = &items.last().unwrap().commit;
         let head = arkret_wire::CommitStreamHead {
             stream_ref: head_commit.stream_ref.clone(),
@@ -4405,7 +3828,7 @@ mod tests {
         let rows_with = |join_policy: Option<serde_json::Value>, rule: &str| {
             let mut rows = coland_bootstrap_rows(&bundle, &items);
             for row in &mut rows {
-                let TypedCurrentRow::Value {
+                let CurrentState::Value {
                     selector, value, ..
                 } = row;
                 match selector {
@@ -4481,12 +3904,12 @@ mod tests {
         )
     }
 
-    fn coland_bootstrap_rows(
+    pub(in crate::realm_events_engine) fn coland_bootstrap_rows(
         bundle: &arkret_sdk::RealmAuthorityBundle,
         items: &[arkret_sdk::CommittedEventFullView],
-    ) -> Vec<TypedCurrentRow> {
+    ) -> Vec<CurrentState> {
         use arkret_wire::CurrentSelector;
-        let row = |selector, commit: &arkret_sdk::RealmCommit, value| TypedCurrentRow::Value {
+        let row = |selector, commit: &arkret_sdk::RealmCommit, value| CurrentState::Value {
             selector,
             source_stream_ref: commit.stream_ref.clone(),
             revision: arkret_wire::CurrentRevision {
@@ -4508,7 +3931,7 @@ mod tests {
                 json!({
                     "controller_actor_id": bundle.genesis_event.actor_id,
                     "controller_epoch": 0,
-                    "authority_generation": 0,
+                    "authority_generation": "0",
                 "authority_event_ref": bundle.realm_id.event_id(),
                 }),
             ),
@@ -4518,9 +3941,13 @@ mod tests {
             let commit = &item.commit;
             rows.push(match item.event.kind.as_str() {
                 "ak.realm.profile" => row(CurrentSelector::RealmProfile, commit, payload),
-                "ak.realm.read_receipt_policy" => {
-                    row(CurrentSelector::RealmReadReceiptPolicy, commit, payload)
-                }
+                "ak.scope.read_receipt_policy" => row(
+                    CurrentSelector::ScopeReadReceiptPolicy {
+                        scope_ref: commit.stream_ref.scope_ref(),
+                    },
+                    commit,
+                    payload,
+                ),
                 "ak.realm.policy_bundle" => {
                     row(CurrentSelector::RealmPolicyBundle, commit, payload)
                 }
@@ -4586,13 +4013,13 @@ mod tests {
                     let watch: arkret_sdk::StrandWatchSetPayload =
                         serde_json::from_value(payload).unwrap();
                     let value = match watch.level {
-                        Some(level) => arkret_sdk::StrandWatchCurrentValue::Set(
+                        Some(level) => arkret_sdk::StrandWatchValue::Set(
                             arkret_sdk::StrandWatchExpectedValue {
                                 level,
                                 level_public: watch.level_public,
                             },
                         ),
-                        None => arkret_sdk::StrandWatchCurrentValue::Cleared(()),
+                        None => arkret_sdk::StrandWatchValue::Cleared(()),
                     };
                     row(
                         CurrentSelector::StrandWatch {
@@ -4680,7 +4107,8 @@ mod tests {
                 "alice.example",
                 DEVICE_ID,
             );
-        let request = arkret_sdk::AuthorityBundleRequest {
+        let realm = bundle.realm_id.clone();
+        let request = arkret_sdk::RealmAuthorityBundleRequestBody {
             realm_id: realm.clone(),
             nonce: bundle.current_assertion.nonce.clone(),
         };
@@ -4700,13 +4128,13 @@ mod tests {
         let stream = arkret_sdk::CommitStreamRef::Realm {
             realm_id: realm.clone(),
         };
-        let scan = StreamScanRequest {
+        let scan = StreamScanRequestBody {
             realm_id: realm,
             stream_ref: stream.clone(),
             direction: arkret_sdk::StreamScanDirection::After(None),
             limit: 200,
         };
-        let outcome = arkret_sdk::StreamScanOutcome {
+        let outcome = arkret_sdk::StreamScanResponseBody {
             committed_events: std::iter::once(arkret_sdk::CommittedEventFullView {
                 event: bundle.genesis_event.clone(),
                 commit: bundle.genesis_commit.clone(),
@@ -4731,7 +4159,7 @@ mod tests {
         let CommittedEventView::Full(last) = forged.committed_events.last_mut().unwrap() else {
             unreachable!()
         };
-        last.commit.signature.sig = arkret_sdk::Base64UrlString::new("AA").unwrap();
+        last.commit.signature.signature = arkret_sdk::Base64UrlString::new("AA").unwrap();
         assert!(
             replay
                 .apply_verified_scan(&scan, forged, &freshness, &keys)
@@ -4755,7 +4183,7 @@ mod tests {
     async fn verified_native_sidecar_prefix_survives_restart_and_requires_the_signed_head() {
         use crate::state::LocalStateStore;
         use crate::test_support::committed_event::{FixtureStation, fixture_time};
-        let realm = arkret_sdk::RealmId::new(REALM_ID).unwrap();
+        let realm = collaboration_fixture_realm_id();
         let station = FixtureStation::did_web();
         let actor = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
             arkret_sdk::DidCoreId::new(ACTOR_ID).unwrap(),
@@ -4770,7 +4198,8 @@ mod tests {
                 "alice.example",
                 DEVICE_ID,
             );
-        let request = arkret_sdk::AuthorityBundleRequest {
+        let realm = bundle.realm_id.clone();
+        let request = arkret_sdk::RealmAuthorityBundleRequestBody {
             realm_id: realm.clone(),
             nonce: bundle.current_assertion.nonce.clone(),
         };
@@ -4847,7 +4276,7 @@ mod tests {
             commit_id: native[0].commit.commit_id.clone(),
             stream_position: 0,
         };
-        let mls_current = arkret_wire::MlsGroupCurrent {
+        let mls_current = arkret_wire::MlsGroupValue {
             effective_scope: scope.clone(),
             genesis_event_ref: native[0].event.event_id.clone(),
             cipher_suite: arkret_sdk::NonEmptyString::new(
@@ -4865,7 +4294,7 @@ mod tests {
             .unwrap(),
         };
         snapshot.current_state_entries.extend([
-            TypedCurrentRow::Value {
+            CurrentState::Value {
                 selector: arkret_sdk::CurrentSelector::MlsGroup {
                     scope_ref: scope.clone(),
                 },
@@ -4873,7 +4302,7 @@ mod tests {
                 revision: revision.clone(),
                 value: serde_json::to_value(&mls_current).unwrap(),
             },
-            TypedCurrentRow::Value {
+            CurrentState::Value {
                 selector: arkret_sdk::CurrentSelector::Sidecar {
                     sidecar_id: sidecar.clone(),
                 },
@@ -4883,7 +4312,7 @@ mod tests {
                     "realm_id":realm,"controller_account_id":controller,"state":"active",
                     "created_at":"2026-01-01T00:00:00.000Z"}),
             },
-            TypedCurrentRow::Value {
+            CurrentState::Value {
                 selector: arkret_sdk::CurrentSelector::SidecarContext {
                     sidecar_id: sidecar.clone(),
                     source_context_ref: arkret_sdk::SidecarContextRef::Strand {
@@ -4918,10 +4347,10 @@ mod tests {
                 snapshot: snapshot.clone(),
             })
             .unwrap();
-        assert!(store.verified_sidecar_inputs(REALM_ID).is_err());
+        assert!(store.verified_sidecar_inputs(realm.as_str()).is_err());
         assert!(store.current_mls_group_for_scope(&scope).is_none());
         let mut replay = replica.fork_verified_authority().unwrap();
-        let scan = arkret_sdk::StreamScanRequest {
+        let scan = arkret_sdk::StreamScanRequestBody {
             realm_id: realm.clone(),
             stream_ref: stream.clone(),
             direction: arkret_sdk::StreamScanDirection::After(None),
@@ -4930,7 +4359,7 @@ mod tests {
         let page = replay
             .apply_verified_scan(
                 &scan,
-                arkret_sdk::StreamScanOutcome {
+                arkret_sdk::StreamScanResponseBody {
                     committed_events: vec![CommittedEventView::Full(native[0].clone())],
                     readable_floor: Some(arkret_sdk::ReadableFloor {
                         oldest_position: 0,
@@ -4969,8 +4398,8 @@ mod tests {
             Some(mls_current.clone())
         );
         let group_id = scope.canonical_mls_group_id().unwrap();
-        let checkpoint = crate::mls::persistence::encrypt_state(
-            REALM_ID,
+        let checkpoint = garth::mls::checkpoint::encrypt_state(
+            realm.as_str(),
             group_id.as_str(),
             0,
             b"provider state",
@@ -4986,7 +4415,7 @@ mod tests {
         );
         assert_eq!(
             reopened
-                .verified_sidecar_for_source(&controller, REALM_ID, &source_strand)
+                .verified_sidecar_for_source(&controller, realm.as_str(), &source_strand)
                 .unwrap()
                 .unwrap()
                 .id,
@@ -4995,7 +4424,7 @@ mod tests {
         let other_strand = arkret_sdk::StrandId::from_event_id(&native[0].event.event_id);
         assert!(
             reopened
-                .verified_sidecar_for_source(&controller, REALM_ID, &other_strand)
+                .verified_sidecar_for_source(&controller, realm.as_str(), &other_strand)
                 .unwrap()
                 .is_none()
         );
@@ -5004,12 +4433,12 @@ mod tests {
             arkret_sdk::DidCoreId::new("ak:did_core:web:other.example").unwrap();
         assert!(
             reopened
-                .verified_sidecar_for_source(&other_station, REALM_ID, &source_strand)
+                .verified_sidecar_for_source(&other_station, realm.as_str(), &source_strand)
                 .unwrap()
                 .is_none()
         );
         assert_eq!(
-            reopened.verified_sidecar_inputs(REALM_ID).unwrap().1[sidecar.as_str()],
+            reopened.verified_sidecar_inputs(realm.as_str()).unwrap().1[sidecar.as_str()],
             vec![native[0].clone()]
         );
         let old = snapshot.clone();
@@ -5026,13 +4455,13 @@ mod tests {
             .install_verified_current_snapshot_heads(&snapshot, &freshness, &keys)
             .unwrap();
         let before_new_cut = reopened.load();
-        let prior_position = reopened.verified_sidecar_inputs(REALM_ID).unwrap().1
+        let prior_position = reopened.verified_sidecar_inputs(realm.as_str()).unwrap().1
             [sidecar.as_str()]
         .last()
         .unwrap()
         .commit
         .stream_position;
-        assert!(!reopened.has_pending_sidecar_history(REALM_ID));
+        assert!(!reopened.has_pending_sidecar_history(realm.as_str()));
         let mut missing_tail = snapshot.clone();
         let missing_head = missing_tail
             .visible_stream_heads
@@ -5113,8 +4542,8 @@ mod tests {
                 snapshot: snapshot.clone(),
             })
             .unwrap();
-        assert!(reopened.verified_sidecar_inputs(REALM_ID).is_err());
-        assert!(reopened.has_pending_sidecar_history(REALM_ID));
+        assert!(reopened.verified_sidecar_inputs(realm.as_str()).is_err());
+        assert!(reopened.has_pending_sidecar_history(realm.as_str()));
         assert!(
             reopened
                 .install_verified_sidecar_current(&VerifiedCurrentSnapshot {
@@ -5126,17 +4555,17 @@ mod tests {
         assert!(reopened.mls_scopes_needing_tail_recovery().is_empty());
         assert!(
             reopened
-                .verified_sidecar_for_source(&controller, REALM_ID, &source_strand)
+                .verified_sidecar_for_source(&controller, realm.as_str(), &source_strand)
                 .is_err()
         );
-        let scan = arkret_sdk::StreamScanRequest {
+        let scan = arkret_sdk::StreamScanRequestBody {
             direction: arkret_sdk::StreamScanDirection::After(Some(0)),
             ..scan
         };
         let page = replay
             .apply_verified_scan(
                 &scan,
-                arkret_sdk::StreamScanOutcome {
+                arkret_sdk::StreamScanResponseBody {
                     committed_events: vec![CommittedEventView::Full(native[1].clone())],
                     readable_floor: Some(arkret_sdk::ReadableFloor {
                         oldest_position: 0,
@@ -5159,7 +4588,10 @@ mod tests {
             "history alone must not replace the accepted current original"
         );
         assert_eq!(
-            live_follow.verified_sidecar_inputs(REALM_ID).unwrap().1[sidecar.as_str()],
+            live_follow
+                .verified_sidecar_inputs(realm.as_str())
+                .unwrap()
+                .1[sidecar.as_str()],
             vec![native[0].clone()],
             "the old complete cut still exposes only its exact prefix"
         );
@@ -5171,16 +4603,19 @@ mod tests {
         )
         .await;
         assert_eq!(
-            live_follow.verified_sidecar_inputs(REALM_ID).unwrap().1[sidecar.as_str()],
+            live_follow
+                .verified_sidecar_inputs(realm.as_str())
+                .unwrap()
+                .1[sidecar.as_str()],
             native
         );
         reopened.ingest_verified_message_history(&page).unwrap();
-        assert!(!reopened.has_pending_sidecar_history(REALM_ID));
+        assert!(!reopened.has_pending_sidecar_history(realm.as_str()));
         let mut ahead = LocalStateStore::with_path(directory.join("ahead.json"));
         ahead.save(before_new_cut.clone());
         ahead.ingest_verified_message_history(&page).unwrap();
         assert_eq!(
-            ahead.verified_sidecar_inputs(REALM_ID).unwrap().1[sidecar.as_str()],
+            ahead.verified_sidecar_inputs(realm.as_str()).unwrap().1[sidecar.as_str()],
             vec![native[0].clone()]
         );
         let stream_key = serde_json::to_string(&stream).unwrap();
@@ -5198,30 +4633,8 @@ mod tests {
             .unwrap();
         failed.flush().unwrap();
         let failed_before = serde_json::to_value(failed.load()).unwrap();
-        let account_files = std::fs::read_dir(&directory)
-            .unwrap()
-            .map(|entry| entry.unwrap().path())
-            .filter(|path| {
-                path.file_name()
-                    .unwrap()
-                    .to_string_lossy()
-                    .starts_with("failed-cut.account.")
-                    && path
-                        .extension()
-                        .is_some_and(|extension| extension == "json")
-            })
-            .filter(|path| {
-                serde_json::from_slice::<serde_json::Value>(&std::fs::read(path).unwrap()).unwrap()
-                    ["sync_cursor"]
-                    == "ak:cursor:sidecar-retained"
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(account_files.len(), 1);
-        let account_file = &account_files[0];
-        let prior_bytes = std::fs::read(account_file).unwrap();
-        let backup = account_file.with_extension("saved");
-        std::fs::rename(account_file, &backup).unwrap();
-        std::fs::create_dir(account_file).unwrap();
+        let prior_bytes = failed.conformance_account_checkpoint_token().unwrap();
+        failed.conformance_fail_account_commit(true).unwrap();
         let mut candidate_validated = false;
         let failed_cut = failed.verified_projection_transaction(|store| {
             store.ingest_verified_message_history(&page)?;
@@ -5249,16 +4662,21 @@ mod tests {
             "the candidate must reach the real durable write"
         );
         assert_eq!(serde_json::to_value(failed.load()).unwrap(), failed_before);
-        std::fs::remove_dir(account_file).unwrap();
-        std::fs::rename(&backup, account_file).unwrap();
-        assert_eq!(std::fs::read(account_file).unwrap(), prior_bytes);
+        failed.conformance_fail_account_commit(false).unwrap();
+        assert_eq!(
+            failed.conformance_account_checkpoint_token().unwrap(),
+            prior_bytes
+        );
         let failed_reload = LocalStateStore::with_path(directory.join("failed-cut.json"));
         assert_eq!(
             serde_json::to_value(failed_reload.load()).unwrap(),
             failed_before
         );
         assert_eq!(
-            failed_reload.verified_sidecar_inputs(REALM_ID).unwrap().1[sidecar.as_str()],
+            failed_reload
+                .verified_sidecar_inputs(realm.as_str())
+                .unwrap()
+                .1[sidecar.as_str()],
             vec![native[0].clone()]
         );
         println!(
@@ -5298,7 +4716,10 @@ mod tests {
             serde_json::to_value(atomic.load()).unwrap()
         );
         assert_eq!(
-            atomic_reload.verified_sidecar_inputs(REALM_ID).unwrap().1[sidecar.as_str()],
+            atomic_reload
+                .verified_sidecar_inputs(realm.as_str())
+                .unwrap()
+                .1[sidecar.as_str()],
             native
         );
         assert_eq!(
@@ -5325,7 +4746,7 @@ mod tests {
             })
             .unwrap();
         assert_eq!(
-            ahead.verified_sidecar_inputs(REALM_ID).unwrap().1[sidecar.as_str()],
+            ahead.verified_sidecar_inputs(realm.as_str()).unwrap().1[sidecar.as_str()],
             native
         );
         ahead.flush().unwrap();
@@ -5335,7 +4756,10 @@ mod tests {
             serde_json::to_value(ahead.load()).unwrap()
         );
         assert_eq!(
-            complete_reload.verified_sidecar_inputs(REALM_ID).unwrap().1[sidecar.as_str()],
+            complete_reload
+                .verified_sidecar_inputs(realm.as_str())
+                .unwrap()
+                .1[sidecar.as_str()],
             native
         );
         let complete = ahead.load();
@@ -5346,14 +4770,14 @@ mod tests {
             .unwrap()
             .pop();
         ahead.save(missing);
-        assert!(ahead.verified_sidecar_inputs(REALM_ID).is_err());
+        assert!(ahead.verified_sidecar_inputs(realm.as_str()).is_err());
         let mut gap = complete.clone();
         gap.verified_sidecar_history
             .get_mut(&stream_key)
             .unwrap()
             .remove(0);
         ahead.save(gap);
-        assert!(ahead.verified_sidecar_inputs(REALM_ID).is_err());
+        assert!(ahead.verified_sidecar_inputs(realm.as_str()).is_err());
         let mut withheld = complete.clone();
         withheld
             .verified_sidecar_history
@@ -5365,7 +4789,7 @@ mod tests {
             },
         });
         ahead.save(withheld);
-        assert!(ahead.verified_sidecar_inputs(REALM_ID).is_err());
+        assert!(ahead.verified_sidecar_inputs(realm.as_str()).is_err());
         let mut wrong_head = snapshot.clone();
         wrong_head
             .visible_stream_heads
@@ -5385,7 +4809,7 @@ mod tests {
             vec![scope.clone()]
         );
         assert_eq!(
-            reopened.verified_sidecar_inputs(REALM_ID).unwrap().1[sidecar.as_str()],
+            reopened.verified_sidecar_inputs(realm.as_str()).unwrap().1[sidecar.as_str()],
             native
         );
         assert!(
@@ -5393,19 +4817,41 @@ mod tests {
                 .install_verified_sidecar_current(&VerifiedCurrentSnapshot { snapshot: old })
                 .is_err()
         );
-        reopened.invalidate_sidecar_current(Some(REALM_ID));
-        assert!(!reopened.has_pending_sidecar_history(REALM_ID));
-        assert!(reopened.verified_sidecar_inputs(REALM_ID).is_err());
+        reopened.invalidate_sidecar_current(Some(realm.as_str()));
+        assert!(!reopened.has_pending_sidecar_history(realm.as_str()));
+        assert!(reopened.verified_sidecar_inputs(realm.as_str()).is_err());
         assert!(reopened.mls_scopes_needing_tail_recovery().is_empty());
-        drop(reopened);
-        std::fs::remove_dir_all(directory).unwrap();
+        drop((
+            reopened,
+            live_follow,
+            failed,
+            atomic,
+            missing_reload,
+            failed_reload,
+            atomic_reload,
+            complete_reload,
+        ));
+        // Independent GC can finish its last SQLite transaction after a host drops.
+        let cleanup_deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            match std::fs::remove_dir_all(&directory) {
+                Ok(()) => break,
+                Err(error)
+                    if error.raw_os_error() == Some(32)
+                        && std::time::Instant::now() < cleanup_deadline =>
+                {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                Err(error) => panic!("fixture cleanup failed: {error}"),
+            }
+        }
     }
 
     #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn signed_snapshot_current_staging_is_atomic_and_cut_bound() {
         use crate::test_support::committed_event::FixtureStation;
-        let realm_id = arkret_sdk::RealmId::new(REALM_ID).unwrap();
+        let realm_id = collaboration_fixture_realm_id();
         let account = arkret_sdk::AccountId::new(
             arkret_sdk::DidCoreId::new(ACTOR_ID).unwrap(),
             arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
@@ -5421,7 +4867,8 @@ mod tests {
                 "alice.example",
                 DEVICE_ID,
             );
-        let request = arkret_sdk::AuthorityBundleRequest {
+        let realm_id = bundle.realm_id.clone();
+        let request = arkret_sdk::RealmAuthorityBundleRequestBody {
             realm_id: realm_id.clone(),
             nonce: bundle.current_assertion.nonce.clone(),
         };
@@ -5439,12 +4886,12 @@ mod tests {
             .install_verified_current_snapshot_heads(&snapshot, &freshness, &keys)
             .unwrap();
         let selector = match &snapshot.current_state_entries[0] {
-            arkret_wire::TypedCurrentRow::Value { selector, .. } => selector.clone(),
+            arkret_wire::CurrentState::Value { selector, .. } => selector.clone(),
         };
         let mut frame: arkret_sdk::sync::AccountSubscribeFrame = serde_json::from_value(json!({
             "kind":"delta", "cursor":"ak:cursor:YQ",
-            "realms":{REALM_ID:{"current":{
-                "realm_id":realm_id, "governance_generation":snapshot.governance_generation,
+            "realms":{realm_id.as_str():{"current":{
+                "realm_id":realm_id, "governance_generation":(snapshot.governance_generation).to_string(),
                 "stream_heads":snapshot.visible_stream_heads, "entries":[]
             }}}
         }))
@@ -5455,7 +4902,7 @@ mod tests {
             .as_mut()
             .unwrap()
             .entries
-            .get_mut(REALM_ID)
+            .get_mut(realm_id.as_str())
             .unwrap()
             .streams = Some(vec![
             serde_json::from_value(json!({
@@ -5469,24 +4916,27 @@ mod tests {
             }))
             .unwrap(),
         ]);
-        let proofs = BTreeMap::from([(REALM_ID.to_owned(), VerifiedCurrentSnapshot { snapshot })]);
+        let proofs = BTreeMap::from([(
+            realm_id.as_str().to_owned(),
+            VerifiedCurrentSnapshot { snapshot },
+        )]);
         let unresolved = VerifiedAccountFrame::default();
         assert!(
-            unresolved.product_frame(&frame).realms.unwrap().entries[REALM_ID]
+            unresolved.product_frame(&frame).realms.unwrap().entries[realm_id.as_str()]
                 .current
                 .is_none()
         );
         let proven = VerifiedAccountFrame {
             current_snapshots: BTreeMap::from([(
-                REALM_ID.to_owned(),
+                realm_id.as_str().to_owned(),
                 VerifiedCurrentSnapshot {
-                    snapshot: proofs[REALM_ID].snapshot().clone(),
+                    snapshot: proofs[realm_id.as_str()].snapshot().clone(),
                 },
             )]),
             ..Default::default()
         };
         assert!(
-            proven.product_frame(&frame).realms.unwrap().entries[REALM_ID]
+            proven.product_frame(&frame).realms.unwrap().entries[realm_id.as_str()]
                 .current
                 .is_some()
         );
@@ -5504,17 +4954,23 @@ mod tests {
             .unwrap();
         drop(stage);
         assert_eq!(
-            index.read_selector(REALM_ID, &selector).await.unwrap(),
+            index
+                .read_selector(realm_id.as_str(), &selector)
+                .await
+                .unwrap(),
             None
         );
-        assert_eq!(index.read_complete_cut(REALM_ID).await.unwrap(), None);
+        assert_eq!(
+            index.read_complete_cut(realm_id.as_str()).await.unwrap(),
+            None
+        );
         let mut wrong_cut = frame.clone();
         wrong_cut
             .realms
             .as_mut()
             .unwrap()
             .entries
-            .get_mut(REALM_ID)
+            .get_mut(realm_id.as_str())
             .unwrap()
             .current
             .as_mut()
@@ -5527,7 +4983,10 @@ mod tests {
                 .await
                 .is_err()
         );
-        assert_eq!(index.read_complete_cut(REALM_ID).await.unwrap(), None);
+        assert_eq!(
+            index.read_complete_cut(realm_id.as_str()).await.unwrap(),
+            None
+        );
         let mut lagging = frame.clone();
         let earlier = &items[items.len() - 2].commit;
         let lagging_head = &mut lagging
@@ -5535,7 +4994,7 @@ mod tests {
             .as_mut()
             .unwrap()
             .entries
-            .get_mut(REALM_ID)
+            .get_mut(realm_id.as_str())
             .unwrap()
             .current
             .as_mut()
@@ -5548,17 +5007,23 @@ mod tests {
             .await
             .unwrap()
             .finish();
-        assert!(index.read_complete_cut(REALM_ID).await.unwrap().is_some());
         assert!(
             index
-                .read_selector(REALM_ID, &selector)
+                .read_complete_cut(realm_id.as_str())
+                .await
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            index
+                .read_selector(realm_id.as_str(), &selector)
                 .await
                 .unwrap()
                 .is_some()
         );
         let invalidation = serde_json::from_value(json!({
             "kind":"delta", "cursor":"ak:cursor:YQ",
-            "realm_invalidations":[{"realm_id":REALM_ID,"revision":1}]
+            "realm_invalidations":[{"realm_id":realm_id.as_str(),"revision":1}]
         }))
         .unwrap();
         index
@@ -5566,16 +5031,25 @@ mod tests {
             .await
             .unwrap()
             .finish();
-        assert_eq!(index.read_complete_cut(REALM_ID).await.unwrap(), None);
+        assert_eq!(
+            index.read_complete_cut(realm_id.as_str()).await.unwrap(),
+            None
+        );
         index
             .stage_verified_frame_with_snapshots(2, &lagging, &BTreeSet::new(), &proofs)
             .await
             .unwrap()
             .finish();
-        assert!(index.read_complete_cut(REALM_ID).await.unwrap().is_some());
         assert!(
             index
-                .read_selector_ready(REALM_ID, &selector)
+                .read_complete_cut(realm_id.as_str())
+                .await
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            index
+                .read_selector_ready(realm_id.as_str(), &selector)
                 .await
                 .unwrap()
                 .is_some()
@@ -5591,10 +5065,10 @@ mod tests {
         ));
         for policy in [
             json!({"disclosure":"disabled"}),
-            json!({"disclosure":"required","visibility":"private","scope_overrides_allowed":false}),
+            json!({"disclosure":"required","visibility":"private"}),
         ] {
             let mut entries = ordinary_bootstrap_entries(&creator);
-            entries.push(("ak.realm.read_receipt_policy".to_owned(), policy.clone()));
+            entries.push(("ak.scope.read_receipt_policy".to_owned(), policy.clone()));
             let (bundle, _, items) =
                 crate::test_support::committed_event::verified_realm_fixture_signed_by(
                     &crate::test_support::committed_event::FixtureStation::did_web(),
@@ -5604,6 +5078,7 @@ mod tests {
                     "alice.example",
                     DEVICE_ID,
                 );
+            let realm_id = bundle.realm_id.clone();
             let rows = coland_bootstrap_rows(&bundle, &items);
             let head = bundle.current_assertion.realm_stream_head.clone();
             validate_signed_floor_rows(
@@ -5619,14 +5094,14 @@ mod tests {
                 .position(|row| {
                     matches!(
                         row,
-                        arkret_wire::TypedCurrentRow::Value {
-                            selector: arkret_wire::CurrentSelector::RealmReadReceiptPolicy,
+                        arkret_wire::CurrentState::Value {
+                            selector: arkret_wire::CurrentSelector::ScopeReadReceiptPolicy { .. },
                             ..
                         }
                     )
                 })
                 .unwrap();
-            let arkret_wire::TypedCurrentRow::Value { value, .. } = &rows[index];
+            let arkret_wire::CurrentState::Value { value, .. } = &rows[index];
             assert_eq!(*value, policy);
             for invalid in [
                 json!({}),
@@ -5653,7 +5128,7 @@ mod tests {
 
     #[test]
     fn signed_realm_floor_accepts_complete_relation_and_rejects_domain_or_scope_drift() {
-        let realm_id = arkret_sdk::RealmId::new(REALM_ID).unwrap();
+        let realm_id = collaboration_fixture_realm_id();
         let creator = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
             arkret_sdk::DidCoreId::new(ACTOR_ID).unwrap(),
             arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
@@ -5677,10 +5152,11 @@ mod tests {
                 "alice.example",
                 DEVICE_ID,
             );
+        let realm_id = bundle.realm_id.clone();
         let accepted = items.last().unwrap();
         let head = bundle.current_assertion.realm_stream_head.clone();
         let mut rows = coland_bootstrap_rows(&bundle, &items[..items.len() - 1]);
-        rows.push(arkret_wire::TypedCurrentRow::Value {
+        rows.push(arkret_wire::CurrentState::Value {
             selector: serde_json::from_value(json!({"kind":"relation",
                 "primary_conflict_domain":domain}))
             .unwrap(),
@@ -5698,7 +5174,7 @@ mod tests {
                 "created_at":accepted.event.created_at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
             }),
         });
-        let validate = |rows: &[arkret_wire::TypedCurrentRow]| {
+        let validate = |rows: &[arkret_wire::CurrentState]| {
             validate_signed_floor_rows(
                 &realm_id,
                 &bundle,
@@ -5708,7 +5184,7 @@ mod tests {
             )
         };
         validate(&rows).unwrap();
-        let arkret_wire::TypedCurrentRow::Value { value, .. } = rows.last().unwrap();
+        let arkret_wire::CurrentState::Value { value, .. } = rows.last().unwrap();
         let valid = value.clone();
         for invalid in [
             {
@@ -5743,7 +5219,7 @@ mod tests {
             assert!(validate(&rejected).is_err());
         }
         let mut rejected = rows.clone();
-        let arkret_wire::TypedCurrentRow::Value { selector, .. } = rejected.last_mut().unwrap();
+        let arkret_wire::CurrentState::Value { selector, .. } = rejected.last_mut().unwrap();
         let foreign = arkret_wire::RealmId::from_event_id(&arkret_wire::EventId::from_digest(
             arkret_sdk::DigestSuite::Sha256,
             [0x73; 32],
@@ -5765,6 +5241,8 @@ mod tests {
         };
         let head = prefix.last().unwrap();
         arkret_sdk::RealmStateSnapshot {
+            purpose: arkret_wire::RealmSnapshotPurpose::FullRecovery,
+            history_basis: None,
             snapshot_id: arkret_sdk::RealmSnapshotId::from_digest([0; 32]),
             realm_id: bundle.realm_id.clone(),
             governance_generation: 0,
@@ -5811,7 +5289,8 @@ mod tests {
         target: &arkret_sdk::StrandId,
         expected: Option<&arkret_sdk::StrandId>,
     ) -> (String, serde_json::Value) {
-        let mut payload = json!({"realm_id": REALM_ID, "strand_id": target});
+        let mut payload =
+            json!({"realm_id": collaboration_fixture_realm_id(), "strand_id": target});
         if let Some(expected) = expected {
             payload["expected_default_strand_id"] = json!(expected);
         }
@@ -5990,6 +5469,7 @@ mod tests {
             "agent.example",
             "ak:device:0196419b-0000-7000-8000-000000000001",
         );
+        let realm = committed.event.realm_id.clone();
         let event_id = committed.event.event_id.clone();
         let batch = committed_views_to_client_events(
             &realm,
@@ -6027,10 +5507,11 @@ mod tests {
             "agent.example",
             "ak:device:0196419b-0000-7000-8000-000000000001",
         );
+        let realm_id = bundle.realm_id.clone();
         let stream_ref = arkret_sdk::CommitStreamRef::Realm {
             realm_id: realm_id.clone(),
         };
-        let request = arkret_sdk::AuthorityBundleRequest {
+        let request = arkret_sdk::RealmAuthorityBundleRequestBody {
             realm_id: realm_id.clone(),
             nonce: bundle.current_assertion.nonce.clone(),
         };
@@ -6043,7 +5524,7 @@ mod tests {
             .install_verified_authority(&request, bundle.clone(), &freshness, &keys)
             .unwrap();
         let first_event_id = items[0].event.event_id.clone();
-        let first = arkret_sdk::StreamScanOutcome {
+        let first = arkret_sdk::StreamScanResponseBody {
             committed_events: vec![
                 arkret_sdk::CommittedEventView::Full(arkret_sdk::CommittedEventFullView {
                     commit: bundle.genesis_commit.clone(),
@@ -6058,7 +5539,7 @@ mod tests {
             }),
             truncated: true,
         };
-        let first_request = StreamScanRequest {
+        let first_request = StreamScanRequestBody {
             realm_id: realm_id.clone(),
             stream_ref: stream_ref.clone(),
             direction: arkret_sdk::StreamScanDirection::After(None),
@@ -6067,7 +5548,8 @@ mod tests {
         let mut pages = Vec::new();
         let wrong_nonce = arkret_identity::RealmAuthorityFreshness::new(
             freshness.now,
-            arkret_sdk::Base64UrlString::new("BBBBBBBBBBBBBBBBBBBBBB").unwrap(),
+            arkret_sdk::Base64UrlString::new("AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI")
+                .unwrap(),
         );
         assert!(
             stage_verified_page(
@@ -6109,7 +5591,7 @@ mod tests {
             .is_err()
         );
         assert!(pages.is_empty());
-        let restricted_floor = arkret_sdk::StreamScanOutcome {
+        let restricted_floor = arkret_sdk::StreamScanResponseBody {
             committed_events: Vec::new(),
             readable_floor: Some(arkret_sdk::ReadableFloor {
                 oldest_position: 4,
@@ -6176,7 +5658,7 @@ mod tests {
         let mut forged = items[1].clone();
         forged.commit.signature.signed_digest =
             arkret_sdk::Hash::new(format!("sha256:{}", "f".repeat(64))).unwrap();
-        let second = arkret_sdk::StreamScanOutcome {
+        let second = arkret_sdk::StreamScanResponseBody {
             committed_events: vec![arkret_sdk::CommittedEventView::Full(forged)],
             readable_floor: Some(arkret_sdk::ReadableFloor {
                 oldest_position: 0,
@@ -6185,7 +5667,7 @@ mod tests {
             }),
             truncated: false,
         };
-        let second_request = StreamScanRequest {
+        let second_request = StreamScanRequestBody {
             realm_id: realm_id.clone(),
             stream_ref: stream_ref.clone(),
             direction: arkret_sdk::StreamScanDirection::After(Some(1)),
@@ -6237,16 +5719,16 @@ mod tests {
     impl garth::AuthorityTransport for FrameStation {
         async fn submit(
             &self,
-            _request: &arkret_wire::AuthoritySubmitRequest,
+            _request: &arkret_sdk::VerifiedSubmission<arkret_wire::AuthoritySubmitRequestBody>,
             _options: &arkret_sdk::http_client::ClientRequestOptions,
-        ) -> garth::Result<arkret_wire::AuthoritySubmitOutcome> {
+        ) -> garth::Result<arkret_wire::AuthoritySubmitResponseBody> {
             unreachable!("frame verification never submits")
         }
 
         async fn scan(
             &self,
-            request: &StreamScanRequest,
-        ) -> garth::Result<arkret_sdk::StreamScanOutcome> {
+            request: &StreamScanRequestBody,
+        ) -> garth::Result<arkret_sdk::StreamScanResponseBody> {
             self.scans.lock().unwrap().push(request.stream_ref.clone());
             let realm = &self.realms[&request.realm_id];
             if request.stream_ref
@@ -6255,7 +5737,7 @@ mod tests {
                 })
             {
                 // The caller joined every other stream above its genesis.
-                return Ok(arkret_sdk::StreamScanOutcome {
+                return Ok(arkret_sdk::StreamScanResponseBody {
                     committed_events: Vec::new(),
                     readable_floor: Some(arkret_sdk::ReadableFloor {
                         oldest_position: 1,
@@ -6269,7 +5751,7 @@ mod tests {
                 unreachable!("frame verification replays forward")
             };
             let floor = &realm.rows[realm.readable_floor as usize];
-            Ok(arkret_sdk::StreamScanOutcome {
+            Ok(arkret_sdk::StreamScanResponseBody {
                 committed_events: realm
                     .rows
                     .iter()
@@ -6304,7 +5786,7 @@ mod tests {
 
         async fn authority_bundle(
             &self,
-            request: &arkret_sdk::AuthorityBundleRequest,
+            request: &arkret_sdk::RealmAuthorityBundleRequestBody,
         ) -> garth::Result<arkret_sdk::RealmAuthorityBundle> {
             let mut bundle = self.realms[&request.realm_id].bundle.clone();
             self.station
@@ -6314,7 +5796,7 @@ mod tests {
 
         async fn install_handoff(
             &self,
-            _request: &arkret_sdk::AuthorityHandoffRequest,
+            _request: &arkret_sdk::AuthorityRealmAuthorityHandoffRequestBody,
             _options: &arkret_sdk::http_client::ClientRequestOptions,
         ) -> garth::Result<arkret_wire::RealmAuthorityHandoff> {
             unreachable!("frame verification never installs a handoff")
@@ -6379,7 +5861,7 @@ mod tests {
             ]),
             committed_events: Some(realm.rows[realm.rows.len() - window_rows..].to_vec()),
             current: Some(
-                arkret_models_collaboration::sync_frames::current_results::AccountCurrentView {
+                arkret_models_collaboration::sync_frames::current_states::AccountStateView {
                     realm_id: head.realm_id.clone(),
                     governance_generation: 0,
                     stream_heads: vec![arkret_wire::CommitStreamHead {
@@ -6387,7 +5869,7 @@ mod tests {
                         stream_position: head.stream_position,
                         commit_id: head.commit_id.clone(),
                     }],
-                    entries: vec![TypedCurrentRow::Value {
+                    entries: vec![CurrentState::Value {
                         selector: arkret_wire::CurrentSelector::RealmProfile,
                         source_stream_ref: first.stream_ref.clone(),
                         revision: arkret_wire::CurrentRevision {
@@ -6460,8 +5942,8 @@ mod tests {
                 readable_floor,
             }
         };
-        let preview_id = arkret_sdk::RealmId::new(REALM_ID).unwrap();
-        let verified_id = arkret_sdk::RealmId::new(OTHER_REALM_ID).unwrap();
+        let preview_id = fixture_realm(REALM_ID, &[], 0).bundle.realm_id;
+        let verified_id = fixture_realm(OTHER_REALM_ID, &[], 0).bundle.realm_id;
         let preview_stream = CommitStreamRef::Realm {
             realm_id: preview_id.clone(),
         };
@@ -6487,9 +5969,12 @@ mod tests {
         };
         let batch = |station: &FrameStation| {
             account_frame(vec![
-                (REALM_ID, frame_entry(&station.realms[&preview_id], 1, true)),
                 (
-                    OTHER_REALM_ID,
+                    preview_id.as_str(),
+                    frame_entry(&station.realms[&preview_id], 1, true),
+                ),
+                (
+                    verified_id.as_str(),
                     frame_entry(&station.realms[&verified_id], 2, false),
                 ),
             ])
@@ -6505,7 +5990,7 @@ mod tests {
             .as_mut()
             .unwrap()
             .entries
-            .get_mut(OTHER_REALM_ID)
+            .get_mut(verified_id.as_str())
             .unwrap()
             .current
             .as_mut()
@@ -6566,14 +6051,21 @@ mod tests {
         );
         let product = verified.product_frame(&frame);
         let entries = &product.realms.as_ref().unwrap().entries;
-        assert!(entries[REALM_ID].current.is_none() && entries[REALM_ID].baseline.is_none());
+        assert!(
+            entries[preview_id.as_str()].current.is_none()
+                && entries[preview_id.as_str()].baseline.is_none()
+        );
         assert_eq!(
-            entries[REALM_ID].committed_events.as_ref().unwrap().len(),
+            entries[preview_id.as_str()]
+                .committed_events
+                .as_ref()
+                .unwrap()
+                .len(),
             1
         );
         assert_eq!(
-            entries[OTHER_REALM_ID].current,
-            frame.realms.as_ref().unwrap().entries[OTHER_REALM_ID].current
+            entries[verified_id.as_str()].current,
+            frame.realms.as_ref().unwrap().entries[verified_id.as_str()].current
         );
         project(&mut store, &verified, "ak:cursor:preview-1");
         let unresolved = station(2);
@@ -6599,7 +6091,7 @@ mod tests {
             .as_mut()
             .unwrap()
             .entries
-            .get_mut(REALM_ID)
+            .get_mut(preview_id.as_str())
             .unwrap();
         let CommittedEventView::Full(row) = &mut entry.committed_events.as_mut().unwrap()[0] else {
             unreachable!()
@@ -6664,9 +6156,6 @@ mod tests {
         use crate::test_support::committed_event::FixtureStation;
         let inception_at = chrono::Utc::now() - chrono::Duration::seconds(1000);
         let realm_id = arkret_sdk::RealmId::new(REALM_ID).unwrap();
-        let stream_ref = CommitStreamRef::Realm {
-            realm_id: realm_id.clone(),
-        };
         let (bundle, _, items) =
             crate::test_support::committed_event::verified_realm_fixture_signed_by(
                 &FixtureStation::webvh(0x48, inception_at),
@@ -6676,6 +6165,11 @@ mod tests {
                 "alice.example",
                 DEVICE_ID,
             );
+        let realm_id = bundle.realm_id.clone();
+        let stream_ref = CommitStreamRef::Realm {
+            realm_id: realm_id.clone(),
+        };
+
         let rows = std::iter::once(CommittedEventView::Full(
             arkret_sdk::CommittedEventFullView {
                 commit: bundle.genesis_commit.clone(),
@@ -6776,13 +6270,10 @@ mod tests {
         use crate::test_support::committed_event::FixtureStation;
         let inception_at = chrono::Utc::now() - chrono::Duration::seconds(1000);
         let fixture_station = || FixtureStation::webvh(0x47, inception_at);
-        let realm_id = arkret_sdk::RealmId::new(REALM_ID).unwrap();
+        let realm_id = collaboration_fixture_realm_id();
         let sibling_id = arkret_sdk::RealmId::new(OTHER_REALM_ID).unwrap();
         let realm_stream = CommitStreamRef::Realm {
             realm_id: realm_id.clone(),
-        };
-        let sibling_stream = CommitStreamRef::Realm {
-            realm_id: sibling_id.clone(),
         };
         let circle_stream = CommitStreamRef::Circle {
             realm_id: realm_id.clone(),
@@ -6823,6 +6314,11 @@ mod tests {
                 "alice.example",
                 DEVICE_ID,
             );
+        let sibling_id = sibling_bundle.realm_id.clone();
+        let sibling_stream = CommitStreamRef::Realm {
+            realm_id: sibling_id.clone(),
+        };
+
         let sibling = StationRealm {
             rows: with_genesis(&sibling_bundle, sibling_items),
             bundle: sibling_bundle,
@@ -6847,6 +6343,15 @@ mod tests {
                 &items[..6],
                 chrono::Utc::now() - chrono::Duration::seconds(60),
             );
+            let head = &snapshot.visible_stream_heads[0];
+            snapshot.purpose = arkret_wire::RealmSnapshotPurpose::StreamHistory;
+            snapshot.history_basis = Some(arkret_wire::RealmSnapshotHistoryBasis {
+                account_id: creator.as_account_id().unwrap().clone(),
+                stream_ref: realm_stream.clone(),
+                anchor_position: head.stream_position,
+                anchor_commit_ref: head.commit_id.clone(),
+                accepted_dependency_refs: vec![],
+            });
             fixture_station().sign_snapshot(&mut snapshot);
             (bundle, items, snapshot)
         };
@@ -6860,7 +6365,10 @@ mod tests {
         let exact_tail = vec![strand.clone(), default_strand_entry(&strand_id, None)];
         let unsupported_tail = vec![
             strand.clone(),
-            ("ak.realm.alias".to_owned(), json!({"alias": "general"})),
+            (
+                "ak.realm.alias".to_owned(),
+                json!({"alias": "general:station.example"}),
+            ),
         ];
         let station_for = |tail: &[(String, serde_json::Value)]| {
             let (bundle, items, snapshot) = anchored(tail.to_vec());
@@ -6906,7 +6414,7 @@ mod tests {
         let anchored_entry = |bundle: &arkret_sdk::RealmAuthorityBundle,
                               items: &[arkret_sdk::CommittedEventFullView],
                               snapshot: &arkret_sdk::RealmStateSnapshot,
-                              current_rows: Vec<TypedCurrentRow>,
+                              current_rows: Vec<CurrentState>,
                               circle: bool| {
             let head = &items.last().unwrap().commit;
             let mut streams = vec![RealmStreamWindow {
@@ -6950,7 +6458,7 @@ mod tests {
                         .collect(),
                 ),
                 current: Some(
-                    arkret_models_collaboration::sync_frames::current_results::AccountCurrentView {
+                    arkret_models_collaboration::sync_frames::current_states::AccountStateView {
                         realm_id: realm_id.clone(),
                         governance_generation: 0,
                         stream_heads,
@@ -6983,10 +6491,10 @@ mod tests {
         let exact_rows = coland_bootstrap_rows(&bundle, &items);
         let frame = account_frame(vec![
             (
-                REALM_ID,
+                realm_id.as_str(),
                 anchored_entry(&bundle, &items, &snapshot, exact_rows.clone(), false),
             ),
-            (OTHER_REALM_ID, frame_entry(&sibling, 2, false)),
+            (sibling_id.as_str(), frame_entry(&sibling, 2, false)),
         ]);
         let verified = verify_account_frame_described(
             &AuthorityClient::new(station),
@@ -7011,9 +6519,9 @@ mod tests {
             serde_json::to_value(verified.product_frame(&frame)).unwrap(),
             serde_json::to_value(&frame).unwrap()
         );
-        // A single signed snapshot can bind three independent predecessors.
-        // Empty Circle and Sidecar tails still need their own signed heads;
-        // the Realm head cannot stand in for either stream.
+        // A signed Realm history original cannot also bind unrelated scoped
+        // predecessors. Each target requires its own independent original;
+        // the real multi-Station matrix exercises those source-issued objects.
         let (mut station, bundle, items, mut multi_snapshot) = station_for(&exact_tail);
         let scoped_head = arkret_sdk::RealmCommitId::from_digest([0x6c; 32]);
         for stream_ref in [&circle_stream, &sidecar_stream] {
@@ -7033,8 +6541,10 @@ mod tests {
                 });
         }
         fixture_station().sign_snapshot(&mut multi_snapshot);
-        station.snapshots =
-            BTreeMap::from([(multi_snapshot.snapshot_id.clone(), multi_snapshot.clone())]);
+        station.snapshots = BTreeMap::from([
+            (multi_snapshot.snapshot_id.clone(), multi_snapshot.clone()),
+            (snapshot.snapshot_id.clone(), snapshot.clone()),
+        ]);
         let mut multi_entry =
             anchored_entry(&bundle, &items, &multi_snapshot, exact_rows.clone(), false);
         for stream_ref in [&circle_stream, &sidecar_stream] {
@@ -7067,72 +6577,27 @@ mod tests {
                 },
             );
         }
-        let multi_frame = account_frame(vec![(REALM_ID, multi_entry)]);
+        let multi_frame = account_frame(vec![(realm_id.as_str(), multi_entry)]);
         let multi_authority = AuthorityClient::new(station);
-        let multi_verified =
-            verify_account_frame_described(&multi_authority, &http, Some(&describe), &multi_frame)
-                .await
-                .unwrap();
-        assert!(multi_verified.preview_streams().is_empty());
-        assert_eq!(positions(&multi_verified, &realm_stream), vec![7, 8]);
-        assert_eq!(
-            positions(&multi_verified, &circle_stream),
-            Vec::<u64>::new()
-        );
-        assert_eq!(
-            positions(&multi_verified, &sidecar_stream),
-            Vec::<u64>::new()
-        );
+        verify_account_frame_described(&multi_authority, &http, Some(&describe), &frame)
+            .await
+            .unwrap();
         assert!(
-            multi_verified
-                .product_frame(&multi_frame)
-                .realms
-                .unwrap()
-                .entries[REALM_ID]
-                .current
-                .is_some()
+            verify_account_frame_described(&multi_authority, &http, Some(&describe), &multi_frame,)
+                .await
+                .is_err()
         );
-        let mut accepted_dependency = multi_frame.clone();
-        accepted_dependency
-            .realms
-            .as_mut()
-            .unwrap()
-            .entries
-            .get_mut(REALM_ID)
-            .unwrap()
-            .streams
-            .as_mut()
-            .unwrap()[1]
-            .window_start_basis
-            .as_mut()
-            .unwrap()
-            .accepted_dependency_refs = Some(vec![arkret_wire::CommittedEventRef {
-            event_id: items[5].event.event_id.clone(),
-            commit_id: items[5].commit.commit_id.clone(),
-            stream_ref: realm_stream.clone(),
-            stream_position: 6,
-        }]);
-        let accepted_verified = verify_account_frame_described(
-            &multi_authority,
-            &http,
-            Some(&describe),
-            &accepted_dependency,
-        )
-        .await
-        .unwrap();
-        assert!(accepted_verified.preview_streams().is_empty());
-        assert_eq!(positions(&accepted_verified, &realm_stream), vec![7, 8]);
-        let mut invented_dependency = multi_frame.clone();
+        let mut invented_dependency = frame.clone();
         invented_dependency
             .realms
             .as_mut()
             .unwrap()
             .entries
-            .get_mut(REALM_ID)
+            .get_mut(realm_id.as_str())
             .unwrap()
             .streams
             .as_mut()
-            .unwrap()[1]
+            .unwrap()[0]
             .window_start_basis
             .as_mut()
             .unwrap()
@@ -7159,7 +6624,7 @@ mod tests {
             .as_mut()
             .unwrap()
             .entries
-            .get_mut(REALM_ID)
+            .get_mut(realm_id.as_str())
             .unwrap()
             .current
             .as_mut()
@@ -7181,7 +6646,7 @@ mod tests {
         let (station, bundle, items, snapshot) = station_for(&exact_tail);
         let prefix = &items[..7];
         let older_frame = account_frame(vec![(
-            REALM_ID,
+            realm_id.as_str(),
             anchored_entry(
                 &bundle,
                 prefix,
@@ -7209,7 +6674,7 @@ mod tests {
         let (station, bundle, items, snapshot) = station_for(&exact_tail);
         let prefix = &items[..6];
         let empty_frame = account_frame(vec![(
-            REALM_ID,
+            realm_id.as_str(),
             anchored_entry(
                 &bundle,
                 prefix,
@@ -7236,7 +6701,7 @@ mod tests {
             .as_mut()
             .unwrap()
             .entries
-            .get_mut(REALM_ID)
+            .get_mut(realm_id.as_str())
             .unwrap()
             .streams
             .as_mut()
@@ -7260,10 +6725,10 @@ mod tests {
         forged_rows.pop();
         let forged = account_frame(vec![
             (
-                REALM_ID,
+                realm_id.as_str(),
                 anchored_entry(&bundle, &items, &snapshot, forged_rows.clone(), false),
             ),
-            (OTHER_REALM_ID, frame_entry(&sibling, 2, false)),
+            (sibling_id.as_str(), frame_entry(&sibling, 2, false)),
         ]);
         let verified = verify_account_frame_described(
             &AuthorityClient::new(station),
@@ -7274,7 +6739,7 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(
-            verified.product_frame(&forged).realms.unwrap().entries[REALM_ID]
+            verified.product_frame(&forged).realms.unwrap().entries[realm_id.as_str()]
                 .current
                 .as_ref()
                 .unwrap()
@@ -7287,7 +6752,7 @@ mod tests {
         let (station, bundle, items, snapshot) = station_for(&unsupported_tail);
         let frame = account_frame(vec![
             (
-                REALM_ID,
+                realm_id.as_str(),
                 anchored_entry(
                     &bundle,
                     &items,
@@ -7296,7 +6761,7 @@ mod tests {
                     false,
                 ),
             ),
-            (OTHER_REALM_ID, frame_entry(&sibling, 2, false)),
+            (sibling_id.as_str(), frame_entry(&sibling, 2, false)),
         ]);
         let verified = verify_account_frame_described(
             &AuthorityClient::new(station),
@@ -7310,14 +6775,18 @@ mod tests {
         assert_eq!(positions(&verified, &sibling_stream), vec![0, 1, 2]);
         let product = verified.product_frame(&frame);
         let entries = &product.realms.as_ref().unwrap().entries;
-        assert!(entries[REALM_ID].current.is_some());
+        assert!(entries[realm_id.as_str()].current.is_some());
         assert_eq!(
-            entries[REALM_ID].committed_events.as_ref().unwrap().len(),
+            entries[realm_id.as_str()]
+                .committed_events
+                .as_ref()
+                .unwrap()
+                .len(),
             2
         );
         assert_eq!(
-            entries[OTHER_REALM_ID].current,
-            frame.realms.as_ref().unwrap().entries[OTHER_REALM_ID].current
+            entries[sibling_id.as_str()].current,
+            frame.realms.as_ref().unwrap().entries[sibling_id.as_str()].current
         );
         let mut store = crate::state::isolated_store_for_tests("account-frame-unresolved-tail");
         store.switch_test_account("did:web:reader.example");
@@ -7338,7 +6807,7 @@ mod tests {
                     .map_err(|error| error.to_string())
             })
             .unwrap();
-        assert!(store.realm_tree_projection(REALM_ID).is_none());
+        assert!(store.realm_tree_projection(realm_id.as_str()).is_none());
         assert!(
             store
                 .verified_commit_stream_cursor(&realm_stream)
@@ -7355,15 +6824,15 @@ mod tests {
         for reads_circle in [false, true] {
             let (station, bundle, items, snapshot) = station_for(&exact_tail);
             let frame = account_frame(vec![(
-                REALM_ID,
+                realm_id.as_str(),
                 anchored_entry(&bundle, &items, &snapshot, exact_rows.clone(), reads_circle),
             )]);
-            let mut entry = frame.realms.as_ref().unwrap().entries[REALM_ID].clone();
+            let mut entry = frame.realms.as_ref().unwrap().entries[realm_id.as_str()].clone();
             if !reads_circle {
                 entry.current.as_mut().unwrap().stream_heads.truncate(1);
                 entry.streams.as_mut().unwrap().push(circle_window.clone());
             }
-            let frame = account_frame(vec![(REALM_ID, entry)]);
+            let frame = account_frame(vec![(realm_id.as_str(), entry)]);
             let verified = verify_account_frame_described(
                 &AuthorityClient::new(station),
                 &http,
@@ -7378,7 +6847,7 @@ mod tests {
             );
             assert_eq!(positions(&verified, &realm_stream), vec![7, 8]);
             let product = verified.product_frame(&frame);
-            let installed = product.realms.as_ref().unwrap().entries[REALM_ID]
+            let installed = product.realms.as_ref().unwrap().entries[realm_id.as_str()]
                 .current
                 .is_some();
             assert_eq!(installed, !reads_circle, "reads Circle: {reads_circle}");

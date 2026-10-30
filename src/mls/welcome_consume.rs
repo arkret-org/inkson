@@ -68,7 +68,7 @@ where
 /// `joined_epoch`, under this device's active signer.
 pub(crate) fn sign_welcome_consume(
     delivery: &arkret_wire::MlsWelcomeDelivery,
-    outcome: &arkret_sdk::KeyPackagesClaimOutcome,
+    outcome: &arkret_sdk::KeyPackagesClaimResponseBody,
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
     station: &arkret_sdk::DidCoreId,
@@ -114,7 +114,7 @@ pub(crate) fn sign_welcome_consume(
                     arkret_sdk::NonEmptyString::new(signer.algorithm().to_owned())
                         .map_err(|error| garth::Error::Protocol(error.to_string()))?,
                 ),
-                sig: arkret_sdk::Base64UrlString::new(URL_SAFE_NO_PAD.encode(signature))
+                signature: arkret_sdk::Base64UrlString::new(URL_SAFE_NO_PAD.encode(signature))
                     .map_err(|error| garth::Error::Protocol(error.to_string()))?,
             })
         },

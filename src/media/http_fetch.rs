@@ -3,7 +3,9 @@
 use arkret_sdk::Did;
 #[cfg(target_arch = "wasm32")]
 use arkret_sdk::identity::host_is_safe_for_outbound;
-use arkret_sdk::identity::{DID_WEB_MAX_DOCUMENT_BYTES, DidWebDocumentOutcome, DidWebResolver};
+use arkret_sdk::identity::{
+    DID_WEB_MAX_DOCUMENT_BYTES, DidWebDocumentHttpResponse, DidWebResolver,
+};
 
 #[cfg(target_arch = "wasm32")]
 fn url_host_is_safe(url: &str) -> bool {
@@ -79,15 +81,6 @@ pub(crate) async fn fetch_did_bytes(
     max_bytes: usize,
 ) -> Option<(String, Vec<u8>)> {
     fetch_guarded_bytes(http, url, max_bytes, None).await
-}
-
-pub(crate) async fn fetch_arkret_bytes(
-    http: &reqwest::Client,
-    url: &str,
-    max_bytes: usize,
-    operation: &str,
-) -> Option<(String, Vec<u8>)> {
-    fetch_guarded_bytes(http, url, max_bytes, Some(operation)).await
 }
 
 async fn fetch_guarded_bytes(
@@ -166,10 +159,10 @@ async fn fetch_did_bytes_from_url(
 pub(crate) async fn fetch_did_web_document(
     http: &reqwest::Client,
     did: &Did,
-) -> Option<DidWebDocumentOutcome> {
+) -> Option<DidWebDocumentHttpResponse> {
     let url = DidWebResolver::document_url(did).ok()?;
     let (content_type, body) = fetch_did_bytes(http, &url, DID_WEB_MAX_DOCUMENT_BYTES).await?;
-    Some(DidWebDocumentOutcome {
+    Some(DidWebDocumentHttpResponse {
         url,
         content_type,
         body,

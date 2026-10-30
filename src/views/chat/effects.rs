@@ -134,6 +134,7 @@ mod tests {
 
     fn row(id: &str, realm: &str) -> ChatMessage {
         ChatMessage {
+            protocol_content: None,
             local_scope: None,
             realm_id: realm.to_owned(),
             id: id.to_owned(),
@@ -415,6 +416,8 @@ pub(super) fn ChatEffects(
         )| {
             let strand = selected_channel();
             let credential = token();
+            let _session_generation = (session_context.session_generation)();
+            let _account = (session_context.active_account)();
             let _epoch = realm_live_epoch();
             let readable_realm_strand = channels().iter().any(|channel| {
                 channel.strand_id == strand
@@ -502,7 +505,7 @@ pub(super) fn ChatEffects(
                                 &base,
                                 api_token.clone(),
                                 |http| async move {
-                                    let list = http.agent_list().await?;
+                                    let list = http.agent_page().await?;
                                     Ok::<_, anyhow::Error>(
                                         crate::views::agents::mentionable_owned_agent_slugs(
                                             list.agents,
@@ -567,7 +570,8 @@ pub(super) fn ChatEffects(
             if *shared_pins.peek() != next_shared {
                 event_sink.emit(ChatProjectionEvent::SharedPins(next_shared));
             }
-            let saved_entries = snapshot.saved_account_data;
+            let saved_entries: std::collections::BTreeMap<_, _> =
+                snapshot.saved_account_data.into_iter().collect();
             let next_saved = private_saved_targets_from_account_data(
                 &saved_entries,
                 CHAT_PRIVATE_SAVED_COLLECTION_TITLE,
@@ -714,10 +718,12 @@ pub(super) fn ChatEffects(
             let Some(material) = plan.material else {
                 return;
             };
+            let Some(receipt_scope) = plan.scope else {
+                return;
+            };
             let strand_id = strand;
             let api_token = token();
             let base = base.clone();
-            let realm = realm.clone();
             let authority = authority_for_receipt.clone();
             let device = device.clone();
             // The seal burns the SDK-owned nonce counter into the persisted
@@ -731,9 +737,7 @@ pub(super) fn ChatEffects(
                     |submitter| async move {
                         submitter
                             .send_scope_signal(
-                                arkret_sdk::ScopeRef::Realm {
-                                    realm_id: arkret_sdk::RealmId::new(realm.clone())?,
-                                },
+                                receipt_scope,
                                 &authority,
                                 &device,
                                 &material,
@@ -896,7 +900,7 @@ pub(super) fn ChatEffects(
                                 visible.insert(
                                     agent_id,
                                     participation_allows_public_reply(
-                                        &outcome.agent_participation_entries,
+                                        &outcome.participation_entries,
                                         &realm,
                                         circle.as_deref(),
                                         &strand,

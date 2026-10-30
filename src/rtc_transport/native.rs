@@ -421,23 +421,25 @@ mod tests {
     use crate::media::rtc::DesiredMedia;
 
     fn session() -> JoinedMediaSession {
+        let participant_binding = arkret_sdk::CallMediaParticipantBinding {
+            signature: "signature".to_owned(),
+            issuer_kid: arkret_sdk::DidUrl::new("did:web:media.example#key-1").unwrap(),
+            expires_at: chrono::DateTime::parse_from_rfc3339("2026-04-26T00:05:00.000Z")
+                .unwrap()
+                .with_timezone(&chrono::Utc),
+        };
         JoinedMediaSession {
             backend_kind: "livekit".to_owned(),
             focus_id: "fra-1".to_owned(),
             connect_url: "wss://livekit.example".to_owned(),
             backend_token: "jwt".to_owned(),
             participant_id: "ak:rtc_participant:self".to_owned(),
-            participant_binding: arkret_sdk::CallMediaParticipantBinding {
-                sig: "sig".to_owned(),
-                issuer_kid: arkret_sdk::DidUrl::new("did:web:media.example#key-1").unwrap(),
-                expires_at: chrono::DateTime::parse_from_rfc3339("2026-04-26T00:05:00.000Z")
-                    .unwrap()
-                    .with_timezone(&chrono::Utc),
-            },
+            participant_binding,
+            device_id: "ak:device:01904100-0000-7000-8000-000000000005".to_owned(),
+            actor_id: ice_config().actor_id,
             ice_config: ice_config(),
             frame_key: zeroize::Zeroizing::new(vec![7u8; 32]),
             desired_media: DesiredMedia::audio_video(),
-            device_id: "ak:device:01904100-0000-7000-8000-000000000005".to_owned(),
             realm_id: "ak:realm:AVxu7KCm9qmiOqakDKBXUia9rbZ3NBurP875XbqG1rbs".to_owned(),
             call_id: "ak:call:AYf05kF8z4cSo8r6qmqXgu4KPuv2YtKBlsE00FOmblaz".to_owned(),
             epoch_id: 0,

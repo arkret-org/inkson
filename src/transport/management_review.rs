@@ -5,7 +5,7 @@ use arkret_sdk::{
     ApprovalSignature, ApprovalSignatureInput, ApprovalSignatureProof, ApprovalSignatureProofKind,
     ApprovalTarget, CapabilityActionId, DidUrl, Event, ManagementOperation,
     ManagementReviewDecision, ManagementReviewDecisionRequestBody,
-    ManagementReviewLookupRequestBody, ManagementReviewOutcome, ManagementReviewRequestBody,
+    ManagementReviewLookupRequestBody, ManagementReviewRequestBody, ManagementReviewResponseBody,
     ManagementReviewStatus, ManagementReviewTarget, RealmId, ScopeRef,
 };
 use zeroize::Zeroizing;
@@ -14,7 +14,7 @@ use zeroize::Zeroizing;
 #[derive(Clone)]
 pub(crate) struct FrozenReview {
     pub request: ManagementReviewRequestBody,
-    pub outcome: ManagementReviewOutcome,
+    pub outcome: ManagementReviewResponseBody,
     pub account: AccountId,
     pub session_generation: u64,
     pub accepted_commit: Option<arkret_sdk::RealmCommit>,
@@ -50,9 +50,7 @@ pub(crate) fn candidate(
     request: &ManagementReviewRequestBody,
 ) -> anyhow::Result<(&Event, AccountId)> {
     request.validate()?;
-    let ManagementReviewTarget::Event { event } = &request.target else {
-        anyhow::bail!("This interface supports the original Agent join and public intents")
-    };
+    let ManagementReviewTarget::Event { event } = &request.target;
     anyhow::ensure!(
         event.scope_ref == request.effective_scope
             && matches!(&event.scope_ref, ScopeRef::Realm { realm_id } if realm_id == &event.realm_id)
@@ -109,7 +107,7 @@ pub(crate) fn candidate(
 
 pub(crate) fn bind_outcome(
     request: &ManagementReviewRequestBody,
-    outcome: &ManagementReviewOutcome,
+    outcome: &ManagementReviewResponseBody,
 ) -> anyhow::Result<()> {
     let (event, _) = candidate(request)?;
     anyhow::ensure!(
@@ -141,7 +139,7 @@ pub(crate) async fn freeze_and_request<F: FnOnce(PreparedReview)>(
         agent != controller,
         "Select the Agent beneficiary, not its controller"
     );
-    let submitter = crate::event_submit::EventSubmitter::from_current_session(http.clone());
+    let submitter = crate::app::runtime_adapter::event_submitter(http.clone());
     let local = match operation {
         ManagementOperation::Join => {
             let binding = submitter
@@ -185,6 +183,7 @@ pub(crate) async fn freeze_and_request<F: FnOnce(PreparedReview)>(
     // enqueue, forwarding, membership transition, or Welcome is performed here.
     let signed = submitter.author_for_direct_submission(&local).await?;
     let request = ManagementReviewRequestBody {
+        configuration_ref: None,
         request_id: arkret_sdk::RequestId::new_v7_at(crate::clock::now_unix_ms()).to_string(),
         effective_scope: ScopeRef::Realm { realm_id: realm },
         management_operation: operation,
@@ -371,7 +370,7 @@ pub(crate) async fn approve<F: FnOnce(PreparedDecision)>(
     root_generation: u64,
     retained: Option<PreparedDecision>,
     retain: F,
-) -> anyhow::Result<ManagementReviewOutcome> {
+) -> anyhow::Result<ManagementReviewResponseBody> {
     if let Some(prepared) = retained {
         anyhow::ensure!(
             prepared.body.decision == ManagementReviewDecision::Approve,
@@ -476,7 +475,7 @@ pub(crate) async fn approve<F: FnOnce(PreparedDecision)>(
                 event_id: event.event_id.clone(),
             },
             request_canonical_digest: fresh.target_digest.clone(),
-            operation: "ak.self.events.command.submit.v1".into(),
+            operation: arkret_wire::ServiceOperationId::SELF_EVENTS_COMMAND_SUBMIT_V1.into(),
             action,
             realm_id: event.realm_id.clone(),
             initiating_actor_id: event.actual_signer().clone(),
@@ -502,7 +501,7 @@ pub(crate) async fn approve<F: FnOnce(PreparedDecision)>(
         &control,
         &signature,
         event,
-        "ak.self.events.command.submit.v1",
+        arkret_wire::ServiceOperationId::SELF_EVENTS_COMMAND_SUBMIT_V1,
         action,
         approved_at,
     )?;
@@ -534,7 +533,7 @@ async fn send_prepared_decision(
     http: &arkret_sdk::http_client::Client,
     review: &FrozenReview,
     prepared: &PreparedDecision,
-) -> anyhow::Result<ManagementReviewOutcome> {
+) -> anyhow::Result<ManagementReviewResponseBody> {
     check_session(&prepared.account, prepared.session_generation)?;
     anyhow::ensure!(
         prepared.account == review.account
@@ -585,7 +584,7 @@ pub(crate) async fn retry_decision(
     http: &arkret_sdk::http_client::Client,
     review: &FrozenReview,
     prepared: &PreparedDecision,
-) -> anyhow::Result<ManagementReviewOutcome> {
+) -> anyhow::Result<ManagementReviewResponseBody> {
     send_prepared_decision(http, review, prepared).await
 }
 
@@ -595,7 +594,7 @@ pub(crate) async fn decide_without_approval<F: FnOnce(PreparedDecision)>(
     decision: ManagementReviewDecision,
     retained: Option<PreparedDecision>,
     retain: F,
-) -> anyhow::Result<ManagementReviewOutcome> {
+) -> anyhow::Result<ManagementReviewResponseBody> {
     anyhow::ensure!(
         decision != ManagementReviewDecision::Approve,
         "Approval requires a native control signature"
@@ -625,7 +624,7 @@ pub(crate) async fn decide_without_approval<F: FnOnce(PreparedDecision)>(
 pub(crate) async fn submit_approved(
     http: &arkret_sdk::http_client::Client,
     review: &FrozenReview,
-) -> anyhow::Result<crate::models::SubmitEventResult> {
+) -> anyhow::Result<crate::models::EventSubmissionProgress> {
     check_session(&review.account, review.session_generation)?;
     anyhow::ensure!(
         review.request.requester_actor_id == ActorId::account(review.account.clone()),
@@ -645,9 +644,11 @@ pub(crate) async fn submit_approved(
         "Review is not approved"
     );
     let (event, _) = candidate(&review.request)?;
-    let submitter = crate::event_submit::EventSubmitter::from_current_session(http.clone());
+    let submitter = crate::app::runtime_adapter::event_submitter(http.clone());
     let result = submitter
-        .submit_management_review_event(event, current.approval_signatures)
+        .submit_management_review_event(event, current.approval_signatures, || {
+            check_session(&review.account, review.session_generation)
+        })
         .await?;
     check_session(&review.account, review.session_generation)?;
     anyhow::ensure!(

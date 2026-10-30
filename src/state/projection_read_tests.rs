@@ -34,15 +34,16 @@ fn signed_link() -> LocallyAuthenticatedIdentityLink {
     let placeholder = arkret_sdk::canonical::sha256_digest(b"placeholder");
     let mut link: arkret_sdk::IdentityLink = serde_json::from_value(serde_json::json!({
         "schema": arkret_sdk::IdentityLink::SCHEMA,
-        "pairwise_actor_id": arkret_sdk::project_did_to_core_id(&did).unwrap(),
+        "status": "active",
+        "pairwise_id": arkret_sdk::project_did_to_core_id(&did).unwrap(),
         "principal_id": "ak:did_core:web:alice.example",
         "device_id": "ak:device:01964137-0000-7000-8000-000000000001",
         "realm_id": REALM,
         "trust_domain": "ak:trust_domain:station.example",
-        "mls_group_id": "AQID", "mls_leaf_index": 4, "mls_epoch": 2,
+        "mls_group_id": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "mls_leaf_index": 4, "mls_epoch": "2",
         "response_signing_verification_method": method,
         "response_signing_algorithm": "Ed25519",
-        "response_signing_public_key_b64u": arkret_sdk::base64url_encode(public_key),
+        "response_signing_public_key_base64url": arkret_sdk::base64url_encode(public_key),
         "response_signing_public_key_digest": arkret_sdk::canonical::sha256_digest(public_key),
         "effective_at": "2026-10-06T00:00:00.000Z",
         "proof": {"verification_method": method, "signature_algorithm": "Ed25519",
@@ -83,7 +84,10 @@ fn install_empty_signed_cut(store: &mut LocalStateStore) {
         "alice.example",
         "ak:device:01964137-0000-7000-8000-000000000001",
     );
+    let realm = bundle.realm_id.clone();
     let mut snapshot = arkret_sdk::RealmStateSnapshot {
+        purpose: arkret_wire::RealmSnapshotPurpose::FullRecovery,
+        history_basis: None,
         snapshot_id: arkret_sdk::RealmSnapshotId::from_digest([0; 32]),
         realm_id: realm,
         governance_generation: 0,
@@ -102,19 +106,19 @@ fn install_empty_signed_cut(store: &mut LocalStateStore) {
     store
         .cached
         .verified_sidecar_current
-        .insert(REALM.into(), snapshot);
+        .insert(REALM.into(), snapshot.into());
 }
 
 #[test]
 fn cache_projection_preserves_exact_receive_bytes_without_copying_account_history() {
-    use crate::mls::persistence::encrypt_state;
+    use garth::mls::checkpoint::encrypt_state;
     let (_directory, mut store) = store();
     add_unrelated_history(&mut store);
     store.cached.mls_private_plaintext.insert(
         REALM.into(),
-        BTreeMap::from([(
+        persistent_map([(
             "strand".into(),
-            BTreeMap::from([("body".into(), "author".into())]),
+            persistent_map([("body".to_owned(), "author".to_owned())]),
         )]),
     );
     let original = encrypt_state(REALM, "AQID", 1, b"before", "secret", b"salt");
@@ -125,9 +129,9 @@ fn cache_projection_preserves_exact_receive_bytes_without_copying_account_histor
         .insert(REALM.into(), original.clone());
     store.cached.mls_decrypted_plaintext.insert(
         REALM.into(),
-        BTreeMap::from([
-            ("digest".into(), "before".into()),
-            ("base-only".into(), "unchanged".into()),
+        persistent_map([
+            ("digest".to_owned(), "before".to_owned()),
+            ("base-only".into(), "unchanged".to_owned()),
         ]),
     );
     let link = signed_link();
@@ -137,7 +141,7 @@ fn cache_projection_preserves_exact_receive_bytes_without_copying_account_histor
         overlay.recovery_snapshots.insert(REALM.into(), original);
         overlay.plaintexts.insert(
             REALM.into(),
-            BTreeMap::from([("digest".into(), "after".into())]),
+            BTreeMap::from([("digest".to_owned(), "after".to_owned())]),
         );
         overlay.identity_links.insert("link".into(), link);
     }
@@ -178,7 +182,12 @@ fn identity_link_replay_is_narrow_but_conflicting_authenticated_bytes_still_fail
             .cache_locally_authenticated_identity_link(link.clone())
             .unwrap();
         assert_eq!(
-            store.locally_authenticated_identity_link(&link.identity_link.realm_id, "AQID", 2, 4,),
+            store.locally_authenticated_identity_link(
+                &link.identity_link.realm_id,
+                "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                2,
+                4,
+            ),
             Some(link.clone())
         );
     }
@@ -198,7 +207,12 @@ fn identity_link_replay_is_narrow_but_conflicting_authenticated_bytes_still_fail
             .is_err()
     );
     assert_eq!(
-        store.locally_authenticated_identity_link(&link.identity_link.realm_id, "AQID", 2, 4,),
+        store.locally_authenticated_identity_link(
+            &link.identity_link.realm_id,
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            2,
+            4,
+        ),
         Some(link)
     );
 }
@@ -208,7 +222,9 @@ fn admitted_sidecar_cut_reads_do_not_copy_other_account_history() {
     let (_directory, mut store) = store();
     install_empty_signed_cut(&mut store);
     add_unrelated_history(&mut store);
-    let expected = store.cached.verified_sidecar_current[REALM].clone();
+    let expected = store.cached.verified_sidecar_current[REALM]
+        .clone()
+        .into_inner();
     FULL_STATE_READ_COPIES.with(|count| count.set(0));
     for _ in 0..100 {
         let (snapshot, histories) = store.verified_sidecar_inputs(REALM).unwrap();
@@ -221,15 +237,34 @@ fn admitted_sidecar_cut_reads_do_not_copy_other_account_history() {
 }
 
 #[test]
+fn search_privacy_and_session_reads_do_not_copy_unrelated_history() {
+    let (_directory, mut store) = store();
+    add_unrelated_history(&mut store);
+    store
+        .cached
+        .plain_local_data
+        .insert("ordinary-key".into(), "value".into());
+    FULL_STATE_READ_COPIES.with(|count| count.set(0));
+    let _ = crate::sidecar::SidecarPrivacyGate::from_store(&store, "ak:did_core:web:alice.example");
+    assert_eq!(
+        store.load_plain_local_data("ordinary-key").as_deref(),
+        Some("value")
+    );
+    assert_eq!(store.plain_local_data_keys(), vec!["ordinary-key"]);
+    assert!(store.session_grant().is_none());
+    assert_eq!(FULL_STATE_READ_COPIES.with(|count| count.get()), 0);
+}
+
+#[test]
 fn narrow_projection_reads_follow_active_account_instead_of_a_detached_old_cache() {
     let (_directory, mut store) = store();
     install_empty_signed_cut(&mut store);
     store.cached.server_trust_domain = Some("ak:trust_domain:alice.example".into());
     store.cached.mls_private_plaintext.insert(
         REALM.into(),
-        BTreeMap::from([(
+        persistent_map([(
             "strand".into(),
-            BTreeMap::from([("body".into(), "alice secret".into())]),
+            persistent_map([("body".to_owned(), "alice secret".to_owned())]),
         )]),
     );
     store.flush().unwrap();
@@ -256,4 +291,8 @@ fn narrow_projection_reads_follow_active_account_instead_of_a_detached_old_cache
         "Alice's old plaintext cannot enter Bob's secure namespace"
     );
     assert_eq!(stale.e2ee_plaintext_cache_usage().entry_count(), 0);
+}
+
+fn persistent_map<V: Clone, const N: usize>(entries: [(String, V); N]) -> imbl::OrdMap<String, V> {
+    entries.into_iter().collect()
 }

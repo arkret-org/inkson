@@ -738,7 +738,7 @@ fn location_value_from_text(value: &str) -> Option<arkret_sdk::CalendarEventLoca
             title: Some(trimmed.to_owned()),
             address: None,
             geo_uri: None,
-            url: None,
+            uri: None,
         })
     })
 }
@@ -760,6 +760,55 @@ fn parse_calendar_attendees(value: &str) -> Result<Vec<arkret_sdk::CalendarAtten
     }
     serde_json::from_str(value)
         .map_err(|err| format!("calendar attendees must be a JSON array: {err}"))
+}
+
+pub(crate) fn calendar_fields_from_metadata_and_event(
+    fields: &Map<String, Value>,
+    decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
+    strand_id: &str,
+    event: Option<&Value>,
+) -> CalendarCardFields {
+    let mut calendar = calendar_fields_from_metadata(fields, decrypt_ctx, strand_id);
+    let Some(event) = event else {
+        return calendar;
+    };
+    let Some(envelope) = fields
+        .get(arkret_sdk::CALENDAR_METADATA_FIELDS_NAMESPACE)
+        .and_then(|calendar| calendar.get("location"))
+        .filter(|value| value_is_mls_envelope(value))
+    else {
+        return calendar;
+    };
+    let location = decrypt_ctx
+        .and_then(|ctx| {
+            private_strand_event_field_value(
+                ctx,
+                event,
+                strand_id,
+                CALENDAR_LOCATION_PRIVATE_PATH,
+                envelope,
+            )
+        })
+        .and_then(|value| serde_json::from_value::<arkret_sdk::CalendarLocation>(value).ok())
+        .filter(|location| location.validate().is_ok());
+    if let Some(location) = location {
+        install_authenticated_calendar_location(&mut calendar, location);
+    } else {
+        calendar.location.clear();
+        calendar.location_locked = true;
+    }
+    calendar
+}
+
+pub(crate) fn install_authenticated_calendar_location(
+    calendar: &mut CalendarCardFields,
+    location: arkret_sdk::CalendarLocation,
+) {
+    if let Ok(value) = serde_json::to_value(location) {
+        calendar.location = calendar_location_plaintext_label(&value);
+        calendar.location_source = Some(value);
+        calendar.location_locked = false;
+    }
 }
 
 fn calendar_location_display_value(
@@ -793,7 +842,7 @@ fn calendar_location_plaintext_label(value: &Value) -> String {
     let Some(object) = value.as_object() else {
         return String::new();
     };
-    ["title", "address", "url", "geo_uri"]
+    ["title", "address", "uri", "geo_uri"]
         .iter()
         .find_map(|key| object.get(*key).and_then(Value::as_str))
         .map(str::trim)
@@ -983,7 +1032,7 @@ fn decrypt_rsvp_winner(
     }
     let strand = arkret_sdk::StrandId::new(strand_id.to_owned()).ok()?;
     let strand_value = current.entries.iter().find_map(|row| match row {
-        arkret_wire::TypedCurrentRow::Value {
+        arkret_wire::CurrentState::Value {
             selector:
                 arkret_wire::CurrentSelector::Strand {
                     strand_id: selected,

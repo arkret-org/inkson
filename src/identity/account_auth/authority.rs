@@ -7,7 +7,7 @@ use crate::transport::TransportClient;
 
 thread_local! {
     /// Process-wide cache of resolved account authorities, keyed by principal
-    /// server URL. The `/_arkret/describe` `auth_metadata` this is derived from
+    /// server URL. The `/_arkret/describe` `authentication_metadata` this is derived from
     /// is pinned durably before entering this connection-local cache.
     /// Without it, every session-grant rotation rebuilds a fresh `TransportClient`
     /// and re-fetches describe (the per-instance `describe_cached` OnceCell is
@@ -35,7 +35,7 @@ pub fn clear_authority_resolver_cache() {
 ///
 /// We derive the link from the supplied base URL synchronously
 /// (origin + `/handles/me`). Callers that need the Account Authority origin
-/// should resolve `auth_metadata.account_authority.gate_account_base_url` first.
+/// should resolve `authentication_metadata.account_authority.gate_account_base_url` first.
 /// Returns `None` for an unparseable base URL.
 pub fn issuer_handle_management_url(base_url: &str) -> Option<String> {
     let parsed = Url::parse(base_url.trim()).ok()?;
@@ -55,10 +55,10 @@ pub async fn resolve_principal_gate_account_base_url(station_url: &str) -> anyho
 
 /// T1.Y4 — Account Authority resolver. The Station's root
 /// `/_arkret/describe` (service-surface §2.5.1) publishes a strongly-typed
-/// `auth_metadata.account_authority.gate_account_base_url`; every Arkret
+/// `authentication_metadata.account_authority.gate_account_base_url`; every Arkret
 /// `/_arkret/gate/account/*` request MUST be derived from that single base,
 /// and the available authentication methods come from
-/// `auth_metadata.methods[]`.
+/// `authentication_metadata.methods[]`.
 ///
 /// The resolver fails closed: if the describe response does not carry a strong
 /// `account_authority`, it errors instead of guessing a per-operation route.
@@ -72,14 +72,14 @@ pub struct AuthorityResolver {
     /// Station trust domain used by the principal-control bootstrap.
     pub principal_trust_domain: arkret_sdk::TrustDomainId,
     /// Authentication methods the Account Authority accepts.
-    pub methods: Vec<arkret_sdk::AuthMethod>,
+    pub methods: Vec<arkret_sdk::AuthenticationMethod>,
 }
 
 impl AuthorityResolver {
     /// Discover the Account Authority from the Station's root
-    /// `/_arkret/describe` and its strongly-typed `auth_metadata`.
+    /// `/_arkret/describe` and its strongly-typed `authentication_metadata`.
     pub async fn discover(station_url: &str) -> anyhow::Result<Self> {
-        // describe/`auth_metadata` is deployment-stable, so resolve ONCE per
+        // describe/`authentication_metadata` is deployment-stable, so resolve ONCE per
         // Station and reuse it. This is the choke point every
         // session-grant rotation flows through; caching it here is what stops
         // an upstream refresh loop from storming `/_arkret/describe`.
@@ -100,7 +100,7 @@ impl AuthorityResolver {
         station_url: &str,
         description: &arkret_sdk::ServiceDescribe,
     ) -> anyhow::Result<Self> {
-        let metadata = &description.auth_metadata;
+        let metadata = &description.authentication_metadata;
         let gate_account_base_url = resolve_gate_account_base_url(station_url, metadata)?;
         let principal_audience = description.service_id.to_string();
         Ok(Self {
@@ -111,8 +111,8 @@ impl AuthorityResolver {
         })
     }
 
-    /// Pick the first `oidc` method from `auth_metadata.methods[]`.
-    pub fn oidc_method(&self) -> anyhow::Result<arkret_sdk::AuthMethod> {
+    /// Pick the first `oidc` method from `authentication_metadata.methods[]`.
+    pub fn oidc_method(&self) -> anyhow::Result<arkret_sdk::AuthenticationMethod> {
         if let Some(method) = self
             .methods
             .iter()
@@ -124,15 +124,15 @@ impl AuthorityResolver {
     }
 }
 
-/// Derive the single client-visible `gate_account_base_url` from `auth_metadata`.
+/// Derive the single client-visible `gate_account_base_url` from `authentication_metadata`.
 ///
 /// The published base is mandatory; the origin is not a fallback route.
 pub(crate) fn resolve_gate_account_base_url(
     _station_url: &str,
-    metadata: &arkret_sdk::AuthMetadata,
+    metadata: &arkret_sdk::AuthenticationMetadata,
 ) -> anyhow::Result<String> {
     let authority = metadata.account_authority.as_ref().ok_or_else(|| {
-        anyhow::anyhow!("Station describe is missing auth_metadata.account_authority")
+        anyhow::anyhow!("Station describe is missing authentication_metadata.account_authority")
     })?;
     let base = Url::parse(&authority.gate_account_base_url)?;
     arkret_sdk::validate_connection_url(&base, true)?;

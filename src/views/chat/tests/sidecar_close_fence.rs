@@ -23,7 +23,10 @@ fn fixture() -> (
     ));
     let (bundle, ..) =
         verified_realm_fixture_as(realm.clone(), Vec::new(), "alice.example", device.as_str());
+    let realm = bundle.realm_id.clone();
     let mut snapshot = arkret_sdk::RealmStateSnapshot {
+        purpose: arkret_wire::RealmSnapshotPurpose::FullRecovery,
+        history_basis: None,
         snapshot_id: arkret_sdk::RealmSnapshotId::from_digest([0; 32]),
         realm_id: realm.clone(),
         governance_generation: 0,
@@ -69,7 +72,7 @@ fn fixture() -> (
     // signed complete empty private cut, without rebuilding any MLS history.
     state
         .verified_sidecar_current
-        .insert(realm.to_string(), snapshot);
+        .insert(realm.to_string(), snapshot.into());
     store.save(state);
     (directory, store, authority, device, realm.to_string())
 }

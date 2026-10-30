@@ -7,7 +7,7 @@ use dioxus_router::hooks::{use_navigator, use_route};
 use serde_json::{Map, Value, json};
 
 use crate::components::{
-    ActorIdentityLabel, EmptyState, EmptyStateKind, SecurityStateBadge, UiIcon, WriteStateIcon,
+    ActorIdentityLabel, EmptyState, EmptyStateKind, SecurityStateBadge, UiIcon,
 };
 use crate::rank::rank_for_drop;
 use crate::routes::Route;
@@ -25,6 +25,7 @@ mod card_detail_surface;
 mod controller;
 mod drag_drop_controller;
 mod effects;
+mod projection_reads;
 // card due-calendar pure calculation helpers moved to `due_calendar`
 // (move-only).
 mod due_calendar;
@@ -739,7 +740,7 @@ fn toast_editor_bootstrap_script(
     // extracts the picked file's bytes and hands them to Rust over the
     // bidirectional eval channel; the upload runs through the canonical
     // `BlobEndpoints::upload_bytes_scoped` pipeline and Rust sends the
-    // typed `BlobUploadOutcome` fields back for the markdown insert.
+    // typed `BlobUploadResponseBody` fields back for the markdown insert.
     let nextUploadId = 1;
     const pendingUploads = new Map();
 
@@ -842,23 +843,11 @@ fn toast_editor_cleanup_script(host_id: &str) -> Option<String> {
 
 #[component]
 fn WriteStateBadge(state: CardState, icon_only: Option<bool>) -> Element {
-    let icon_only = icon_only.unwrap_or(false);
-    let class_name = if icon_only {
-        format!("{} write-state-badge is-icon-only", state.class_name())
-    } else {
-        format!("{} write-state-badge", state.class_name())
-    };
-    let data_state = state.data_state();
-    let title = format!("{} - {}", state.label(), state.status_title());
     let write_state = state.write_state();
     rsx! {
-        span {
-            class: "{class_name}",
-            "data-testid": "write-state-badge",
-            "data-write-state": "{data_state}",
-            title: "{title}",
-            WriteStateIcon { state: write_state }
-            span { class: "write-state-label", "{state.label()}" }
+        crate::components::write_state::WriteStateBadge {
+            state: write_state,
+            icon_only,
         }
     }
 }
@@ -1028,6 +1017,28 @@ pub fn KanbanPanel(
             pending_board_creates_from_ops(&store.load().raw_operations, &pending_realm_id)
         }
     });
+    let inventory_session = crate::app::SessionContext::get();
+    let current_inventory_stamp = use_memo(use_reactive((&local_realm_id,), move |(realm,)| {
+        let active = (inventory_session.active_account)()?;
+        let store = state_store.read();
+        if store.active_authority().as_ref() != Some(&active.authority) {
+            return None;
+        }
+        store.current_product_view_stamp(&realm)
+    }));
+    let current_inventory = use_memo(use_reactive((&local_realm_id,), move |(realm,)| {
+        if current_inventory_stamp().is_none() {
+            return Ok(None);
+        }
+        let Some(view) = state_store.peek().current_product_view() else {
+            return Ok(None);
+        };
+        if view.realm_id != realm {
+            return Ok(None);
+        }
+        kanban_inventory_from_current(&view, selected_board().as_ref())
+            .map_err(|error| error.to_string())
+    }));
     // `columns` merges the server's current Space/Strand baseline with the
     // visible Event log. The baseline recovers current objects whose create
     // Event predates a `since_join` floor; Events provide signed updates,
@@ -1045,16 +1056,33 @@ pub fn KanbanPanel(
                 .map(|board_id| board_id.to_string())
                 .unwrap_or_default();
             let decrypt_store = state_store.read();
+            let active = (inventory_session.active_account)();
+            if active.as_ref().is_none_or(|active| {
+                decrypt_store.active_authority().as_ref() != Some(&active.authority)
+            }) {
+                return Vec::new();
+            }
             let raw_operations = decrypt_store.load().raw_operations;
-            let projected_containers = lifecycle_container_projection();
-            let projected_strands = lifecycle_strand_projection();
+            if decrypt_store.account_scope_read_denied(&seed_realm_id) {
+                return Vec::new();
+            }
+            let (projected_containers, projected_strands, complete_current) =
+                match current_inventory() {
+                    Ok(Some(inventory)) => (inventory.containers, inventory.strands, true),
+                    Ok(None) => (
+                        lifecycle_container_projection(),
+                        lifecycle_strand_projection(),
+                        false,
+                    ),
+                    Err(_) => return Vec::new(),
+                };
             let decrypt_ctx = mls_decrypt_ctx_if_ready(
                 &decrypt_store,
                 &decrypt_realm_id,
                 &decrypt_authority,
                 &decrypt_device,
             );
-            if raw_operations.is_empty() && !seed_columns.is_empty() {
+            if !complete_current && raw_operations.is_empty() && !seed_columns.is_empty() {
                 // Demo / seed-fallback columns: layer local optimistic ops on top.
                 let cols = overlay_local_card_create_records(
                     seed_columns.clone(),
@@ -1066,7 +1094,7 @@ pub fn KanbanPanel(
                 return overlay_local_card_assignment_records(cols, &raw_operations);
             }
             let entries = decrypt_store.realm_current_state_entries(&seed_realm_id);
-            let (mut cols, ..) = project_board_with_projection_for_actor(
+            let (mut cols, ..) = project_board_with_current_inventory_for_actor(
                 &raw_operations,
                 &projected_containers,
                 &projected_strands,
@@ -1075,6 +1103,7 @@ pub fn KanbanPanel(
                 decrypt_ctx.as_ref(),
                 &self_actor_id,
                 &entries,
+                complete_current,
             );
             install_current_card_sources(
                 &mut cols,
@@ -1086,7 +1115,11 @@ pub fn KanbanPanel(
             );
             let cols =
                 overlay_pending_card_updates(cols, &raw_operations, &entries, decrypt_ctx.as_ref());
-            overlay_local_card_assignment_records(cols, &raw_operations)
+            overlay_local_card_assignment_records_at_current(
+                cols,
+                &raw_operations,
+                complete_current,
+            )
         }
     });
     let mut current_card_page = use_signal(|| 0usize);
@@ -1234,10 +1267,6 @@ pub fn KanbanPanel(
     // plaintext branch. Known-plaintext (`Some(false)`) stays `false`.
     let selected_scope_security_encrypted_or_secure =
         selected_scope_security_encrypted.unwrap_or(true);
-    let projected_strand_ids = lifecycle_strand_projection()
-        .into_iter()
-        .map(|view| view.strand_id)
-        .collect::<BTreeSet<_>>();
     if !state_store.read().realm_allows_spaces(&selected_realm_id) {
         return rsx! {
             div { class: "timeline kanban-panel", "data-testid": "direct-conversation-board-unavailable",
@@ -1254,6 +1283,7 @@ pub fn KanbanPanel(
             KanbanEffects {
                 controller,
                 columns,
+                current_inventory,
                 route: route.clone(),
                 local_realm_id: local_realm_id.clone(),
                 base_url: base_url.clone(),
@@ -1409,7 +1439,7 @@ pub fn KanbanPanel(
                                         {
                                             let pending_label =
                                                 format!("{} ({})", pending.title, pending.status_hint());
-                                            let retryable = pending.is_retryable();
+                                            let retryable = pending.is_retryable() && card_write_ready;
                                             let retry_title = pending.error.clone().unwrap_or_else(|| {
                                                 if retryable {
                                                     "Retry Board creation".to_owned()
@@ -1490,10 +1520,12 @@ pub fn KanbanPanel(
                                     size: ButtonSize::Sm,
                                     class: "btn",
                                     "data-testid": "add-column-button",
-                                    // A pending Board has no protocol id yet, so it
-                                    // cannot be a List `parent_space_id`; the action
-                                    // unlocks when the receipt commits the selection.
-                                    disabled: selected_board_value.is_none(),
+                                    // List authoring needs an accepted parent and
+                                    // the same complete Realm baseline as submission.
+                                    // A visible draft is not an accepted Space.
+                                    disabled: selected_board_value.is_none()
+                                        || !event_write_ready
+                                        || !realm_current_ready,
                                     title: if selected_board_value.is_some() {
                                         crate::i18n::tr("kanban.ui.add_a_list_to_this_board")
                                     } else {
@@ -2045,7 +2077,7 @@ pub fn KanbanPanel(
                                     {
                                         classes.push_str(" dragging-source");
                                     }
-                                    if !displayed_card_state(card, &projected_strand_ids)
+                                    if !card.state
                                         .is_settled()
                                     {
                                         classes.push_str(" is-draft");
@@ -2058,8 +2090,8 @@ pub fn KanbanPanel(
                                 // distinguishable from a server-synced one. The
                                 // archive-then-recreate promote pattern waits on
                                 // this leaving the draft state.
-                                "data-card-state": displayed_card_state(card, &projected_strand_ids).data_state(),
-                                "data-card-draft": if displayed_card_state(card, &projected_strand_ids).is_settled() { "false" } else { "true" },
+                                "data-card-state": card.state.data_state(),
+                                "data-card-draft": if card.state.is_settled() { "false" } else { "true" },
                                 draggable: "true",
                                 // Card-level drop target: drop on this card
                                 // means "insert above this card". The
@@ -2175,7 +2207,7 @@ pub fn KanbanPanel(
                                         title: kanban_title_label(&card.title, &card.id, &crate::i18n::tr("kanban.title_pending")),
                                         {kanban_title_label(&card.title, &card.id, &crate::i18n::tr("kanban.title_pending"))}
                                     }
-                                    if !displayed_card_state(card, &projected_strand_ids).is_settled() {
+                                    if !card.state.is_settled() {
                                         span {
                                             class: "badge blue board-card-draft-badge",
                                             "data-testid": "kanban-card-draft-badge",
@@ -2245,7 +2277,7 @@ pub fn KanbanPanel(
                                         // draft card would just round-trip to a
                                         // rejection; we fail closed locally and tell
                                         // the user to wait for the draft to settle.
-                                        let card_settled = displayed_card_state(card, &projected_strand_ids)
+                                        let card_settled = card.state
                                             .is_settled();
                                         let archive_enabled = card_settled;
                                         let title_text = if !card_settled {
@@ -2928,7 +2960,6 @@ pub fn KanbanPanel(
                     selected_scope_security_encrypted,
                     selected_scope_security_encrypted_or_secure,
                     realm_content_write_ready: card_write_ready,
-                    projected_strand_ids: projected_strand_ids.clone(),
                 }
             }
         }

@@ -168,7 +168,7 @@ pub fn decrypt_mls_account_secret_backup(
     };
     let generation = account_secret_generation(item)?;
     let secret = B64
-        .decode(item.secret_b64u.as_bytes())
+        .decode(item.secret_base64url.as_bytes())
         .map_err(|error| anyhow!("key backup plaintext secret is not base64url: {error}"))?;
     Ok((secret, generation))
 }
@@ -265,14 +265,14 @@ fn opened_single_secret(unlock_key: &[u8], body: &Value) -> Result<Vec<u8>> {
             "single-secret key backup must decrypt to exactly one plaintext item"
         ));
     };
-    B64.decode(item.secret_b64u.as_bytes())
+    B64.decode(item.secret_base64url.as_bytes())
         .map_err(|error| anyhow!("key backup plaintext secret is not base64url: {error}"))
 }
 
 /// Build an HPKE account-secret backup that extends `previous_series_tail`.
 ///
 /// Series metadata is part of the HPKE `info`, so the successor link must be
-/// attached before sealing. Mutating `series_id`, `series_seq`, or
+/// attached before sealing. Mutating `series_id`, `series_sequence`, or
 /// `supersedes_id` afterwards makes the final envelope undecryptable.
 #[allow(clippy::too_many_arguments)]
 pub fn build_mls_account_secret_recovery_public_key_backup_in_series(
@@ -363,7 +363,7 @@ pub fn open_mls_account_secret_recovery_public_key_backup(
         ));
     };
     let secret = String::from_utf8(
-        B64.decode(item.secret_b64u.as_bytes())
+        B64.decode(item.secret_base64url.as_bytes())
             .map_err(|error| anyhow!("account secret is not base64url: {error}"))?,
     )
     .map_err(|err| anyhow!("account secret is not valid UTF-8: {err}"))?;

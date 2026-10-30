@@ -21,7 +21,7 @@ fn test_authority() -> arkret_sdk::AccountId {
     )
 }
 
-fn account_actor() -> arkret_sdk::ActorId {
+pub(super) fn account_actor() -> arkret_sdk::ActorId {
     arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
         crate::mls_api_helpers::principal_core_id(PRINCIPAL).unwrap(),
         arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
@@ -300,7 +300,7 @@ async fn device_authoring_requeries_only_across_a_same_session_device_refresh() 
         crate::identity::device_directory::reset_session_cache();
         crate::identity::authoring_generation::reset_verified_authoring_generations();
         let now = arkret_sdk::canonical::normalize_timestamp_canonical(chrono::Utc::now());
-        let outcome: arkret_models_crypto::KeysQueryOutcome = serde_json::from_value(json!({
+        let outcome: arkret_models_crypto::KeysQueryResponseBody = serde_json::from_value(json!({
             "device_keys": [{"account_id": account, "device_keys": {
                 DEVICE: {
                     "signer_evidence_ref": "ak:signer_evidence:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -311,9 +311,9 @@ async fn device_authoring_requeries_only_across_a_same_session_device_refresh() 
                         "device_authorize_event_id": "ak:event:AfAnsJqSlM9bHVI7P1QBMOEW3p5P1PNQu7BBMpiSnD_e",
                         "authorized_generation_ref": 7,
                         "device_status": "active",
-                        "authorization_window": { "not_before": now, "expires_at": null },
-                        "attested_at": now,
-                        "expires_at": now + chrono::Duration::minutes(5)
+                        "authorization_window": { "not_before": arkret_sdk::canonical::format_timestamp_canonical(now), "expires_at": null },
+                        "attested_at": arkret_sdk::canonical::format_timestamp_canonical(now),
+                        "expires_at": arkret_sdk::canonical::format_timestamp_canonical(now + chrono::Duration::minutes(5))
                     }
                 }
             }}],
@@ -519,7 +519,7 @@ pub(super) fn author_and_sign(
     let mut event = intent
         .author_with_digest_suite(arkret_sdk::DigestSuite::Sha256)
         .unwrap();
-    sign_event_through_message_seam(&mut event, |unsigned| {
+    sign_finalized_event(&mut event, |unsigned| {
         signer
             .sign_sdk_event_with_context(
                 unsigned,
@@ -543,7 +543,7 @@ fn detached_signature(
         created_at: chrono::DateTime::parse_from_rfc3339("2026-05-19T00:00:01.000Z")
             .unwrap()
             .with_timezone(&chrono::Utc),
-        sig: arkret_wire::Base64UrlString::new("AA").unwrap(),
+        signature: arkret_wire::Base64UrlString::new("AA").unwrap(),
     }
 }
 
@@ -779,11 +779,13 @@ fn the_genesis_lane_projection_counts_committed_and_unsettled_attempts() {
     let binding =
         arkret_sdk::MlsGovernanceBindingPayload::realm(realm_id(REALM), None, 0, 0, 0).unwrap();
     let creator = arkret_sdk::MlsGenesisCreatorLeafAuthority {
-        leaf_signature_key_b64u: arkret_sdk::Base64UrlString::new(arkret_sdk::base64url_encode(
-            ed25519_dalek::SigningKey::from_bytes(&[73; 32])
-                .verifying_key()
-                .as_bytes(),
-        ))
+        leaf_signature_key_base64url: arkret_sdk::Base64UrlString::new(
+            arkret_sdk::base64url_encode(
+                ed25519_dalek::SigningKey::from_bytes(&[73; 32])
+                    .verifying_key()
+                    .as_bytes(),
+            ),
+        )
         .unwrap(),
         endpoint: arkret_sdk::MlsWelcomeRecipientEndpoint::Device {
             device_id: arkret_sdk::DeviceId::new(DEVICE).unwrap(),
@@ -1260,6 +1262,96 @@ fn a_rejected_item_reports_the_station_reason_code_on_its_row() {
     ));
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn failed_message_refusal_survives_cold_projection_without_reviving_sending() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("refused-message.json");
+    let event = author_and_sign(
+        message_intent(
+            REALM,
+            "ak:strand:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
+        ),
+        &test_signer(),
+    );
+    let mut store = crate::state::LocalStateStore::with_path(path.clone());
+    let operation = "local-message:refused-before-grant";
+    assert!(record_queued_operation_identity(
+        &mut store,
+        operation,
+        event.event()
+    ));
+    let mut snapshot = snapshot_of(vec![(event.clone(), SendQueueStatus::Failed)]);
+    let item = &mut snapshot.items[0];
+    item.last_error = Some("capability_denied".to_owned());
+    item.last_problem = Some(Box::new(arkret_wire::Problem::new(
+        "capability_denied",
+        403,
+        "message creation is not granted",
+    )));
+    let original = item.submission.clone();
+    assert!(reconcile_settled_outbound_item(&mut store, item));
+    assert_eq!(
+        item.submission, original,
+        "a holder failure must not invent a Station rejection or change signed bytes"
+    );
+    store.flush().unwrap();
+    drop(store);
+    let reopened = crate::state::LocalStateStore::with_path(path);
+    let state = reopened.load();
+    let projected =
+        crate::views::chat::model::chat_messages_from_local_state_with_sidecar(&state, None, None);
+    assert_eq!(projected.len(), 1);
+    assert!(projected[0].failed);
+    assert!(
+        !projected[0].pending,
+        "a definitive refusal is not an unknown submission outcome"
+    );
+    assert_eq!(projected[0].error.as_deref(), Some("capability_denied"));
+    assert_eq!(
+        state.raw_operations[0].payload["event"],
+        serde_json::to_value(event.event()).unwrap()
+    );
+}
+
+#[test]
+fn an_unverified_message_outcome_is_not_turned_into_a_refusal() {
+    let event = author_and_sign(
+        message_intent(
+            REALM,
+            "ak:strand:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
+        ),
+        &test_signer(),
+    );
+    for status in [
+        SendQueueStatus::Queued,
+        SendQueueStatus::Forwarding,
+        SendQueueStatus::Failed,
+    ] {
+        let mut store = local_state_store("unknown-message-outcome");
+        record_queued_operation_identity(
+            &mut store,
+            "local-message:unknown-outcome",
+            event.event(),
+        );
+        let mut snapshot = snapshot_of(vec![(event.clone(), status)]);
+        snapshot.items[0].last_error = Some("unverified response after submission".into());
+        assert!(snapshot.items[0].last_problem.is_none());
+        assert!(!reconcile_settled_outbound_item(
+            &mut store,
+            &snapshot.items[0]
+        ));
+        let projected = crate::views::chat::model::chat_messages_from_local_state_with_sidecar(
+            &store.load(),
+            None,
+            None,
+        );
+        assert_eq!(projected.len(), 1);
+        assert!(projected[0].pending);
+        assert!(!projected[0].failed);
+    }
+}
+
 #[test]
 fn a_committed_item_yields_the_commit_that_covers_exactly_this_event() {
     let signer = test_signer();
@@ -1305,6 +1397,33 @@ fn queued_and_forwarding_items_never_report_realm_commit_acceptance() {
 
 // ───────────────────── durable submission state transitions ────────────────
 
+async fn verify_test_publication(
+    request: arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequestBody,
+) -> Result<
+    arkret_sdk::VerifiedSubmission<
+        arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequestBody,
+    >,
+    String,
+> {
+    let signer = test_signer();
+    let allowed = [
+        account_actor(),
+        arkret_sdk::ActorId::account(test_authority()),
+    ];
+    arkret_sdk::VerifiedSubmission::verify(request, |event| {
+        let actor = allowed
+            .iter()
+            .find(|actor| *actor == event.actual_signer())
+            .ok_or_else(|| {
+                arkret_sdk::identity::IdentityError::Protocol("unknown fixture producer".into())
+            })?;
+        signer
+            .publication_context(actor)
+            .map_err(|error| arkret_sdk::identity::IdentityError::Protocol(error.to_string()))
+    })
+    .map_err(|error| error.to_string())
+}
+
 /// One scripted governance-authority transport.
 ///
 /// It answers exactly one submit per queued Event, so a test can observe the
@@ -1312,19 +1431,20 @@ fn queued_and_forwarding_items_never_report_realm_commit_acceptance() {
 /// rather than asserting on a hand-written state machine.
 #[derive(Clone)]
 struct ScriptedAuthority {
-    unit_outcome: Option<arkret_models_collaboration::authority_commit::SelfAuthoritySubmitOutcome>,
+    unit_outcome:
+        Option<arkret_models_collaboration::authority_commit::SelfAuthoritySubmitResponseBody>,
     expected_unit:
-        Option<arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest>,
-    outcome: arkret_wire::AuthoritySubmitOutcome,
+        Option<arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequestBody>,
+    outcome: arkret_wire::AuthoritySubmitResponseBody,
     submits: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl garth::AuthorityTransport for ScriptedAuthority {
     async fn submit(
         &self,
-        _request: &arkret_wire::AuthoritySubmitRequest,
+        _request: &arkret_sdk::VerifiedSubmission<arkret_wire::AuthoritySubmitRequestBody>,
         _options: &arkret_sdk::http_client::ClientRequestOptions,
-    ) -> garth::Result<arkret_wire::AuthoritySubmitOutcome> {
+    ) -> garth::Result<arkret_wire::AuthoritySubmitResponseBody> {
         self.submits
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         Ok(self.outcome.clone())
@@ -1332,20 +1452,22 @@ impl garth::AuthorityTransport for ScriptedAuthority {
 
     async fn submit_self(
         &self,
-        request: &arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest,
+        request: &arkret_sdk::VerifiedSubmission<
+            arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequestBody,
+        >,
         options: &arkret_sdk::http_client::ClientRequestOptions,
-    ) -> garth::Result<arkret_models_collaboration::authority_commit::SelfAuthoritySubmitOutcome>
+    ) -> garth::Result<arkret_models_collaboration::authority_commit::SelfAuthoritySubmitResponseBody>
     {
         use arkret_models_collaboration::authority_commit::{
-            SelfAuthoritySubmitOutcome, SelfAuthoritySubmitRequest,
+            SelfAuthoritySubmitRequestBody, SelfAuthoritySubmitResponseBody,
         };
         if let Some(outcome) = &self.unit_outcome {
-            assert_eq!(Some(request), self.expected_unit.as_ref());
-            let key = match request {
-                SelfAuthoritySubmitRequest::OrdinaryRealmBootstrap(unit) => {
+            assert_eq!(Some(request.wire()), self.expected_unit.as_ref());
+            let key = match request.wire() {
+                SelfAuthoritySubmitRequestBody::OrdinaryRealmBootstrap(unit) => {
                     unit.idempotency_key.as_uuid().to_string()
                 }
-                SelfAuthoritySubmitRequest::DirectConversationFounding(unit) => {
+                SelfAuthoritySubmitRequestBody::DirectConversationFounding(unit) => {
                     unit.idempotency_key.as_uuid().to_string()
                 }
                 _ => panic!("complete unit must reach transport"),
@@ -1355,37 +1477,37 @@ impl garth::AuthorityTransport for ScriptedAuthority {
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             return Ok(outcome.clone());
         }
-        let ordinary = match request {
-            SelfAuthoritySubmitRequest::Event(value) => {
-                arkret_wire::AuthoritySubmitRequest::Event(value.clone())
+        let ordinary = match request.wire() {
+            SelfAuthoritySubmitRequestBody::Event(value) => {
+                arkret_wire::AuthoritySubmitRequestBody::Event(value.clone())
             }
-            SelfAuthoritySubmitRequest::MlsCommit(value) => {
-                arkret_wire::AuthoritySubmitRequest::MlsCommit(value.clone())
+            SelfAuthoritySubmitRequestBody::MlsCommit(value) => {
+                arkret_wire::AuthoritySubmitRequestBody::MlsCommit(value.clone())
             }
             _ => panic!("unexpected atomic unit"),
         };
-        self.submit(&ordinary, options)
+        self.submit(&request.rebind(ordinary).unwrap(), options)
             .await
-            .map(SelfAuthoritySubmitOutcome::Ordinary)
+            .map(SelfAuthoritySubmitResponseBody::Ordinary)
     }
 
     async fn scan(
         &self,
-        _request: &arkret_wire::StreamScanRequest,
-    ) -> garth::Result<arkret_wire::StreamScanOutcome> {
+        _request: &arkret_wire::StreamScanRequestBody,
+    ) -> garth::Result<arkret_wire::StreamScanResponseBody> {
         Err(garth::Error::Protocol("scan is not scripted".to_owned()))
     }
 
     async fn authority_bundle(
         &self,
-        _request: &arkret_wire::AuthorityBundleRequest,
+        _request: &arkret_wire::RealmAuthorityBundleRequestBody,
     ) -> garth::Result<arkret_wire::RealmAuthorityBundle> {
         Err(garth::Error::Protocol("bundle is not scripted".to_owned()))
     }
 
     async fn install_handoff(
         &self,
-        _request: &arkret_sdk::AuthorityHandoffRequest,
+        _request: &arkret_sdk::AuthorityRealmAuthorityHandoffRequestBody,
         _options: &arkret_sdk::http_client::ClientRequestOptions,
     ) -> garth::Result<arkret_wire::RealmAuthorityHandoff> {
         Err(garth::Error::Protocol("handoff is not scripted".to_owned()))
@@ -1403,7 +1525,7 @@ impl garth::AuthorityTransport for ScriptedAuthority {
 }
 
 fn scripted_engine(
-    outcome: arkret_wire::AuthoritySubmitOutcome,
+    outcome: arkret_wire::AuthoritySubmitResponseBody,
 ) -> (
     OutboundEngine<garth::MemoryOutboundQueueStore, InksonHostClock>,
     garth::AuthorityClient<ScriptedAuthority>,
@@ -1434,7 +1556,7 @@ async fn a_queued_write_reaches_committed_through_the_durable_engine() {
     );
     let commit = commit_for(event.event(), 4);
     let (engine, authority, submits) =
-        scripted_engine(arkret_wire::AuthoritySubmitOutcome::Accepted {
+        scripted_engine(arkret_wire::AuthoritySubmitResponseBody::Accepted {
             status: arkret_wire::AuthorityCommitStatus::Committed,
             commit: commit.clone(),
         });
@@ -1451,6 +1573,7 @@ async fn a_queued_write_reaches_committed_through_the_durable_engine() {
         .submit_next(
             &authority,
             &arkret_sdk::http_client::ClientRequestOptions::new(),
+            verify_test_publication,
         )
         .await
         .unwrap();
@@ -1468,7 +1591,8 @@ async fn a_queued_write_reaches_committed_through_the_durable_engine() {
         engine
             .submit_next(
                 &authority,
-                &arkret_sdk::http_client::ClientRequestOptions::new()
+                &arkret_sdk::http_client::ClientRequestOptions::new(),
+                verify_test_publication
             )
             .await
             .unwrap(),
@@ -1487,10 +1611,11 @@ async fn a_station_refusal_settles_the_item_with_its_exact_reason_code() {
         ),
         &signer,
     );
-    let (engine, authority, _) = scripted_engine(arkret_wire::AuthoritySubmitOutcome::Rejected {
-        status: arkret_wire::AuthorityRejectionStatus::Rejected,
-        reason_code: "mls_activation_required".to_owned(),
-    });
+    let (engine, authority, _) =
+        scripted_engine(arkret_wire::AuthoritySubmitResponseBody::Rejected {
+            status: arkret_wire::AuthorityRejectionStatus::Rejected,
+            reason_code: "mls_activation_required".to_owned(),
+        });
 
     engine
         .enqueue(event_submission(&event).unwrap())
@@ -1500,6 +1625,7 @@ async fn a_station_refusal_settles_the_item_with_its_exact_reason_code() {
         .submit_next(
             &authority,
             &arkret_sdk::http_client::ClientRequestOptions::new(),
+            verify_test_publication,
         )
         .await
         .unwrap();
@@ -1510,7 +1636,7 @@ async fn a_station_refusal_settles_the_item_with_its_exact_reason_code() {
     assert_eq!(reason_code, "mls_activation_required");
     assert_eq!(item.status, SendQueueStatus::Rejected);
     assert_eq!(
-        SubmitEventResult::from(&*item)
+        EventSubmissionProgress::from(&*item)
             .rejection_reason_code
             .as_deref(),
         Some("mls_activation_required"),
@@ -1531,7 +1657,7 @@ fn welcome_delivery(commit_event: &arkret_sdk::Event, nth: u64) -> arkret_wire::
             device_id: arkret_wire::DeviceId::new(DEVICE.to_owned()).unwrap(),
         },
         keypackage_claim_ref: arkret_wire::KeypackageClaimId::new_v7_at(1_760_000_000_000 + nth),
-        ciphertext_b64: arkret_wire::Base64UrlString::new("AQID").unwrap(),
+        ciphertext_base64url: arkret_wire::Base64UrlString::new("AQID").unwrap(),
         producer_proof: detached_signature(
             arkret_wire::DetachedSignatureContext::MlsWelcomeDelivery,
         ),
@@ -1579,7 +1705,7 @@ async fn one_mls_commit_and_its_welcomes_are_a_single_atomic_submission() {
     let mut sorted = welcomes.clone();
     sorted.sort_by(|left, right| left.welcome_id.cmp(&right.welcome_id));
 
-    let submission = QueuedSubmission::new(arkret_wire::AuthoritySubmitRequest::MlsCommit(
+    let submission = QueuedSubmission::new(arkret_wire::AuthoritySubmitRequestBody::MlsCommit(
         arkret_wire::MlsCommitSubmission {
             commit_event: commit_event.event().clone(),
             welcomes: sorted.clone(),
@@ -1594,16 +1720,17 @@ async fn one_mls_commit_and_its_welcomes_are_a_single_atomic_submission() {
     assert_eq!(&submission.event_id, commit_event.event_id());
 
     let commit = commit_for(commit_event.event(), 1);
-    let (engine, authority, _) = scripted_engine(arkret_wire::AuthoritySubmitOutcome::Accepted {
-        status: arkret_wire::AuthorityCommitStatus::Committed,
-        commit,
-    });
+    let (engine, authority, _) =
+        scripted_engine(arkret_wire::AuthoritySubmitResponseBody::Accepted {
+            status: arkret_wire::AuthorityCommitStatus::Committed,
+            commit,
+        });
     engine.enqueue(submission).await.unwrap();
 
     // The frozen queue item still carries every Welcome: nothing delivers
     // them separately, and nothing waits for a recipient acknowledgement.
     let queued = engine.snapshot().await.unwrap();
-    let arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest::MlsCommit(
+    let arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequestBody::MlsCommit(
         stored,
     ) = queued.items[0].request()
     else {
@@ -1615,6 +1742,7 @@ async fn one_mls_commit_and_its_welcomes_are_a_single_atomic_submission() {
         .submit_next(
             &authority,
             &arkret_sdk::http_client::ClientRequestOptions::new(),
+            verify_test_publication,
         )
         .await
         .unwrap();
@@ -1634,7 +1762,7 @@ fn unsorted_welcome_deliveries_are_refused_before_anything_is_queued() {
     ];
     welcomes.reverse();
 
-    let error = QueuedSubmission::new(arkret_wire::AuthoritySubmitRequest::MlsCommit(
+    let error = QueuedSubmission::new(arkret_wire::AuthoritySubmitRequestBody::MlsCommit(
         arkret_wire::MlsCommitSubmission {
             commit_event: commit_event.event().clone(),
             welcomes,
@@ -1734,7 +1862,7 @@ async fn a_quarantined_item_is_withdrawn_instead_of_forwarded() {
         &signer,
     );
     let (engine, authority, submits) =
-        scripted_engine(arkret_wire::AuthoritySubmitOutcome::Accepted {
+        scripted_engine(arkret_wire::AuthoritySubmitResponseBody::Accepted {
             status: arkret_wire::AuthorityCommitStatus::Committed,
             commit: commit_for(event.event(), 0),
         });
@@ -1751,7 +1879,8 @@ async fn a_quarantined_item_is_withdrawn_instead_of_forwarded() {
         engine
             .submit_next(
                 &authority,
-                &arkret_sdk::http_client::ClientRequestOptions::new()
+                &arkret_sdk::http_client::ClientRequestOptions::new(),
+                verify_test_publication
             )
             .await
             .unwrap(),
@@ -1773,7 +1902,7 @@ async fn realm_bootstrap_queue_restores_the_whole_unit_and_rejects_partial_recei
     use arkret_models_collaboration::authority_commit::{
         AggregateAcceptanceStatus, OrdinaryRealmBootstrapAcceptanceOutcome,
         OrdinaryRealmBootstrapUnitKind, OrdinaryRealmBootstrapUnitSubmission,
-        SelfAuthoritySubmitOutcome,
+        SelfAuthoritySubmitResponseBody,
     };
     let signer = test_signer();
     let mut events = author_event_unit_for_test(
@@ -1834,11 +1963,11 @@ async fn realm_bootstrap_queue_restores_the_whole_unit_and_rejects_partial_recei
     };
     let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let authority = garth::AuthorityClient::new(ScriptedAuthority {
-        unit_outcome: Some(SelfAuthoritySubmitOutcome::OrdinaryRealmBootstrap(
+        unit_outcome: Some(SelfAuthoritySubmitResponseBody::OrdinaryRealmBootstrap(
             outcome.clone(),
         )),
         expected_unit: Some(queued.request.clone()),
-        outcome: arkret_wire::AuthoritySubmitOutcome::Rejected {
+        outcome: arkret_wire::AuthoritySubmitResponseBody::Rejected {
             status: arkret_wire::AuthorityRejectionStatus::Rejected,
             reason_code: "must_not_submit_single_events".to_owned(),
         },
@@ -1854,6 +1983,7 @@ async fn realm_bootstrap_queue_restores_the_whole_unit_and_rejects_partial_recei
             &authority,
             &arkret_sdk::http_client::ClientRequestOptions::new()
                 .idempotency_key("unrelated-current-ui-write"),
+            verify_test_publication,
         )
         .await
         .unwrap();
@@ -1867,11 +1997,11 @@ async fn realm_bootstrap_queue_restores_the_whole_unit_and_rejects_partial_recei
             .unwrap();
     assert_eq!(persisted.items[0].status, garth::SendQueueStatus::Committed);
     assert!(
-        matches!(&persisted.items[0].submission.state, garth::SubmissionState::UnitCommitted { outcome: stored } if **stored == SelfAuthoritySubmitOutcome::OrdinaryRealmBootstrap(outcome.clone()))
+        matches!(&persisted.items[0].submission.state, garth::SubmissionState::UnitCommitted { outcome: stored } if **stored == SelfAuthoritySubmitResponseBody::OrdinaryRealmBootstrap(outcome.clone()))
     );
     assert!(matches!(
         engine
-            .submit_next(&authority, &Default::default())
+            .submit_next(&authority, &Default::default(), verify_test_publication)
             .await
             .unwrap(),
         OutboundEngineOutcome::Idle
@@ -1881,7 +2011,9 @@ async fn realm_bootstrap_queue_restores_the_whole_unit_and_rejects_partial_recei
     let mut candidate = queued.clone();
     assert!(
         candidate
-            .apply_self_outcome(SelfAuthoritySubmitOutcome::OrdinaryRealmBootstrap(partial))
+            .apply_self_outcome(SelfAuthoritySubmitResponseBody::OrdinaryRealmBootstrap(
+                partial
+            ))
             .is_err()
     );
     assert_eq!(candidate.state, garth::SubmissionState::Queued);
@@ -1889,7 +2021,9 @@ async fn realm_bootstrap_queue_restores_the_whole_unit_and_rejects_partial_recei
     swapped.commits.swap(1, 2);
     assert!(
         candidate
-            .apply_self_outcome(SelfAuthoritySubmitOutcome::OrdinaryRealmBootstrap(swapped))
+            .apply_self_outcome(SelfAuthoritySubmitResponseBody::OrdinaryRealmBootstrap(
+                swapped
+            ))
             .is_err()
     );
     let mut wrong_realm = outcome.clone();
@@ -1901,13 +2035,13 @@ async fn realm_bootstrap_queue_restores_the_whole_unit_and_rejects_partial_recei
     }
     assert!(
         candidate
-            .apply_self_outcome(SelfAuthoritySubmitOutcome::OrdinaryRealmBootstrap(
+            .apply_self_outcome(SelfAuthoritySubmitResponseBody::OrdinaryRealmBootstrap(
                 wrong_realm
             ))
             .is_err()
     );
     candidate
-        .apply_self_outcome(SelfAuthoritySubmitOutcome::OrdinaryRealmBootstrap(
+        .apply_self_outcome(SelfAuthoritySubmitResponseBody::OrdinaryRealmBootstrap(
             outcome.clone(),
         ))
         .unwrap();
@@ -1917,7 +2051,7 @@ async fn realm_bootstrap_queue_restores_the_whole_unit_and_rejects_partial_recei
     let mut duplicate = outcome;
     duplicate.status = AggregateAcceptanceStatus::Duplicate;
     candidate
-        .apply_self_outcome(SelfAuthoritySubmitOutcome::OrdinaryRealmBootstrap(
+        .apply_self_outcome(SelfAuthoritySubmitResponseBody::OrdinaryRealmBootstrap(
             duplicate,
         ))
         .unwrap();
@@ -1932,7 +2066,7 @@ async fn direct_founding_queue_restores_all_events_and_binds_every_receipt() {
     use arkret_models_collaboration::authority_commit::{
         AggregateAcceptanceStatus, DirectConversationFoundingAcceptanceOutcome,
         DirectConversationFoundingUnitKind, DirectConversationFoundingUnitSubmission,
-        SelfAuthoritySubmitOutcome,
+        SelfAuthoritySubmitResponseBody,
     };
     let evidence = arkret_sdk::DirectConversationFoundingAuthorityEvidence::ControllerAgent {
         agent_provision_ref: arkret_sdk::EventId::from_digest(
@@ -2010,7 +2144,7 @@ async fn direct_founding_queue_restores_all_events_and_binds_every_receipt() {
     wrong_event.commits[2].event_ref = events[1].event_id().clone();
     assert!(
         candidate
-            .apply_self_outcome(SelfAuthoritySubmitOutcome::DirectConversationFounding(
+            .apply_self_outcome(SelfAuthoritySubmitResponseBody::DirectConversationFounding(
                 wrong_event
             ))
             .is_err()
@@ -2024,7 +2158,7 @@ async fn direct_founding_queue_restores_all_events_and_binds_every_receipt() {
     }
     assert!(
         candidate
-            .apply_self_outcome(SelfAuthoritySubmitOutcome::DirectConversationFounding(
+            .apply_self_outcome(SelfAuthoritySubmitResponseBody::DirectConversationFounding(
                 wrong_realm
             ))
             .is_err()
@@ -2033,7 +2167,7 @@ async fn direct_founding_queue_restores_all_events_and_binds_every_receipt() {
     reordered.commits.swap(1, 2);
     assert!(
         candidate
-            .apply_self_outcome(SelfAuthoritySubmitOutcome::DirectConversationFounding(
+            .apply_self_outcome(SelfAuthoritySubmitResponseBody::DirectConversationFounding(
                 reordered
             ))
             .is_err()
@@ -2041,11 +2175,11 @@ async fn direct_founding_queue_restores_all_events_and_binds_every_receipt() {
     assert_eq!(candidate.state, garth::SubmissionState::Queued);
     let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let authority = garth::AuthorityClient::new(ScriptedAuthority {
-        unit_outcome: Some(SelfAuthoritySubmitOutcome::DirectConversationFounding(
+        unit_outcome: Some(SelfAuthoritySubmitResponseBody::DirectConversationFounding(
             outcome.clone(),
         )),
         expected_unit: Some(queued.request.clone()),
-        outcome: arkret_wire::AuthoritySubmitOutcome::Rejected {
+        outcome: arkret_wire::AuthoritySubmitResponseBody::Rejected {
             status: arkret_wire::AuthorityRejectionStatus::Rejected,
             reason_code: "must_not_submit_single_events".to_owned(),
         },
@@ -2062,6 +2196,7 @@ async fn direct_founding_queue_restores_all_events_and_binds_every_receipt() {
                 &authority,
                 &arkret_sdk::http_client::ClientRequestOptions::new()
                     .idempotency_key("new-ui-write"),
+                verify_test_publication
             )
             .await
             .unwrap(),
@@ -2073,10 +2208,10 @@ async fn direct_founding_queue_restores_all_events_and_binds_every_receipt() {
             .unwrap();
     assert!(matches!(&accepted.items[0].submission.state,
         garth::SubmissionState::UnitCommitted { outcome: stored }
-            if **stored == SelfAuthoritySubmitOutcome::DirectConversationFounding(outcome.clone())));
+            if **stored == SelfAuthoritySubmitResponseBody::DirectConversationFounding(outcome.clone())));
     assert!(matches!(
         engine
-            .submit_next(&authority, &Default::default())
+            .submit_next(&authority, &Default::default(), verify_test_publication)
             .await
             .unwrap(),
         OutboundEngineOutcome::Idle
@@ -2084,7 +2219,7 @@ async fn direct_founding_queue_restores_all_events_and_binds_every_receipt() {
     let mut duplicate = outcome;
     duplicate.status = AggregateAcceptanceStatus::Duplicate;
     candidate
-        .apply_self_outcome(SelfAuthoritySubmitOutcome::DirectConversationFounding(
+        .apply_self_outcome(SelfAuthoritySubmitResponseBody::DirectConversationFounding(
             duplicate,
         ))
         .unwrap();
@@ -2101,7 +2236,7 @@ fn message_seam_rejects_a_proof_callback_that_changes_the_body() {
     .unwrap();
     let original = event.event().clone();
     let signer = test_signer();
-    let result = sign_event_through_message_seam(&mut event, |unsigned| {
+    let result = sign_finalized_event(&mut event, |unsigned| {
         let mut rewritten = unsigned.event().clone();
         rewritten.payload.insert(
             "content".to_owned(),
@@ -2164,7 +2299,7 @@ async fn retryable_authority_answer_is_durable_and_really_resubmits_after_restar
     let engine = OutboundEngine::new(store.clone(), InksonHostClock);
     engine.enqueue(frozen).await.unwrap();
     let (unused, refusing, refused_calls) =
-        scripted_engine(arkret_wire::AuthoritySubmitOutcome::Rejected {
+        scripted_engine(arkret_wire::AuthoritySubmitResponseBody::Rejected {
             status: arkret_wire::AuthorityRejectionStatus::RetryableUnavailable,
             reason_code: "backend_unavailable".to_owned(),
         });
@@ -2173,6 +2308,7 @@ async fn retryable_authority_answer_is_durable_and_really_resubmits_after_restar
         .submit_next(
             &refusing,
             &arkret_sdk::http_client::ClientRequestOptions::new(),
+            verify_test_publication,
         )
         .await
         .unwrap();
@@ -2199,7 +2335,7 @@ async fn retryable_authority_answer_is_durable_and_really_resubmits_after_restar
     );
     let commit = commit_for(event.event(), 0);
     let (unused, accepting, accepted_calls) =
-        scripted_engine(arkret_wire::AuthoritySubmitOutcome::Accepted {
+        scripted_engine(arkret_wire::AuthoritySubmitResponseBody::Accepted {
             status: arkret_wire::AuthorityCommitStatus::Committed,
             commit,
         });
@@ -2209,7 +2345,8 @@ async fn retryable_authority_answer_is_durable_and_really_resubmits_after_restar
         resumed
             .submit_next(
                 &accepting,
-                &arkret_sdk::http_client::ClientRequestOptions::new()
+                &arkret_sdk::http_client::ClientRequestOptions::new(),
+                verify_test_publication
             )
             .await
             .unwrap(),
@@ -2217,7 +2354,36 @@ async fn retryable_authority_answer_is_durable_and_really_resubmits_after_restar
     ));
     assert_eq!(accepted_calls.load(std::sync::atomic::Ordering::SeqCst), 1);
     assert_eq!(resumed.snapshot().await.unwrap().items[0].attempts, 2);
-    std::fs::remove_dir_all(directory).unwrap();
+    drop(resumed);
+    let fixture_root = directory.canonicalize().unwrap();
+    let temporary_root = std::env::temp_dir().canonicalize().unwrap();
+    assert_eq!(fixture_root.parent(), Some(temporary_root.as_path()));
+    assert!(
+        fixture_root
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with("inkson-message-retry-")
+    );
+    let cleanup_deadline = std::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        match std::fs::remove_dir_all(&fixture_root) {
+            Ok(()) => break,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+            Err(error)
+                if cfg!(windows)
+                    && error.raw_os_error() == Some(32)
+                    && std::time::Instant::now() < cleanup_deadline =>
+            {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            Err(error) => panic!(
+                "remove owned retry fixture {}: {error}",
+                fixture_root.display()
+            ),
+        }
+    }
+    assert!(!fixture_root.exists());
 }
 
 pub(crate) fn queue_message_operation_for_test(operation: &LocalOperation) -> QueuedSubmission {
@@ -2228,7 +2394,7 @@ pub(crate) fn queue_message_operation_for_test(operation: &LocalOperation) -> Qu
         .author_with_digest_suite(arkret_sdk::DigestSuite::Sha256)
         .unwrap();
     let mut sign_count = 0;
-    sign_event_through_message_seam(&mut event, |unsigned| {
+    sign_finalized_event(&mut event, |unsigned| {
         sign_count += 1;
         test_signer()
             .sign_sdk_event_with_context(unsigned, crate::event_signer::ProducerProofContext::new())
@@ -2271,7 +2437,7 @@ async fn application_authoring_waits_for_detail_even_with_a_complete_durable_cut
     }]);
     let frame: arkret_sdk::sync::AccountSubscribeFrame = serde_json::from_value(json!({
         "kind": "delta", "cursor": "ak:cursor:YQ", "realms": {REALM: {
-            "current": {"realm_id": REALM, "governance_generation": 1, "stream_heads": heads, "entries": []},
+            "current": {"realm_id": REALM, "governance_generation": "1", "stream_heads": heads, "entries": []},
             "baseline": {
                 "snapshot_cursor": "ak:cursor:cw", "cut_revision": 1,
                 "coverage": {"realm_id": REALM, "stream_heads": heads, "complete_for_authorized_streams": true},
@@ -2282,8 +2448,16 @@ async fn application_authoring_waits_for_detail_even_with_a_complete_durable_cut
     let index = crate::state::CurrentIndex::open(&authority, 0, local.current_index_location())
         .await
         .unwrap();
-    index.stage_frame(0, &frame).await.unwrap().finish();
-    local.set_current_generation(1);
+    let mut stage = index.stage_frame(0, &frame).await.unwrap();
+    stage.arm_account_commit();
+    local
+        .verified_projection_transaction(|store| {
+            store.set_current_generation(stage.generation());
+            Ok(())
+        })
+        .unwrap();
+    local.begin_durable_flush().unwrap().wait().await.unwrap();
+    stage.finish();
     assert!(index.read_complete_cut(REALM).await.unwrap().is_some());
     assert!(local.realm_detail_invalidated(REALM));
     let state = std::sync::Arc::new(std::sync::Mutex::new(local));
@@ -2489,4 +2663,156 @@ async fn blocklist_unknown_freshness_withholds_privacy_signals_before_transport(
             "privacy refusal must precede every HTTP lookup"
         );
     }
+}
+
+#[test]
+fn unresolved_consent_replacement_blocks_reauthoring_only_for_its_exact_peer() {
+    let signer = test_signer();
+    let authority = account_actor().as_account_id().unwrap().clone();
+    let peer = arkret_sdk::ConsentPeer::Actor {
+        actor_id: arkret_sdk::ActorId::account(crate::test_support::authority_at_station(
+            "ak:did_core:web:consent-peer.example",
+            "ak:did_core:web:peer-station.example",
+        )),
+    };
+    let other_station_peer = arkret_sdk::ConsentPeer::Actor {
+        actor_id: arkret_sdk::ActorId::account(crate::test_support::authority_at_station(
+            "ak:did_core:web:consent-peer.example",
+            "ak:did_core:web:other-station.example",
+        )),
+    };
+    let intent: EventIntent = serde_json::from_value(json!({
+        "kind": "ak.consent.replace",
+        "scope_ref": {"kind": "realm", "realm_id": REALM},
+        "actor_id": account_actor(),
+        "authorization_ref": arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [91; 32]),
+        "created_at": "2026-05-19T00:00:00.000Z",
+        "payload": {"peer":peer, "expected_current":{"state":"never_written"}, "permissions":[]}
+    })).unwrap();
+    let event = author_and_sign(intent, &signer);
+    for status in [
+        SendQueueStatus::Queued,
+        SendQueueStatus::Forwarding,
+        SendQueueStatus::Failed,
+        SendQueueStatus::Cancelled,
+        SendQueueStatus::Rejected,
+    ] {
+        let snapshot = snapshot_of(vec![(event.clone(), status)]);
+        assert_eq!(
+            pending_consent_replacement_from_snapshot(&snapshot, &authority, &peer).unwrap(),
+            Some(event.event_id().clone())
+        );
+        assert_eq!(
+            pending_consent_replacement_from_snapshot(&snapshot, &authority, &other_station_peer)
+                .unwrap(),
+            None
+        );
+    }
+    let snapshot = snapshot_of(vec![(event.clone(), SendQueueStatus::Queued)]);
+    let reopened: garth::SendQueueSnapshot =
+        serde_json::from_slice(&serde_json::to_vec(&snapshot).unwrap()).unwrap();
+    assert_eq!(
+        pending_consent_replacement_from_snapshot(&reopened, &authority, &peer).unwrap(),
+        Some(event.event_id().clone())
+    );
+    let committed = snapshot_of(vec![(event.clone(), SendQueueStatus::Committed)]);
+    assert_eq!(
+        pending_consent_replacement_from_snapshot(&committed, &authority, &peer).unwrap(),
+        None
+    );
+    for status in [SendQueueStatus::Failed, SendQueueStatus::Cancelled] {
+        let original = event_submission(&event).unwrap();
+        let snapshot = snapshot_of(vec![(event.clone(), status)]);
+        let reopened: garth::SendQueueSnapshot =
+            serde_json::from_slice(&serde_json::to_vec(&snapshot).unwrap()).unwrap();
+        let mut queue = garth::SendQueue::from_snapshot(reopened);
+        let frozen_bytes = arkret_sdk::canonical::canonical_json_bytes(
+            &queue.get(event.event_id()).unwrap().submission.request,
+        )
+        .unwrap();
+        assert!(
+            requeue_original_consent(
+                &mut queue,
+                &authority,
+                &peer,
+                &original,
+                chrono::Utc::now(),
+                || Ok(())
+            )
+            .unwrap()
+        );
+        let resumed = queue.get(event.event_id()).unwrap();
+        assert_eq!(resumed.status, SendQueueStatus::Queued);
+        assert_eq!(resumed.event_id(), event.event_id());
+        assert_eq!(
+            arkret_sdk::canonical::canonical_json_bytes(&resumed.submission.request).unwrap(),
+            frozen_bytes
+        );
+        assert_eq!(resumed.submission, original);
+    }
+    let original = event_submission(&event).unwrap();
+    let mut queue = garth::SendQueue::from_snapshot(snapshot_of(vec![(
+        event.clone(),
+        SendQueueStatus::Failed,
+    )]));
+    let unchanged = queue.snapshot();
+    assert!(
+        requeue_original_consent(
+            &mut queue,
+            &authority,
+            &other_station_peer,
+            &original,
+            chrono::Utc::now(),
+            || Ok(())
+        )
+        .is_err()
+    );
+    let other_account = crate::test_support::authority_at_station(
+        PRINCIPAL_CORE,
+        "ak:did_core:web:other-account-station.example",
+    );
+    assert!(
+        requeue_original_consent(
+            &mut queue,
+            &other_account,
+            &peer,
+            &original,
+            chrono::Utc::now(),
+            || Ok(())
+        )
+        .is_err()
+    );
+    let checks = std::cell::Cell::new(0);
+    assert!(
+        requeue_original_consent(
+            &mut queue,
+            &authority,
+            &peer,
+            &original,
+            chrono::Utc::now(),
+            || {
+                checks.set(checks.get() + 1);
+                anyhow::ensure!(
+                    checks.get() == 1,
+                    "session generation changed while recovering original"
+                );
+                Ok(())
+            }
+        )
+        .is_err()
+    );
+    assert_eq!(
+        queue.snapshot(),
+        unchanged,
+        "peer/account/session mismatch mutated the frozen queue"
+    );
+    let mut rejected = snapshot_of(vec![(event, SendQueueStatus::Rejected)]);
+    rejected.items[0].submission.state = garth::SubmissionState::Rejected {
+        status: arkret_wire::AuthorityRejectionStatus::Rejected,
+        reason_code: "cas_conflict".to_owned(),
+    };
+    assert_eq!(
+        pending_consent_replacement_from_snapshot(&rejected, &authority, &peer).unwrap(),
+        None
+    );
 }

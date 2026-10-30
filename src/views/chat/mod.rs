@@ -14,7 +14,7 @@ use crate::components::{
     ActorIdentityLabel, CircleScopePicker, HelpTip, SecurityStateBadge, SelfAttributionBadge,
     UiIcon,
 };
-use crate::models::SubmitEventResult;
+use crate::models::EventSubmissionProgress;
 use crate::operation::{ak_ops, trim_realm_id, uuid_v7};
 use crate::payload::sdk_payload_value;
 use crate::routes::Route;
@@ -81,12 +81,12 @@ mod send_probe_presentation_tests {
                 .parse()
                 .unwrap(),
         };
-        let current: arkret_wire::MlsGroupCurrent = serde_json::from_value(json!({
+        let current: arkret_wire::MlsGroupValue = serde_json::from_value(json!({
             "effective_scope": scope,
             "genesis_event_ref": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
             "current_mls_commit_event_ref": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-            "cipher_suite": "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519", "epoch": 4,
-            "current_key_access_revision": 2, "covered_key_access_revision": 2,
+            "cipher_suite": "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519", "epoch": "4",
+            "current_key_access_revision": "2", "covered_key_access_revision": "2",
             "public_tree_ref": "ak:blob:sha256:431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460"
         })).unwrap();
         let probe = crate::mls::send_gate::decide_mls_send_gate(Ok(Some(current.clone())), None);
@@ -243,6 +243,7 @@ pub(crate) use model::{
 };
 use right_panel::{DiscussionSettingsPanel, DiscussionUsersPanel, SidecarDeliveryDiagnostics};
 use timeline::*;
+mod attachment_renderer;
 use timeline_surface::{ChatTimeline, ChatTimelineContext};
 
 // Invariant assertions: each `expect` message names the check that
@@ -595,11 +596,11 @@ async fn submit_frozen_sidecar_ensure<'a, F, Fut>(
     expires_at: chrono::DateTime<chrono::Utc>,
     check_session: impl Fn() -> anyhow::Result<()>,
     mut submit: F,
-) -> anyhow::Result<arkret_sdk::SidecarEnsureOutcome>
+) -> anyhow::Result<arkret_sdk::SidecarEnsureResponseBody>
 where
     F: FnMut(&'a arkret_sdk::SidecarEnsureRequestBody) -> Fut,
     Fut: std::future::Future<
-            Output = arkret_sdk::http_client::Result<arkret_sdk::SidecarEnsureOutcome>,
+            Output = arkret_sdk::http_client::Result<arkret_sdk::SidecarEnsureResponseBody>,
         >,
 {
     anyhow::ensure!(
@@ -700,14 +701,14 @@ fn validate_native_prepared_sidecar_binding(
 }
 
 fn accepted_native_sidecar_id(
-    outcome: &arkret_sdk::SidecarEnsureOutcome,
+    outcome: &arkret_sdk::SidecarEnsureResponseBody,
     expected_operation_id: &arkret_sdk::ProtocolOperationId,
     expected_phase: arkret_sdk::SidecarEnsureAcceptedPhase,
     expected_sidecar_id: &arkret_sdk::SidecarId,
     expected_source_context: &arkret_sdk::SidecarContextRef,
 ) -> anyhow::Result<arkret_sdk::SidecarId> {
     match outcome {
-        arkret_sdk::SidecarEnsureOutcome::Accepted(accepted)
+        arkret_sdk::SidecarEnsureResponseBody::Accepted(accepted)
             if accepted.operation_id == *expected_operation_id
                 && accepted.accepted_phase == expected_phase
                 && accepted.sidecar_id == *expected_sidecar_id
@@ -718,11 +719,11 @@ fn accepted_native_sidecar_id(
             }
             Ok(accepted.sidecar_id.clone())
         }
-        arkret_sdk::SidecarEnsureOutcome::Accepted(_) => {
+        arkret_sdk::SidecarEnsureResponseBody::Accepted(_) => {
             anyhow::bail!("native Sidecar accepted outcome changed its reserved binding")
         }
-        arkret_sdk::SidecarEnsureOutcome::PreparedNew(_)
-        | arkret_sdk::SidecarEnsureOutcome::PreparedExisting(_) => {
+        arkret_sdk::SidecarEnsureResponseBody::PreparedNew(_)
+        | arkret_sdk::SidecarEnsureResponseBody::PreparedExisting(_) => {
             anyhow::bail!("native Sidecar commit returned another prepared outcome")
         }
     }
@@ -877,7 +878,7 @@ async fn ensure_owned_agent_sidecar(
                 (pending.expected_phase, pending.sidecar_id, pending.request, pending.expires_at)
             } else {
                 let prepared = http
-                    .agent_sidecar_ensure(&prepare)
+                    .agent_sidecar_ensure(&arkret_sdk::VerifiedSubmission::from_verified_events(prepare, &[])?)
                     .await
                     .map_err(anyhow::Error::from)?;
                 ceremony_fence.check()?;
@@ -895,11 +896,11 @@ async fn ensure_owned_agent_sidecar(
                 let idempotency_key =
                     arkret_sdk::IdempotencyKey::new(uuid_v7()).map_err(anyhow::Error::msg)?;
                 match prepared {
-                arkret_sdk::SidecarEnsureOutcome::Accepted(_) => {
+                arkret_sdk::SidecarEnsureResponseBody::Accepted(_) => {
                     anyhow::bail!("native Sidecar prepare skipped its signed reservation ceremony")
                 }
-                        arkret_sdk::SidecarEnsureOutcome::PreparedNew(
-                            arkret_sdk::SidecarEnsurePreparedNewOutcome {
+                        arkret_sdk::SidecarEnsureResponseBody::PreparedNew(
+                            arkret_sdk::SidecarEnsurePreparedNewResponseBody {
                             operation_id,
                             reservation_handle,
                             expires_at,
@@ -975,8 +976,8 @@ async fn ensure_owned_agent_sidecar(
                                 expires_at,
                             )
                         }
-                        arkret_sdk::SidecarEnsureOutcome::PreparedExisting(
-                            arkret_sdk::SidecarEnsurePreparedExistingOutcome {
+                        arkret_sdk::SidecarEnsureResponseBody::PreparedExisting(
+                            arkret_sdk::SidecarEnsurePreparedExistingResponseBody {
                             operation_id,
                             reservation_handle,
                             expires_at,
@@ -1042,11 +1043,15 @@ async fn ensure_owned_agent_sidecar(
                         }
                 }
             };
+            let producer = ceremony_fence.signer.publication_context(
+                &arkret_sdk::ActorId::account(ceremony_controller_account_id.clone()),
+            )?;
+            let verified = arkret_sdk::VerifiedSubmission::verify(request.clone(), |_| Ok(producer.clone()))?;
             let accepted = submit_frozen_sidecar_ensure(
                 &request,
                 expires_at,
                 || ceremony_fence.check(),
-                |request| http.agent_sidecar_ensure(request),
+                |_| http.agent_sidecar_ensure(&verified),
             ).await?;
             let sidecar_id = accepted_native_sidecar_id(
                 &accepted,
@@ -1165,6 +1170,7 @@ async fn submit_source_routed_sidecar_message(
     routed_source_strand_id: &str,
     source_event_id: Option<&str>,
     body: &str,
+    attachment_drafts: &[crate::attachments::DraftAttachment],
     mentions: &[MentionNode],
     addressed_agent_ids: &[String],
     mut state_store: SyncSignal<LocalStateStore>,
@@ -1187,6 +1193,28 @@ async fn submit_source_routed_sidecar_message(
         "private send belongs to a replaced account session"
     );
     crate::sidecar::validate_agent_sidecar_view(view)?;
+    let api = crate::transport::auth::authed_api_with_sync(base_url, api_token.clone(), None)?;
+    let history_pending = state_store
+        .read()
+        .has_pending_sidecar_history(source_realm_id);
+    if history_pending {
+        // An authenticated current may advance before its private originals.
+        // Complete that cut before creating an intent or consuming the send
+        // ratchet; an old fold cannot authorize the next private request.
+        crate::realm_events_engine::refresh_sidecar_history(
+            api.http(),
+            authority,
+            request_epoch,
+            &view.sidecar.realm_id,
+            crate::app::runtime_adapter::state_store_handle(state_store),
+            &active,
+        )
+        .await?;
+    }
+    anyhow::ensure!(
+        active(),
+        "private send belongs to a replaced account session"
+    );
     crate::sidecar::cached_sidecar_exchange_projections(
         &state_store.read(),
         authority,
@@ -1232,7 +1260,27 @@ async fn submit_source_routed_sidecar_message(
     {
         anyhow::bail!("every addressed Agent must have effective native Sidecar MLS access");
     }
-    let mut content = chat_content_block_for_body(body)?;
+    let content_api = crate::transport::auth::authed_api(base_url, api_token.clone())?;
+    let initial_content = crate::attachments::private_message_body(
+        &content_api,
+        crate::app::runtime_adapter::state_store_handle(state_store),
+        authority,
+        device_id,
+        &effective_scope,
+        attached_source_strand_id,
+        &crate::sidecar::sidecar_submission_intent_digest(
+            attached_source_strand_id,
+            body,
+            addressed_agent_ids,
+        ),
+        body,
+    )
+    .await?;
+    let mut content = crate::attachments::compose_draft_attachments(
+        initial_content,
+        attachment_drafts,
+        &effective_scope,
+    )?;
     let actor_mentions = mentions
         .iter()
         .filter_map(|mention| mention.as_mention().cloned())
@@ -1256,7 +1304,7 @@ async fn submit_source_routed_sidecar_message(
         .collect::<Vec<_>>();
     let intent_digest = crate::sidecar::sidecar_submission_intent_digest(
         attached_source_strand_id,
-        body,
+        &content_for_sidecar,
         &addressed_strings,
     );
     let Some(_submission_guard) = crate::sidecar::try_begin_sidecar_submission(
@@ -1311,7 +1359,6 @@ async fn submit_source_routed_sidecar_message(
     crate::sidecar::set_sidecar_exchange_binding(&mut message_metadata, &binding)?;
     let metadata_bytes = serde_json::to_vec(&message_metadata)?;
     let message_id = new_chat_local_id();
-    let api = crate::transport::auth::authed_api_with_sync(base_url, api_token.clone(), None)?;
     let build = crate::views::secure_send::build_secure_send(
         &api,
         state_store,
@@ -1756,6 +1803,7 @@ fn composer_mention_nodes(
     mentions
 }
 
+#[cfg(test)]
 fn chat_visible_read_receipt_should_send(
     store: &LocalStateStore,
     strand_id: &str,
@@ -1893,6 +1941,10 @@ pub fn ChatPanel(
         typing_throttle: _,
         compose_dragover: _,
         compose_upload_status: _,
+        attachments: _,
+        attachment_target_key: _,
+        attachment_target_revision: _,
+        selection_revision: _,
         shared_pins,
         private_saved_targets: _,
         private_saved_account_data: _,
@@ -1906,6 +1958,7 @@ pub fn ChatPanel(
         strand_watch_level: _,
         strand_watch_current: _,
         strand_watch_pending: _,
+        strand_watch_queued: _,
         strand_watch_request: _,
         strand_watch_refresh: _,
         watch_level_menu_open: _,
@@ -1948,6 +2001,7 @@ pub fn ChatPanel(
         mut new_channel_scope,
         sidecar_send_pending: _,
         member_handle_fetching: _,
+        attachment_upload_revision: _,
     } = controller;
     let blocked_actor_id_set =
         crate::account_data::blocked_message_actor_ids(&state_store.read().client_blocklist());
@@ -2929,14 +2983,16 @@ pub fn ChatPanel(
                                 })
                             } else { None };
                             let observed = (controller.strand_watch_current)();
+                            let target_matches = request.as_ref().is_some_and(|request| controller.strand_watch_target_is_current(&base_url, &token(), request));
                             let enabled = request.as_ref().zip(observed.as_ref()).is_some_and(|(request, current)| current.validate_for_request(request).is_ok())
+                                && target_matches
                                 && !(controller.strand_watch_pending)();
                             let explicit_level = observed.as_ref().and_then(|current| match current {
-                                arkret_sdk::StrandWatchCurrentOutcome::Current { result, .. } => match result.value {
-                                    arkret_sdk::StrandWatchCurrentValue::Set(value) => Some(value.level),
-                                    arkret_sdk::StrandWatchCurrentValue::Cleared(()) => None,
+                                arkret_sdk::StrandWatchCurrentResponseBody::Current { current_state: result, .. } => match result.value {
+                                    arkret_sdk::StrandWatchValue::Set(value) => Some(value.level),
+                                    arkret_sdk::StrandWatchValue::Cleared(()) => None,
                                 },
-                                arkret_sdk::StrandWatchCurrentOutcome::NeverWritten { .. } => None,
+                                arkret_sdk::StrandWatchCurrentResponseBody::NeverWritten { .. } => None,
                             });
                             let label = if (controller.strand_watch_pending)() { crate::i18n::tr("chat.watch_level.pending_short") }
                                 else if enabled && explicit_level.is_none() { crate::i18n::tr("chat.watch_level.default") }
@@ -2944,8 +3000,28 @@ pub fn ChatPanel(
                                 else { crate::i18n::tr("chat.watch_level.unavailable_short") };
                             let tooltip = crate::i18n::tr(if enabled { "chat.watch_level.tooltip" } else if (controller.strand_watch_pending)() { "chat.watch_level.pending" } else { "chat.watch_level.unavailable" });
                             rsx! {
+                                if target_matches && (controller.strand_watch_queued)() {
+                                    Button {
+                                        variant: ButtonVariant::Secondary,
+                                        r#type: "button",
+                                        "data-testid": "watch-level-retry",
+                                        title: crate::i18n::tr("chat.watch_level.queued"),
+                                        disabled: controller.strand_watch_write_pending(),
+                                        onclick: {
+                                            let request = request.clone();
+                                            let base = base_url.clone();
+                                            move |_| {
+                                                if let Some(request) = request.clone() {
+                                                    controller.recover_strand_watch(base.clone(), token(), request);
+                                                }
+                                            }
+                                        },
+                                        {crate::i18n::tr("common.retry")}
+                                    }
+                                }
                                 DropdownMenu {
                                     class: "watch-level-picker", "data-testid": "watch-level-picker",
+                                    "data-watch-read-pending": controller.strand_watch_read_running(),
                                     disabled: !enabled,
                                     open: request.is_some() && (controller.watch_level_menu_open)(),
                                     on_open_change: move |open| {

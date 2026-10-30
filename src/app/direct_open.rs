@@ -126,7 +126,7 @@ pub(super) fn open_direct_conversation(
                         .await?;
                         if matches!(
                             outcome,
-                            arkret_sdk::DirectConversationResolveOutcome::CreationRequired { .. }
+                            arkret_sdk::DirectConversationResolveResponseBody::CreationRequired { .. }
                         ) {
                             let submitter = api.event_submitter()?;
                             let founder = submitter.authority()?.clone();
@@ -192,7 +192,7 @@ pub(super) fn open_direct_conversation(
                         .await?;
                         if matches!(
                             outcome,
-                            arkret_sdk::DirectConversationResolveOutcome::CreationRequired { .. }
+                            arkret_sdk::DirectConversationResolveResponseBody::CreationRequired { .. }
                         ) {
                             let submitter = api.event_submitter()?;
                             let founder = submitter.authority()?.clone();
@@ -258,15 +258,15 @@ pub(super) fn open_direct_conversation(
             }
             Ok(response) => {
                 let key = match &response {
-                    arkret_sdk::DirectConversationResolveOutcome::TemporarilyUnavailable {
+                    arkret_sdk::DirectConversationResolveResponseBody::TemporarilyUnavailable {
                         ..
                     } => "feedback.direct_temporarily_unavailable",
-                    arkret_sdk::DirectConversationResolveOutcome::AwaitingFounder { .. } => {
-                        "feedback.direct_awaiting_founder"
-                    }
-                    arkret_sdk::DirectConversationResolveOutcome::CreationBlocked { .. } => {
-                        "feedback.direct_creation_blocked"
-                    }
+                    arkret_sdk::DirectConversationResolveResponseBody::AwaitingFounder {
+                        ..
+                    } => "feedback.direct_awaiting_founder",
+                    arkret_sdk::DirectConversationResolveResponseBody::CreationBlocked {
+                        ..
+                    } => "feedback.direct_creation_blocked",
                     _ => "feedback.direct_open_failed",
                 };
                 crate::components::feedback::toast_error(
@@ -311,7 +311,7 @@ pub(crate) async fn start_founder_genesis(
     api: &crate::transport::TransportClient,
     state_store: &crate::runtime::input::StateStoreHandle,
     founder: &arkret_sdk::AccountId,
-    founded: &arkret_sdk::DirectConversationResolveOutcome,
+    founded: &arkret_sdk::DirectConversationResolveResponseBody,
     initiating_account: Option<&crate::config::ActiveAccountContext>,
 ) {
     let Some(coordinates) = crate::transport::account::direct_conversation_coordinates(founded)

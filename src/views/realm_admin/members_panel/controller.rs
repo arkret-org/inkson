@@ -8,14 +8,18 @@
 
 use super::*;
 
-fn invite_delivery_summary(outcome: &arkret_sdk::InviteDeliveryOutcome) -> &'static str {
-    use arkret_sdk::{DisclosedOutcome, InviteDeliveryOutcomeStatus};
+fn invite_delivery_summary(outcome: &arkret_sdk::InviteDeliveryResponseBody) -> &'static str {
+    use arkret_sdk::{DisclosedInviteDeliveryOutcome, InviteDeliveryOutcomeStatus};
     if outcome.status == InviteDeliveryOutcomeStatus::Deferred {
         return "private delivery is deferred; retry later";
     }
     match outcome.disclosed_outcome {
-        Some(DisclosedOutcome::Blocked) => "recipient reports private delivery blocked",
-        Some(DisclosedOutcome::Delivered) => "recipient reports private delivery delivered",
+        Some(DisclosedInviteDeliveryOutcome::Blocked) => {
+            "recipient reports private delivery blocked"
+        }
+        Some(DisclosedInviteDeliveryOutcome::Delivered) => {
+            "recipient reports private delivery delivered"
+        }
         None if outcome.status == InviteDeliveryOutcomeStatus::Duplicate => {
             "private delivery was already accepted"
         }
@@ -70,7 +74,7 @@ pub(super) async fn fetch_owned_agent_rows(
     realm: &str,
     fallback_controller_principal_id: &str,
 ) -> anyhow::Result<Vec<MemberAgentRow>> {
-    let list = http.agent_list().await?;
+    let list = http.agent_page().await?;
     let mut rows = Vec::<MemberAgentRow>::new();
     for value in list.agents {
         let Some(mut row) = member_agent_row_from_value(value, fallback_controller_principal_id)
@@ -88,7 +92,7 @@ pub(super) async fn fetch_owned_agent_rows(
         match http.agent_participation_get(&row.agent_id).await {
             Ok(outcome) => {
                 let (policy, selection) =
-                    mention_state_from_entries(&outcome.agent_participation_entries, realm);
+                    mention_state_from_entries(&outcome.participation_entries, realm);
                 row.mention_policy = policy;
                 row.selection = selection;
             }
@@ -198,7 +202,7 @@ pub(super) fn spawn_set_agent_realm_behavior(
         {
             Ok(outcome) => {
                 let (mention_policy, selection) =
-                    mention_state_from_entries(&outcome.agent_participation_entries, &realm);
+                    mention_state_from_entries(&outcome.participation_entries, &realm);
                 owned_agents.with_mut(|rows| {
                     if let Some(row) = rows.iter_mut().find(|row| row.agent_id == outcome.agent_id)
                     {
@@ -228,71 +232,30 @@ pub(super) fn spawn_set_agent_realm_behavior(
 /// cell. It acts on the occupant instead, using the stable identity the
 /// rejection echoed.
 ///
-/// `pending` (and, for a third-party invite, `claimed`) means the governance
-/// decision already exists and only its private delivery is missing, so the
-/// delivery is re-dispatched under the occupant's own `create_event_id` — the
-/// stable idempotency key, not the id of the Event that was just refused.
-/// `send_failed` still occupies the slot and has no edge back to `pending`, so
-/// it must be revoked before a replacement invite can be created; that revoke
-/// carries the slot's `head_eq` and is what frees the account.
+/// A pending occupant retains the accepted governance decision through
+/// private delivery failures. Dispatch loads its exact create Event and uses
+/// the original InviteId as the stable retry key.
 pub(super) async fn recover_from_occupied_live_target(
     api: &crate::transport::TransportClient,
-    realm_id: &str,
-    actor: &str,
     invitee: &crate::transport::InviteeResolution,
     invitee_label: &str,
-    occupied: &arkret_sdk::InviteLiveTargetOccupiedProblem,
-    occupant_state: Option<&str>,
+    occupied: &arkret_sdk::InviteLiveTargetOccupiedProblemExtensions,
 ) -> String {
     let invite_id = occupied.invite_id().as_str().to_owned();
     let create_event_id = occupied.create_event_id().as_str().to_owned();
-    match occupant_state {
-        Some(INVITE_STATE_SEND_FAILED) => {
-            match crate::operation::ak_ops::invite_revoke(
-                realm_id,
-                actor,
-                &invite_id,
-                Some(invitee.account_id()),
-                arkret_sdk::InviteRevokePreviousState::SendFailed,
-                "revoked",
-                "delivery_target_unreachable",
-            )
-            .and_then(|builder| builder.build_sdk_event("inkson"))
-            {
-                Ok(revoke) => match api.event_submitter() {
-                    Ok(submitter) => match submitter.submit_sdk_event(&revoke).await {
-                        Ok(_) => format!(
-                            "{invitee_label} had an undeliverable invite ({}); it was revoked. Send the invite again.",
-                            short_protocol_id(&invite_id)
-                        ),
-                        Err(error) => format!(
-                            "invite failed: {invitee_label} has an undeliverable invite ({}) that could not be revoked: {}",
-                            short_protocol_id(&invite_id),
-                            crate::api_error::display_user_facing(&error)
-                        ),
-                    },
-                    Err(error) => format!(
-                        "invite failed: {}",
-                        crate::api_error::display_user_facing(&error)
-                    ),
-                },
-                Err(error) => format!("invite failed: {error:#}"),
-            }
-        }
-        _ => match api
-            .dispatch_accepted_invite(&create_event_id, invitee)
-            .await
-        {
-            Ok(outcome) => format!(
-                "{invitee_label} already has a live invite ({}); {}.",
-                short_protocol_id(&invite_id),
-                invite_delivery_summary(&outcome)
-            ),
-            Err(error) => format!(
-                "invite failed: {invitee_label} already has a live invite ({}) and re-delivery failed: {error}",
-                short_protocol_id(&invite_id)
-            ),
-        },
+    match api
+        .dispatch_accepted_invite(&create_event_id, invitee)
+        .await
+    {
+        Ok(outcome) => format!(
+            "{invitee_label} already has a live invite ({}); {}.",
+            short_protocol_id(&invite_id),
+            invite_delivery_summary(&outcome)
+        ),
+        Err(error) => format!(
+            "invite failed: {invitee_label} already has a live invite ({}) and re-delivery failed: {error}",
+            short_protocol_id(&invite_id)
+        ),
     }
 }
 
@@ -377,7 +340,7 @@ pub(super) struct RealmMembersController {
     pub(super) permissions: Signal<RealmMemberCapabilities>,
     /// The caller's accepted contacts, loaded the first time the invite modal
     /// opens and not again.
-    pub(super) invite_contacts: Signal<Vec<crate::models::ContactListRow>>,
+    pub(super) invite_contacts: Signal<Vec<crate::models::ContactView>>,
     pub(super) invite_contacts_loaded: Signal<bool>,
     pub(super) invite_contacts_status: Signal<String>,
     pub(super) state_store: SyncSignal<LocalStateStore>,
@@ -709,32 +672,21 @@ impl RealmMembersController {
         } = context;
         let request_realm = realm_id.clone();
         let request_invite_id = invite_id.clone();
-        let request_invitee = direct_invitee.clone();
-        let is_direct = request_invitee.is_some();
+        let Some(request_invitee) = direct_invitee.clone() else {
+            self.status_msg.set("The accepted directed invitation target is unavailable; refresh before cancelling.".into());
+            return;
+        };
         match crate::transport::auth::with_event_submitter(&base_url, api_token, |sub| async move {
-            if let Some(invitee) = request_invitee {
-                crate::transport::realm_write::cancel_realm_invite(
-                    &sub,
-                    &request_realm,
-                    &actor_id,
-                    &request_invite_id,
-                    &invitee,
-                    "revoked",
-                    Some("admin_cancel"),
-                )
-                .await
-            } else {
-                crate::transport::realm_write::revoke_realm_invite(
-                    &sub,
-                    &request_realm,
-                    &actor_id,
-                    &request_invite_id,
-                    None,
-                    "revoked",
-                    "admin_revoke",
-                )
-                .await
-            }
+            crate::transport::realm_write::cancel_realm_invite(
+                &sub,
+                &request_realm,
+                &actor_id,
+                &request_invite_id,
+                &request_invitee,
+                "revoked",
+                Some("admin_cancel"),
+            )
+            .await
         })
         .await
         {
@@ -744,11 +696,7 @@ impl RealmMembersController {
                     format!("ak:operation:{}", crate::operation::uuid_v7()),
                     Some(realm_id),
                     json!({
-                        "kind": if is_direct {
-                            event_kind_str::INVITE_CANCEL
-                        } else {
-                            event_kind_str::INVITE_REVOKE
-                        },
+                        "kind": event_kind_str::INVITE_CANCEL,
                         "invite_id": invite_id.clone(),
                         "invitee_id": direct_invitee,
                         "state": "revoked",
@@ -761,10 +709,8 @@ impl RealmMembersController {
                         && !(profile.actor_id == member_id && profile.is_pending_invite())
                 });
                 self.members.set(next_members);
-                self.status_msg.set(format!(
-                    "{} invite for {member_label}",
-                    if is_direct { "cancelled" } else { "revoked" }
-                ));
+                self.status_msg
+                    .set(format!("{} invite for {member_label}", "cancelled"));
             }
             Err(err) => self
                 .status_msg
@@ -968,22 +914,8 @@ impl RealmMembersController {
                 let occupied = crate::api_error::invite_live_target_occupied_details(&error);
                 let message = match occupied {
                     Some(occupied) => {
-                        let local_state = self.state_store.read().load();
-                        let occupant_state = local_invite_lifecycle_state(
-                            &local_state.raw_operations,
-                            &realm_id,
-                            occupied.invite_id().as_str(),
-                        );
-                        recover_from_occupied_live_target(
-                            &api,
-                            &realm_id,
-                            &actor_id,
-                            &invitee,
-                            &invitee_label,
-                            &occupied,
-                            occupant_state.as_deref(),
-                        )
-                        .await
+                        recover_from_occupied_live_target(&api, &invitee, &invitee_label, &occupied)
+                            .await
                     }
                     None if crate::event_submit::is_durably_queued_error(&error) => {
                         format!("invite queued for retry: {invitee_label}: {error:#}")

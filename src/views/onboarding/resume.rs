@@ -81,7 +81,7 @@ pub(super) async fn recover_bound_principal_device(
     ))
     .map_err(anyhow::Error::msg)?;
     let possession = arkret_models_crypto::RecoveryDevicePossessionTranscript {
-        schema: "ak.identity.recovery_device_possession.v1".to_owned(),
+        schema: arkret_wire::DomainSeparationId::IDENTITY_RECOVERY_DEVICE_POSSESSION_V1.to_owned(),
         session_grant_id: recovery_grant_id,
         session_grant_cnf_jkt: arkret_sdk::Base64UrlString::new(recovery_grant_jkt)
             .map_err(anyhow::Error::msg)?,
@@ -187,14 +187,15 @@ pub(super) async fn issue_recovery_session_transport(
         .bound_principal_id
         .as_ref()
         .context("bound recovery handoff has no principal")?;
-    let request =
-        arkret_sdk::SessionGrantRequestBody::Recovery(arkret_sdk::RecoverySessionGrantRequest {
+    let request = arkret_sdk::SessionGrantRequestBody::Recovery(
+        arkret_sdk::RecoverySessionGrantRequestBody {
             credential_class: arkret_sdk::SessionGrantCredentialClass::RecoverySession,
             request_id: arkret_sdk::RequestId::new(handoff.request_id.clone())?,
             principal_id: principal_id.clone(),
             device_id: arkret_sdk::DeviceId::new(handoff.device_id.clone())?,
             audience_id: handoff.audience_id.clone(),
-        });
+        },
+    );
     request.validate()?;
     let outcome = account_http.auth_issue_session_grant(&request).await?;
     let expected_session_public_key = holder.canonical_session_public_jwk()?;
@@ -313,10 +314,10 @@ pub(super) async fn issue_recovery_completion_grant(
     let outcome = account_http
         .issue_recovery_completion_grant(&request)
         .await?;
-    let session_grant_outcome = serde_json::from_value(outcome.session_grant_outcome)?;
+    let issued_session = serde_json::from_value(outcome.issued_session)?;
     let session = garth::SessionGrantState::from_initial_registration_outcome(
         &initial_session,
-        session_grant_outcome,
+        issued_session,
         chrono::Utc::now(),
     )?;
     let principal_id = handoff

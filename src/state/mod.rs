@@ -14,8 +14,8 @@ use serde_json::Value;
 
 use crate::notification_rules::WatchLevel;
 
-/// Root-index storage key. Per-account `ClientLocalState` entries live under
-/// the sibling key `account_state_key(did)`.
+/// Small profile-selection index. Account cursors and records live in the
+/// encrypted transaction store, independently of this public control index.
 #[cfg(target_arch = "wasm32")]
 const LOCAL_STATE_STORAGE_KEY: &str = "inkson.local_state.v1";
 
@@ -33,19 +33,8 @@ fn account_storage_scope(authority: &arkret_sdk::AccountId) -> anyhow::Result<St
     crate::identity::active_account::authority_namespace(authority)
 }
 
-/// Per-account `ClientLocalState` storage key, always authority-pair scoped.
-#[cfg(target_arch = "wasm32")]
-fn account_state_key(namespace: &str) -> String {
-    format!("{LOCAL_STATE_STORAGE_KEY}.account.{namespace}")
-}
-
-/// Hard cap on the persisted `raw_operations` audit log. Each
-/// user write appends one record and the whole `ClientLocalState` blob is
-/// re-serialized on every flush; left unbounded it grows without limit
-/// (linear native write cost) and, on wasm, eventually blows the ~5 MB
-/// localStorage quota — after which *all* persistence (MLS snapshots, sync
-/// cursor, plaintext sidecar) silently fails. We retain the most recent
-/// `RAW_OPERATIONS_MAX` records, dropping the oldest first.
+/// Retain a bounded local audit window. Entries are independent records;
+/// the cap also bounds explicit callers requesting the complete audit view.
 const RAW_OPERATIONS_MAX: usize = 512;
 const TO_DEVICE_INBOX_MAX: usize = 512;
 const TO_DEVICE_RECEIPTS_MAX: usize = 4096;
@@ -106,17 +95,19 @@ mod projection_read_tests;
 thread_local! {
     static FULL_STATE_READ_COPIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
+#[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+pub(crate) use account_store::run_browser_account_record_corruption_contract;
 pub(crate) use e2ee_secure_cache::{
     BrowserStorageEstimate, E2eeCacheWriteIntent, E2eePlaintextCacheClearScope,
     E2eePlaintextCacheUsage, browser_storage_estimate,
 };
-
-mod account_decode;
-#[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
-pub(crate) use account_decode::run_browser_retired_account_contract;
+pub mod account_items;
+use account_items::MapExt as _;
 mod account_persist;
+mod account_store;
+pub(crate) use account_store::CommittedAccountRead;
 #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
-pub(crate) use account_persist::run_browser_account_persist_fault_contract;
+pub(crate) use account_store::run_browser_account_persist_fault_contract;
 
 mod move_tracking;
 
@@ -133,6 +124,7 @@ pub(crate) use storage_util::*;
 // sees this module's items (private parent items are visible to child
 // modules, so no visibility widening is needed).
 mod demand_sync;
+pub(crate) use demand_sync::RealmListReadFence;
 mod identity_session;
 pub(crate) mod invite_credentials;
 mod member_identity;
@@ -155,11 +147,10 @@ enum LocalProjectionCommand {
 
 #[derive(Debug)]
 pub struct LocalStateStore {
-    /// The ACTIVE account's full state. Every existing read/write method
-    /// operates on `cached` unchanged — they simply act on whichever account
-    /// the persisted root index's `active_profile_id` selects. Loaded from
-    /// `account_state_key(active_profile_id)` (or default when signed out) by
-    /// [`Self::ensure_cached_loaded`].
+    /// Account-local read-your-writes view. Persistent collections make a
+    /// snapshot clone independent of the number of loaded Realms or members.
+    /// The durable backend owns the committed cut; a stale writer must pass
+    /// its exact root CAS before any record or cursor becomes durable.
     ///
     /// NOTE: the root index is deliberately NOT a struct field. `LocalStateStore`
     /// is `#[derive(Clone)]` and held in a widely-cloned `Signal<_>`; a cached
@@ -170,6 +161,9 @@ pub struct LocalStateStore {
     /// through [`Self::read_root`] and updated atomically through
     /// [`Self::mutate_root`] so every clone observes one shared source of truth.
     cached: ClientLocalState,
+    account_checkpoints: Mutex<imbl::OrdMap<String, Arc<account_store::CachedCheckpoint>>>,
+    #[cfg(not(target_arch = "wasm32"))]
+    account_backend: Mutex<Option<current_index::platform::Backend>>,
     /// Principal storage scope bound to `cached`. The root index is shared by every
     /// store instance, while `cached` is instance-local; without this fence a
     /// store loaded for Alice can observe Bob becoming active and flush Alice's
@@ -221,8 +215,8 @@ pub struct LocalStateStore {
     /// Shared by clones and bound to the exact account cache key.
     e2ee_cache_clears: Arc<Mutex<e2ee_secure_cache::CacheClearFences>>,
     /// Per-clone reconciliation already absorbed into this live cache.
-    e2ee_cache_reconciliations_seen: BTreeSet<String>,
-    e2ee_cache_clear_generations_seen: BTreeMap<String, u64>,
+    e2ee_cache_reconciliations_seen: imbl::OrdSet<String>,
+    e2ee_cache_clear_generations_seen: imbl::OrdMap<String, u64>,
     /// Serialization lock for the MLS "decrypt → state
     /// write-back" critical section. Multiple views (chat / kanban) can
     /// trigger decrypt-on-read for the same realm; holding this
@@ -235,10 +229,11 @@ pub struct LocalStateStore {
     /// Runtime-only unified Sidecar projection. Its inputs come exclusively
     /// from decrypted Account Data and deterministic accepted private-history
     /// folds; persisted caches remain rebuildable accelerators.
-    sidecar_projection_fold: crate::sidecar::SidecarProjectionFold,
+    sidecar_projection_fold: account_items::Shared<crate::sidecar::SidecarProjectionFold>,
     blocklist_projection_cache: Mutex<BlocklistProjectionCache>,
     blocklist_sync: Arc<Mutex<BlocklistSyncState>>,
-    pending_projection_commands: std::collections::VecDeque<LocalProjectionCommand>,
+    pending_projection_commands:
+        account_items::Shared<std::collections::VecDeque<LocalProjectionCommand>>,
     #[cfg(not(target_arch = "wasm32"))]
     path: PathBuf,
 }
@@ -250,6 +245,8 @@ pub(crate) struct CurrentProductView {
     /// The account namespace of the store that installed the view; a clone
     /// hydrated for another account never reads it.
     account_key: Option<String>,
+    /// Committed account generation from which this in-memory view was read.
+    generation: u64,
     view: crate::current_projection::RealmCurrentView,
     required_ready: bool,
 }
@@ -262,9 +259,19 @@ struct RealmSecurityView {
 }
 
 impl Clone for LocalStateStore {
+    #[cfg_attr(
+        not(test),
+        expect(
+            clippy::unwrap_used,
+            reason = "Clone cannot report a poisoned account-cache invariant; never reuse partial authority state."
+        )
+    )]
     fn clone(&self) -> Self {
         Self {
             cached: self.cached.clone(),
+            account_checkpoints: Mutex::new(self.account_checkpoints.lock().unwrap().clone()),
+            #[cfg(not(target_arch = "wasm32"))]
+            account_backend: Mutex::new(self.account_backend.lock().unwrap().clone()),
             cached_account_key: self.cached_account_key.clone(),
             contact_remarks_restored_for: self.contact_remarks_restored_for.clone(),
             product_current_demand: Arc::clone(&self.product_current_demand),
@@ -293,7 +300,7 @@ impl Clone for LocalStateStore {
 }
 
 pub(crate) struct LocalStatePersistBarrier {
-    inner: account_persist::AccountPersistBarrier,
+    inner: account_store::Barrier,
     persist_health: Arc<Mutex<Option<String>>>,
 }
 
@@ -326,7 +333,7 @@ impl LocalStatePersistBarrier {
 /// is unverified, so any occurrence is sufficient to quarantine its Realm
 /// until a new projection is built from verified current governance facts.
 fn realm_tree_projection_has_retired_minimal_metadata_marker(body: &Value) -> bool {
-    const RETIRED_MARKER: &str = "ak.profile.mls.minimal_metadata_realm.v1";
+    const RETIRED_MARKER: &str = arkret_wire::RejectedProfileId::MLS_MINIMAL_METADATA_REALM_V1;
     match body {
         Value::String(value) => value == RETIRED_MARKER,
         Value::Array(values) => values
@@ -343,6 +350,9 @@ impl Default for LocalStateStore {
     fn default() -> Self {
         Self {
             cached: ClientLocalState::default(),
+            account_checkpoints: Mutex::new(imbl::OrdMap::new()),
+            #[cfg(not(target_arch = "wasm32"))]
+            account_backend: Mutex::new(None),
             cached_account_key: None,
             contact_remarks_restored_for: None,
             product_current_demand: Arc::new(Mutex::new(None)),
@@ -355,13 +365,13 @@ impl Default for LocalStateStore {
             corrupt_account_scopes: Arc::new(Mutex::new(std::collections::BTreeSet::new())),
             mls_receive_overlay: Arc::new(Mutex::new(MlsReceiveOverlay::default())),
             e2ee_cache_clears: Arc::new(Mutex::new(Default::default())),
-            e2ee_cache_reconciliations_seen: BTreeSet::new(),
-            e2ee_cache_clear_generations_seen: BTreeMap::new(),
+            e2ee_cache_reconciliations_seen: imbl::OrdSet::new(),
+            e2ee_cache_clear_generations_seen: imbl::OrdMap::new(),
             mls_decrypt_serial: Arc::new(Mutex::new(())),
-            sidecar_projection_fold: crate::sidecar::SidecarProjectionFold::default(),
+            sidecar_projection_fold: crate::sidecar::SidecarProjectionFold::default().into(),
             blocklist_projection_cache: Mutex::new(BlocklistProjectionCache::default()),
             blocklist_sync: Arc::new(Mutex::new(BlocklistSyncState::default())),
-            pending_projection_commands: std::collections::VecDeque::new(),
+            pending_projection_commands: std::collections::VecDeque::new().into(),
             #[cfg(not(target_arch = "wasm32"))]
             path: default_state_path(),
         }
@@ -472,9 +482,8 @@ impl LocalStateStore {
     pub fn load(&self) -> ClientLocalState {
         #[cfg(test)]
         FULL_STATE_READ_COPIES.with(|count| count.set(count.get() + 1));
-        // Once reconciled with persistence, `cached` is authoritative (single
-        // process) — skip the full-state `!= default` compare and the repeated
-        // backing-store read that an empty account used to pay on every call.
+        // This is an optimistic COW snapshot, never evidence of durability.
+        // Committed consumers use the explicit backend read port.
         let effective_account_key = self.effective_account_key();
         let mut state = if self.loaded.load(Ordering::Relaxed)
             && self.cached_account_key.as_deref() == Some(effective_account_key.as_str())
@@ -521,39 +530,18 @@ impl LocalStateStore {
         result
     }
 
-    /// Freeze the active account's current state into the single-writer queue
-    /// and return a barrier that resolves only after that sequence (or a newer
-    /// coalesced snapshot) is durably committed. Remote acknowledgements and
-    /// post-accept actions must await this instead of treating a wasm enqueue
+    /// Freeze one account delta into its single-writer transaction and return
+    /// an exact barrier that resolves only after the backend has committed. Remote acknowledgements
+    /// and post-accept actions must await this instead of treating a wasm enqueue
     /// as a completed IndexedDB write.
     pub(crate) fn begin_durable_flush(&self) -> anyhow::Result<LocalStatePersistBarrier> {
         if self.flush_suspended > 0 {
             anyhow::bail!("cannot begin a durable state barrier inside a state batch");
         }
 
-        #[cfg(not(target_arch = "wasm32"))]
-        let inner = {
-            self.flush()?;
-            account_persist::AccountPersistBarrier::ready()
-        };
-
-        #[cfg(target_arch = "wasm32")]
-        let inner = {
-            let account_key = self.cached_account_key_for_persist()?;
-            let state = e2ee_safe_persist_state_owned(self.effective_state_for_persist());
-            let json = serde_json::to_string(&state)?;
-            match account_persist::enqueue_account_state_persist_barrier(
-                account_state_key(&account_key),
-                json,
-            ) {
-                Ok(barrier) => barrier,
-                Err(error) => {
-                    tracing::error!(%error, "local state durable barrier enqueue failed");
-                    *self.lock_persist_health() = Some(error.to_string());
-                    return Err(error);
-                }
-            }
-        };
+        let account_key = self.cached_account_key_for_persist()?;
+        let inner =
+            self.persist_account_records(&account_key, self.effective_state_for_persist())?;
 
         Ok(LocalStatePersistBarrier {
             inner,
@@ -679,6 +667,9 @@ impl LocalStateStore {
     pub fn with_path(path: impl Into<PathBuf>) -> Self {
         Self {
             cached: ClientLocalState::default(),
+            account_checkpoints: Mutex::new(imbl::OrdMap::new()),
+            #[cfg(not(target_arch = "wasm32"))]
+            account_backend: Mutex::new(None),
             cached_account_key: None,
             contact_remarks_restored_for: None,
             product_current_demand: Arc::new(Mutex::new(None)),
@@ -691,74 +682,89 @@ impl LocalStateStore {
             corrupt_account_scopes: Arc::new(Mutex::new(std::collections::BTreeSet::new())),
             mls_receive_overlay: Arc::new(Mutex::new(MlsReceiveOverlay::default())),
             e2ee_cache_clears: Arc::new(Mutex::new(Default::default())),
-            e2ee_cache_reconciliations_seen: BTreeSet::new(),
-            e2ee_cache_clear_generations_seen: BTreeMap::new(),
+            e2ee_cache_reconciliations_seen: imbl::OrdSet::new(),
+            e2ee_cache_clear_generations_seen: imbl::OrdMap::new(),
             mls_decrypt_serial: Arc::new(Mutex::new(())),
-            sidecar_projection_fold: crate::sidecar::SidecarProjectionFold::default(),
+            sidecar_projection_fold: crate::sidecar::SidecarProjectionFold::default().into(),
             blocklist_projection_cache: Mutex::new(BlocklistProjectionCache::default()),
             blocklist_sync: Arc::new(Mutex::new(BlocklistSyncState::default())),
-            pending_projection_commands: std::collections::VecDeque::new(),
+            pending_projection_commands: std::collections::VecDeque::new().into(),
             path: path.into(),
         }
     }
 
     // ── Account-aware persistence (per-account isolation) ────────────────
     //
-    // The storage layout is a small root index at [`LOCAL_STATE_STORAGE_KEY`]
-    // plus one full `ClientLocalState` per authority at its digest-derived key
-    // (native: sibling files via `account_state_path`). The only persistence
-    // functions that touch a storage key are the three below; the ~hundreds of
-    // `cached`-based read/write methods are untouched — they act on whichever
-    // account `root.active_profile_id` selects.
-    //
-    // `read_persisted_state` returns the ACTIVE account's state (its callers
-    // only want the state); `load_persisted_root` reads the index;
-    // `write_persisted_state` writes the active account's entry and the index.
+    // Profile selection is a small control index. Per-account records,
+    // cursors and current publications share the encrypted KV transaction.
 
-    #[cfg(not(target_arch = "wasm32"))]
-    fn account_state_path(&self, namespace: &str) -> PathBuf {
-        let sanitized = sanitize_storage_scope_for_filename(namespace);
-        let stem = self
-            .path
-            .file_stem()
-            .and_then(|stem| stem.to_str())
-            .unwrap_or("state");
-        let ext = self
-            .path
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .unwrap_or("json");
-        let file_name = format!("{stem}.account.{sanitized}.{ext}");
-        match self.path.parent() {
-            Some(parent) => parent.join(file_name),
-            None => PathBuf::from(file_name),
+    /// Native conformance inspects the same committed transaction as the product.
+    #[cfg(all(not(target_arch = "wasm32"), any(test, feature = "spec-conformance")))]
+    pub fn conformance_committed_account_state(&self) -> anyhow::Result<ClientLocalState> {
+        Ok(account_store::load(
+            &self.account_record_backend()?,
+            &self.effective_account_key(),
+        )?
+        .state)
+    }
+    #[cfg(all(not(target_arch = "wasm32"), any(test, feature = "spec-conformance")))]
+    pub fn conformance_account_database_path(&self) -> PathBuf {
+        self.current_index_location().path
+    }
+    #[cfg(all(not(target_arch = "wasm32"), any(test, feature = "spec-conformance")))]
+    pub fn conformance_account_checkpoint_token(&self) -> anyhow::Result<Option<Vec<u8>>> {
+        self.account_record_backend()?
+            .get_raw_sync(&account_store::root_key(&self.effective_account_key()))
+    }
+    #[cfg(all(not(target_arch = "wasm32"), any(test, feature = "spec-conformance")))]
+    pub fn conformance_fail_account_commit(&self, enabled: bool) -> anyhow::Result<()> {
+        let backend = self.account_record_backend()?;
+        if enabled {
+            let key = account_store::root_key(&self.effective_account_key());
+            anyhow::ensure!(!key.contains('\''), "unsafe conformance storage scope");
+            backend.execute_for_test(&format!("CREATE TRIGGER IF NOT EXISTS conformance_fail_account_commit BEFORE INSERT ON current_entries WHEN NEW.key='{key}' BEGIN SELECT RAISE(ABORT,'injected client account commit failure'); END;"))
+        } else {
+            backend.execute_for_test("DROP TRIGGER IF EXISTS conformance_fail_account_commit")
         }
     }
 
-    /// The exact native shard selected by the normal persistence boundary.
+    /// Reopen the normal native root to exercise process-restart restoration.
     #[cfg(all(not(target_arch = "wasm32"), feature = "spec-conformance"))]
-    pub fn conformance_account_state_path(&self) -> PathBuf {
-        self.account_state_path(&self.effective_account_key())
+    pub fn conformance_reopen(&self) -> Self {
+        Self::with_path(self.path.clone())
     }
 
-    /// Dedicated atomic store for durable Signal sequence block reservations.
-    /// It is intentionally separate from the large account-state snapshot: a
-    /// second process can lock and advance this high-water without rewriting
-    /// or racing unrelated projections.
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    pub(crate) fn commit_current_stage_for_test(
+        &mut self,
+        mut stage: current_index::CurrentStage,
+    ) -> anyhow::Result<()> {
+        stage.arm_account_commit();
+        self.verified_projection_transaction(|store| {
+            store.set_current_generation(stage.generation());
+            Ok(())
+        })
+        .map_err(anyhow::Error::msg)?;
+        stage.finish();
+        Ok(())
+    }
+
+    /// Signal nonce reservations retain their independent durable namespace.
     #[cfg(not(target_arch = "wasm32"))]
     fn signal_sequence_store_path(&self, namespace: &str) -> PathBuf {
-        let account = self.account_state_path(namespace);
-        let file_name = format!(
-            "{}.signal-sequences.jsonl",
-            account
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("account")
-        );
-        account
-            .parent()
-            .map(|parent| parent.join(&file_name))
-            .unwrap_or_else(|| PathBuf::from(file_name))
+        let stem = self
+            .path
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .unwrap_or("state");
+        let extension = self
+            .path
+            .extension()
+            .and_then(|name| name.to_str())
+            .unwrap_or("json");
+        self.path.with_file_name(format!(
+            "{stem}.account.{namespace}.{extension}.signal-sequences.jsonl"
+        ))
     }
 
     /// Pin the sender's account and physical storage from one root snapshot.
@@ -860,7 +866,7 @@ impl LocalStateStore {
         *self.lock_persist_health() = Some(message);
     }
 
-    /// The namespace the cached blob persists under. A pending transaction
+    /// The namespace to which this cached account view is bound. A pending transaction
     /// always selects the anonymous namespace; otherwise the last committed
     /// account is selected. Reads the shared root on every call so no clone can
     /// route pending writes into the retained account.
@@ -919,113 +925,251 @@ impl LocalStateStore {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    fn read_account_state(&self, storage_scope: &str) -> Option<ClientLocalState> {
-        let path = self.account_state_path(storage_scope);
-        let bytes = match fs::read(&path) {
-            Ok(bytes) => bytes,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                // An earlier version may already have moved a legacy account
-                // to this sibling. Recover it without deleting the original.
-                fs::read(path.with_extension("corrupt")).ok()?
-            }
-            Err(_) => return None,
-        };
-        match account_decode::decode_account_state(&bytes) {
-            Ok(state) => Some(state),
+    fn account_record_backend(&self) -> anyhow::Result<current_index::platform::Backend> {
+        let mut backend = self
+            .account_backend
+            .lock()
+            .map_err(|_| anyhow::anyhow!("account backend lock poisoned"))?;
+        if let Some(backend) = &*backend {
+            return Ok(backend.clone());
+        }
+        let opened = current_index::platform::Backend::open_sync(self.current_index_location())?;
+        *backend = Some(opened.clone());
+        Ok(opened)
+    }
+
+    fn read_account_state(&self, scope: &str) -> Option<ClientLocalState> {
+        #[cfg(not(target_arch = "wasm32"))]
+        let backend = match self.account_record_backend() {
+            Ok(backend) => backend,
             Err(error) => {
-                let corrupt_path = path.with_extension("corrupt");
-                let _ = fs::rename(&path, &corrupt_path);
-                let message = format!(
-                    "account state at {} was unreadable ({error}); preserved a copy at {} and started from defaults",
-                    path.display(),
-                    corrupt_path.display()
-                );
-                tracing::error!(%error, "corrupt account state preserved, not silently reset");
+                *self.lock_persist_health() =
+                    Some(format!("account storage temporarily unavailable: {error}"));
+                return None;
+            }
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        let result = (|| -> anyhow::Result<_> {
+            let checkpoint = account_store::load(&backend, scope)?;
+            account_store::schedule_gc(
+                backend,
+                scope.to_owned(),
+                self.path.to_string_lossy().to_string(),
+            );
+            Ok(checkpoint)
+        })()
+        .map(|checkpoint| account_store::CachedCheckpoint { checkpoint });
+        #[cfg(target_arch = "wasm32")]
+        let result: anyhow::Result<_> = match account_store::browser::cached_result(scope) {
+            Ok(Some(cached)) => Ok(cached),
+            Ok(None) => return None,
+            Err(error) => Err(error),
+        };
+        match result {
+            Ok(cached) => {
+                let state = cached.checkpoint.state.clone();
+                self.account_checkpoints
+                    .lock()
+                    .map_err(|_| {
+                        *self.lock_persist_health() =
+                            Some("account checkpoint or quarantine lock poisoned".into());
+                    })
+                    .ok()?
+                    .insert(scope.to_owned(), Arc::new(cached));
+                Some(state)
+            }
+            Err(error) => {
                 self.corrupt_account_scopes
                     .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner())
-                    .insert(storage_scope.to_owned());
-                *self.lock_persist_health() = Some(message);
+                    .map_err(|_| {
+                        *self.lock_persist_health() =
+                            Some("account checkpoint or quarantine lock poisoned".into());
+                    })
+                    .ok()?
+                    .insert(scope.to_owned());
+                *self.lock_persist_health() = Some(format!(
+                    "account records could not be authenticated; durable data retained: {error}"
+                ));
                 None
             }
         }
     }
 
-    #[cfg(target_arch = "wasm32")]
-    fn read_account_state(&self, did: &str) -> Option<ClientLocalState> {
-        let key = account_state_key(did);
-        // Read-your-writes: a durable write still in the single-writer queue is
-        // the newest snapshot for this key; observe it before the backend cache
-        // so a flush-then-read in the same tick never reads a stale value.
-        let json = if let Some(pending) = account_persist::pending_account_state_json(&key) {
-            pending
-        } else {
-            let store = crate::secure_key_store::default_secure_key_store("inkson");
-            // Before the IndexedDB tier is ready the localStorage secure tier
-            // refuses this IndexedDB-only key (`Unsupported`), treated as absent —
-            // fail closed rather than reading a weaker copy. After boot the
-            // decrypted entry is served synchronously from the in-memory cache.
-            match store.get_secret(&key) {
-                Ok(Some(json)) => json,
-                Ok(None) | Err(_) => return None,
-            }
-        };
-        match account_decode::decode_account_state(json.as_bytes()) {
-            Ok(state) => Some(state),
-            Err(error) => {
-                // Preserve the undecodable blob under a sibling secure entry
-                // (still IndexedDB-only) before returning defaults, so a later
-                // flush cannot silently overwrite the only copy.
-                let store = crate::secure_key_store::default_secure_key_store("inkson");
-                let _ = store.store_secret(&format!("{key}.corrupt"), &json);
-                let message = format!(
-                    "account state entry was unreadable ({error}); preserved a copy and started from defaults"
-                );
-                tracing::error!(%error, "corrupt account state preserved, not silently reset");
-                self.corrupt_account_scopes
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner())
-                    .insert(did.to_owned());
-                *self.lock_persist_health() = Some(message);
-                None
-            }
-        }
+    pub(crate) fn capture_committed_account_read(&self) -> anyhow::Result<CommittedAccountRead> {
+        let scope = self.effective_account_key();
+        anyhow::ensure!(
+            self.cached_account_key
+                .as_ref()
+                .is_none_or(|cached| cached == &scope),
+            "account changed before committed read capture"
+        );
+        let expected = self.committed_account_checkpoint(&scope)?;
+        anyhow::ensure!(
+            expected.state.current_generation == self.current_generation(),
+            "current generation has not reached its durable account checkpoint"
+        );
+        Ok(CommittedAccountRead {
+            scope,
+            expected,
+            location: self.current_index_location(),
+            account: self.active_authority(),
+            generation: self.current_generation(),
+            epoch: crate::identity::device_directory::cache_epoch(),
+            device: crate::secure_key_store::active_device_seed_scope()
+                .map(|scope| (scope.authority, scope.device_id)),
+            grant: self.session_grant().map(|grant| grant.grant_id),
+            pending: self
+                .pending_login()
+                .map(|pending| (pending.device_id, pending.anonymous_storage_incarnation)),
+        })
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
-    fn write_account_state(&self, did: &str, state: ClientLocalState) -> anyhow::Result<()> {
-        use std::io::Write;
+    fn reset_quarantined_anonymous_records(&self, incarnation: &str) -> anyhow::Result<()> {
+        #[cfg(not(target_arch = "wasm32"))]
+        let cached = {
+            let checkpoint = account_store::reset_anonymous(
+                &self.account_record_backend()?,
+                incarnation,
+                || {
+                    self.read_root()
+                        .pending_login
+                        .as_ref()
+                        .and_then(|pending| pending.anonymous_storage_incarnation.as_deref())
+                        == Some(incarnation)
+                },
+            )?;
+            self.corrupt_account_scopes
+                .lock()
+                .map_err(|_| anyhow::anyhow!("account checkpoint or quarantine lock poisoned"))?
+                .remove(ANONYMOUS_ACCOUNT_NAMESPACE);
+            account_store::CachedCheckpoint { checkpoint }
+        };
+        #[cfg(target_arch = "wasm32")]
+        let cached = account_store::browser::enqueue_reset(
+            incarnation.to_owned(),
+            self.corrupt_account_scopes.clone(),
+            self.persist_health.clone(),
+        )?;
+        self.account_checkpoints
+            .lock()
+            .map_err(|_| anyhow::anyhow!("account checkpoint or quarantine lock poisoned"))?
+            .insert(ANONYMOUS_ACCOUNT_NAMESPACE.to_owned(), Arc::new(cached));
+        Ok(())
+    }
 
-        let path = self.account_state_path(did);
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let persisted = e2ee_safe_persist_state_owned(state);
-        let bytes = serde_json::to_vec_pretty(&persisted)?;
-        let tmp_path = path.with_extension("json.tmp");
+    fn committed_account_checkpoint(
+        &self,
+        scope: &str,
+    ) -> anyhow::Result<account_store::Checkpoint> {
+        #[cfg(not(target_arch = "wasm32"))]
         {
-            let mut tmp = fs::File::create(&tmp_path)?;
-            tmp.write_all(&bytes)?;
-            tmp.sync_all()?;
+            if let Some(cached) = self
+                .account_checkpoints
+                .lock()
+                .map_err(|_| anyhow::anyhow!("account checkpoint or quarantine lock poisoned"))?
+                .get(scope)
+            {
+                return Ok(cached.checkpoint.clone());
+            }
+            let checkpoint = account_store::load(&self.account_record_backend()?, scope)?;
+            self.account_checkpoints
+                .lock()
+                .map_err(|_| anyhow::anyhow!("account checkpoint or quarantine lock poisoned"))?
+                .insert(
+                    scope.to_owned(),
+                    Arc::new(account_store::CachedCheckpoint {
+                        checkpoint: checkpoint.clone(),
+                    }),
+                );
+            Ok(checkpoint)
         }
-        fs::rename(&tmp_path, &path)?;
-        Ok(())
+        #[cfg(target_arch = "wasm32")]
+        {
+            let cached = account_store::browser::cached_result(scope)?
+                .ok_or_else(|| anyhow::anyhow!("committed account records are not hydrated"))?;
+            let checkpoint = cached
+                .last_committed
+                .lock()
+                .map_err(|_| anyhow::anyhow!("account checkpoint or quarantine lock poisoned"))?
+                .clone();
+            Ok(checkpoint)
+        }
     }
 
-    #[cfg(target_arch = "wasm32")]
-    fn write_account_state(&self, did: &str, state: ClientLocalState) -> anyhow::Result<()> {
-        // E2EE-at-rest: never persist raw history key material or decrypted MLS
-        // plaintext in the account-state blob — those live in their own hardened
-        // secure entries (`e2ee_plaintext_cache` / `mls_history_secret`).
-        let to_persist = e2ee_safe_persist_state_owned(state);
-        let json = serde_json::to_string(&to_persist)?;
-        // Route the blob through the durable single-writer queue into the
-        // IndexedDB encrypted entries store. Before the IndexedDB tier is ready
-        // this is a no-op (fail closed): the value stays in `cached` and the boot
-        // hydration flushes it once the tier initialises. The account key is
-        // frozen here so a later account switch cannot misroute this write.
-        account_persist::enqueue_account_state_persist(account_state_key(did), json);
-        Ok(())
+    fn persist_account_records(
+        &self,
+        scope: &str,
+        state: ClientLocalState,
+    ) -> anyhow::Result<account_store::Barrier> {
+        let mut checkpoints = self
+            .account_checkpoints
+            .lock()
+            .map_err(|_| anyhow::anyhow!("account checkpoint lock poisoned"))?;
+        #[cfg(not(target_arch = "wasm32"))]
+        let backend = self.account_record_backend()?;
+        if !checkpoints.contains_key(scope) {
+            #[cfg(not(target_arch = "wasm32"))]
+            let checkpoint = account_store::CachedCheckpoint {
+                checkpoint: account_store::load(&backend, scope)?,
+            };
+            #[cfg(target_arch = "wasm32")]
+            let checkpoint = account_store::browser::cached(scope).unwrap_or_default();
+            checkpoints.insert(scope.to_owned(), Arc::new(checkpoint));
+        }
+        let cached = Arc::make_mut(
+            checkpoints
+                .get_mut(scope)
+                .ok_or_else(|| anyhow::anyhow!("hydrated account checkpoint is missing"))?,
+        );
+        let publication = match self.active_authority() {
+            Some(authority) => CurrentIndex::account_publication(
+                self.current_index_location(),
+                &authority,
+                state.current_generation,
+            )?,
+            None => None,
+        };
+        if state.current_generation > cached.checkpoint.state.current_generation {
+            #[cfg(not(test))]
+            anyhow::ensure!(
+                publication.is_some(),
+                "account generation has no bound current publication"
+            );
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let state_generation_advances =
+                state.current_generation > cached.checkpoint.state.current_generation;
+            let mut plan = account_store::plan(scope, &cached.checkpoint, state)?;
+            if state_generation_advances && let Some(publication) = publication {
+                plan.deletes.extend(publication.deletes.iter().cloned());
+                plan.writes.extend(publication.writes.iter().cloned());
+            }
+            backend.apply_checked_sync(Some(plan.check), plan.deletes, plan.writes)?;
+            cached.checkpoint = plan.checkpoint;
+            account_store::schedule_gc(
+                backend,
+                scope.to_owned(),
+                self.path.to_string_lossy().to_string(),
+            );
+            Ok(account_store::Barrier::ready())
+        }
+        #[cfg(target_arch = "wasm32")]
+        account_store::browser::enqueue(
+            scope.to_owned(),
+            cached,
+            state,
+            publication,
+            self.persist_health.clone(),
+        )
+    }
+
+    fn write_account_state(&self, scope: &str, state: ClientLocalState) -> anyhow::Result<()> {
+        #[cfg(target_arch = "wasm32")]
+        if !crate::secure_key_store::wasm_secure_store_ready() {
+            return Ok(());
+        }
+        self.persist_account_records(scope, state).map(|_| ())
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -1069,8 +1213,18 @@ impl LocalStateStore {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .contains(&active)
         {
-            anyhow::bail!(
-                "refusing to persist account state after its durable blob was quarantined as corrupt: {active}"
+            #[cfg(target_arch = "wasm32")]
+            let repairing = self
+                .account_checkpoints
+                .lock()
+                .map_err(|_| anyhow::anyhow!("account checkpoint lock poisoned"))?
+                .get(&active)
+                .is_some_and(|cached| cached.recovering.load(Ordering::Acquire));
+            #[cfg(not(target_arch = "wasm32"))]
+            let repairing = false;
+            anyhow::ensure!(
+                repairing,
+                "refusing to persist account state after its durable records were quarantined as corrupt: {active}"
             );
         }
         match self.cached_account_key.as_deref() {
@@ -1111,15 +1265,6 @@ impl LocalStateStore {
     }
 }
 
-/// Sanitise a DID into a filesystem-safe filename segment for the native
-/// per-account state file. URL-safe-base64 of the DID bytes keeps it stable,
-/// reversible-free (we never need to decode it), and free of `:`/`/` which are
-/// hostile on Windows. Matches the per-account secure-store scoping convention.
-#[cfg(not(target_arch = "wasm32"))]
-fn sanitize_storage_scope_for_filename(storage_scope: &str) -> String {
-    storage_scope.to_owned()
-}
-
 #[cfg(test)]
 fn e2ee_safe_persist_state(state: &ClientLocalState) -> ClientLocalState {
     e2ee_safe_persist_state_owned(state.clone())
@@ -1158,3 +1303,59 @@ pub mod projection_views;
 #[cfg(test)]
 #[path = "../local_state_tests/mod.rs"]
 mod tests;
+
+#[cfg(target_arch = "wasm32")]
+impl LocalStateStore {
+    pub(crate) fn account_record_scopes_for_boot(&self) -> Vec<String> {
+        let mut scopes = vec![ANONYMOUS_ACCOUNT_NAMESPACE.to_owned()];
+        scopes.extend(
+            self.read_root()
+                .known_profiles
+                .iter()
+                .filter_map(|entry| account_storage_scope(&entry.authority).ok()),
+        );
+        scopes.sort();
+        scopes.dedup();
+        scopes
+    }
+    pub(crate) async fn prepare_account_records(scopes: Vec<String>) -> anyhow::Result<()> {
+        if let Some(incarnation) = Self::default()
+            .read_root()
+            .pending_login
+            .and_then(|pending| pending.anonymous_storage_incarnation)
+        {
+            account_store::browser::resume_reset(&incarnation).await?;
+        }
+        let active = Self::default().effective_account_key();
+        let mut scopes = scopes;
+        scopes.extend(account_store::browser::persisted_scopes().await?);
+        scopes.sort();
+        scopes.dedup();
+        for scope in scopes {
+            if let Err(error) = account_store::browser::hydrate(&scope).await {
+                if scope == active {
+                    return Err(error);
+                }
+                tracing::warn!(%error,"inactive account records remain quarantined");
+            }
+        }
+        Ok(())
+    }
+    pub(crate) fn account_records_boot_failed(&self, error: &anyhow::Error) {
+        self.corrupt_account_scopes
+            .lock()
+            .unwrap()
+            .insert(self.effective_account_key());
+        *self.lock_persist_health() = Some(format!(
+            "account record hydration failed; durable data retained: {error}"
+        ));
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+impl LocalStateStore {
+    fn persisted_account_records_for_test(&self, scope: &str) -> String {
+        account_store::decoded_records_for_test(&self.account_record_backend().unwrap(), scope)
+            .unwrap()
+    }
+}

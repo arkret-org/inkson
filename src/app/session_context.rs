@@ -1,9 +1,9 @@
 //! Session-scoped shared handles provided once at the app root and read by
-//! descendant components via `use_context`, replacing the `state_store` /
+//! descendants and scoped callbacks via `consume_context`, replacing the `state_store` /
 //! `base_url` prop-drilling chains (arch-review A4 / decision D17 step ②).
 //!
 //! Both fields are `Signal<_>`, which is `Copy`, so `SessionContext` is `Copy`
-//! and reading it through `use_context` is zero-cost. Providing the same signal
+//! and reading it through `consume_context` preserves those handles. Providing the same signal
 //! handles that `RouterView` already owns keeps a single source of truth — the
 //! context is a view onto those handles, not a second copy of the state.
 
@@ -20,7 +20,7 @@ pub(super) struct AppStateStore(pub SyncSignal<LocalStateStore>);
 
 /// Current account's contact inbox, shared by the sidebar and notifications.
 #[derive(Clone, Copy)]
-pub(crate) struct ContactInbox(pub Signal<Vec<crate::models::ContactListRow>>);
+pub(crate) struct ContactInbox(pub Signal<Vec<crate::models::ContactView>>);
 
 impl ContactInbox {
     pub(crate) fn pending_count(self, snapshot: &crate::state::ClientLocalState) -> usize {
@@ -40,7 +40,7 @@ impl ContactInbox {
     pub(crate) fn visible_pending(
         self,
         snapshot: &crate::state::ClientLocalState,
-    ) -> Vec<crate::models::ContactListRow> {
+    ) -> Vec<crate::models::ContactView> {
         self.0
             .read()
             .iter()
@@ -58,7 +58,7 @@ impl ContactInbox {
 
 /// Shared per-login-session handles. Provided in `RouterView` via
 /// `use_context_provider`; consumed anywhere below via
-/// `use_context::<SessionContext>()`.
+/// `consume_context::<SessionContext>()`.
 #[derive(Clone, Copy)]
 pub struct SessionContext {
     /// The authenticated account and its four distinct identity coordinates.
@@ -79,7 +79,7 @@ pub struct SessionContext {
     /// Monotonic revision bumped whenever the signed-in account's owned-agent
     /// set changes in Settings → My Agents (provision/pair, pause, resume,
     /// deactivate). The Contacts sidebar subscribes to it and re-pulls
-    /// `agent_list`, so a newly paired agent appears — or a deactivated one
+    /// `agent_page`, so a newly paired agent appears — or a deactivated one
     /// disappears — without the user re-opening the tab. My Agents and the
     /// sidebar each fetch their own view of the directory; this is the single
     /// change-notification that bridges them.
@@ -87,10 +87,12 @@ pub struct SessionContext {
 }
 
 impl SessionContext {
-    /// Fetch the provided context. Panics if called outside a `RouterView`
-    /// subtree, which is a programming error (every component runs under it).
+    /// Fetch provided handles without registering a render hook. Event handlers
+    /// and scope-owned async tasks also consume this context, including secure
+    /// session restoration before the routed surface becomes ready.
+    /// Panics outside a `RouterView` subtree, where the context is not provided.
     pub fn get() -> Self {
-        use_context::<SessionContext>()
+        consume_context::<SessionContext>()
     }
 
     pub fn active_account(&self) -> Option<crate::config::ActiveAccountContext> {

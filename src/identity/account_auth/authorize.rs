@@ -24,7 +24,7 @@ use super::{
 /// inkson client id.
 pub fn build_oidc_authorize_scaffold(
     discovery: &OidcDiscoveryDocument,
-    method: &arkret_sdk::AuthMethod,
+    method: &arkret_sdk::AuthenticationMethod,
     redirect_uri: &str,
     principal_audience: &str,
     entry_point: &OidcEntryPoint,
@@ -79,7 +79,7 @@ pub fn build_oidc_authorize_scaffold(
 #[allow(clippy::too_many_arguments)]
 fn build_standard_authorize_url(
     discovery: &OidcDiscoveryDocument,
-    method: &arkret_sdk::AuthMethod,
+    method: &arkret_sdk::AuthenticationMethod,
     client_id: &str,
     redirect_uri: &str,
     entry_point: &OidcEntryPoint,

@@ -10,7 +10,7 @@ pub async fn report(
     target_ref: &str,
     report_reason_code: &str,
     description: Option<&str>,
-) -> anyhow::Result<arkret_sdk::ModerationReportOutcome> {
+) -> anyhow::Result<arkret_sdk::ModerationReportResponseBody> {
     let event = crate::operation::ak_ops::moderation_report(
         realm_id,
         actor,
@@ -44,7 +44,7 @@ pub async fn report(
     )?;
     submitter
         .http()
-        .moderation_report(&body)
+        .moderation_report(&submitter.verify_publication(body)?)
         .await
         .map_err(anyhow::Error::from)
 }

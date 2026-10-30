@@ -150,7 +150,7 @@ pub(crate) fn moderation_decision_lift(
 
 #[cfg(test)]
 mod tests {
-    use arkret_models_collaboration::exact_current_results::{
+    use arkret_models_collaboration::exact_current_state::{
         CanonicalEventDot, ModerationAssertionValue, ModerationDecisionEntry,
     };
 

@@ -83,7 +83,7 @@ fn restore_ignores_cursor_noise_and_revalidates_content_current_account_and_devi
         dom.in_runtime(|| {
             let mut state = signals.store.peek().load();
             state.sync_cursor = Some(format!("reminted-{change}"));
-            state.presence_projection = vec![json!({"presence": change})];
+            state.presence_projection = vec![json!({"presence": change})].into();
             signals.store.write().save(state);
         });
         settle(&mut dom);

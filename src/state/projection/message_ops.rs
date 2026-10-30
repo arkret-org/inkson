@@ -210,11 +210,18 @@ mod tests {
             payload,
         )
         .unwrap();
-        event.event_id =
-            arkret_sdk::EventId::new("ak:event:AfqXI4jyBJWA5HRhSr3SdFP5Qb_2V210Q00mFqUjA7_z")
-                .unwrap();
         event.created_at = "2026-07-08T00:00:00.000Z".parse().unwrap();
-        event
+        let signer = arkret_test_kit::keys::seeded_signer(
+            arkret_sdk::Did::new("did:webvh:z6mkfixture:alice.example").unwrap(),
+            arkret_sdk::DidUrl::new("did:webvh:z6mkfixture:alice.example#ak:device:0196419b-0000-7000-8000-000000000001").unwrap(),
+        );
+        arkret_test_kit::signed_event::sign_verifiable_event(
+            event,
+            &signer,
+            arkret_sdk::DigestSuite::Sha256,
+        )
+        .unwrap()
+        .expect_verifiable()
     }
 
     #[test]
@@ -231,10 +238,7 @@ mod tests {
 
         let record = typed_message_raw_operation_from_event(&value).unwrap();
 
-        assert_eq!(
-            record.operation_id,
-            "ak:event:AfqXI4jyBJWA5HRhSr3SdFP5Qb_2V210Q00mFqUjA7_z"
-        );
+        assert_eq!(record.operation_id, event.event_id.as_str());
         assert_eq!(
             record.realm_id.as_deref(),
             Some("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
@@ -253,7 +257,7 @@ mod tests {
                     "version": "1.0",
                     "content_type": "application/vnd.arkret.sidecar-control+json",
                     "encryption_context": {
-                        "epoch": 1,
+                        "epoch": "1",
                         "group_state_ref": "ak:event:AbHexNOxiiU334tA-ZHyM5pRxJxbMY0jvwlMVDY3Xjrz"
                     },
                     "ciphertext": "AQIDBA"
@@ -289,6 +293,7 @@ mod tests {
                 "content": {"kind": "ak.content.text", "body": "typed"}
             }),
         );
+        let event_id = event.event_id.clone();
         let decoded = garth::InboundDecoder::new()
             .try_decode_event(event)
             .unwrap();
@@ -303,9 +308,6 @@ mod tests {
         );
 
         assert_eq!(records.len(), 1);
-        assert_eq!(
-            records[0].operation_id,
-            "ak:event:AfqXI4jyBJWA5HRhSr3SdFP5Qb_2V210Q00mFqUjA7_z"
-        );
+        assert_eq!(records[0].operation_id, event_id.as_str());
     }
 }

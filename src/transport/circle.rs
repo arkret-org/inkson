@@ -29,7 +29,7 @@ pub async fn add_circle_member(
     circle_id: &str,
     target_actor: &arkret_sdk::ActorId,
     membership: arkret_sdk::CircleMembership,
-) -> anyhow::Result<arkret_sdk::CircleMembershipOutcome> {
+) -> anyhow::Result<arkret_sdk::CircleMembershipResponseBody> {
     let parent_membership_revision = if membership == arkret_sdk::CircleMembership::Join {
         let realm = arkret_sdk::RealmId::new(crate::operation::trim_realm_id(realm_id))
             .map_err(|err| anyhow::anyhow!("invalid realm id {realm_id:?}: {err:?}"))?;
@@ -61,7 +61,7 @@ pub(crate) async fn submit_circle_member_with_parent_revision(
     target_actor: &arkret_sdk::ActorId,
     membership: arkret_sdk::CircleMembership,
     parent_membership_revision: Option<arkret_wire::CurrentRevision>,
-) -> anyhow::Result<arkret_sdk::CircleMembershipOutcome> {
+) -> anyhow::Result<arkret_sdk::CircleMembershipResponseBody> {
     let event = crate::operation::ak_ops::circle_member_state(
         realm_id,
         actor,
@@ -82,7 +82,7 @@ pub(crate) async fn submit_circle_member_with_parent_revision(
     };
     submitter
         .http()
-        .circle_member_add(circle_id, &body)
+        .circle_member_add(circle_id, &submitter.verify_publication(body)?)
         .await
         .map_err(anyhow::Error::from)
 }
@@ -94,7 +94,7 @@ pub async fn remove_circle_member(
     actor: &str,
     circle_id: &str,
     target_actor: &arkret_sdk::ActorId,
-) -> anyhow::Result<arkret_sdk::CircleMembershipOutcome> {
+) -> anyhow::Result<arkret_sdk::CircleMembershipResponseBody> {
     let event = crate::operation::ak_ops::circle_member_state_with_expected(
         realm_id,
         actor,
@@ -116,7 +116,11 @@ pub async fn remove_circle_member(
     };
     submitter
         .http()
-        .circle_member_remove(circle_id, target_actor, &body)
+        .circle_member_remove(
+            circle_id,
+            target_actor,
+            &submitter.verify_publication(body)?,
+        )
         .await
         .map_err(anyhow::Error::from)
 }
@@ -128,7 +132,7 @@ pub async fn archive_circle(
     actor: &str,
     circle_id: &str,
     reason: Option<&str>,
-) -> anyhow::Result<crate::models::SubmitEventResult> {
+) -> anyhow::Result<crate::models::EventSubmissionProgress> {
     let event = crate::operation::ak_ops::circle_lifecycle(
         realm_id,
         actor,
@@ -147,7 +151,7 @@ pub async fn restore_circle(
     actor: &str,
     circle_id: &str,
     reason: Option<&str>,
-) -> anyhow::Result<crate::models::SubmitEventResult> {
+) -> anyhow::Result<crate::models::EventSubmissionProgress> {
     let event = crate::operation::ak_ops::circle_lifecycle(
         realm_id,
         actor,

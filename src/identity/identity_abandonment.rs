@@ -78,7 +78,7 @@ pub async fn confirm(
     handoff: &PendingAccountHandoff,
     pending: &PendingIdentityAbandonment,
     dpop: &crate::identity::account_auth::grant_dpop::DpopHandle,
-) -> anyhow::Result<arkret_sdk::IdentityAbandonmentOutcome> {
+) -> anyhow::Result<arkret_sdk::IdentityAbandonmentResponseBody> {
     let grant = crate::identity::account_auth::load_account_handoff_grant(handoff)?
         .ok_or_else(|| anyhow::anyhow!("fresh account handoff credential is unavailable"))?;
     let request = &pending.request;

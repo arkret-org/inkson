@@ -17,7 +17,7 @@ for (const language of ["en", "zh"] as const) {
     await expect(page.getByTestId("auth-shell")).toHaveAttribute("data-locale", language);
     const zh = language === "zh";
     await expect(login.getByRole("heading", { level: 1 })).toHaveText(zh ? "登录" : "Sign in");
-    await expect(login.getByTestId("start-server-login-button")).toHaveText(zh ? "继续" : "Continue");
+    await expect(login.getByTestId("start-server-login-button")).toHaveText(zh ? "前往服务器登录" : "Sign in to this server");
     const create = login.locator('a[href="/register"]');
     await expect(create).toHaveText(zh ? "第一次使用？创建可恢复的身份" : "New here? Create a recoverable identity");
     await expect(create).toHaveAttribute("href", "/register");

@@ -46,8 +46,8 @@ test("invalid deactivation submission cannot mutate the Agent fixture", async ()
   expect(body.key_state.active_authorizations).toHaveLength(1);
 });
 
-test("Agent lifecycle outcome remains closed status-only", () => {
-  const schema = "schemas/agent-operations.schema.json#/$defs/agent_lifecycle_state";
+test("Agent lifecycle operation view remains closed status-only", () => {
+  const schema = "schemas/agent-operations.schema.json#/$defs/operation_status_view";
   expect(() => validateMockSchema(schema, { status: "deactivated" })).not.toThrow();
   expect(() => validateMockSchema(schema, {
     status: "deactivated",

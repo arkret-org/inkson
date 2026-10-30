@@ -16,7 +16,7 @@
 //! (`hpke-suite-registry.json`): standard RFC 9180 base mode —
 //! KEM `DHKEM(X25519, HKDF-SHA256)`, KDF `HKDF-SHA256`, AEAD ChaCha20-Poly1305
 //! (96-bit nonce). The AEAD nonce is the key-schedule-derived `base_nonce`
-//! (single-shot seq=0) and is NOT carried on the wire.
+//! (single-shot sequence=0) and is NOT carried on the wire.
 //!
 //! The seal/open crypto is delegated to
 //! `arkret_crypto::secret_share::{seal_base_mode_to_x25519_pubkey,

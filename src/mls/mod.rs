@@ -4,7 +4,11 @@
 //! MIMI protocol calls live in `crate::transport::mls`, which uses the shared SDK
 //! request/response types directly.
 
-pub(crate) mod accepted_artifact;
+mod checkpoint_port;
+#[cfg(all(target_arch = "wasm32", feature = "spec-conformance"))]
+pub use checkpoint_port::wasm_harness as checkpoint_harness;
+pub(crate) use checkpoint_port::{read_durable_checkpoint, read_durable_consumes};
+
 pub mod account_recovery;
 pub(crate) mod admission;
 pub(crate) mod admission_reconcile;

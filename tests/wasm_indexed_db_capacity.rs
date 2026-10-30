@@ -5,6 +5,14 @@ use wasm_bindgen_test::*;
 
 wasm_bindgen_test_configure!(run_in_browser);
 
+#[cfg(feature = "wasm-localstorage-secrets-test")]
+#[inline(never)]
+fn on_heap<'a, F: std::future::Future + 'a>(
+    make: impl FnOnce() -> F,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = F::Output> + 'a>> {
+    Box::pin(make())
+}
+
 #[wasm_bindgen_test(async)]
 async fn cancelled_open_preserves_schema_and_detaches_request_callbacks() {
     use std::cell::RefCell;
@@ -267,15 +275,15 @@ async fn failed_durable_write_does_not_publish_a_phantom_cache_value() {
 #[wasm_bindgen_test(async)]
 #[cfg(feature = "wasm-localstorage-secrets-test")]
 async fn account_state_fault_injection_contract_holds_in_browser() {
-    inkson::run_browser_account_persist_fault_contract()
+    on_heap(inkson::run_browser_account_persist_fault_contract)
         .await
         .expect("browser account-state persistence contract");
 }
 
 #[wasm_bindgen_test(async)]
 #[cfg(feature = "wasm-localstorage-secrets-test")]
-async fn retired_account_encrypted_browser_read_and_durable_reopen() {
-    inkson::run_browser_retired_account_contract()
+async fn account_record_corruption_is_retained_and_rejected_on_cold_reopen() {
+    on_heap(inkson::run_browser_account_record_corruption_contract)
         .await
         .unwrap();
 }
@@ -339,7 +347,7 @@ fn creator_submission(
     let scope = arkret_sdk::ScopeRef::Realm {
         realm_id: create.realm_id.clone(),
     };
-    let submission = garth::QueuedSubmission::new(arkret_wire::AuthoritySubmitRequest::Event(
+    let submission = garth::QueuedSubmission::new(arkret_wire::AuthoritySubmitRequestBody::Event(
         arkret_wire::EventAdmissionSubmission::new(create.into_event()),
     ))
     .unwrap();
@@ -467,7 +475,7 @@ fn contract_submission(nth: usize) -> garth::QueuedSubmission {
             &ed25519_dalek::SigningKey::from_bytes(&[7; 32]),
         )
         .expect("contract Event has a real producer proof");
-    garth::QueuedSubmission::new(arkret_wire::AuthoritySubmitRequest::Event(
+    garth::QueuedSubmission::new(arkret_wire::AuthoritySubmitRequestBody::Event(
         arkret_wire::EventAdmissionSubmission {
             event: event.into_event(),
             approval_signatures: None,

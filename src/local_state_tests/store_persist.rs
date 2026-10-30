@@ -394,7 +394,7 @@ fn local_state_store_persists_private_read_cursors() {
 fn local_state_store_persists_canonical_read_cursor_outcome() {
     let path = temp_state_path("read-cursor-outcome");
     let mut store = LocalStateStore::with_path(path.clone());
-    let outcome = arkret_sdk::ReadMarkerOutcome {
+    let outcome = arkret_sdk::ReadMarkerResponseBody {
         realm_id: arkret_sdk::RealmId::new("ak:realm:AV56KkeEaMSR4caEiVYFp1MtJk3sQ_Zn0VETrzEWQlU3")
             .unwrap(),
         actor_id: crate::mls_api_helpers::local_account_actor_id("did:web:alice.example").unwrap(),
@@ -653,58 +653,82 @@ fn local_state_store_durably_deduplicates_device_message_envelopes() {
 }
 
 #[test]
-fn corrupt_account_blob_is_quarantined_without_being_replaced_by_defaults() {
-    let root_path = temp_state_path("corrupt-account-quarantine");
-    let mut store = LocalStateStore::with_path(root_path);
-    let account_path = store.account_state_path(ANONYMOUS_ACCOUNT_NAMESPACE);
-    std::fs::create_dir_all(account_path.parent().unwrap()).unwrap();
-    std::fs::write(&account_path, b"{truncated").unwrap();
-
+fn corrupt_account_records_are_retained_without_being_replaced_by_defaults() {
+    let path = temp_state_path("corrupt-account-records");
+    let mut store = LocalStateStore::with_path(&path);
+    let backend = store.account_record_backend().unwrap();
+    let root = account_store::root_key(ANONYMOUS_ACCOUNT_NAMESPACE);
+    backend
+        .apply_checked_sync(None, vec![], vec![(root.clone(), b"{truncated".to_vec())])
+        .unwrap();
+    let original = backend.get_raw_sync(&root).unwrap();
     assert_eq!(store.load(), ClientLocalState::default());
     store.save(ClientLocalState::default());
-
-    assert!(!account_path.exists());
-    assert!(account_path.with_extension("corrupt").exists());
+    assert_eq!(backend.get_raw_sync(&root).unwrap(), original);
     let error = store.persist_error().expect("corruption remains visible");
     assert!(
         error.contains("refusing to persist account state")
             && error.contains(ANONYMOUS_ACCOUNT_NAMESPACE),
-        "unexpected persistence error: {error}"
+        "{error}"
     );
 }
 
 #[test]
-fn fresh_pending_login_replaces_only_a_quarantined_anonymous_blob() {
-    // begin_pending_login mutates the process-global pending-login id.
+fn fresh_pending_login_preserves_a_quarantined_anonymous_incarnation() {
     let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
-    let root_path = temp_state_path("fresh-login-replaces-corrupt-anonymous");
-    let mut store = LocalStateStore::with_path(root_path.clone());
-    let account_path = store.account_state_path(ANONYMOUS_ACCOUNT_NAMESPACE);
-    std::fs::create_dir_all(account_path.parent().unwrap()).unwrap();
-    std::fs::write(&account_path, b"{truncated").unwrap();
-
+    let path = temp_state_path("fresh-login-quarantine");
+    let mut writer = LocalStateStore::with_path(&path);
+    writer.save_sync_cursor("retained-old-cursor");
+    let backend = writer.account_record_backend().unwrap();
+    let root = account_store::root_key(ANONYMOUS_ACCOUNT_NAMESPACE);
+    backend
+        .apply_checked_sync(None, vec![], vec![(root.clone(), b"{truncated".to_vec())])
+        .unwrap();
+    let original = backend.get_raw_sync(&root).unwrap().unwrap();
+    let mut store = LocalStateStore::with_path(&path);
     assert_eq!(store.load(), ClientLocalState::default());
-    assert!(account_path.with_extension("corrupt").exists());
-
     store.begin_test_pending_login(
         "ak:device:019f0000-0000-7000-8000-000000000001",
         Some("fresh-jkt"),
     );
     assert!(
         store.persist_error().is_none(),
-        "an explicit fresh login must recover its anonymous scratch namespace"
+        "{:?}",
+        store.persist_error()
     );
     store.save_sync_cursor("sx:fresh-anonymous");
     assert!(store.persist_error().is_none());
-
-    let reopened = LocalStateStore::with_path(root_path);
+    let reopened = LocalStateStore::with_path(&path);
     assert_eq!(
         reopened.load().sync_cursor.as_deref(),
         Some("sx:fresh-anonymous")
     );
+    let diagnostics = backend
+        .scan_sync(
+            &format!(
+                "{}accounts/anonymous/quarantine/",
+                current_index::CURRENT_PREFIX
+            ),
+            None,
+            100,
+        )
+        .unwrap();
+    assert_eq!(diagnostics.len(), 1);
+    let preserved: serde_json::Value = serde_json::from_slice(&diagnostics[0].1).unwrap();
+    assert_eq!(preserved["ciphertext"], hex::encode(original));
+    let retained = backend
+        .scan_sync(
+            &format!(
+                "{}accounts/anonymous/incarnations/",
+                current_index::CURRENT_PREFIX
+            ),
+            None,
+            100,
+        )
+        .unwrap();
     assert!(
-        account_path.with_extension("corrupt").exists(),
-        "the original undecodable payload must remain preserved"
+        retained.len() > 3,
+        "old incarnation recovery records must remain intact"
     );
 }
 

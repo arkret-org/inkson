@@ -1,46 +1,99 @@
+use super::projection_reads::ProjectionReadSet;
 use super::*;
+
+fn kanban_read_account_scope(
+    account: Option<crate::config::ActiveAccountContext>,
+) -> Option<(
+    String,
+    arkret_sdk::AccountId,
+    arkret_sdk::DeviceId,
+    url::Url,
+)> {
+    account.map(|account| {
+        (
+            account.profile_id,
+            account.authority,
+            account.device_id,
+            account.server_url,
+        )
+    })
+}
 
 struct KanbanProjectionSnapshot {
     containers: Option<Vec<crate::state::projection_views::SpaceContainerProjectionView>>,
     strands: Option<Vec<crate::state::projection_views::StrandProjectionView>>,
-    events: Vec<arkret_sdk::Event>,
 }
 
 async fn fetch_kanban_projection_snapshot(
-    api: crate::transport::TransportClient,
+    http: arkret_sdk::http_client::Client,
     realm_id: &str,
+    needed: ProjectionReadSet,
+    read_fence: Option<crate::state::RealmListReadFence>,
 ) -> anyhow::Result<KanbanProjectionSnapshot> {
-    let http = api.sdk_http_client()?;
-    // Read complete derived Space/Strand projection pages for display before
-    // backfill. These rows are not an authoring basis or a governance head;
+    // Read independent, complete derived Space/Strand pages concurrently.
+    // These rows are not an authoring basis or a governance head;
     // accepted Events remain the canonical truth source.
-    let spaces = match crate::transport::realm_read::list_realm_spaces(&http, realm_id).await {
-        Ok(spaces) => Some(spaces.into_iter().map(Into::into).collect::<Vec<_>>()),
-        Err(error) => {
+    let (spaces, strands) = futures_util::future::join(
+        async {
+            if needed.spaces {
+                Some(match read_fence.as_ref() {
+                    Some(fence) => {
+                        crate::transport::realm_read::list_realm_spaces_scoped(
+                            &http, realm_id, fence,
+                        )
+                        .await
+                    }
+                    None => crate::transport::realm_read::list_realm_spaces(&http, realm_id).await,
+                })
+            } else {
+                None
+            }
+        },
+        async {
+            if needed.strands {
+                Some(match read_fence.as_ref() {
+                    Some(fence) => {
+                        crate::transport::realm_read::list_realm_strands_scoped(
+                            &http, realm_id, fence,
+                        )
+                        .await
+                    }
+                    None => crate::transport::realm_read::list_realm_strands(&http, realm_id).await,
+                })
+            } else {
+                None
+            }
+        },
+    )
+    .await;
+    let spaces = match spaces {
+        Some(Ok(spaces)) => Some(spaces.into_iter().map(Into::into).collect::<Vec<_>>()),
+        None => None,
+        Some(Err(error)) => {
+            if crate::api_error::is_auth_expired_error(&error) {
+                return Err(error);
+            }
             tracing::warn!(%error, %realm_id, "kanban Space baseline unavailable");
             None
         }
     };
-    let strands = match crate::transport::realm_read::list_realm_strands(&http, realm_id).await {
-        Ok(strands) => Some(strands.into_iter().map(Into::into).collect::<Vec<_>>()),
-        Err(error) => {
+    let strands = match strands {
+        Some(Ok(strands)) => Some(strands.into_iter().map(Into::into).collect::<Vec<_>>()),
+        None => None,
+        Some(Err(error)) => {
+            if crate::api_error::is_auth_expired_error(&error) {
+                return Err(error);
+            }
             tracing::warn!(%error, %realm_id, "kanban Strand baseline unavailable");
             None
         }
     };
-    // History may be unavailable to a since-join member. It must not erase
-    // successfully read current objects or block their presentation.
-    let events = match api.event_submitter()?.backfill(realm_id).await {
-        Ok(page) => page.events(),
-        Err(error) => {
-            tracing::warn!(%error, %realm_id, "kanban Event backfill unavailable");
-            Vec::new()
-        }
-    };
+    // The Realm follower owns admitted, paginated Event history for every
+    // visible stream. A panel-local first-page scan duplicates that work and
+    // cannot recover Events beyond that page or in independent Circle streams.
     Ok(KanbanProjectionSnapshot {
         containers: spaces,
         strands,
-        events,
     })
 }
 
@@ -48,6 +101,7 @@ async fn fetch_kanban_projection_snapshot(
 pub(super) fn KanbanEffects(
     controller: KanbanController,
     columns: Memo<Vec<KanbanColumn>>,
+    current_inventory: Memo<Result<Option<KanbanCurrentInventory>, String>>,
     route: Route,
     local_realm_id: String,
     base_url: String,
@@ -155,10 +209,21 @@ pub(super) fn KanbanEffects(
     {
         let realm = local_realm_id.clone();
         use_effect(move || {
-            let raw_operations = state_store.read().load().raw_operations;
+            let operations = state_store.read().load().raw_operations;
+            let (projected, raw_operations) = match current_inventory() {
+                Ok(Some(inventory)) => (
+                    inventory.containers,
+                    std::borrow::Cow::Owned(kanban_pending_operations(&operations)),
+                ),
+                Ok(None) => (
+                    lifecycle_container_projection(),
+                    std::borrow::Cow::Borrowed(operations.as_slice()),
+                ),
+                Err(_) => (Vec::new(), std::borrow::Cow::Borrowed(&[][..])),
+            };
             let entries = state_store.read().realm_current_state_entries(&realm);
             let mut containers = space_container_views_from_projection_and_ops(
-                &lifecycle_container_projection(),
+                &projected,
                 &raw_operations,
                 &realm,
                 &entries,
@@ -385,13 +450,22 @@ pub(super) fn KanbanEffects(
             let raw_operations = state_store.read().load().raw_operations;
             let aliases = event_derived_target_aliases(&raw_operations);
             let strand_id = resolve_event_derived_target_alias(&aliases, &strand_id);
-            let Some(strand_board) = strand_views_from_projection_and_ops(
-                &lifecycle_strand_projection(),
-                &raw_operations,
-            )
-            .into_iter()
-            .find(|view| view.strand_id == strand_id)
-            .and_then(|view| view.board_space_id) else {
+            let (projected, overlay) = match current_inventory() {
+                Ok(Some(inventory)) => (
+                    inventory.strands,
+                    std::borrow::Cow::Owned(kanban_pending_operations(&raw_operations)),
+                ),
+                Ok(None) => (
+                    lifecycle_strand_projection(),
+                    std::borrow::Cow::Borrowed(raw_operations.as_slice()),
+                ),
+                Err(_) => return,
+            };
+            let Some(strand_board) = strand_views_from_projection_and_ops(&projected, &overlay)
+                .into_iter()
+                .find(|view| view.strand_id == strand_id)
+                .and_then(|view| view.board_space_id)
+            else {
                 return;
             };
             // The projection may still reference a holder-local handle; only a
@@ -405,185 +479,190 @@ pub(super) fn KanbanEffects(
         });
     }
 
-    // One-shot current-object baseline plus durable Event backfill. The
-    // Space/Strand rows recover pre-join current state; Events retain the
-    // signed history and E2EE content projection.
-    let mut bootstrapped = use_signal(|| false);
-    let auto_base = base_url.clone();
-    let auto_token = token;
-    let auto_lifecycle_realm_id = local_realm_id.clone();
-    use_future(move || {
-        let base = auto_base.clone();
-        let lifecycle_realm_id = auto_lifecycle_realm_id.clone();
-        async move {
-            if bootstrapped() {
-                return;
-            }
-            bootstrapped.set(true);
-            let api_token = auto_token();
-            if api_token.trim().is_empty() {
-                return;
-            }
-            let projection_res = if lifecycle_realm_id.trim().is_empty() {
-                None
-            } else {
-                let realm_id = lifecycle_realm_id.clone();
-                match with_authed_api(&base, api_token.clone(), move |api| async move {
-                    fetch_kanban_projection_snapshot(api, &realm_id).await
-                })
-                .await
-                {
-                    Ok(response) => Some(response),
-                    Err(err) if err.is_auth_expired() => return,
-                    Err(_) => None,
-                }
-            };
-            if let Some(snapshot) = projection_res {
-                if let Some(containers) = snapshot.containers {
-                    lifecycle_container_projection.set(containers);
-                }
-                if let Some(strands) = snapshot.strands {
-                    lifecycle_strand_projection.set(strands);
-                }
-                let mut guard = state_store.write();
-                crate::sync_engine::ingest_kanban_projection_events(
-                    &mut guard,
-                    &lifecycle_realm_id,
-                    &snapshot.events,
-                );
-            }
-        }
-    });
-
-    // F-KANBAN-LIVE-1: refresh the board projection only when account
-    // subscribe advances. The global SyncEngine owns the liveness channel;
-    // this panel must not poll `spaces` / `strands` / `events` on a timer while
-    // no durable event has arrived.
-    let mut live_refresh_key_seen = use_signal({
-        let initial_realm_id = local_realm_id.clone();
-        move || {
-            let initial_cursor = sync_cursor.peek().clone();
-            let initial_sync_ready = crate::app::account_sync_ready(&initial_cursor);
-            let initial_epoch = *realm_live_epoch.peek();
-            let (initial_mls_unlock, initial_current_generation) = {
-                let store = state_store.peek();
-                (
-                    kanban_mls_unlock_signature(
-                        !store.mls_local_checkpoints().is_empty(),
-                        crate::app::local_mls_epoch_floor_all(&store),
-                    ),
-                    store.current_generation(),
-                )
-            };
-            kanban_projection_refresh_key(
-                &initial_realm_id,
-                initial_sync_ready,
-                initial_epoch,
-                &initial_mls_unlock,
-                initial_current_generation,
-            )
-        }
-    });
-    let live_base = base_url.clone();
-    let live_token = token;
-    let live_lifecycle_realm_id = local_realm_id.clone();
-    let live_lifecycle_local_realm_id = local_realm_id.clone();
-    use_effect(move || {
-        let base = live_base.clone();
-        let lifecycle_realm_id = live_lifecycle_realm_id.clone();
-        let lifecycle_local_realm_id = live_lifecycle_local_realm_id.clone();
-        let api_token = live_token();
-        if api_token.trim().is_empty() {
-            return;
-        }
-        // Observe the cursor so the first successful account sync wakes this
-        // effect, but reduce it to a readiness transition before constructing
-        // the refresh key. Cursor tokens are checkpoints, not render
-        // revisions; re-minting the same frontier must not backfill events.
-        let account_sync_ready = crate::app::account_sync_ready(&sync_cursor());
-        // Reading `realm_live_epoch` here subscribes this effect to the per-realm
-        // events engine, so fresh cross-member events trigger a reproject even
-        // when the account `sync_cursor` never advanced for them.
-        let live_epoch = realm_live_epoch();
-        // Third freshness axis: read the MLS-unlock state through `.read()` so
-        // this effect subscribes to `state_store` and re-runs when a snapshot is
-        // installed. An invitee's Welcome/snapshot can land AFTER the one-shot
-        // bootstrap backfill, while the account cursor and events engine are both
-        // stale — folding snapshot-presence + epoch floor into the refresh key
-        // makes that arrival re-trigger the backfill so the pre-join history can
-        // finally decrypt, instead of staying blank until a manual page refresh.
-        // (invitee-history-late-decrypt)
-        // Fourth freshness axis: the generation committed by the last
-        // current-result install. `client-sync.md` 13.1 puts the panel's truth
-        // in `current`, so a current delta must be able to drive a reproject on
-        // its own -- otherwise the only way this panel ever refreshes is an
-        // Event arriving, which is exactly the receipt coupling 13.1 forbids.
-        // Read through `.read()` so this effect subscribes to the store.
-        let (mls_unlock, current_generation) = {
-            let store = state_store.read();
+    // The admitted current view contains the whole Realm inventory. Prefer
+    // local projection; HTTP only bootstraps a still-missing display baseline.
+    // The ordinary follower owns subsequent current/history recovery.
+    let session = crate::app::SessionContext::get();
+    let read_scope = use_memo(use_reactive(
+        (&base_url, &local_realm_id),
+        move |(base, realm)| {
             (
-                kanban_mls_unlock_signature(
-                    !store.mls_local_checkpoints().is_empty(),
-                    crate::app::local_mls_epoch_floor_all(&store),
-                ),
-                store.current_generation(),
+                base,
+                realm,
+                (session.session_generation)(),
+                kanban_read_account_scope((session.active_account)()),
             )
-        };
-        let Some(refresh_key) = next_kanban_projection_refresh_key(
-            live_refresh_key_seen.peek().as_str(),
-            &lifecycle_realm_id,
-            account_sync_ready,
-            live_epoch,
-            &mls_unlock,
-            current_generation,
-        ) else {
+        },
+    ));
+    let read_owner = use_hook(|| {
+        std::rc::Rc::new(std::cell::RefCell::new(
+            super::projection_reads::ProjectionReadOwner::default(),
+        ))
+    });
+    use_effect(move || {
+        let scope = read_scope();
+        let credential = token();
+        let account = scope.3.as_ref().map(|(_, account, ..)| account);
+        let enabled = !credential.trim().is_empty()
+            && !scope.0.trim().is_empty()
+            && !scope.1.trim().is_empty()
+            && account.is_some_and(|account| {
+                state_store.read().active_authority().as_ref() == Some(account)
+            })
+            && !state_store.read().account_scope_read_denied(&scope.1);
+        if read_owner
+            .borrow_mut()
+            .set_scope(enabled.then_some(scope.clone()))
+        {
+            lifecycle_container_projection.set(Vec::new());
+            lifecycle_strand_projection.set(Vec::new());
+        }
+        if !enabled {
             return;
-        };
-        live_refresh_key_seen.set(refresh_key);
-        spawn(async move {
-            // Refresh the current baseline and then fold the durable Event log
-            // over it. This keeps pre-join objects visible while preserving
-            // live/local updates and encrypted content handling.
-            let projection_res = {
-                let realm_id = lifecycle_realm_id.clone();
-                with_authed_api(&base, api_token, move |api| async move {
-                    fetch_kanban_projection_snapshot(api, &realm_id).await
-                })
-                .await
-            };
-            if projection_res
-                .as_ref()
-                .err()
-                .is_some_and(|err| err.is_auth_expired())
-            {
+        }
+        match current_inventory() {
+            Ok(Some(inventory)) => {
+                read_owner.borrow_mut().cancel_pending();
+                read_owner.borrow_mut().cover(ProjectionReadSet::all());
+                if *lifecycle_container_projection.peek() != inventory.containers {
+                    lifecycle_container_projection.set(inventory.containers);
+                }
+                if *lifecycle_strand_projection.peek() != inventory.strands {
+                    lifecycle_strand_projection.set(inventory.strands);
+                }
                 return;
             }
-            if let Ok(snapshot) = projection_res {
-                if let Some(containers) = snapshot.containers {
-                    lifecycle_container_projection.set(containers);
+            Err(error) => {
+                read_owner.borrow_mut().cancel_pending();
+                tracing::warn!(%error, "admitted Kanban inventory is unavailable");
+                if !lifecycle_container_projection.peek().is_empty() {
+                    lifecycle_container_projection.set(Vec::new());
                 }
-                if let Some(strands) = snapshot.strands {
-                    lifecycle_strand_projection.set(strands);
+                if !lifecycle_strand_projection.peek().is_empty() {
+                    lifecycle_strand_projection.set(Vec::new());
                 }
-                let mut store = state_store.write();
-                crate::sync_engine::ingest_kanban_projection_events(
-                    &mut store,
-                    &lifecycle_local_realm_id,
-                    &snapshot.events,
-                );
+                return;
+            }
+            Ok(None) => {}
+        }
+        if !read_owner.borrow().missing().any() {
+            return;
+        }
+        let request = (
+            scope,
+            crate::app::account_sync_ready(&sync_cursor()),
+            realm_live_epoch(),
+            state_store.read().current_generation(),
+        );
+        if !read_owner.borrow_mut().queue.request(request) {
+            return;
+        }
+        let owner = read_owner.clone();
+        let task = spawn(async move {
+            loop {
+                let next = owner.borrow_mut().queue.next();
+                let Some(request) = next else {
+                    owner.borrow_mut().finish();
+                    return;
+                };
+                let (scope, ..) = request.clone();
+                if *read_scope.peek() != scope
+                    || *session.session_generation.peek() != scope.2
+                    || kanban_read_account_scope(session.active_account.peek().clone()) != scope.3
+                    || token.peek().trim().is_empty()
+                {
+                    continue;
+                }
+                let needed = owner.borrow().missing();
+                if !needed.any() {
+                    continue;
+                }
+                let realm = scope.1.clone();
+                let list_fence = state_store.peek().realm_list_read_fence(&realm);
+                if state_store.peek().account_scope_read_denied(&realm) {
+                    continue;
+                }
+                let Some((_, expected_account, expected_device, _)) = scope.3.clone() else {
+                    continue;
+                };
+                let credential = token.peek().clone();
+                let request_fence = list_fence.clone();
+                let result = with_authed_api(&scope.0, credential, move |api| async move {
+                    let http = api.sdk_http_client()?;
+                    let bound =
+                        crate::transport::own_station_results::client_for_http(&http).await?;
+                    let active_device_scope = crate::secure_key_store::active_device_seed_scope();
+                    anyhow::ensure!(
+                        bound.session()?.account_id() == &expected_account
+                            && active_device_scope.as_ref().is_some_and(|active| {
+                                active.authority == expected_account
+                                    && active.device_id == expected_device
+                            }),
+                        "Kanban inventory belongs to another Account or Device session"
+                    );
+                    let snapshot = fetch_kanban_projection_snapshot(
+                        bound.http_client()?,
+                        &realm,
+                        needed,
+                        Some(request_fence),
+                    )
+                    .await?;
+                    bound.check_session()?;
+                    Ok(snapshot)
+                })
+                .await;
+                // An old account, Station, session or route may finish after
+                // its replacement. Never install its display rows there.
+                if *read_scope.peek() != scope
+                    || *session.session_generation.peek() != scope.2
+                    || kanban_read_account_scope(session.active_account.peek().clone()) != scope.3
+                    || token.peek().trim().is_empty()
+                {
+                    continue;
+                }
+                let store = state_store.peek();
+                if store.account_scope_read_denied(&scope.1)
+                    || store
+                        .require_realm_list_read_fence(&scope.1, Some(&list_fence))
+                        .is_err()
+                    || store.current_product_view_stamp(&scope.1).is_some()
+                {
+                    continue;
+                }
+                drop(store);
+                match result {
+                    Ok(snapshot) => {
+                        owner.borrow_mut().cover_if_latest(
+                            &request,
+                            ProjectionReadSet {
+                                spaces: snapshot.containers.is_some(),
+                                strands: snapshot.strands.is_some(),
+                            },
+                        );
+                        if let Some(containers) = snapshot.containers {
+                            lifecycle_container_projection.set(containers);
+                        }
+                        if let Some(strands) = snapshot.strands {
+                            lifecycle_strand_projection.set(strands);
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!(error = %error.display_diagnostic(), "kanban inventory read failed")
+                    }
+                }
             }
         });
+        read_owner.borrow_mut().attach(task);
     });
 
     // Locked author-private fields can become readable after another device
     // uploads the account-private plaintext sidecar. A device that already has
     // the account MLS secret should restore that sidecar silently with active
-    // device proof, then re-project the current board using a fresh backfill.
+    // device proof. Retained admitted Events and current values reproject locally.
     {
         let restore_base = base_url.clone();
         let restore_token = token;
         let restore_realm_id = selected_realm_id.clone();
-        let restore_local_realm_id = local_realm_id.clone();
         let restore_authority = authority.clone();
         let restore_actor = principal_id.clone();
         let restore_device = device_id.clone();
@@ -646,11 +725,10 @@ pub(super) fn KanbanEffects(
             mls_sidecar_restore_key_seen.set(restore_key);
 
             let base = restore_base.clone();
-            let realm_id = restore_realm_id.clone();
-            let local_realm_id = restore_local_realm_id.clone();
             let actor = restore_actor.clone();
             let authority = restore_authority.clone();
             let device = restore_device.clone();
+            let restore_scope = read_scope.peek().clone();
             spawn(async move {
                 for attempt in 0..5u32 {
                     if attempt > 0 {
@@ -659,9 +737,11 @@ pub(super) fn KanbanEffects(
                         ))
                         .await;
                     }
+                    if *read_scope.peek() != restore_scope {
+                        return;
+                    }
                     let actor_for_fetch = actor.clone();
                     let device_for_fetch = device.to_string();
-                    let realm_for_fetch = realm_id.clone();
                     let result =
                         with_authed_api(&base, api_token.clone(), move |api| async move {
                             let payload = crate::mls::account_recovery::fetch_mls_restore_payload_with_unlock_proof(
@@ -670,15 +750,13 @@ pub(super) fn KanbanEffects(
                                 &device_for_fetch,
                             )
                             .await?;
-                            let events = api
-                                .event_submitter()?
-                                .backfill(&realm_for_fetch)
-                                .await?
-                                .events();
-                            Ok((payload, events))
+                            Ok(payload)
                         })
                         .await;
-                    let (payload, events) = match result {
+                    if *read_scope.peek() != restore_scope {
+                        return;
+                    }
+                    let payload = match result {
                         Ok(value) => value,
                         Err(error) => {
                             if let Some(retry_after_ms) =
@@ -718,19 +796,8 @@ pub(super) fn KanbanEffects(
                         report.private_plaintext_restored || report.restored > 0
                     };
 
-                    // Fold the freshly backfilled events into the op log. The
-                    // restore also wrote the account-private plaintext sidecar
-                    // into `state_store`, so the `columns` memo re-projects with
-                    // the now-unlockable decrypt context automatically — no
-                    // explicit reproject here.
-                    {
-                        let mut store = state_store.write();
-                        crate::sync_engine::ingest_kanban_projection_events(
-                            &mut store,
-                            &local_realm_id,
-                            &events,
-                        );
-                    }
+                    // Restoring the sidecar writes the local store, which
+                    // invalidates the columns memo without another Event scan.
                     let card_unlocked = selected_card()
                         .is_some_and(|card| !card.description_locked && !card.synthesis_locked);
                     if restored_private_plaintext || card_unlocked {
@@ -757,5 +824,113 @@ mod private_narrative_restore_tests {
         assert!(private_narrative_restore_needed(true, false));
         assert!(private_narrative_restore_needed(false, true));
         assert!(!private_narrative_restore_needed(false, false));
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod projection_read_tests {
+    use std::io::{Read, Write};
+    use std::time::{Duration, Instant};
+
+    use super::*;
+
+    #[tokio::test]
+    async fn independent_inventory_reads_start_together_without_an_event_scan() {
+        let realm = "ak:realm:AeEFmfOZxsx5kLi2kpOJu8m7TFXZ_G8E4019rUp4wmT6";
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let base = format!("http://{}/", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            let mut requests = Vec::new();
+            // Neither response is available until both requests have arrived.
+            while requests.len() < 2 {
+                match listener.accept() {
+                    Ok((mut connection, _)) => {
+                        connection.set_nonblocking(false).unwrap();
+                        connection
+                            .set_read_timeout(Some(Duration::from_secs(5)))
+                            .unwrap();
+                        let mut bytes = Vec::new();
+                        let mut buffer = [0; 4096];
+                        while !bytes.windows(4).any(|value| value == b"\r\n\r\n") {
+                            let count = connection.read(&mut buffer).unwrap();
+                            assert!(count > 0);
+                            bytes.extend_from_slice(&buffer[..count]);
+                        }
+                        requests.push((connection, String::from_utf8(bytes).unwrap()));
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        assert!(Instant::now() < deadline, "inventory reads were serialized");
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(error) => panic!("{error}"),
+                }
+            }
+            let mut paths = Vec::new();
+            for (mut connection, request) in requests {
+                let path = request.lines().next().unwrap().to_owned();
+                let collection = if path.contains("/spaces?") {
+                    "spaces"
+                } else {
+                    assert!(path.contains("/strands?"), "unexpected request: {path}");
+                    "strands"
+                };
+                let body =
+                    json!({"realm_id": realm, (collection): [], "total_count": 0, "has_more": false})
+                        .to_string();
+                write!(connection, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{}", body.len(), body).unwrap();
+                paths.push(path);
+            }
+            paths
+        });
+        let http = arkret_sdk::http_client::ClientBuilder::new(url::Url::parse(&base).unwrap())
+            .allow_insecure_localhost()
+            .auth(arkret_sdk::http_client::Auth::Bearer(
+                "inventory-fixture".into(),
+            ))
+            .build()
+            .unwrap();
+        use arkret_sdk::http_client::own_station_results::{
+            OwnStationSessionSnapshot, OwnStationSessionSource, OwnStationStateClient,
+        };
+        struct Source(OwnStationSessionSnapshot);
+        impl OwnStationSessionSource for Source {
+            fn snapshot(&self) -> arkret_sdk::http_client::Result<OwnStationSessionSnapshot> {
+                Ok(self.0.clone())
+            }
+        }
+        let account = arkret_sdk::AccountId {
+            principal_id: arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap(),
+            station_id: arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
+        };
+        let binding = arkret_sdk::StationConnectionBinding {
+            service_id: account.station_id.clone(),
+            base_url: base,
+            trust_domain: arkret_sdk::TrustDomainId::new("ak:trust_domain:station.example")
+                .unwrap(),
+            authentication_metadata: arkret_sdk::AuthenticationMetadata::minimal(),
+        };
+        let session = OwnStationSessionSnapshot::new(
+            binding.clone(),
+            account.clone(),
+            account.station_id,
+            arkret_wire::SessionGrantId::from_issuance_digest([33; 32]),
+            1,
+            "inventory-fixture".into(),
+        )
+        .unwrap()
+        .with_provider_identity(Default::default());
+        let http = OwnStationStateClient::new(http, binding, std::sync::Arc::new(Source(session)))
+            .unwrap()
+            .http_client()
+            .unwrap();
+        let snapshot =
+            fetch_kanban_projection_snapshot(http, realm, ProjectionReadSet::all(), None)
+                .await
+                .unwrap();
+        assert_eq!(snapshot.containers, Some(Vec::new()));
+        assert_eq!(snapshot.strands, Some(Vec::new()));
+        assert_eq!(server.join().unwrap().len(), 2);
     }
 }

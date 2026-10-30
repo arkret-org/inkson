@@ -16,14 +16,14 @@ impl LocalStateStore {
         realm: &str,
         strand: &arkret_sdk::StrandId,
     ) -> anyhow::Result<Option<arkret_sdk::AgentSidecar>> {
-        use arkret_sdk::{CurrentSelector, EventKind, SidecarContextRef, TypedCurrentRow};
+        use arkret_sdk::{CurrentSelector, CurrentState, EventKind, SidecarContextRef};
         let (snapshot, histories) = self.verified_sidecar_inputs(realm)?;
         let source = SidecarContextRef::Strand {
             strand_id: strand.clone(),
         };
         let mut found = None;
         for row in &snapshot.current_state_entries {
-            let TypedCurrentRow::Value {
+            let CurrentState::Value {
                 selector:
                     CurrentSelector::SidecarContext {
                         sidecar_id,
@@ -78,7 +78,7 @@ impl LocalStateStore {
                 "Sidecar source context differs from its accepted attachment"
             );
             for current in &snapshot.current_state_entries {
-                let TypedCurrentRow::Value {
+                let CurrentState::Value {
                     selector:
                         CurrentSelector::Sidecar {
                             sidecar_id: candidate,
@@ -186,6 +186,38 @@ impl LocalStateStore {
         &mut self,
         incoming: &arkret_sdk::RealmStateSnapshot,
     ) -> Result<usize, String> {
+        let watermark = self
+            .next_sidecar_current_watermark(incoming)
+            .map_err(|error| error.to_string())?;
+        let changed = usize::from(
+            self.cached
+                .verified_sidecar_current
+                .get(incoming.realm_id.as_str())
+                .map(|snapshot| &**snapshot)
+                != Some(incoming),
+        );
+        self.cached
+            .verified_sidecar_current_watermarks
+            .insert(incoming.realm_id.to_string(), watermark);
+        self.cached
+            .verified_sidecar_current
+            .insert(incoming.realm_id.to_string(), incoming.clone().into());
+        Ok(changed)
+    }
+
+    /// Check immediately before arming a publication, without adopting any
+    /// bytes. A superseded response needs a fresh read; a fork stays terminal.
+    pub(crate) fn require_sidecar_current_not_superseded(
+        &mut self,
+        incoming: &arkret_sdk::RealmStateSnapshot,
+    ) -> anyhow::Result<()> {
+        self.next_sidecar_current_watermark(incoming).map(|_| ())
+    }
+
+    fn next_sidecar_current_watermark(
+        &mut self,
+        incoming: &arkret_sdk::RealmStateSnapshot,
+    ) -> anyhow::Result<super::types::ObservedSidecarCurrentWatermark> {
         self.ensure_cached_loaded();
         let prior = self
             .cached
@@ -215,63 +247,30 @@ impl LocalStateStore {
                 }
             }
         }
-        if incoming.governance_generation < generation {
-            return Err(
-                "Sidecar current regresses a previously observed governance generation".into(),
-            );
-        }
+        anyhow::ensure!(
+            incoming.governance_generation >= generation,
+            "Sidecar current regresses a previously observed governance generation"
+        );
         generation = incoming.governance_generation;
+        let mut superseded = false;
         for head in &incoming.visible_stream_heads {
-            if observed.get(&head.stream_ref).is_some_and(|known| {
-                head.stream_position < known.stream_position
-                    || (head.stream_position == known.stream_position
-                        && head.commit_id != known.commit_id)
-            }) {
-                return Err(
-                    "Sidecar current regresses or forks a previously observed hidden stream".into(),
+            if let Some(known) = observed.get(&head.stream_ref) {
+                anyhow::ensure!(
+                    head.stream_position != known.stream_position
+                        || head.commit_id == known.commit_id,
+                    "Sidecar current forks a previously observed hidden stream"
                 );
+                superseded |= head.stream_position < known.stream_position;
             }
             observed.insert(head.stream_ref.clone(), head.clone());
         }
-
-        if let Some(old) = self
-            .cached
-            .verified_sidecar_current
-            .get(incoming.realm_id.as_str())
-        {
-            if incoming.governance_generation < old.governance_generation {
-                return Err("Sidecar current authority generation regressed".into());
-            }
-            for old_head in &old.visible_stream_heads {
-                if let Some(new_head) = incoming
-                    .visible_stream_heads
-                    .iter()
-                    .find(|head| head.stream_ref == old_head.stream_ref)
-                    && (new_head.stream_position < old_head.stream_position
-                        || (new_head.stream_position == old_head.stream_position
-                            && new_head.commit_id != old_head.commit_id))
-                {
-                    return Err("Sidecar current Snapshot regresses or forks a held head".into());
-                }
-            }
+        if superseded {
+            return Err(super::current_index::CurrentCutSuperseded.into());
         }
-        let changed = usize::from(
-            self.cached
-                .verified_sidecar_current
-                .get(incoming.realm_id.as_str())
-                != Some(incoming),
-        );
-        self.cached.verified_sidecar_current_watermarks.insert(
-            incoming.realm_id.to_string(),
-            super::types::ObservedSidecarCurrentWatermark {
-                governance_generation: generation,
-                stream_heads: observed.into_values().collect(),
-            },
-        );
-        self.cached
-            .verified_sidecar_current
-            .insert(incoming.realm_id.to_string(), incoming.clone());
-        Ok(changed)
+        Ok(super::types::ObservedSidecarCurrentWatermark {
+            governance_generation: generation,
+            stream_heads: observed.into_values().collect(),
+        })
     }
 
     pub(crate) fn invalidate_sidecar_current(&mut self, realm: Option<&str>) {
@@ -297,7 +296,7 @@ impl LocalStateStore {
             state
                 .verified_sidecar_current
                 .get(realm)
-                .cloned()
+                .map(|snapshot| (**snapshot).clone())
                 .ok_or_else(|| {
                     anyhow::anyhow!(
                         "Sidecar exchange current requires a verified signed current cut"
@@ -314,48 +313,101 @@ impl LocalStateStore {
         &self,
         snapshot: &RealmStateSnapshot,
     ) -> anyhow::Result<BTreeMap<String, Vec<arkret_sdk::CommittedEventFullView>>> {
+        let mut histories = BTreeMap::new();
+        for head in &snapshot.visible_stream_heads {
+            if let CommitStreamRef::Sidecar { sidecar_id, .. } = &head.stream_ref {
+                histories.insert(
+                    sidecar_id.to_string(),
+                    self.sidecar_history_through_head(snapshot, head)?,
+                );
+            }
+        }
+        Ok(histories)
+    }
+
+    /// Validate just one retained prefix against the independently frozen cut.
+    /// This local check never proves that the new session re-admitted its rows.
+    pub(crate) fn sidecar_history_through_head(
+        &self,
+        snapshot: &RealmStateSnapshot,
+        head: &arkret_sdk::CommitStreamHead,
+    ) -> anyhow::Result<Vec<arkret_sdk::CommittedEventFullView>> {
+        self.sidecar_history_prefix(snapshot, head, true)
+    }
+
+    pub(crate) fn has_complete_sidecar_prefix(
+        &self,
+        snapshot: &RealmStateSnapshot,
+        head: &arkret_sdk::CommitStreamHead,
+    ) -> bool {
+        self.sidecar_history_prefix(snapshot, head, false).is_ok()
+    }
+
+    fn sidecar_history_prefix(
+        &self,
+        snapshot: &RealmStateSnapshot,
+        head: &arkret_sdk::CommitStreamHead,
+        collect_rows: bool,
+    ) -> anyhow::Result<Vec<arkret_sdk::CommittedEventFullView>> {
+        anyhow::ensure!(
+            matches!(head.stream_ref, CommitStreamRef::Sidecar { .. })
+                && head.stream_ref.realm_id() == &snapshot.realm_id,
+            "Sidecar prefix has another scope"
+        );
+        let cap = snapshot
+            .visible_stream_heads
+            .iter()
+            .find(|cap| cap.stream_ref == head.stream_ref)
+            .ok_or_else(|| anyhow::anyhow!("Sidecar prefix is absent from current"))?;
+        anyhow::ensure!(
+            head.stream_position <= cap.stream_position
+                && (head.stream_position != cap.stream_position || head.commit_id == cap.commit_id),
+            "Sidecar prefix exceeds or forks current"
+        );
+        anyhow::ensure!(
+            snapshot
+                .retention_and_history_floor
+                .stream_floors
+                .iter()
+                .find(|floor| floor.stream_ref == head.stream_ref)
+                .is_some_and(|floor| floor.oldest_position == 0),
+            "Complete Sidecar prefix is below the current readable floor"
+        );
         self.with_unoverlaid_account_fields(|state| {
-            let mut histories = BTreeMap::new();
-            for head in &snapshot.visible_stream_heads {
-                let CommitStreamRef::Sidecar { sidecar_id, .. } = &head.stream_ref else {
-                    continue;
+            let key = serde_json::to_string(&head.stream_ref)?;
+            let rows = state.verified_sidecar_history.get(&key).ok_or_else(|| {
+                anyhow::anyhow!("Sidecar exchange current requires verified Sidecar Commit history")
+            })?;
+            let mut full_rows = Vec::new();
+            let mut previous = None;
+            let mut last_position = None;
+            for (position, row) in rows.iter().enumerate() {
+                if row.commit().stream_position > head.stream_position {
+                    break;
+                }
+                let CommittedEventView::Full(full) = row else {
+                    anyhow::bail!("Sidecar exchange history contains an undisclosed Event");
                 };
-                let key = serde_json::to_string(&head.stream_ref)?;
-                let rows = state.verified_sidecar_history.get(&key).ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "Sidecar exchange current requires verified Sidecar Commit history"
-                    )
-                })?;
-                let mut full_rows = Vec::with_capacity(rows.len());
-                let mut previous = None;
-                for (position, row) in rows.iter().enumerate() {
-                    if row.commit().stream_position > head.stream_position {
-                        break;
-                    }
-                    let CommittedEventView::Full(full) = row else {
-                        anyhow::bail!("Sidecar exchange history contains an undisclosed Event");
-                    };
-                    anyhow::ensure!(
-                        full.commit.stream_ref == head.stream_ref
-                            && full.commit.stream_position == u64::try_from(position)?
-                            && full.commit.previous_commit_ref == previous
-                            && full.commit.event_ref == full.event.event_id
-                            && full.event.realm_id == snapshot.realm_id,
-                        "Sidecar exchange history is not a complete native Commit chain"
-                    );
-                    previous = Some(full.commit.commit_id.clone());
+                anyhow::ensure!(
+                    full.commit.stream_ref == head.stream_ref
+                        && full.commit.stream_position == u64::try_from(position)?
+                        && full.commit.previous_commit_ref == previous
+                        && full.commit.event_ref == full.event.event_id
+                        && full.event.realm_id == snapshot.realm_id,
+                    "Sidecar exchange history is not a complete native Commit chain"
+                );
+                previous = Some(full.commit.commit_id.clone());
+                last_position = Some(full.commit.stream_position);
+                if collect_rows {
                     full_rows.push(full.clone());
                 }
-                anyhow::ensure!(
-                    full_rows
-                        .last()
-                        .is_some_and(|row| row.commit.commit_id == head.commit_id
-                            && row.commit.stream_position == head.stream_position),
-                    "Sidecar exchange history and signed current head differ"
-                );
-                histories.insert(sidecar_id.to_string(), full_rows);
             }
-            Ok(histories)
+            anyhow::ensure!(
+                previous.as_ref() == Some(&head.commit_id)
+                    && last_position == Some(head.stream_position),
+                "Sidecar exchange history and signed current head differ"
+            );
+            Ok(full_rows)
         })
     }
 
@@ -423,6 +475,8 @@ mod tests {
             }
             heads.sort_by(|a, b| a.stream_ref.cmp(&b.stream_ref));
             let mut snapshot = arkret_sdk::RealmStateSnapshot {
+                purpose: arkret_wire::RealmSnapshotPurpose::FullRecovery,
+                history_basis: None,
                 snapshot_id: arkret_sdk::RealmSnapshotId::from_digest([0; 32]),
                 realm_id: realm.clone(),
                 governance_generation: generation,
@@ -447,7 +501,7 @@ mod tests {
                     signed_digest: arkret_sdk::Hash::new(format!("sha256:{}", "a".repeat(64)))
                         .unwrap(),
                     created_at: at,
-                    sig: arkret_sdk::Base64UrlString::new("AA").unwrap(),
+                    signature: arkret_sdk::Base64UrlString::new("AA").unwrap(),
                 },
             };
             let mut unsigned = serde_json::to_value(&snapshot).unwrap();
@@ -507,7 +561,11 @@ mod tests {
                 .unwrap();
         }
         assert_eq!(
-            store.load().verified_sidecar_current.get(realm.as_str()),
+            store
+                .load()
+                .verified_sidecar_current
+                .get(realm.as_str())
+                .map(|snapshot| &**snapshot),
             Some(&hidden)
         );
         // Original exact visible cut stays hidden; the held current watermark
@@ -523,8 +581,18 @@ mod tests {
         reopened.switch_active_account(&account).unwrap();
         reopened.invalidate_sidecar_current(Some(realm.as_str()));
         let original = serde_json::to_value(reopened.load()).unwrap();
-        for _ in 0..3 {
+        for superseded in [true, false, false] {
             let response = client.snapshot_head(&realm).await.unwrap();
+            let refused = reopened
+                .require_sidecar_current_not_superseded(response.value().unwrap())
+                .unwrap_err();
+            let classified = super::super::current_index::current_stage_error(refused);
+            assert_eq!(
+                matches!(classified, garth::Error::AuthorityCutBehind),
+                superseded,
+                "only an older cut retries; a fork or older governance remains terminal"
+            );
+            assert_eq!(serde_json::to_value(reopened.load()).unwrap(), original);
             assert!(
                 reopened
                     .verified_projection_transaction(
@@ -539,7 +607,11 @@ mod tests {
             .verified_projection_transaction(|s| s.install_own_station_sidecar_current(&response))
             .unwrap();
         assert_eq!(
-            reopened.load().verified_sidecar_current.get(realm.as_str()),
+            reopened
+                .load()
+                .verified_sidecar_current
+                .get(realm.as_str())
+                .map(|snapshot| &**snapshot),
             Some(&forward)
         );
         assert!(

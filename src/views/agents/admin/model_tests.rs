@@ -97,7 +97,7 @@ fn directory_refresh_updates_status_without_dropping_loaded_details() {
             AgentRuntimeState::PendingRuntimeKey,
         ),
         grants: vec![
-            serde_json::to_value(arkret_sdk::GrantSnapshot {
+            serde_json::to_value(arkret_sdk::AgentGrantView {
                 grant_id: arkret_sdk::GrantId::new(
                     "ak:grant:AdIokNbDGo5OV8uIK_7oyEOrSIU423PwmxNVThDeiPwQ",
                 )
@@ -126,7 +126,7 @@ fn directory_refresh_updates_status_without_dropping_loaded_details() {
         crate::views::agents::model::agent_projection_runtime_state(&rows[0].agent),
         AgentRuntimeState::Ready
     );
-    let grant: arkret_sdk::GrantSnapshot =
+    let grant: arkret_sdk::AgentGrantView =
         serde_json::from_value(rows[0].grants[0].clone()).unwrap();
     assert_eq!(
         grant.grant_id.as_str(),
@@ -168,7 +168,7 @@ fn test_agent_projection(
         presence: arkret_sdk::AgentPresence {
             state: arkret_sdk::AgentPresenceState::Unknown,
             expires_at: crate::clock::now_utc(),
-            refresh_after: crate::clock::now_utc(),
+            refresh_at: crate::clock::now_utc(),
         },
         created_at: None,
         updated_at: None,
@@ -315,11 +315,12 @@ fn test_pairing_view(status: AgentLifecycleState, runtime_state: AgentRuntimeSta
             active_authorizations,
             signer_resolution_evidence_ref: None,
             current_signer_evidence: None,
+            current_key_authorization: None,
         }),
     }
 }
 
-fn test_renew_outcome(replacement: bool) -> AgentRenewPairingOutcome {
+fn test_renew_outcome(replacement: bool) -> AgentRenewPairingResponseBody {
     let row = match replacement {
         false => test_pairing_view(
             AgentLifecycleState::Active,
@@ -335,7 +336,7 @@ fn test_renew_outcome(replacement: bool) -> AgentRenewPairingOutcome {
         &key_state.requested_scope,
     )
     .unwrap();
-    AgentRenewPairingOutcome {
+    AgentRenewPairingResponseBody {
         agent_id: agent_did,
         principal_control_realm_id: key_state.principal_control_realm_id,
         controller_authorization_ref: key_state.controller_authorization_ref,

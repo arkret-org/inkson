@@ -15,13 +15,13 @@
 //! methods. Plain one-shot device-message sends remain transport writes; the
 //! caller prepares any signed content before dispatch.
 
-use crate::models::KeysQueryOutcome;
+use crate::models::KeysQueryResponseBody;
 
 pub async fn query_keys(
     http: &arkret_sdk::http_client::Client,
     account_id: &arkret_sdk::AccountId,
     device_id: &str,
-) -> anyhow::Result<KeysQueryOutcome> {
+) -> anyhow::Result<KeysQueryResponseBody> {
     account_id.validate()?;
     let device_id = arkret_sdk::DeviceId::new(device_id.to_owned())
         .map_err(|err| anyhow::anyhow!("invalid device_id `{device_id}`: {err}"))?;

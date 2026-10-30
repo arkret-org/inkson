@@ -7,8 +7,8 @@
 //!
 //! Spec sources:
 //! - `sync/operations-sync.md`: offline-first writes; the Event Envelope is the source of truth.
-//! - `authz/event-auth-state-resolution.md`: reducer rejections fall into `state_mismatch` or
-//!   `cas_conflict`.
+//! - `sync/authority-commit-log.md`: only the exact Event's covering RealmCommit confirms
+//!   admission.
 //! - `governance/content-moderation.md`: quarantined writes remain visible but flow through the
 //!   moderation queue.
 //!
@@ -24,12 +24,11 @@ use dioxus::prelude::*;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WriteStateIconSpec {
     pub class_suffix: &'static str,
-    pub aria_label: &'static str,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WriteState {
-    /// Aligned with the sync frontier — accepted by the server reducer.
+    /// The accepted write is reflected in the local current projection.
     Synced,
     /// Applied optimistically on the client; not yet submitted.
     Optimistic,
@@ -37,11 +36,10 @@ pub enum WriteState {
     Queued,
     /// Submitted to the Station; awaiting acknowledgement.
     Submitted,
-    /// Reducer accepted — equivalent to `Synced` but kept separate so the
-    /// activity stream can render the moment of acceptance.
+    /// The exact Event has a verified covering RealmCommit; its local current
+    /// projection may still be catching up.
     Accepted,
-    /// Reducer soft failure (schema / capability passed but the transition
-    /// is illegal).
+    /// The submission was refused, or a local submission attempt failed.
     SoftFailed,
     /// A write precondition failed (for example a product-level CAS guard).
     CasConflict,
@@ -51,19 +49,6 @@ pub enum WriteState {
 }
 
 impl WriteState {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Synced => "synced",
-            Self::Optimistic => "optimistic",
-            Self::Queued => "queued",
-            Self::Submitted => "submitted",
-            Self::Accepted => "accepted",
-            Self::SoftFailed => "soft failed",
-            Self::CasConflict => "CAS conflict",
-            Self::Quarantined => "quarantined",
-        }
-    }
-
     pub fn class_name(self) -> &'static str {
         match self {
             Self::Synced | Self::Accepted => "badge green",
@@ -90,35 +75,27 @@ impl WriteState {
         match self {
             Self::Synced => WriteStateIconSpec {
                 class_suffix: "is-synced",
-                aria_label: "Synced",
             },
             Self::Optimistic => WriteStateIconSpec {
                 class_suffix: "is-optimistic",
-                aria_label: "Optimistic local write",
             },
             Self::Queued => WriteStateIconSpec {
                 class_suffix: "is-queued",
-                aria_label: "Queued local write",
             },
             Self::Submitted => WriteStateIconSpec {
                 class_suffix: "is-submitted",
-                aria_label: "Submitted write",
             },
             Self::Accepted => WriteStateIconSpec {
                 class_suffix: "is-accepted",
-                aria_label: "Accepted by server",
             },
             Self::SoftFailed => WriteStateIconSpec {
                 class_suffix: "is-soft-failed",
-                aria_label: "Write failed",
             },
             Self::CasConflict => WriteStateIconSpec {
                 class_suffix: "is-conflict",
-                aria_label: "CAS conflict",
             },
             Self::Quarantined => WriteStateIconSpec {
                 class_suffix: "is-quarantined",
-                aria_label: "Quarantined write",
             },
         }
     }
@@ -128,39 +105,37 @@ impl WriteState {
         format!("write-state-icon {}", icon.class_suffix)
     }
 
-    /// One-line explanation of the state, suitable for tooltips / inbox
-    /// summaries.
-    pub fn explanation(self) -> &'static str {
-        match self {
-            Self::Synced => "Aligned with the sync frontier; reducer has accepted.",
-            Self::Optimistic => "Applied optimistically on the client; not yet queued.",
-            Self::Queued => "Queued in the local offline buffer, waiting for the network.",
-            Self::Submitted => "Submitted to the Station; awaiting acknowledgement.",
-            Self::Accepted => "Reducer accepted; local state has been merged.",
-            Self::SoftFailed => {
-                "Reducer rejected (schema passed but the transition is illegal); rewritable."
-            }
-            Self::CasConflict => {
-                "Concurrent write superseded by a later HLC; retained in the audit log for recovery."
-            }
-            Self::Quarantined => {
-                "Capability check passed but moderation isolated the write into the review queue."
-            }
-        }
-    }
-
-    pub fn from_wire(s: &str) -> Option<Self> {
+    /// Interpret holder-local progress written by the durable outbound engine
+    /// or accepted-current ingestion. These tags are presentation metadata,
+    /// never wire evidence: their producers verify the exact Event/Commit pair
+    /// before recording accepted, and current ingestion records synced.
+    pub fn from_local_state(s: &str) -> Option<Self> {
         match s {
-            "synced" | "effective" => Some(Self::Synced),
+            "synced" => Some(Self::Synced),
             "optimistic" => Some(Self::Optimistic),
             "queued" => Some(Self::Queued),
-            "submitted" | "pending_commit" => Some(Self::Submitted),
-            "accepted" | "pending" | "pending_seal" => Some(Self::Accepted),
-            "failed" | "rejected" | "soft_failed" | "soft failed" => Some(Self::SoftFailed),
-            "conflict" | "cas_conflict" | "CAS conflict" => Some(Self::CasConflict),
+            "submitting"
+            | "forwarding"
+            | "submitted"
+            | "pending"
+            | "pending_commit"
+            | "pending_mls_binding" => Some(Self::Submitted),
+            "accepted" | "committed" | "effective" => Some(Self::Accepted),
+            "failed" | "rejected" | "soft_failed" | "cancelled" | "dropped" => {
+                Some(Self::SoftFailed)
+            }
+            "conflict" | "cas_conflict" => Some(Self::CasConflict),
             "quarantined" => Some(Self::Quarantined),
             _ => None,
         }
+    }
+
+    pub fn localized_label(self) -> String {
+        crate::i18n::tr(&format!("write_state.{}.label", self.data_state()))
+    }
+
+    pub fn localized_explanation(self) -> String {
+        crate::i18n::tr(&format!("write_state.{}.description", self.data_state()))
     }
 
     /// All variants, ordered the way the UI prefers to display them.
@@ -178,15 +153,42 @@ impl WriteState {
     }
 }
 
+/// Shared lifecycle badge for card and other write surfaces.
+#[component]
+pub fn WriteStateBadge(state: WriteState, icon_only: Option<bool>) -> Element {
+    let class_name = format!(
+        "{} write-state-badge{}",
+        state.class_name(),
+        if icon_only.unwrap_or(false) {
+            " is-icon-only"
+        } else {
+            ""
+        }
+    );
+    let data_state = state.data_state();
+    let label = state.localized_label();
+    let title = state.localized_explanation();
+    rsx! {
+        span {
+            class: "{class_name}",
+            "data-testid": "write-state-badge",
+            "data-write-state": "{data_state}",
+            title: "{title}",
+            WriteStateIcon { state }
+            span { class: "write-state-label", "{label}" }
+        }
+    }
+}
+
 #[component]
 pub fn WriteStateIcon(state: WriteState) -> Element {
     let icon_class = state.icon_class();
-    let icon = state.icon();
+    let label = state.localized_explanation();
     rsx! {
         span {
             class: "{icon_class}",
             role: "img",
-            "aria-label": "{icon.aria_label}",
+            "aria-label": "{label}",
         }
     }
 }
@@ -196,14 +198,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn write_state_labels_are_unique() {
-        let mut labels: Vec<&str> = WriteState::all().iter().map(|s| s.label()).collect();
+    fn write_state_tags_are_unique() {
+        let mut labels: Vec<&str> = WriteState::all().iter().map(|s| s.data_state()).collect();
         labels.sort();
         labels.dedup();
         assert_eq!(
             labels.len(),
             8,
-            "every WriteState variant must have a unique label"
+            "every WriteState variant must have a unique local tag"
         );
     }
 
@@ -235,16 +237,22 @@ mod tests {
     }
 
     #[test]
-    fn write_state_parses_display_label_strings() {
-        assert_eq!(
-            WriteState::from_wire("CAS conflict"),
-            Some(WriteState::CasConflict)
-        );
-        assert_eq!(
-            WriteState::from_wire("soft failed"),
-            Some(WriteState::SoftFailed)
-        );
-        assert_eq!(WriteState::from_wire("synced"), Some(WriteState::Synced));
-        assert_eq!(WriteState::from_wire("garbage"), None);
+    fn pending_local_progress_never_claims_acceptance() {
+        for tag in [
+            "submitting",
+            "forwarding",
+            "submitted",
+            "pending",
+            "pending_commit",
+            "pending_mls_binding",
+        ] {
+            assert_eq!(
+                WriteState::from_local_state(tag),
+                Some(WriteState::Submitted),
+                "{tag}"
+            );
+        }
+        assert_eq!(WriteState::from_local_state("pending_seal"), None);
+        assert_eq!(WriteState::from_local_state("garbage"), None);
     }
 }

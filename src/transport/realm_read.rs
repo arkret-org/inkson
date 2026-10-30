@@ -14,9 +14,11 @@
 //! The realm create / mutate methods build + submit signed events via the event
 //! submitter and remain inherent `TransportClient` methods.
 
-use crate::models::{AuthzCheckOutcome, GrantList};
+use crate::models::{AuthorizationCheckResponseBody, EffectiveGrantSnapshot};
 use crate::operation::trim_realm_id;
 use crate::wire_helpers::path_component;
+
+mod shared;
 
 fn effective_grants_path(
     realm_id: &arkret_sdk::RealmId,
@@ -60,22 +62,43 @@ fn realm_projection_path(
 pub async fn list_realm_spaces(
     http: &arkret_sdk::http_client::Client,
     realm_id: &str,
-) -> anyhow::Result<Vec<arkret_sdk::ProjectionSpaceRow>> {
+) -> anyhow::Result<Vec<arkret_sdk::SpaceView>> {
     let realm_id = arkret_sdk::RealmId::new(trim_realm_id(realm_id))?;
+    shared::spaces(http, realm_id, None).await
+}
+
+pub(crate) async fn list_realm_spaces_scoped(
+    http: &arkret_sdk::http_client::Client,
+    realm_id: &str,
+    read_fence: &crate::state::RealmListReadFence,
+) -> anyhow::Result<Vec<arkret_sdk::SpaceView>> {
+    let realm_id = arkret_sdk::RealmId::new(trim_realm_id(realm_id))?;
+    shared::spaces(http, realm_id, Some(read_fence.clone())).await
+}
+
+async fn list_realm_spaces_pages(
+    http: &arkret_sdk::http_client::Client,
+    realm_id: &arkret_sdk::RealmId,
+) -> anyhow::Result<Vec<arkret_sdk::SpaceView>> {
+    let bound = http
+        .own_station_result_client()?
+        .ok_or_else(|| anyhow::anyhow!("Space read requires its captured session"))?;
     let mut rows = Vec::new();
     let mut cursor = None;
     let mut seen = std::collections::BTreeSet::new();
     loop {
-        let page: arkret_sdk::ProjectionSpaceList = http
+        bound.check_session()?;
+        let page: arkret_sdk::SpacePage = http
             .get(&realm_projection_path(
-                &realm_id,
+                realm_id,
                 "spaces",
                 cursor.as_deref(),
             ))
             .await?;
+        bound.check_session()?;
         page.validate()?;
         anyhow::ensure!(
-            page.realm_id == realm_id,
+            &page.realm_id == realm_id,
             "Space page belongs to another Realm"
         );
         rows.extend(page.spaces);
@@ -98,22 +121,43 @@ pub async fn list_realm_spaces(
 pub async fn list_realm_strands(
     http: &arkret_sdk::http_client::Client,
     realm_id: &str,
-) -> anyhow::Result<Vec<arkret_sdk::ProjectionStrandRow>> {
+) -> anyhow::Result<Vec<arkret_sdk::StrandView>> {
     let realm_id = arkret_sdk::RealmId::new(trim_realm_id(realm_id))?;
+    shared::strands(http, realm_id, None).await
+}
+
+pub(crate) async fn list_realm_strands_scoped(
+    http: &arkret_sdk::http_client::Client,
+    realm_id: &str,
+    read_fence: &crate::state::RealmListReadFence,
+) -> anyhow::Result<Vec<arkret_sdk::StrandView>> {
+    let realm_id = arkret_sdk::RealmId::new(trim_realm_id(realm_id))?;
+    shared::strands(http, realm_id, Some(read_fence.clone())).await
+}
+
+async fn list_realm_strands_pages(
+    http: &arkret_sdk::http_client::Client,
+    realm_id: &arkret_sdk::RealmId,
+) -> anyhow::Result<Vec<arkret_sdk::StrandView>> {
+    let bound = http
+        .own_station_result_client()?
+        .ok_or_else(|| anyhow::anyhow!("Strand read requires its captured session"))?;
     let mut rows = Vec::new();
     let mut cursor = None;
     let mut seen = std::collections::BTreeSet::new();
     loop {
-        let page: arkret_sdk::ProjectionStrandList = http
+        bound.check_session()?;
+        let page: arkret_sdk::StrandPage = http
             .get(&realm_projection_path(
-                &realm_id,
+                realm_id,
                 "strands",
                 cursor.as_deref(),
             ))
             .await?;
+        bound.check_session()?;
         page.validate()?;
         anyhow::ensure!(
-            page.realm_id == realm_id,
+            &page.realm_id == realm_id,
             "Strand page belongs to another Realm"
         );
         rows.extend(page.strands);
@@ -137,30 +181,26 @@ pub async fn authz_check_resource(
     actor: &str,
     action: &str,
     resource: Option<arkret_sdk::WireResourceSelector>,
-) -> anyhow::Result<AuthzCheckOutcome> {
-    let body = arkret_models_collaboration::governance::authorization::AuthzCheckRequestBody {
-        actor_id: crate::mls_api_helpers::local_account_actor_id(actor)?,
-        action: action.trim().to_owned(),
-        resource,
-        context: None,
-    };
+) -> anyhow::Result<AuthorizationCheckResponseBody> {
+    let body =
+        arkret_models_collaboration::governance::authorization::AuthorizationCheckRequestBody {
+            actor_id: crate::mls_api_helpers::local_account_actor_id(actor)?,
+            action: action.trim().to_owned(),
+            resource,
+            context: None,
+        };
     authz_check_request(http, &body).await
 }
 
 /// Ask the authenticated account Station to evaluate one authorization query.
 ///
-/// The SDK intentionally exposes registered JSON operations through its generic
-/// typed request path: it derives the exact `Arkret-Operation` selector from
-/// the method and path. Keeping this as a transport call means Inkson consumes
-/// the Station's current projection and never grows a second local policy
-/// evaluator.
+/// The typed SDK operation derives the registered operation selector. Inkson
+/// consumes the Station's current projection without a local policy evaluator.
 pub async fn authz_check_request(
     http: &arkret_sdk::http_client::Client,
-    body: &arkret_models_collaboration::governance::authorization::AuthzCheckRequestBody,
-) -> anyhow::Result<AuthzCheckOutcome> {
-    http.post("/_arkret/self/authz/check", body)
-        .await
-        .map_err(anyhow::Error::from)
+    body: &arkret_models_collaboration::governance::authorization::AuthorizationCheckRequestBody,
+) -> anyhow::Result<AuthorizationCheckResponseBody> {
+    http.authz_check(body).await.map_err(anyhow::Error::from)
 }
 
 pub async fn authz_check(
@@ -168,7 +208,7 @@ pub async fn authz_check(
     actor: &str,
     action: &str,
     realm_id: &str,
-) -> anyhow::Result<AuthzCheckOutcome> {
+) -> anyhow::Result<AuthorizationCheckResponseBody> {
     authz_check_resource(
         http,
         actor,
@@ -180,15 +220,15 @@ pub async fn authz_check(
     .await
 }
 
-pub fn authz_allowed(outcome: &AuthzCheckOutcome) -> bool {
-    matches!(outcome.decision, arkret_sdk::AuthzDecision::Allow)
+pub fn authz_allowed(outcome: &AuthorizationCheckResponseBody) -> bool {
+    matches!(outcome.decision, arkret_sdk::AuthorizationDecision::Allow)
 }
 
 pub async fn effective_grants(
     http: &arkret_sdk::http_client::Client,
     realm_id: &arkret_sdk::RealmId,
     subject: &arkret_sdk::ActorId,
-) -> anyhow::Result<GrantList> {
+) -> anyhow::Result<EffectiveGrantSnapshot> {
     // Deliberately no `at` parameter: historical evaluation is not an
     // authoring basis. Settings relinquish and manual admin revoke consume
     // only the exact row revision from this current read.

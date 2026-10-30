@@ -104,6 +104,11 @@ impl SessionCoordinator {
         self.state.borrow_mut().invalidator = Some(Rc::new(RefCell::new(invalidator)));
     }
 
+    /// Account-local UI callbacks must not outlive their mounted owner.
+    pub(crate) fn clear_invalidator(&self) {
+        self.state.borrow_mut().invalidator = None;
+    }
+
     pub fn replace(&self, credential: impl Into<String>) -> u64 {
         crate::identity::device_directory::reset_session_cache();
         crate::identity::contact_profile::reset_session_cache();

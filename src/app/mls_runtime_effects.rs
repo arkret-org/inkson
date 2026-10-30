@@ -55,8 +55,71 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
     let SessionContext {
         state_store,
         active_account,
+        mut owned_agents_rev,
         ..
     } = SessionContext::get();
+    // Agent creation is an explicit durable intent. Discovery runs on every
+    // route and reads current identity without subscribing to its own writes.
+    use_future(move || async move {
+        loop {
+            crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(5)).await;
+            if !*secure_store_bootstrap_ready.peek() || !*sync_bootstrap_complete.peek() {
+                continue;
+            }
+            let Some(account) = active_account.peek().clone() else {
+                continue;
+            };
+            let credential = token.peek().clone();
+            if credential.trim().is_empty() {
+                continue;
+            }
+            let Some(evidence) = state_store.peek().recovery_material_evidence() else {
+                continue;
+            };
+            if evidence.account_id != account.authority || evidence.device_id != account.device_id {
+                continue;
+            }
+            let Ok(vault) = crate::outbound_store::InksonOutboundStore::open(
+                &account.authority,
+                crate::outbound_store::OutboundLane::Standard,
+            ) else {
+                continue;
+            };
+            let records = match vault.pending_agent_provisions(&account.authority).await {
+                Ok(records) => records,
+                Err(_) => continue,
+            };
+            for original in records {
+                if original.device_id != account.device_id
+                    || original.controller_did != *account.did()
+                    || original.principal_endpoint != account.server_url.as_str()
+                {
+                    continue;
+                }
+                match crate::agent_identity::provision::resume_ceremony(
+                    original,
+                    evidence.clone(),
+                    credential.clone(),
+                )
+                .await
+                {
+                    Ok(_) => {
+                        if active_account
+                            .peek()
+                            .as_ref()
+                            .is_some_and(|current| current.authority == account.authority)
+                        {
+                            let next = (*owned_agents_rev.peek()).saturating_add(1);
+                            owned_agents_rev.set(next);
+                        }
+                    }
+                    Err(error) => {
+                        tracing::debug!(%error, "Original Agent ceremony remains pending")
+                    }
+                }
+            }
+        }
+    });
     // Resume explicit Device creator intents on every route, including a
     // create wizard left pending by unavailable evidence. No implicit activation.
     let mut creator_resume_revision = use_signal(|| 0_u64);

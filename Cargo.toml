@@ -14,7 +14,8 @@ resolver = "3"
 # renderer's PHF 0.8 API while resolving rand to a patched registry release.
 # Both crates must share a source so phf_codegen uses the same PhfHash trait.
 [patch.crates-io]
-dioxus-desktop = { path = "vendor/dioxus-desktop" }
+dioxus-desktop = { git = "https://github.com/arkret-org/dioxus", rev = "0c19002e89ab70729bf6fbeda24e98eafb861cb9" }
+ksni = { git = "https://github.com/arkret-org/ksni", rev = "c95fc5ba94780c2376ee8b89ad91f7412abd3966" }
 phf_generator = { git = "https://github.com/rust-phf/rust-phf", rev = "6d5bfb4a377270d2ae69e05347044b1a95499973" }
 phf_shared = { git = "https://github.com/rust-phf/rust-phf", rev = "6d5bfb4a377270d2ae69e05347044b1a95499973" }
 
@@ -44,7 +45,7 @@ dioxus = { version = "=0.7.10", default-features = false, features = ["minimal",
 dioxus-primitives = { version = "0.0.1", git = "https://github.com/DioxusLabs/components", default-features = false }
 dioxus-router = "=0.7.10"
 ed25519-dalek = "3.0.0"
-futures-util = { version = "0.3.34", default-features = false, features = ["sink"] }
+futures-util = { version = "0.3.34", default-features = false, features = ["sink", "std"] }
 getrandom = "0.4.3"
 getrandom_02 = { package = "getrandom", version = "0.2.17" }
 gloo-timers = "0.4"
@@ -52,7 +53,7 @@ hkdf = "0.13"
 hmac = "0.13"
 image = { version = "0.25.10", default-features = false }
 js-sys = "0.3"
-jsonschema = { version = "0.52.1", default-features = false }
+jsonschema = { version = "0.59.0", default-features = false }
 pulldown-cmark = { version = "0.13", default-features = false }
 qrcode = { version = "0.14", default-features = false }
 rand_core = "0.10"
@@ -91,7 +92,7 @@ web = ["app", "dioxus/web"]
 # hidden from the local 1.0 UI unless explicitly opted in.
 experimental-discussion-promote = []
 experimental-applets = []
-spec-conformance = ["dep:arkret-schema-conformance"]
+spec-conformance = ["dep:arkret-schema-conformance", "dep:arkret-test-kit"]
 # Test-only wasm escape hatch for Playwright/cotest fixtures that must inject a
 # real session grant and grant-binding seed before IndexedDB is ready. Production
 # builds must not enable this feature.
@@ -124,6 +125,7 @@ path = "src/bin/inkson-wire.rs"
 required-features = ["spec-conformance"]
 
 [dependencies]
+arkret-test-kit = { path = "../arkret-rust-sdk/crates/test-kit", optional = true }
 rand_chacha = "0.10"
 # Feature-unification alias: `getrandom@0.2` is pulled in transitively by the
 # crypto stack (rand_core 0.6 → p256/k256/hpke-rs/openmls and Arkret owner
@@ -191,13 +193,14 @@ futures-util = { workspace = true }
 getrandom = { workspace = true, features = ["sys_rng", "wasm_js"] }
 getrandom_02 = { workspace = true, features = ["js"] }
 hex = "0.4.3"
+imbl = { version = "7.0.2", features = ["serde"] }
 hkdf = { workspace = true }
 hmac = { workspace = true }
 image = { workspace = true, default-features = false, features = ["gif", "jpeg", "png", "webp"] }
 pulldown-cmark = { workspace = true, default-features = false, features = ["html"] }
 qrcode = { workspace = true, default-features = false, features = ["svg"] }
 rand_core = { workspace = true }
-serde = { workspace = true, features = ["derive"] }
+serde = { workspace = true, features = ["derive", "rc"] }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
 thiserror = { workspace = true }
@@ -237,7 +240,7 @@ arkret-egress-reqwest = { version = "0.3.0", path = "../arkret-rust-sdk/crates/e
 # NOTE: arkret-sdk `default = []`; this client opts into only its transport,
 # MLS, signer and platform-keystore integrations. Crypto capabilities are
 # selected directly on `arkret-crypto`.
-arkret-sdk = { workspace = true, features = ["client", "mls", "signer", "keystore-macos", "keystore-linux", "keystore-windows"] }
+arkret-sdk = { workspace = true, features = ["client", "mls", "signer", "tls-rustls", "keystore-macos", "keystore-linux", "keystore-windows"] }
 dioxus = { workspace = true }
 fs2 = "0.4.3"
 garth = { path = "../garth", default-features = false, features = ["native"] }
@@ -245,7 +248,7 @@ reqwest = { workspace = true, default-features = false, features = ["json", "mul
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 sentry = { workspace = true, default-features = false, features = ["backtrace", "contexts", "panic", "reqwest", "rustls"] }
 tempfile = "3.27.0"
-tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time", "fs", "io-util", "net"] }
 # `ak.profile.binding.websocket.v1` native socket. garth owns the protocol;
 # tungstenite only reassembles messages and enforces the byte ceiling.
 tokio-tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }
@@ -305,6 +308,7 @@ web-sys = { workspace = true, features = [
     "SubtleCrypto",
     "CryptoKey",
     "Blob",
+    "File",
     "BlobPropertyBag",
     "Document",
     "Element",
@@ -376,6 +380,7 @@ regex = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 wasm-bindgen-test = "0.3"
+web-sys = { version = "0.3", features = ["EventInit"] }
 
 [lints]
 workspace = true

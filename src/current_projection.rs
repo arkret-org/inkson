@@ -5,7 +5,7 @@
 //! has to be re-derived from Event ordering, and there is no Realm-global
 //! position anywhere in this view.
 
-use arkret_wire::{CurrentSelector, RealmId, TypedCurrentRow};
+use arkret_wire::{CurrentSelector, CurrentState, RealmId};
 use serde_json::Value;
 
 /// The current results a Realm view needs before it can render its own
@@ -15,24 +15,24 @@ pub(crate) const REQUIRED_REALM_SELECTORS: [CurrentSelector; 2] = [
     CurrentSelector::RealmPolicyBundle,
 ];
 
-fn selector_of(entry: &TypedCurrentRow) -> &CurrentSelector {
-    let TypedCurrentRow::Value { selector, .. } = entry;
+fn selector_of(entry: &CurrentState) -> &CurrentSelector {
+    let CurrentState::Value { selector, .. } = entry;
     selector
 }
 
-fn value_of(entry: &TypedCurrentRow) -> &Value {
-    let TypedCurrentRow::Value { value, .. } = entry;
+fn value_of(entry: &CurrentState) -> &Value {
+    let CurrentState::Value { value, .. } = entry;
     value
 }
 
 fn entry_for<'a>(
-    entries: &'a [TypedCurrentRow],
+    entries: &'a [CurrentState],
     selector: &CurrentSelector,
-) -> Option<&'a TypedCurrentRow> {
+) -> Option<&'a CurrentState> {
     entries.iter().find(|entry| selector_of(entry) == selector)
 }
 
-pub(crate) fn required_realm_values_ready(entries: &[TypedCurrentRow]) -> bool {
+pub(crate) fn required_realm_values_ready(entries: &[CurrentState]) -> bool {
     if let Some(genesis) = entry_for(entries, &CurrentSelector::RealmGenesis)
         .map(value_of)
         .and_then(|value| serde_json::from_value::<arkret_sdk::RealmGenesis>(value.clone()).ok())
@@ -58,11 +58,63 @@ pub(crate) fn required_realm_values_ready(entries: &[TypedCurrentRow]) -> bool {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct RealmCurrentView {
     pub realm_id: String,
-    pub entries: Vec<TypedCurrentRow>,
+    pub entries: Vec<CurrentState>,
     /// Whether the rows were read at one complete verified cut of the durable
     /// index (installed baseline, every authorized stream covered, no pending
     /// refresh). Only such a view may answer a selector's absence.
     pub complete_cut: bool,
+}
+
+/// Decode receipt delivery policy from the existing accepted current carriers.
+/// Missing selectors are defaults only when a complete cut proves absence.
+pub(crate) fn read_receipt_policy_from_current(
+    scope: &arkret_sdk::ScopeRef,
+    entries: &[CurrentState],
+    complete_cut: bool,
+) -> anyhow::Result<arkret_sdk::ReadReceiptPolicy> {
+    let _realm = scope
+        .realm_id_opt()
+        .ok_or_else(|| anyhow::anyhow!("receipt scope has no Realm"))?;
+    anyhow::ensure!(
+        complete_cut,
+        "receipt policy requires a complete verified cut"
+    );
+    anyhow::ensure!(
+        matches!(
+            scope,
+            arkret_sdk::ScopeRef::Realm { .. } | arkret_sdk::ScopeRef::Circle { .. }
+        ),
+        "unsupported receipt scope"
+    );
+    let selector = CurrentSelector::ScopeReadReceiptPolicy {
+        scope_ref: scope.clone(),
+    };
+    let mut matching = entries
+        .iter()
+        .filter(|entry| selector_of(entry) == &selector);
+    let policy = if let Some(CurrentState::Value {
+        source_stream_ref,
+        revision,
+        value,
+        ..
+    }) = matching.next()
+    {
+        anyhow::ensure!(
+            matching.next().is_none(),
+            "duplicate receipt-policy current"
+        );
+        let current = arkret_sdk::CurrentScopeReadReceiptPolicy {
+            selector,
+            source_stream_ref: source_stream_ref.clone(),
+            revision: revision.clone(),
+            value: serde_json::from_value(value.clone())?,
+        };
+        current.validate()?;
+        current.value.resolved()
+    } else {
+        arkret_sdk::ReadReceiptPolicy::default()
+    };
+    Ok(policy)
 }
 
 /// What an installed current view says about one scope's MLS activation.
@@ -70,7 +122,7 @@ pub(crate) struct RealmCurrentView {
 pub(crate) enum ScopeMlsCurrent {
     /// The view carries the scope's accepted `mls_group`: the scope is
     /// irreversibly standard RFC 9420.
-    Activated(arkret_wire::MlsGroupCurrent),
+    Activated(arkret_wire::MlsGroupValue),
     /// The view is a complete verified cut without an `mls_group` for the
     /// scope: it has no accepted Genesis.
     NotActivated,
@@ -90,6 +142,98 @@ impl ScopeMlsCurrent {
 }
 
 impl RealmCurrentView {
+    pub(crate) fn read_receipt_policy(
+        &self,
+        scope: &arkret_sdk::ScopeRef,
+    ) -> anyhow::Result<arkret_sdk::ReadReceiptPolicy> {
+        anyhow::ensure!(
+            scope
+                .realm_id_opt()
+                .is_some_and(|realm| realm.as_str() == self.realm_id),
+            "receipt-policy view belongs to another Realm"
+        );
+        read_receipt_policy_from_current(scope, &self.entries, self.complete_cut)
+    }
+
+    /// Consume complete effective entries and the exact last source from the
+    /// accepted Snapshot. Raw Event history cannot establish this current.
+    pub(crate) fn call_roster(
+        &self,
+        call: &arkret_sdk::CallId,
+    ) -> anyhow::Result<Option<Vec<arkret_sdk::CallParticipant>>> {
+        use arkret_models_collaboration::events_payloads::call::CallRosterCurrentValue;
+        if !self.complete_cut {
+            return Ok(None);
+        }
+        let Some(CurrentState::Value {
+            source_stream_ref: call_stream,
+            value: lifecycle,
+            ..
+        }) = entry_for(
+            &self.entries,
+            &CurrentSelector::CallState {
+                call_id: call.clone(),
+            },
+        )
+        else {
+            return Ok(None);
+        };
+        anyhow::ensure!(
+            call_stream.realm_id().as_str() == self.realm_id,
+            "Call current belongs to another Realm"
+        );
+        let lifecycle: arkret_sdk::CallStateCurrentValue =
+            serde_json::from_value(lifecycle.clone())?;
+        lifecycle.validate().map_err(anyhow::Error::msg)?;
+        let Some(CurrentState::Value {
+            source_stream_ref,
+            revision,
+            value,
+            ..
+        }) = entry_for(
+            &self.entries,
+            &CurrentSelector::CallRoster {
+                call_id: call.clone(),
+            },
+        )
+        else {
+            return Ok(Some(Vec::new()));
+        };
+        anyhow::ensure!(
+            source_stream_ref == call_stream,
+            "Call roster scope differs from its lifecycle"
+        );
+        let roster: CallRosterCurrentValue = serde_json::from_value(value.clone())?;
+        roster.validate_sources(source_stream_ref, revision)?;
+        arkret_sdk::verify_call_roster_bindings(source_stream_ref.realm_id(), call, &roster)?;
+        Ok(Some(roster.effective_participants()?))
+    }
+
+    pub(crate) fn media_service(
+        &self,
+    ) -> anyhow::Result<Option<arkret_models_collaboration::events_payloads::RealmMediaServiceValue>>
+    {
+        if !self.complete_cut {
+            return Ok(None);
+        }
+        let Some(CurrentState::Value {
+            source_stream_ref,
+            value,
+            ..
+        }) = entry_for(&self.entries, &CurrentSelector::RealmMediaService)
+        else {
+            return Ok(None);
+        };
+        anyhow::ensure!(
+            source_stream_ref
+                == &arkret_wire::CommitStreamRef::Realm {
+                    realm_id: RealmId::new(self.realm_id.clone())?
+                },
+            "Media service current belongs to another stream"
+        );
+        Ok(Some(serde_json::from_value(value.clone())?))
+    }
+
     pub(crate) fn ready(&self) -> bool {
         self.complete_cut && required_realm_values_ready(&self.entries)
     }
@@ -97,12 +241,12 @@ impl RealmCurrentView {
     /// Validate that every scope-carrying row belongs to `realm_id`.
     pub(crate) fn new(
         realm_id: &str,
-        entries: Vec<TypedCurrentRow>,
+        entries: Vec<CurrentState>,
         complete_cut: bool,
     ) -> anyhow::Result<Self> {
         let realm = RealmId::new(realm_id.to_owned())?;
         for entry in &entries {
-            if let TypedCurrentRow::Value {
+            if let CurrentState::Value {
                 selector: CurrentSelector::MemberState { .. },
                 source_stream_ref,
                 ..
@@ -151,7 +295,7 @@ impl RealmCurrentView {
 
     /// The rows of `realm_id`, or `None` when this view belongs to another
     /// Realm. `None` is "not installed", never an empty current set.
-    pub(crate) fn entries_for(&self, realm_id: &str) -> Option<&[TypedCurrentRow]> {
+    pub(crate) fn entries_for(&self, realm_id: &str) -> Option<&[CurrentState]> {
         (self.realm_id == realm_id.trim()).then_some(self.entries.as_slice())
     }
 
@@ -165,19 +309,83 @@ impl RealmCurrentView {
         }
         let mut joined = std::collections::BTreeSet::new();
         for entry in &self.entries {
-            if let TypedCurrentRow::Value {
+            if let CurrentState::Value {
                 selector: CurrentSelector::MemberState { actor_id },
                 value,
                 ..
             } = entry
             {
-                let state: arkret_wire::MemberStateCurrent = serde_json::from_value(value.clone())?;
+                let state: arkret_wire::MemberStateValue = serde_json::from_value(value.clone())?;
                 if state.membership == arkret_wire::MembershipState::Join {
                     joined.insert(actor_id.clone());
                 }
             }
         }
         Ok(Some(joined))
+    }
+    pub(crate) fn complete_joined_members_for_scope(
+        &self,
+        scope: &arkret_sdk::ScopeRef,
+    ) -> anyhow::Result<Option<std::collections::BTreeSet<arkret_sdk::ActorId>>> {
+        if self.realm_id != scope.realm_id().as_str() || !self.complete_cut {
+            return Ok(None);
+        }
+        let Some(parent) = self.complete_joined_members()? else {
+            return Ok(None);
+        };
+        let arkret_sdk::ScopeRef::Circle { circle_id, .. } = scope else {
+            return Ok(Some(parent));
+        };
+        let mut members = std::collections::BTreeSet::new();
+        for entry in &self.entries {
+            if let CurrentState::Value {
+                selector:
+                    CurrentSelector::CircleMemberState {
+                        circle_id: found,
+                        member_actor_id: actor_id,
+                    },
+                source_stream_ref,
+                value,
+                ..
+            } = entry
+            {
+                anyhow::ensure!(
+                    source_stream_ref.scope_ref() == *scope || found != circle_id,
+                    "Circle membership source differs from scope"
+                );
+                if found != circle_id {
+                    continue;
+                }
+                let state: arkret_wire::CircleMemberStateValue =
+                    serde_json::from_value(value.clone())?;
+                if !parent.contains(actor_id) {
+                    continue;
+                }
+                let selector = CurrentSelector::MemberState {
+                    actor_id: actor_id.clone(),
+                };
+                let Some(parent_row) = entry_for(&self.entries, &selector) else {
+                    continue;
+                };
+                let Some(revision) =
+                    parent_row.parent_membership_revision(scope.realm_id(), actor_id)
+                else {
+                    continue;
+                };
+                let CurrentState::Value {
+                    source_stream_ref, ..
+                } = parent_row;
+                if state.is_effective_under_parent(
+                    scope.realm_id(),
+                    source_stream_ref,
+                    &revision,
+                    arkret_sdk::MembershipState::Join,
+                ) {
+                    members.insert(actor_id.clone());
+                }
+            }
+        }
+        Ok(Some(members))
     }
 }
 
@@ -186,7 +394,7 @@ impl RealmCurrentView {
 /// rows themselves stay in the index.
 pub(crate) fn apply_profile_summary(
     projection: &mut Value,
-    entries: &[TypedCurrentRow],
+    entries: &[CurrentState],
 ) -> anyhow::Result<()> {
     let Some(profile) = entry_for(entries, &CurrentSelector::RealmProfile)
         .map(value_of)
@@ -216,7 +424,7 @@ pub(crate) fn apply_profile_summary(
 
 /// Decode the current Strand value the Station selected for `strand_id`.
 pub(crate) fn current_strand(
-    entries: &[TypedCurrentRow],
+    entries: &[CurrentState],
     strand_id: &arkret_sdk::StrandId,
 ) -> Option<arkret_sdk::Strand> {
     let selector = CurrentSelector::Strand {
@@ -230,20 +438,20 @@ pub(crate) fn current_strand(
 /// The current MLS group of `scope_ref`, i.e. the evidence that this scope has
 /// an accepted `ak.mls.genesis` and is therefore irreversibly encrypted.
 pub(crate) fn current_mls_group(
-    entries: &[TypedCurrentRow],
+    entries: &[CurrentState],
     scope_ref: &arkret_sdk::ScopeRef,
-) -> Option<arkret_wire::MlsGroupCurrent> {
+) -> Option<arkret_wire::MlsGroupValue> {
     let selector = CurrentSelector::MlsGroup {
         scope_ref: scope_ref.clone(),
     };
     entry_for(entries, &selector)
         .map(value_of)
         .and_then(|value| serde_json::from_value(value.clone()).ok())
-        .filter(|group: &arkret_wire::MlsGroupCurrent| group.effective_scope == *scope_ref)
+        .filter(|group: &arkret_wire::MlsGroupValue| group.effective_scope == *scope_ref)
 }
 
 /// The Station-selected current `ak.realm.policy_bundle` value.
-pub(crate) fn current_realm_policy_bundle_value(entries: &[TypedCurrentRow]) -> Option<Value> {
+pub(crate) fn current_realm_policy_bundle_value(entries: &[CurrentState]) -> Option<Value> {
     entry_for(entries, &CurrentSelector::RealmPolicyBundle)
         .map(value_of)
         .cloned()
@@ -256,6 +464,108 @@ mod tests {
     use super::*;
 
     const REALM: &str = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
+
+    #[test]
+    fn cold_call_roster_retains_leave_and_rejects_wrong_axis_provenance() {
+        use serde_json::json;
+        let call = arkret_sdk::CallId::from_event_id(&arkret_sdk::EventId::from_digest(
+            arkret_sdk::canonical::DigestSuite::Sha256,
+            [8; 32],
+        ));
+        let actor = json!({"kind":"account","account_id":{"principal_id":"ak:did_core:web:participant.example","station_id":"ak:did_core:web:station.example"}});
+        let device = "ak:device:01904100-0000-7000-8000-00000000000a";
+        // Trusted-storage fixture: signatures were verified before publication.
+        // This test exercises the consumer fold and provenance, not cryptography.
+        let assertion = |position, previous: RealmCommitId, value| {
+            let event = arkret_sdk::EventId::from_digest(
+                arkret_sdk::canonical::DigestSuite::Sha256,
+                [position as u8; 32],
+            );
+            let rev = revision(position);
+            let mut result = json!({"tag_id":format!("{event}:7"),"value":value,"source_commit":{
+                "commit_id":rev.commit_id,"realm_id":REALM,
+                "stream_ref":{"kind":"realm","realm_id":REALM},
+                "stream_position":position,"previous_commit_ref":previous,
+                "event_ref":event,"governance_generation":"0","authority_ref":event,
+                "committed_at":"2026-10-15T00:00:00.000Z",
+                "signature":{"context":"ak.realm_commit_signature.v1","signature_algorithm":"Ed25519",
+                    "verification_method":"did:web:authority.example#key-1",
+                    "signed_digest":format!("sha256:{}","0".repeat(64)),
+                    "created_at":"2026-10-15T00:00:00.000Z",
+                    "signature":arkret_sdk::canonical::base64url_encode([0;64])}
+            }});
+            let mut unsigned = result["source_commit"].clone();
+            unsigned.as_object_mut().unwrap().remove("commit_id");
+            unsigned.as_object_mut().unwrap().remove("signature");
+            result["source_commit"]["commit_id"] = json!(RealmCommitId::from_digest(
+                arkret_sdk::canonical::sha256_bytes(
+                    arkret_sdk::canonical::canonical_json_bytes(&unsigned).unwrap()
+                )
+            ));
+            result
+        };
+        let joined = assertion(
+            1,
+            revision(0).commit_id,
+            json!({"op":"join","participant":{"actor_id":actor,"device_id":device}}),
+        );
+        let join_revision = CurrentRevision {
+            commit_id: serde_json::from_value(joined["source_commit"]["commit_id"].clone())
+                .unwrap(),
+            stream_position: 1,
+        };
+        let left = assertion(
+            2,
+            join_revision.commit_id.clone(),
+            json!({"op":"leave","actor_id":actor,"device_id":device,"expected_revision":join_revision}),
+        );
+        let roster_revision = CurrentRevision {
+            commit_id: serde_json::from_value(left["source_commit"]["commit_id"].clone()).unwrap(),
+            stream_position: 2,
+        };
+        let mut rows = vec![
+            entry(
+                CurrentSelector::CallState {
+                    call_id: call.clone(),
+                },
+                0,
+                json!({"from":null,"to":"ringing"}),
+            ),
+            entry(
+                CurrentSelector::CallRoster {
+                    call_id: call.clone(),
+                },
+                2,
+                json!({"entries":[],"last_source":left}),
+            ),
+        ];
+        let CurrentState::Value { revision, .. } = &mut rows[1];
+        *revision = roster_revision;
+        assert!(
+            RealmCurrentView::new(REALM, rows.clone(), false)
+                .unwrap()
+                .call_roster(&call)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            RealmCurrentView::new(REALM, rows.clone(), true)
+                .unwrap()
+                .call_roster(&call)
+                .unwrap()
+                .unwrap()
+                .is_empty()
+        );
+        let mut bad = rows;
+        let CurrentState::Value { value, .. } = &mut bad[1];
+        value["last_source"]["tag_id"] = json!("wrong-axis:7");
+        assert!(
+            RealmCurrentView::new(REALM, bad, true)
+                .unwrap()
+                .call_roster(&call)
+                .is_err()
+        );
+    }
 
     #[test]
     fn membership_reconciliation_requires_a_complete_verified_cut() {
@@ -285,7 +595,7 @@ mod tests {
             Some(std::collections::BTreeSet::from([actor])),
         );
         let mut stale = rows;
-        let TypedCurrentRow::Value {
+        let CurrentState::Value {
             source_stream_ref, ..
         } = &mut stale[0];
         *source_stream_ref = arkret_wire::CommitStreamRef::Realm {
@@ -304,8 +614,8 @@ mod tests {
         }
     }
 
-    fn entry(selector: CurrentSelector, position: u64, value: Value) -> TypedCurrentRow {
-        TypedCurrentRow::Value {
+    fn entry(selector: CurrentSelector, position: u64, value: Value) -> CurrentState {
+        CurrentState::Value {
             selector,
             source_stream_ref: arkret_wire::CommitStreamRef::Realm {
                 realm_id: RealmId::new(REALM).unwrap(),
@@ -328,9 +638,9 @@ mod tests {
             "cipher_suite": "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519",
             "current_mls_commit_event_ref":
                 "ak:event:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL",
-            "epoch": 4,
-            "current_key_access_revision": 2,
-            "covered_key_access_revision": 2,
+            "epoch": "4",
+            "current_key_access_revision": "2",
+            "covered_key_access_revision": "2",
             "public_tree_ref":
                 "ak:blob:sha256:431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460"
         })
@@ -434,7 +744,11 @@ mod tests {
         assert_eq!(group.epoch, 4);
         let view = RealmCurrentView::new(REALM, activated, false).unwrap();
         assert_eq!(
-            crate::views::helpers::scope_mls_activation(&Default::default(), Some(&view), REALM,),
+            crate::views::helpers::scope_mls_activation(
+                &std::collections::BTreeMap::<String, serde_json::Value>::new(),
+                Some(&view),
+                REALM,
+            ),
             Some(true),
             "accepted Realm MLS does not require a navigation projection"
         );

@@ -1,15 +1,11 @@
 //! Ordinary Account projection through the accepted authenticated Station.
-use arkret_sdk::http_client::own_station_results::{
-    BoundOwnStationResponse, OwnStationResultClient,
-};
-use garth::own_station_results::{OwnStationReplica, OwnStationScanPage};
+use arkret_sdk::http_client::own_station_results::OwnStationStateClient;
+use garth::current_ingest::closed_current_value as closed_value;
+pub(super) use garth::current_ingest::validate_current_product;
+pub(super) use garth::history_recovery::{genesis_pages, window_pages};
+use garth::own_station_results::OwnStationReplica;
 
 use super::*;
-
-const MAX_PREFIX_BYTES: usize = 64 * 1024 * 1024;
-
-type SnapshotResponse =
-    BoundOwnStationResponse<arkret_sdk::RealmId, arkret_sdk::RealmStateSnapshot>;
 
 /// Establish the live checkpoint before publishing completion of a local join.
 /// Limited historical windows remain preview; subsequent live rows extend this
@@ -44,20 +40,30 @@ pub(crate) async fn refresh_joined_realm(
     };
     let active = || client.check_session().is_ok();
     let mut current = OwnStationReplica::new(realm.clone());
-    super::own_live::drain(
-        &client,
-        http,
-        realm,
-        &CommitStreamRef::Realm {
-            realm_id: realm.clone(),
-        },
-        &projector,
-        &active,
-        &mut current,
-    )
-    .await?;
-    client.check_session()?;
-    Ok(())
+    // Acceptance is already committed. Retry only the read of a superseded
+    // authority cut, never the invite write or an authorization refusal.
+    for attempt in 0..3 {
+        client.check_session()?;
+        let result = super::own_live::drain(
+            &client,
+            http,
+            realm,
+            &CommitStreamRef::Realm {
+                realm_id: realm.clone(),
+            },
+            &projector,
+            &active,
+            &mut current,
+        )
+        .await;
+        if !super::creator_cut_changed(&result) || attempt == 2 {
+            result?;
+            client.check_session()?;
+            return Ok(());
+        }
+        crate::runtime_helpers::sleep_for(Duration::from_millis(250)).await;
+    }
+    unreachable!("the bounded joined-cut loop always returns")
 }
 
 /// Read back an accepted private write without depending on a live hint rail.
@@ -155,7 +161,7 @@ pub(crate) async fn refresh_sidecar_history<F: Fn() -> bool>(
 }
 
 fn require_readback_session(
-    client: &OwnStationResultClient,
+    client: &OwnStationStateClient,
     account: &arkret_sdk::AccountId,
     request_epoch: u64,
 ) -> garth::Result<()> {
@@ -230,7 +236,11 @@ pub(super) async fn account_frame(
             let pages = match cached_pages {
                 Some(pages) => Some(pages),
                 None => {
-                    match window_pages(&client, &realm_id, &response, &mut replica, window).await {
+                    match crate::runtime::boxed_future_from(|| {
+                        window_pages(&client, &realm_id, &response, &mut replica, window)
+                    })
+                    .await
+                    {
                         Err(error) if error.is_stream_interruption() => {
                             accepted.stream_interruption.get_or_insert(error);
                             continue;
@@ -328,7 +338,7 @@ pub(super) async fn account_frame(
                 ));
             }
             for row in &snapshot.current_state_entries {
-                if let arkret_wire::TypedCurrentRow::Value {
+                if let arkret_wire::CurrentState::Value {
                     selector: arkret_wire::CurrentSelector::RealmGenesis,
                     value,
                     ..
@@ -342,13 +352,13 @@ pub(super) async fn account_frame(
                             .then_some(arkret_sdk::CollaborationRealmRole::DirectConversation),
                     );
                 }
-                if let arkret_wire::TypedCurrentRow::Value {
+                if let arkret_wire::CurrentState::Value {
                     selector: arkret_wire::CurrentSelector::MlsGroup { scope_ref },
                     value,
                     ..
                 } = row
                 {
-                    let group: arkret_wire::MlsGroupCurrent =
+                    let group: arkret_wire::MlsGroupValue =
                         serde_json::from_value(value.clone()).map_err(protocol)?;
                     if &group.effective_scope != scope_ref {
                         return Err(protocol("own Station MLS selector has another scope"));
@@ -366,239 +376,4 @@ pub(super) async fn account_frame(
     client.check_session()?;
     accepted.own_client = Some(client);
     Ok(accepted)
-}
-
-pub(super) fn validate_current_product(
-    snapshot: &arkret_sdk::RealmStateSnapshot,
-    realm: &arkret_sdk::RealmId,
-) -> garth::Result<()> {
-    let stream = CommitStreamRef::Realm {
-        realm_id: realm.clone(),
-    };
-    let head = snapshot
-        .visible_stream_heads
-        .iter()
-        .find(|head| head.stream_ref == stream)
-        .ok_or_else(|| protocol("own Station snapshot omits Realm coverage"))?;
-    let rows = snapshot
-        .current_state_entries
-        .iter()
-        .filter(|row| row_source(row) == &stream)
-        .cloned()
-        .collect::<Vec<_>>();
-    let (object, revision) = rows
-        .iter()
-        .find_map(|row| match row {
-            arkret_wire::TypedCurrentRow::Value {
-                selector: arkret_wire::CurrentSelector::RealmGenesis,
-                value,
-                revision,
-                ..
-            } => Some((value, revision)),
-            _ => None,
-        })
-        .ok_or_else(|| protocol("own Station complete cut omits typed Realm Genesis"))?;
-    if revision.stream_position != 0 {
-        return Err(protocol("typed Genesis is not at the Realm origin"));
-    }
-    let root = rows
-        .iter()
-        .find_map(|row| match row {
-            arkret_wire::TypedCurrentRow::Value {
-                selector: arkret_wire::CurrentSelector::RealmAuthorityRoot,
-                value,
-                ..
-            } => Some(value),
-            _ => None,
-        })
-        .ok_or_else(|| protocol("own Station cut omits typed authority root"))?;
-    let actor: arkret_sdk::ActorId = serde_json::from_value(
-        root.get("controller_actor_id")
-            .cloned()
-            .ok_or_else(|| protocol("typed root lacks its full controller"))?,
-    )
-    .map_err(protocol)?;
-    validate_floor_product_rows(
-        realm,
-        head,
-        snapshot.retention_and_history_floor.history_access,
-        &rows,
-        revision,
-        object,
-        &actor,
-    )
-}
-
-async fn window_pages(
-    client: &OwnStationResultClient,
-    realm: &arkret_sdk::RealmId,
-    current: &SnapshotResponse,
-    replica: &mut OwnStationReplica,
-    window: &arkret_models_collaboration::sync_frames::account_sync::RealmStreamWindow,
-) -> garth::Result<Option<Vec<OwnStationScanPage>>> {
-    let mut after = None;
-    let mut pages = Vec::new();
-    let mut retained_bytes = 0usize;
-    let basis = snapshot_window_basis(window);
-    let mut floor_response = None;
-    let mut dependencies = BTreeMap::new();
-    if let Some(basis) = basis {
-        let response = client.snapshot_by_ref(realm, &basis.snapshot_ref).await?;
-        garth::own_station_results::consume_bound_snapshot(&response, realm)?;
-        for dependency in basis.accepted_dependency_refs.iter().flatten() {
-            if dependencies.contains_key(&dependency.stream_ref) {
-                continue;
-            }
-            let cap = response
-                .value()?
-                .visible_stream_heads
-                .iter()
-                .find(|head| head.stream_ref == dependency.stream_ref)
-                .ok_or_else(|| protocol("own Station floor dependency has no covering head"))?;
-            let mut dependency_replica = OwnStationReplica::new(realm.clone());
-            dependency_replica.install_bound_snapshot(current)?;
-            let dependency_pages = genesis_pages(
-                client,
-                realm,
-                &dependency.stream_ref,
-                cap.stream_position
-                    .checked_add(1)
-                    .ok_or_else(|| protocol("dependency position overflow"))?,
-                &mut dependency_replica,
-            )
-            .await?
-            .ok_or_else(|| protocol("floor dependency lacks its original readable prefix"))?;
-            dependencies.insert(dependency.stream_ref.clone(), dependency_pages);
-        }
-        after = Some(basis.anchor_position);
-        floor_response = Some(response);
-    }
-    loop {
-        let next = after.map_or(Ok(0), |position: u64| {
-            position
-                .checked_add(1)
-                .ok_or_else(|| protocol("stream position overflow"))
-        })?;
-        let remaining = window
-            .next_position
-            .checked_sub(next)
-            .ok_or_else(|| protocol("Account window lies behind its exact basis"))?;
-        let request = StreamScanRequest {
-            realm_id: realm.clone(),
-            stream_ref: window.stream_ref.clone(),
-            direction: arkret_sdk::StreamScanDirection::After(after),
-            limit: remaining.min(u64::from(SCAN_LIMIT)).max(1) as u16,
-        };
-        let response = client.scan_commit_stream(&request).await?;
-        let outcome = response.value()?;
-        if let Some(basis) = basis {
-            if let Some(snapshot) = floor_response.take() {
-                let floor = outcome
-                    .readable_floor
-                    .as_ref()
-                    .ok_or_else(|| protocol("own Station floor scan omits its floor"))?;
-                replica.install_bound_floor_predecessor(
-                    &window.stream_ref,
-                    basis,
-                    floor,
-                    snapshot,
-                    &dependencies,
-                )?;
-            }
-        } else if pages.is_empty()
-            && outcome
-                .readable_floor
-                .as_ref()
-                .is_some_and(|floor| floor.oldest_position > 0)
-        {
-            if window.preview_only == Some(true) {
-                return Ok(None);
-            }
-            return Err(above_genesis_without_basis());
-        }
-        if remaining == 0 {
-            response.value()?;
-            break;
-        }
-        let truncated = outcome.truncated;
-        let page = replica.apply_bound_scan(client, response).await?;
-        let empty = page.rows()?.is_empty();
-        after = replica
-            .head(&window.stream_ref)
-            .map(|head| head.stream_position);
-        retained_bytes = retained_bytes
-            .checked_add(serde_json::to_vec(page.rows()?).map_err(protocol)?.len())
-            .ok_or_else(|| protocol("own-Station prefix capacity overflow"))?;
-        if retained_bytes > MAX_PREFIX_BYTES {
-            return Err(protocol(
-                "own-Station prefix exceeds bounded candidate capacity",
-            ));
-        }
-        pages.push(page);
-        if empty
-            || !truncated
-            || after.and_then(|position| position.checked_add(1)) == Some(window.next_position)
-        {
-            break;
-        }
-    }
-    Ok(Some(pages))
-}
-
-pub(super) async fn genesis_pages(
-    client: &OwnStationResultClient,
-    realm: &arkret_sdk::RealmId,
-    stream: &CommitStreamRef,
-    end: u64,
-    replica: &mut OwnStationReplica,
-) -> garth::Result<Option<Vec<OwnStationScanPage>>> {
-    let mut after = None;
-    let mut pages = Vec::new();
-    let mut retained_bytes = 0usize;
-    loop {
-        let next = after.map_or(Ok(0), |position: u64| {
-            position
-                .checked_add(1)
-                .ok_or_else(|| protocol("stream position overflow"))
-        })?;
-        let remaining = end
-            .checked_sub(next)
-            .ok_or_else(|| protocol("own stream crossed its requested prefix"))?;
-        if remaining == 0 {
-            break;
-        }
-        let request = StreamScanRequest {
-            realm_id: realm.clone(),
-            stream_ref: stream.clone(),
-            direction: arkret_sdk::StreamScanDirection::After(after),
-            limit: remaining.min(u64::from(SCAN_LIMIT)) as u16,
-        };
-        let response = client.scan_commit_stream(&request).await?;
-        if pages.is_empty()
-            && response
-                .value()?
-                .readable_floor
-                .as_ref()
-                .is_some_and(|floor| floor.oldest_position > 0)
-        {
-            return Ok(None);
-        }
-        let truncated = response.value()?.truncated;
-        let page = replica.apply_bound_scan(client, response).await?;
-        let empty = page.rows()?.is_empty();
-        after = replica.head(stream).map(|head| head.stream_position);
-        retained_bytes = retained_bytes
-            .checked_add(serde_json::to_vec(page.rows()?).map_err(protocol)?.len())
-            .ok_or_else(|| protocol("own-Station prefix capacity overflow"))?;
-        if retained_bytes > MAX_PREFIX_BYTES {
-            return Err(protocol(
-                "own-Station prefix exceeds bounded candidate capacity",
-            ));
-        }
-        pages.push(page);
-        if empty || !truncated {
-            break;
-        }
-    }
-    Ok(Some(pages))
 }

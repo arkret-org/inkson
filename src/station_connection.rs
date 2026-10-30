@@ -301,7 +301,7 @@ mod tests {
             base_url: "https://station.example/".into(),
             trust_domain: arkret_sdk::TrustDomainId::new("ak:trust_domain:station.example")
                 .unwrap(),
-            auth_metadata: arkret_sdk::AuthMetadata::minimal(),
+            authentication_metadata: arkret_sdk::AuthenticationMetadata::minimal(),
         }
     }
 

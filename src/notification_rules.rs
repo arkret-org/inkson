@@ -5,7 +5,7 @@ use arkret_wire::AccountDataKey;
 pub use chime::{
     DND_TZDB_VERSION, DndPeriod, DndSchedule, DndSettings, DndSettingsRejection,
     NotificationDecision, NotificationEvalContext, NotificationSound, PushCondition, PushRule,
-    PushRulesConfig, PushRulesRejection, evaluate_notification, parse_dnd_settings,
+    PushRulesConfiguration, PushRulesRejection, evaluate_notification, parse_dnd_settings,
     parse_push_rules,
 };
 use serde_json::Value;
@@ -13,7 +13,7 @@ use serde_json::Value;
 pub fn push_rules_from_account_data(
     authority: &arkret_sdk::AccountId,
     entries: &[arkret_sdk::Event],
-) -> Option<PushRulesConfig> {
+) -> Option<PushRulesConfiguration> {
     let value = encrypted_account_data_content(authority, entries, AccountDataKey::PUSH_RULES)?;
     match parse_push_rules(&value) {
         Ok(config) => Some(config),

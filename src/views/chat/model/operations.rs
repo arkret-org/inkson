@@ -445,11 +445,17 @@ pub(crate) fn chat_message_authoring_intent(
         }
         None => None,
     };
+    let blob_refs = match &content {
+        arkret_sdk::MessageAuthoringContent::Plaintext { content, .. } => {
+            content.referenced_blobs()?
+        }
+        arkret_sdk::MessageAuthoringContent::Mls { .. } => Vec::new(),
+    };
     let intent = arkret_sdk::MessageAuthoringIntent {
         strand_id: strand_id_value(strand_id)?,
         track_name: arkret_sdk::MessageTrackName::Discussion,
         content,
-        blob_refs: vec![],
+        blob_refs,
         reply_to_id,
     };
     // The closed SDK intent has no independent validator. Its payload is
@@ -541,7 +547,32 @@ pub(crate) async fn send_ordinary_chat_message(
     content: arkret_sdk::MessageAuthoringContent,
     reply_to: Option<&str>,
     local_operation_id: String,
-) -> std::result::Result<SubmitEventResult, garth::MessageAuthoringFailure> {
+) -> std::result::Result<EventSubmissionProgress, garth::MessageAuthoringFailure> {
+    send_ordinary_chat_message_with_blob_refs(
+        api,
+        state_store,
+        realm_id,
+        scope,
+        strand_id,
+        content,
+        reply_to,
+        local_operation_id,
+        Vec::new(),
+    )
+    .await
+}
+
+pub(crate) async fn send_ordinary_chat_message_with_blob_refs(
+    api: &TransportClient,
+    state_store: crate::runtime::input::StateStoreHandle,
+    realm_id: &str,
+    scope: arkret_sdk::ScopeRef,
+    strand_id: &str,
+    content: arkret_sdk::MessageAuthoringContent,
+    reply_to: Option<&str>,
+    local_operation_id: String,
+    blob_refs: Vec<String>,
+) -> std::result::Result<EventSubmissionProgress, garth::MessageAuthoringFailure> {
     let refused = |error: anyhow::Error| garth::MessageAuthoringFailure::Refused {
         code: "failed_precondition".to_owned(),
         detail: format!("{error:#}"),
@@ -550,7 +581,17 @@ pub(crate) async fn send_ordinary_chat_message(
         .event_submitter()
         .map_err(refused)?
         .with_state_store(state_store);
-    let intent = chat_message_authoring_intent(strand_id, content, reply_to).map_err(refused)?;
+    let mut intent =
+        chat_message_authoring_intent(strand_id, content, reply_to).map_err(refused)?;
+    if matches!(
+        intent.content,
+        arkret_sdk::MessageAuthoringContent::Mls { .. }
+    ) {
+        for reference in &blob_refs {
+            arkret_sdk::BlobRef::new(reference.clone()).map_err(|e| refused(e.into()))?;
+        }
+        intent.blob_refs = blob_refs;
+    }
     let session = submitter.message_authoring_session(
         realm_id,
         scope,

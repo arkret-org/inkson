@@ -91,7 +91,7 @@ pub(super) async fn stage_device_setup_pairing(
         arkret_sdk::DevicePairingNonce::new(arkret_sdk::base64url_encode(client_nonce_bytes))
             .map_err(anyhow::Error::msg)?;
     let stage_body = arkret_sdk::DevicePairingStageRequestBody {
-        new_device_pubkey: arkret_sdk::PublicKey {
+        new_device_public_key: arkret_sdk::PublicKey {
             kty: arkret_sdk::NonEmptyString::new("OKP".to_owned()).map_err(anyhow::Error::msg)?,
             kid: arkret_sdk::NonEmptyString::new(target_device.to_string())
                 .map_err(anyhow::Error::msg)?,
@@ -124,7 +124,7 @@ pub(super) async fn stage_device_setup_pairing(
         );
     let (_, transcript_digest) =
         arkret_sdk::signatures::device_pairing::server_device_pairing_transcript(
-            &stage_body.new_device_pubkey,
+            &stage_body.new_device_public_key,
             &challenge,
         )?;
     let target_proof = crate::identity::device_pairing::sign_target_proof(

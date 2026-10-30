@@ -1,6 +1,5 @@
 use serde_json::json;
 
-use crate::ephemeral::validate_outgoing_registered_event_payload;
 use crate::event_builders::{
     build_member_state_transition_event, build_realm_bootstrap_steps_for_station,
     build_realm_create_event, build_realm_state_event_for_station, build_space_create_event,
@@ -358,7 +357,11 @@ fn outgoing_payload_schema_gate_accepts_sdk_object_patch_payload() {
     .target_ref(strand_id)
     .build("inkson");
 
-    validate_outgoing_registered_event_payload(event.kind().as_str(), &event.payload()).unwrap();
+    arkret_sdk::validate_event_payload(
+        event.kind(),
+        &serde_json::to_value(event.payload()).unwrap(),
+    )
+    .unwrap();
 }
 
 /// Contract test: ak.space.create payload must satisfy spec

@@ -13,7 +13,7 @@ use arkret_sdk::push_rule_core::{
 use serde_json::Value;
 
 use crate::notification_rules::{
-    DndSettings, NotificationEvalContext, PushRulesConfig, WatchLevel, evaluate_notification,
+    DndSettings, NotificationEvalContext, PushRulesConfiguration, WatchLevel, evaluate_notification,
 };
 #[cfg(test)]
 pub(crate) use crate::state::projection::notifications::actor_is_joined_member;
@@ -197,7 +197,7 @@ pub(crate) fn notification_value_read_by_cursor(
 pub(crate) fn hydrate_notifications(
     raw_notifications: Vec<StoredNotification>,
     local_state: &ClientLocalState,
-    push_rules: Option<&PushRulesConfig>,
+    push_rules: Option<&PushRulesConfiguration>,
     dnd: Option<&DndSettings>,
 ) -> Vec<UiNotification> {
     hydrate_notifications_with_privacy_gate(
@@ -232,7 +232,7 @@ pub(crate) fn hydrate_notifications_with_privacy_gate(
     // This account's complete ActorId; `None` when no account is active, in
     // which case no Realm counts as joined and every invite stays visible.
     actor: Option<&arkret_sdk::ActorId>,
-    push_rules: Option<&PushRulesConfig>,
+    push_rules: Option<&PushRulesConfiguration>,
     dnd: Option<&DndSettings>,
     sidecar_privacy_gate: &crate::sidecar::SidecarPrivacyGate,
 ) -> Vec<UiNotification> {
@@ -307,7 +307,7 @@ fn notification_from_stored(
     _index: usize,
     value: StoredNotification,
     local_state: &ClientLocalState,
-    push_rules: Option<&PushRulesConfig>,
+    push_rules: Option<&PushRulesConfiguration>,
     dnd: Option<&DndSettings>,
     sidecar_privacy_gate: &crate::sidecar::SidecarPrivacyGate,
 ) -> Option<UiNotification> {

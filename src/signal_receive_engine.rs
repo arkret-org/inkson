@@ -9,7 +9,7 @@
 //!
 //! Admission is entirely [`garth::SignalReceiver`]. The client no longer
 //! resolves a sender key of its own: the Station issues the
-//! [`arkret_wire::SignalDeliveryAuthority`] inside the authenticated stream
+//! [`arkret_models_collaboration::SignalDeliveryAuthority`] inside the authenticated stream
 //! frame, and the receiver binds the envelope to it, verifies the producer
 //! proof, and enforces the per-endpoint sequence high-water. This module
 //! supplies only the two seams that need host state:
@@ -231,6 +231,22 @@ struct LiveSignalBody {
     payload_sequence: u64,
     expires_at: DateTime<Utc>,
     body: Value,
+    typing: Option<TypingAdmission>,
+}
+
+#[derive(Clone, Debug)]
+struct TypingAdmission {
+    signal: AdmittedSignal,
+    recipient: Option<arkret_sdk::AccountId>,
+    session_epoch: u64,
+}
+
+struct TypingSessionGuard<'a>(&'a InksonSignalSink);
+
+impl Drop for TypingSessionGuard<'_> {
+    fn drop(&mut self) {
+        self.0.clear_typing();
+    }
 }
 
 /// The bounded in-memory presence / typing projection the chat views read.
@@ -283,6 +299,7 @@ impl LiveSignalProjection {
                 payload_sequence,
                 expires_at,
                 body,
+                typing: None,
             },
         );
         changed = true;
@@ -371,12 +388,34 @@ pub fn live_signal_projection_key(signal: &AdmittedSignal) -> garth::Result<Stri
 
 /// Routes admitted plaintext to the three product consumers.
 pub(crate) struct InksonSignalSink {
+    pub(crate) call_account: Option<crate::config::ActiveAccountContext>,
+    pub(crate) call_http: Option<arkret_sdk::http_client::Client>,
     pub(crate) state_store: crate::runtime::input::StateStoreHandle,
     pub(crate) products: SignalProductRouter,
     pub(crate) live: Mutex<LiveSignalProjection>,
 }
 
 impl InksonSignalSink {
+    fn clear_typing(&self) {
+        let retained = if let Ok(mut live) = self.live.lock() {
+            let retained = live
+                .bodies
+                .values()
+                .filter(|body| body.typing.is_some())
+                .map(|body| body.body.clone())
+                .collect::<Vec<_>>();
+            live.bodies.retain(|_, body| body.typing.is_none());
+            retained
+        } else {
+            return;
+        };
+        self.state_store.write(|store| {
+            let mut bodies = store.load().presence_projection;
+            bodies.retain(|body| !retained.contains(body));
+            store.save_presence_projection(&bodies);
+        });
+    }
+
     /// One receiver decision.
     ///
     /// Stale and expired outcomes are not failures: the rail allows loss,
@@ -388,6 +427,11 @@ impl InksonSignalSink {
             domain,
             plaintext,
             effective_expires_at,
+            authority_commit_id,
+            parent_realm_authority_commit_id,
+            product_authority,
+            call_invitation,
+            signer_verification_method,
         } = outcome
         else {
             return Ok(());
@@ -395,19 +439,31 @@ impl InksonSignalSink {
         let signal = AdmittedSignal {
             expires_at: effective_expires_at,
             domain: *domain,
-            payload: plaintext,
+            authority_commit_id,
+            parent_realm_authority_commit_id,
+            product_authority,
+            call_invitation,
+            signer_verification_method,
+            payload: *plaintext,
         };
         #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
         let observation_owner = self.state_store.read(|store| store.active_principal_id());
         #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
         let observation_epoch = crate::identity::device_directory::session_cache_epoch();
-        let target_scope_matches = self
-            .strand_target_at_verified_cut(&signal)
-            .await
-            .unwrap_or(false);
+        let target_scope_result = self.strand_target_at_verified_cut(&signal).await;
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+        let target_scope_error = target_scope_result.as_ref().err().map(ToString::to_string);
+        let target_scope_matches = target_scope_result.unwrap_or(false);
         if !target_scope_matches {
             #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
-            self.observe_typing(&signal, observation_owner, observation_epoch, false, false);
+            self.observe_typing(
+                &signal,
+                observation_owner,
+                observation_epoch,
+                false,
+                false,
+                target_scope_error,
+            );
             return Ok(());
         }
         match signal.kind() {
@@ -423,7 +479,14 @@ impl InksonSignalSink {
             arkret_sdk::SignalPlaintextKind::Presence | arkret_sdk::SignalPlaintextKind::Typing => {
                 let applied = self.apply_live_body(&signal)?;
                 #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
-                self.observe_typing(&signal, observation_owner, observation_epoch, true, applied);
+                self.observe_typing(
+                    &signal,
+                    observation_owner,
+                    observation_epoch,
+                    true,
+                    applied,
+                    None,
+                );
                 #[cfg(not(all(
                     target_arch = "wasm32",
                     feature = "wasm-localstorage-secrets-test"
@@ -436,12 +499,13 @@ impl InksonSignalSink {
                 // after the receipt that carried it expires
                 // (`read-receipts.md` §1.1).
                 //
-                // The Realm policy travels with it because §2.5 puts the
+                // The scope policy travels with it because §2.5 puts the
                 // `disabled` / `private` discard on the receiving client:
                 // the receipt is inside the ciphertext, so the Station
                 // could not have filtered it.
-                let policy = self.realm_read_receipt_policy(&signal);
-                self.products.read_receipt(&signal, &policy);
+                if let Some(policy) = self.scope_read_receipt_policy(&signal).await {
+                    self.products.read_receipt(&signal, &policy);
+                }
             }
         }
         Ok(())
@@ -514,6 +578,161 @@ fn call_current_attempt_matches(
 }
 
 impl InksonSignalSink {
+    fn typing_blocked(&self, signal: &AdmittedSignal, now: DateTime<Utc>) -> bool {
+        self.state_store.read(|store| {
+            let row = garth::mls::membership::validated_realm_roster_entries(
+                store
+                    .realm_tree_projection(signal.scope_ref().realm_id().as_str())
+                    .as_ref(),
+            )
+            .into_iter()
+            .find(|row| row.actor_id == *signal.actor_id());
+            let handles = row
+                .map(|row| {
+                    let Some(account) = row.subject_account_id.as_ref() else {
+                        return Vec::new();
+                    };
+                    let policies =
+                        crate::identity::member_identity_store::realm_handle_issuer_policies(
+                            store,
+                            signal.scope_ref().realm_id().as_str(),
+                        );
+                    row.handle_claims
+                        .as_deref()
+                        .unwrap_or_default()
+                        .iter()
+                        .filter_map(|claim| {
+                            arkret_sdk::identity::select_primary_handle(
+                                &arkret_sdk::identity::PrimaryHandleSelectInput {
+                                    account_id: account,
+                                    context: Some(signal.scope_ref().realm_id().as_str()),
+                                    claim_set_snapshot: std::slice::from_ref(claim),
+                                    handle_issuer_policies: &policies,
+                                    holder_primary_handle_at_as_of: None,
+                                    resolution_as_of: now,
+                                },
+                            )
+                            .map(|verified| verified.claim.handle)
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            crate::account_data::hides_typing(&store.client_blocklist(), signal, &handles, now)
+        })
+    }
+
+    fn typing_product_allowed(
+        &self,
+        signal: &AdmittedSignal,
+        strand: &arkret_sdk::StrandId,
+        now: DateTime<Utc>,
+    ) -> bool {
+        let Some(recipient) = self.state_store.read(|store| store.active_authority()) else {
+            return false;
+        };
+        signal.expires_at > now
+            && !self.typing_blocked(signal, now)
+            && signal.product_authority.as_deref().is_some_and(|material| {
+                material.authority_commit_id == signal.authority_commit_id
+                    && material.parent_realm_authority_commit_id
+                        == signal.parent_realm_authority_commit_id
+                    && arkret_policy::signal_authorization::typing_visible(
+                        material,
+                        &arkret_sdk::ActorId::account(recipient.clone()),
+                        signal.scope_ref(),
+                        strand,
+                        now,
+                    )
+                    && arkret_policy::signal_authorization::typing_allowed(
+                        material,
+                        signal.actor_id(),
+                        signal.scope_ref(),
+                        strand,
+                        now,
+                    )
+            })
+    }
+
+    /// Recheck retained authenticated Typing without waiting for a peer frame.
+    /// IO never holds the projection lock; comparison prevents an older refresh
+    /// from erasing a newer admitted sequence that arrived while it waited.
+    async fn refresh_typing(&self, now: DateTime<Utc>) {
+        let retained = match self.live.lock() {
+            Ok(live) => live
+                .bodies
+                .iter()
+                .filter_map(|(key, body)| body.typing.clone().map(|typing| (key.clone(), typing)))
+                .collect::<Vec<_>>(),
+            Err(_) => return,
+        };
+        let mut rejected = Vec::new();
+        for (key, typing) in retained {
+            if typing.session_epoch != crate::identity::device_directory::session_cache_epoch()
+                || typing.recipient != self.state_store.read(|store| store.active_authority())
+                || typing.signal.expires_at <= now
+                || !self
+                    .strand_target_at_verified_cut(&typing.signal)
+                    .await
+                    .unwrap_or(false)
+            {
+                rejected.push((key, typing.signal));
+            }
+        }
+        let Ok(mut live) = self.live.lock() else {
+            return;
+        };
+        for (key, signal) in rejected {
+            if live
+                .bodies
+                .get(&key)
+                .and_then(|body| body.typing.as_ref())
+                .is_some_and(|typing| typing.signal == signal)
+            {
+                live.bodies.remove(&key);
+            }
+        }
+        let bodies = live.bodies();
+        drop(live);
+        let cached = self
+            .state_store
+            .read(|store| store.load().presence_projection);
+        let mut next = cached.clone();
+        next.retain(|body| {
+            body.get("kind").and_then(Value::as_str) != Some("ak.typing") || bodies.contains(body)
+        });
+        if next != cached {
+            self.state_store
+                .write(|store| store.save_presence_projection(&next));
+        }
+    }
+
+    async fn refresh_message_streams(&self, now: DateTime<Utc>) {
+        let mut eligible = Vec::new();
+        for signal in self.products.retained_message_streams() {
+            let arkret_sdk::SignalPlaintext::MessageStream(frame) = &signal.payload else {
+                continue;
+            };
+            if signal.expires_at > now
+                && self
+                    .strand_target_at_verified_cut(&signal)
+                    .await
+                    .unwrap_or(false)
+                && signal.product_authority.as_deref().is_some_and(|material| {
+                    arkret_policy::signal_authorization::message_stream_allowed(
+                        material,
+                        signal.actor_id(),
+                        signal.scope_ref(),
+                        frame.strand_id(),
+                        now,
+                    )
+                })
+            {
+                eligible.push(signal);
+            }
+        }
+        self.products.retain_message_streams(&eligible);
+    }
+
     async fn strand_target_at_verified_cut(&self, signal: &AdmittedSignal) -> garth::Result<bool> {
         let Some(strand) = plaintext_strand_target(signal)? else {
             return Ok(true);
@@ -539,10 +758,52 @@ impl InksonSignalSink {
         })
         .await
         .map_err(|_| garth::Error::Protocol("Signal Strand current is unavailable".to_owned()))?;
-        let current = index
-            .read_strand_ready(signal.scope_ref().realm_id(), &strand)
-            .await
-            .map_err(|_| garth::Error::Protocol("Signal Strand current is not ready".to_owned()))?;
+        if matches!(
+            signal.kind(),
+            arkret_sdk::SignalPlaintextKind::MessageStream
+                | arkret_sdk::SignalPlaintextKind::Typing
+        ) {
+            let Some(material) = signal.product_authority.as_deref() else {
+                return Ok(false);
+            };
+            if !index
+                .signal_product_cut_current(material)
+                .await
+                .unwrap_or(false)
+                || self.state_store.read(|store| {
+                    crate::account_data::is_blocked(
+                        &store.client_blocklist(),
+                        &signal.actor_id().to_string(),
+                    )
+                })
+            {
+                return Ok(false);
+            }
+        }
+        if let arkret_sdk::SignalPlaintext::Typing(typing) = &signal.payload
+            && !self.typing_product_allowed(signal, &typing.strand_id, crate::clock::now_utc())
+        {
+            return Ok(false);
+        }
+        let current = if matches!(
+            signal.kind(),
+            arkret_sdk::SignalPlaintextKind::Typing
+                | arkret_sdk::SignalPlaintextKind::MessageStream
+        ) {
+            index
+                .read_typing_strand_ready(
+                    signal.scope_ref(),
+                    &strand,
+                    signal.actor_id(),
+                    &arkret_sdk::ActorId::account(authority.clone()),
+                )
+                .await
+        } else {
+            index
+                .read_strand_ready(signal.scope_ref().realm_id(), &strand)
+                .await
+        }
+        .map_err(|_| garth::Error::Protocol("Signal Strand current is not ready".to_owned()))?;
         let same_attempt = self
             .state_store
             .read(|store| call_current_attempt_matches(store, &authority, generation))
@@ -561,6 +822,7 @@ impl InksonSignalSink {
         epoch: u64,
         target_scope_matches: bool,
         live_applied: bool,
+        target_scope_error: Option<String>,
     ) {
         let arkret_sdk::SignalPlaintext::Typing(typing) = &signal.payload else {
             return;
@@ -596,6 +858,7 @@ impl InksonSignalSink {
                 "sender_actor_id": signal.actor_id(), "sender_endpoint": signal.sender_endpoint(),
                     "payload_sequence": signal.payload_sequence(), "typing": typing.typing,
                     "admitted_and_decrypted": true, "target_scope_matches": target_scope_matches,
+                    "target_scope_error": target_scope_error,
                     "live_applied": live_applied, "visible_count": visible_count
                 }),
             ));
@@ -606,6 +869,8 @@ impl InksonSignalSink {
     }
 
     async fn call_exists_at_verified_cut(&self, signal: &AdmittedSignal) -> garth::Result<bool> {
+        #[cfg(feature = "spec-conformance")]
+        let started = std::time::Instant::now();
         let arkret_sdk::SignalPlaintext::CallSignal(call) = &signal.payload else {
             return Ok(false);
         };
@@ -617,9 +882,13 @@ impl InksonSignalSink {
             )
         });
         let Some(authority) = authority else {
+            #[cfg(feature = "spec-conformance")]
+            eprintln!("[call-product-cut] active_authority=false");
             return Ok(false);
         };
         if reset {
+            #[cfg(feature = "spec-conformance")]
+            eprintln!("[call-product-cut] current_reset_required=true");
             return Ok(false);
         }
         let mut generation = 0;
@@ -635,16 +904,56 @@ impl InksonSignalSink {
             .map_err(|error| {
                 garth::Error::Protocol(format!("Call current is not ready: {error}"))
             })?;
+        #[cfg(feature = "spec-conformance")]
+        eprintln!(
+            "[call-product-cut] call_current_millis={} signal_live={}",
+            started.elapsed().as_millis(),
+            signal.expires_at > crate::clock::now_utc()
+        );
         // A store await cannot carry the previous account's permission across
         // an account switch, current reset or a newly installed generation.
         let same_attempt = self
             .state_store
             .read(|store| call_current_attempt_matches(store, &authority, generation));
-        Ok(current.is_some() && same_attempt)
+        let ready = current.as_ref().is_some_and(|state| {
+            !matches!(
+                state.to,
+                arkret_sdk::CallLifecycleState::Ended
+                    | arkret_sdk::CallLifecycleState::Failed
+                    | arkret_sdk::CallLifecycleState::Cancelled
+                    | arkret_sdk::CallLifecycleState::Missed
+            )
+        }) && same_attempt;
+        #[cfg(feature = "spec-conformance")]
+        if !ready {
+            eprintln!(
+                "[call-product-cut] call_current_present={} same_attempt={same_attempt}",
+                current.is_some()
+            );
+        }
+        Ok(ready)
     }
 
     /// The product boundary runs only after the accepted Call current gate.
     async fn dispatch_call_product(&self, signal: &AdmittedSignal) -> garth::Result<()> {
+        if signal.call_invitation.is_some()
+            && !matches!(&signal.payload, arkret_sdk::SignalPlaintext::CallSignal(call)
+                if matches!(&call.signal, arkret_sdk::CallSignalData::Invite(_)))
+        {
+            return Ok(());
+        }
+        if matches!(&signal.payload, arkret_sdk::SignalPlaintext::CallSignal(call)
+            if matches!(&call.signal, arkret_sdk::CallSignalData::Invite(_)))
+        {
+            let consent = self.call_consent_at_ring(signal).await;
+            #[cfg(feature = "spec-conformance")]
+            if !matches!(&consent, Ok(true)) {
+                eprintln!("[call-product-cut] holder_consent={consent:?}");
+            }
+            if !consent.unwrap_or(false) {
+                return Ok(());
+            }
+        }
         if matches!(&signal.payload, arkret_sdk::SignalPlaintext::CallSignal(call)
             if matches!(&call.signal, arkret_sdk::CallSignalData::Invite(_)))
             && self.state_store.read(|store| {
@@ -662,6 +971,121 @@ impl InksonSignalSink {
         Ok(())
     }
 
+    async fn call_consent_at_ring(&self, signal: &AdmittedSignal) -> anyhow::Result<bool> {
+        let Some(account) = &self.call_account else {
+            return Ok(false);
+        };
+        let Some(delivery) = &signal.call_invitation else {
+            return Ok(false);
+        };
+        let arkret_sdk::SignalPlaintext::CallSignal(call) = &signal.payload else {
+            return Ok(false);
+        };
+        let arkret_sdk::CallSignalData::Invite(invite) = &call.signal else {
+            return Ok(false);
+        };
+        if delivery.invitation.holder_account_id != account.authority
+            || delivery.invitation.call_id != call.call_id
+            || delivery.invitation.scope_ref != *signal.scope_ref()
+            || delivery.invitation.inviter_actor_id != *signal.actor_id()
+            || delivery.request.subject_device_id != account.device_id
+            || delivery.invitation.media
+                != (arkret_sdk::CallInvitationMedia {
+                    audio: invite.media.audio,
+                    video: invite.media.video,
+                    screen: invite.media.screen.unwrap_or(false),
+                })
+            || delivery.invitation.expires_at <= crate::clock::now_utc()
+            || signal.expires_at <= crate::clock::now_utc()
+        {
+            #[cfg(feature = "spec-conformance")]
+            eprintln!(
+                "[call-product-cut] holder_matches={} call_matches={} scope_matches={} inviter_matches={} device_matches={} media_matches={} invitation_live={} signal_live={}",
+                delivery.invitation.holder_account_id == account.authority,
+                delivery.invitation.call_id == call.call_id,
+                delivery.invitation.scope_ref == *signal.scope_ref(),
+                delivery.invitation.inviter_actor_id == *signal.actor_id(),
+                delivery.request.subject_device_id == account.device_id,
+                delivery.invitation.media
+                    == (arkret_sdk::CallInvitationMedia {
+                        audio: invite.media.audio,
+                        video: invite.media.video,
+                        screen: invite.media.screen.unwrap_or(false)
+                    }),
+                delivery.invitation.expires_at > crate::clock::now_utc(),
+                signal.expires_at > crate::clock::now_utc(),
+            );
+            return Ok(false);
+        }
+        let session_epoch = crate::identity::device_directory::session_cache_epoch();
+        let guard = || -> anyhow::Result<()> {
+            anyhow::ensure!(
+                self.state_store.read(|s| s.active_authority()) == Some(account.authority.clone())
+                    && !self.state_store.read(|s| s.current_reset_required())
+                    && crate::identity::device_directory::session_cache_epoch() == session_epoch,
+                "ring attempt changed its account/device/current session"
+            );
+            Ok(())
+        };
+        guard()?;
+        let http = match &self.call_http {
+            Some(http) => http.clone(),
+            None => {
+                crate::identity::session_refresh::provide_authenticated_sdk_client(
+                    account.server_url.as_str(),
+                )
+                .await?
+            }
+        };
+        let client = crate::transport::own_station_results::client_for_http(&http).await?;
+        let request = arkret_sdk::ConsentCurrentReadRequestBody {
+            holder_account_id: account.authority.clone(),
+            peer: arkret_sdk::ConsentPeer::Actor {
+                actor_id: signal.actor_id().clone(),
+            },
+            audience_actor_id: arkret_sdk::ActorId::service(account.authority.station_id.clone()),
+            nonce: crate::random::base64url_token(32, "Consent read nonce unavailable")?,
+        };
+        let authority = crate::transport::own_station_results::consent_current_authority(
+            &http,
+            &client,
+            &account.authority,
+            &account.principal_control_realm_id,
+        )
+        .await?;
+        guard()?;
+        let response = client
+            .consent_current(&request, &account.principal_control_realm_id, &authority)
+            .await?;
+        guard()?;
+        let permitted = install_call_consent_current(
+            &self.state_store,
+            account,
+            &response,
+            delivery.invitation.media.consent_scope(),
+            session_epoch,
+            &guard,
+        )
+        .await?;
+        // A fresh holder read cannot rehabilitate product material issued by
+        // a previous authority generation or outside its original window.
+        if !permitted {
+            #[cfg(feature = "spec-conformance")]
+            eprintln!("[call-product-cut] private_current_permitted=false");
+            return Ok(false);
+        }
+        let delivery_current = delivery.decision.validate_for_request(
+            &delivery.request,
+            response.value()?.governance_generation,
+            crate::clock::now_utc(),
+        );
+        #[cfg(feature = "spec-conformance")]
+        if delivery_current.is_err() {
+            eprintln!("[call-product-cut] delivery_current={delivery_current:?}");
+        }
+        Ok(delivery_current.is_ok())
+    }
+
     /// Drop presence/typing bodies whose effective TTL has passed.
     ///
     /// A typing indicator lives five seconds and a presence signal thirty, so
@@ -671,59 +1095,110 @@ impl InksonSignalSink {
         let Ok(mut live) = self.live.lock() else {
             return;
         };
-        let changed = live.expire(now);
+        let blocklist = self.state_store.read(|store| store.client_blocklist());
+        let before = live.bodies.len();
+        live.bodies.retain(|_, body| {
+            body.body.get("kind").and_then(Value::as_str) != Some("ak.typing")
+                || body.typing.as_ref().is_some_and(|typing| {
+                    typing.session_epoch == crate::identity::device_directory::session_cache_epoch()
+                        && typing.recipient
+                            == self.state_store.read(|store| store.active_authority())
+                        && !self.typing_blocked(&typing.signal, now)
+                })
+        });
+        let changed = live.expire(now) || live.bodies.len() != before;
         let bodies = changed.then(|| live.bodies());
+        let retained_typing = live
+            .bodies
+            .values()
+            .filter(|body| body.typing.is_some())
+            .map(|body| body.body.clone())
+            .collect::<Vec<_>>();
         drop(live);
         let cached = self
             .state_store
             .read(|store| store.load().presence_projection);
         // A restarted receiver has no in-memory keys for the prior projection.
         // Its admitted cached bodies still expire without a new network frame.
-        let mut bodies = bodies.unwrap_or_else(|| cached.clone());
+        let mut bodies = bodies.unwrap_or_else(|| cached.to_vec());
         bodies.retain(|body| {
-            body.get("expires_at")
-                .and_then(Value::as_str)
-                .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
-                .is_some_and(|expiry| expiry > now)
+            (body.get("kind").and_then(Value::as_str) != Some("ak.typing")
+                || retained_typing.iter().any(|retained| retained == body))
+                && !typing_body_blocked(body, &blocklist)
+                && body
+                    .get("expires_at")
+                    .and_then(Value::as_str)
+                    .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
+                    .is_some_and(|expiry| expiry > now)
         });
-        if bodies != cached {
+        if bodies != *cached {
             self.state_store
                 .write(|store| store.save_presence_projection(&bodies));
         }
     }
 
-    /// The Realm's accepted `ak.realm.read_receipt_policy`, as last projected
-    /// from the Seal view.
+    /// The exact scope's accepted `ak.scope.read_receipt_policy` at the account's
+    /// current committed generation.
     ///
-    /// A Realm with no projected snapshot resolves to the spec default
-    /// (`disclosure=optional`, `visibility=members`), which is what
-    /// `read-receipts.md` §2.5 says an undeclared policy means.
-    fn realm_read_receipt_policy(&self, signal: &AdmittedSignal) -> arkret_sdk::ReadReceiptPolicy {
-        let realm_id = signal.scope_ref().realm_id().as_str().to_owned();
-        let snapshot = self
+    /// Only an accepted complete current cut can prove an undeclared policy.
+    /// Legacy presentation snapshots never establish this privacy boundary.
+    async fn scope_read_receipt_policy(
+        &self,
+        signal: &AdmittedSignal,
+    ) -> Option<arkret_sdk::ReadReceiptPolicy> {
+        let (authority, reset, location) = self.state_store.read(|store| {
+            (
+                store.active_authority(),
+                store.current_reset_required(),
+                store.current_index_location(),
+            )
+        });
+        let authority = authority?;
+        if reset {
+            return None;
+        }
+        let epoch = crate::identity::device_directory::session_cache_epoch();
+        let mut generation = 0;
+        let index = crate::state::CurrentIndex::open_committed(&authority, location, || {
+            generation = self.state_store.read(|store| store.current_generation());
+            Ok(generation)
+        })
+        .await
+        .ok()?;
+        let holder = arkret_sdk::ActorId::account(authority.clone());
+        index
+            .read_parent_membership_revision_at_complete_cut(signal.scope_ref().realm_id(), &holder)
+            .await
+            .ok()??;
+        if matches!(signal.scope_ref(), arkret_sdk::ScopeRef::Circle { .. }) {
+            index
+                .read_mls_group_ready(signal.scope_ref(), &holder)
+                .await
+                .ok()?;
+        }
+        let policy = match index
+            .read_read_receipt_policy_ready(signal.scope_ref())
+            .await
+        {
+            Ok(policy) => policy,
+            Err(error) => {
+                tracing::debug!(%error, "receipt policy current is unavailable; receipt discarded");
+                return None;
+            }
+        };
+        let same_attempt = self
             .state_store
-            .read(|store| store.read_receipt_policy_for_realm(&realm_id));
-        let mut policy = arkret_sdk::ReadReceiptPolicy::default();
-        let Some(snapshot) = snapshot else {
-            return policy;
-        };
-        // An unrecognized wire value is NOT silently treated as the default:
-        // a value this build cannot parse is one whose privacy meaning it does
-        // not know, so it falls closed to the strictest reading.
-        policy.disclosure = match snapshot.disclosure.as_str() {
-            "optional" => arkret_sdk::ReadReceiptDisclosure::Optional,
-            "required" => arkret_sdk::ReadReceiptDisclosure::Required,
-            _ => arkret_sdk::ReadReceiptDisclosure::Disabled,
-        };
-        policy.visibility = match snapshot.visibility.as_deref() {
-            Some("public") => arkret_sdk::ReadReceiptVisibility::Public,
-            Some("members") | None => arkret_sdk::ReadReceiptVisibility::Members,
-            _ => arkret_sdk::ReadReceiptVisibility::Private,
-        };
-        policy
+            .read(|store| call_current_attempt_matches(store, &authority, generation))
+            && epoch == crate::identity::device_directory::session_cache_epoch();
+        same_attempt.then_some(policy)
     }
 
     fn apply_live_body(&self, signal: &AdmittedSignal) -> garth::Result<bool> {
+        if let arkret_sdk::SignalPlaintext::Typing(typing) = &signal.payload
+            && !self.typing_product_allowed(signal, &typing.strand_id, crate::clock::now_utc())
+        {
+            return Ok(false);
+        }
         let body = live_body_value(signal)?;
         let now = crate::clock::now_utc();
         let Ok(mut live) = self.live.lock() else {
@@ -732,12 +1207,33 @@ impl InksonSignalSink {
         if !live.apply_admitted(signal, body, now)? {
             return Ok(false);
         }
+        if signal.kind() == arkret_sdk::SignalPlaintextKind::Typing {
+            let key = live_signal_projection_key(signal)?;
+            if let Some(body) = live.bodies.get_mut(&key) {
+                body.typing = Some(TypingAdmission {
+                    signal: signal.clone(),
+                    recipient: self.state_store.read(|store| store.active_authority()),
+                    session_epoch: crate::identity::device_directory::session_cache_epoch(),
+                });
+            }
+        }
         let bodies = live.bodies();
         drop(live);
         self.state_store
             .write(|store| store.save_presence_projection(&bodies));
         Ok(true)
     }
+}
+
+fn typing_body_blocked(
+    body: &Value,
+    blocklist: &[arkret_models_collaboration::objects::productivity::AccountBlocklistEntry],
+) -> bool {
+    body.get("kind").and_then(Value::as_str) == Some("ak.typing")
+        && body
+            .get("actor_id")
+            .and_then(|actor| serde_json::from_value::<arkret_sdk::ActorId>(actor.clone()).ok())
+            .is_none_or(|actor| crate::account_data::is_blocked(blocklist, &actor.to_string()))
 }
 
 /// Serialize the already-admitted SDK profile for product adapters that still
@@ -829,10 +1325,13 @@ pub async fn run_signal_receive_engine(
         ctx.account.device_id.clone(),
     );
     let sink = InksonSignalSink {
+        call_account: Some(ctx.account.clone()),
+        call_http: None,
         state_store: ctx.state_store.clone(),
         products: ctx.products.clone(),
         live: Mutex::new(LiveSignalProjection::new()),
     };
+    let _typing_session = TypingSessionGuard(&sink);
     let receive = run_signal_receive_loop(
         start_generation,
         &generation,
@@ -850,6 +1349,8 @@ pub async fn run_signal_receive_engine(
         ) {
             let now = crate::clock::now_utc();
             sink.expire_live_bodies(now);
+            sink.refresh_typing(now).await;
+            sink.refresh_message_streams(now).await;
             sink.products.advance_clock(now);
             crate::runtime_helpers::sleep_for(Duration::from_secs(1)).await;
         }
@@ -953,9 +1454,9 @@ fn signal_engine_is_active(
     start_generation: u64,
     start_profile_id: Option<&str>,
 ) -> bool {
-    generation.get() == start_generation
+    !ctx.effect.is_cancelled()
+        && generation.get() == start_generation
         && ctx.profiles.get().active_profile_id.as_deref() == start_profile_id
-        && !ctx.effect.is_cancelled()
         && !ctx.token.get().trim().is_empty()
 }
 
@@ -1007,7 +1508,7 @@ async fn run_signal_receive_attempt(
             return Ok(SignalStreamStopReason::Ended);
         };
         match frame {
-            arkret_wire::SignalStreamFrame::Signal {
+            arkret_models_collaboration::SignalStreamFrame::Signal {
                 envelope,
                 delivery_authority,
             } => {
@@ -1022,7 +1523,7 @@ async fn run_signal_receive_attempt(
                 sink.handle(outcome).await?;
                 *healthy_progress = true;
             }
-            arkret_wire::SignalStreamFrame::Heartbeat => {
+            arkret_models_collaboration::SignalStreamFrame::Heartbeat => {
                 // The initial heartbeat alone must not reset a rapid failure
                 // loop. A later heartbeat proves a sustained live window.
                 if received_heartbeat {
@@ -1031,14 +1532,15 @@ async fn run_signal_receive_attempt(
                 received_heartbeat = true;
                 let now = crate::clock::now_utc();
                 sink.expire_live_bodies(now);
+                sink.refresh_typing(now).await;
                 sink.products.advance_clock(now);
             }
-            arkret_wire::SignalStreamFrame::Drain {
+            arkret_models_collaboration::SignalStreamFrame::Drain {
                 reconnect_after_ms, ..
             } => {
                 return Ok(SignalStreamStopReason::ReconnectAfter { reconnect_after_ms });
             }
-            arkret_wire::SignalStreamFrame::Unauthorized { reason } => {
+            arkret_models_collaboration::SignalStreamFrame::Unauthorized { reason } => {
                 return Ok(SignalStreamStopReason::Unauthorized { reason });
             }
         }
@@ -1046,8 +1548,103 @@ async fn run_signal_receive_attempt(
     Ok(SignalStreamStopReason::Ended)
 }
 
+/// Install the sealed complete holder read and enforce its persisted high-water.
+pub(crate) async fn install_call_consent_current(
+    state_store: &crate::runtime::input::StateStoreHandle,
+    account: &crate::config::ActiveAccountContext,
+    response: &arkret_sdk::http_client::own_station_results::BoundOwnStationResponse<
+        arkret_sdk::ConsentCurrentReadRequestBody,
+        arkret_sdk::ConsentCurrentReadResponseBody,
+    >,
+    consent_scope: arkret_sdk::ConsentScope,
+    session_epoch: u64,
+    guard: &dyn Fn() -> anyhow::Result<()>,
+) -> anyhow::Result<bool> {
+    install_consent_current_for_holder(
+        state_store,
+        &account.authority,
+        &account.principal_control_realm_id,
+        response,
+        consent_scope,
+        session_epoch,
+        guard,
+    )
+    .await
+}
+
+pub(crate) async fn install_consent_current_for_holder(
+    state_store: &crate::runtime::input::StateStoreHandle,
+    holder: &arkret_sdk::AccountId,
+    pcr_realm: &arkret_sdk::RealmId,
+    response: &arkret_sdk::http_client::own_station_results::BoundOwnStationResponse<
+        arkret_sdk::ConsentCurrentReadRequestBody,
+        arkret_sdk::ConsentCurrentReadResponseBody,
+    >,
+    consent_scope: arkret_sdk::ConsentScope,
+    session_epoch: u64,
+    guard: &dyn Fn() -> anyhow::Result<()>,
+) -> anyhow::Result<bool> {
+    guard()?;
+    anyhow::ensure!(
+        response.value()?.realm_id == *pcr_realm,
+        "Consent current differs from accepted holder PCR"
+    );
+    let index = crate::state::CurrentIndex::open_committed(
+        holder,
+        state_store.read(|s| s.current_index_location()),
+        || Ok(state_store.read(|s| s.current_generation())),
+    )
+    .await?;
+    let mut stage = index
+        .stage_consent_current(
+            || Ok(state_store.read(|s| s.current_generation())),
+            response,
+            &guard,
+        )
+        .await?;
+    state_store
+        .write(|store| {
+            store.verified_projection_transaction(|store| {
+                if store.active_authority() != Some(holder.clone())
+                    || store.current_reset_required()
+                    || crate::identity::device_directory::session_cache_epoch() != session_epoch
+                {
+                    return Err("ring attempt changed before installation".to_owned());
+                }
+                response.value().map_err(|e| e.to_string())?;
+                stage.arm_account_commit();
+                store.set_current_generation(stage.generation());
+                Ok(())
+            })
+        })
+        .map_err(anyhow::Error::msg)?;
+    let durable = state_store.read(|s| s.begin_durable_flush())?.wait().await;
+    if let Err(error) = durable {
+        index.poison();
+        return Err(anyhow::anyhow!(error));
+    }
+    stage.finish();
+    guard()?;
+    let progress = index
+        .read_progress(response.value()?.realm_id.as_str())
+        .await?;
+    if progress.observed_governance_generation != Some(response.value()?.governance_generation)
+        || !progress
+            .observed_heads
+            .contains(&response.value()?.effective_stream_head)
+    {
+        return Ok(false);
+    }
+    Ok(response
+        .value()?
+        .permits(response.request(), consent_scope, crate::clock::now_utc()))
+}
+
 #[cfg(test)]
 mod tests {
+    #[cfg(not(target_arch = "wasm32"))]
+    mod read_receipts;
+
     use serde_json::json;
 
     use super::*;
@@ -1109,6 +1706,8 @@ mod tests {
         let read = store.clone();
         let write = store.clone();
         let sink = InksonSignalSink {
+            call_account: None,
+            call_http: None,
             state_store: crate::runtime::input::StateStoreHandle::new(
                 move |consume| consume(&read.lock().unwrap()),
                 move |consume| consume(&mut write.lock().unwrap()),
@@ -1134,7 +1733,7 @@ mod tests {
         // The registered closed profile the receiver dispatches on. The tests
         // below assert how each route reshapes the typed profile, so admission
         // parses the same object rather than keeping a parallel raw body.
-        body.entry("payload_sequence").or_insert(json!(7));
+        body.entry("payload_sequence").or_insert(json!("7"));
         if kind == arkret_sdk::SignalPlaintextKind::Presence.as_str() {
             body.entry("actor_id").or_insert(json!({
                 "kind": "account",
@@ -1151,6 +1750,12 @@ mod tests {
             .expect("test plaintext matches its registered closed profile");
         assert_eq!(payload.kind().as_str(), kind);
         AdmittedSignal {
+            call_invitation: None,
+            signer_verification_method: arkret_sdk::DidUrl::new("did:web:alice.example#device-1")
+                .unwrap(),
+            product_authority: None,
+            authority_commit_id: arkret_sdk::RealmCommitId::from_digest([41; 32]),
+            parent_realm_authority_commit_id: None,
             expires_at: at(30),
             domain: arkret_sdk::SignalSequenceDomain {
                 sender_actor_id: arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
@@ -1251,6 +1856,362 @@ mod tests {
         ));
     }
 
+    fn authorize_typing(signal: &mut AdmittedSignal) {
+        let head = arkret_sdk::CommitStreamHead {
+            stream_ref: arkret_sdk::CommitStreamRef::from_scope(signal.scope_ref(), None).unwrap(),
+            commit_id: signal.authority_commit_id.clone(),
+            stream_position: 1,
+        };
+        let grant: arkret_models_collaboration::governance::grant_constraint::CapabilityGrant = serde_json::from_value(serde_json::json!({
+            "id":arkret_sdk::GrantId::from_event_id(&arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256,[72;32])),
+            "schema":"ak.schema.capability.v1", "realm_id":signal.scope_ref().realm_id(),
+            "issuer_id":signal.actor_id(), "subject":signal.actor_id(),
+            "actions":[arkret_sdk::CapabilityActionId::TYPING_BROADCAST],
+            "resources":[{"kind":"realm", "realm_id":signal.scope_ref().realm_id()}],
+            "issuer_authority_refs":[{"kind":"realm_root", "realm_id":signal.scope_ref().realm_id(), "authority_event_ref":arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256,[73;32]), "authority_generation":"0"}],
+            "authority_root_refs":[{"kind":"realm_root", "realm_id":signal.scope_ref().realm_id(), "authority_event_ref":arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256,[73;32]), "authority_generation":"0"}],
+            "authority_depth":1, "status":"active", "issued_at":"2026-01-01T00:00:00.000Z"
+        })).unwrap();
+        signal.product_authority = Some(Box::new(arkret_sdk::SignalProductAuthority {
+            authority_commit_id: signal.authority_commit_id.clone(),
+            parent_realm_authority_commit_id: signal.parent_realm_authority_commit_id.clone(),
+            current_realm_head: head.clone(),
+            current_scope_head: head,
+            sent_at: crate::clock::now_utc(),
+            grants: vec![grant.clone()],
+            current_grants: vec![grant],
+            historical_product_policies: vec![],
+            current_product_policies: vec![],
+            owner_actions: vec![],
+            profile_actions: vec![],
+            agent: None,
+        }));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn typing_authority_revocation_and_restart_clear_old_indicators_without_a_frame() {
+        use std::sync::Arc;
+        let directory = tempfile::tempdir().unwrap();
+        let mut local =
+            crate::LocalStateStore::with_path(directory.path().join("typing-revoke.json"));
+        local.promote_accepted_context_for_test(&"did:web:bob.example".parse().unwrap());
+        let recipient = arkret_sdk::ActorId::account(local.active_authority().unwrap());
+        let index = crate::state::CurrentIndex::open(
+            &local.active_authority().unwrap(),
+            0,
+            local.current_index_location(),
+        )
+        .await
+        .unwrap();
+        let store = Arc::new(Mutex::new(local));
+        let read = store.clone();
+        let write = store.clone();
+        let sink = InksonSignalSink {
+            call_account: None,
+            call_http: None,
+            state_store: crate::runtime::input::StateStoreHandle::new(
+                move |consume| consume(&read.lock().unwrap()),
+                move |consume| consume(&mut write.lock().unwrap()),
+            ),
+            products: SignalProductRouter::default(),
+            live: Mutex::new(Default::default()),
+        };
+        let strand = arkret_sdk::StrandId::from_event_id(&arkret_sdk::EventId::from_digest(
+            arkret_sdk::DigestSuite::Sha256,
+            [71; 32],
+        ));
+        let mut signal = plaintext_of(
+            "ak.typing",
+            json!({"kind":"ak.typing","strand_id":strand,"typing":true}),
+        );
+        signal.expires_at = crate::clock::now_utc() + chrono::Duration::seconds(5);
+        assert!(!sink.apply_live_body(&signal).unwrap());
+        assert!(store.lock().unwrap().load().presence_projection.is_empty());
+        authorize_typing(&mut signal);
+        let realm = signal.scope_ref().realm_id().clone();
+        let stream = arkret_sdk::CommitStreamRef::Realm {
+            realm_id: realm.clone(),
+        };
+        let head = signal
+            .product_authority
+            .as_ref()
+            .unwrap()
+            .current_realm_head
+            .clone();
+        let row = |selector, value| arkret_sdk::CurrentState::Value {
+            selector,
+            source_stream_ref: stream.clone(),
+            revision: arkret_sdk::CurrentRevision {
+                commit_id: head.commit_id.clone(),
+                stream_position: 1,
+            },
+            value,
+        };
+        let rows = vec![
+            row(
+                arkret_sdk::CurrentSelector::MemberState {
+                    actor_id: signal.actor_id().clone(),
+                },
+                json!({"membership":"join"}),
+            ),
+            row(
+                arkret_sdk::CurrentSelector::MemberState {
+                    actor_id: recipient,
+                },
+                json!({"membership":"join"}),
+            ),
+            row(
+                arkret_sdk::CurrentSelector::Strand {
+                    strand_id: strand.clone(),
+                },
+                serde_json::to_value(arkret_sdk::Strand::discussion(
+                    strand.clone(),
+                    realm.clone(),
+                    "Target",
+                    signal.actor_id().clone(),
+                ))
+                .unwrap(),
+            ),
+        ];
+        let frame = |position, entries: Vec<arkret_sdk::CurrentState>| {
+            let head = arkret_sdk::CommitStreamHead {
+                stream_ref: stream.clone(),
+                commit_id: head.commit_id.clone(),
+                stream_position: position,
+            };
+            serde_json::from_value::<arkret_sdk::sync::AccountSubscribeFrame>(json!({
+                "kind":"delta", "cursor":"ak:cursor:YQ", "realms": {realm.to_string(): {
+                    "current":{"realm_id":realm,"governance_generation":"1","stream_heads":[head],"entries":entries},
+                    "baseline":{"snapshot_cursor":if position == 1 {"ak:cursor:Yg"} else {"ak:cursor:Yw"}, "cut_revision":position,
+                        "coverage":{"realm_id":realm,"stream_heads":[head],"complete_for_authorized_streams":true},"complete":true}
+                }}
+            })).unwrap()
+        };
+        let stage = index.stage_frame(0, &frame(1, rows)).await.unwrap();
+        store
+            .lock()
+            .unwrap()
+            .commit_current_stage_for_test(stage)
+            .unwrap();
+        store.lock().unwrap().set_current_generation(1);
+        assert!(sink.strand_target_at_verified_cut(&signal).await.unwrap());
+        assert!(sink.apply_live_body(&signal).unwrap());
+        sink.refresh_typing(crate::clock::now_utc()).await;
+        assert_eq!(sink.live.lock().unwrap().len(), 1);
+        let cached = store.lock().unwrap().load().presence_projection;
+        let mut revoked = signal.clone();
+        revoked
+            .product_authority
+            .as_mut()
+            .unwrap()
+            .current_grants
+            .clear();
+        assert!(!sink.apply_live_body(&revoked).unwrap());
+        // An accepted governance advance invalidates the retained authority cut.
+        // No new Typing frame is delivered and the original TTL is still live.
+        let stage = index.stage_frame(1, &frame(2, vec![])).await.unwrap();
+        store
+            .lock()
+            .unwrap()
+            .commit_current_stage_for_test(stage)
+            .unwrap();
+        store.lock().unwrap().set_current_generation(2);
+        assert!(signal.expires_at > crate::clock::now_utc());
+        sink.refresh_typing(crate::clock::now_utc()).await;
+        assert!(sink.live.lock().unwrap().is_empty());
+        assert!(store.lock().unwrap().load().presence_projection.is_empty());
+        store.lock().unwrap().save_presence_projection(&cached);
+        sink.expire_live_bodies(crate::clock::now_utc());
+        assert!(store.lock().unwrap().load().presence_projection.is_empty());
+        // Ending the receiver session also removes its still-live indicators.
+        assert!(sink.apply_live_body(&signal).unwrap());
+        {
+            let _guard = TypingSessionGuard(&sink);
+        }
+        assert!(sink.live.lock().unwrap().is_empty());
+        assert!(store.lock().unwrap().load().presence_projection.is_empty());
+    }
+
+    #[test]
+    fn typing_blocklist_uses_accepted_device_method_domain_and_verified_handle_only() {
+        use arkret_models_collaboration::objects::productivity::{
+            AccountBlocklistEntry, AccountBlocklistMode, AccountBlocklistSurface,
+        };
+        let strand = arkret_sdk::StrandId::from_event_id(&arkret_sdk::EventId::from_digest(
+            arkret_sdk::DigestSuite::Sha256,
+            [71; 32],
+        ));
+        let signal = plaintext_of(
+            "ak.typing",
+            json!({"kind":"ak.typing","strand_id":strand,"typing":true}),
+        );
+        let now = crate::clock::now_utc();
+        let device = match signal.sender_endpoint() {
+            arkret_sdk::SignalSequenceEndpoint::AccountDevice { device_id } => device_id,
+            _ => unreachable!(),
+        };
+        for target in [
+            json!({"kind":"actor","actor_id":signal.actor_id()}),
+            json!({"kind":"device","object_ref":device}),
+            json!({"kind":"device","value":signal.signer_verification_method}),
+            json!({"kind":"domain","value":"alice.example"}),
+            json!({"kind":"domain","value":"verified.example"}),
+            json!({"kind":"handle","value":"alice:verified.example"}),
+        ] {
+            let mut entry: AccountBlocklistEntry = serde_json::from_value(json!({
+                "target":target,"mode":"hide","applies_to":["messages"],
+                "created_at":"2026-01-01T00:00:00.000Z"}))
+            .unwrap();
+            let handle = arkret_sdk::Handle::parse("alice:verified.example").unwrap();
+            assert!(crate::account_data::hides_typing(
+                std::slice::from_ref(&entry),
+                &signal,
+                std::slice::from_ref(&handle),
+                now
+            ));
+            if target.get("kind") == Some(&json!("handle"))
+                || target.get("value") == Some(&json!("verified.example"))
+            {
+                assert!(!crate::account_data::hides_typing(
+                    std::slice::from_ref(&entry),
+                    &signal,
+                    &[],
+                    now
+                ));
+            }
+            entry.mode = AccountBlocklistMode::Mute;
+            assert!(!crate::account_data::hides_typing(
+                std::slice::from_ref(&entry),
+                &signal,
+                std::slice::from_ref(&handle),
+                now
+            ));
+            entry.mode = AccountBlocklistMode::Block;
+            entry.applies_to = vec![AccountBlocklistSurface::Calls];
+            assert!(!crate::account_data::hides_typing(
+                std::slice::from_ref(&entry),
+                &signal,
+                std::slice::from_ref(&handle),
+                now
+            ));
+            entry.applies_to = vec![AccountBlocklistSurface::Messages];
+            entry.expires_at = Some(now);
+            assert!(!crate::account_data::hides_typing(
+                &[entry],
+                &signal,
+                std::slice::from_ref(&handle),
+                now
+            ));
+        }
+        for target in [
+            json!({"kind":"domain","value":"example"}),
+            json!({"kind":"domain","value":"principal.example"}),
+            json!({"kind":"keyword","value":"typing"}),
+            json!({"kind":"device","value":"did:web:alice.example#other"}),
+        ] {
+            let entry = serde_json::from_value(json!({"target":target,"mode":"block","applies_to":["messages"],"created_at":"2026-01-01T00:00:00.000Z"})).unwrap();
+            assert!(!crate::account_data::hides_typing(
+                &[entry],
+                &signal,
+                &[],
+                now
+            ));
+        }
+        let handles = [
+            arkret_sdk::Handle::parse("primary:first.example").unwrap(),
+            arkret_sdk::Handle::parse("secondary:second.example").unwrap(),
+        ];
+        let entry: AccountBlocklistEntry = serde_json::from_value(json!({"target":{"kind":"handle","value":"secondary:second.example"},"mode":"hide","applies_to":["messages"],"created_at":"2026-01-01T00:00:00.000Z"})).unwrap();
+        assert!(crate::account_data::hides_typing(
+            &[entry],
+            &signal,
+            &handles,
+            now
+        ));
+        let entry: AccountBlocklistEntry = serde_json::from_value(json!({"target":{"kind":"domain","value":"alice.example"},"mode":"hide","applies_to":["dm"],"created_at":"2026-01-01T00:00:00.000Z"})).unwrap();
+        assert!(!crate::account_data::hides_typing(
+            std::slice::from_ref(&entry),
+            &signal,
+            &[],
+            now
+        ));
+        let mut direct = signal.clone();
+        authorize_typing(&mut direct);
+        direct.product_authority.as_mut().unwrap().profile_actions =
+            vec![arkret_sdk::CapabilityActionId::TYPING_BROADCAST.into()];
+        assert!(crate::account_data::hides_typing(
+            &[entry],
+            &direct,
+            &[],
+            now
+        ));
+        let mut webvh = signal.clone();
+        webvh.signer_verification_method =
+            arkret_sdk::DidUrl::new("did:webvh:z6mkfixture:alice.example#device-1").unwrap();
+        let entry = serde_json::from_value(json!({"target":{"kind":"domain","value":"alice.example"},"mode":"block","applies_to":["messages"],"created_at":"2026-01-01T00:00:00.000Z"})).unwrap();
+        assert!(!crate::account_data::hides_typing(
+            &[entry],
+            &webvh,
+            &[],
+            now
+        ));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn typing_product_observes_exact_private_blocklist_and_clears_retained_bodies() {
+        use std::sync::Arc;
+        let directory = tempfile::tempdir().unwrap();
+        let store = Arc::new(Mutex::new(crate::LocalStateStore::with_path(
+            directory.path().join("typing-block.json"),
+        )));
+        store.lock().unwrap().promote_accepted_context_for_test(
+            &arkret_sdk::Did::new("did:web:bob.example").unwrap(),
+        );
+        let read = store.clone();
+        let write = store.clone();
+        let sink = InksonSignalSink {
+            call_account: None,
+            call_http: None,
+            state_store: crate::runtime::input::StateStoreHandle::new(
+                move |consume| consume(&read.lock().unwrap()),
+                move |consume| consume(&mut write.lock().unwrap()),
+            ),
+            products: SignalProductRouter::default(),
+            live: Mutex::new(Default::default()),
+        };
+        let id = arkret_sdk::StrandId::from_event_id(&arkret_sdk::EventId::from_digest(
+            arkret_sdk::DigestSuite::Sha256,
+            [31; 32],
+        ));
+        let mut signal = plaintext_of(
+            "ak.typing",
+            json!({"kind":"ak.typing", "strand_id":id, "typing":true}),
+        );
+        signal.expires_at = crate::clock::now_utc() + chrono::Duration::seconds(30);
+        authorize_typing(&mut signal);
+        assert!(sink.apply_live_body(&signal).unwrap());
+        let entry = crate::account_data::new_blocklist_entry(
+            crate::account_data::BlocklistUiTargetKind::Actor, &signal.actor_id().to_string(), None,
+            vec![arkret_models_collaboration::objects::productivity::AccountBlocklistSurface::Messages],
+            None, chrono::Utc::now(),
+        ).unwrap();
+        store.lock().unwrap().set_client_blocklist(1, vec![entry]);
+        assert!(!sink.apply_live_body(&signal).unwrap());
+        sink.expire_live_bodies(crate::clock::now_utc());
+        assert!(sink.live.lock().unwrap().is_empty());
+        assert!(store.lock().unwrap().load().presence_projection.is_empty());
+        if let arkret_sdk::ActorId::Account { account_id } = &mut signal.domain.sender_actor_id {
+            account_id.station_id =
+                arkret_sdk::DidCoreId::new("ak:did_core:web:other-station.example").unwrap();
+        }
+        authorize_typing(&mut signal);
+        assert!(sink.apply_live_body(&signal).unwrap());
+        sink.expire_live_bodies(crate::clock::now_utc());
+        assert_eq!(sink.live.lock().unwrap().len(), 1);
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn decrypted_typing_without_verified_current_produces_no_live_body() {
@@ -1262,6 +2223,8 @@ mod tests {
         let read = store.clone();
         let write = store.clone();
         let sink = InksonSignalSink {
+            call_account: None,
+            call_http: None,
             state_store: crate::runtime::input::StateStoreHandle::new(
                 move |consume| consume(&read.lock().unwrap()),
                 move |consume| consume(&mut write.lock().unwrap()),
@@ -1279,8 +2242,13 @@ mod tests {
         );
         // Accepted fixture isolates product containment; it claims no transport/MLS proof.
         sink.handle(SignalReceiveOutcome::Accepted {
+            call_invitation: None,
             domain: Box::new(signal.domain),
-            plaintext: signal.payload,
+            authority_commit_id: signal.authority_commit_id,
+            parent_realm_authority_commit_id: signal.parent_realm_authority_commit_id,
+            signer_verification_method: signal.signer_verification_method,
+            product_authority: signal.product_authority,
+            plaintext: Box::new(signal.payload),
             effective_expires_at: crate::clock::now_utc() + chrono::Duration::seconds(5),
         })
         .await
@@ -1295,7 +2263,7 @@ mod tests {
     #[tokio::test]
     async fn blocklist_call_invite_product_tracks_private_revision_and_exact_actor() {
         use std::sync::Arc;
-        async fn observe_private_product(
+        async fn private_invite_allowance(
             state_store: crate::runtime::input::StateStoreHandle,
             outcome: SignalReceiveOutcome,
         ) -> anyhow::Result<usize> {
@@ -1324,6 +2292,8 @@ mod tests {
             let products = SignalProductRouter::default();
             products.install(calls.clone());
             let sink = InksonSignalSink {
+                call_account: None,
+                call_http: None,
                 state_store,
                 products,
                 live: Mutex::new(Default::default()),
@@ -1332,20 +2302,37 @@ mod tests {
                 domain,
                 plaintext,
                 effective_expires_at,
+                authority_commit_id,
+                parent_realm_authority_commit_id,
+                product_authority,
+                call_invitation,
+                signer_verification_method,
             } = outcome
             else {
                 return Ok(0);
             };
             let signal = AdmittedSignal {
                 domain: *domain,
-                payload: plaintext,
+                authority_commit_id,
+                parent_realm_authority_commit_id,
+                product_authority,
+                call_invitation,
+                signer_verification_method,
+                payload: *plaintext,
                 expires_at: effective_expires_at,
             };
-            // This test isolates the actual private product boundary. Unknown
-            // accepted Call current is independently refused by the full sink.
+            // The private filter does not supply Call current or Consent.
+            // Its allowance must never release this unbound fixture invite.
+            let blocked = sink.state_store.read(|store| {
+                crate::account_data::blocks_call_invite(
+                    &store.client_blocklist(),
+                    signal.actor_id(),
+                )
+            });
             assert!(!sink.call_exists_at_verified_cut(&signal).await?);
             sink.dispatch_call_product(&signal).await?;
-            Ok(calls.0.get())
+            assert_eq!(calls.0.get(), 0, "unbound invite bypassed current Consent");
+            Ok(usize::from(!blocked))
         }
         let directory = tempfile::tempdir().unwrap();
         let store = Arc::new(Mutex::new(crate::LocalStateStore::with_path(
@@ -1392,8 +2379,13 @@ mod tests {
         )
         .unwrap();
         let outcome = |signal: AdmittedSignal| SignalReceiveOutcome::Accepted {
+            call_invitation: None,
             domain: Box::new(signal.domain),
-            plaintext: signal.payload,
+            authority_commit_id: signal.authority_commit_id,
+            parent_realm_authority_commit_id: signal.parent_realm_authority_commit_id,
+            signer_verification_method: signal.signer_verification_method,
+            product_authority: signal.product_authority,
+            plaintext: Box::new(signal.payload),
             effective_expires_at: signal.expires_at,
         };
         store
@@ -1401,7 +2393,7 @@ mod tests {
             .unwrap()
             .set_client_blocklist(1, vec![entry.clone()]);
         assert_eq!(
-            observe_private_product(handle.clone(), outcome(admitted.clone()))
+            private_invite_allowance(handle.clone(), outcome(admitted.clone()))
                 .await
                 .unwrap(),
             0
@@ -1418,7 +2410,7 @@ mod tests {
                 arkret_sdk::DidCoreId::new("ak:did_core:web:other.example").unwrap(),
             ));
         assert_eq!(
-            observe_private_product(handle.clone(), outcome(other_station))
+            private_invite_allowance(handle.clone(), outcome(other_station))
                 .await
                 .unwrap(),
             1
@@ -1429,7 +2421,7 @@ mod tests {
             .unwrap()
             .set_client_blocklist(2, vec![entry.clone()]);
         assert_eq!(
-            observe_private_product(handle.clone(), outcome(admitted.clone()))
+            private_invite_allowance(handle.clone(), outcome(admitted.clone()))
                 .await
                 .unwrap(),
             1
@@ -1451,7 +2443,7 @@ mod tests {
                 .unwrap()
                 .set_client_blocklist(revision, vec![entry.clone()]);
             assert_eq!(
-                observe_private_product(handle.clone(), outcome(admitted.clone()))
+                private_invite_allowance(handle.clone(), outcome(admitted.clone()))
                     .await
                     .unwrap(),
                 1
@@ -1461,14 +2453,14 @@ mod tests {
             arkret_models_collaboration::objects::productivity::AccountBlocklistMode::Block;
         store.lock().unwrap().set_client_blocklist(5, vec![entry]);
         assert_eq!(
-            observe_private_product(handle.clone(), outcome(admitted.clone()))
+            private_invite_allowance(handle.clone(), outcome(admitted.clone()))
                 .await
                 .unwrap(),
             0
         );
         store.lock().unwrap().set_client_blocklist(6, Vec::new());
         assert_eq!(
-            observe_private_product(handle, outcome(admitted))
+            private_invite_allowance(handle, outcome(admitted))
                 .await
                 .unwrap(),
             1

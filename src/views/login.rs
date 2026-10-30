@@ -59,7 +59,7 @@ pub fn LoginPanel(
     // A4 — base_url / state_store from session context instead of props.
     let session_context = crate::app::SessionContext::get();
     let mut base_url = session_context.base_url;
-    let mut station_draft = use_signal(|| base_url());
+    let mut station_draft = use_signal(&*base_url);
     use_effect(move || station_draft.set(base_url()));
     let mut active_account = session_context.active_account;
     let state_store = session_context.state_store;
@@ -156,20 +156,21 @@ pub fn LoginPanel(
                 }
                 let mut account = completed.account.clone();
                 let mut profiles = config_store.read().load_profiles();
-                let profile_id =
-                    match profiles.upsert_and_activate(crate::config::AccountProfile::new(
-                        account.clone(),
-                        completed.session_credential.clone(),
-                    )) {
-                        Ok(profile_id) => profile_id,
-                        Err(error) => {
-                            auth_status.set(format!(
-                                "Could not prepare the accepted account profile: {error}"
-                            ));
-                            is_busy.set(false);
-                            return;
-                        }
-                    };
+                let mut profile = crate::config::AccountProfile::new(
+                    account.clone(),
+                    completed.session_credential.clone(),
+                );
+                profile.label = completed.personal_handle.clone().unwrap_or_default();
+                let profile_id = match profiles.upsert_and_activate(profile) {
+                    Ok(profile_id) => profile_id,
+                    Err(error) => {
+                        auth_status.set(format!(
+                            "Could not prepare the accepted account profile: {error}"
+                        ));
+                        is_busy.set(false);
+                        return;
+                    }
+                };
                 account.profile_id = profile_id;
                 let station_url = normalize_server_url(account.server_url.as_str());
                 let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
@@ -536,11 +537,12 @@ pub fn LoginPanel(
                     if is_busy() {
                         {crate::i18n::tr("login.working")}
                     } else {
-                        {crate::i18n::tr("login.continue")}
+                        {crate::i18n::tr("login.server_sign_in")}
                     }
                 }
 
                 if !auto_capture_callback {
+                    crate::app::account_switch::ReturnToPreviousAccount { disabled: is_busy() }
                     div { class: "auth-footer",
                         Link {
                             to: crate::routes::Route::Register,
@@ -760,7 +762,7 @@ fn connection_review_details(change: &crate::station_connection::ConnectionTrust
             if change.previous.trust_domain != change.candidate.trust_domain {
                 li { {crate::i18n::tr("login.connection.domain_changed")} }
             }
-            if change.previous.auth_metadata != change.candidate.auth_metadata {
+            if change.previous.authentication_metadata != change.candidate.authentication_metadata {
                 li { {crate::i18n::tr("login.connection.provider_changed")} }
             }
         }
@@ -836,19 +838,20 @@ mod connection_review_locale_tests {
             "base_url": "https://station.example/",
             "service_id": "ak:did_core:webvh:z6mkfixture",
             "trust_domain": "ak:trust_domain:station.example",
-            "auth_metadata": {
+            "authentication_metadata": {
                 "account_authority": { "origin": "https://auth.example", "gate_account_base_url": "https://auth.example/_arkret/gate/account" },
                 "methods": [{ "method": "oidc", "issuer_uri": "https://auth.example/", "client_id": "login.connection.new", "scopes": ["openid", "profile"], "grant_exchange": { "kind": "account_handoff" } }]
             }
         })).unwrap();
-        let mut second = previous.auth_metadata.methods[0].clone();
+        let mut second = previous.authentication_metadata.methods[0].clone();
         second.client_id = Some("unchanged-client".to_owned());
-        previous.auth_metadata.methods.push(second);
+        previous.authentication_metadata.methods.push(second);
         let mut candidate = previous.clone();
         candidate.service_id = arkret_sdk::DidCoreId::new("ak:did_core:webvh:z6mkchanged").unwrap();
         candidate.trust_domain =
             arkret_sdk::TrustDomainId::new("ak:trust_domain:new-station.example").unwrap();
-        candidate.auth_metadata.methods[0].client_id = Some("{index} {method} / 原文".to_owned());
+        candidate.authentication_metadata.methods[0].client_id =
+            Some("{index} {method} / 原文".to_owned());
         let change = crate::station_connection::ConnectionTrustChange {
             previous,
             candidate,

@@ -88,7 +88,7 @@ pub(crate) fn mls_restore_prompt_required_after_material(
     let Some(material) = material else {
         return true;
     };
-    let Ok(list) = serde_json::from_value::<arkret_sdk::KeysBackupsList>(metadata.clone()) else {
+    let Ok(list) = serde_json::from_value::<arkret_sdk::KeysBackupsPage>(metadata.clone()) else {
         return true;
     };
     let bodies = material
@@ -275,7 +275,7 @@ pub async fn fetch_mls_restore_payload(
             query.cursor = Some(cursor);
         }
     }
-    Ok(serde_json::to_value(arkret_sdk::KeysBackupsList {
+    Ok(serde_json::to_value(arkret_sdk::KeysBackupsPage {
         backups,
         active_series: current,
         next_cursor: None,

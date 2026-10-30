@@ -114,7 +114,7 @@ impl LocalStateStore {
         member_display_state_digest: Option<String>,
         primary_handle: Option<String>,
         claims_count: usize,
-        as_of: Option<DateTime<Utc>>,
+        evaluated_at: Option<DateTime<Utc>>,
         earliest_claim_expires_at: Option<DateTime<Utc>>,
     ) {
         self.ensure_cached_loaded();
@@ -146,7 +146,7 @@ impl LocalStateStore {
             primary_handle,
             claims_count,
             fetched_at: now,
-            as_of,
+            evaluated_at,
             cache_expires_at,
             member_display_state_digest: member_display_state_digest
                 .map(|value| value.trim().to_owned())
@@ -168,5 +168,6 @@ impl LocalStateStore {
             .and_then(|by_actor| by_actor.get(&actor_id.to_string()))
             .cloned()
             .unwrap_or_default()
+            .into_inner()
     }
 }

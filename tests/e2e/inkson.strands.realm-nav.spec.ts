@@ -23,7 +23,7 @@ registerStrandsBeforeEach();
 
 async function rejectCircleControl(page: import("@playwright/test").Page, kind: string) {
   const outcome = { status: "rejected", reason_code: "capability_denied" };
-  validateMockSchema("schemas/authority-commit-operations.schema.json#/$defs/self_submit_outcome", outcome);
+  validateMockSchema("schemas/authority-commit-operations.schema.json#/$defs/self_submit_response_body", outcome);
   await page.route("**/_arkret/self/events", async route => {
     const event = submittedEvent(route.request().postDataJSON());
     if (event?.kind !== kind) { await route.fallback(); return; }
@@ -166,6 +166,33 @@ test("Circle history can only tighten after explicit confirmation", async ({ pag
   await detail.getByTestId("circle-history-restrict").click();
   await expect(page.getByTestId("circle-status")).toContainText("History change failed");
   await expect(detail).toContainText("AllHistoryForCurrentMembers");
+});
+
+test("Circle member removal sends the exact signed leave Event and refreshes members", async ({ page }) => {
+  const circle = "ak:circle:AVhDoodj6EFMf5ZQ1JXfSmM5ZNZrK3ekqYa4-EOvqSiE";
+  const writes: Array<Record<string, any>> = [];
+  await page.route("**/_arkret/self/circles/*/members/**", async route => {
+    if (route.request().method() === "DELETE") {
+      const body = route.request().postDataJSON();
+      validateMockSchema("schemas/circle-operations.schema.json#/$defs/circle_member_delete_request_body", body);
+      const event = body.member_event.event;
+      expect(event.kind).toBe("ak.circle.member.state");
+      expect(event.actor_id).toEqual(CURRENT_ACCOUNT_ACTOR_ID);
+      expect(event.scope_ref).toEqual({ kind: "circle", realm_id: DEMO_REALM, circle_id: circle });
+      expect(event.payload).toMatchObject({ circle_id: circle, member_id: CURRENT_ACCOUNT_ACTOR_ID, membership: "leave", expected_membership: "join" });
+      expect(event.producer_proof).toBeTruthy();
+      expect(JSON.parse(decodeURIComponent(new URL(route.request().url()).pathname.split("/members/")[1]))).toEqual(CURRENT_ACCOUNT_ACTOR_ID);
+      writes.push(event);
+    }
+    await route.fallback();
+  });
+  await gotoAndDismissRecovery(page, `/realms/${DEMO_REALM}/circles/${circle}`);
+  const detail = page.getByTestId("circle-detail");
+  await expect(detail.locator(".circle-member-row")).toHaveCount(1);
+  await detail.locator(".circle-member-row").getByRole("button", { name: "Remove", exact: true }).click();
+  await expect(page.getByTestId("circle-status")).toContainText("Member access removed");
+  await expect(detail.locator(".circle-member-row")).toHaveCount(0);
+  expect(writes).toHaveLength(1);
 });
 
 for (const [joinRule, action] of [["public", "Join Circle"], ["knock", "Request to join"], ["invite", null]] as const) {

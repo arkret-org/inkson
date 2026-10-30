@@ -28,10 +28,19 @@ use crate::routes::Route;
 /// A parsed shareable link plus the local route it resolves to. `address` is
 /// the SDK [`ParsedAddress`]; `token` is lifted out for the resolve request
 /// body (present iff the link was an invite or preview link).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct OpenedLink {
     pub address: ParsedAddress,
     pub token: Option<String>,
+}
+
+impl std::fmt::Debug for OpenedLink {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OpenedLink")
+            .field("address", &self.address)
+            .field("token", &self.token.as_ref().map(|_| "[REDACTED]"))
+            .finish()
+    }
 }
 
 impl OpenedLink {

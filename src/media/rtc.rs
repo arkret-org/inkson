@@ -24,19 +24,19 @@
 /// §8.1`). Re-exported from the SDK so the renderer pins exactly one value.
 use arkret_crypto::sframe::{FrameKeyContext, MlsExporterSource, derive_frame_key};
 use arkret_sdk::{
-    CallId, CallMediaDesiredMedia, CallMediaParticipantBinding, CallMediaTokenExchangeOutcome,
-    CallMediaTokenExchangeRequestBody, DeviceId, DidCoreId, MediaBackendKind, MediaBackendToken,
-    MediaIceConfigRequestBody, MediaIceMode, MlsGovernanceBindingPayload, PlaintextDataClassKind,
-    PlaintextVisibleServicesPayload, RealmId, resolve_verification_method_key_from_document,
+    CallId, CallMediaDesiredMedia, CallMediaParticipantBinding, CallMediaTokenExchangeRequestBody,
+    CallMediaTokenExchangeResponseBody, DeviceId, DidCoreId, MediaBackendKind, MediaBackendToken,
+    MediaIceConfigurationRequestBody, MediaIceMode, MlsGovernanceBindingPayload,
+    PlaintextDataClassKind, PlaintextVisibleServicesPayload, RealmId,
 };
 use arkret_signatures::media::{
     IceConfig, MediaServiceAnchors, call_media_token_exchange, verify_call_media_token_outcome,
     verify_ice_config_outcome,
 };
 use ed25519_dalek::VerifyingKey;
-use garth::RouteResolution;
 use serde_json::Value;
 
+use super::service_route::VerifiedMediaBinding;
 use crate::transport::TransportClient;
 
 /// Spec-mandated TTL ceiling for media tokens
@@ -227,6 +227,8 @@ impl DesiredMedia {
 /// `did:…`, `ak:device:…`).
 #[derive(Clone, Debug)]
 pub struct MediaJoinRequest {
+    pub account_id: arkret_sdk::AccountId,
+    pub join_context: arkret_sdk::CallMediaJoinContext,
     pub realm_id: String,
     pub call_id: String,
     pub actor_id: String,
@@ -241,7 +243,7 @@ pub struct MediaJoinRequest {
     /// Evaluator-produced route material for every accepted stable service
     /// identity. A DID, DID document, URL or generic principal
     /// resolution is intentionally not accepted at this boundary.
-    pub verified_media_routes: Vec<RouteResolution>,
+    pub verified_media_bindings: Vec<VerifiedMediaBinding>,
     /// Local evidence that the selected `ak.realm.media_service` event is
     /// covered by the current MLS governance binding. Token/ICE issuer anchors
     /// are not trusted until this verifies.
@@ -264,12 +266,14 @@ impl MediaJoinRequest {
             CallId::new(self.call_id.clone()).map_err(|_| RtcClientError::FocusMismatch)?;
         let actor_id = crate::mls_api_helpers::principal_core_id(&self.actor_id)
             .map_err(|_| RtcClientError::FocusMismatch)?;
+        if actor_id != self.account_id.principal_id {
+            return Err(RtcClientError::ParticipantBindingInvalid);
+        }
         let device_id =
             DeviceId::new(self.device_id.clone()).map_err(|_| RtcClientError::FocusMismatch)?;
         Ok(TypedJoinIds {
             realm_id,
             call_id,
-            actor_id,
             device_id,
         })
     }
@@ -296,42 +300,15 @@ impl MediaJoinRequest {
     }
 
     fn anchors(&self) -> Result<MediaServiceAnchors, RtcClientError> {
-        let service_ids = self.media_service_core_ids()?;
-        if self.verified_media_routes.len() != service_ids.len() {
-            return Err(RtcClientError::TokenIssuerUnauthorised);
-        }
-
-        let mut route_pairs = Vec::with_capacity(service_ids.len());
-        for service_id in &service_ids {
-            let route = self
-                .verified_media_routes
-                .iter()
-                .find(|route| route.route().service_id() == service_id)
-                .ok_or(RtcClientError::TokenIssuerUnauthorised)?;
-            let cached = route.route();
-            let authenticated = route.authenticated_resolution();
-            let record = authenticated
-                .projection()
-                .map_err(|_| RtcClientError::TokenIssuerUnauthorised)?;
-            // The cached route holds the whole projection this evidence
-            // derives, so the two can only differ by being different
-            // projections.
-            if record.service_kind != "media_service"
-                || record.service_id != *service_id
-                || cached.projection != record
-                || &authenticated.normalized_did_document.id != cached.did()
-            {
-                return Err(RtcClientError::TokenIssuerUnauthorised);
-            }
-            route_pairs.push((service_id.clone(), cached.did().clone()));
-        }
-
-        let mut anchors = MediaServiceAnchors::new(route_pairs)
+        let ids = self.media_service_core_ids()?;
+        let realm = RealmId::new(self.realm_id.clone())
             .map_err(|_| RtcClientError::TokenIssuerUnauthorised)?;
-        for route in &self.verified_media_routes {
-            register_media_service_keys(&mut anchors, route)?;
-        }
-        Ok(anchors)
+        verified_binding_anchors(
+            &self.account_id,
+            &realm,
+            &ids,
+            &self.verified_media_bindings,
+        )
     }
 
     fn verify_governance_evidence(&self) -> Result<(), RtcClientError> {
@@ -341,6 +318,61 @@ impl MediaJoinRequest {
             .ok_or(RtcClientError::MediaServiceBindingUncovered)?;
         evidence.verify_for_join(self)
     }
+}
+
+/// Consume only a fresh result bound to the exact active own-Station session.
+pub fn verified_binding_anchors(
+    account: &arkret_sdk::AccountId,
+    realm: &RealmId,
+    ids: &[DidCoreId],
+    bindings: &[VerifiedMediaBinding],
+) -> Result<MediaServiceAnchors, RtcClientError> {
+    if ids.is_empty() || bindings.len() != ids.len() {
+        return Err(RtcClientError::TokenIssuerUnauthorised);
+    }
+    let mut routes = Vec::new();
+    for service in ids {
+        let binding = bindings
+            .iter()
+            .find(|bound| bound.request().1 == *service)
+            .ok_or(RtcClientError::TokenIssuerUnauthorised)?;
+        if binding.session().account_id() != account {
+            return Err(RtcClientError::TokenIssuerUnauthorised);
+        }
+        let value = binding
+            .value()
+            .map_err(|_| RtcClientError::TokenIssuerUnauthorised)?;
+        value
+            .validate_for_request(&binding.request().0, service)
+            .map_err(|_| RtcClientError::TokenIssuerUnauthorised)?;
+        if value.realm_id.as_str() != realm.as_str() || !value.is_reusable_at(chrono::Utc::now()) {
+            return Err(RtcClientError::TokenIssuerUnauthorised);
+        }
+        routes.push((service.clone(), value.route.did.clone()));
+    }
+    let mut anchors =
+        MediaServiceAnchors::new(routes).map_err(|_| RtcClientError::TokenIssuerUnauthorised)?;
+    for binding in bindings {
+        for key in &binding
+            .value()
+            .map_err(|_| RtcClientError::TokenIssuerUnauthorised)?
+            .signing_keys
+        {
+            let bytes = arkret_sdk::canonical::base64url_decode(&key.public_key_base64url)
+                .map_err(|_| RtcClientError::TokenIssuerUnauthorised)?;
+            let bytes: [u8; 32] = bytes
+                .try_into()
+                .map_err(|_| RtcClientError::TokenIssuerUnauthorised)?;
+            anchors
+                .insert_key(
+                    key.verification_method.as_str().to_owned(),
+                    VerifyingKey::from_bytes(&bytes)
+                        .map_err(|_| RtcClientError::TokenIssuerUnauthorised)?,
+                )
+                .map_err(|_| RtcClientError::TokenIssuerUnauthorised)?;
+        }
+    }
+    Ok(anchors)
 }
 
 #[derive(Clone, Debug)]
@@ -431,6 +463,7 @@ impl AuthorizedMediaJoin<'_> {
         &self,
         mls_exporter: &impl MlsExporterSource,
         participant_id: &str,
+        roster_device_id: &DeviceId,
     ) -> Result<zeroize::Zeroizing<Vec<u8>>, RtcClientError> {
         let frame_context = FrameKeyContext {
             realm_id: self.ids.realm_id.clone(),
@@ -438,7 +471,7 @@ impl AuthorizedMediaJoin<'_> {
             focus_id: self.request.focus_id.clone(),
             epoch_id: self.request.epoch_id,
             participant_id: participant_id.to_owned(),
-            device_id: self.ids.device_id.clone(),
+            device_id: roster_device_id.clone(),
         };
         derive_frame_key(mls_exporter, &frame_context)
             .map_err(|_| RtcClientError::E2eeKeySourceUnauthorised)
@@ -474,62 +507,18 @@ fn policy_media_service_decrypts(payload: Option<&Value>) -> bool {
     payload
         .and_then(|value| {
             value
-                .get("media_service_decrypts")
-                .or_else(|| value.pointer("/components/media_service_decrypts"))
-                .or_else(|| value.pointer("/media/media_service_decrypts"))
+                .get("media_service_decryption_allowed")
+                .or_else(|| value.pointer("/components/media_service_decryption_allowed"))
+                .or_else(|| value.pointer("/media/media_service_decryption_allowed"))
         })
         .and_then(Value::as_bool)
         .unwrap_or(false)
-}
-
-fn register_media_service_keys(
-    anchors: &mut MediaServiceAnchors,
-    route: &RouteResolution,
-) -> Result<(), RtcClientError> {
-    let document = &route.authenticated_resolution().normalized_did_document;
-    let service_did = route.route().did().as_str();
-
-    let mut registered = 0usize;
-    for method in document.verification_methods.keys() {
-        let resolved = resolve_verification_method_key_from_document(document, method)
-            .map_err(|_| RtcClientError::TokenIssuerUnauthorised)?;
-        if resolved.did.as_str() != service_did {
-            return Err(RtcClientError::TokenIssuerUnauthorised);
-        }
-        let key_bytes = resolved
-            .public_key
-            .ed25519_bytes()
-            .map_err(|_| RtcClientError::TokenIssuerUnauthorised)?;
-        let verifying_key = VerifyingKey::from_bytes(&key_bytes)
-            .map_err(|_| RtcClientError::TokenIssuerUnauthorised)?;
-        let kid = normalize_verification_method_kid(service_did, &resolved.verification_method);
-        anchors
-            .insert_key(kid, verifying_key)
-            .map_err(|_| RtcClientError::TokenIssuerUnauthorised)?;
-        registered += 1;
-    }
-
-    if registered == 0 {
-        return Err(RtcClientError::TokenIssuerUnauthorised);
-    }
-    Ok(())
-}
-
-fn normalize_verification_method_kid(service_did: &str, method: &str) -> String {
-    if method.starts_with("did:") {
-        method.to_owned()
-    } else if method.starts_with('#') {
-        format!("{service_did}{method}")
-    } else {
-        format!("{service_did}#{method}")
-    }
 }
 
 #[derive(Debug)]
 struct TypedJoinIds {
     realm_id: RealmId,
     call_id: CallId,
-    actor_id: DidCoreId,
     device_id: DeviceId,
 }
 
@@ -539,6 +528,7 @@ struct TypedJoinIds {
 /// keyprovider.
 #[derive(Clone, Debug)]
 pub struct JoinedMediaSession {
+    pub actor_id: arkret_sdk::ActorId,
     /// SFU backend type (`livekit` / `mediasoup` / …) — already checked
     /// against [`ALLOWED_FOCUS_TYPES`].
     pub backend_kind: String,
@@ -676,14 +666,14 @@ pub async fn join_call_media(
     let mut token_request: CallMediaTokenExchangeRequestBody = call_media_token_exchange(
         ids.realm_id.clone(),
         ids.call_id.clone(),
-        crate::mls_api_helpers::local_account_actor_id(ids.actor_id.as_str())
-            .map_err(|_| RtcClientError::ParticipantBindingInvalid)?,
+        arkret_sdk::ActorId::account(request.account_id.clone()),
         ids.device_id.clone(),
         request.focus_id.clone(),
+        request.join_context.clone(),
     );
     token_request.desired_media = Some(request.desired_media.into_wire());
 
-    let outcome: CallMediaTokenExchangeOutcome = async {
+    let outcome: CallMediaTokenExchangeResponseBody = async {
         crate::transport::EndpointClients::from_http(api.sdk_http_client()?)
             .media()
             .token_exchange(&token_request)
@@ -716,11 +706,10 @@ pub async fn join_call_media(
 
     // ICE config — verified against the same anchors. A focus-bound call
     // always relays through the SFU media plane.
-    let ice_request = MediaIceConfigRequestBody {
+    let ice_request = MediaIceConfigurationRequestBody {
         realm_id: ids.realm_id.clone(),
         call_id: request.call_id.clone(),
-        actor_id: crate::mls_api_helpers::local_account_actor_id(ids.actor_id.as_str())
-            .map_err(|_| RtcClientError::ParticipantBindingInvalid)?,
+        actor_id: arkret_sdk::ActorId::account(request.account_id.clone()),
         device_id: ids.device_id.clone(),
         mode: MediaIceMode::Sfu,
     };
@@ -738,9 +727,14 @@ pub async fn join_call_media(
     // MEDIA-1 — SFrame frame key from the live MLS exporter. The
     // participant_id is the verified SFU-local handle from the
     // token binding, so the key is sender-bound per §8.1.
-    let frame_key = authorization.publish_frame_key(mls_exporter, &verification.participant_id)?;
+    let frame_key = authorization.publish_frame_key(
+        mls_exporter,
+        &verification.participant_id,
+        &outcome.device_id,
+    )?;
 
     Ok(JoinedMediaSession {
+        actor_id: outcome.actor_id.clone(),
         backend_kind: "livekit".to_owned(),
         focus_id: outcome.focus_id,
         connect_url: outcome.connect_url,
@@ -750,7 +744,7 @@ pub async fn join_call_media(
         ice_config,
         frame_key,
         desired_media: request.desired_media,
-        device_id: request.device_id.clone(),
+        device_id: outcome.device_id.to_string(),
         realm_id: request.realm_id.clone(),
         call_id: request.call_id.clone(),
         epoch_id: request.epoch_id,
@@ -802,7 +796,7 @@ impl RealmMlsExporter {
     /// Restore the realm's live, synchronised MLS group from this device's
     /// persisted snapshot so the SFrame exporter secret matches every other
     /// member's. `snapshot` is the per-realm
-    /// [`crate::mls::persistence::MlsLocalCheckpointEnvelope`] the caller reads from
+    /// [`garth::mls::checkpoint::MlsLocalCheckpointEnvelope`] the caller reads from
     /// `LocalStateStore::mls_checkpoint_for` (passed by value so the caller can
     /// drop the store read-guard before this synchronous KDF runs, never
     /// holding it across an `.await`); `secure_store` provides the account
@@ -818,7 +812,7 @@ impl RealmMlsExporter {
     /// group has not synced on this device yet, so no media key can be
     /// derived".
     pub fn for_realm(
-        snapshot: Option<crate::mls::persistence::MlsLocalCheckpointEnvelope>,
+        snapshot: Option<garth::mls::checkpoint::MlsLocalCheckpointEnvelope>,
         secure_store: &dyn crate::secure_key_store::SecureKeyStore,
         authority: &arkret_sdk::AccountId,
         device_id: &arkret_sdk::DeviceId,
@@ -830,6 +824,36 @@ impl RealmMlsExporter {
         let group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0)
             .map_err(|_| RtcClientError::E2eeKeySourceUnauthorised)?;
         Ok(Self { group })
+    }
+
+    /// Match the restored private group to the exact accepted current coordinates.
+    pub fn current_governance_binding(
+        &self,
+        checkpoint: &garth::mls::checkpoint::MlsLocalCheckpointEnvelope,
+        current: &arkret_wire::MlsGroupValue,
+    ) -> Result<MlsGovernanceBindingPayload, RtcClientError> {
+        let binding = self
+            .group
+            .authenticated_governance_binding()
+            .map_err(|_| RtcClientError::MlsGovernanceBindingStale)?;
+        if checkpoint.realm_id
+            != current
+                .effective_scope
+                .realm_id_opt()
+                .map(ToString::to_string)
+                .unwrap_or_default()
+            || checkpoint.group_state_event_id.as_ref()
+                != Some(&current.current_mls_commit_event_ref)
+            || self.group.scope() != &current.effective_scope
+            || self.group.epoch() != current.epoch
+            || binding.effective_scope() != &current.effective_scope
+            || binding.next_epoch() != current.epoch
+            || binding.key_access_revision() != current.covered_key_access_revision
+            || current.covered_key_access_revision != current.current_key_access_revision
+        {
+            return Err(RtcClientError::MlsGovernanceBindingStale);
+        }
+        Ok(binding)
     }
 
     /// Current MLS epoch of the restored realm group. Bound into the
@@ -892,6 +916,100 @@ fn classify_protocol_error(err: &arkret_signatures::Error) -> RtcClientError {
     RtcClientError::ParticipantBindingInvalid
 }
 
+/// Create a signed token intent only at an explicit user join action.
+pub fn voluntary_join_context(
+    realm: &str,
+    call: &str,
+    authority: &arkret_sdk::AccountId,
+    device: &DeviceId,
+    focus: &str,
+    media: DesiredMedia,
+) -> Result<arkret_sdk::CallMediaJoinContext, RtcClientError> {
+    use arkret_sdk::*;
+    let signer =
+        crate::event_signer::active_signer().ok_or(RtcClientError::ParticipantBindingInvalid)?;
+    let created_at = crate::clock::now_utc();
+    let nonce = crate::random::base64url_token(32, "voluntary join nonce unavailable")
+        .map_err(|_| RtcClientError::ParticipantBindingInvalid)?;
+    let context = CallMediaJoinContext::Voluntary(CallVoluntaryJoinContext {
+        kind: CallVoluntaryJoinKind::Voluntary,
+        created_at,
+        expires_at: created_at + chrono::Duration::seconds(60),
+        nonce,
+        proof: CallVoluntaryJoinProof {
+            verification_method: signer.verification_method().to_owned(),
+            jws: String::new(),
+        },
+    });
+    let mut body = call_media_token_exchange(
+        RealmId::new(realm).map_err(|_| RtcClientError::FocusMismatch)?,
+        CallId::new(call).map_err(|_| RtcClientError::FocusMismatch)?,
+        ActorId::account(authority.clone()),
+        device.clone(),
+        focus,
+        context,
+    );
+    body.desired_media = Some(media.into_wire());
+    let raw = serde_json::to_value(&body).map_err(|_| RtcClientError::ParticipantBindingInvalid)?;
+    let input =
+        arkret_models_collaboration::call_invitation::voluntary_join_signing_input_from_value(&raw)
+            .map_err(|_| RtcClientError::ParticipantBindingInvalid)?;
+    let CallMediaJoinContext::Voluntary(mut context) = body.join_context else {
+        unreachable!()
+    };
+    context.proof.jws = signer
+        .detached_jws_over_payload_with_kid(signer.verification_method(), &input)
+        .map_err(|_| RtcClientError::ParticipantBindingInvalid)?;
+    Ok(CallMediaJoinContext::Voluntary(context))
+}
+
+pub(crate) fn current_media_governance_evidence(
+    store: &crate::state::LocalStateStore,
+    realm_id: &str,
+    device_id: &str,
+    media_plaintext_ui_confirmed: bool,
+) -> Option<MediaGovernanceEvidence> {
+    let view = store
+        .current_product_view()
+        .filter(|view| view.realm_id == realm_id && view.complete_cut)?;
+    let scope = arkret_sdk::ScopeRef::Realm {
+        realm_id: arkret_sdk::RealmId::new(realm_id.to_owned()).ok()?,
+    };
+    let current = crate::current_projection::current_mls_group(&view.entries, &scope)?;
+    let checkpoint = store.mls_checkpoint_for(realm_id)?;
+    let account = store.active_authority()?;
+    let device = arkret_sdk::DeviceId::new(device_id.to_owned()).ok()?;
+    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+    let exporter = crate::media::rtc::RealmMlsExporter::for_realm(
+        Some(checkpoint.clone()),
+        secure_store.as_ref(),
+        &account,
+        &device,
+    )
+    .ok()?;
+    let governance_binding = exporter
+        .current_governance_binding(&checkpoint, &current)
+        .ok()?;
+    let descriptor = view.media_service().ok().flatten()?;
+    let policy_bundle_payload =
+        crate::current_projection::current_realm_policy_bundle_value(&view.entries);
+    let plaintext_visible_services_payload = view.entries.iter().find_map(|row| {
+        let arkret_wire::CurrentState::Value {
+            selector, value, ..
+        } = row;
+        (*selector == arkret_wire::CurrentSelector::RealmPlaintextVisibleServices)
+            .then(|| serde_json::from_value(value.clone()).ok())
+            .flatten()
+    });
+    Some(MediaGovernanceEvidence {
+        governance_binding,
+        media_service_payload: serde_json::to_value(descriptor).ok()?,
+        policy_bundle_payload,
+        plaintext_visible_services_payload,
+        media_plaintext_ui_confirmed,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use std::cell::Cell;
@@ -945,6 +1063,13 @@ mod tests {
     #[test]
     fn empty_anchor_set_fails_closed() {
         let request = MediaJoinRequest {
+
+            account_id:arkret_wire::AccountId::new(arkret_wire::DidCoreId::new("ak:did_core:web:alice.example").unwrap(),arkret_wire::DidCoreId::new("ak:did_core:web:station.example").unwrap()),
+            join_context:arkret_models_collaboration::call_invitation::CallMediaJoinContext::Voluntary(arkret_models_collaboration::call_invitation::CallVoluntaryJoinContext {
+                kind:arkret_models_collaboration::call_invitation::CallVoluntaryJoinKind::Voluntary,
+                created_at:arkret_sdk::canonical::normalize_timestamp_canonical(chrono::Utc::now()),expires_at:arkret_sdk::canonical::normalize_timestamp_canonical(chrono::Utc::now()+chrono::Duration::seconds(30)),
+                nonce:arkret_sdk::canonical::base64url_encode([71u8;32]),proof:arkret_models_collaboration::call_invitation::CallVoluntaryJoinProof{verification_method:"did:web:alice.example#device".to_owned(),jws:"unused_by_plaintext_policy_gate".to_owned()},
+            }),
             realm_id: "ak:realm:AVxu7KCm9qmiOqakDKBXUia9rbZ3NBurP875XbqG1rbs".to_owned(),
             call_id: "ak:call:AYf05kF8z4cSo8r6qmqXgu4KPuv2YtKBlsE00FOmblaz".to_owned(),
             actor_id: "ak:did_core:web:alice.example".to_owned(),
@@ -953,7 +1078,7 @@ mod tests {
             epoch_id: 7,
             desired_media: DesiredMedia::audio_video(),
             media_service_ids: Vec::new(),
-            verified_media_routes: Vec::new(),
+            verified_media_bindings: Vec::new(),
             governance_evidence: None,
             media_service_decryption_requested: false,
         };
@@ -1051,6 +1176,9 @@ mod tests {
             .publish_frame_key(
                 &exporter,
                 "ak:rtc_participant:00000000-0000-7000-8000-000000000001",
+                &"ak:device:01904100-0000-7000-8000-000000000047"
+                    .parse()
+                    .unwrap(),
             )
             .unwrap();
         assert_eq!(key.len(), 32);
@@ -1092,6 +1220,13 @@ mod tests {
             .as_ref()
             .is_some_and(MediaGovernanceEvidence::media_service_decrypts_enabled);
         MediaJoinRequest {
+
+            account_id:arkret_wire::AccountId::new(arkret_wire::DidCoreId::new("ak:did_core:web:alice.example").unwrap(),arkret_wire::DidCoreId::new("ak:did_core:web:station.example").unwrap()),
+            join_context:arkret_models_collaboration::call_invitation::CallMediaJoinContext::Voluntary(arkret_models_collaboration::call_invitation::CallVoluntaryJoinContext {
+                kind:arkret_models_collaboration::call_invitation::CallVoluntaryJoinKind::Voluntary,
+                created_at:arkret_sdk::canonical::normalize_timestamp_canonical(chrono::Utc::now()),expires_at:arkret_sdk::canonical::normalize_timestamp_canonical(chrono::Utc::now()+chrono::Duration::seconds(30)),
+                nonce:arkret_sdk::canonical::base64url_encode([71u8;32]),proof:arkret_models_collaboration::call_invitation::CallVoluntaryJoinProof{verification_method:"did:web:alice.example#device".to_owned(),jws:"unused_by_plaintext_policy_gate".to_owned()},
+            }),
             realm_id: "ak:realm:AVxu7KCm9qmiOqakDKBXUia9rbZ3NBurP875XbqG1rbs".to_owned(),
             call_id: "ak:call:AYf05kF8z4cSo8r6qmqXgu4KPuv2YtKBlsE00FOmblaz".to_owned(),
             actor_id: "ak:did_core:web:alice.example".to_owned(),
@@ -1100,19 +1235,19 @@ mod tests {
             epoch_id: 7,
             desired_media: DesiredMedia::audio_video(),
             media_service_ids: vec!["ak:did_core:web:media.example".to_owned()],
-            verified_media_routes: Vec::new(),
+            verified_media_bindings: Vec::new(),
             governance_evidence,
             media_service_decryption_requested,
         }
     }
 
     fn media_governance_evidence(
-        media_service_decrypts: bool,
+        media_service_decryption_allowed: bool,
         media_plaintext_ui_confirmed: bool,
     ) -> MediaGovernanceEvidence {
         let media_service_payload = json!({
             "service_id": "ak:did_core:web:media.example",
-            "ice_config_endpoint": "https://media.example/_arkret/self/rtc/ice-config",
+            "ice_configuration_url": "https://media.example/_arkret/self/rtc/ice-config",
             "foci": [
                 {
                     "focus_id": "fra-1",
@@ -1121,13 +1256,13 @@ mod tests {
                 }
             ]
         });
-        let policy_bundle_payload = media_service_decrypts.then(|| {
+        let policy_bundle_payload = media_service_decryption_allowed.then(|| {
             json!({
                 "policy_revision": 3,
-                "media_service_decrypts": true
+                "media_service_decryption_allowed": true
             })
         });
-        let plaintext_visible_services_payload = media_service_decrypts.then(|| {
+        let plaintext_visible_services_payload = media_service_decryption_allowed.then(|| {
             PlaintextVisibleServicesPayload::new(vec![arkret_sdk::PlaintextVisibleService::new(
                 crate::mls_api_helpers::principal_core_id("did:web:media.example").unwrap(),
                 "media_service",
@@ -1162,47 +1297,6 @@ mod tests {
     /// satisfies the token-exchange issuer anchoring, while the empty set
     /// keeps failing closed. This is the proof that "wired" does not mean
     /// "always rejects".
-    #[cfg(not(target_arch = "wasm32"))]
-    #[test]
-    fn evaluator_route_material_satisfies_token_issuer_anchors() {
-        use chrono::TimeZone as _;
-        use garth::service_route_material::test_fixture::current_web_route_fixture;
-
-        let now = chrono::Utc.with_ymd_and_hms(2026, 8, 20, 1, 0, 0).unwrap();
-        let fixture = current_web_route_fixture("media.example", "media_service", 31);
-        let resolution = garth::authenticate_fetched_resolution(
-            fixture.resolution.clone(),
-            arkret_identity::ResolvedDid::proofless(fixture.document.clone()),
-            now,
-        )
-        .expect("fixture record must authenticate");
-        let mut evaluator = garth::ServiceRouteEvaluator::new(
-            garth::MemoryServiceRouteStateStore::default(),
-            chrono::Duration::minutes(1),
-        )
-        .unwrap();
-        let mut source = garth::PrefetchedRouteSource::new(Some(resolution));
-        source.insert_describe(
-            garth::describe_route_binding(&fixture.resolution, &fixture.describe, now).unwrap(),
-        );
-        let route = evaluator
-            .resolve(&fixture.service_id, "media_service", now, &mut source)
-            .expect("evaluator must accept the verified current record");
-
-        let mut request = governed_join_request(Some(media_governance_evidence(false, false)));
-        request.verified_media_routes = vec![route];
-        request
-            .anchors()
-            .expect("evaluator-produced route material must satisfy issuer anchoring");
-
-        // The fail-closed half stays intact: same ids, no verified routes.
-        let empty = governed_join_request(Some(media_governance_evidence(false, false)));
-        assert_eq!(
-            empty.anchors().unwrap_err(),
-            RtcClientError::TokenIssuerUnauthorised
-        );
-    }
-
     #[test]
     fn classify_protocol_error_reads_wire_prefix() {
         let err = arkret_signatures::Error::Protocol(
@@ -1249,7 +1343,7 @@ mod tests {
     /// construction `crate::mls::runtime` uses for chat/reaction restore.
     fn seed_realm_snapshot(
         store: &crate::secure_key_store::MemorySecureKeyStore,
-    ) -> crate::mls::persistence::MlsLocalCheckpointEnvelope {
+    ) -> garth::mls::checkpoint::MlsLocalCheckpointEnvelope {
         use arkret_sdk::{ArkretMlsIdentity, DeviceId};
 
         let secret = crate::mls::runtime::load_or_create_account_mls_secret(
@@ -1268,7 +1362,7 @@ mod tests {
         let group = identity.create_group(&effective_scope).unwrap();
         let record = group.export_state_record().unwrap();
         let bytes = serde_json::to_vec(&record).unwrap();
-        crate::mls::persistence::encrypt_state(
+        garth::mls::checkpoint::encrypt_state(
             EXPORTER_REALM,
             &record.group_id,
             record.epoch,
@@ -1398,7 +1492,7 @@ mod tests {
         .unwrap();
         let record = group.export_state_record().unwrap();
         let bytes = serde_json::to_vec(&record).unwrap();
-        let envelope = crate::mls::persistence::encrypt_state(
+        let envelope = garth::mls::checkpoint::encrypt_state(
             INTEROP_REALM,
             &record.group_id,
             record.epoch,
@@ -1469,7 +1563,7 @@ mod tests {
             &accepted_commit,
             1_760_000_000_002,
         );
-        let base_current = arkret_wire::MlsGroupCurrent {
+        let base_current = arkret_wire::MlsGroupValue {
             effective_scope: effective_scope.clone(),
             genesis_event_ref: base_event_ref.clone(),
             cipher_suite: arkret_wire::NonEmptyString::new(

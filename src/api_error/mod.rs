@@ -49,6 +49,9 @@ pub(crate) fn api_error_status_and_envelope(
         {
             return Some((StatusCode::from_u16(*status).ok()?, error.as_ref()));
         }
+        if let Some(garth::Error::Api { status, error }) = cause.downcast_ref::<garth::Error>() {
+            return Some((StatusCode::from_u16(*status).ok()?, error.as_ref()));
+        }
     }
     None
 }
@@ -745,10 +748,12 @@ mod tests {
     }
 
     fn station_rejection(reason_code: &str) -> anyhow::Error {
-        crate::ephemeral::ensure_authority_accepted(arkret_wire::AuthoritySubmitOutcome::Rejected {
-            status: arkret_wire::AuthorityRejectionStatus::Rejected,
-            reason_code: reason_code.to_owned(),
-        })
+        crate::ephemeral::ensure_authority_accepted(
+            arkret_wire::AuthoritySubmitResponseBody::Rejected {
+                status: arkret_wire::AuthorityRejectionStatus::Rejected,
+                reason_code: reason_code.to_owned(),
+            },
+        )
         .unwrap_err()
     }
 
@@ -816,5 +821,81 @@ mod tests {
 
         let other_claim = api_error(Problem::from_code(ErrorCode::CLAIM_REQUIRED, "claim"));
         assert!(!is_agent_approval_required_error(&other_claim));
+    }
+
+    fn replay_refresh_refusal(code: &str, state: Option<&str>, status: u16) -> anyhow::Error {
+        let mut problem = Problem::from_code(code, "refresh refused");
+        if let Some(state) = state {
+            problem.extensions.insert(
+                "session_grant_id".into(),
+                serde_json::json!("ak:session_grant:AY6DJbBwavsGTQuBZZiqqw9MVcqPZ8QX8invQ3i2kpi7"),
+            );
+            problem
+                .extensions
+                .insert("state".into(), serde_json::json!(state));
+        }
+        anyhow::Error::new(garth::Error::from(arkret_sdk::http_client::Error::Api {
+            status,
+            error: Box::new(problem),
+        }))
+        .context("session grant refresh")
+    }
+
+    #[test]
+    fn garth_refresh_replay_terminations_keep_the_registered_api_envelope() {
+        use arkret_sdk::error_codes::ErrorCode;
+        for (code, state, expected_status) in [
+            (
+                ErrorCode::SESSION_GRANT_REPLAY_EXPIRED,
+                Some("expired"),
+                410,
+            ),
+            (
+                ErrorCode::SESSION_GRANT_REPLAY_TERMINAL,
+                Some("revoked"),
+                409,
+            ),
+            (
+                ErrorCode::SESSION_GRANT_REPLAY_TERMINAL,
+                Some("superseded"),
+                409,
+            ),
+            (ErrorCode::SESSION_GRANT_REPLAY_INDETERMINATE, None, 409),
+        ] {
+            let error = replay_refresh_refusal(code, state, expected_status);
+            let (status, envelope) = api_error_status_and_envelope(&error).unwrap();
+            assert_eq!(status.as_u16(), expected_status);
+            assert_eq!(envelope.code(), code);
+            assert!(is_terminal_session_grant_refresh_error(&error), "{code}");
+            assert!(!is_terminal_session_grant_error(&error));
+        }
+    }
+
+    #[test]
+    fn refresh_replay_rejects_wrong_status_invalid_details_and_opaque_messages() {
+        use arkret_sdk::error_codes::ErrorCode;
+        for error in [
+            replay_refresh_refusal(
+                ErrorCode::SESSION_GRANT_REPLAY_TERMINAL,
+                Some("revoked"),
+                503,
+            ),
+            replay_refresh_refusal(
+                ErrorCode::SESSION_GRANT_REPLAY_TERMINAL,
+                Some("active"),
+                409,
+            ),
+            replay_refresh_refusal(
+                ErrorCode::SESSION_GRANT_REPLAY_EXPIRED,
+                Some("expired"),
+                409,
+            ),
+            replay_refresh_refusal(ErrorCode::SESSION_GRANT_REPLAY_EXPIRED, None, 409),
+            replay_refresh_refusal(ErrorCode::SESSION_GRANT_REPLAY_INDETERMINATE, None, 503),
+            replay_refresh_refusal("unregistered_refresh_refusal", None, 409),
+            anyhow::Error::new(garth::Error::Http("session grant revoked".into())),
+        ] {
+            assert!(!is_terminal_session_grant_refresh_error(&error));
+        }
     }
 }

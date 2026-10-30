@@ -79,7 +79,7 @@ async fn publish_genesis(
         .write(|store| store.mark_mls_genesis_emitted_for_scope_with_event(scope, event_id))
         .map_err(anyhow::Error::msg)?;
     barrier.wait().await?;
-    let durable = state.read(|store| store.durable_mls_checkpoint_for_scope(scope))?;
+    let durable = crate::mls::read_durable_checkpoint(state, scope).await?;
     anyhow::ensure!(
         durable.is_some_and(|checkpoint| {
             checkpoint.epoch == 0 && checkpoint.group_state_event_id.as_ref() == Some(event_id)
@@ -179,7 +179,7 @@ async fn ensure_sidecar_mls_genesis(
             .commit()
             .ok_or_else(|| anyhow::anyhow!("Sidecar Genesis submission is not committed yet"))?;
         let transition =
-            crate::mls::accepted_artifact::accepted_from_submission(event.clone(), commit.clone())
+            garth::mls::accepted_artifact::accepted_from_submission(event.clone(), commit.clone())
                 .map_err(anyhow::Error::msg)?;
         anyhow::ensure!(
             transition.effective_scope == scope
@@ -1134,9 +1134,9 @@ pub(crate) mod tests {
         group: &ArkretMlsGroup,
         scope: &ScopeRef,
         secret: &str,
-    ) -> crate::mls::persistence::MlsLocalCheckpointEnvelope {
+    ) -> garth::mls::checkpoint::MlsLocalCheckpointEnvelope {
         let record = group.export_state_record().unwrap();
-        crate::mls::persistence::encrypt_state(
+        garth::mls::checkpoint::encrypt_state(
             scope.realm_id().as_str(),
             &record.group_id,
             record.epoch,
@@ -1368,8 +1368,8 @@ pub(crate) mod tests {
         genesis: &EventId,
         base: &EventId,
         epoch: u64,
-    ) -> arkret_wire::MlsGroupCurrent {
-        arkret_wire::MlsGroupCurrent {
+    ) -> arkret_wire::MlsGroupValue {
+        arkret_wire::MlsGroupValue {
             effective_scope: scope.clone(),
             genesis_event_ref: genesis.clone(),
             current_mls_commit_event_ref: base.clone(),

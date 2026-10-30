@@ -184,10 +184,8 @@ pub fn CallPanel(
                 .unwrap_or(false)
         })
         .count();
-    let media_plaintext_confirmation_required = {
-        let snapshot = state_store.read().load();
-        media_service_decrypts_enabled(&snapshot, &active_realm())
-    };
+    let media_plaintext_confirmation_required =
+        { media_service_decrypts_enabled(&state_store.read(), &active_realm()) };
 
     // ── Start an outgoing call (1:1 or SFU). ─────────────────────────
     let start_call = {
@@ -278,27 +276,22 @@ pub fn CallPanel(
                     known_participant_devices,
                     governance_evidence,
                     realm_mls_checkpoint,
-                    route_origins,
                 ) = {
                     let store = state_store.read();
-                    let snapshot = store.load();
-                    let (media_service_ids, focus_id) =
-                        media_service_selection(&snapshot, &realm_id);
+                    let (media_service_ids, focus_id) = media_service_selection(&store, &realm_id);
                     (
                         media_service_ids,
                         focus_id,
-                        call_state_participant_actor_device_map(&snapshot, &realm_id, &call),
-                        call_state_participant_identities(&snapshot, &realm_id, &call),
-                        call_state_participant_device_map(&snapshot, &realm_id, &call),
+                        call_state_participant_actor_device_map(&store, &realm_id, &call),
+                        call_state_participant_identities(&store, &realm_id, &call),
+                        call_state_participant_device_map(&store, &realm_id, &call),
                         media_governance_evidence(
-                            &snapshot,
+                            &store,
                             &realm_id,
+                            &device,
                             media_plaintext_confirmed(),
                         ),
                         store.mls_checkpoint_for(&realm_id),
-                        crate::media::service_route::media_service_route_origins(
-                            &snapshot, &realm_id,
-                        ),
                     )
                 };
                 active_call_id.set(call.clone());
@@ -320,10 +313,11 @@ pub fn CallPanel(
                 // and run it through the durable-floor / fail-closed route
                 // evaluator. Any failure ends the call attempt visibly — the
                 // token exchange never runs with unverified or empty routes.
-                let verified_media_routes =
+                let verified_media_bindings =
                     match crate::media::service_route::evaluate_media_routes(
+                        &base,
+                        &realm_id,
                         &media_service_ids,
-                        &route_origins,
                     )
                     .await
                     {
@@ -342,7 +336,48 @@ pub fn CallPanel(
                 let media_service_decryption_requested = governance_evidence
                     .as_ref()
                     .is_some_and(|evidence| evidence.media_service_decrypts_enabled());
+                let desired = if want_video {
+                    DesiredMedia::audio_video()
+                } else {
+                    DesiredMedia::audio_only()
+                };
+                let restored = {
+                    let store = state_store.read();
+                    super::projection::accepted_refresh_context(
+                        &store,
+                        &account.authority,
+                        &account.device_id,
+                        &realm_id,
+                        &call,
+                        &focus_id,
+                    )
+                };
+                let join_context = match restored {
+                    Ok(Some(context)) => context,
+                    Ok(None) => match crate::media::rtc::voluntary_join_context(
+                        &realm_id,
+                        &call,
+                        &account.authority,
+                        &account.device_id,
+                        &focus_id,
+                        desired,
+                    ) {
+                        Ok(context) => context,
+                        Err(error) => {
+                            last_error.set(media_error_label(error).to_owned());
+                            stage.set(CallStage::Ended);
+                            return;
+                        }
+                    },
+                    Err(error) => {
+                        last_error.set(format!("media refresh recovery failed: {error:#}"));
+                        stage.set(CallStage::Ended);
+                        return;
+                    }
+                };
                 let join = MediaJoinRequest {
+                    account_id: account.authority.clone(),
+                    join_context,
                     realm_id: realm_id.clone(),
                     call_id: call.clone(),
                     actor_id: actor.clone(),
@@ -355,7 +390,7 @@ pub fn CallPanel(
                         DesiredMedia::audio_only()
                     },
                     media_service_ids,
-                    verified_media_routes,
+                    verified_media_bindings,
                     governance_evidence,
                     media_service_decryption_requested,
                 };
@@ -746,30 +781,26 @@ pub fn CallPanel(
                                             known_participant_devices,
                                             governance_evidence,
                                             realm_mls_checkpoint,
-                                            route_origins,
-                                        ) = {
+                                                                ) = {
                                             let store = state_store.read();
-                                            let snapshot = store.load();
-                                            let (media_service_ids, focus_id) =
-                                                media_service_selection(&snapshot, &realm_id);
+                                                                    let (media_service_ids, focus_id) =
+                                                media_service_selection(&store, &realm_id);
                                             (
                                                 media_service_ids,
                                                 focus_id,
                                                 call_state_participant_identities(
-                                                    &snapshot, &realm_id, &call,
+                                                    &store, &realm_id, &call,
                                                 ),
                                                 call_state_participant_device_map(
-                                                    &snapshot, &realm_id, &call,
+                                                    &store, &realm_id, &call,
                                                 ),
                                                 media_governance_evidence(
-                                                    &snapshot,
+                                                    &store,
                                                     &realm_id,
+                                                    &device,
                                                     media_plaintext_confirmed(),
                                                 ),
                                                 store.mls_checkpoint_for(&realm_id),
-                                                crate::media::service_route::media_service_route_origins(
-                                                    &snapshot, &realm_id,
-                                                ),
                                             )
                                         };
                                         let want_video = want_video_signal();
@@ -778,10 +809,11 @@ pub fn CallPanel(
                                         spawn(async move {
                                             // Evaluator-produced route material — same
                                             // fail-closed gate as the outgoing path.
-                                            let verified_media_routes =
+                                            let verified_media_bindings =
                                                 match crate::media::service_route::evaluate_media_routes(
+                                                    &base,
+                                                    &realm_id,
                                                     &media_service_ids,
-                                                    &route_origins,
                                                 )
                                                 .await
                                                 {
@@ -797,7 +829,12 @@ pub fn CallPanel(
                                             let media_service_decryption_requested = governance_evidence
                                                 .as_ref()
                                                 .is_some_and(|evidence| evidence.media_service_decrypts_enabled());
+                                            let delivery=call_signal_hub.as_ref().and_then(|hub|hub.invitation_contexts.read().get(&call).cloned());
+                                            let Some(delivery)=delivery else {last_error.set("accepted invitation context is unavailable".to_owned());stage.set(CallStage::Ended);return;};
+                                            let join_context=arkret_sdk::CallMediaJoinContext::Invitation(arkret_sdk::CallInvitationJoinContext {kind:arkret_sdk::CallInvitationJoinKind::Invitation,invitation:delivery.invitation,envelope:delivery.request.envelope});
                                             let join = MediaJoinRequest {
+                    account_id:account.authority.clone(),
+                                                join_context,
                                                 realm_id: realm_id.clone(),
                                                 call_id: call.clone(),
                                                 actor_id: actor.clone(),
@@ -806,7 +843,7 @@ pub fn CallPanel(
                                                 epoch_id: 0,
                                                 desired_media: if want_video { DesiredMedia::audio_video() } else { DesiredMedia::audio_only() },
                                                 media_service_ids,
-                                                verified_media_routes,
+                                                verified_media_bindings,
                                                 governance_evidence,
                                                 media_service_decryption_requested,
                                             };

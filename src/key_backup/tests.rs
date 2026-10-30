@@ -86,7 +86,7 @@ fn wire(body: &KeyBackup) -> Value {
 }
 
 fn plaintext_secret(plaintext: &arkret_sdk::KeyBackupPlaintext) -> Vec<u8> {
-    B64.decode(plaintext.items[0].secret_b64u.as_bytes())
+    B64.decode(plaintext.items[0].secret_base64url.as_bytes())
         .unwrap()
 }
 
@@ -114,14 +114,14 @@ fn build_recovery_vault_backup_body_seals_per_spec() {
     assert!(
         arkret_sdk::BackupSeriesId::new(body["series_id"].as_str().unwrap().to_owned()).is_ok()
     );
-    assert_eq!(body["series_seq"], 0);
+    assert_eq!(body["series_sequence"], 0);
     assert!(body.get("supersedes_id").is_none());
     assert!(body.get("supersedes_digest").is_none());
     assert_eq!(body["encryption"]["recipient_method"], "passphrase_kdf");
     assert_eq!(body["encryption"]["kdf"]["name"], "argon2id");
-    // Argon2id params come from the root KEK; salt/nonce/nonce_salt are real.
+    // Argon2id parameters come from the root KEK; salt/nonce/nonce_salt are real.
     assert_eq!(
-        body["encryption"]["kdf"]["params"]["memory_kib"],
+        body["encryption"]["kdf"]["parameters"]["memory_kib"],
         root.m_kib
     );
     assert!(
@@ -189,7 +189,7 @@ fn successor_binds_the_current_device_without_breaking_the_series() {
         SECOND_DEVICE
     );
     assert_eq!(successor.series_id, predecessor.series_id);
-    assert_eq!(successor.series_seq, predecessor.series_seq + 1);
+    assert_eq!(successor.series_sequence, predecessor.series_sequence + 1);
     assert_eq!(
         successor.supersedes_id.as_ref(),
         Some(&predecessor.backup_id)
@@ -221,14 +221,14 @@ fn key_backup_auth_data_sign_verify_round_trip() {
     )
     .unwrap();
 
-    let auth_data = &body.auth_data;
-    assert_eq!(auth_data.verification_method.as_str(), vm);
+    let signature_proof = &body.signature_proof;
+    assert_eq!(signature_proof.verification_method.as_str(), vm);
     assert_eq!(
-        auth_data.signature_algorithm,
+        signature_proof.signature_algorithm,
         arkret_sdk::KeyBackupSignatureAlgorithm::Ed25519
     );
     assert_eq!(
-        auth_data.device_authorize_event_id.as_str(),
+        signature_proof.device_authorize_event_id.as_str(),
         DEVICE_AUTHORIZE_EVENT
     );
     body.validate()
@@ -254,7 +254,7 @@ fn key_backup_auth_data_sign_verify_service_attested_round_trip() {
     .unwrap();
 
     assert_eq!(
-        body.auth_data.device_authorize_event_id.as_str(),
+        body.signature_proof.device_authorize_event_id.as_str(),
         DEVICE_AUTHORIZE_EVENT
     );
     verify_key_backup_auth_data(&body, &signing_key.verifying_key())
@@ -286,7 +286,7 @@ fn recovery_policy_ref_is_covered_by_the_closed_transcript_when_present() {
     });
     // Re-sign after adding the transcript-covered optional field.
     let signature = signing_key.sign(&body.signing_payload_bytes().unwrap());
-    body.auth_data.signature =
+    body.signature_proof.signature =
         arkret_sdk::Base64UrlString::new(B64.encode(signature.to_bytes())).unwrap();
     verify_key_backup_auth_data(&body, &signing_key.verifying_key())
         .expect("signed backup with recovery_policy_ref must verify");
@@ -516,11 +516,11 @@ fn key_backup_validator_rejects_weak_argon2id() {
     let root = test_root();
     let body = build_recovery_vault_backup_body(BACKUP_ID, ACTOR, DEVICE, &root, b"x").unwrap();
     let mut body = wire(&body);
-    // Force the wire params below the profile floor (the builder always uses
-    // the strong root params, so weaken them post-build to exercise the
+    // Force the wire parameters below the profile floor (the builder always uses
+    // the strong root parameters, so weaken them post-build to exercise the
     // validator).
-    body["encryption"]["kdf"]["params"]["memory_kib"] = json!(1);
-    body["encryption"]["kdf"]["params"]["iterations"] = json!(1);
+    body["encryption"]["kdf"]["parameters"]["memory_kib"] = json!(1);
+    body["encryption"]["kdf"]["parameters"]["iterations"] = json!(1);
 
     let err = validate_wire_envelope(&body, BackupKind::SecretStorage)
         .expect_err("weak KDF parameters must be rejected");

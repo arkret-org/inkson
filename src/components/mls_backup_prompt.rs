@@ -407,7 +407,6 @@ pub(crate) fn mark_mls_recovery_backup_configured(
         return;
     }
     let payload = serde_json::json!({
-        "schema_version": 1,
         "backup_id": backup_id,
         "configured_at": arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now()),
     });

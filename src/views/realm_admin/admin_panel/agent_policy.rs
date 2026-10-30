@@ -2,9 +2,9 @@
 use arkret_models_collaboration::governance::operation_wire::{
     Policy, PolicySetStatePayload, PolicySetValue,
 };
-use arkret_sdk::exact_current_results::{
-    ExactCurrentResultEntry, ExactCurrentResultSelector, ExactCurrentResultsReadOutcome,
-    ExactCurrentResultsReadRequestBody, PolicyExactCurrentSelector, PolicyExactCurrentSelectorKind,
+use arkret_sdk::exact_current_state::{
+    ExactCurrentState, ExactCurrentStateReadRequestBody, ExactCurrentStateReadResponseBody,
+    ExactCurrentStateSelector, PolicyExactCurrentSelector, PolicyExactCurrentSelectorKind,
 };
 use arkret_sdk::{AccountId, CommitStreamRef, CurrentRevision, PolicyId, RealmId, ScopeRef};
 use dioxus::prelude::*;
@@ -45,15 +45,15 @@ async fn read_policy(
     let client = crate::transport::own_station_results::client_for_http(http).await?;
     let before = client.snapshot_head(realm).await?;
     garth::own_station_results::consume_bound_snapshot(&before, realm)?;
-    let request = ExactCurrentResultsReadRequestBody {
+    let request = ExactCurrentStateReadRequestBody {
         realm_id: realm.clone(),
-        selector: ExactCurrentResultSelector::Policy(PolicyExactCurrentSelector {
+        selector: ExactCurrentStateSelector::Policy(PolicyExactCurrentSelector {
             kind: PolicyExactCurrentSelectorKind::Policy,
             policy_id: id.clone(),
         }),
     };
     let result = client
-        .exact_current_result(&request, before.value()?.governance_generation)
+        .exact_current_state(&request, before.value()?.governance_generation)
         .await?;
     let after = client.snapshot_head(realm).await?;
     garth::own_station_results::consume_bound_snapshot(&after, realm)?;
@@ -61,12 +61,12 @@ async fn read_policy(
         .value()?
         .validate_for_request(&request, before.value()?.governance_generation)?;
     let (result_head, result_generation) = match result.value()? {
-        ExactCurrentResultsReadOutcome::Present {
+        ExactCurrentStateReadResponseBody::Present {
             effective_stream_head,
             governance_generation,
             ..
         }
-        | ExactCurrentResultsReadOutcome::NeverWritten {
+        | ExactCurrentStateReadResponseBody::NeverWritten {
             effective_stream_head,
             governance_generation,
             ..
@@ -92,18 +92,18 @@ async fn read_policy(
     );
     check_session(&account, generation)?;
     let (policy, revision, scope) = match result.into_value()? {
-        ExactCurrentResultsReadOutcome::NeverWritten { .. } => (
+        ExactCurrentStateReadResponseBody::NeverWritten { .. } => (
             None,
             None,
             ScopeRef::Realm {
                 realm_id: realm.clone(),
             },
         ),
-        ExactCurrentResultsReadOutcome::Present {
-            entry: ExactCurrentResultEntry::Policy(row),
+        ExactCurrentStateReadResponseBody::Present {
+            current_state: ExactCurrentState::Policy(row),
             ..
         } => {
-            let PolicySetValue::Governance(policy) = row.value.value else {
+            let PolicySetValue::Governance(policy) = row.value else {
                 anyhow::bail!("This Policy id belongs to another policy family")
             };
             anyhow::ensure!(
@@ -242,7 +242,12 @@ pub(super) fn AgentPolicyEditor(realm_id: String, token: Signal<String>) -> Elem
                                             Ok(draft) => form.set(draft),
                                             Err(error) => { message.set(error.to_string()); pending.set(false); return; }
                                         }
-                                        message.set(format!("Accepted current {} at {}. Editing does not change the accepted value.", current.id, current.revision.as_ref().unwrap().commit_id));
+                                        let Some(revision) = current.revision.as_ref() else {
+                                            message.set("Accepted policy has no current revision; editing remains blocked.".into());
+                                            pending.set(false);
+                                            return;
+                                        };
+                                        message.set(format!("Accepted current {} at {}. Editing does not change the accepted value.", current.id, revision.commit_id));
                                     } else { message.set("Authoritative never_written: this exact id can be created with null expected_revision.".into()); }
                                     loaded.set(Some(current));
                                 }
@@ -333,8 +338,7 @@ fn submit_pending(
         let result =
             crate::transport::auth::with_authed_sdk_client(&base, token(), |http| async move {
                 check_session(&write.current.account, write.current.session_generation)?;
-                let submitter =
-                    crate::event_submit::EventSubmitter::from_current_session(http.clone());
+                let submitter = crate::app::runtime_adapter::event_submitter(http.clone());
                 if write.signed.is_none() {
                     // No queue/network submission exists before this one-shot authoring completes.
                     awaiting.set(None);
@@ -348,7 +352,9 @@ fn submit_pending(
                 }
                 let accepted = submitter
                     .submit_signed_sdk_events_in_order(std::slice::from_ref(
-                        write.signed.as_ref().unwrap(),
+                        write.signed.as_ref().ok_or_else(|| {
+                            anyhow::anyhow!("Policy authoring did not produce a signed event")
+                        })?,
                     ))
                     .await;
                 check_session(&write.current.account, write.current.session_generation)?;
@@ -356,9 +362,7 @@ fn submit_pending(
                     Ok(mut results) => results
                         .pop()
                         .ok_or_else(|| anyhow::anyhow!("Submission omits its final result"))?,
-                    Err(error)
-                        if crate::ephemeral::authority_rejection_reason(&error).is_some() =>
-                    {
+                    Err(error) if definitive_policy_refusal(&error) => {
                         awaiting.set(None);
                         return Ok(None);
                     }
@@ -418,6 +422,25 @@ fn submit_pending(
         }
         busy.set(false);
     });
+}
+
+fn definitive_policy_refusal(error: &anyhow::Error) -> bool {
+    if crate::ephemeral::authority_rejection_reason(error).is_some() {
+        return true;
+    }
+    error.chain().any(|cause| {
+        let Some(arkret_sdk::http_client::Error::Api { status, error }) =
+            cause.downcast_ref::<arkret_sdk::http_client::Error>()
+        else {
+            return false;
+        };
+        use arkret_sdk::ErrorCode as Code;
+        matches!(
+            (*status, error.error_code().map(|code| code.as_str())),
+            (409, Some(Code::FAILED_PRECONDITION))
+                | (403, Some(Code::CAPABILITY_DENIED | Code::POLICY_VIOLATION))
+        )
+    })
 }
 
 #[cfg(test)]
@@ -484,6 +507,25 @@ mod tests {
         )
         .unwrap();
         event
+    }
+
+    #[test]
+    fn explicit_policy_cas_refusal_is_terminal_but_unavailability_is_unknown() {
+        for (status, code, expected) in [
+            (409, "failed_precondition", true),
+            (403, "capability_denied", true),
+            (503, "policy_unavailable", false),
+        ] {
+            let error = anyhow::Error::new(arkret_sdk::http_client::Error::Api {
+                status,
+                error: Box::new(arkret_sdk::Problem::new(code, status, "test refusal")),
+            })
+            .context("original signed Policy request");
+            assert_eq!(definitive_policy_refusal(&error), expected);
+        }
+        assert!(!definitive_policy_refusal(&anyhow::anyhow!(
+            "failed_precondition"
+        )));
     }
 
     #[test]
@@ -561,7 +603,7 @@ fn Choice(
     options: Vec<String>,
     onvalue: EventHandler<String>,
 ) -> Element {
-    rsx! { label { "{label}" select { value, onchange: move |e| onvalue.call(e.value()), for option in options { option { value: "{option}", "{option}" } } } } }
+    rsx! { label { "{label}" select { "aria-label": label.clone(), value, onchange: move |e| onvalue.call(e.value()), for option in options { option { value: "{option}", "{option}" } } } } }
 }
 #[component]
 fn OperationChoices(

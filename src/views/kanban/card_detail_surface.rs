@@ -20,7 +20,6 @@ pub(super) struct CardDetailContext {
     pub selected_scope_security_encrypted: Option<bool>,
     pub selected_scope_security_encrypted_or_secure: bool,
     pub realm_content_write_ready: bool,
-    pub projected_strand_ids: BTreeSet<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -230,7 +229,6 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
         selected_scope_security_encrypted,
         selected_scope_security_encrypted_or_secure,
         realm_content_write_ready,
-        projected_strand_ids,
     } = context;
     // Keep validation at the component boundary; local view helpers consume
     // only the canonical textual representation.
@@ -254,7 +252,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                     return Err("authenticated Agent inventory is unavailable".to_owned());
                 }
                 with_authed_sdk_client(&base, api_token, |http| async move {
-                    let list = http.agent_list().await?;
+                    let list = http.agent_page().await?;
                     Ok::<_, anyhow::Error>(crate::views::agents::mentionable_owned_agent_slugs(
                         list.agents,
                     ))
@@ -633,7 +631,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                             }
                                             h2 { {kanban_title_label(&card.title, &card.id, &crate::i18n::tr("kanban.title_pending"))} }
                                             div { class: "card-detail-title-meta",
-                                                WriteStateBadge { state: displayed_card_state(card, &projected_strand_ids) }
+                                                WriteStateBadge { state: card.state }
                                                 for label in &card.labels {
                                                     span { key: "{label}", class: "badge", "{label}" }
                                                 }

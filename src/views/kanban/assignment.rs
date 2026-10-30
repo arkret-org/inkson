@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::Serialize;
 
 use super::model::*;
+use crate::components::WriteState;
 use crate::state::LocalStateStore;
 use crate::transport::auth::with_authed_api;
 use crate::views::helpers::short_protocol_id;
@@ -53,7 +54,7 @@ impl CardAssignmentMutation {
 #[serde(untagged)]
 enum QueuedAssignmentBody {
     Create(Box<arkret_sdk::RelationCreatePayload>),
-    Tombstone(arkret_sdk::RelationTombstonePayload),
+    Tombstone(Box<arkret_sdk::RelationTombstonePayload>),
 }
 
 /// Queued op-log record for one card-assignee mutation; field order matches
@@ -79,7 +80,7 @@ fn queued_assignment_body(
             operation.typed_payload::<arkret_wire::event_spec::RelationCreate>()?,
         )),
         CardAssignmentMutation::Tombstone { operation, .. } => QueuedAssignmentBody::Tombstone(
-            operation.typed_payload::<arkret_wire::event_spec::RelationTombstone>()?,
+            Box::new(operation.typed_payload::<arkret_wire::event_spec::RelationTombstone>()?),
         ),
     })
 }
@@ -377,6 +378,7 @@ pub(super) fn dispatch_card_assignees_update(
             "submitting {operation_count} assignee relation operation{}",
             if operation_count == 1 { "" } else { "s" }
         ));
+        let mut has_queued = false;
         for mutation in mutations {
             let operation = mutation.operation().clone();
             let operation_id = operation.local_operation_id().to_string();
@@ -393,6 +395,9 @@ pub(super) fn dispatch_card_assignees_update(
                         Some(resp.event_id.clone()),
                         None,
                     );
+                }
+                Err(err) if crate::event_submit::is_durably_queued_error(err.inner()) => {
+                    has_queued = true;
                 }
                 Err(err) => {
                     let err_text = err.display().to_string();
@@ -419,11 +424,21 @@ pub(super) fn dispatch_card_assignees_update(
         if let Some(mut card) = selected
             && card.id == strand_id
         {
-            card.state = CardState::Accepted;
+            card.state = if has_queued {
+                CardState::Queued
+            } else {
+                CardState::Accepted
+            };
             selected_card.set(Some(card));
         }
-        assignee_edit_status.set(String::new());
-        board_status.set("Assignees updated".to_owned());
+        if has_queued {
+            let status = WriteState::Queued.localized_explanation();
+            assignee_edit_status.set(status.clone());
+            board_status.set(status);
+        } else {
+            assignee_edit_status.set(String::new());
+            board_status.set("Assignees updated".to_owned());
+        }
     });
     true
 }

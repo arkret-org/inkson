@@ -3,7 +3,7 @@
 //! Wire shape (spec: `models/content-types.md §4.9`, canonical schema
 //! `content-block-poll.schema.json`, `additionalProperties: false`):
 //! * `ak.message.create` with a `poll_block` content block `{kind: "ak.content.poll", body, poll:
-//!   {kind: "disclosed", max_selections, answers: [{id, text}]}}` creates a poll.
+//!   {kind: "disclosed", max_selection_count, answers: [{id, text}]}}` creates a poll.
 //! * `ak.message.create` with a `poll_response_block` `{kind: "ak.content.poll.response", body,
 //!   poll_response: {poll_ref: id:message, selections: [answer_id]}}` records a response.
 //!
@@ -31,7 +31,7 @@ pub struct PollDraft {
     pub options: Vec<String>,
     /// Maximum number of options a single voter may select. Defaults
     /// to 1 (single-choice).
-    pub max_selections: u32,
+    pub max_selection_count: u32,
 }
 
 impl PollDraft {
@@ -39,7 +39,7 @@ impl PollDraft {
         Self {
             question: String::new(),
             options: vec![String::new(), String::new()],
-            max_selections: 1,
+            max_selection_count: 1,
         }
     }
 
@@ -73,7 +73,7 @@ impl PollDraft {
     pub fn clear(&mut self) {
         self.question.clear();
         self.options = vec![String::new(), String::new()];
-        self.max_selections = 1;
+        self.max_selection_count = 1;
     }
 }
 
@@ -94,7 +94,7 @@ pub struct PollCard {
     /// One Vec per option containing the complete ActorIds that currently vote for
     /// it. Same ordering as `options`.
     pub votes: Vec<Vec<arkret_sdk::ActorId>>,
-    pub max_selections: u64,
+    pub max_selection_count: u64,
     pub closed: bool,
     /// Exact accepted response identity per complete ActorId, never a local
     /// arrival-order winner. Unknown or incomplete verified input stays provisional.
@@ -123,7 +123,7 @@ impl PollCard {
             question: draft.question.trim().to_owned(),
             options,
             votes,
-            max_selections: u64::from(draft.max_selections.max(1)),
+            max_selection_count: u64::from(draft.max_selection_count.max(1)),
             closed: false,
             response_heads: Default::default(),
             provisional: true,
@@ -178,7 +178,7 @@ impl PollCard {
             question: definition.question_text().to_owned(),
             votes: vec![Vec::new(); options.len()],
             options,
-            max_selections: definition.poll.max_selections,
+            max_selection_count: definition.poll.max_selection_count,
             closed: false,
             response_heads: Default::default(),
             provisional: true,
@@ -231,7 +231,7 @@ pub fn build_poll_create_op_scoped(
         reply_context: None,
         poll: arkret_models_collaboration::events_payloads::PollBody {
             kind: arkret_models_collaboration::events_payloads::PollDisclosureKind::Disclosed,
-            max_selections: u64::from(draft.max_selections.max(1)),
+            max_selection_count: u64::from(draft.max_selection_count.max(1)),
             question: None,
             answers,
         },
@@ -328,7 +328,7 @@ pub fn build_poll_vote_op_with_heads_scoped(
         format: None,
         formatted_body: None,
         reply_context: None,
-        poll_response: arkret_models_collaboration::events_payloads::PollResponseBody {
+        poll_response: arkret_models_collaboration::events_payloads::PollVote {
             poll_ref,
             selections: selections.to_vec(),
         },
@@ -496,7 +496,7 @@ mod tests {
         assert!(block.get("options").is_none());
         assert!(block.get("question").is_none());
         assert_eq!(block["poll"]["kind"], "disclosed");
-        assert_eq!(block["poll"]["max_selections"], 1);
+        assert_eq!(block["poll"]["max_selection_count"], 1);
         let answers = block["poll"]["answers"].as_array().unwrap();
         assert_eq!(answers.len(), 2);
         assert_eq!(answers[0]["id"], "opt-0");
@@ -567,7 +567,7 @@ mod tests {
             "body": "ship?",
             "poll": {
                 "kind": "disclosed",
-                "max_selections": 2,
+                "max_selection_count": 2,
                 "answers": [
                     {"id": "yes", "text": {"kind": "ak.content.text", "body": "Yes"}},
                     {"id": "no", "text": {"kind": "ak.content.text", "body": "No"}}
@@ -595,7 +595,7 @@ mod tests {
             "ak:event:A42FkwFdQPw7aC_yPcdlVU5ZjKLAnFCbmrXTVRJTNhRc"
         );
         assert_eq!(card.question, "ship?");
-        assert_eq!(card.max_selections, 2);
+        assert_eq!(card.max_selection_count, 2);
         assert_eq!(card.options[0].id, "yes");
         assert_eq!(card.options[0].label, "Yes");
         assert!(!card.closed);

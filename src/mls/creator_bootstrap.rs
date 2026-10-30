@@ -178,7 +178,9 @@ async fn publish_accepted_scope_creator_genesis(
 }
 
 fn has_staged_creator_genesis(store: &LocalStateStore, realm_id: &str) -> bool {
-    store.mls_checkpoint_for(realm_id).is_some()
+    store
+        .mls_checkpoint_for(realm_id)
+        .is_some_and(|checkpoint| checkpoint.epoch == 0)
 }
 
 fn creator_genesis_has_resume_evidence(
@@ -219,16 +221,20 @@ pub(crate) fn creator_record_needs_background_resume(
 }
 
 /// Background recovery gate for an already accepted or staged creator Genesis.
-/// Absence of accepted/staged work is a plaintext Realm, not an implicit MLS
-/// activation request. A candidate is still checked against accepted creator
-/// authority before any resume work proceeds.
+/// An ordinary Realm without local creator work follows member recovery,
+/// including after MLS activation. A candidate is still checked against
+/// accepted creator authority before any resume work proceeds.
 pub(crate) async fn should_resume_creator_genesis(
     api: &crate::transport::TransportClient,
     state_store: &StateStoreHandle,
     realm_id: &str,
     authority: &arkret_sdk::AccountId,
 ) -> Result<bool, String> {
-    let submitter = api.event_submitter().map_err(|e| e.to_string())?;
+    let submitter = api
+        .event_submitter()
+        .map_err(|e| e.to_string())?
+        .with_state_store(state_store.clone())
+        .with_authority(authority.clone());
     let scope = arkret_sdk::ScopeRef::Realm {
         realm_id: arkret_sdk::RealmId::new(realm_id).map_err(|e| e.to_string())?,
     };
@@ -244,24 +250,7 @@ pub(crate) async fn should_resume_creator_genesis(
         .creator_bootstrap_intent(&scope)
         .await
         .map_err(|e| format!("read durable creator intent: {e}"))?;
-    let accepted = submitter
-        .find_mls_genesis_event_id(realm_id)
-        .await
-        .map_err(|e| e.to_string())?;
     let staged_checkpoint = state_store.read(|store| has_staged_creator_genesis(store, realm_id));
-    if accepted.is_some() && durable_intent.is_some() {
-        return authenticated_account_is_realm_creator(api, state_store, realm_id, authority).await;
-    }
-    if accepted.is_some() {
-        return Ok(creator_genesis_has_resume_evidence(
-            true,
-            staged_checkpoint,
-            false,
-        ));
-    }
-    // A plaintext Realm with no accepted Genesis is not an implicit request
-    // to activate MLS. Only an already-staged checkpoint or a byte-identical
-    // durable queue item may be resumed by background effects.
     let durable_queued_genesis = if staged_checkpoint {
         false
     } else {
@@ -271,20 +260,18 @@ pub(crate) async fn should_resume_creator_genesis(
             .map_err(|e| e.to_string())?
     };
     // A later member's since-join window need not disclose the original
-    // create. With no creator work, a complete accepted plaintext ordinary
-    // current is enough to stop background recovery; it grants no authority
-    // to activate MLS and never classifies anyone as the creator.
+    // create or the original MLS Genesis. Check the accepted ordinary current
+    // before any historical read, regardless of whether MLS is activated.
+    // This only declines creator work: Welcome/commit recovery and the send
+    // gate still verify their own accepted evidence. It grants no authority.
     if durable_intent.is_none()
         && !creator_genesis_has_resume_evidence(false, staged_checkpoint, durable_queued_genesis)
         && state_store.read(|store| {
-            matches!(
-                store.installed_scope_mls_current(&scope),
-                crate::current_projection::ScopeMlsCurrent::NotActivated
-            ) && store
+            store
                 .realm_current_state_entries(realm_id)
                 .iter()
                 .any(|entry| {
-                    let arkret_wire::TypedCurrentRow::Value {
+                    let arkret_wire::CurrentState::Value {
                         selector, value, ..
                     } = entry;
                     matches!(selector, arkret_wire::CurrentSelector::RealmGenesis)
@@ -296,6 +283,20 @@ pub(crate) async fn should_resume_creator_genesis(
         })
     {
         return Ok(false);
+    }
+    let accepted = submitter
+        .find_mls_genesis_event_id(realm_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    if accepted.is_some() && durable_intent.is_some() {
+        return authenticated_account_is_realm_creator(api, state_store, realm_id, authority).await;
+    }
+    if accepted.is_some() {
+        return Ok(creator_genesis_has_resume_evidence(
+            true,
+            staged_checkpoint,
+            false,
+        ));
     }
     // A Direct Conversation is MLS-backed from its founding: its founder
     // authors the one scope-derived Genesis the bootstrap phases require
@@ -640,7 +641,7 @@ async fn bootstrap_creator_realm_mls_genesis(
     if let Some(durable_intent) = &durable_intent {
         let submitter = submitter.for_founding_realm(scope.realm_id().clone());
         if matches!(durable_intent.signed_scope_create_unit(),
-            arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequest::OrdinaryRealmBootstrap(_)) {
+            arkret_models_collaboration::authority_commit::SelfAuthoritySubmitRequestBody::OrdinaryRealmBootstrap(_)) {
             submitter.ensure_creator_realm_default_discussion(scope.realm_id()).await
                 .map_err(|error| format!("resume creator default discussion: {error}"))?;
         }
@@ -1025,10 +1026,8 @@ mod tests {
     const ACTOR: &str = "did:web:alice.example";
     const REALM: &str = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
 
-    fn epoch_zero_snapshot(
-        group_id: String,
-    ) -> crate::mls::persistence::MlsLocalCheckpointEnvelope {
-        crate::mls::persistence::MlsLocalCheckpointEnvelope {
+    fn epoch_zero_snapshot(group_id: String) -> garth::mls::checkpoint::MlsLocalCheckpointEnvelope {
+        garth::mls::checkpoint::MlsLocalCheckpointEnvelope {
             realm_id: REALM.to_owned(),
             group_id,
             epoch: 0,
@@ -1040,7 +1039,7 @@ mod tests {
             recorded_at: chrono::Utc::now(),
             epoch_started_at: chrono::Utc::now(),
             app_messages_observed: 0,
-            aead_version: crate::mls::persistence::AEAD_VERSION_CHACHA20_POLY1305,
+            aead_version: garth::mls::checkpoint::AEAD_VERSION_CHACHA20_POLY1305,
         }
     }
 
@@ -1076,6 +1075,89 @@ mod tests {
         assert!(creator_genesis_has_resume_evidence(false, false, true));
         assert!(!creator_genesis_has_resume_evidence(true, false, true));
         assert!(creator_genesis_has_resume_evidence(true, true, false));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn ordinary_late_member_does_not_probe_prejoin_genesis_for_creator_recovery() {
+        let principal = format!(
+            "ak:did_core:web:late-member-{}.example",
+            crate::operation::uuid_v7()
+        );
+        let authority = crate::test_support::authority_at_station(
+            &principal,
+            crate::test_support::SERVER_STATION_ID,
+        );
+        let scope = arkret_sdk::ScopeRef::Realm {
+            realm_id: arkret_sdk::RealmId::new(REALM).unwrap(),
+        };
+        let genesis = arkret_sdk::RealmGenesis::new(
+            arkret_sdk::RealmPurpose::Collaboration,
+            arkret_sdk::GenesisSalt::new("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA").unwrap(),
+            arkret_sdk::TrustDomainId::new("ak:trust_domain:station.example").unwrap(),
+            arkret_sdk::SecurityClass::Standard,
+            arkret_sdk::DidCoreId::new(crate::test_support::SERVER_STATION_ID).unwrap(),
+            arkret_sdk::JoinRule::Invite,
+            arkret_sdk::HistoryAccess::SinceJoin,
+            arkret_sdk::Discoverability::Listed,
+            None,
+            None,
+        )
+        .unwrap();
+        // Hold no listening server: creator recovery must make no HTTP request
+        // for a member with accepted ordinary current and no creator work.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        drop(listener);
+        let api = crate::transport::TransportClient::unauthenticated(&base).unwrap();
+        let mut dom = dioxus::prelude::VirtualDom::new(dioxus::prelude::VNode::empty);
+        dom.rebuild_in_place();
+        for epoch in [None, Some(3)] {
+            let mut store = temp_store("late-member-no-genesis-read");
+            crate::test_support::install_current_entries(
+                &mut store,
+                REALM,
+                vec![arkret_wire::CurrentState::Value {
+                    selector: arkret_wire::CurrentSelector::RealmGenesis,
+                    source_stream_ref: arkret_wire::CommitStreamRef::Realm {
+                        realm_id: scope.realm_id().clone(),
+                    },
+                    revision: arkret_wire::CurrentRevision {
+                        commit_id: arkret_wire::RealmCommitId::from_digest([0x61; 32]),
+                        stream_position: 0,
+                    },
+                    value: serde_json::to_value(&genesis).unwrap(),
+                }],
+            );
+            crate::test_support::install_accepted_mls_group_at_epoch(&mut store, &scope, 3, 0);
+            if let Some(epoch) = epoch {
+                let mut checkpoint =
+                    epoch_zero_snapshot(scope.canonical_mls_group_id().unwrap().to_string());
+                checkpoint.epoch = epoch;
+                checkpoint.admission_epoch = epoch;
+                store.save_mls_checkpoint(REALM, checkpoint).unwrap();
+            }
+            let store = std::sync::Arc::new(std::sync::Mutex::new(store));
+            let reader = store.clone();
+            let writer = store.clone();
+            let handle = StateStoreHandle::new(
+                move |read| read(&reader.lock().unwrap()),
+                move |write| write(&mut writer.lock().unwrap()),
+            );
+            let probe = should_resume_creator_genesis(&api, &handle, REALM, &authority);
+            tokio::pin!(probe);
+            let result = std::future::poll_fn(|cx| {
+                dom.runtime().in_scope(dioxus::prelude::ScopeId::ROOT, || {
+                    std::future::Future::poll(probe.as_mut(), cx)
+                })
+            })
+            .await;
+            assert_eq!(
+                result,
+                Ok(false),
+                "a late member must enter Welcome/commit recovery without reading prejoin history (local epoch {epoch:?})"
+            );
+        }
     }
 
     #[test]
@@ -1143,18 +1225,13 @@ mod tests {
                 epoch_zero_snapshot(scope.canonical_mls_group_id().unwrap().to_string()),
             )
             .unwrap();
-        let account_path = std::fs::read_dir(&directory)
-            .unwrap()
-            .map(|entry| entry.unwrap().path())
-            .find(|path| path.extension().is_some_and(|ext| ext == "json"))
-            .unwrap();
-        std::fs::remove_file(&account_path).unwrap();
-        std::fs::create_dir(&account_path).unwrap();
+        let before = store.durable_mls_checkpoint_for_scope(&scope).unwrap();
+        store.conformance_fail_account_commit(true).unwrap();
         let accepted =
             arkret_sdk::EventId::new("ak:event:AXBcp13trH3bPXvj0eHppCpGqJZWL9yqE3cf2Tl43vyk")
                 .unwrap();
         let result = store.mark_mls_genesis_emitted_for_scope_with_event(&scope, &accepted);
-        std::fs::remove_dir(&account_path).unwrap();
+        store.conformance_fail_account_commit(false).unwrap();
         assert!(
             result.is_err(),
             "failed durable publication cannot acknowledge accepted Genesis locally"
@@ -1163,11 +1240,9 @@ mod tests {
             creator_mls_bootstrap_incomplete(&store, REALM),
             "a failed publication remains pending even if its cache was updated"
         );
-        assert!(
-            store
-                .durable_mls_checkpoint_for_scope(&scope)
-                .unwrap()
-                .is_none()
+        assert_eq!(
+            store.durable_mls_checkpoint_for_scope(&scope).unwrap(),
+            before
         );
         store
             .mark_mls_genesis_emitted_for_scope_with_event(&scope, &accepted)

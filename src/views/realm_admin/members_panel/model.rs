@@ -9,7 +9,7 @@
 use super::*;
 #[cfg(test)]
 pub(super) use crate::state::realm_membership::{
-    AcceptedInviteClaimRoute, accepted_invite_claim_route, claim_target_device_id,
+    MemberJoinKeyPackageRoute, claim_target_device_id, member_join_key_package_route,
 };
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -291,19 +291,19 @@ pub(super) fn member_agent_row_from_value(
 }
 
 pub(super) fn mention_state_from_entries(
-    entries: &[AgentParticipationEntry],
+    entries: &[AgentParticipationView],
     realm_id: &str,
 ) -> (AgentMentionPolicy, ParticipationBits) {
     let mut selection = ParticipationBits::NONE;
     let mut matched = false;
     for entry in entries {
-        match &entry.scope {
+        match &entry.target_scope {
             ParticipationScope::Realm {
                 realm_id: entry_realm,
             } if entry_realm.as_str() == realm_id => {
                 matched = true;
                 selection = entry.selection;
-                if entry.selection.accept_third_party_mention {
+                if entry.selection.third_party_mention_delivery_allowed {
                     return (AgentMentionPolicy::Allowed, selection);
                 }
             }
@@ -335,6 +335,15 @@ pub(super) fn push_unique(out: &mut Vec<String>, value: impl Into<String>) {
 }
 
 pub(super) fn merge_member_profile(target: &mut MemberProfile, incoming: MemberProfile) {
+    // A live invitation is independent of the actor's historical membership.
+    // The caller has already excluded terminal invitation ids.
+    if incoming.pending_invite {
+        target.pending_invite = true;
+        if incoming.invite_id.is_some() {
+            target.invite_id = incoming.invite_id.clone();
+            target.invite_is_direct = incoming.invite_is_direct;
+        }
+    }
     if target.subject_id.is_none() {
         target.subject_id = incoming.subject_id;
     }
@@ -478,6 +487,29 @@ pub(super) fn projected_member_profiles_for_realm(
             upsert_member_profile(&mut rows, profile);
         }
     }
+    // A complete installed cut is the membership source. The optional roster
+    // display projection and bounded Event history may both lag or be absent
+    // after a cold navigation; neither may replace current joined membership.
+    if store.current_product_cut_generation(realm_id).is_some()
+        && let Ok(Some(joined)) = store.complete_joined_member_hint_for_realm(realm_id)
+    {
+        let joined: BTreeSet<String> = joined.into_iter().map(|actor| actor.to_string()).collect();
+        for profile in rows.values_mut() {
+            if joined.contains(&profile.actor_id) {
+                profile.membership = Some("join".to_owned());
+                profile.pending_invite = false;
+            } else if profile.normalized_membership() == Some("join") {
+                profile.membership = None;
+            }
+        }
+        for actor in joined {
+            let profile = rows
+                .entry(actor.clone())
+                .or_insert_with(|| MemberProfile::bare(actor));
+            profile.membership = Some("join".to_owned());
+            profile.pending_invite = false;
+        }
+    }
     let mut out: Vec<MemberProfile> = rows.into_values().collect();
     for profile in &mut out {
         // Realm actor ids are not Contact identity keys. Join a global
@@ -510,75 +542,11 @@ pub(super) fn local_terminal_invite_ids_for_realm(
                     raw_operation_invite_ref(payload)
                 }
                 Some(event_kind_str::INVITE_CANCEL) => raw_operation_invite_ref(payload),
-                // `send_failed` is the one `ak.invite.revoke` target that is not
-                // terminal: the invite stays inside the live set and keeps the
-                // Realm live-target slot claimed
-                // (`governance-objects.md` section 5.3). Hiding it here would
-                // tell the operator the account is free to re-invite when it
-                // still needs a revoke first.
-                Some(event_kind_str::INVITE_REVOKE)
-                    if raw_operation_invite_target_state(payload).as_deref()
-                        != Some(INVITE_STATE_SEND_FAILED) =>
-                {
-                    raw_operation_invite_ref(payload)
-                }
+                Some(event_kind_str::INVITE_REVOKE) => raw_operation_invite_ref(payload),
                 _ => None,
             }
         })
         .collect()
-}
-
-/// The `ak.component.invite.lifecycle.v1` state of one Invite, folded out of
-/// the local Realm operation log.
-///
-/// The live set is `{pending, send_failed}` and the two recover differently
-/// from `invite_live_target_occupied`: `pending` only needs its private
-/// delivery re-dispatched, while `send_failed` has no edge back to `pending`
-/// and must be revoked before a replacement invite can exist
-/// (`governance-objects.md` section 5.3).
-pub(super) fn local_invite_lifecycle_state(
-    records: &[RawOperationRecord],
-    realm_id: &str,
-    invite_id: &str,
-) -> Option<String> {
-    let mut state = None;
-    for record in records {
-        if !raw_operation_realm_matches_exact(record, realm_id) {
-            continue;
-        }
-        let payload = &record.payload;
-        match raw_operation_payload_kind(payload).as_deref() {
-            Some(event_kind_str::INVITE_CREATE)
-                if trimmed_string(payload.get("invite_id").or_else(|| payload.get("id")))
-                    .as_deref()
-                    == Some(invite_id) =>
-            {
-                state = Some("pending".to_owned());
-            }
-            Some(event_kind_str::INVITE_ACCEPT)
-                if raw_operation_is_accepted_fact(payload)
-                    && raw_operation_invite_ref(payload).as_deref() == Some(invite_id) =>
-            {
-                state = Some("accepted".to_owned());
-            }
-            Some(event_kind_str::INVITE_CANCEL | event_kind_str::INVITE_REVOKE)
-                if raw_operation_invite_ref(payload).as_deref() == Some(invite_id) =>
-            {
-                state = raw_operation_invite_target_state(payload);
-            }
-            _ => {}
-        }
-    }
-    state
-}
-
-pub(super) const INVITE_STATE_SEND_FAILED: &str = "send_failed";
-
-pub(super) fn raw_operation_invite_target_state(payload: &Value) -> Option<String> {
-    raw_operation_path_string(payload, &["body", "target_state"])
-        .or_else(|| raw_operation_path_string(payload, &["payload", "target_state"]))
-        .or_else(|| trimmed_string(payload.get("target_state")))
-        .or_else(|| trimmed_string(payload.get("state")))
 }
 
 pub(super) fn group_members_with_owned_agents(
@@ -696,10 +664,12 @@ pub(super) fn split_member_profiles(
     let mut active_members = Vec::new();
     let mut pending_invites = Vec::new();
     for member in members {
-        if member.is_pending_invite() {
-            pending_invites.push(member);
-        } else {
-            active_members.push(member);
+        match member.normalized_membership() {
+            Some("join") => active_members.push(member),
+            _ if member.is_pending_invite() => {
+                pending_invites.push(member);
+            }
+            _ => {}
         }
     }
     (active_members, pending_invites)
@@ -748,15 +718,10 @@ pub(super) fn upsert_pending_invite_profile(
         .find(|profile| profile.actor_id.trim() == actor_id)
     {
         existing.pending_invite = existing.normalized_membership() != Some("join");
-        if existing.invite_id.is_none() {
-            existing.invite_id = invite_id
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToOwned::to_owned);
+        if let Some(invite_id) = invite_id.map(str::trim).filter(|value| !value.is_empty()) {
+            existing.invite_id = Some(invite_id.to_owned());
         }
-        if existing.invite_is_direct.is_none() {
-            existing.invite_is_direct = Some(true);
-        }
+        existing.invite_is_direct = Some(true);
         apply_label(existing);
         return;
     }
@@ -828,8 +793,7 @@ pub(super) fn local_pending_invite_profile_from_raw_operation(
 
 pub(super) use crate::state::realm_membership::{
     local_invitee_by_invite_id_for_realm, raw_invite_create_account_id, raw_operation_invite_ref,
-    raw_operation_is_accepted_fact, raw_operation_path_string, raw_operation_payload_kind,
-    raw_operation_realm_matches_exact,
+    raw_operation_is_accepted_fact, raw_operation_payload_kind, raw_operation_realm_matches_exact,
 };
 pub(super) fn local_membership_profile_from_raw_operation(
     record: &RawOperationRecord,

@@ -1,0 +1,2010 @@
+{
+  "operations": [
+    {
+      "operation_id": "ak.edge.applet.actor.read.resolve.v1",
+      "verification_need": "native_fixture_replay",
+      "reason": "The native Bridge retains an actually admitted Ghost creation and verifies the current Realm governor and manager through signed material before returning the exact complete ActorId. Browser tests replay only the exact archived request/response at its recorded verification cut; this is not live authorization or a new admission. StandardGrant introspection uses the trusted native test channel.",
+      "normative_documents": [
+        "zh/extensions/realm-actors.md",
+        "zh/extensions/applet-integration.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/identity/realm_actor_material.rs",
+        "arkret-rust-sdk/crates/server/src/applet.rs"
+      ],
+      "mock_test": {
+        "file": "tests/contract/native-read-evidence.spec.ts",
+        "name": "native accepted read replay preserves original contract: ak.edge.applet.actor.read.resolve.v1"
+      },
+      "contract_digest": "sha256:542ba4d91018d3a1f1ab6ba0173372d508b8ec83cfa0a022b44be52ed5c0179d"
+    },
+    {
+      "operation_id": "ak.edge.applet.command.transaction.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires the real accepted installation/grant/current-revision plan and exact administrator/runtime/governor identities. Preview digests, signed candidates, approval or revoke/configuration replay must be tied to that actual cut and original results; a Service transport response never proves creation/admission.",
+      "normative_documents": [
+        "zh/extensions/applet-management-source.md",
+        "zh/extensions/realm-actors.md"
+      ],
+      "source_references": [
+        "arkret-rust-sdk/crates/server/src/applet.rs",
+        "coland/crates/http/src/routing/identity/realm_actor_control.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:f622fac4fbdbb5dbcd022f848f14012698bde339e69d5ddc4478a485d6afcea7"
+    },
+    {
+      "operation_id": "ak.edge.applet.managed_actor.command.author.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires the real accepted installation/grant/current-revision plan and exact administrator/runtime/governor identities. Preview digests, signed candidates, approval or revoke/configuration replay must be tied to that actual cut and original results; a Service transport response never proves creation/admission.",
+      "normative_documents": [
+        "zh/extensions/applet-management-source.md",
+        "zh/extensions/realm-actors.md"
+      ],
+      "source_references": [
+        "arkret-rust-sdk/crates/server/src/applet.rs",
+        "coland/crates/http/src/routing/identity/realm_actor_control.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:86d33a96a1e5801b672389b72d7eb96bd2de30f2d949afc4688184435cd7fb81"
+    },
+    {
+      "operation_id": "ak.edge.applet.read.describe.v1",
+      "verification_need": "mock_behavior",
+      "reason": "A concrete known-object request and positive mock response are available. Tests validate canonical schema and observable fixture behavior; this does not certify native authorization, persistence or all domain branches.",
+      "normative_documents": [],
+      "source_references": [
+        "inkson/tests/e2e/mockRemainingOperations.ts",
+        "inkson/tests/contract/remaining-operations.spec.ts"
+      ],
+      "mock_test": {
+        "file": "tests/contract/remaining-operations.spec.ts",
+        "name": "remaining valid request and response contract: ak.edge.applet.read.describe.v1"
+      },
+      "contract_digest": "sha256:391cb09725977e1579d92ff7292cb12d53661337f6a33b7b8db1954efda757ba"
+    },
+    {
+      "operation_id": "ak.edge.applet.read.ping.v1",
+      "verification_need": "mock_behavior",
+      "reason": "A concrete known-object request and positive mock response are available. Tests validate canonical schema and observable fixture behavior; this does not certify native authorization, persistence or all domain branches.",
+      "normative_documents": [],
+      "source_references": [
+        "inkson/tests/e2e/mockRemainingOperations.ts",
+        "inkson/tests/contract/remaining-operations.spec.ts"
+      ],
+      "mock_test": {
+        "file": "tests/contract/remaining-operations.spec.ts",
+        "name": "remaining valid request and response contract: ak.edge.applet.read.ping.v1"
+      },
+      "contract_digest": "sha256:526d3367ad6082cde0a3d9b4ffc277b3651398755c80176bcc1a9fdade229535"
+    },
+    {
+      "operation_id": "ak.edge.applet.read.protocol_metadata.v1",
+      "verification_need": "mock_behavior",
+      "reason": "A concrete known-object request and positive mock response are available. Tests validate canonical schema and observable fixture behavior; this does not certify native authorization, persistence or all domain branches.",
+      "normative_documents": [],
+      "source_references": [
+        "inkson/tests/e2e/mockRemainingOperations.ts",
+        "inkson/tests/contract/remaining-operations.spec.ts"
+      ],
+      "mock_test": {
+        "file": "tests/contract/remaining-operations.spec.ts",
+        "name": "remaining valid request and response contract: ak.edge.applet.read.protocol_metadata.v1"
+      },
+      "contract_digest": "sha256:f9ca911f162bca366416678b813e7645cf6d88518007dcc006bf22e9538c4609"
+    },
+    {
+      "operation_id": "ak.edge.applet.realm.read.resolve.v1",
+      "verification_need": "mock_behavior",
+      "reason": "A concrete known-object request and positive mock response are available. Tests validate canonical schema and observable fixture behavior; this does not certify native authorization, persistence or all domain branches.",
+      "normative_documents": [],
+      "source_references": [
+        "inkson/tests/e2e/mockRemainingOperations.ts",
+        "inkson/tests/contract/remaining-operations.spec.ts"
+      ],
+      "mock_test": {
+        "file": "tests/contract/remaining-operations.spec.ts",
+        "name": "remaining valid request and response contract: ak.edge.applet.realm.read.resolve.v1"
+      },
+      "contract_digest": "sha256:399c346a444d4094a6fa0a6adc348c0c64fce753e488b59d9c4923f3f813e34f"
+    },
+    {
+      "operation_id": "ak.edge.applet.third_party_locations.read.list.v1",
+      "verification_need": "mock_behavior",
+      "reason": "A concrete known-object request and positive mock response are available. Tests validate canonical schema and observable fixture behavior; this does not certify native authorization, persistence or all domain branches.",
+      "normative_documents": [],
+      "source_references": [
+        "inkson/tests/e2e/mockRemainingOperations.ts",
+        "inkson/tests/contract/remaining-operations.spec.ts"
+      ],
+      "mock_test": {
+        "file": "tests/contract/remaining-operations.spec.ts",
+        "name": "remaining valid request and response contract: ak.edge.applet.third_party_locations.read.list.v1"
+      },
+      "contract_digest": "sha256:f9663211bfac1348a751489f9456d9a47c3078d14a41b0221cacc46c6f712631"
+    },
+    {
+      "operation_id": "ak.edge.applet.third_party_users.read.list.v1",
+      "verification_need": "native_fixture_replay",
+      "reason": "The native Bridge resolves all five required Realm/Applet/external tuple coordinates against retained accepted Ghost originals, verifies current governor and manager, and rejects the previous manager after transfer. Browser tests replay only the exact archived request/response at its recorded verification cut; this is not live authorization or a new admission. StandardGrant introspection uses the trusted native test channel.",
+      "normative_documents": [
+        "zh/extensions/realm-actors.md",
+        "zh/extensions/applet-integration.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/identity/realm_actor_material.rs",
+        "arkret-rust-sdk/crates/server/src/applet.rs"
+      ],
+      "mock_test": {
+        "file": "tests/contract/native-read-evidence.spec.ts",
+        "name": "native accepted read replay preserves original contract: ak.edge.applet.third_party_users.read.list.v1"
+      },
+      "contract_digest": "sha256:945ae975a8d35fc0bbfb95117c333016414eaed5df8731db074f721b5cda3988"
+    },
+    {
+      "operation_id": "ak.edge.push.command.apply_registration.v1",
+      "verification_need": "native_authority",
+      "reason": "Needs a real Station-approved Gateway registration and authenticated source-partitioned durable state. Registration replay/revocation and notify must use the same installed source, with exact body digest/HTTP signature; a client-supplied route/token is not authorization.",
+      "normative_documents": [
+        "zh/sync/authority-commit-log.md"
+      ],
+      "source_references": [
+        "arkret-rust-sdk/crates/http-client/src/endpoints/data.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:a4e7d91a8b5b0f4976da95b264cc1952bcaaf5c9415e11ba15d9d1828416f344"
+    },
+    {
+      "operation_id": "ak.edge.push.command.notify.v1",
+      "verification_need": "native_authority",
+      "reason": "Needs a real Station-approved Gateway registration and authenticated source-partitioned durable state. Registration replay/revocation and notify must use the same installed source, with exact body digest/HTTP signature; a client-supplied route/token is not authorization.",
+      "normative_documents": [
+        "zh/sync/authority-commit-log.md"
+      ],
+      "source_references": [
+        "arkret-rust-sdk/crates/http-client/src/endpoints/data.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:4241a00b30e5a99bc910e2954ca081176d6856bf42aa1fadc838ec19e164bd8b"
+    },
+    {
+      "operation_id": "ak.gate.account.command.abandon_identity_creation.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires the Account Authority's authenticated holder/DPoP context and its actual issuer/onboarding/session/device/revocation ledger. OIDC exchange, leases/fences, accepted device possession, ordered PCR admission and terminal replay cannot be established by a client-created response. The exact operation obligations are retained verbatim in normative_notes.",
+      "normative_documents": [
+        "zh/identity/account-lifecycle.md",
+        "zh/crypto-media/device-lifecycle.md"
+      ],
+      "source_references": [
+        "coauth/crates/backend/src/handlers/arkret/account_handoff.rs",
+        "coauth/crates/backend/src/handlers/arkret/device_pairing.rs",
+        "coauth/crates/backend/src/handlers/arkret/session_grant/session_logout.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:40f87ffe0d0f6c5f6c83a74db2ca41c2ce63025595364fcd95e4e0edec3d4151"
+    },
+    {
+      "operation_id": "ak.gate.account.command.finalize_device_pairing.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires the Account Authority's authenticated holder/DPoP context and its actual issuer/onboarding/session/device/revocation ledger. OIDC exchange, leases/fences, accepted device possession, ordered PCR admission and terminal replay cannot be established by a client-created response. The exact operation obligations are retained verbatim in normative_notes.",
+      "normative_documents": [
+        "zh/identity/account-lifecycle.md",
+        "zh/crypto-media/device-lifecycle.md"
+      ],
+      "source_references": [
+        "coauth/crates/backend/src/handlers/arkret/account_handoff.rs",
+        "coauth/crates/backend/src/handlers/arkret/device_pairing.rs",
+        "coauth/crates/backend/src/handlers/arkret/session_grant/session_logout.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:60d80949b71fd3851cac971365775398dd2f98e6cb9e8f1dcf77234aa55f93d0"
+    },
+    {
+      "operation_id": "ak.gate.account.command.issue_did_binding_challenge.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires the Account Authority's authenticated holder/DPoP context and its actual issuer/onboarding/session/device/revocation ledger. OIDC exchange, leases/fences, accepted device possession, ordered PCR admission and terminal replay cannot be established by a client-created response. The exact operation obligations are retained verbatim in normative_notes.",
+      "normative_documents": [
+        "zh/identity/account-lifecycle.md",
+        "zh/crypto-media/device-lifecycle.md"
+      ],
+      "source_references": [
+        "coauth/crates/backend/src/handlers/arkret/account_handoff.rs",
+        "coauth/crates/backend/src/handlers/arkret/device_pairing.rs",
+        "coauth/crates/backend/src/handlers/arkret/session_grant/session_logout.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:4f938a30c2dfc6c734a7cbea76c3e0a1085d3a94a004ab0fa9c3f127e1b71bb5"
+    },
+    {
+      "operation_id": "ak.gate.account.command.issue_identity_binding_challenge.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires the Account Authority's authenticated holder/DPoP context and its actual issuer/onboarding/session/device/revocation ledger. OIDC exchange, leases/fences, accepted device possession, ordered PCR admission and terminal replay cannot be established by a client-created response. The exact operation obligations are retained verbatim in normative_notes.",
+      "normative_documents": [
+        "zh/identity/account-lifecycle.md",
+        "zh/crypto-media/device-lifecycle.md"
+      ],
+      "source_references": [
+        "coauth/crates/backend/src/handlers/arkret/account_handoff.rs",
+        "coauth/crates/backend/src/handlers/arkret/device_pairing.rs",
+        "coauth/crates/backend/src/handlers/arkret/session_grant/session_logout.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:16bec845267022a9eadcc4ea5a36bd87ddab9a81516d5f88493f2e5124ced9c6"
+    },
+    {
+      "operation_id": "ak.gate.account.command.issue_recovery_completion_grant.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires the Account Authority's authenticated holder/DPoP context and its actual issuer/onboarding/session/device/revocation ledger. OIDC exchange, leases/fences, accepted device possession, ordered PCR admission and terminal replay cannot be established by a client-created response. The exact operation obligations are retained verbatim in normative_notes.",
+      "normative_documents": [
+        "zh/identity/account-lifecycle.md",
+        "zh/crypto-media/device-lifecycle.md"
+      ],
+      "source_references": [
+        "coauth/crates/backend/src/handlers/arkret/account_handoff.rs",
+        "coauth/crates/backend/src/handlers/arkret/device_pairing.rs",
+        "coauth/crates/backend/src/handlers/arkret/session_grant/session_logout.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:9084b9955011f7b94c2b5dc5f07bfe0d504d369aa0b53050155e7ae79e113cef"
+    },
+    {
+      "operation_id": "ak.gate.account.command.issue_session_grant.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires the Account Authority's authenticated holder/DPoP context and its actual issuer/onboarding/session/device/revocation ledger. OIDC exchange, leases/fences, accepted device possession, ordered PCR admission and terminal replay cannot be established by a client-created response. The exact operation obligations are retained verbatim in normative_notes.",
+      "normative_documents": [
+        "zh/identity/account-lifecycle.md",
+        "zh/crypto-media/device-lifecycle.md"
+      ],
+      "source_references": [
+        "coauth/crates/backend/src/handlers/arkret/account_handoff.rs",
+        "coauth/crates/backend/src/handlers/arkret/device_pairing.rs",
+        "coauth/crates/backend/src/handlers/arkret/session_grant/session_logout.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:74ba6df72f4a1e669b80418d2635530aded3aa5a31b759434f9b68c478fcdf38"
+    },
+    {
+      "operation_id": "ak.gate.account.command.logout.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires the Account Authority's authenticated holder/DPoP context and its actual issuer/onboarding/session/device/revocation ledger. OIDC exchange, leases/fences, accepted device possession, ordered PCR admission and terminal replay cannot be established by a client-created response. The exact operation obligations are retained verbatim in normative_notes.",
+      "normative_documents": [
+        "zh/identity/account-lifecycle.md",
+        "zh/crypto-media/device-lifecycle.md"
+      ],
+      "source_references": [
+        "coauth/crates/backend/src/handlers/arkret/account_handoff.rs",
+        "coauth/crates/backend/src/handlers/arkret/device_pairing.rs",
+        "coauth/crates/backend/src/handlers/arkret/session_grant/session_logout.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:78c8e8990dc526087db3f44a6db5cb530cab95987e91f4165a8e1c7b2a32fbde"
+    },
+    {
+      "operation_id": "ak.gate.account.command.refresh_session_grant.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires the Account Authority's authenticated holder/DPoP context and its actual issuer/onboarding/session/device/revocation ledger. OIDC exchange, leases/fences, accepted device possession, ordered PCR admission and terminal replay cannot be established by a client-created response. The exact operation obligations are retained verbatim in normative_notes.",
+      "normative_documents": [
+        "zh/identity/account-lifecycle.md",
+        "zh/crypto-media/device-lifecycle.md"
+      ],
+      "source_references": [
+        "coauth/crates/backend/src/handlers/arkret/account_handoff.rs",
+        "coauth/crates/backend/src/handlers/arkret/device_pairing.rs",
+        "coauth/crates/backend/src/handlers/arkret/session_grant/session_logout.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:e7c4547eee3ba1ede6c5d8811244861a9823c658d083aee9c9573621782992f6"
+    },
+    {
+      "operation_id": "ak.gate.account.command.register.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires the Account Authority's authenticated holder/DPoP context and its actual issuer/onboarding/session/device/revocation ledger. OIDC exchange, leases/fences, accepted device possession, ordered PCR admission and terminal replay cannot be established by a client-created response. The exact operation obligations are retained verbatim in normative_notes.",
+      "normative_documents": [
+        "zh/identity/account-lifecycle.md",
+        "zh/crypto-media/device-lifecycle.md"
+      ],
+      "source_references": [
+        "coauth/crates/backend/src/handlers/arkret/account_handoff.rs",
+        "coauth/crates/backend/src/handlers/arkret/device_pairing.rs",
+        "coauth/crates/backend/src/handlers/arkret/session_grant/session_logout.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:abd45e7ce3632898fd322cc4d2f939b149d64b8e60d367ad2fd9405f93abbfd0"
+    },
+    {
+      "operation_id": "ak.gate.account.command.request_erasure.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires the Account Authority's authenticated holder/DPoP context and its actual issuer/onboarding/session/device/revocation ledger. OIDC exchange, leases/fences, accepted device possession, ordered PCR admission and terminal replay cannot be established by a client-created response. The exact operation obligations are retained verbatim in normative_notes. The native erasure implementation and its direct database receipt discovery were reverted at the user's request. A new native contract requires the original issuer ledger, accepted status history and actual physical-erasure receipt; prior evidence does not cover the restored implementation.",
+      "normative_documents": [
+        "zh/identity/account-lifecycle.md",
+        "zh/crypto-media/device-lifecycle.md"
+      ],
+      "source_references": [
+        "coauth/crates/backend/src/handlers/arkret/account_handoff.rs",
+        "coauth/crates/backend/src/handlers/arkret/device_pairing.rs",
+        "coauth/crates/backend/src/handlers/arkret/session_grant/session_logout.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:fa0436a4739499cc443bae928973c7f0c5fc392438ea492075a82ff99d9c217e"
+    },
+    {
+      "operation_id": "ak.gate.account.exchange.create_handoff.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires the Account Authority's authenticated holder/DPoP context and its actual issuer/onboarding/session/device/revocation ledger. OIDC exchange, leases/fences, accepted device possession, ordered PCR admission and terminal replay cannot be established by a client-created response. The exact operation obligations are retained verbatim in normative_notes.",
+      "normative_documents": [
+        "zh/identity/account-lifecycle.md",
+        "zh/crypto-media/device-lifecycle.md"
+      ],
+      "source_references": [
+        "coauth/crates/backend/src/handlers/arkret/account_handoff.rs",
+        "coauth/crates/backend/src/handlers/arkret/device_pairing.rs",
+        "coauth/crates/backend/src/handlers/arkret/session_grant/session_logout.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:f600d7d56a82ce53520d0847c2bd4c7317be7916905c3a59a67dfc7152b820d1"
+    },
+    {
+      "operation_id": "ak.gate.account.read.claim_device_pairing_code.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires the Account Authority's authenticated holder/DPoP context and its actual issuer/onboarding/session/device/revocation ledger. OIDC exchange, leases/fences, accepted device possession, ordered PCR admission and terminal replay cannot be established by a client-created response. The exact operation obligations are retained verbatim in normative_notes.",
+      "normative_documents": [
+        "zh/identity/account-lifecycle.md",
+        "zh/crypto-media/device-lifecycle.md"
+      ],
+      "source_references": [
+        "coauth/crates/backend/src/handlers/arkret/account_handoff.rs",
+        "coauth/crates/backend/src/handlers/arkret/device_pairing.rs",
+        "coauth/crates/backend/src/handlers/arkret/session_grant/session_logout.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:28074c909ffe9193e56e02b3e8de374e6ed05169a3d69de65622cb3cc7cb10cf"
+    },
+    {
+      "operation_id": "ak.gate.account.read.onboarding.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires the Account Authority's authenticated holder/DPoP context and its actual issuer/onboarding/session/device/revocation ledger. OIDC exchange, leases/fences, accepted device possession, ordered PCR admission and terminal replay cannot be established by a client-created response. The exact operation obligations are retained verbatim in normative_notes.",
+      "normative_documents": [
+        "zh/identity/account-lifecycle.md",
+        "zh/crypto-media/device-lifecycle.md"
+      ],
+      "source_references": [
+        "coauth/crates/backend/src/handlers/arkret/account_handoff.rs",
+        "coauth/crates/backend/src/handlers/arkret/device_pairing.rs",
+        "coauth/crates/backend/src/handlers/arkret/session_grant/session_logout.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:6a2fad60f6cb0378fd2ff7a7cf9cbfa1208acbacb35f970efc7704464c388704"
+    },
+    {
+      "operation_id": "ak.open.agent_pairing.command.submit_runtime_key_request.v1",
+      "verification_need": "mock_behavior",
+      "reason": "Mock renewal actually issues and invalidates a body-only fixture token; SDK verifies fresh Ed25519 PoP and stable raw-key binding. Same-binding refresh preserves candidate identity; different keys conflict. Poll covers submitted-but-not-approved state, uniform not_found and Retry-After. Controller approval, accepted authorization evidence and durable native ledger remain unverified.",
+      "normative_documents": [
+        "zh/identity/key-management.md"
+      ],
+      "source_references": [
+        "inkson/tests/e2e/mockRemainingOperations.ts",
+        "inkson/src/bin/inkson-wire/operation_fixture.rs"
+      ],
+      "mock_test": {
+        "file": "tests/contract/remaining-operations.spec.ts",
+        "name": "remaining valid request and response contract: ak.open.agent_pairing.command.submit_runtime_key_request.v1"
+      },
+      "contract_digest": "sha256:ff3985c56b2cd3236a4da96ee12143cd1c3c7dce89ea3d5f8c944f1ca1fd24b8"
+    },
+    {
+      "operation_id": "ak.open.agent_pairing.read.resolve.v1",
+      "verification_need": "mock_behavior",
+      "reason": "Mock renewal actually issues and invalidates a body-only fixture token; SDK verifies fresh Ed25519 PoP and stable raw-key binding. Same-binding refresh preserves candidate identity; different keys conflict. Poll covers submitted-but-not-approved state, uniform not_found and Retry-After. Controller approval, accepted authorization evidence and durable native ledger remain unverified.",
+      "normative_documents": [
+        "zh/identity/key-management.md"
+      ],
+      "source_references": [
+        "inkson/tests/e2e/mockRemainingOperations.ts",
+        "inkson/src/bin/inkson-wire/operation_fixture.rs"
+      ],
+      "mock_test": {
+        "file": "tests/contract/remaining-operations.spec.ts",
+        "name": "remaining valid request and response contract: ak.open.agent_pairing.read.resolve.v1"
+      },
+      "contract_digest": "sha256:75a2f1297ae566bd8ba0d4d1e1ea008a0ebf30bea86e322ade657ee3b1a5205e"
+    },
+    {
+      "operation_id": "ak.open.agent_pairing.read.runtime_key_request_status.v1",
+      "verification_need": "mock_behavior",
+      "reason": "Mock renewal actually issues and invalidates a body-only fixture token; SDK verifies fresh Ed25519 PoP and stable raw-key binding. Same-binding refresh preserves candidate identity; different keys conflict. Poll covers submitted-but-not-approved state, uniform not_found and Retry-After. Controller approval, accepted authorization evidence and durable native ledger remain unverified.",
+      "normative_documents": [
+        "zh/identity/key-management.md"
+      ],
+      "source_references": [
+        "inkson/tests/e2e/mockRemainingOperations.ts",
+        "inkson/src/bin/inkson-wire/operation_fixture.rs"
+      ],
+      "mock_test": {
+        "file": "tests/contract/remaining-operations.spec.ts",
+        "name": "remaining valid request and response contract: ak.open.agent_pairing.read.runtime_key_request_status.v1"
+      },
+      "contract_digest": "sha256:0648221b4406c4b530a863ee5eaee6532ae9488fc21de1ab1efb257e5270cbe3"
+    },
+    {
+      "operation_id": "ak.open.identity.read.resolution.v1",
+      "verification_need": "native_fixture_replay",
+      "reason": "The native Station serves the accepted principal projection and method history. The SDK verifies the complete method history and Station attestation against its actual authenticated Service resolution. Browser tests replay only the exact archived request/response at its recorded verification cut; this is not live authorization or a new admission. StandardGrant introspection uses the trusted native test channel.",
+      "normative_documents": [
+        "zh/identity/identity-did.md"
+      ],
+      "source_references": [
+        "arkret-rust-sdk/crates/models-identity/src/identity_resolution.rs",
+        "coland/crates/http/src/routing/identity/account/current_principal.rs"
+      ],
+      "mock_test": {
+        "file": "tests/contract/native-read-evidence.spec.ts",
+        "name": "native accepted read replay preserves original contract: ak.open.identity.read.resolution.v1"
+      },
+      "contract_digest": "sha256:43b628d2a8d03770c4c9268815be73b31c27167c7d26d11a27d81e2f3ffe467c"
+    },
+    {
+      "operation_id": "ak.open.mimi.command.notify.v1",
+      "verification_need": "native_authority",
+      "reason": "Provider identity and accepted room/recipient routing must gate the native notification effect; HTTP acceptance cannot be relabeled delivery.",
+      "normative_documents": [
+        "zh/extensions/mimi-interop.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/interop/mimi.rs",
+        "coland/crates/http/src/state/authority_mimi_unit.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:7f9cb1a2e03ebfe20f4a548e7bebc3846520a2e6ee631d8f3dad23e57b115b4d"
+    },
+    {
+      "operation_id": "ak.open.mimi.command.proxy_download.v1",
+      "verification_need": "native_authority",
+      "reason": "Authorized room/blob binding, provider identity and media privacy/classification policy must gate download; an arbitrary URL or opaque success is insufficient.",
+      "normative_documents": [
+        "zh/extensions/mimi-interop.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/interop/mimi.rs",
+        "coland/crates/http/src/state/authority_mimi_unit.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:72b36e962880e915db85b00d24fdbfb1c60b4a689869740789c47e176688b67c"
+    },
+    {
+      "operation_id": "ak.open.mimi.command.report_abuse.v1",
+      "verification_need": "native_authority",
+      "reason": "Provider-scoped full-body hash must atomically bind the service-authored Event and Commit with exact replay and conflicting-body refusal.",
+      "normative_documents": [
+        "zh/extensions/mimi-interop.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/interop/mimi.rs",
+        "coland/crates/http/src/state/authority_mimi_unit.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:b9da2dd2d50fdced3101a8d899b0f623436413d51bc6c02d99bf97c3c4774b57"
+    },
+    {
+      "operation_id": "ak.open.mimi.command.request_consent.v1",
+      "verification_need": "native_authority",
+      "reason": "Provider authentication and holder-private consent-contact admission/quarantine must not become a public permission oracle.",
+      "normative_documents": [
+        "zh/extensions/mimi-interop.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/interop/mimi.rs",
+        "coland/crates/http/src/state/authority_mimi_unit.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:9935092da38be953e584465cf1d9e3d373642b34e447961eec6a8c2046b64520"
+    },
+    {
+      "operation_id": "ak.open.mimi.command.submit_message.v1",
+      "verification_need": "native_authority",
+      "reason": "Verified RFC 9420 group identity, accepted room binding, provider role and original producer authority precede Event construction; observers must have zero effects.",
+      "normative_documents": [
+        "zh/extensions/mimi-interop.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/interop/mimi.rs",
+        "coland/crates/http/src/state/authority_mimi_unit.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:f41f9f06498c6a80f7550a8de06631c7b93cf633f02636ade91e922e62878a01"
+    },
+    {
+      "operation_id": "ak.open.mimi.command.update_consent.v1",
+      "verification_need": "native_authority",
+      "reason": "Original holder-signed complete replacement, private exact-peer correlation, PCR authority and prior-current CAS are required.",
+      "normative_documents": [
+        "zh/extensions/mimi-interop.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/interop/mimi.rs",
+        "coland/crates/http/src/state/authority_mimi_unit.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:be213b6a9a5c592b59c7d96b96d161ab20adb7e41a7895d28ed9f6b10c1db1ad"
+    },
+    {
+      "operation_id": "ak.open.mimi.command.update_room.v1",
+      "verification_need": "native_authority",
+      "reason": "Provider-bound accepted room identity and the actual native governance/producer permission gate are needed before any room update.",
+      "normative_documents": [
+        "zh/extensions/mimi-interop.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/interop/mimi.rs",
+        "coland/crates/http/src/state/authority_mimi_unit.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:854dc3699c771887118cf231a70c7552011f44949cd7dbe9f31e15fc64e28ac0"
+    },
+    {
+      "operation_id": "ak.open.mimi.exchange.request_key_material.v1",
+      "verification_need": "native_authority",
+      "reason": "Native destination claim CAS and original signed claim outcome are required; Provider-ID, source and destination service binding cannot be replaced by a key-array stub.",
+      "normative_documents": [
+        "zh/extensions/mimi-interop.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/interop/mimi.rs",
+        "coland/crates/http/src/state/authority_mimi_unit.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:0e54bac98e174cc59fb702604a2259fff99df2d4c318ff4715350350eb94e6e7"
+    },
+    {
+      "operation_id": "ak.open.mimi.read.identifiers.v1",
+      "verification_need": "native_authority",
+      "reason": "Provider-scoped identifier correlation must be bound to accepted actor/room identity and anti-enumeration policy.",
+      "normative_documents": [
+        "zh/extensions/mimi-interop.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/interop/mimi.rs",
+        "coland/crates/http/src/state/authority_mimi_unit.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:65dd2aacbf41ab8c0600447cd558a94cef9acc67976dd2b69be2ff9e49e37eb7"
+    },
+    {
+      "operation_id": "ak.open.realm_authority.read.bundle.v1",
+      "verification_need": "mock_behavior",
+      "reason": "A concrete known-object request and positive mock response are available. Tests validate canonical schema and observable fixture behavior; this does not certify native authorization, persistence or all domain branches.",
+      "normative_documents": [],
+      "source_references": [
+        "inkson/tests/e2e/mockRemainingOperations.ts",
+        "inkson/tests/contract/remaining-operations.spec.ts"
+      ],
+      "mock_test": {
+        "file": "tests/contract/remaining-operations.spec.ts",
+        "name": "remaining valid request and response contract: ak.open.realm_authority.read.bundle.v1"
+      },
+      "contract_digest": "sha256:7e7343d6462918189591c771a8382b8c0e649703585b1ea3affb58cc35a01073"
+    },
+    {
+      "operation_id": "ak.peer.account_status.command.submit.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires the Account Authority issuer's original contiguous signed sequence and exact existing receiver/account relationship. Submit needs atomic monotonic replica and physical-erasure-intent acceptance; resolve needs original authorized ledger range. Current fixture has neither issuer history nor receiver replica, so no valid original request/response is claimed. The native erasure implementation and its direct database receipt discovery were reverted at the user's request. A new native contract requires the original issuer ledger, accepted status history and actual physical-erasure receipt; prior evidence does not cover the restored implementation.",
+      "normative_documents": [
+        "zh/identity/account-lifecycle.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/events/peer.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:5bb22137e1189314df5b99f48356018bc8350786e0d65f07c565121d562259af"
+    },
+    {
+      "operation_id": "ak.peer.account_status.read.resolve.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires the Account Authority issuer's original contiguous signed sequence and exact existing receiver/account relationship. Submit needs atomic monotonic replica and physical-erasure-intent acceptance; resolve needs original authorized ledger range. Current fixture has neither issuer history nor receiver replica, so no valid original request/response is claimed. The native erasure implementation and its direct database receipt discovery were reverted at the user's request. A new native contract requires the original issuer ledger, accepted status history and actual physical-erasure receipt; prior evidence does not cover the restored implementation.",
+      "normative_documents": [
+        "zh/identity/account-lifecycle.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/events/peer.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:ec31d88430dfda0fa6ffa9026836dbd02a926e6ca40fcefcc118c54bbeee461d"
+    },
+    {
+      "operation_id": "ak.peer.contacts.command.submit.v1",
+      "verification_need": "native_authority",
+      "reason": "Existing client Contact views do not contain the five original holder-signed exchange facts, independently verified producer closures, per-round glare choice or source-confirmed effects. A positive peer submit requires both exact counterpart identities and durable native current/replay lineage; a client projection is not an accepted Contact exchange.",
+      "normative_documents": [
+        "zh/sync/authority-commit-log.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/events/peer.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:c9933f2c3c000b2dae5676679fb471e8d129b22894ba65139c5fcdb60c43407e"
+    },
+    {
+      "operation_id": "ak.peer.erasure_receipt.command.submit.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires an actually completed native deletion and original signed receipt plus retained stub bound to its exact accepted Event or AccountStatusRecord trigger. Submit must replay the same acceptance without triggering deletion; get needs original retained bytes and auditor authority. None can be reconstructed from current fixture values. The native erasure implementation and its direct database receipt discovery were reverted at the user's request. A new native contract requires the original issuer ledger, accepted status history and actual physical-erasure receipt; prior evidence does not cover the restored implementation.",
+      "normative_documents": [
+        "zh/identity/account-lifecycle.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/federation/erasure_receipts.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:f282437682fd87a5139ae843436c2e2c6786d83348ec18b60d6acfd33482a445"
+    },
+    {
+      "operation_id": "ak.peer.erasure_receipt.resource.get.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires an actually completed native deletion and original signed receipt plus retained stub bound to its exact accepted Event or AccountStatusRecord trigger. Submit must replay the same acceptance without triggering deletion; get needs original retained bytes and auditor authority. None can be reconstructed from current fixture values. The native erasure implementation and its direct database receipt discovery were reverted at the user's request. A new native contract requires the original issuer ledger, accepted status history and actual physical-erasure receipt; prior evidence does not cover the restored implementation.",
+      "normative_documents": [
+        "zh/identity/account-lifecycle.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/federation/erasure_receipts.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:9a1a469ff96e3d63c05f6f0280d1b6af65a2e4aaf727a6497d2dda28e7087796"
+    },
+    {
+      "operation_id": "ak.peer.events.command.submit.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires real receiver admission/replication authority and branch-specific producer closures, exact inner-unit replay fences and accepted original Commit provenance. Existing scan history is source material only and cannot prove authorized receiver first admission, registered atomic materialization or zero-write conflicting replay.",
+      "normative_documents": [
+        "zh/sync/authority-commit-log.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/events/peer.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:cf3d92c297f538967aa3ad5e9dd6e389c977ba1a1bd161583397f2dc7050522c"
+    },
+    {
+      "operation_id": "ak.peer.committed_event.read.scan.v1",
+      "verification_need": "mock_behavior",
+      "reason": "Existing verified native scan/watch fixture can supply the original values and Commit-bound signer facts. Mock service context checks source/destination and forbids forwarded user credentials; real RFC 9421 authentication and replication authorization are not claimed.",
+      "normative_documents": [
+        "zh/sync/authority-commit-log.md"
+      ],
+      "source_references": [
+        "inkson/tests/e2e/mockRemainingOperations.ts",
+        "inkson/src/bin/inkson-wire/realm_fixture.rs"
+      ],
+      "mock_test": {
+        "file": "tests/contract/remaining-operations.spec.ts",
+        "name": "remaining valid request and response contract: ak.peer.committed_event.read.scan.v1"
+      },
+      "contract_digest": "sha256:7e88bca697faf440f2d1908cc5fcf8873c5e96b091496d79e410c5de441fe271"
+    },
+    {
+      "operation_id": "ak.peer.invites.command.submit.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires authenticated source/destination Stations, original Invite to the complete recipient Account and introduction evidence evaluated by the recipient's actual receive policy. The UI invite fixture does not establish recipient Station acceptance or its private delivery transaction.",
+      "normative_documents": [
+        "zh/sync/invite-addressing.md",
+        "zh/models/governance-objects.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/invites.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:161b739c4e7d32816e4b00b80b97c89b9876826191ed958ec1f805ea6305c51e"
+    },
+    {
+      "operation_id": "ak.peer.keys.keypackages.command.claim.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires the destination authority's actual KeyPackage inventory/claim ledger, exact endpoint authorization and original claim receipt. Claim/consume/revoke are atomic transitions; query replays the original signed outcome without reconstructing keys or changing state.",
+      "normative_documents": [
+        "zh/identity/key-management.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/mls_keypackage_native.rs",
+        "coland/crates/http/src/routing/mls_keypackage_upload.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:5e4dc2dd1ee3b2297b0bf403bd094db6adb3accb825957c7fc01a497f1cf6a7f"
+    },
+    {
+      "operation_id": "ak.peer.keys.keypackages.read.claim.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires the destination authority's actual KeyPackage inventory/claim ledger, exact endpoint authorization and original claim receipt. Claim/consume/revoke are atomic transitions; query replays the original signed outcome without reconstructing keys or changing state.",
+      "normative_documents": [
+        "zh/identity/key-management.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/mls_keypackage_native.rs",
+        "coland/crates/http/src/routing/mls_keypackage_upload.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:6e4cf891a1c0d9f142e79f043e0b2b1002887edf89009d194c07775c51626bec"
+    },
+    {
+      "operation_id": "ak.peer.keys.read.lookup.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires the destination Station's own current accepted Contact or joined-Realm relationship, purpose gate, target device material and original key attestation. Foreign user credentials must never be forwarded. Existing local device fixture cannot prove destination authorization, omission privacy or final delivery fences.",
+      "normative_documents": [
+        "zh/identity/key-management.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/mls_keypackage_native.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:fb9fb19f2fcf25794e1c0f63c698f6eaedfd390004bfa1ac005a6fb58095a96d"
+    },
+    {
+      "operation_id": "ak.peer.mls.command.attest_add.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires already accepted exact MLS Commit Add provenance, verified recipient KeyPackage claim and durable recipient-Station attestation. Governance installation must bind frozen original Proposal provenance with duplicate/conflicting-byte handling; no accepted Add attestation fixture exists. Requires the real accepted MLS Genesis and Commit Add, exact original recipient KeyPackage claim/Welcome and a recipient-Station-produced durable attestation. The actual outbox acknowledgement and governor installation, full independent histories, consumed Add provenance, recipient durable state and exact peer replay must all be retained; a scenario-created attestation or ACK alone earns no credit.",
+      "normative_documents": [
+        "zh/sync/authority-commit-log.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/mls_keypackage_native.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:16b22209958c8a645a6a7da7a6e8699749b78df5214ece9ea7a883edbe2eb3a9"
+    },
+    {
+      "operation_id": "ak.peer.mls.read.group_state_material.v1",
+      "verification_need": "native_fixture_replay",
+      "reason": "The member Station sends a real Service HTTP signature to the current governor for the accepted target cut and Genesis Blob references. The SDK validates the returned public bytes against the actual joined group. Browser tests replay only the exact archived request/response at its recorded verification cut; this is not live authorization or a new admission. StandardGrant introspection uses the trusted native test channel.",
+      "normative_documents": [
+        "zh/sync/authority-commit-log.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/mls_keypackage_native.rs",
+        "arkret-rust-sdk/crates/models-collaboration/src/objects/read_receipts.rs"
+      ],
+      "mock_test": {
+        "file": "tests/contract/native-read-evidence.spec.ts",
+        "name": "native accepted read replay preserves original contract: ak.peer.mls.read.group_state_material.v1"
+      },
+      "contract_digest": "sha256:469b3a923db0f68f125028b93dfaba348b15edf07d467c42e46daacf64cbc93b"
+    },
+    {
+      "operation_id": "ak.peer.mls.read.roster_authority.v1",
+      "verification_need": "native_fixture_replay",
+      "reason": "The actual member Station reads signed roster pages through the native peer route, with verified governor Service resolution and original Add attestor closures. Changed records digests must fail SDK verification. Browser tests replay only the exact archived request/response at its recorded verification cut; this is not live authorization or a new admission. StandardGrant introspection uses the trusted native test channel.",
+      "normative_documents": [
+        "zh/sync/authority-commit-log.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/mls_keypackage_native.rs",
+        "arkret-rust-sdk/crates/models-collaboration/src/objects/read_receipts.rs"
+      ],
+      "mock_test": {
+        "file": "tests/contract/native-read-evidence.spec.ts",
+        "name": "native accepted read replay preserves original contract: ak.peer.mls.read.roster_authority.v1"
+      },
+      "contract_digest": "sha256:0614d659864073dc52c8d17da5abd6702bc2946d8ef0e3eb6798e2acc7866e4a"
+    },
+    {
+      "operation_id": "ak.peer.realm_authority.command.handoff.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires eligible immutable genesis purpose, both old and new governance authorities, complete imported snapshot/stream heads and original dual-signed handoff transaction. Human and user-managed Agent PCRs must reject before any effects. A public bundle or standalone DID is not handoff permission.",
+      "normative_documents": [
+        "zh/sync/authority-commit-log.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/events/peer.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:63638b5b4b0a4e999fbd0705de645f4c3e20a40843a42ac2a27c0e9c5f5cdd24"
+    },
+    {
+      "operation_id": "ak.peer.realm_join.read.bootstrap.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires independently authenticated source/destination Stations and the current governor's accepted exact invite/audience or current member opening Commit. Preview must implement private non-enumeration and policy; bootstrap must bind original qualified signed snapshot/history and fresh nonce. Self UI join preview is a separate carrier and not proof of these peer contracts.",
+      "normative_documents": [
+        "zh/sync/authority-commit-log.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/events/peer.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:b159252df06d3e47a03a9105065f1ddb88631f07d4683bc86ae23c796becaabe"
+    },
+    {
+      "operation_id": "ak.peer.realm_join.read.preview.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires independently authenticated source/destination Stations and the current governor's accepted exact invite/audience or current member opening Commit. Preview must implement private non-enumeration and policy; bootstrap must bind original qualified signed snapshot/history and fresh nonce. Self UI join preview is a separate carrier and not proof of these peer contracts.",
+      "normative_documents": [
+        "zh/sync/authority-commit-log.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/events/peer.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:f4b775159a3f54cb5e43402e0ccee862bc0b99a8c71a949e96ef16eff5805309"
+    },
+    {
+      "operation_id": "ak.peer.signal.command.relay.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires the native transient encrypted rail's actual source identity, destination/current scope authorization and forwarding behavior. No Event or Commit may be created and HTTP acceptance is not delivery proof. Existing self Signal mock does not exercise the service-authenticated peer relay or its zero-durable-effect gate.",
+      "normative_documents": [
+        "zh/sync/authority-commit-log.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/events/sync/signal.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:8783d0fe679438b44968a941e3035d6cb2ab5fe7fa102629aae8e2375d1dee25"
+    },
+    {
+      "operation_id": "ak.root.identity.command.submit_did_operation.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires a real registry/recovery owner and original method-native control or accepted registration receipt. Issuer-local durable uniqueness, challenges and exact publication/control binding cannot be supplied by the read-only raw DID-document fixture.",
+      "normative_documents": [
+        "zh/identity/identity-did.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/identity/did/endpoints.rs",
+        "coland/crates/http/src/routing/identity/service_registration.rs",
+        "coland/crates/http/src/routing/identity/organization_registration.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:4cac333448aa090cd7099292998789b02b9679f4fcde54bff49606e40464bab9"
+    },
+    {
+      "operation_id": "ak.root.identity.document.resource.get.v1",
+      "verification_need": "mock_behavior",
+      "reason": "A concrete known-object request and positive mock response are available. Tests validate canonical schema and observable fixture behavior; this does not certify native authorization, persistence or all domain branches.",
+      "normative_documents": [],
+      "source_references": [
+        "inkson/tests/e2e/mockRemainingOperations.ts",
+        "inkson/tests/contract/remaining-operations.spec.ts"
+      ],
+      "mock_test": {
+        "file": "tests/contract/remaining-operations.spec.ts",
+        "name": "remaining valid request and response contract: ak.root.identity.document.resource.get.v1"
+      },
+      "contract_digest": "sha256:97d860764bc8ba02c271de21a02f1f9eeb36dc8053e859299c8772ad509635ff"
+    },
+    {
+      "operation_id": "ak.root.identity.log.read.list.v1",
+      "verification_need": "mock_behavior",
+      "reason": "A concrete known-object request and positive mock response are available. Tests validate canonical schema and observable fixture behavior; this does not certify native authorization, persistence or all domain branches.",
+      "normative_documents": [],
+      "source_references": [
+        "inkson/tests/e2e/mockRemainingOperations.ts",
+        "inkson/tests/contract/remaining-operations.spec.ts"
+      ],
+      "mock_test": {
+        "file": "tests/contract/remaining-operations.spec.ts",
+        "name": "remaining valid request and response contract: ak.root.identity.log.read.list.v1"
+      },
+      "contract_digest": "sha256:cccd85d4b5548938136b7fdcbdf12bfd412e412d3b283bfefe5bb1ade63d0847"
+    },
+    {
+      "operation_id": "ak.root.identity.organization_registration.command.ensure.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires a real registry/recovery owner and original method-native control or accepted registration receipt. Issuer-local durable uniqueness, challenges and exact publication/control binding cannot be supplied by the read-only raw DID-document fixture.",
+      "normative_documents": [
+        "zh/identity/identity-did.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/identity/did/endpoints.rs",
+        "coland/crates/http/src/routing/identity/service_registration.rs",
+        "coland/crates/http/src/routing/identity/organization_registration.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:f11c0832dd40c27af55e82649fce62768c6680b666b98a7da4b79dc7b6069265"
+    },
+    {
+      "operation_id": "ak.root.identity.organization_registration.command.prepare.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires a real registry/recovery owner and original method-native control or accepted registration receipt. Issuer-local durable uniqueness, challenges and exact publication/control binding cannot be supplied by the read-only raw DID-document fixture.",
+      "normative_documents": [
+        "zh/identity/identity-did.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/identity/did/endpoints.rs",
+        "coland/crates/http/src/routing/identity/service_registration.rs",
+        "coland/crates/http/src/routing/identity/organization_registration.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:8ee27e736297fde6abb41ac337190c97f12227daed40ac8692fde9d7cd70283a"
+    },
+    {
+      "operation_id": "ak.root.identity.organization_registration.command.refresh.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires a real registry/recovery owner and original method-native control or accepted registration receipt. Issuer-local durable uniqueness, challenges and exact publication/control binding cannot be supplied by the read-only raw DID-document fixture.",
+      "normative_documents": [
+        "zh/identity/identity-did.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/identity/did/endpoints.rs",
+        "coland/crates/http/src/routing/identity/service_registration.rs",
+        "coland/crates/http/src/routing/identity/organization_registration.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:24d8262225c86d5618ca1fa70a186183cb0e1f652f3e8b4bdb1d874580c4b3c0"
+    },
+    {
+      "operation_id": "ak.root.identity.organization_registration.command.revoke.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires a real registry/recovery owner and original method-native control or accepted registration receipt. Issuer-local durable uniqueness, challenges and exact publication/control binding cannot be supplied by the read-only raw DID-document fixture.",
+      "normative_documents": [
+        "zh/identity/identity-did.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/identity/did/endpoints.rs",
+        "coland/crates/http/src/routing/identity/service_registration.rs",
+        "coland/crates/http/src/routing/identity/organization_registration.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:1c66f962ee17c3abf52c5241efe755f13b0d812218371ad447db6d4f2355b6e5"
+    },
+    {
+      "operation_id": "ak.root.identity.organization_registration.resource.get.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires a real registry/recovery owner and original method-native control or accepted registration receipt. Issuer-local durable uniqueness, challenges and exact publication/control binding cannot be supplied by the read-only raw DID-document fixture.",
+      "normative_documents": [
+        "zh/identity/identity-did.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/identity/did/endpoints.rs",
+        "coland/crates/http/src/routing/identity/service_registration.rs",
+        "coland/crates/http/src/routing/identity/organization_registration.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:5519f62b2bd232621f6133b1b1698529f6e6cee7500842120125606619632ccb"
+    },
+    {
+      "operation_id": "ak.root.identity.receipts.read.list.v1",
+      "verification_need": "mock_behavior",
+      "reason": "A concrete known-object request and positive mock response are available. Tests validate canonical schema and observable fixture behavior; this does not certify native authorization, persistence or all domain branches.",
+      "normative_documents": [],
+      "source_references": [
+        "inkson/tests/e2e/mockRemainingOperations.ts",
+        "inkson/tests/contract/remaining-operations.spec.ts"
+      ],
+      "mock_test": {
+        "file": "tests/contract/remaining-operations.spec.ts",
+        "name": "remaining valid request and response contract: ak.root.identity.receipts.read.list.v1"
+      },
+      "contract_digest": "sha256:43be03dfe0d98f63e1bfa80d388c364dc07829801babb59d28e52d8981bbecac"
+    },
+    {
+      "operation_id": "ak.root.identity.recovery_session.command.create.v1",
+      "verification_need": "native_authority",
+      "reason": "A native durable recovery/rotation resource, immutable prepared plan, exact grant/device binding and accepted step prefix are required. Progress cannot be inferred from a short-lived UI cache; completion consumes the session and activates the device atomically.",
+      "normative_documents": [
+        "zh/identity/key-management.md",
+        "zh/crypto-media/device-lifecycle.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/identity/recovery/security_transaction_endpoints.rs",
+        "coauth/crates/backend/src/handlers/arkret/recovery_authority.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:81e408fc1ae301a0a95a697c26c985f8df5336fce76da29497aceb8313151386"
+    },
+    {
+      "operation_id": "ak.root.identity.recovery_session.command.submit_proof.v1",
+      "verification_need": "native_authority",
+      "reason": "A native durable recovery/rotation resource, immutable prepared plan, exact grant/device binding and accepted step prefix are required. Progress cannot be inferred from a short-lived UI cache; completion consumes the session and activates the device atomically.",
+      "normative_documents": [
+        "zh/identity/key-management.md",
+        "zh/crypto-media/device-lifecycle.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/identity/recovery/security_transaction_endpoints.rs",
+        "coauth/crates/backend/src/handlers/arkret/recovery_authority.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:274d03c56df75c11dfc795600c0ffc01ebd30523b49206b656602458168bc621"
+    },
+    {
+      "operation_id": "ak.root.identity.recovery_session.resource.get.v1",
+      "verification_need": "native_authority",
+      "reason": "A native durable recovery/rotation resource, immutable prepared plan, exact grant/device binding and accepted step prefix are required. Progress cannot be inferred from a short-lived UI cache; completion consumes the session and activates the device atomically.",
+      "normative_documents": [
+        "zh/identity/key-management.md",
+        "zh/crypto-media/device-lifecycle.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/identity/recovery/security_transaction_endpoints.rs",
+        "coauth/crates/backend/src/handlers/arkret/recovery_authority.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:81bc3f8992eff8dbae60fda0f5efed4fc7c6f2dceead71d88dd1123282ffb0c9"
+    },
+    {
+      "operation_id": "ak.root.identity.service_registration.command.ensure.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires a real registry/recovery owner and original method-native control or accepted registration receipt. Issuer-local durable uniqueness, challenges and exact publication/control binding cannot be supplied by the read-only raw DID-document fixture.",
+      "normative_documents": [
+        "zh/identity/identity-did.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/identity/did/endpoints.rs",
+        "coland/crates/http/src/routing/identity/service_registration.rs",
+        "coland/crates/http/src/routing/identity/organization_registration.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:fe0a3837ae763502e036091b2021685b89fd94acc44fe5f8ef9295840df0c966"
+    },
+    {
+      "operation_id": "ak.root.identity.service_registration.resource.get.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires a real registry/recovery owner and original method-native control or accepted registration receipt. Issuer-local durable uniqueness, challenges and exact publication/control binding cannot be supplied by the read-only raw DID-document fixture.",
+      "normative_documents": [
+        "zh/identity/identity-did.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/identity/did/endpoints.rs",
+        "coland/crates/http/src/routing/identity/service_registration.rs",
+        "coland/crates/http/src/routing/identity/organization_registration.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:59fd02eacd81f7ad48edcc90a000e45e03a3613f8943560f79e5d65c787200ed"
+    },
+    {
+      "operation_id": "ak.self.account.command.revoke_cursor.v1",
+      "verification_need": "native_authority",
+      "reason": "The UI continuation handle map is not a validated native cursor authority instance. Requires exact Account/device/issuing-session identity, immutable token instance/expiry and durable scope-revocation horizon. Same device must not be treated as same session.",
+      "normative_documents": [
+        "zh/sync/client-sync.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/events/sync/cursor.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:784491b3f60ff4324e839c31f42f5a52ad30522e6c114703d1f3066902ce7e66"
+    },
+    {
+      "operation_id": "ak.self.account_data.read.list.v1",
+      "verification_need": "mock_behavior",
+      "reason": "Holder-signed SDK Event and real AEAD envelope; per-key CAS, immutable ciphertext, tombstone high water, and registered writer authority are modeled. Backend durability and production session authorization remain unverified.",
+      "normative_documents": [
+        "zh/models/account-data.md"
+      ],
+      "source_references": [
+        "inkson/tests/e2e/mockRemainingOperations.ts",
+        "inkson/src/bin/inkson-wire/operation_fixture.rs"
+      ],
+      "mock_test": {
+        "file": "tests/contract/remaining-operations.spec.ts",
+        "name": "remaining valid request and response contract: ak.self.account_data.read.list.v1"
+      },
+      "contract_digest": "sha256:d01fd64654746bf144b8fb849bb9f94e19d923ea859b5902ca5e9cd864f415e0"
+    },
+    {
+      "operation_id": "ak.self.account_data.resource.delete.v1",
+      "verification_need": "mock_behavior",
+      "reason": "Holder-signed SDK Event and real AEAD envelope; per-key CAS, immutable ciphertext, tombstone high water, and registered writer authority are modeled. Backend durability and production session authorization remain unverified.",
+      "normative_documents": [
+        "zh/models/account-data.md"
+      ],
+      "source_references": [
+        "inkson/tests/e2e/mockRemainingOperations.ts",
+        "inkson/src/bin/inkson-wire/operation_fixture.rs"
+      ],
+      "mock_test": {
+        "file": "tests/contract/remaining-operations.spec.ts",
+        "name": "remaining valid request and response contract: ak.self.account_data.resource.delete.v1"
+      },
+      "contract_digest": "sha256:4dd6e7a0828a2b3852d7c6130a14af3f7c1e5d9db1d6dd8f3506d39a4ac706ac"
+    },
+    {
+      "operation_id": "ak.self.account_data.resource.replace.v1",
+      "verification_need": "mock_behavior",
+      "reason": "Holder-signed SDK Event and real AEAD envelope; per-key CAS, immutable ciphertext, tombstone high water, and registered writer authority are modeled. Backend durability and production session authorization remain unverified.",
+      "normative_documents": [
+        "zh/models/account-data.md"
+      ],
+      "source_references": [
+        "inkson/tests/e2e/mockRemainingOperations.ts",
+        "inkson/src/bin/inkson-wire/operation_fixture.rs"
+      ],
+      "mock_test": {
+        "file": "tests/contract/remaining-operations.spec.ts",
+        "name": "remaining valid request and response contract: ak.self.account_data.resource.replace.v1"
+      },
+      "contract_digest": "sha256:fbda0f1a86fd86a805e05dea2b41e1558486108d6837dee6da31bcef9dce7295"
+    },
+    {
+      "operation_id": "ak.self.actor_private_events.command.submit.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires a registered allowed kind, actual signing actor at its owning Station, exact Event signature and kind-specific target state. Value projection and canonical exact-retry outcome must commit atomically with revision/terminal conflict zero-write guarantees. AccountData and ReadCursor fixtures are dedicated contracts and cannot stand in for this native private-effect transaction.",
+      "normative_documents": [
+        "zh/models/actor-private-effects.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/events/peer.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:c1851e3d7ad7fdf912472bb940df96ffdea58703e851cb7414ec53a651470028"
+    },
+    {
+      "operation_id": "ak.self.actor_profile.read.resolve.v1",
+      "verification_need": "native_fixture_replay",
+      "reason": "The accepted Human ProfileCreate Event and covering PCR Commit are resolved through an actual joined ordinary Realm relationship and compared to the native committed original. Browser tests replay only the exact archived request/response at its recorded verification cut; this is not live authorization or a new admission. StandardGrant introspection uses the trusted native test channel.",
+      "normative_documents": [
+        "zh/identity/identity-did.md"
+      ],
+      "source_references": [
+        "arkret-rust-sdk/crates/models-identity/src/identity_resolution.rs",
+        "coland/crates/http/src/routing/identity/account/current_principal.rs"
+      ],
+      "mock_test": {
+        "file": "tests/contract/native-read-evidence.spec.ts",
+        "name": "native accepted read replay preserves original contract: ak.self.actor_profile.read.resolve.v1"
+      },
+      "contract_digest": "sha256:a95d073763070e44b2e57f98564b2b5317eb324ec851b6b451e70c3067318fa7"
+    },
+    {
+      "operation_id": "ak.self.agent.participation.resource.replace.v1",
+      "verification_need": "mock_behavior",
+      "reason": "A concrete known-object request and positive mock response are available. Tests validate canonical schema and observable fixture behavior; this does not certify native authorization, persistence or all domain branches.",
+      "normative_documents": [],
+      "source_references": [
+        "inkson/tests/e2e/mockRemainingOperations.ts",
+        "inkson/tests/contract/remaining-operations.spec.ts"
+      ],
+      "mock_test": {
+        "file": "tests/contract/remaining-operations.spec.ts",
+        "name": "remaining valid request and response contract: ak.self.agent.participation.resource.replace.v1"
+      },
+      "contract_digest": "sha256:a0161b4e020e4415b7ca93a8d6a6b6963c76d3209b3a7b536fd57dae682b87f5"
+    },
+    {
+      "operation_id": "ak.self.applet.command.install.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires the real accepted installation/grant/current-revision plan and exact administrator/runtime/governor identities. Preview digests, signed candidates, approval or revoke/configuration replay must be tied to that actual cut and original results; a Service transport response never proves creation/admission.",
+      "normative_documents": [
+        "zh/extensions/applet-management-source.md",
+        "zh/extensions/realm-actors.md"
+      ],
+      "source_references": [
+        "arkret-rust-sdk/crates/server/src/applet.rs",
+        "coland/crates/http/src/routing/identity/realm_actor_control.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:65269fd9505bd9dda8a8bc6fe0a7179c5504b203da7f29a97e4a48f7d3c164e4"
+    },
+    {
+      "operation_id": "ak.self.applet.command.revoke.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires the real accepted installation/grant/current-revision plan and exact administrator/runtime/governor identities. Preview digests, signed candidates, approval or revoke/configuration replay must be tied to that actual cut and original results; a Service transport response never proves creation/admission.",
+      "normative_documents": [
+        "zh/extensions/applet-management-source.md",
+        "zh/extensions/realm-actors.md"
+      ],
+      "source_references": [
+        "arkret-rust-sdk/crates/server/src/applet.rs",
+        "coland/crates/http/src/routing/identity/realm_actor_control.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:d93095ddaaaea60121188a818f381e916e488a437fde927d957e5c67f6ac3336"
+    },
+    {
+      "operation_id": "ak.self.applet.ghost.command.preview.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires the real accepted installation/grant/current-revision plan and exact administrator/runtime/governor identities. Preview digests, signed candidates, approval or revoke/configuration replay must be tied to that actual cut and original results; a Service transport response never proves creation/admission.",
+      "normative_documents": [
+        "zh/extensions/applet-management-source.md",
+        "zh/extensions/realm-actors.md"
+      ],
+      "source_references": [
+        "arkret-rust-sdk/crates/server/src/applet.rs",
+        "coland/crates/http/src/routing/identity/realm_actor_control.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:3c04f51287a202f690106831697814eecea8f707fd9202988bd8ffdefef3cc1a"
+    },
+    {
+      "operation_id": "ak.self.applet.install.command.preview.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires the real accepted installation/grant/current-revision plan and exact administrator/runtime/governor identities. Preview digests, signed candidates, approval or revoke/configuration replay must be tied to that actual cut and original results; a Service transport response never proves creation/admission.",
+      "normative_documents": [
+        "zh/extensions/applet-management-source.md",
+        "zh/extensions/realm-actors.md"
+      ],
+      "source_references": [
+        "arkret-rust-sdk/crates/server/src/applet.rs",
+        "coland/crates/http/src/routing/identity/realm_actor_control.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:9f523b9b542ebb9f47055b41f244abb6db2dbcaccafdb3affdf978dff5b86e43"
+    },
+    {
+      "operation_id": "ak.self.applet.revoke.command.preview.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires the real accepted installation/grant/current-revision plan and exact administrator/runtime/governor identities. Preview digests, signed candidates, approval or revoke/configuration replay must be tied to that actual cut and original results; a Service transport response never proves creation/admission.",
+      "normative_documents": [
+        "zh/extensions/applet-management-source.md",
+        "zh/extensions/realm-actors.md"
+      ],
+      "source_references": [
+        "arkret-rust-sdk/crates/server/src/applet.rs",
+        "coland/crates/http/src/routing/identity/realm_actor_control.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:8ad8a08e7bcc44c9e19e24b4075f63faff91eb3e130a09af18e6f029b8f622a8"
+    },
+    {
+      "operation_id": "ak.self.blob.command.presign.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires a real issuing grant and authenticated single-blob read capability envelope, TTL/scope binding and explicit plaintext classification. Current Blob bytes/HEAD fixtures contain no presign issuer or grant ledger; inventing a URL cannot test signature/integrity or encrypted-Blob refusal.",
+      "normative_documents": [
+        "zh/crypto-media/media-and-blob.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/mod.rs",
+        "arkret-rust-sdk/crates/http-client/src/endpoints/data.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:f08fe8f73e4d974ae40dce077c40c7759ea880f3e84604331b124ad9fe6acebd"
+    },
+    {
+      "operation_id": "ak.self.blob.resource.head.v1",
+      "verification_need": "mock_behavior",
+      "reason": "A concrete known-object request and positive mock response are available. Tests validate canonical schema and observable fixture behavior; this does not certify native authorization, persistence or all domain branches.",
+      "normative_documents": [],
+      "source_references": [
+        "inkson/tests/e2e/mockRemainingOperations.ts",
+        "inkson/tests/contract/remaining-operations.spec.ts"
+      ],
+      "mock_test": {
+        "file": "tests/contract/remaining-operations.spec.ts",
+        "name": "remaining valid request and response contract: ak.self.blob.resource.head.v1"
+      },
+      "contract_digest": "sha256:4839befde3ef9ab40c9e2f0ea8b87daa33a798608417456365e7cba5f2f6578f"
+    },
+    {
+      "operation_id": "ak.self.call.media.exchange.issue_token.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires the Realm-authorized media issuer and backend-specific expiring token with exact participant binding. Neither the ordinary Station key nor the ICE fixture is authority to mint a backend join token.",
+      "normative_documents": [
+        "zh/crypto-media/media-service-binding.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/mod.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:5da36f9ff69101c703d4f59a3aaf771d087d4953fca754e15606ffa89cda0e8c"
+    },
+    {
+      "operation_id": "ak.self.circle.command.rotate_scope.v1",
+      "verification_need": "native_authority",
+      "reason": "Normative operation notes explicitly forbid acknowledging rotation without the MLS genesis/commit/welcome cascade actually changing the cryptographic scope. No rotation fixture is wired; an empty success would be false.",
+      "normative_documents": [
+        "zh/models/circle.md"
+      ],
+      "source_references": [
+        "arkret-rust-sdk/crates/crypto/src/lib.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:90b2027a9c834b33f77b23cb60c4fe0b9497d6ae17c3f628fc4867a95b6c9b2f"
+    },
+    {
+      "operation_id": "ak.self.circle.resource.get.v1",
+      "verification_need": "mock_behavior",
+      "reason": "A concrete known-object request and positive mock response are available. Tests validate canonical schema and observable fixture behavior; this does not certify native authorization, persistence or all domain branches.",
+      "normative_documents": [],
+      "source_references": [
+        "inkson/tests/e2e/mockRemainingOperations.ts",
+        "inkson/tests/contract/remaining-operations.spec.ts"
+      ],
+      "mock_test": {
+        "file": "tests/contract/remaining-operations.spec.ts",
+        "name": "remaining valid request and response contract: ak.self.circle.resource.get.v1"
+      },
+      "contract_digest": "sha256:a4ba7c59fd32ee3f5b884b899cbf5f931f1307f585c4d31a65f92ec017331edc"
+    },
+    {
+      "operation_id": "ak.self.consent.command.replace.v1",
+      "verification_need": "native_authority",
+      "reason": "Needs holder PCR root-control authority and exact peer CAS/current observation, or the owning-Station quarantine/effect transaction. Human and user-managed Agent separated-governor proxy/publication are prohibited; Organization-only proxy requires verified provenance. Contact state or public scope lookup cannot substitute.",
+      "normative_documents": [
+        "zh/sync/authority-commit-log.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/identity/consent.rs",
+        "coland/crates/http/src/routing/consent_private.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:327c0f6af317a493356887da89d24634c7f273d11ba0c8a2f0da3ee9aa7e7c8c"
+    },
+    {
+      "operation_id": "ak.self.consent.command.request.v1",
+      "verification_need": "native_authority",
+      "reason": "Needs holder PCR root-control authority and exact peer CAS/current observation, or the owning-Station quarantine/effect transaction. Human and user-managed Agent separated-governor proxy/publication are prohibited; Organization-only proxy requires verified provenance. Contact state or public scope lookup cannot substitute.",
+      "normative_documents": [
+        "zh/sync/authority-commit-log.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/identity/consent.rs",
+        "coland/crates/http/src/routing/consent_private.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:31ebc7282bbe54256693aa664f14d9dc414f7217d1df4890148caaea08e5db03"
+    },
+    {
+      "operation_id": "ak.self.consent.read.list.v1",
+      "verification_need": "native_fixture_replay",
+      "reason": "The holder submits its signed exact-peer ConsentReplace through the registered operation after both Accounts have admitted PCRs. The nonempty list must contain the resulting accepted revision and permission. Browser tests replay only the exact archived request/response at its recorded verification cut; this is not live authorization or a new admission. StandardGrant introspection uses the trusted native test channel.",
+      "normative_documents": [
+        "zh/sync/authority-commit-log.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/identity/consent.rs",
+        "coland/crates/http/src/routing/consent_private.rs"
+      ],
+      "mock_test": {
+        "file": "tests/contract/native-read-evidence.spec.ts",
+        "name": "native accepted read replay preserves original contract: ak.self.consent.read.list.v1"
+      },
+      "contract_digest": "sha256:9882d9dce914de09e2ee6f6fb3f93f7485a33bd839fe83176174c4e1c790d6c7"
+    },
+    {
+      "operation_id": "ak.self.consent.resource.get.v1",
+      "verification_need": "native_fixture_replay",
+      "reason": "The registered exact-peer read returns the real holder-signed ConsentReplace revision and nonempty permission. The Event and Commit are fetched from the actual native admission store. Browser tests replay only the exact archived request/response at its recorded verification cut; this is not live authorization or a new admission. StandardGrant introspection uses the trusted native test channel.",
+      "normative_documents": [
+        "zh/sync/authority-commit-log.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/identity/consent.rs",
+        "coland/crates/http/src/routing/consent_private.rs"
+      ],
+      "mock_test": {
+        "file": "tests/contract/native-read-evidence.spec.ts",
+        "name": "native accepted read replay preserves original contract: ak.self.consent.resource.get.v1"
+      },
+      "contract_digest": "sha256:2f2f18ccedc2e3210ba48bd59cf65ea70fa64d594da73039d00fca27b48b2ca0"
+    },
+    {
+      "operation_id": "ak.self.events.read.delivery_status.v1",
+      "verification_need": "mock_behavior",
+      "reason": "A concrete known-object request and positive mock response are available. Tests validate canonical schema and observable fixture behavior; this does not certify native authorization, persistence or all domain branches.",
+      "normative_documents": [],
+      "source_references": [
+        "inkson/tests/e2e/mockRemainingOperations.ts",
+        "inkson/tests/contract/remaining-operations.spec.ts"
+      ],
+      "mock_test": {
+        "file": "tests/contract/remaining-operations.spec.ts",
+        "name": "remaining valid request and response contract: ak.self.events.read.delivery_status.v1"
+      },
+      "contract_digest": "sha256:cea9240f1994603d6129e160033f2c203cd0e03d4dd58698c51c8c5aa97bff40"
+    },
+    {
+      "operation_id": "ak.self.identity.read.resolution_audit.v1",
+      "verification_need": "native_fixture_replay",
+      "reason": "The holder reads the admitted PCR genesis, founding Device and current resolution originals through the registered private audit route; every Event and covering Commit is compared to PostgreSQL. Browser tests replay only the exact archived request/response at its recorded verification cut; this is not live authorization or a new admission. StandardGrant introspection uses the trusted native test channel.",
+      "normative_documents": [
+        "zh/identity/identity-did.md"
+      ],
+      "source_references": [
+        "arkret-rust-sdk/crates/models-identity/src/identity_resolution.rs",
+        "coland/crates/http/src/routing/identity/account/current_principal.rs"
+      ],
+      "mock_test": {
+        "file": "tests/contract/native-read-evidence.spec.ts",
+        "name": "native accepted read replay preserves original contract: ak.self.identity.read.resolution_audit.v1"
+      },
+      "contract_digest": "sha256:a05bd8f9a4cfd5f43b51a07d04909f7b0e8cba7fedbb65b6fcca98e75cbd2a1b"
+    },
+    {
+      "operation_id": "ak.self.keys.backups.command.issue_delete_challenge.v1",
+      "verification_need": "native_authority",
+      "reason": "Existing UI fixtures contain backup summaries, not the durable current-device/high-risk challenge and unlock ledger. A positive case needs the real signed challenge/proof, opaque encrypted backup and one-use/replay transaction; a guessed nonce or empty acknowledgement would skip that contract.",
+      "normative_documents": [
+        "zh/identity/key-management.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/identity/key_backup.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:eadc90de94eb28189d45f241f775d2e0616d41577ec5ac7d72d0ce10d977dac9"
+    },
+    {
+      "operation_id": "ak.self.keys.backups.command.issue_unlock_challenge.v1",
+      "verification_need": "native_authority",
+      "reason": "Existing UI fixtures contain backup summaries, not the durable current-device/high-risk challenge and unlock ledger. A positive case needs the real signed challenge/proof, opaque encrypted backup and one-use/replay transaction; a guessed nonce or empty acknowledgement would skip that contract.",
+      "normative_documents": [
+        "zh/identity/key-management.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/identity/key_backup.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:d0b097afc256db90c894946bb494ea35bf72e1c1d1c670f29a15c848865f54cb"
+    },
+    {
+      "operation_id": "ak.self.keys.backups.command.unlock.v1",
+      "verification_need": "native_authority",
+      "reason": "Existing UI fixtures contain backup summaries, not the durable current-device/high-risk challenge and unlock ledger. A positive case needs the real signed challenge/proof, opaque encrypted backup and one-use/replay transaction; a guessed nonce or empty acknowledgement would skip that contract.",
+      "normative_documents": [
+        "zh/identity/key-management.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/identity/key_backup.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:313cad83efcb29804fac5290fb6f816f75cbdb445fe0bd56fcd0878271eb1d8c"
+    },
+    {
+      "operation_id": "ak.self.keys.backups.resource.delete.v1",
+      "verification_need": "native_authority",
+      "reason": "Existing UI fixtures contain backup summaries, not the durable current-device/high-risk challenge and unlock ledger. A positive case needs the real signed challenge/proof, opaque encrypted backup and one-use/replay transaction; a guessed nonce or empty acknowledgement would skip that contract.",
+      "normative_documents": [
+        "zh/identity/key-management.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/identity/key_backup.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:2d87a870d139d0baea5896379f5a253c7bac2046040b90cc410ee418d959daee"
+    },
+    {
+      "operation_id": "ak.self.keys.keypackages.command.claim.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires the destination authority's actual KeyPackage inventory/claim ledger, exact endpoint authorization and original claim receipt. Claim/consume/revoke are atomic transitions; query replays the original signed outcome without reconstructing keys or changing state.",
+      "normative_documents": [
+        "zh/identity/key-management.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/mls_keypackage_native.rs",
+        "coland/crates/http/src/routing/mls_keypackage_upload.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:6caa6c185c0e7687e8ef69baffe532fcb22c4ef3facc7fb131d6c02bba7e5da3"
+    },
+    {
+      "operation_id": "ak.self.keys.keypackages.command.consume.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires the destination authority's actual KeyPackage inventory/claim ledger, exact endpoint authorization and original claim receipt. Claim/consume/revoke are atomic transitions; query replays the original signed outcome without reconstructing keys or changing state.",
+      "normative_documents": [
+        "zh/identity/key-management.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/mls_keypackage_native.rs",
+        "coland/crates/http/src/routing/mls_keypackage_upload.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:c3ba43d5d467df70499b8c9c282bdc56f4be59a928ad006c6a82865f0506acbb"
+    },
+    {
+      "operation_id": "ak.self.keys.keypackages.command.revoke.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires the destination authority's actual KeyPackage inventory/claim ledger, exact endpoint authorization and original claim receipt. Claim/consume/revoke are atomic transitions; query replays the original signed outcome without reconstructing keys or changing state.",
+      "normative_documents": [
+        "zh/identity/key-management.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/mls_keypackage_native.rs",
+        "coland/crates/http/src/routing/mls_keypackage_upload.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:9a458607031b774740329f285321b0f73d0376172bca03a21dca1d4f695e7c4a"
+    },
+    {
+      "operation_id": "ak.self.keys.keypackages.read.claim.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires the destination authority's actual KeyPackage inventory/claim ledger, exact endpoint authorization and original claim receipt. Claim/consume/revoke are atomic transitions; query replays the original signed outcome without reconstructing keys or changing state.",
+      "normative_documents": [
+        "zh/identity/key-management.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/mls_keypackage_native.rs",
+        "coland/crates/http/src/routing/mls_keypackage_upload.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:2341c59a1fa747c330c72e790c1450c83d1b68a01c28d55ac0cad1016a4ec324"
+    },
+    {
+      "operation_id": "ak.self.media_service_binding.read.resolve.v1",
+      "verification_need": "native_fixture_replay",
+      "reason": "An admitted RealmMediaService Event names the actual Station issuer and native focus. The joined holder reads its current route and nonempty signing keys, validated against that accepted issuer and reuse window. Browser tests replay only the exact archived request/response at its recorded verification cut; this is not live authorization or a new admission. StandardGrant introspection uses the trusted native test channel.",
+      "normative_documents": [
+        "zh/crypto-media/media-service-binding.md"
+      ],
+      "source_references": [
+        "arkret-rust-sdk/crates/models-identity/src/identity_resolution.rs"
+      ],
+      "mock_test": {
+        "file": "tests/contract/native-read-evidence.spec.ts",
+        "name": "native accepted read replay preserves original contract: ak.self.media_service_binding.read.resolve.v1"
+      },
+      "contract_digest": "sha256:6e6e651b79657dff93e7eb44558c1663126b4f54dd36ef1ded49bb2c70f48495"
+    },
+    {
+      "operation_id": "ak.self.morph.read.list.v1",
+      "verification_need": "mock_behavior",
+      "reason": "Covers a concrete UI document projection and its distinct list/get schema; the projection is not represented as signed accepted native Morph history. Native governance and reduction remain unverified.",
+      "normative_documents": [],
+      "source_references": [
+        "inkson/tests/e2e/mockRemainingOperations.ts"
+      ],
+      "mock_test": {
+        "file": "tests/contract/remaining-operations.spec.ts",
+        "name": "remaining valid request and response contract: ak.self.morph.read.list.v1"
+      },
+      "contract_digest": "sha256:e7791d865d53a5f6d93a929e4e7e4f7073969c2fc2fe8281e30b6bf02cfef149"
+    },
+    {
+      "operation_id": "ak.self.morph.resource.get.v1",
+      "verification_need": "mock_behavior",
+      "reason": "Covers a concrete UI document projection and its distinct list/get schema; the projection is not represented as signed accepted native Morph history. Native governance and reduction remain unverified.",
+      "normative_documents": [],
+      "source_references": [
+        "inkson/tests/e2e/mockRemainingOperations.ts"
+      ],
+      "mock_test": {
+        "file": "tests/contract/remaining-operations.spec.ts",
+        "name": "remaining valid request and response contract: ak.self.morph.resource.get.v1"
+      },
+      "contract_digest": "sha256:2c53426050f88eefb9787f310e992f0b28cd37188bb0edc0facacc07545ae7d5"
+    },
+    {
+      "operation_id": "ak.self.read_cursor.command.advance.v1",
+      "verification_need": "mock_behavior",
+      "reason": "Holder-signed SDK cursor covers known Realm positions, exact replay and list. Same-stream committed position precedes HLC; concurrent/same-Event positions use HLC and device tie-break. Unknown coordinates preserve the old point and return temporarily_unavailable. Native scoped history and multi-device delivery remain unverified.",
+      "normative_documents": [
+        "zh/sync/client-sync.md"
+      ],
+      "source_references": [
+        "inkson/tests/e2e/mockRemainingOperations.ts"
+      ],
+      "mock_test": {
+        "file": "tests/contract/remaining-operations.spec.ts",
+        "name": "remaining valid request and response contract: ak.self.read_cursor.command.advance.v1"
+      },
+      "contract_digest": "sha256:12a5d6511a38648b7f021606487a303864fccd7992ab84132f653465a2f35c33"
+    },
+    {
+      "operation_id": "ak.self.read_cursor.read.list.v1",
+      "verification_need": "mock_behavior",
+      "reason": "Holder-signed SDK cursor covers known Realm positions, exact replay and list. Same-stream committed position precedes HLC; concurrent/same-Event positions use HLC and device tie-break. Unknown coordinates preserve the old point and return temporarily_unavailable. Native scoped history and multi-device delivery remain unverified.",
+      "normative_documents": [
+        "zh/sync/client-sync.md"
+      ],
+      "source_references": [
+        "inkson/tests/e2e/mockRemainingOperations.ts"
+      ],
+      "mock_test": {
+        "file": "tests/contract/remaining-operations.spec.ts",
+        "name": "remaining valid request and response contract: ak.self.read_cursor.read.list.v1"
+      },
+      "contract_digest": "sha256:2b62646fb0f5f5276c0acd80d8ef0cf01bf8bfc5ad2941822c958edb1a21084b"
+    },
+    {
+      "operation_id": "ak.self.mls.read.group_state_material.v1",
+      "verification_need": "native_fixture_replay",
+      "reason": "The actual remote member reads the accepted Genesis public GroupInfo and tree after an admitted Add/Welcome. The SDK checks both content addresses and installs the roster against the real joined RFC group. Browser tests replay only the exact archived request/response at its recorded verification cut; this is not live authorization or a new admission. StandardGrant introspection uses the trusted native test channel.",
+      "normative_documents": [
+        "zh/sync/authority-commit-log.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/mls_keypackage_native.rs",
+        "arkret-rust-sdk/crates/models-collaboration/src/objects/read_receipts.rs"
+      ],
+      "mock_test": {
+        "file": "tests/contract/native-read-evidence.spec.ts",
+        "name": "native accepted read replay preserves original contract: ak.self.mls.read.group_state_material.v1"
+      },
+      "contract_digest": "sha256:3a356e0a716f997694b94d7edc384004002b05f0cd3c1b9a095db9af35a1cb2f"
+    },
+    {
+      "operation_id": "ak.self.mls.read.roster_authority.v1",
+      "verification_need": "native_fixture_replay",
+      "reason": "The real joined remote member obtains a complete signed paginated roster including actual Genesis/Add originals and the own-Station key projection. The SDK verifies signatures and reconciles every occupied leaf. Browser tests replay only the exact archived request/response at its recorded verification cut; this is not live authorization or a new admission. StandardGrant introspection uses the trusted native test channel.",
+      "normative_documents": [
+        "zh/sync/authority-commit-log.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/mls_keypackage_native.rs",
+        "arkret-rust-sdk/crates/models-collaboration/src/objects/read_receipts.rs"
+      ],
+      "mock_test": {
+        "file": "tests/contract/native-read-evidence.spec.ts",
+        "name": "native accepted read replay preserves original contract: ak.self.mls.read.roster_authority.v1"
+      },
+      "contract_digest": "sha256:e6d6279d3ae7d48a0f23e173fc94511d0d14568cc1f58fc9e7e9379b165db66b"
+    },
+    {
+      "operation_id": "ak.self.realm.read.export.v1",
+      "verification_need": "mock_behavior",
+      "reason": "A concrete known-object request and positive mock response are available. Tests validate canonical schema and observable fixture behavior; this does not certify native authorization, persistence or all domain branches.",
+      "normative_documents": [],
+      "source_references": [
+        "inkson/tests/e2e/mockRemainingOperations.ts",
+        "inkson/tests/contract/remaining-operations.spec.ts"
+      ],
+      "mock_test": {
+        "file": "tests/contract/remaining-operations.spec.ts",
+        "name": "remaining valid request and response contract: ak.self.realm.read.export.v1"
+      },
+      "contract_digest": "sha256:81393c1a249f57eebb5d4f72404511702591e91f1b569ef5adf6e64cf46a876d"
+    },
+    {
+      "operation_id": "ak.self.realm.resource.get.v1",
+      "verification_need": "mock_behavior",
+      "reason": "A concrete known-object request and positive mock response are available. Tests validate canonical schema and observable fixture behavior; this does not certify native authorization, persistence or all domain branches.",
+      "normative_documents": [],
+      "source_references": [
+        "inkson/tests/e2e/mockRemainingOperations.ts",
+        "inkson/tests/contract/remaining-operations.spec.ts"
+      ],
+      "mock_test": {
+        "file": "tests/contract/remaining-operations.spec.ts",
+        "name": "remaining valid request and response contract: ak.self.realm.resource.get.v1"
+      },
+      "contract_digest": "sha256:6f6c897db6f327272f1d7c941e5bddfc4134dbd305ced3b0392fec9efa625e78"
+    },
+    {
+      "operation_id": "ak.self.realm_link.read.list.v1",
+      "verification_need": "mock_behavior",
+      "reason": "Covers only the known Realm with no accepted relationship statements. Empty projection is checked against the fixture history; non-empty native relationship reduction remains unverified.",
+      "normative_documents": [],
+      "source_references": [
+        "inkson/tests/e2e/mockRemainingOperations.ts"
+      ],
+      "mock_test": {
+        "file": "tests/contract/remaining-operations.spec.ts",
+        "name": "remaining valid request and response contract: ak.self.realm_link.read.list.v1"
+      },
+      "contract_digest": "sha256:ff43c2547567f94452f5c20084a8fbad9df8414305730ff9f30ccd687bea5d5d"
+    },
+    {
+      "operation_id": "ak.self.realm_organization.read.list.v1",
+      "verification_need": "mock_behavior",
+      "reason": "Covers only the known Realm with no accepted relationship statements. Empty projection is checked against the fixture history; non-empty native relationship reduction remains unverified.",
+      "normative_documents": [],
+      "source_references": [
+        "inkson/tests/e2e/mockRemainingOperations.ts"
+      ],
+      "mock_test": {
+        "file": "tests/contract/remaining-operations.spec.ts",
+        "name": "remaining valid request and response contract: ak.self.realm_organization.read.list.v1"
+      },
+      "contract_digest": "sha256:08e125f196af5c196e7c4c69d1f4296d19ba94fbaf559f233e53b76787f3a6ee"
+    },
+    {
+      "operation_id": "ak.self.security_transaction.command.continue.v1",
+      "verification_need": "native_authority",
+      "reason": "A native durable recovery/rotation resource, immutable prepared plan, exact grant/device binding and accepted step prefix are required. Progress cannot be inferred from a short-lived UI cache; completion consumes the session and activates the device atomically.",
+      "normative_documents": [
+        "zh/identity/key-management.md",
+        "zh/crypto-media/device-lifecycle.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/identity/recovery/security_transaction_endpoints.rs",
+        "coauth/crates/backend/src/handlers/arkret/recovery_authority.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:4b7e32880e17c3bd9d5b768a1060f4213605fd12c47c09622ca823236ca5c26d"
+    },
+    {
+      "operation_id": "ak.self.security_transaction.command.create.v1",
+      "verification_need": "native_authority",
+      "reason": "A native durable recovery/rotation resource, immutable prepared plan, exact grant/device binding and accepted step prefix are required. Progress cannot be inferred from a short-lived UI cache; completion consumes the session and activates the device atomically.",
+      "normative_documents": [
+        "zh/identity/key-management.md",
+        "zh/crypto-media/device-lifecycle.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/identity/recovery/security_transaction_endpoints.rs",
+        "coauth/crates/backend/src/handlers/arkret/recovery_authority.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:a3035e47ee2fb07161acdea13819df9e837ddef7c1e955132844ccecdcbc2f0d"
+    },
+    {
+      "operation_id": "ak.self.security_transaction.resource.get.v1",
+      "verification_need": "native_authority",
+      "reason": "A native durable recovery/rotation resource, immutable prepared plan, exact grant/device binding and accepted step prefix are required. Progress cannot be inferred from a short-lived UI cache; completion consumes the session and activates the device atomically.",
+      "normative_documents": [
+        "zh/identity/key-management.md",
+        "zh/crypto-media/device-lifecycle.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/identity/recovery/security_transaction_endpoints.rs",
+        "coauth/crates/backend/src/handlers/arkret/recovery_authority.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:0aa2f983806af725f019ba731b14b9f723ffb7900cdd264748cd26acde2b26fe"
+    },
+    {
+      "operation_id": "ak.self.applet.bot.command.preview.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires the real accepted installation/grant/current-revision plan and exact administrator/runtime/governor identities. Preview digests, signed candidates, approval or revoke/configuration replay must be tied to that actual cut and original results; a Service transport response never proves creation/admission.",
+      "normative_documents": [
+        "zh/extensions/applet-management-source.md",
+        "zh/extensions/realm-actors.md"
+      ],
+      "source_references": [
+        "arkret-rust-sdk/crates/server/src/applet.rs",
+        "coland/crates/http/src/routing/identity/realm_actor_control.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:ce093982691d661934a4a9b9771e46699c40ef13d91ee8fd280d2d0677942da0"
+    },
+    {
+      "operation_id": "ak.self.applet.authority.read.material.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires the real accepted installation/grant/current-revision plan and exact administrator/runtime/governor identities. Preview digests, signed candidates, approval or revoke/configuration replay must be tied to that actual cut and original results; a Service transport response never proves creation/admission.",
+      "normative_documents": [
+        "zh/extensions/applet-management-source.md",
+        "zh/extensions/realm-actors.md"
+      ],
+      "source_references": [
+        "arkret-rust-sdk/crates/server/src/applet.rs",
+        "coland/crates/http/src/routing/identity/realm_actor_control.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:a51d03ebfee70587a2c6b8f31e5207db53901c4746cf2a3111e1f1979e1c9c63"
+    },
+    {
+      "operation_id": "ak.self.management_review.command.request.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires the real accepted installation/grant/current-revision plan and exact administrator/runtime/governor identities. Preview digests, signed candidates, approval or revoke/configuration replay must be tied to that actual cut and original results; a Service transport response never proves creation/admission.",
+      "normative_documents": [
+        "zh/extensions/applet-management-source.md",
+        "zh/extensions/realm-actors.md"
+      ],
+      "source_references": [
+        "arkret-rust-sdk/crates/server/src/applet.rs",
+        "coland/crates/http/src/routing/identity/realm_actor_control.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:33a9bac90e21c6ed151650c9616654c31f89ea4cc37350b740b45f992383a385"
+    },
+    {
+      "operation_id": "ak.self.management_review.command.decide.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires the real accepted installation/grant/current-revision plan and exact administrator/runtime/governor identities. Preview digests, signed candidates, approval or revoke/configuration replay must be tied to that actual cut and original results; a Service transport response never proves creation/admission.",
+      "normative_documents": [
+        "zh/extensions/applet-management-source.md",
+        "zh/extensions/realm-actors.md"
+      ],
+      "source_references": [
+        "arkret-rust-sdk/crates/server/src/applet.rs",
+        "coland/crates/http/src/routing/identity/realm_actor_control.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:8c047601a47cca098e50b00de45defd278b7802d724c1691d8d18d32493f72fa"
+    },
+    {
+      "operation_id": "ak.self.management_review.read.status.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires the real accepted installation/grant/current-revision plan and exact administrator/runtime/governor identities. Preview digests, signed candidates, approval or revoke/configuration replay must be tied to that actual cut and original results; a Service transport response never proves creation/admission.",
+      "normative_documents": [
+        "zh/extensions/applet-management-source.md",
+        "zh/extensions/realm-actors.md"
+      ],
+      "source_references": [
+        "arkret-rust-sdk/crates/server/src/applet.rs",
+        "coland/crates/http/src/routing/identity/realm_actor_control.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:432e625bebf66437520db3a25f70583e3f5792af1c871c16218a67c98aa23536"
+    },
+    {
+      "operation_id": "ak.self.call.invitation.command.send.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires the producer-signed exact invitation and authorized consumer-only current holder PCR verdict; public Consent or a sender-side success cannot substitute. Sender send/relay always stays deferred, and admission must verify actual invitation/recipient binding and privacy. No qualified recipient admission fixture is present.",
+      "normative_documents": [
+        "zh/crypto-media/webrtc-signaling.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/call_admission.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:5b9cd3f04438671a94cf353925ac2393a34321ce162b6d38f81c4200e28c495f"
+    },
+    {
+      "operation_id": "ak.peer.call.invitation.command.relay.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires the producer-signed exact invitation and authorized consumer-only current holder PCR verdict; public Consent or a sender-side success cannot substitute. Sender send/relay always stays deferred, and admission must verify actual invitation/recipient binding and privacy. No qualified recipient admission fixture is present.",
+      "normative_documents": [
+        "zh/crypto-media/webrtc-signaling.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/call_admission.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:56c5097453e578dad3277101786556104c27b51a37dd624b26b2123a0e49edaf"
+    },
+    {
+      "operation_id": "ak.peer.call.invitation.read.admission.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires the producer-signed exact invitation and authorized consumer-only current holder PCR verdict; public Consent or a sender-side success cannot substitute. Sender send/relay always stays deferred, and admission must verify actual invitation/recipient binding and privacy. No qualified recipient admission fixture is present.",
+      "normative_documents": [
+        "zh/crypto-media/webrtc-signaling.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/call_admission.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:64ca016818b27c159b767a47fa1ae82cc664d45e23c903fce459870050dea223"
+    },
+    {
+      "operation_id": "ak.peer.strand.watch.read.current.v1",
+      "verification_need": "mock_behavior",
+      "reason": "Existing verified native scan/watch fixture can supply the original values and Commit-bound signer facts. Mock service context checks source/destination and forbids forwarded user credentials; real RFC 9421 authentication and replication authorization are not claimed.",
+      "normative_documents": [
+        "zh/sync/authority-commit-log.md"
+      ],
+      "source_references": [
+        "inkson/tests/e2e/mockRemainingOperations.ts",
+        "inkson/src/bin/inkson-wire/realm_fixture.rs"
+      ],
+      "mock_test": {
+        "file": "tests/contract/remaining-operations.spec.ts",
+        "name": "remaining valid request and response contract: ak.peer.strand.watch.read.current.v1"
+      },
+      "contract_digest": "sha256:48542329fae55972d2c3a814c22dd71bbdf4410f69e7527f277853d0640531ce"
+    },
+    {
+      "operation_id": "ak.self.consent.read.current.v1",
+      "verification_need": "native_authority",
+      "reason": "Needs holder PCR root-control authority and exact peer CAS/current observation, or the owning-Station quarantine/effect transaction. Human and user-managed Agent separated-governor proxy/publication are prohibited; Organization-only proxy requires verified provenance. Contact state or public scope lookup cannot substitute.",
+      "normative_documents": [
+        "zh/sync/authority-commit-log.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/identity/consent.rs",
+        "coland/crates/http/src/routing/consent_private.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:5aeed2d2fb95a1c80f706b29df828fd3cc2da2cbc8cae612174e795711ad4b59"
+    },
+    {
+      "operation_id": "ak.peer.consent.read.current.v1",
+      "verification_need": "native_authority",
+      "reason": "Needs holder PCR root-control authority and exact peer CAS/current observation, or the owning-Station quarantine/effect transaction. Human and user-managed Agent separated-governor proxy/publication are prohibited; Organization-only proxy requires verified provenance. Contact state or public scope lookup cannot substitute.",
+      "normative_documents": [
+        "zh/sync/authority-commit-log.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/identity/consent.rs",
+        "coland/crates/http/src/routing/consent_private.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:88d9025c7e27ca7a5fcc4e105fa61eb20587bab5c83443fef16614c64fc79529"
+    },
+    {
+      "operation_id": "ak.self.strand.watch.command.audit_read.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires governor read AND audit-write capabilities, exact signed audit Event, one atomic accepted audit/frozen observation and durable original result replay. Current watch fixture is a read projection only; it has no audit-write transaction and cannot turn a preaccepted ticket or later head into an audited read. Self and peer delivery fences must also run.",
+      "normative_documents": [
+        "zh/sync/authority-commit-log.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/events/peer.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:cb42d87b5996deec125261e348a5e1b051ccb1bf9a6e39214c0b76793dacf58a"
+    },
+    {
+      "operation_id": "ak.peer.strand.watch.command.audit_read.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires governor read AND audit-write capabilities, exact signed audit Event, one atomic accepted audit/frozen observation and durable original result replay. Current watch fixture is a read projection only; it has no audit-write transaction and cannot turn a preaccepted ticket or later head into an audited read. Self and peer delivery fences must also run.",
+      "normative_documents": [
+        "zh/sync/authority-commit-log.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/events/peer.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:38b8e3d87ef43503d3a714524d4f7c334db4ee86b082cac190d1c2a8a7855926"
+    },
+    {
+      "operation_id": "ak.peer.consent.command.proxy.v1",
+      "verification_need": "native_authority",
+      "reason": "Needs holder PCR root-control authority and exact peer CAS/current observation, or the owning-Station quarantine/effect transaction. Human and user-managed Agent separated-governor proxy/publication are prohibited; Organization-only proxy requires verified provenance. Contact state or public scope lookup cannot substitute.",
+      "normative_documents": [
+        "zh/sync/authority-commit-log.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/identity/consent.rs",
+        "coland/crates/http/src/routing/consent_private.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:0bcbdc975c03c184be27673d09fbce8316e8f3a36158f4aa1eab4d54918c09c7"
+    },
+    {
+      "operation_id": "ak.peer.consent.command.publish_effects.v1",
+      "verification_need": "native_authority",
+      "reason": "Needs holder PCR root-control authority and exact peer CAS/current observation, or the owning-Station quarantine/effect transaction. Human and user-managed Agent separated-governor proxy/publication are prohibited; Organization-only proxy requires verified provenance. Contact state or public scope lookup cannot substitute.",
+      "normative_documents": [
+        "zh/sync/authority-commit-log.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/identity/consent.rs",
+        "coland/crates/http/src/routing/consent_private.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:a5a32b8bf4293e2ad72556525888442d15edd71ba062e95dbfe00c7c0e25f637"
+    },
+    {
+      "operation_id": "ak.self.applet.configuration.command.submit.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires the real accepted installation/grant/current-revision plan and exact administrator/runtime/governor identities. Preview digests, signed candidates, approval or revoke/configuration replay must be tied to that actual cut and original results; a Service transport response never proves creation/admission.",
+      "normative_documents": [
+        "zh/extensions/applet-management-source.md",
+        "zh/extensions/realm-actors.md"
+      ],
+      "source_references": [
+        "arkret-rust-sdk/crates/server/src/applet.rs",
+        "coland/crates/http/src/routing/identity/realm_actor_control.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:d50d874507c4841318eec4f4127274083d508e9e33846f43243f63efac68303b"
+    },
+    {
+      "operation_id": "ak.peer.applet.configuration.command.submit.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires the real accepted installation/grant/current-revision plan and exact administrator/runtime/governor identities. Preview digests, signed candidates, approval or revoke/configuration replay must be tied to that actual cut and original results; a Service transport response never proves creation/admission.",
+      "normative_documents": [
+        "zh/extensions/applet-management-source.md",
+        "zh/extensions/realm-actors.md"
+      ],
+      "source_references": [
+        "arkret-rust-sdk/crates/server/src/applet.rs",
+        "coland/crates/http/src/routing/identity/realm_actor_control.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:21cc6251ea5e56b5ffc0840c2a50f3311b5bd652738c13a010053cad25c655fe"
+    },
+    {
+      "operation_id": "ak.edge.applet.configuration.command.execute.v1",
+      "verification_need": "native_authority",
+      "reason": "Requires the real accepted installation/grant/current-revision plan and exact administrator/runtime/governor identities. Preview digests, signed candidates, approval or revoke/configuration replay must be tied to that actual cut and original results; a Service transport response never proves creation/admission.",
+      "normative_documents": [
+        "zh/extensions/applet-management-source.md",
+        "zh/extensions/realm-actors.md"
+      ],
+      "source_references": [
+        "arkret-rust-sdk/crates/server/src/applet.rs",
+        "coland/crates/http/src/routing/identity/realm_actor_control.rs"
+      ],
+      "mock_test": null,
+      "contract_digest": "sha256:0311f0d7c3293c5cee1291e9d538f002d7889d90c6b4e29c758d418eeecb8ad5"
+    },
+    {
+      "operation_id": "ak.self.realm_actor.read.material.v1",
+      "verification_need": "native_fixture_replay",
+      "reason": "The actual admitted Realm actor authenticates its current control key and nonce at the registered private read route. The signed nonempty control entry is checked against the original PostgreSQL creation Commit. Browser tests replay only the exact archived request/response at its recorded verification cut; this is not live authorization or a new admission. StandardGrant introspection uses the trusted native test channel.",
+      "normative_documents": [
+        "zh/extensions/realm-actors.md",
+        "zh/extensions/applet-integration.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/identity/realm_actor_material.rs",
+        "arkret-rust-sdk/crates/server/src/applet.rs"
+      ],
+      "mock_test": {
+        "file": "tests/contract/native-read-evidence.spec.ts",
+        "name": "native accepted read replay preserves original contract: ak.self.realm_actor.read.material.v1"
+      },
+      "contract_digest": "sha256:9b01cdac30a7647f571748ab6e534f4f17f21285407aeb212a48bf33b4e62350"
+    },
+    {
+      "operation_id": "ak.peer.realm_actor.read.material.v1",
+      "verification_need": "native_fixture_replay",
+      "reason": "Two real Stations admit membership and an exact ak.realm.actor.audit grant. The peer read uses a Service signature and validates the signed material for the exact requester, nonce and governor cut; spoofed source and changed body are rejected. Browser tests replay only the exact archived request/response at its recorded verification cut; this is not live authorization or a new admission. StandardGrant introspection uses the trusted native test channel.",
+      "normative_documents": [
+        "zh/extensions/realm-actors.md",
+        "zh/extensions/applet-integration.md"
+      ],
+      "source_references": [
+        "coland/crates/http/src/routing/identity/realm_actor_material.rs",
+        "arkret-rust-sdk/crates/server/src/applet.rs"
+      ],
+      "mock_test": {
+        "file": "tests/contract/native-read-evidence.spec.ts",
+        "name": "native accepted read replay preserves original contract: ak.peer.realm_actor.read.material.v1"
+      },
+      "contract_digest": "sha256:86e0c6c9da47f486ea14c3acdd8feb649f3b07610bfc2316d5045c8b56622a21"
+    }
+  ]
+}

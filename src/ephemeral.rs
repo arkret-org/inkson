@@ -5,8 +5,6 @@
 //! plaintext broadcast envelopes used to live here. v1 deleted that rail: the
 //! successor is the encrypted-only Signal Extension in [`crate::signal`].
 
-use serde::Serialize;
-
 /// A submission the current governance Station refused.
 ///
 /// The message quotes wire vocabulary — the rejection status and the Station's
@@ -44,28 +42,14 @@ pub(crate) fn authority_rejection_reason(error: &anyhow::Error) -> Option<&str> 
     })
 }
 
-pub(crate) fn validate_outgoing_registered_event_payload<T: Serialize>(
-    kind: &str,
-    payload: &T,
-) -> anyhow::Result<()> {
-    let payload = serde_json::to_value(payload)?;
-    arkret_sdk::validate_event_payload(&arkret_sdk::EventKind::from(kind), &payload).map_err(
-        |err| {
-            anyhow::anyhow!(
-                "outgoing event kind '{kind}' payload violates its typed contract: {err}"
-            )
-        },
-    )
-}
-
 /// Turn one authority submit outcome into the accepted commit, or into the
 /// typed refusal above.
 pub(crate) fn ensure_authority_accepted(
-    outcome: arkret_wire::AuthoritySubmitOutcome,
+    outcome: arkret_wire::AuthoritySubmitResponseBody,
 ) -> anyhow::Result<arkret_wire::RealmCommit> {
     match outcome {
-        arkret_wire::AuthoritySubmitOutcome::Accepted { commit, .. } => Ok(commit),
-        arkret_wire::AuthoritySubmitOutcome::Rejected {
+        arkret_wire::AuthoritySubmitResponseBody::Accepted { commit, .. } => Ok(commit),
+        arkret_wire::AuthoritySubmitResponseBody::Rejected {
             status,
             reason_code,
         } => Err(AuthorityRejectedError {

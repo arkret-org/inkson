@@ -13,6 +13,8 @@ fn snapshot_payload() -> Value {
     let commit_id = arkret_sdk::RealmCommitId::from_digest([0x31; 32]);
     let created_at = Utc::now();
     serde_json::to_value(arkret_sdk::RealmStateSnapshot {
+        purpose: arkret_wire::RealmSnapshotPurpose::FullRecovery,
+        history_basis: None,
         snapshot_id: arkret_sdk::RealmSnapshotId::from_digest([0xcc; 32]),
         realm_id: realm_id.clone(),
         governance_generation: 4,
@@ -23,7 +25,7 @@ fn snapshot_payload() -> Value {
             stream_position: 7,
             commit_id: commit_id.clone(),
         }],
-        current_state_entries: vec![arkret_sdk::TypedCurrentRow::Value {
+        current_state_entries: vec![arkret_sdk::CurrentState::Value {
             selector: arkret_sdk::CurrentSelector::RealmProfile,
             source_stream_ref: arkret_sdk::CommitStreamRef::Realm {
                 realm_id: realm_id.clone(),
@@ -51,7 +53,7 @@ fn snapshot_payload() -> Value {
             .unwrap(),
             signed_digest: hash(2),
             created_at,
-            sig: arkret_sdk::Base64UrlString::new("AQ".to_owned()).unwrap(),
+            signature: arkret_sdk::Base64UrlString::new("AQ".to_owned()).unwrap(),
         },
     })
     .unwrap()

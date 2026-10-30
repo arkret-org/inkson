@@ -8,6 +8,77 @@ use super::{TranslationDict, UiLocale};
 /// Build the default English translation dictionary.
 pub fn english_translations() -> TranslationDict {
     let mut dict = TranslationDict::new(UiLocale::En);
+    dict.set("consent.resume_original", "Resume original pending sends");
+    dict.set(
+        "consent.replace_success",
+        "Complete permissions replacement committed",
+    );
+    dict.set(
+        "consent.replace_failed",
+        "Permissions replacement is incomplete: {error}",
+    );
+
+    dict.set("consent.edit_intro", "Read the complete permissions for a peer, review the entire change, then confirm. Other permissions and retained details are preserved.");
+    dict.set("consent.edit_peer", "Edit permissions");
+    dict.set(
+        "consent.empty_set",
+        "No permissions; a saved revision remains.",
+    );
+    dict.set("consent.read_complete", "Read complete current permissions");
+    dict.set("consent.before", "Complete current state");
+    dict.set("consent.after", "Complete replacement to confirm");
+    dict.set("consent.not_before", "Valid from (RFC 3339, optional)");
+    dict.set("consent.expires_at", "Expires at (RFC 3339, optional)");
+    dict.set("consent.reason", "Reason (optional)");
+    dict.set("consent.retained_fields", "Existing constraints and evidence are retained. Unknown constraints do not grant permission.");
+    dict.set("consent.preview", "Review complete change");
+    dict.set("consent.confirm", "Confirm and submit replacement");
+
+    for (state, label, description) in [
+        (
+            "synced",
+            "Synced",
+            "The accepted write is reflected in the local view.",
+        ),
+        (
+            "optimistic",
+            "Draft",
+            "Saved locally; not yet queued for sending.",
+        ),
+        (
+            "queued",
+            "Queued",
+            "Saved in the offline queue, waiting for the network.",
+        ),
+        (
+            "submitted",
+            "Sending",
+            "Sent for processing; waiting for confirmation.",
+        ),
+        (
+            "accepted",
+            "Accepted",
+            "The server accepted this write; the local view is catching up.",
+        ),
+        (
+            "soft_failed",
+            "Failed",
+            "The write did not succeed. Review the error before retrying.",
+        ),
+        (
+            "cas_conflict",
+            "Conflict",
+            "The write's expected state changed. Refresh and retry.",
+        ),
+        (
+            "quarantined",
+            "Under review",
+            "This write is waiting for moderation review.",
+        ),
+    ] {
+        dict.set(format!("write_state.{state}.label"), label);
+        dict.set(format!("write_state.{state}.description"), description);
+    }
     dict.set("kanban.ui.members_loading", "Loading member identities…");
     dict.set(
         "kanban.ui.members_unavailable",
@@ -669,6 +740,10 @@ pub fn english_translations() -> TranslationDict {
         "Contacts only",
     );
     dict.set(
+        "settings.privacy.presence_visibility.consent_only",
+        "Only explicitly authorized people",
+    );
+    dict.set(
         "settings.privacy.presence_visibility.nobody",
         "Nobody (appear offline)",
     );
@@ -796,6 +871,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("topbar.account_menu", "Account menu");
 
     dict.set("login.continue", "Continue");
+    dict.set("login.server_sign_in", "Sign in to this server");
     dict.set("login.working", "Working...");
     dict.set("login.title", "Sign in");
     dict.set("login.completing", "Completing sign in");
@@ -874,7 +950,7 @@ pub fn english_translations() -> TranslationDict {
     );
     dict.set(
         "realm_admin.invite_hint",
-        "For the most secure invite, use the invite link the person shares with you. If they allow being found, enter their handle or identity address plus their server.",
+        "Use the personal invitation link shared by the recipient, or a complete invitation address. A username, handle or bare DID is not a complete invitation address.",
     );
 
     // F-NOTIF-VLIST-1: client-side paging UI.
@@ -1739,6 +1815,16 @@ pub fn english_translations() -> TranslationDict {
     dict.set("notifications.tooltip.mark_read", "Mark read");
     dict.set("notifications.tooltip.mark_unread", "Mark unread");
     dict.set("notifications.tooltip.archive", "Archive");
+    dict.set("notifications.tooltip.restore", "Unarchive");
+    dict.set(
+        "notifications.feedback.restoring",
+        "Restoring notification…",
+    );
+    dict.set("notifications.feedback.restored", "Notification restored");
+    dict.set(
+        "notifications.feedback.restore_failed",
+        "Could not restore notification. Retry: {error}",
+    );
     dict.set("notifications.tooltip.mute_realm", "Mute this realm");
     dict.set(
         "notifications.feedback.refresh_failed",
@@ -2103,7 +2189,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("settings.avatar.error", "Avatar upload failed");
     dict.set("settings.account.identity", "Account identity");
     dict.set("settings.profile.display_name", "Display name");
-    dict.set("settings.profile.bio", "Bio");
+    dict.set("settings.profile.biography", "Bio");
     dict.set("settings.profile.save", "Save profile");
     dict.set("settings.profile.saving", "Saving profile…");
     dict.set("settings.profile.saved", "Profile saved");
@@ -2125,6 +2211,18 @@ pub fn english_translations() -> TranslationDict {
     dict.set("settings.account.copy_did", "Copy DID");
     dict.set("settings.account.copy_handles", "Copy handles");
     dict.set("settings.account.copy_device_id", "Copy device ID");
+    dict.set("settings.invite_locator.generate", "Generate link");
+    dict.set("settings.invite_locator.revoke", "Revoke link");
+    dict.set("settings.invite_locator.revoking", "Revoking link…");
+    dict.set(
+        "settings.invite_locator.revoked",
+        "Link revoked. Generate a new link to share again.",
+    );
+    dict.set(
+        "settings.invite_locator.revoke_failed",
+        "Revocation could not be confirmed; retry revocation",
+    );
+    dict.set("settings.invite_locator.scope", "Applies to this link only. Other links remain active until revoked or expired. Closing settings hides this link; reopening does not generate another.");
     dict.set("settings.invite_locator.title", "Invite locator");
     dict.set("settings.invite_locator.expiry", "Expires in 15 min");
     dict.set("settings.invite_locator.issuing", "Issuing secure locator…");
@@ -2388,7 +2486,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("applets.registry_empty", "No applets registered yet. Use the signed Applet Package install flow below; registration is derived during commit.");
     dict.set("applets.bridge_errors", "Bridge errors");
     dict.set("applets.bridge_errors_empty", "No bridge errors observed.");
-    dict.set("applets.installed", "Installed applets");
+    dict.set("applets.installed", "Observed Applet Services");
     dict.set("applets.close_install", "Close install");
     dict.set("applets.open_install", "+ Install applet");
     dict.set("applets.manifest_placeholder", "manifest URL or JSON body");
@@ -2403,9 +2501,34 @@ pub fn english_translations() -> TranslationDict {
     dict.set("applets.allow_ghost", "allow Applet-managed Ghost Actors");
     dict.set("applets.preview_plan", "Preview plan");
     dict.set("applets.install", "Install applet");
-    dict.set("applets.installed_empty", "No applets installed.");
-    dict.set("applets.bot_creation_help", "Service installation supports zero or more independent Bots. Create Bots through the Applet's own management controls; this client has no authenticated Applet control connection. Any required approval must complete before acceptance.");
+    dict.set(
+        "applets.installed_empty",
+        "No Applet Services observed in this Realm.",
+    );
     dict.set("applets.trace_events", "Trace events");
+    dict.set("applets.revoke_scope", "Uninstall target");
+    dict.set("applets.revoke_scope_help", "Choose the Circle to uninstall from, or leave blank for the Realm installation. Only the selected Service is affected. Registration history does not show whether an installation is active.");
+    dict.set("applets.bot_name", "Bot display name (optional)");
+    dict.set("applets.create_bot", "Create Bot");
+    dict.set(
+        "applets.configure_accepted",
+        "Bot creation accepted. The Applet manages its keys and devices.",
+    );
+    dict.set(
+        "applets.configure_denied",
+        "The configuration request was denied.",
+    );
+    dict.set(
+        "applets.configure_cancelled",
+        "The configuration request was cancelled.",
+    );
+    dict.set(
+        "applets.configure_pending",
+        "This request is pending. Check its original result before starting another.",
+    );
+    dict.set("applets.configure_recover", "Check original result");
+    dict.set("applets.configure_cancel", "Cancel this request");
+    dict.set("applets.configure_retry", "Retry original request");
     dict.set("applets.uninstall", "Uninstall");
     dict.set(
         "applets.trace_empty",
@@ -2485,6 +2608,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("chat.composer.search_members", "Search members");
     dict.set("chat.composer.mention_member", "Mention member");
     dict.set("chat.composer.add_attachment", "Add attachment");
+    dict.set("chat.composer.choose_files", "Choose files");
     dict.set("chat.composer.schedule_message", "Schedule message");
     dict.set("chat.composer.poll_question", "Question");
     dict.set("chat.composer.poll_option", "Option {number}");
@@ -2720,7 +2844,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("realm_admin.roster.invite_member", "Invite member");
     dict.set(
         "realm_admin.roster.invite_target_placeholder",
-        "alice:example.com",
+        "Paste a personal invitation link",
     );
     dict.set("realm_admin.roster.send_invite", "Send Invite");
     dict.set("realm_admin.roster.pending_count", "{total} pending");
@@ -2767,7 +2891,10 @@ pub fn english_translations() -> TranslationDict {
     dict.set("realm_admin.roster.public", "Public");
     dict.set("realm_admin.roster.reply", "Reply as agent");
     dict.set("realm_admin.roster.mention", "Accept @mentions");
-    dict.set("realm_admin.roster.act_on_behalf", "Act on my behalf");
+    dict.set(
+        "realm_admin.roster.acting_on_behalf_allowed",
+        "Act on my behalf",
+    );
     dict.set(
         "realm_admin.roster.load_more",
         "Load more — showing {visible} of {total} groups",
@@ -2954,7 +3081,6 @@ fn add_feedback_keys(dict: &mut TranslationDict) {
         "feedback.read_receipt_override_inherit",
         "Read receipts for {realm}: inherit default",
     );
-    dict.set("feedback.enter_realm_id", "Enter a Realm ID first");
     dict.set(
         "feedback.realm_remark_saved",
         "Realm remark saved: {realm} \u{2192} {name}",
@@ -2965,7 +3091,7 @@ fn add_feedback_keys(dict: &mut TranslationDict) {
     );
     dict.set(
         "feedback.enter_realm_and_name",
-        "Enter both a Realm ID and a local name",
+        "Choose a Realm and enter a local name",
     );
     dict.set(
         "feedback.invalid_realm_id",
@@ -3022,15 +3148,15 @@ fn add_contacts_keys(dict: &mut TranslationDict) {
     dict.set("contacts.new.subtitle", "Needs their approval");
     dict.set(
         "contacts.new.intro",
-        "Enter the other person's invite link, handle, or complete account selector to send a friend request. All contact permissions are allowed by default. You can change them later in Settings.",
+        "Enter the other person's invite link or complete account selector to send a friend request. All contact permissions are allowed by default. You can change them later in Settings.",
     );
     dict.set(
         "contacts.new.target_label",
-        "Their invite link, handle, or account",
+        "Their invite link or complete account selector",
     );
     dict.set(
         "contacts.new.target_placeholder",
-        "Paste an invite link or enter alice:example.com",
+        "Paste an invite link or complete account selector",
     );
     dict.set("contacts.new.message_label", "Note (optional)");
     dict.set("contacts.new.message_placeholder", "Say hello…");
@@ -3223,6 +3349,28 @@ fn add_contacts_keys(dict: &mut TranslationDict) {
     );
     dict.set("settings.capabilities.hint_subject", "the server rejected this because the signer is not the grant's subject — only the subject may relinquish a grant; ask the issuer (or Realm owner) to revoke it instead");
     dict.set("settings.capabilities.hint_pending", "the grant is not yet resolved in the server projection — the relinquish stays pending until the grant row lands; retry after sync if it does not settle");
+    dict.set("consent.never_written", "No previous decision for this peer. Saving an empty set explicitly closes all permissions.");
+    dict.set("consent.existing", "An existing decision will be replaced. The current permissions stay in effect until your change is accepted.");
+    dict.set("consent.edit_intro", "Edit one peer's complete permissions. Read the current value, review the change, then confirm.");
+    dict.set("consent.closed", "All permissions closed");
+    dict.set("consent.edit_select", "Select peer");
+    dict.set("consent.grantee_station_label", "Peer Station identity");
+    dict.set("consent.read_complete", "Read complete permissions");
+    dict.set("consent.edit_preserve", "Expired, future and constrained permissions remain visible. Unchanged entries are preserved. Read again if the confirmation expires.");
+    dict.set(
+        "consent.complete_permissions",
+        "Complete permissions and conditions",
+    );
+    dict.set("consent.preview", "Review changes");
+    dict.set("consent.before", "Current permissions");
+    dict.set("consent.after", "Replacement permissions");
+    dict.set("consent.confirm_replace", "Confirm replacement");
+    dict.set("consent.replace_success", "Permissions replaced");
+    dict.set("consent.recover_original", "Recover original pending write");
+    dict.set(
+        "consent.recovery_complete",
+        "Recovery checked. Read the current permissions again before editing.",
+    );
     dict.set("consent.title", "Consent");
     dict.set("consent.grant", "Grant consent");
     dict.set("consent.request", "Request consent");
@@ -3236,9 +3384,11 @@ fn add_contacts_keys(dict: &mut TranslationDict) {
     dict.set("consent.scope.voice_call", "Voice calls");
     dict.set("consent.scope.video_call", "Video calls");
     dict.set("consent.scope.presence", "Presence");
-    dict.set("consent.scope.any", "All consent permissions");
     dict.set("consent.scope.unknown", "Unknown scope");
-    dict.set("consent.grantee", "Grantee DID");
+    dict.set(
+        "consent.grantee",
+        "Peer Actor JSON or Account principal DID",
+    );
     dict.set("consent.ttl", "Valid for (e.g. 30d)");
     dict.set("consent.grant_submit", "Grant");
     dict.set("consent.holder", "Holder DID");
@@ -3304,7 +3454,7 @@ fn add_contacts_keys(dict: &mut TranslationDict) {
     dict.set("invite_policy.kinds_title", "Allowed invite sources");
     dict.set(
         "invite_policy.kind.consent_grant",
-        "Contacts (friends you've approved)",
+        "Peers with my invite permission",
     );
     dict.set("invite_policy.kind.locator_ref", "Invite links");
     dict.set("invite_policy.kind.shared_realm", "Members of my groups");
@@ -3393,7 +3543,7 @@ fn add_contacts_keys(dict: &mut TranslationDict) {
     );
     dict.set(
         "realm_admin.invite_none_eligible",
-        "No contacts can be invited (missing consent grant).",
+        "No contacts have authorized invitations.",
     );
     dict.set("realm_admin.invite_sending", "Inviting {total} contact(s)…");
     dict.set(
@@ -3405,13 +3555,13 @@ fn add_contacts_keys(dict: &mut TranslationDict) {
         "Invited {ok}/{total} contact(s); some failed: {error}",
     );
     dict.set("realm_admin.invite_selected", "Invite selected contacts");
-    dict.set("realm_admin.invite_divider", "Or add by handle");
-    dict.set("realm_admin.invite_by_handle", "Add by handle");
-    dict.set("realm_admin.invite_handle_opt_in", "Recipient opt-in");
+    dict.set("realm_admin.invite_divider", "Or use an invitation address");
+    dict.set("realm_admin.invite_by_address", "Use an invitation address");
     dict.set(
-        "realm_admin.invite_target_label",
-        "Handle or invite address",
+        "realm_admin.invite_link_recommended",
+        "Personal invitation link recommended",
     );
+    dict.set("realm_admin.invite_target_label", "Invitation address");
     dict.set(
         "realm_admin.invite_bad_server",
         "Invalid server address: {error}",
@@ -4525,6 +4675,20 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
     dict.set("app.account.server", "Server");
     dict.set("app.account.refresh_session", "Refresh session");
     dict.set("app.account.log_out", "Log out");
+    dict.set("app.account.switching", "Switching account…");
+    dict.set("app.account.switch", "Switch account");
+    dict.set("app.account.unnamed", "Unnamed account");
+    dict.set("app.account.return_previous", "Back to previous account");
+    dict.set("app.account.choose", "Choose a saved account");
+    dict.set("app.account.add", "Sign in to another account");
+    dict.set(
+        "app.account.saved_unavailable",
+        "Saved accounts could not be loaded. Your data has been retained.",
+    );
+    dict.set(
+        "app.account.switch_failed",
+        "Account switching failed. Your saved accounts have been retained. Please retry.",
+    );
     dict.set("theme.switch_to_light", "Switch to light theme");
     dict.set("theme.switch_to_night", "Switch to night theme");
     dict.set("account.not_signed_in", "Not signed in");
@@ -4607,6 +4771,10 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
         "Replaced connections",
     );
     dict.set("agent_runtime.permission_read", "Read authorized content");
+    dict.set(
+        "agent_runtime.permission_metadata",
+        "Read authorized object metadata",
+    );
     dict.set(
         "agent_runtime.permission_post",
         "Send messages in authorized conversations",

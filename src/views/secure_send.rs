@@ -65,7 +65,7 @@ fn scope_current_evidence(
         })
         .and_then(|entries| {
             entries.iter().find_map(|entry| match entry {
-                arkret_sdk::TypedCurrentRow::Value {
+                arkret_sdk::CurrentState::Value {
                     selector: arkret_sdk::CurrentSelector::MlsGroup { scope_ref },
                     source_stream_ref,
                     revision,
@@ -185,7 +185,7 @@ pub(crate) fn use_scope_send_probe(
                     view.entries.iter().any(|entry| {
                         matches!(
                             entry,
-                            arkret_sdk::TypedCurrentRow::Value {
+                            arkret_sdk::CurrentState::Value {
                                 selector: arkret_sdk::CurrentSelector::RealmGenesis,
                                 ..
                             }
@@ -465,6 +465,7 @@ pub(crate) type SecureControlPlan = Box<
 /// One ordinary message, ready to be completed by the account's own Station.
 pub(crate) struct SecureMessageAuthoring {
     pub strand_id: String,
+    pub blob_refs: Vec<String>,
     pub reply_to: Option<String>,
     pub plan: SecureMessagePlan,
 }
@@ -548,6 +549,10 @@ pub(crate) async fn build_secure_send(
         &crate::app::runtime_adapter::state_store_handle(state_store),
         &effective_scope,
     )?;
+    let attachment_refs = serde_json::from_slice::<arkret_sdk::ContentBlock>(plaintext_bytes)
+        .map_err(|e| format!("private ContentBlock: {e}"))?
+        .referenced_blobs()
+        .map_err(|e| format!("private attachment references: {e}"))?;
     let encryption = run_local_mls_encrypt(
         state_store,
         realm_id,
@@ -631,6 +636,7 @@ pub(crate) async fn build_secure_send(
     Ok(SecureSendBuild {
         message_plan: SecureWritePlan::Message(SecureMessageAuthoring {
             strand_id: strand_id.to_owned(),
+            blob_refs: attachment_refs,
             reply_to: reply_to
                 .filter(|value| !value.trim().is_empty())
                 .map(ToOwned::to_owned),
@@ -806,7 +812,7 @@ pub(crate) async fn submit_secure_send(
                 Ok(content) => content,
                 Err(message) => return SecureSendOutcome::MessageFailed { message },
             };
-            return match crate::views::chat::model::send_ordinary_chat_message(
+            return match crate::views::chat::model::send_ordinary_chat_message_with_blob_refs(
                 api,
                 crate::app::runtime_adapter::state_store_handle(state_store),
                 realm_id,
@@ -815,6 +821,7 @@ pub(crate) async fn submit_secure_send(
                 content,
                 authoring.reply_to.as_deref(),
                 message_local_operation_id.to_string(),
+                authoring.blob_refs,
             )
             .await
             {
@@ -897,7 +904,7 @@ pub(crate) async fn submit_secure_send(
 
 #[cfg(test)]
 mod readiness_current_tests {
-    use arkret_sdk::{CommitStreamRef, CurrentRevision, CurrentSelector, TypedCurrentRow};
+    use arkret_sdk::{CommitStreamRef, CurrentRevision, CurrentSelector, CurrentState};
 
     use super::*;
     use crate::current_projection::RealmCurrentView;
@@ -931,9 +938,9 @@ mod readiness_current_tests {
         }
     }
 
-    fn row(epoch: u64, position: u64) -> TypedCurrentRow {
+    fn row(epoch: u64, position: u64) -> CurrentState {
         let scope = scope();
-        TypedCurrentRow::Value {
+        CurrentState::Value {
             selector: CurrentSelector::MlsGroup {
                 scope_ref: scope.clone(),
             },
@@ -948,8 +955,8 @@ mod readiness_current_tests {
                 "effective_scope": scope,
                 "genesis_event_ref": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
                 "current_mls_commit_event_ref": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-                "cipher_suite": "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519", "epoch": epoch,
-                "current_key_access_revision": 2, "covered_key_access_revision": 2,
+                "cipher_suite": "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519", "epoch": (epoch).to_string(),
+                "current_key_access_revision": "2", "covered_key_access_revision": "2",
                 "public_tree_ref": "ak:blob:sha256:431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460"
             }),
         }

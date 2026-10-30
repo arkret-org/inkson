@@ -7,6 +7,9 @@ use serde_json::{Value, json};
 #[path = "inkson-wire/realm_fixture.rs"]
 mod realm_fixture;
 
+#[path = "inkson-wire/operation_fixture.rs"]
+mod operation_fixture;
+
 #[derive(Debug, Deserialize)]
 struct CanonicalInput {
     value: Value,
@@ -41,6 +44,13 @@ struct MockServiceAuthority {
     verification_method: arkret_sdk::DidUrl,
 }
 
+#[path = "inkson-wire/contact_fixture.rs"]
+mod contact_fixture;
+
+#[cfg(not(target_arch = "wasm32"))]
+#[path = "inkson-wire/native_search.rs"]
+mod native_search;
+
 fn main() -> Result<()> {
     let command = std::env::args().nth(1).context("missing command")?;
     let input = read_stdin_json()?;
@@ -49,8 +59,32 @@ fn main() -> Result<()> {
         "canonical-json" => canonical_json(input)?,
         "sha256-canonical-json" => sha256_canonical_json(input)?,
         "service-resolution" => serde_json::to_value(service_resolution(input)?)?,
+        "mock-mimi-directory" => mimi_provider_directory(input)?,
         "service-document" => {
             serde_json::to_value(service_resolution(input)?.normalized_did_document)?
+        }
+        "mock-operation-request" => operation_fixture::build(input)?,
+        "mock-operation-verify" => operation_fixture::verify(input)?,
+        "mock-runtime-candidate" => operation_fixture::runtime_candidate(input)?,
+        "mock-account-data-value" => operation_fixture::account_data_value(input)?,
+        "mock-ice-config" => {
+            let request: arkret_models_collaboration::objects::media::MediaIceConfigurationRequestBody =
+                serde_json::from_value(input)?;
+            let endpoint = url::Url::parse("https://server.local/")?;
+            let at = chrono::DateTime::parse_from_rfc3339("2026-06-01T00:00:00Z")?
+                .with_timezone(&chrono::Utc);
+            let now = arkret_sdk::canonical::normalize_timestamp_canonical(chrono::Utc::now());
+            let authority = arkret_test_kit::service_identity::ServiceIdentityFixture::webvh(
+                &endpoint,
+                31,
+                [31; 32],
+                "signing-1",
+                at,
+                now,
+            )?;
+            serde_json::to_value(arkret_test_kit::media_ice::signed_config(
+                &request, &authority, now,
+            )?)?
         }
         "principal-locator" => principal_locator(input)?,
         "direct-conversation-pair-key" => direct_conversation_pair_key(input)?,
@@ -61,15 +95,25 @@ fn main() -> Result<()> {
         "contact-request-commit" => contact_request_commit(input)?,
         "contact-request-sign" => contact_request_sign(input)?,
         "contact-request-verify" => contact_request_verify(input)?,
+        "contact-ceremony-fixture" => contact_fixture::build(input)?,
+        "contact-ceremony-verify" => contact_fixture::verify(input)?,
+        "contact-ceremony-operation" => contact_fixture::operation(input)?,
         "mock-realm-fixture" => realm_fixture::build(input)?,
         "mock-realm-list" => realm_fixture::realm_list(input)?,
         "mock-realm-verify" => realm_fixture::verify(input)?,
         "mock-realm-authority-bundle" => realm_fixture::authority_bundle(input)?,
+        "mock-realm-authority-bundle-for-request" => {
+            realm_fixture::authority_bundle_for_request(input)?
+        }
         "mock-current-principal" => realm_fixture::current_principal(input)?,
         "mock-realm-scan" => realm_fixture::scan(input)?,
+        "mock-realm-streams" => realm_fixture::streams(input)?,
         "mock-exact-current" => realm_fixture::exact_current(input)?,
+        "mock-strand-watch-current" => realm_fixture::strand_watch_current(input)?,
         "mock-realm-submit" => realm_fixture::submit(input)?,
         "mock-realm-signer-keys" => realm_fixture::signer_keys(input)?,
+        #[cfg(not(target_arch = "wasm32"))]
+        "native-account-search" => native_search::read(input)?,
         _ => bail!("unknown inkson-wire command {command:?}"),
     };
 
@@ -122,7 +166,7 @@ struct ContactRequestPrepareInput {
 
 fn contact_request_prepare(input: Value) -> Result<Value> {
     use arkret_sdk::contact_operations::{
-        ContactOperationOutcome, ContactPeer, ContactPreparedOutcome,
+        ContactOperationResponseBody, ContactPeer, ContactPreparedResponseBody,
     };
     let input: ContactRequestPrepareInput = serde_json::from_value(input)?;
     let holder = ContactPeer::Human {
@@ -136,11 +180,10 @@ fn contact_request_prepare(input: Value) -> Result<Value> {
         !input.body.granted_to_peer_scopes.is_empty(),
         "Contact scopes must not be empty"
     );
-    anyhow::ensure!(
-        input.body.continuity_evidence.is_none(),
-        "mock request supports only a first Contact round"
-    );
     let payload = arkret_sdk::ContactRequestedPayload {
+        trust_domain_id: arkret_sdk::TrustDomainId::new("ak:trust_domain:mock.test")?,
+        version: 1,
+        predecessor_event_ref: None,
         peer: input.body.peer,
         granted_to_peer_scopes: input.body.granted_to_peer_scopes,
         introduction_evidence_digest: arkret_sdk::Hash::new(
@@ -149,7 +192,7 @@ fn contact_request_prepare(input: Value) -> Result<Value> {
                 &input.body.introduction_evidence,
             )?,
         )?,
-        previous_terminal_contact_round_id: None,
+        initial_contact_round_id: None,
         message: input
             .body
             .message
@@ -167,7 +210,7 @@ fn contact_request_prepare(input: Value) -> Result<Value> {
         )?
         .author_with_digest_suite(created_at, arkret_sdk::DigestSuite::Sha256)?;
     let draft = arkret_sdk::PreparedEventDraft {
-        unsigned_event_bytes: arkret_sdk::Base64UrlString::new(arkret_sdk::base64url_encode(
+        unsigned_event_base64url: arkret_sdk::Base64UrlString::new(arkret_sdk::base64url_encode(
             arkret_sdk::canonical::canonical_json_bytes(&event.digest_payload()?)?,
         ))
         .map_err(anyhow::Error::msg)?,
@@ -176,8 +219,8 @@ fn contact_request_prepare(input: Value) -> Result<Value> {
         )?,
     };
     draft.unsigned_event_for_kind(arkret_wire::event_kind_str::CONTACT_REQUESTED)?;
-    serde_json::to_value(ContactOperationOutcome::Prepared {
-        outcome: ContactPreparedOutcome::Request {
+    serde_json::to_value(ContactOperationResponseBody::Prepared {
+        outcome: ContactPreparedResponseBody::Request {
             operation_id: input.body.operation_id,
             reservation_handle: arkret_sdk::ReservationHandle::new(format!(
                 "e2e-contact-{}",
@@ -193,7 +236,7 @@ fn contact_request_prepare(input: Value) -> Result<Value> {
 
 #[derive(Deserialize)]
 struct ContactRequestCommitInput {
-    prepared: arkret_sdk::contact_operations::ContactOperationOutcome,
+    prepared: arkret_sdk::contact_operations::ContactOperationResponseBody,
     body: arkret_sdk::contact_operations::ContactCommitRequestBody,
     producer_verification_method: arkret_sdk::DidUrl,
     producer_public_key_b64url: arkret_sdk::Base64UrlString,
@@ -202,9 +245,9 @@ struct ContactRequestCommitInput {
 fn contact_request_commit(input: Value) -> Result<Value> {
     use arkret_sdk::contact_operations::*;
     let input: ContactRequestCommitInput = serde_json::from_value(input)?;
-    let ContactOperationOutcome::Prepared {
+    let ContactOperationResponseBody::Prepared {
         outcome:
-            ContactPreparedOutcome::Request {
+            ContactPreparedResponseBody::Request {
                 operation_id,
                 reservation_handle,
                 event_draft,
@@ -275,14 +318,18 @@ fn contact_request_commit(input: Value) -> Result<Value> {
         RequestAcceptanceReceiptCore {
             holder,
             peer: payload.peer,
-            slot_version: 1,
-            slot_predecessor: None,
-            previous_terminal_contact_round_id: None,
+            trust_domain_id: arkret_sdk::TrustDomainId::new("ak:trust_domain:mock.test")?,
+            version: 1,
+            predecessor_event_ref: None,
+            initial_contact_round_id: None,
             request_event_ref: event.event_id.clone(),
             producer_signer: producer,
-            source_checkpoint: arkret_sdk::Hash::new(arkret_sdk::canonical::canonical_sha256(
-                &event,
-            )?)?,
+            source_checkpoint: arkret_sdk::Hash::new(
+                arkret_sdk::canonical::domain_prefixed_canonical_sha256(
+                    arkret_wire::DomainSeparationId::CONTACT_REQUEST_SOURCE_CHECKPOINT_V1,
+                    &json!({"event_ref":event.event_id,"event_digest":event.event_id.event_digest()}),
+                )?,
+            )?,
             accepted_at,
             issuer_id: authority.service_id,
         },
@@ -303,7 +350,7 @@ fn contact_request_commit(input: Value) -> Result<Value> {
         &event.event_id,
         &authority.signing_key.verifying_key(),
     )?;
-    let list_row = ContactListRow {
+    let contact_view = ContactView {
         peer: receipt.core.peer.clone(),
         state: ContactState::PendingOutgoing,
         request_event_ref: Some(event.event_id.clone()),
@@ -315,24 +362,23 @@ fn contact_request_commit(input: Value) -> Result<Value> {
         granted_by_peer_scopes: Vec::new(),
         bidirectional_scopes: Vec::new(),
         effective_scopes: None,
-        continuity_evidence: None,
         direct_conversation: None,
         contact_agent_projections: Vec::new(),
         peer_endpoint: None,
     };
-    list_row.validate_shape()?;
-    let outcome = ContactOperationOutcome::Accepted {
-        outcome: ContactAcceptedOutcome::Request {
+    contact_view.validate_shape()?;
+    let outcome = ContactOperationResponseBody::Accepted {
+        outcome: ContactAcceptedResponseBody::Request {
             operation_id,
             request_acceptance_receipt: receipt,
         },
     };
-    Ok(json!({"outcome": outcome, "list_row": list_row}))
+    Ok(json!({"outcome": outcome, "contact_view": contact_view}))
 }
 
 #[derive(Deserialize)]
 struct ContactRequestSignInput {
-    prepared: arkret_sdk::contact_operations::ContactOperationOutcome,
+    prepared: arkret_sdk::contact_operations::ContactOperationResponseBody,
     seed_b64url: String,
     holder_did: String,
     device_id: String,
@@ -340,14 +386,12 @@ struct ContactRequestSignInput {
 
 fn contact_request_sign(input: Value) -> Result<Value> {
     let input: ContactRequestSignInput = serde_json::from_value(input)?;
-    let arkret_sdk::contact_operations::ContactOperationOutcome::Prepared { outcome } =
+    let arkret_sdk::contact_operations::ContactOperationResponseBody::Prepared { outcome } =
         input.prepared
     else {
         bail!("Contact signer requires prepared outcome")
     };
-    let mut event = outcome
-        .event_draft()?
-        .unsigned_event_for_kind(arkret_wire::event_kind_str::CONTACT_REQUESTED)?;
+    let mut event = outcome.event_draft()?.unsigned_event()?;
     let seed: [u8; 32] = arkret_sdk::base64url_decode(&input.seed_b64url)?
         .try_into()
         .map_err(|_| anyhow::anyhow!("Contact fixture seed must have 32 bytes"))?;
@@ -376,16 +420,18 @@ fn contact_request_sign(input: Value) -> Result<Value> {
 
 #[derive(Deserialize)]
 struct ContactRequestVerifyInput {
-    outcome: arkret_sdk::contact_operations::ContactOperationOutcome,
+    outcome: arkret_sdk::contact_operations::ContactOperationResponseBody,
     event: arkret_sdk::Event,
 }
 
 fn contact_request_verify(input: Value) -> Result<Value> {
-    use arkret_sdk::contact_operations::{ContactAcceptedOutcome, ContactOperationOutcome};
+    use arkret_sdk::contact_operations::{
+        ContactAcceptedResponseBody, ContactOperationResponseBody,
+    };
     let input: ContactRequestVerifyInput = serde_json::from_value(input)?;
-    let ContactOperationOutcome::Accepted {
+    let ContactOperationResponseBody::Accepted {
         outcome:
-            ContactAcceptedOutcome::Request {
+            ContactAcceptedResponseBody::Request {
                 request_acceptance_receipt,
                 ..
             },
@@ -438,59 +484,22 @@ fn demo_realm_genesis() -> Result<Value> {
 }
 
 fn mock_service_authority() -> Result<MockServiceAuthority> {
-    use arkret_identity::{
-        DidResolver as _, DidWebvhDocumentOutcome, DidWebvhLogOutcome, DidWebvhResolver,
-    };
-    use rand_core::SeedableRng as _;
     let endpoint = url::Url::parse("https://server.local/")?;
     let at =
         chrono::DateTime::parse_from_rfc3339("2026-06-01T00:00:00Z")?.with_timezone(&chrono::Utc);
-    let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(31);
-    let prepared = arkret_signatures::webvh::prepare_service_inception_with_did_key_seed(
-        &mut rng,
-        &arkret_signatures::webvh::ServiceInceptionInput {
-            principal_endpoint: &endpoint,
-            local_id: "service",
-            also_known_as: &[],
-            version_time: at,
-            did_key_fragment: Some("signing-1"),
-        },
-        &[31; 32],
-    )?;
-    let did = arkret_sdk::Did::new(prepared.did.clone())?;
-    let service_id = arkret_wire::project_did_to_core_id(&did)?;
-    let verification_method =
-        arkret_sdk::DidUrl::new(prepared.did_key_id.clone()).map_err(anyhow::Error::msg)?;
-    let mut resolver = DidWebvhResolver::new();
-    resolver.insert_from_https_response(
-        &did,
-        DidWebvhDocumentOutcome {
-            url: DidWebvhResolver::document_url(&did)?,
-            content_type: "application/json".into(),
-            body: serde_json::to_vec(&prepared.log_entry["state"])?,
-        },
-    )?;
-    resolver.ingest_log(
-        &did,
-        DidWebvhLogOutcome {
-            url: DidWebvhResolver::log_url(&did)?,
-            content_type: "application/jsonl".into(),
-            body: serde_json::to_vec(&prepared.log_entry)?,
-        },
-    )?;
-    let resolution = arkret_identity::build_authenticated_webvh_service_resolution(
-        service_id.clone(),
-        "station".into(),
-        resolver.resolve_did(&did)?.document,
-        vec![prepared.log_entry.clone()],
-        vec![],
+    let fixture = arkret_test_kit::service_identity::ServiceIdentityFixture::webvh(
+        &endpoint,
+        31,
+        [31; 32],
+        "signing-1",
+        at,
         chrono::Utc::now(),
     )?;
     Ok(MockServiceAuthority {
-        resolution,
-        signing_key: ed25519_dalek::SigningKey::from_bytes(&[31; 32]),
-        service_id,
-        verification_method,
+        resolution: fixture.resolution,
+        signing_key: fixture.signing_key,
+        service_id: fixture.service_id,
+        verification_method: fixture.verification_method,
     })
 }
 
@@ -501,9 +510,14 @@ fn service_resolution(input: Value) -> Result<arkret_sdk::AuthenticatedServiceRe
         .unwrap_or(arkret_wire::ServiceKind::Station);
     let resolution = match kind {
         arkret_wire::ServiceKind::Station => mock_service_authority()?.resolution,
-        arkret_wire::ServiceKind::DirectoryService => {
-            let did = arkret_wire::Did::new("did:web:directory.example".to_owned())?;
-            let key = ed25519_dalek::SigningKey::from_bytes(&[32; 32]);
+        arkret_wire::ServiceKind::DirectoryService | arkret_wire::ServiceKind::AppletService => {
+            let (host, seed) = if kind == arkret_wire::ServiceKind::DirectoryService {
+                ("directory.example", 32)
+            } else {
+                ("applet.example", 33)
+            };
+            let did = arkret_wire::Did::new(format!("did:web:{host}"))?;
+            let key = ed25519_dalek::SigningKey::from_bytes(&[seed; 32]);
             let method = format!("{did}#signing-1");
             let document: arkret_models_identity::DidDocument = serde_json::from_value(json!({
                 "@context":["https://www.w3.org/ns/did/v1"],
@@ -512,10 +526,10 @@ fn service_resolution(input: Value) -> Result<arkret_sdk::AuthenticatedServiceRe
                     "publicKeyMultibase":arkret_sdk::ed25519_pubkey_to_did_key_multibase(key.verifying_key().as_bytes())}],
                 "assertionMethod":[method],
                 "service":[{"id":format!("{did}#arkret"),"type":"ArkretService",
-                    "serviceKind":kind.as_str(),"serviceEndpoint":"https://directory.example/"}]
+                    "serviceKind":kind.as_str(),"serviceEndpoint":format!("https://{host}/")}]
             }))?;
-            // Directory reads use independently fetched current did:web state;
-            // they do not supply historical signer or Realm authority evidence.
+            // Metadata fixtures use independently fetched current did:web state;
+            // they supply no historical signer or Realm authority evidence.
             arkret_identity::build_authenticated_did_web_service_resolution(
                 arkret_wire::project_did_to_core_id(&did)?,
                 kind.as_str().to_owned(),
@@ -523,9 +537,38 @@ fn service_resolution(input: Value) -> Result<arkret_sdk::AuthenticatedServiceRe
                 chrono::Utc::now(),
             )?
         }
-        _ => bail!("service fixture supports only Station and Directory roles"),
+        _ => bail!("service fixture supports only Station, Directory and Applet metadata roles"),
     };
     Ok(resolution)
+}
+
+fn mimi_provider_directory(mut input: Value) -> Result<Value> {
+    let authority = mock_service_authority()?;
+    input["service_id"] = serde_json::to_value(&authority.service_id)?;
+    input["proof"] = serde_json::to_value(arkret_wire::PayloadProof {
+        kind: arkret_sdk::proof_kind::DETACHED_JWS.to_owned(),
+        verification_method: authority.verification_method,
+        payload_digest: arkret_wire::Hash::new(arkret_sdk::canonical::sha256_digest(b""))?,
+        created_at: chrono::Utc::now(),
+        domain: None,
+        audience: None,
+        proof_purpose: None,
+        jws: String::new(),
+    })?;
+    let mut directory: arkret_models_collaboration::objects::interop::ProviderDirectory =
+        serde_json::from_value(input)?;
+    directory.proof.0.payload_digest = directory.payload_digest()?;
+    let bytes = directory.proof_binding_bytes()?;
+    directory.proof.0.jws =
+        arkret_sdk::signatures::sign_ed25519_detached_jws(&authority.signing_key, &bytes)?;
+    directory.validate()?;
+    arkret_sdk::signatures::service_resolution::verify_service_payload_proof(
+        &authority.service_id,
+        &authority.resolution.normalized_did_document,
+        &directory.proof.0,
+        &bytes,
+    )?;
+    serde_json::to_value(directory).context("serialize the signed own Station MIMI directory")
 }
 
 fn principal_locator(input: Value) -> Result<Value> {

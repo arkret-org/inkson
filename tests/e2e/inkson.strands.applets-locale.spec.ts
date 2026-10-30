@@ -52,7 +52,7 @@ test("applet registry and install form copy follow the active language without a
     const errors = panel.getByTestId("applet-bridge-errors");
     await expect(errors.getByText(zh ? "桥接错误" : "Bridge errors", { exact: true })).toBeVisible();
     await expect(errors.getByText(zh ? "尚未观察到桥接错误。" : "No bridge errors observed.", { exact: true })).toBeVisible();
-    await expect(panel.getByTestId("applet-empty")).toHaveText(zh ? "尚未安装小程序。" : "No applets installed.");
+    await expect(panel.getByTestId("applet-empty")).toHaveText(zh ? "此 Realm 尚未观察到小程序 Service。" : "No Applet Services observed in this Realm.");
     await expect(panel.getByTestId("applet-row")).toHaveCount(0);
     await expect(panel.getByTestId("applet-accountability-modal")).toHaveCount(0);
     const toggle = panel.getByTestId("applet-install-button");

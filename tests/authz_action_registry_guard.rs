@@ -3,7 +3,7 @@
 //! Regression: the `ak.member.{invite,remove,role_change}` tokens are
 //! inkson-local UI grouping placeholders only. They are NOT registered in
 //! `capability-action-registry.json`, so they must never be sent on the
-//! protocol authz wire (`authz_check_raw` → `AuthzCheckRequestBody.action` →
+//! protocol authz wire (`authz_check_raw` → `AuthorizationCheckRequestBody.action` →
 //! `POST /_arkret/self/authz/check`). A spec-conformant server fail-closes on
 //! unregistered actions, which would permanently hide the member-management
 //! controls; a lax server would accept a non-canonical action token across the

@@ -92,7 +92,7 @@ fn contact_remark_set_tombstone_and_display_name() {
     let did = "ak:did_core:web:alice.example";
     assert!(store.active_contact_remark(did).is_none());
 
-    let accepted = crate::models::ContactListRow {
+    let accepted = crate::models::ContactView {
         peer: arkret_sdk::contact_operations::ContactPeer::Human {
             account_id: arkret_sdk::AccountId::new(
                 arkret_sdk::DidCoreId::new(did).unwrap(),
@@ -109,7 +109,6 @@ fn contact_remark_set_tombstone_and_display_name() {
         granted_by_peer_scopes: Vec::new(),
         bidirectional_scopes: Vec::new(),
         effective_scopes: None,
-        continuity_evidence: None,
         direct_conversation: None,
         contact_agent_projections: Vec::new(),
         peer_endpoint: None,
@@ -281,10 +280,8 @@ fn cold_reload_restores_private_contact_labels_without_redelivering_the_cursor()
         writer
             .save_account_checkpoint(&scope, checkpoint.clone())
             .unwrap();
-        let persisted = std::fs::read_to_string(
-            writer.account_state_path(&writer.active_authority_namespace_for_test()),
-        )
-        .unwrap();
+        let persisted = writer
+            .persisted_account_records_for_test(&writer.active_authority_namespace_for_test());
         assert!(!persisted.contains("Holder petname"));
         assert!(!persisted.contains("Original confirmed name"));
         let mut reopened = LocalStateStore::with_path(path);

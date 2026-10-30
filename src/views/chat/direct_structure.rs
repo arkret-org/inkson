@@ -366,9 +366,9 @@ fn DirectAgentReplyPreference(
                                         "Direct Conversation ownership is pending");
                                 }
                                 anyhow::ensure!(existing.agent_id == agent.principal_id.as_str(), "Participation belongs to another Agent");
-                                let entry = existing.agent_participation_entries.iter().find(|entry| entry.scope == scope);
+                                let entry = existing.participation_entries.iter().find(|entry| entry.target_scope == scope);
                                 let mut selection = entry.map(|entry| entry.selection).unwrap_or_default();
-                                selection.reply_message = true;
+                                selection.message_creation_allowed = true;
                                 let request = arkret_sdk::ParticipationReplaceRequestBody {
                                     target_scope: scope.clone(), selection,
                                     expected_version: entry.map(|entry| entry.version).unwrap_or(0),
@@ -376,7 +376,7 @@ fn DirectAgentReplyPreference(
                                 let accepted = http.agent_participation_replace(agent.principal_id.as_str(), &request).await?;
                                 fence.check()?;
                                 anyhow::ensure!(accepted.agent_id == agent.principal_id.as_str()
-                                    && accepted.agent_participation_entries.iter().any(|entry| entry.scope == scope && entry.selection == selection),
+                                    && accepted.participation_entries.iter().any(|entry| entry.target_scope == scope && entry.selection == selection),
                                     "Reply preference was not confirmed");
                                 Ok(())
                             }).await.map_err(|error| anyhow::anyhow!(error.display()))
@@ -409,7 +409,7 @@ pub(super) fn metadata_title(
 ) -> String {
     envelope
         .and_then(|envelope| {
-            crate::views::metadata::open_metadata(store, realm, id, envelope, account, device)
+            crate::identity::metadata::open_metadata(store, realm, id, envelope, account, device)
         })
         .and_then(|metadata| {
             metadata
@@ -740,7 +740,7 @@ async fn submit_structure(
     account: arkret_sdk::AccountId,
     device: arkret_sdk::DeviceId,
     mut store: SyncSignal<LocalStateStore>,
-) -> anyhow::Result<(crate::models::SubmitEventResult, Option<String>)> {
+) -> anyhow::Result<(crate::models::EventSubmissionProgress, Option<String>)> {
     #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
     tracing::warn!(action = %write.action, stage = "starting", "Direct structure write diagnostic");
     let fence = crate::transport::auth::AuthoringSessionFence::capture()?;
@@ -752,7 +752,7 @@ async fn submit_structure(
     let actor = account.principal_id.as_str();
     let context = store
         .read()
-        .direct_message_context(&realm, &arkret_sdk::ActorId::account(account.clone()))
+        .direct_structure_context(&realm, &arkret_sdk::ActorId::account(account.clone()))
         .ok_or_else(|| anyhow::anyhow!("Conversation authority is pending"))?;
     anyhow::ensure!(
         context.authority_source == arkret_wire::AuthoritySourceId::DirectConversationParticipantV1,
@@ -941,7 +941,7 @@ pub(super) fn DirectStructurePanel(
         "new_chat" | "new_topic" | "rename_chat" | "rename_topic_target"
     );
     let actor = arkret_sdk::ActorId::account(account.clone());
-    let context = store.read().direct_message_context(&realm, &actor);
+    let context = store.read().direct_structure_context(&realm, &actor);
     let stable = context.as_ref().is_some_and(|c| {
         c.authority_source == arkret_wire::AuthoritySourceId::DirectConversationParticipantV1
     });
@@ -1008,7 +1008,7 @@ pub(super) fn DirectStructurePanel(
                 .filter(|entry| {
                     matches!(
                         entry,
-                        arkret_sdk::TypedCurrentRow::Value {
+                        arkret_sdk::CurrentState::Value {
                             selector: arkret_sdk::CurrentSelector::Strand { .. },
                             ..
                         }

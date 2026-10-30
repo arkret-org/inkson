@@ -1564,9 +1564,9 @@ pub async fn initialize_wasm_secure_key_store_async(
     }
     let store = IndexedDbSecureKeyStore::new_async(service_name).await?;
     // `IndexedDbSecureKeyStore` is genuinely `Send + Sync` (its `!Send` JS handles
-    // ride inside `IndexedDbSendBoundary`), so it can inhabit the `+ Send + Sync`
-    // trait object the process-global `OnceLock` requires.
-    let store: Arc<dyn SecureKeyStore + Send + Sync> = Arc::new(store);
+    // ride inside `IndexedDbSendBoundary`), so it can inhabit the process-global
+    // `OnceLock` while remaining available through the secure-store port.
+    let store = Arc::new(store);
     let _ = WASM_INDEXEDDB_SECURE_KEY_STORE.set(store.clone());
     Ok(Some(store))
 }

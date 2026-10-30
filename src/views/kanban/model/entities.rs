@@ -338,27 +338,6 @@ impl CardState {
         }
     }
 
-    pub(crate) fn label(&self) -> &'static str {
-        match self {
-            CardState::Synced => "synced",
-            CardState::Optimistic | CardState::Queued | CardState::Submitted => "sending...",
-            CardState::Accepted => "pending seal",
-            CardState::SoftFailed => "soft failed",
-            CardState::Quarantined => "quarantined",
-            CardState::Conflict => "conflict",
-        }
-    }
-
-    pub(crate) fn class_name(&self) -> &'static str {
-        match self {
-            CardState::Synced => "badge green",
-            CardState::Accepted => "badge amber",
-            CardState::Optimistic | CardState::Queued | CardState::Submitted => "badge blue",
-            CardState::SoftFailed | CardState::Conflict => "badge red",
-            CardState::Quarantined => "badge amber",
-        }
-    }
-
     pub(crate) fn data_state(self) -> &'static str {
         match self {
             CardState::Synced => "synced",
@@ -379,23 +358,10 @@ impl CardState {
     pub(crate) fn is_settled(self) -> bool {
         matches!(self, CardState::Synced | CardState::Accepted)
     }
-
-    pub(crate) fn status_title(self) -> &'static str {
-        match self {
-            CardState::Synced => "Server projection is current",
-            CardState::Optimistic | CardState::Queued | CardState::Submitted => {
-                "Sending; waiting for server confirmation"
-            }
-            CardState::Accepted => "Server accepted the event; waiting for projection",
-            CardState::SoftFailed => "Server did not accept this event",
-            CardState::Quarantined => "Write failed; open the queue for details",
-            CardState::Conflict => "Write precondition failed; refresh and retry",
-        }
-    }
 }
 
 pub(crate) fn card_state_from_write_state(write_state: &str) -> CardState {
-    match WriteState::from_wire(write_state) {
+    match WriteState::from_local_state(write_state) {
         Some(WriteState::Synced) => CardState::Synced,
         Some(WriteState::Optimistic) => CardState::Optimistic,
         Some(WriteState::Queued) => CardState::Queued,

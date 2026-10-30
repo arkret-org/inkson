@@ -4,7 +4,8 @@ use super::*;
 
 #[test]
 fn stale_secure_creator_cache_cannot_replace_the_accepted_private_checkpoint() {
-    use crate::mls::persistence::encrypt_state;
+    use garth::mls::checkpoint::encrypt_state;
+
     use crate::secure_key_store::MemorySecureKeyStore;
     let realm =
         arkret_sdk::RealmId::new("ak:realm:AR9U75vD82XqGon9r2GYv6cwT3_W8U4BtjeOCoODErj_").unwrap();
@@ -78,7 +79,7 @@ fn mls_snapshot_persists_and_round_trips_through_store() {
     // MLS snapshot envelope is durable across store instances and the
     // boot path can rehydrate every realm's group from the persisted
     // record.
-    use crate::mls::persistence::encrypt_state;
+    use garth::mls::checkpoint::encrypt_state;
     let path = temp_state_path("mls-snapshot-persist");
     let realm = "ak:realm:AR9U75vD82XqGon9r2GYv6cwT3_W8U4BtjeOCoODErj_";
     let envelope = encrypt_state(
@@ -104,7 +105,7 @@ fn mls_snapshot_persists_and_round_trips_through_store() {
 
 #[test]
 fn receive_ratchet_preserves_exact_accepted_group_state_event() {
-    use crate::mls::persistence::encrypt_state;
+    use garth::mls::checkpoint::encrypt_state;
 
     let path = temp_state_path("mls-receive-accepted-ref");
     let realm = "ak:realm:AR9U75vD82XqGon9r2GYv6cwT3_W8U4BtjeOCoODErj_";
@@ -144,7 +145,8 @@ fn receive_ratchet_preserves_exact_accepted_group_state_event() {
 
 #[test]
 fn logout_session_clear_shreds_memory_and_preserves_encrypted_e2ee_state() {
-    use crate::mls::persistence::encrypt_state;
+    use garth::mls::checkpoint::encrypt_state;
+
     use crate::secure_key_store::{MemorySecureKeyStore, SecureKeyStore};
 
     let path = temp_state_path("logout-preserves-mls");
@@ -253,7 +255,7 @@ async fn rejected_mls_checkpoint_and_cleanup_marker_share_one_durable_main_cut()
     let group = scope.canonical_mls_group_id().unwrap().to_string();
     let mut store = LocalStateStore::with_path(path.clone());
     store.switch_test_account("did:web:alice.example");
-    let pending = crate::mls::persistence::encrypt_state(
+    let pending = garth::mls::checkpoint::encrypt_state(
         realm.as_str(),
         &group,
         1,
@@ -264,7 +266,7 @@ async fn rejected_mls_checkpoint_and_cleanup_marker_share_one_durable_main_cut()
     store
         .save_mls_checkpoint_for_scope(&scope, pending.clone())
         .unwrap();
-    let cleared = crate::mls::persistence::encrypt_state(
+    let cleared = garth::mls::checkpoint::encrypt_state(
         realm.as_str(),
         &group,
         1,

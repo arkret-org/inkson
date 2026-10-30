@@ -139,6 +139,7 @@ pub(super) fn DiscussionParticipantRow(
                         self_badge_test_id: Some("participant-self-badge".to_owned()),
                         agent_badge_test_id: Some("member-badge-agent".to_owned()),
                         is_self: participant.is_self,
+                        is_agent: participant.is_agent,
                         agent_slug,
                         agent_selector: None,
                     }

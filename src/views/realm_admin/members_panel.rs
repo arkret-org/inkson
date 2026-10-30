@@ -5,7 +5,7 @@ use std::sync::Arc;
 #[cfg(test)]
 use arkret_models_collaboration::governance::agent_participation::ParticipationNextReplaceInput;
 use arkret_models_collaboration::governance::agent_participation::{
-    AgentParticipationEntry, ParticipationBits, ParticipationScope,
+    AgentParticipationView, ParticipationBits, ParticipationScope,
 };
 use arkret_wire::{CapabilityActionId, event_kind_str};
 use dioxus::prelude::*;
@@ -450,7 +450,7 @@ pub fn RealmMembersPanel(
     // U3 - "Add from contacts" picker state. `invite_contacts` holds the user's
     // accepted contacts (lazily loaded when the modal opens); `selected_contacts`
     // is the multi-select set of DIDs to invite via the consent-grant path.
-    let invite_contacts = use_signal(Vec::<crate::models::ContactListRow>::new);
+    let invite_contacts = use_signal(Vec::<crate::models::ContactView>::new);
     let invite_contacts_loaded = use_signal(|| false);
     let invite_contacts_status = use_signal(String::new);
     let mut selected_contacts = use_signal(std::collections::BTreeSet::<String>::new);
@@ -756,10 +756,10 @@ pub fn RealmMembersPanel(
 
                                 div { class: "invite-divider muted", "data-testid": "realm-invite-divider", {crate::i18n::tr("realm_admin.invite_divider")} }
 
-                                div { class: "invite-by-handle", "data-testid": "realm-invite-by-handle",
+                                div { class: "invite-by-address", "data-testid": "realm-invite-by-address",
                                     div { class: "event-head",
-                                        span { {crate::i18n::tr("realm_admin.invite_by_handle")} }
-                                        span { {crate::i18n::tr("realm_admin.invite_handle_opt_in")} }
+                                        span { {crate::i18n::tr("realm_admin.invite_by_address")} }
+                                        span { {crate::i18n::tr("realm_admin.invite_link_recommended")} }
                                     }
                                     Label { html_for: "invite-target-input", {crate::i18n::tr("realm_admin.invite_target_label")} }
                                     Input {
@@ -1274,7 +1274,7 @@ pub fn RealmMembersPanel(
                                                                                 label { class: "member-agent-behavior-toggle",
                                                                                     Checkbox {
                                                                                         "data-testid": "member-agent-reply-toggle",
-                                                                                        checked: if owned_agent.selection.reply_message { CheckboxState::Checked } else { CheckboxState::Unchecked },
+                                                                                        checked: if owned_agent.selection.message_creation_allowed { CheckboxState::Checked } else { CheckboxState::Unchecked },
                                                                                         disabled: !can_enable,
                                                                                         on_checked_change: {
                                                                                             let base = base_url.clone();
@@ -1284,7 +1284,7 @@ pub fn RealmMembersPanel(
                                                                                             move |state: CheckboxState| {
                                                                                                 spawn_set_agent_realm_behavior(
                                                                                                     base.clone(), token(), realm.clone(), agent_id.clone(),
-                                                                                                    ParticipationBits { reply_message: bool::from(state), ..previous },
+                                                                                                    ParticipationBits { message_creation_allowed: bool::from(state), ..previous },
                                                                                                     owned_agents, status_msg, agent_behavior_pending,
                                                                                                 );
                                                                                             }
@@ -1295,7 +1295,7 @@ pub fn RealmMembersPanel(
                                                                                 label { class: "member-agent-behavior-toggle",
                                                                                     Checkbox {
                                                                                         "data-testid": "member-agent-mention-toggle",
-                                                                                        checked: if owned_agent.selection.accept_third_party_mention { CheckboxState::Checked } else { CheckboxState::Unchecked },
+                                                                                        checked: if owned_agent.selection.third_party_mention_delivery_allowed { CheckboxState::Checked } else { CheckboxState::Unchecked },
                                                                                         disabled: !can_enable,
                                                                                         on_checked_change: {
                                                                                             let base = base_url.clone();
@@ -1305,7 +1305,7 @@ pub fn RealmMembersPanel(
                                                                                             move |state: CheckboxState| {
                                                                                                 spawn_set_agent_realm_behavior(
                                                                                                     base.clone(), token(), realm.clone(), agent_id.clone(),
-                                                                                                    ParticipationBits { accept_third_party_mention: bool::from(state), ..previous },
+                                                                                                    ParticipationBits { third_party_mention_delivery_allowed: bool::from(state), ..previous },
                                                                                                     owned_agents, status_msg, agent_behavior_pending,
                                                                                                 );
                                                                                             }
@@ -1316,7 +1316,7 @@ pub fn RealmMembersPanel(
                                                                                 label { class: "member-agent-behavior-toggle",
                                                                                     Checkbox {
                                                                                         "data-testid": "member-agent-act-on-behalf-toggle",
-                                                                                        checked: if owned_agent.selection.act_on_behalf { CheckboxState::Checked } else { CheckboxState::Unchecked },
+                                                                                        checked: if owned_agent.selection.acting_on_behalf_allowed { CheckboxState::Checked } else { CheckboxState::Unchecked },
                                                                                         disabled: !can_enable,
                                                                                         on_checked_change: {
                                                                                             let base = base_url.clone();
@@ -1326,13 +1326,13 @@ pub fn RealmMembersPanel(
                                                                                             move |state: CheckboxState| {
                                                                                                 spawn_set_agent_realm_behavior(
                                                                                                     base.clone(), token(), realm.clone(), agent_id.clone(),
-                                                                                                    ParticipationBits { act_on_behalf: bool::from(state), ..previous },
+                                                                                                    ParticipationBits { acting_on_behalf_allowed: bool::from(state), ..previous },
                                                                                                     owned_agents, status_msg, agent_behavior_pending,
                                                                                                 );
                                                                                             }
                                                                                         },
                                                                                     }
-                                                                                    span { {crate::i18n::tr("realm_admin.roster.act_on_behalf")} }
+                                                                                    span { {crate::i18n::tr("realm_admin.roster.acting_on_behalf_allowed")} }
                                                                                 }
                                                                             }
                                                                         }

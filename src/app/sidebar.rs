@@ -296,7 +296,7 @@ pub(super) fn load_own_agents_for_sidebar(
     own_agents_loaded.set(true);
     spawn(async move {
         match crate::transport::auth::with_authed_sdk_client(&base, api_token, |http| async move {
-            http.agent_list().await.map_err(anyhow::Error::from)
+            http.agent_page().await.map_err(anyhow::Error::from)
         })
         .await
         {
@@ -315,7 +315,7 @@ pub(super) fn load_direct_contacts_and_agents_for_sidebar(
     base: String,
     api_token: String,
     mut state_store: SyncSignal<LocalStateStore>,
-    mut direct_contact_rows: Signal<Vec<crate::models::ContactListRow>>,
+    mut direct_contact_rows: Signal<Vec<crate::models::ContactView>>,
     mut direct_contacts_loaded: Signal<bool>,
     mut own_agent_rows: Signal<Vec<arkret_sdk::AgentProjection>>,
     mut own_agents_loaded: Signal<bool>,
@@ -334,7 +334,7 @@ pub(super) fn load_direct_contacts_and_agents_for_sidebar(
     spawn(async move {
         match crate::transport::auth::with_authed_sdk_client(&base, api_token, |http| async move {
             let contacts = crate::transport::account::contacts(&http).await;
-            let agents = http.agent_list().await.map_err(anyhow::Error::from);
+            let agents = http.agent_page().await.map_err(anyhow::Error::from);
             Ok((contacts, agents))
         })
         .await
@@ -381,7 +381,7 @@ pub(super) fn load_direct_contacts_for_sidebar(
     base: String,
     api_token: String,
     mut state_store: SyncSignal<LocalStateStore>,
-    mut direct_contact_rows: Signal<Vec<crate::models::ContactListRow>>,
+    mut direct_contact_rows: Signal<Vec<crate::models::ContactView>>,
     mut direct_contacts_loaded: Signal<bool>,
 ) {
     if api_token.trim().is_empty() {
@@ -638,7 +638,7 @@ pub(super) fn delete_sidebar_contact(
     api_token: String,
     peer: String,
     mut state_store: SyncSignal<LocalStateStore>,
-    mut direct_contact_rows: Signal<Vec<crate::models::ContactListRow>>,
+    mut direct_contact_rows: Signal<Vec<crate::models::ContactView>>,
     mut direct_contacts_loaded: Signal<bool>,
 ) {
     let peer_label = serde_json::from_str::<arkret_sdk::ActorId>(&peer)
@@ -648,6 +648,12 @@ pub(super) fn delete_sidebar_contact(
             }
             arkret_sdk::ActorId::Service { service_id } => {
                 crate::views::helpers::actor_display_label(&state_store.read(), service_id.as_str())
+            }
+            arkret_sdk::ActorId::Realm { realm_actor_id } => {
+                crate::views::helpers::actor_display_label(
+                    &state_store.read(),
+                    &realm_actor_id.to_string(),
+                )
             }
         })
         .unwrap_or_else(|_| crate::views::helpers::short_protocol_id(&peer));

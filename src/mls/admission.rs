@@ -13,8 +13,9 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use garth::mls::checkpoint::MlsLocalCheckpointEnvelope;
 
-use crate::mls::persistence::MlsLocalCheckpointEnvelope;
+#[cfg(test)]
 use crate::operation::trim_realm_id;
 use crate::secure_key_store::SecureKeyStore;
 use crate::state::LocalStateStore;
@@ -116,6 +117,7 @@ fn requester_device_authorize_event_id(
 
 /// Build the complete admission unit for one claimed KeyPackage.
 #[allow(clippy::too_many_arguments)]
+#[cfg(test)]
 pub(crate) fn build_realm_mls_admission_events_from_claim(
     state_store: &LocalStateStore,
     secure_store: &dyn SecureKeyStore,
@@ -140,6 +142,7 @@ pub(crate) fn build_realm_mls_admission_events_from_claim(
     )
 }
 
+#[cfg(test)]
 fn realm_effective_scope(realm_id: &str) -> Result<arkret_sdk::ScopeRef, String> {
     Ok(arkret_sdk::ScopeRef::Realm {
         realm_id: arkret_sdk::RealmId::new(trim_realm_id(realm_id))
@@ -148,6 +151,7 @@ fn realm_effective_scope(realm_id: &str) -> Result<arkret_sdk::ScopeRef, String>
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg(test)]
 pub(crate) fn build_admission_events_for_scope(
     state_store: &LocalStateStore,
     secure_store: &dyn SecureKeyStore,
@@ -350,7 +354,7 @@ fn build_welcome_delivery(
         recipient_actor_id: recipient_actor_id.clone(),
         recipient_endpoint,
         keypackage_claim_ref: draft.keypackage_claim_ref.clone(),
-        ciphertext_b64: draft.ciphertext_b64.clone(),
+        ciphertext_base64url: draft.ciphertext_base64url.clone(),
     };
     let WelcomeRequester::Device { sender_device_id } = requester;
     let body = unsigned.unsigned_body();
@@ -373,7 +377,7 @@ fn build_welcome_delivery(
         verification_method,
         signed_digest,
         created_at,
-        sig: arkret_sdk::Base64UrlString::new(URL_SAFE_NO_PAD.encode(signature))
+        signature: arkret_sdk::Base64UrlString::new(URL_SAFE_NO_PAD.encode(signature))
             .map_err(|error| format!("Welcome delivery signature encoding: {error}"))?,
     };
     let delivery = unsigned.into_delivery(producer_proof);
@@ -392,7 +396,7 @@ struct UnsignedWelcomeDelivery {
     recipient_actor_id: arkret_sdk::ActorId,
     recipient_endpoint: arkret_wire::MlsWelcomeRecipientEndpoint,
     keypackage_claim_ref: arkret_wire::KeypackageClaimId,
-    ciphertext_b64: arkret_sdk::Base64UrlString,
+    ciphertext_base64url: arkret_sdk::Base64UrlString,
 }
 
 impl UnsignedWelcomeDelivery {
@@ -408,7 +412,7 @@ impl UnsignedWelcomeDelivery {
             "recipient_actor_id": self.recipient_actor_id,
             "recipient_endpoint": self.recipient_endpoint,
             "keypackage_claim_ref": self.keypackage_claim_ref,
-            "ciphertext_b64": self.ciphertext_b64,
+            "ciphertext_base64url": self.ciphertext_base64url,
         })
     }
 
@@ -424,7 +428,7 @@ impl UnsignedWelcomeDelivery {
             recipient_actor_id: self.recipient_actor_id,
             recipient_endpoint: self.recipient_endpoint,
             keypackage_claim_ref: self.keypackage_claim_ref,
-            ciphertext_b64: self.ciphertext_b64,
+            ciphertext_base64url: self.ciphertext_base64url,
             producer_proof,
         }
     }
@@ -584,7 +588,9 @@ mod tests {
         let intended_realm_id = arkret_sdk::RealmId::new(realm_id.to_owned()).unwrap();
         let mls_group_id = garth::mls::mls_group_id_for_realm(&intended_realm_id)
             .expect("test Realm scope must derive a canonical MLS group id");
-        let request = arkret_sdk::PeerKeyPackagesClaimUnsignedRequest {
+        let request = arkret_sdk::PeerKeyPackagesClaimFields {
+            target_actor_id: None,
+            requester_actor_id: None,
             claim_request_id: arkret_sdk::Base64UrlString::new(claim_request_id.to_owned())
                 .unwrap(),
             target_account_id: Some(claim.actor_id.as_account_id().unwrap().clone()),
@@ -620,6 +626,7 @@ mod tests {
         .unwrap();
         let authority = arkret_sdk::DidCoreId::new("ak:did_core:web:ps.example").unwrap();
         arkret_sdk::PeerKeyPackageClaimReceipt {
+            claim_authority_ref: None,
             claim_request_id: request.claim_request_id.clone(),
             request_digest,
             claims_digest,
@@ -631,7 +638,7 @@ mod tests {
             signature: arkret_sdk::KeyOperationSignature {
                 kid: arkret_sdk::NonEmptyString::new("did:web:ps.example#assertion").unwrap(),
                 signature_algorithm: Some(arkret_sdk::NonEmptyString::new("Ed25519").unwrap()),
-                sig: arkret_sdk::Base64UrlString::new("YQ").unwrap(),
+                signature: arkret_sdk::Base64UrlString::new("YQ").unwrap(),
             },
         }
     }
@@ -717,7 +724,7 @@ mod tests {
                 "ak:keypackage_claim:01904100-0000-7000-8000-00000000000a".to_owned(),
             )
             .unwrap(),
-            ciphertext_b64: arkret_sdk::Base64UrlString::new("AQID").unwrap(),
+            ciphertext_base64url: arkret_sdk::Base64UrlString::new("AQID").unwrap(),
         };
         let body = unsigned.unsigned_body();
         let object = body.as_object().unwrap();
@@ -727,7 +734,7 @@ mod tests {
         assert_eq!(
             fields,
             [
-                "ciphertext_b64",
+                "ciphertext_base64url",
                 "commit_event_ref",
                 "effective_scope",
                 "keypackage_claim_ref",
@@ -743,7 +750,7 @@ mod tests {
             verification_method: arkret_sdk::DidUrl::new("did:web:alice.example#device").unwrap(),
             signed_digest: arkret_sdk::Hash::new(format!("sha256:{}", "0".repeat(64))).unwrap(),
             created_at: "2026-09-16T00:00:00.000Z".parse().unwrap(),
-            sig: arkret_sdk::Base64UrlString::new("AA").unwrap(),
+            signature: arkret_sdk::Base64UrlString::new("AA").unwrap(),
         });
         let mut expected = serde_json::to_value(&delivery).unwrap();
         expected.as_object_mut().unwrap().remove("producer_proof");
@@ -775,7 +782,7 @@ mod tests {
             recipient_actor_id: delivery.recipient_actor_id.clone(),
             recipient_endpoint: delivery.recipient_endpoint.clone(),
             keypackage_claim_ref: delivery.keypackage_claim_ref.clone(),
-            ciphertext_b64: delivery.ciphertext_b64.clone(),
+            ciphertext_base64url: delivery.ciphertext_base64url.clone(),
         };
         let body = unsigned.unsigned_body();
         assert_eq!(body, case["unsigned_projection"]);
@@ -797,7 +804,7 @@ mod tests {
         assert_eq!(hex::encode(input), case["signature_input_hex"]);
         let key = arkret_signatures::PublicKeyMaterial::Ed25519Raw {
             bytes: arkret_sdk::canonical::base64url_decode(
-                case["public_key_b64u"].as_str().unwrap(),
+                case["public_key_base64url"].as_str().unwrap(),
             )
             .unwrap(),
         };

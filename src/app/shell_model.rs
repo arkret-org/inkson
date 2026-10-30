@@ -142,7 +142,7 @@ pub(super) struct RealmNavigationInput<'a> {
     pub context_realm_id: Option<&'a str>,
     pub active_realm_id: &'a str,
     pub pinned_realm_ids: &'a BTreeSet<String>,
-    pub realm_tree_projections: &'a BTreeMap<String, Value>,
+    pub realm_tree_projections: &'a dyn crate::state::account_items::Lookup<Value>,
     pub realm_security_states: &'a BTreeMap<String, Option<bool>>,
     pub realm_remarks: &'a BTreeMap<String, RealmRemark>,
     /// Already trimmed and lowercased by the caller.
@@ -260,13 +260,13 @@ fn remark_display_name(remarks: &BTreeMap<String, RealmRemark>, node: &RealmTree
 ///
 /// `query` is already trimmed and lowercased by the caller.
 pub(super) fn filter_and_sort_direct_contacts(
-    rows: &[crate::models::ContactListRow],
+    rows: &[crate::models::ContactView],
     query: &str,
     store: &LocalStateStore,
     contact_remarks: &BTreeMap<String, ContactRemark>,
-) -> Vec<crate::models::ContactListRow> {
+) -> Vec<crate::models::ContactView> {
     let blocklist = store.client_blocklist();
-    let mut filtered: Vec<crate::models::ContactListRow> = rows
+    let mut filtered: Vec<crate::models::ContactView> = rows
         .iter()
         .filter(|contact| {
             contact.state != arkret_sdk::ContactState::PendingIncoming

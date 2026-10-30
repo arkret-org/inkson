@@ -1,7 +1,7 @@
 use super::*;
 use crate::components::HelpTip;
 
-pub(super) fn contact_manage_scope_summary(contact: &crate::models::ContactListRow) -> String {
+pub(super) fn contact_manage_scope_summary(contact: &crate::models::ContactView) -> String {
     let mut seen = BTreeSet::<String>::new();
     for scope in contact
         .bidirectional_scopes
@@ -50,6 +50,7 @@ pub(super) fn RealmsManagePage(
 
     rsx! {
         div { class: "settings realm-manage-page", "data-testid": "realms-manage-page",
+            crate::views::realm_admin::invite_links::RealmInviteLinks {token,realm_id:None,initial_input:None}
             div { class: "settings-shell realm-manage-shell",
                 section { class: "settings-content-stack realm-manage-main",
                     div { class: "event realm-manage-list-card",
@@ -268,7 +269,7 @@ pub(super) fn PrincipalControlRealmPage(realm_id: Option<String>) -> Element {
 pub(super) fn ContactsManagePage(
     token: Signal<String>,
     has_session: bool,
-    mut contact_rows: Signal<Vec<crate::models::ContactListRow>>,
+    mut contact_rows: Signal<Vec<crate::models::ContactView>>,
     mut contacts_loaded: Signal<bool>,
     mut query: Signal<String>,
 ) -> Element {

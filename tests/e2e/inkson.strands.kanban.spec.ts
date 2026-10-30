@@ -21,6 +21,60 @@ import {
 
 registerStrandsBeforeEach();
 
+test("kanban coalesces delayed inventory reads into one worker", async ({ page }, testInfo) => {
+  const requests = new Map<import("@playwright/test").Request, "spaces" | "strands">();
+  const active = { spaces: 0, strands: 0 };
+  const maximum = { spaces: 0, strands: 0 };
+  const totals = { spaces: 0, strands: 0 };
+  const discoveryStatuses: number[] = [];
+  page.on("response", response => {
+    if (/\/_arkret\/self\/realms\/[^/]+\/streams$/.test(new URL(response.url()).pathname)) {
+      discoveryStatuses.push(response.status());
+    }
+  });
+  page.on("request", request => {
+    const path = new URL(request.url()).pathname;
+    const collection = path.match(/\/_arkret\/self\/realms\/[^/]+\/(spaces|strands)$/)?.[1] as "spaces" | "strands" | undefined;
+    if (!collection || request.method() !== "GET") return;
+    requests.set(request, collection);
+    totals[collection]++;
+    maximum[collection] = Math.max(maximum[collection], ++active[collection]);
+  });
+  const finish = (request: import("@playwright/test").Request) => {
+    const collection = requests.get(request);
+    if (!collection) return;
+    active[collection]--;
+    requests.delete(request);
+  };
+  page.on("requestfinished", finish);
+  page.on("requestfailed", finish);
+  await page.route("**/_arkret/self/realms/*/*", async route => {
+    if (/\/(spaces|strands)$/.test(new URL(route.request().url()).pathname)) {
+      // Keep initial requests in flight while account/current updates arrive.
+      await new Promise(resolve => setTimeout(resolve, 300));
+    }
+    await route.fallback();
+  });
+  await openKanban(page);
+  await expect.poll(() => discoveryStatuses.filter(status => status === 200).length).toBeGreaterThan(0);
+  expect(discoveryStatuses).not.toContain(404);
+  await expect.poll(() => active.spaces + active.strands).toBe(0);
+  expect(maximum.spaces).toBeLessThanOrEqual(1);
+  expect(maximum.strands).toBeLessThanOrEqual(1);
+  const settled = { ...totals };
+  for (let index = 0; index < 20; index++) {
+    await page.getByTestId("kanban-card").first().click();
+    await expect(page.getByTestId("card-detail-edit-button")).toBeEnabled();
+    await page.getByTestId("card-detail-close-button").click();
+  }
+  await expect.poll(() => active.spaces + active.strands).toBe(0);
+  expect(totals).toEqual(settled);
+  await testInfo.attach("kanban-inventory-concurrency.json", {
+    body: Buffer.from(JSON.stringify({ totals, maximum, discoveryStatuses }, null, 2)),
+    contentType: "application/json",
+  });
+});
+
 test("kanban card detail embeds discussion without boundary copy", async ({
   page,
 }) => {
@@ -159,7 +213,7 @@ test("fresh Sidecar rejection preserves its bound draft without publishing to th
   const ensureBodies: Record<string, any>[] = [];
   await page.route("**/_arkret/self/agent-sidecars:ensure", async (route) => {
     const body = route.request().postDataJSON();
-    validateMockSchema("schemas/agent-operations.schema.json#/$defs/agent_sidecar_ensure_request_body", body);
+    validateMockSchema("schemas/principal-operations.schema.json#/$defs/agent_sidecar_ensure_request_body", body);
     ensureBodies.push(body);
     const problem = {
       type: "https://arkret.org/problems/service_unavailable",
@@ -227,7 +281,7 @@ test("kanban hides list creation until a board exists", async ({ page }) => {
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({
-          realm_id: realmId, total: 0, spaces: [], has_more: false,
+          realm_id: realmId, total_count: 0, spaces: [], has_more: false,
         }),
       });
     },
@@ -242,7 +296,7 @@ test("kanban hides list creation until a board exists", async ({ page }) => {
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({
-          realm_id: realmId, total: 0, strands: [], has_more: false,
+          realm_id: realmId, total_count: 0, strands: [], has_more: false,
         }),
       });
     },

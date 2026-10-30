@@ -22,9 +22,10 @@ enum LeaderState {
 
 #[component]
 pub(super) fn WebLeaderGate() -> Element {
+    let state_store = use_context::<super::session_context::AppStateStore>().0;
     #[cfg(not(target_arch = "wasm32"))]
     {
-        return rsx! { Router::<Route> {} };
+        return rsx! { super::account_switch::SessionRoot { state_store, Router::<Route> {} } };
     }
 
     #[cfg(target_arch = "wasm32")]
@@ -44,7 +45,9 @@ pub(super) fn WebLeaderGate() -> Element {
         });
 
         match state() {
-            LeaderState::Leader => rsx! { Router::<Route> {} },
+            LeaderState::Leader => {
+                rsx! { super::account_switch::SessionRoot { state_store, Router::<Route> {} } }
+            }
             LeaderState::Pending => rsx! {
                 LeaderGatePage {
                     test_id: "web-leader-pending",

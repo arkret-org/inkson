@@ -1,7 +1,7 @@
 use arkret_sdk::contact_operations::{
-    ContactCommitPhase, ContactCommitRequestBody, ContactOperationOutcome,
-    ContactOperationRequestBody, ContactPeer, ContactPreparePhase, ContactPrepareRequestBody,
-    ContactPreparedOutcome, ContactScope,
+    ContactCommitPhase, ContactCommitRequestBody, ContactOperationRequestBody,
+    ContactOperationResponseBody, ContactPeer, ContactPreparePhase, ContactPrepareRequestBody,
+    ContactPreparedResponseBody, ContactScope,
 };
 use arkret_sdk::{IdempotencyKey, PreparedEventDraft, ProtocolOperationId, ReservationHandle};
 
@@ -129,7 +129,7 @@ pub(crate) async fn finish_contact_commit(
     mut context: ContactCommitContext,
     pending: &pending::PendingOperation,
     commit: &impl serde::Serialize,
-) -> anyhow::Result<ContactOperationOutcome> {
+) -> anyhow::Result<ContactOperationResponseBody> {
     let commit: ContactCommitRequestBody = serde_json::from_value(serde_json::to_value(commit)?)?;
     let journal = pending.stage(&mut context, &commit).await?;
     let outcome = run_contact_commit(http, context, &commit).await?;
@@ -142,24 +142,22 @@ async fn run_contact_commit(
     http: &arkret_sdk::http_client::Client,
     context: ContactCommitContext,
     commit: &ContactCommitRequestBody,
-) -> anyhow::Result<ContactOperationOutcome> {
-    let endpoint = match commit.signed_event.kind.as_str() {
-        arkret_wire::event_kind_str::CONTACT_REQUESTED => "/_arkret/self/contacts/request",
-        arkret_wire::event_kind_str::CONTACT_ACCEPTED => "/_arkret/self/contacts/respond",
-        arkret_wire::event_kind_str::CONTACT_REJECTED => "/_arkret/self/contacts/reject",
-        arkret_wire::event_kind_str::CONTACT_SCOPE_UPDATE => "/_arkret/self/contacts/scope-update",
-        arkret_wire::event_kind_str::CONTACT_TOMBSTONE => "/_arkret/self/contacts/tombstone",
-        _ => anyhow::bail!("unregistered Contact commit Event"),
-    };
+) -> anyhow::Result<ContactOperationResponseBody> {
     let fence = context.fence.clone();
     anyhow::ensure!(
         commit.signed_event.actor_id == context.actor_id
             && commit.signed_event.realm_id == context.control_realm,
         "Contact Event differs from the frozen account/Realm"
     );
+    let producer = context
+        .fence
+        .signer
+        .publication_context(&context.actor_id)?;
+    let verified =
+        arkret_sdk::VerifiedSubmission::verify(commit.clone(), |_| Ok(producer.clone()))?;
     let result = drive_contact_commit(
         || fence.check(),
-        || http.post(endpoint, commit),
+        || http.submit_contact_event(&verified),
         |outcome| {
             validate_contact_commit_outcome(
                 outcome,
@@ -186,11 +184,12 @@ async fn run_contact_commit(
 async fn drive_contact_commit<F, Fut>(
     check_session: impl Fn() -> anyhow::Result<()>,
     mut submit: F,
-    validate: impl Fn(&ContactOperationOutcome) -> anyhow::Result<()>,
-) -> anyhow::Result<ContactOperationOutcome>
+    validate: impl Fn(&ContactOperationResponseBody) -> anyhow::Result<()>,
+) -> anyhow::Result<ContactOperationResponseBody>
 where
     F: FnMut() -> Fut,
-    Fut: std::future::Future<Output = arkret_sdk::http_client::Result<ContactOperationOutcome>>,
+    Fut:
+        std::future::Future<Output = arkret_sdk::http_client::Result<ContactOperationResponseBody>>,
 {
     check_session()?;
     let mut initial = submit().await;
@@ -212,13 +211,13 @@ where
 }
 
 fn validate_contact_commit_outcome(
-    outcome: &ContactOperationOutcome,
+    outcome: &ContactOperationResponseBody,
     event: &arkret_sdk::Event,
     operation_id: &ProtocolOperationId,
     signer: &crate::event_signer::InksonEventSigner,
 ) -> anyhow::Result<()> {
     use arkret_sdk::contact_operations::{
-        ContactAcceptedOutcome as Accepted, ContactResultKind as Kind,
+        ContactAcceptedResponseBody as Accepted, ContactOperationKind as Kind,
     };
     let expected = match event.kind.as_str() {
         arkret_wire::event_kind_str::CONTACT_REQUESTED => Kind::Request,
@@ -228,7 +227,7 @@ fn validate_contact_commit_outcome(
         arkret_wire::event_kind_str::CONTACT_TOMBSTONE => Kind::Tombstone,
         _ => anyhow::bail!("Contact commit uses an unregistered Event kind"),
     };
-    let producer = matches!(outcome, ContactOperationOutcome::Accepted { .. })
+    let producer = matches!(outcome, ContactOperationResponseBody::Accepted { .. })
         .then(|| local_contact_producer(event, signer))
         .transpose()?;
     let check_producer = |returned: &arkret_sdk::contact_operations::ContactProducerSigner,
@@ -238,13 +237,13 @@ fn validate_contact_commit_outcome(
             producer
                 .as_ref()
                 .is_some_and(|(method, key)| returned.verification_method() == method
-                    && returned.public_key_b64u() == key),
+                    && returned.public_key_base64url() == key),
             "Contact result changed the exact Event producer method or local signing key"
         );
         Ok::<(), anyhow::Error>(())
     };
     let (kind, returned_operation, event_ref) = match outcome {
-        ContactOperationOutcome::Accepted { outcome } => match outcome {
+        ContactOperationResponseBody::Accepted { outcome } => match outcome {
             Accepted::Request {
                 operation_id,
                 request_acceptance_receipt,
@@ -308,7 +307,7 @@ fn validate_contact_commit_outcome(
                     lineage.event_ref == event.event_id,
                     "Contact response projection changed the exact Event"
                 );
-                validate_contact_current_result(event, lineage, current_proof)?;
+                validate_contact_current_state(event, lineage, current_proof)?;
                 (
                     Kind::Response,
                     operation_id,
@@ -349,7 +348,7 @@ fn validate_contact_commit_outcome(
                 current_proof,
             } => {
                 check_producer(&lineage.producer_signer, &lineage.issuer)?;
-                validate_contact_current_result(event, lineage, current_proof)?;
+                validate_contact_current_state(event, lineage, current_proof)?;
                 (Kind::ScopeUpdate, operation_id, &lineage.event_ref)
             }
             Accepted::Tombstone {
@@ -358,18 +357,18 @@ fn validate_contact_commit_outcome(
                 current_proof,
             } => {
                 check_producer(&lineage.producer_signer, &lineage.issuer)?;
-                validate_contact_current_result(event, lineage, current_proof)?;
+                validate_contact_current_state(event, lineage, current_proof)?;
                 (Kind::Tombstone, operation_id, &lineage.event_ref)
             }
         },
-        ContactOperationOutcome::Failed { outcome } => {
+        ContactOperationResponseBody::Failed { outcome } => {
             anyhow::ensure!(
-                outcome.operation_id == *operation_id && outcome.result_kind == expected,
+                outcome.operation_id == *operation_id && outcome.operation_kind == expected,
                 "Contact terminal rejection changed the operation or branch"
             );
             return Ok(());
         }
-        ContactOperationOutcome::Prepared { .. } => {
+        ContactOperationResponseBody::Prepared { .. } => {
             anyhow::bail!("Contact commit returned another preparation")
         }
     };
@@ -377,6 +376,41 @@ fn validate_contact_commit_outcome(
         kind == expected && returned_operation == operation_id && event_ref == &event.event_id,
         "Contact accepted result changed the operation, branch or exact Event"
     );
+    if let ContactOperationResponseBody::Accepted { outcome } = outcome {
+        use arkret_sdk::contact_operations::ContactOperationEvidence as Evidence;
+        let original = match outcome {
+            Accepted::Request {
+                request_acceptance_receipt,
+                ..
+            } => Evidence::Request {
+                signed_event: event.clone(),
+                request_receipt: request_acceptance_receipt.clone(),
+            },
+            Accepted::Response {
+                normal_response_acceptance_receipt,
+                ..
+            } => Evidence::Response {
+                signed_event: event.clone(),
+                response_receipt: normal_response_acceptance_receipt.clone(),
+            },
+            Accepted::Reject {
+                reject_acceptance_receipt,
+                ..
+            } => Evidence::Reject {
+                signed_event: event.clone(),
+                reject_receipt: reject_acceptance_receipt.clone(),
+            },
+            Accepted::ScopeUpdate { lineage, .. } => Evidence::ScopeUpdate {
+                signed_event: event.clone(),
+                lineage: lineage.clone(),
+            },
+            Accepted::Tombstone { lineage, .. } => Evidence::Tombstone {
+                signed_event: event.clone(),
+                lineage: lineage.clone(),
+            },
+        };
+        original.validate_shape()?;
+    }
     Ok(())
 }
 
@@ -411,7 +445,7 @@ fn local_contact_producer(
     Ok((method, key))
 }
 
-fn validate_contact_current_result(
+fn validate_contact_current_state(
     event: &arkret_sdk::Event,
     lineage: &arkret_sdk::contact_operations::ContactLineage,
     current: &arkret_sdk::contact_operations::ContactCurrentProof,
@@ -435,24 +469,37 @@ fn validate_contact_current_result(
             && current.contact_round_id == lineage.contact_round_id,
         "Contact current result changed its full actor, peer, issuer or round"
     );
-    // The authenticated own Station validates the complete successor chain.
-    // A later current head does not alter the exact receipt/lineage being returned.
+    current.validate_shape()?;
+    anyhow::ensure!(
+        current.holder.contact_actor_id() == event.actor_id
+            && current.trust_domain_id == lineage.trust_domain_id
+            && (if lineage.initial_contact_round_id.is_some() {
+                current.initial_contact_round_id == lineage.initial_contact_round_id
+            } else {
+                current.initial_contact_round_id == current.contact_round_id
+            })
+            && current.version >= lineage.version
+            && (current.version != lineage.version || current.head_event_ref == event.event_id),
+        "Contact current result conflicts with its immutable original operation"
+    );
+    // The authenticated own Station attests the later current head. A frozen
+    // result remains replayable after its lease expires; this is not a grant.
     Ok(())
 }
 
-pub(crate) fn require_contact_success(outcome: ContactOperationOutcome) -> anyhow::Result<()> {
+pub(crate) fn require_contact_success(outcome: ContactOperationResponseBody) -> anyhow::Result<()> {
     successful_contact_request(outcome).map(|_| ())
 }
 
 fn successful_contact_request(
-    outcome: ContactOperationOutcome,
-) -> anyhow::Result<ContactOperationOutcome> {
+    outcome: ContactOperationResponseBody,
+) -> anyhow::Result<ContactOperationResponseBody> {
     match outcome {
-        accepted @ ContactOperationOutcome::Accepted { .. } => Ok(accepted),
-        ContactOperationOutcome::Failed { outcome } => {
+        accepted @ ContactOperationResponseBody::Accepted { .. } => Ok(accepted),
+        ContactOperationResponseBody::Failed { outcome } => {
             anyhow::bail!("Contact operation failed: {:?}", outcome.reason)
         }
-        ContactOperationOutcome::Prepared { .. } => {
+        ContactOperationResponseBody::Prepared { .. } => {
             anyhow::bail!("Contact commit returned a preparation")
         }
     }
@@ -470,32 +517,33 @@ fn contact_scope(scope: &str) -> anyhow::Result<ContactScope> {
 }
 
 fn prepared_contact_request(
-    outcome: ContactOperationOutcome,
+    outcome: ContactOperationResponseBody,
 ) -> anyhow::Result<(ProtocolOperationId, ReservationHandle, PreparedEventDraft)> {
     match outcome {
-        ContactOperationOutcome::Prepared {
+        ContactOperationResponseBody::Prepared {
             outcome:
-                ContactPreparedOutcome::Request {
+                ContactPreparedResponseBody::Request {
                     operation_id,
                     reservation_handle,
                     event_draft,
                     ..
                 },
         } => Ok((operation_id, reservation_handle, event_draft)),
-        ContactOperationOutcome::Failed { outcome } => {
+        ContactOperationResponseBody::Failed { outcome } => {
             anyhow::bail!("Contact request prepare was rejected: {:?}", outcome.reason)
         }
         _ => anyhow::bail!("Contact request prepare returned an invalid result kind"),
     }
 }
 
-pub(crate) fn sign_prepared_contact_event(
+pub(crate) async fn sign_prepared_contact_event(
+    http: &arkret_sdk::http_client::Client,
     draft: &PreparedEventDraft,
     expected_kind: &str,
 ) -> anyhow::Result<arkret_sdk::AuthoredEvent> {
     let mut event = draft.unsigned_event_for_kind(expected_kind)?;
-    let signer = crate::event_signer::active_signer()
-        .ok_or_else(|| anyhow::anyhow!("active device signer is required for Contact commit"))?;
+    let session = AuthoringSessionFence::capture()?;
+    let signer = &session.signer;
     let principal =
         arkret_sdk::project_did_to_core_id(&arkret_sdk::Did::new(signer.signer_did().to_owned())?)?;
     contact_commit_actor(&event.actor_id, &principal)?;
@@ -507,7 +555,10 @@ pub(crate) fn sign_prepared_contact_event(
         );
     }
     let digest_suite = event.digest_suite();
-    let proof_context = crate::event_signer::cached_active_event_proof_context(digest_suite)?;
+    let proof_context = crate::app::runtime_adapter::event_submitter(http.clone())
+        .event_proof_context(digest_suite)
+        .await?;
+    session.check()?;
     signer.sign_sdk_event_with_context(&mut event, proof_context)?;
     let signed_digest =
         arkret_sdk::Hash::new(event.event_digest_with_digest_suite(event.digest_suite())?)?;
@@ -518,7 +569,10 @@ pub(crate) fn sign_prepared_contact_event(
 }
 
 impl crate::transport::TransportClient {
-    pub async fn request_contact(&self, target: &str) -> anyhow::Result<ContactOperationOutcome> {
+    pub async fn request_contact(
+        &self,
+        target: &str,
+    ) -> anyhow::Result<ContactOperationResponseBody> {
         self.request_contact_scoped(target, "direct_message").await
     }
 
@@ -526,7 +580,7 @@ impl crate::transport::TransportClient {
         &self,
         target: &str,
         scope: &str,
-    ) -> anyhow::Result<ContactOperationOutcome> {
+    ) -> anyhow::Result<ContactOperationResponseBody> {
         self.request_contact_with_message(target, &[scope.to_owned()], None)
             .await
     }
@@ -540,7 +594,7 @@ impl crate::transport::TransportClient {
         target: &str,
         scopes: &[String],
         message: Option<&str>,
-    ) -> anyhow::Result<ContactOperationOutcome> {
+    ) -> anyhow::Result<ContactOperationResponseBody> {
         let session = AuthoringSessionFence::capture()?;
         let mut granted_to_peer_scopes = scopes
             .iter()
@@ -573,22 +627,28 @@ impl crate::transport::TransportClient {
             },
             granted_to_peer_scopes,
             introduction_evidence: addressing.introduction_evidence,
-            continuity_evidence: None,
             message: message
                 .map(str::trim)
                 .filter(|message| !message.is_empty())
                 .map(ToOwned::to_owned),
         });
-        let (prepared_operation_id, reservation_handle, event_draft) =
-            prepared_contact_request(http.contacts_request(&prepare).await?)?;
+        let (prepared_operation_id, reservation_handle, event_draft) = prepared_contact_request(
+            http.contacts_request(&arkret_sdk::VerifiedSubmission::from_verified_events(
+                prepare,
+                &[],
+            )?)
+            .await?,
+        )?;
         session.check()?;
         if prepared_operation_id != operation_id {
             anyhow::bail!("Contact prepare changed operation_id");
         }
         let signed_event = sign_prepared_contact_event(
+            &http,
             &event_draft,
             arkret_wire::event_kind_str::CONTACT_REQUESTED,
-        )?;
+        )
+        .await?;
         let commit_context = freeze_contact_commit_context(&signed_event)?;
         session.check()?;
         let commit = ContactOperationRequestBody::Commit(ContactCommitRequestBody {

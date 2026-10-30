@@ -174,6 +174,54 @@ fn add_generic_error_keys_zh(dict: &mut TranslationDict) {
 /// Build Chinese translation dictionary.
 pub fn chinese_translations() -> TranslationDict {
     let mut dict = TranslationDict::new(UiLocale::Zh);
+    dict.set("consent.resume_original", "恢复已签名的待定提交");
+    dict.set("consent.replace_success", "完整权限替换已提交");
+    dict.set("consent.replace_failed", "权限替换未完成：{error}");
+
+    dict.set(
+        "consent.edit_intro",
+        "先读取对方的完整权限，查看全部变更后再确认。未修改的权限及附加信息会完整保留。",
+    );
+    dict.set("consent.edit_peer", "编辑权限");
+    dict.set("consent.empty_set", "权限为空，已保存的版本仍保留。");
+    dict.set("consent.read_complete", "读取完整当前权限");
+    dict.set("consent.before", "完整当前状态");
+    dict.set("consent.after", "待确认的完整替换");
+    dict.set("consent.not_before", "生效时间（RFC 3339，可留空）");
+    dict.set("consent.expires_at", "过期时间（RFC 3339，可留空）");
+    dict.set("consent.reason", "原因（可留空）");
+    dict.set(
+        "consent.retained_fields",
+        "原有约束和证据会完整保留，无法解释的约束不会授权。",
+    );
+    dict.set("consent.preview", "查看完整变更");
+    dict.set("consent.confirm", "确认并提交替换");
+
+    for (state, label, description) in [
+        ("synced", "已同步", "已接受的修改已显示在本地视图中。"),
+        ("optimistic", "草稿", "已保存在本地，尚未加入发送队列。"),
+        ("queued", "排队中", "已保存在离线队列中，等待网络恢复。"),
+        ("submitted", "发送中", "已提交处理，正在等待确认。"),
+        (
+            "accepted",
+            "已接受",
+            "服务器已接受此次修改，本地视图正在同步。",
+        ),
+        (
+            "soft_failed",
+            "未成功",
+            "此次修改未成功，请查看错误后重试。",
+        ),
+        (
+            "cas_conflict",
+            "修改冲突",
+            "修改所依据的状态已变化，请刷新后重试。",
+        ),
+        ("quarantined", "审核中", "此次修改正在等待审核。"),
+    ] {
+        dict.set(format!("write_state.{state}.label"), label);
+        dict.set(format!("write_state.{state}.description"), description);
+    }
     dict.set("kanban.ui.members_loading", "正在加载成员身份…");
     dict.set("kanban.ui.members_unavailable", "暂时无法读取成员身份。");
     dict.set("circles.feedback.account_required", "请先登录账号。");
@@ -460,6 +508,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("topbar.account_menu", "账号菜单");
 
     dict.set("login.continue", "继续");
+    dict.set("login.server_sign_in", "前往服务器登录");
     dict.set("login.working", "处理中...");
     dict.set("login.title", "登录");
     dict.set("login.completing", "正在完成登录");
@@ -516,7 +565,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("realm_admin.members_no_match", "没有匹配的成员。");
     dict.set(
         "realm_admin.invite_hint",
-        "最稳妥的方式是使用对方分享给你的邀请链接。如果对方允许被发现,也可以输入其用户名或身份地址,以及对方所在的服务器。",
+        "请使用对方主动分享的个人邀请链接，或完整邀请地址。单独的用户名、账号标识或 DID 不能作为完整邀请地址。",
     );
 
     // F-NOTIF-VLIST-1: pagination button copy synced with the en dict.
@@ -615,7 +664,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("settings.section.developer", "开发者工具");
     dict.set("settings.account.identity", "账号身份");
     dict.set("settings.profile.display_name", "显示名称");
-    dict.set("settings.profile.bio", "个人简介");
+    dict.set("settings.profile.biography", "个人简介");
     dict.set("settings.profile.save", "保存资料");
     dict.set("settings.profile.saving", "正在保存资料…");
     dict.set("settings.profile.saved", "资料已保存");
@@ -628,6 +677,18 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("settings.account.copy_did", "复制 DID");
     dict.set("settings.account.copy_handles", "复制账号标识");
     dict.set("settings.account.copy_device_id", "复制设备 ID");
+    dict.set("settings.invite_locator.generate", "生成链接");
+    dict.set("settings.invite_locator.revoke", "撤销链接");
+    dict.set("settings.invite_locator.revoking", "正在撤销链接…");
+    dict.set(
+        "settings.invite_locator.revoked",
+        "链接已撤销，需要分享时请重新生成。",
+    );
+    dict.set(
+        "settings.invite_locator.revoke_failed",
+        "尚未确认撤销成功，请重试撤销",
+    );
+    dict.set("settings.invite_locator.scope", "仅作用于当前链接，其他链接仍有效，直至被撤销或过期。关闭设置后将隐藏当前链接，再次打开不会自动生成。");
     dict.set("settings.invite_locator.title", "安全邀请链接");
     dict.set("settings.invite_locator.expiry", "15 分钟后过期");
     dict.set("settings.invite_locator.issuing", "正在生成安全邀请链接…");
@@ -885,6 +946,10 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set(
         "settings.privacy.presence_visibility.contacts_only",
         "仅联系人",
+    );
+    dict.set(
+        "settings.privacy.presence_visibility.consent_only",
+        "仅已明确授权的用户",
     );
     dict.set(
         "settings.privacy.presence_visibility.nobody",
@@ -1671,6 +1736,13 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("notifications.tooltip.mark_read", "标为已读");
     dict.set("notifications.tooltip.mark_unread", "标为未读");
     dict.set("notifications.tooltip.archive", "归档");
+    dict.set("notifications.tooltip.restore", "撤销归档");
+    dict.set("notifications.feedback.restoring", "正在恢复通知…");
+    dict.set("notifications.feedback.restored", "已恢复通知");
+    dict.set(
+        "notifications.feedback.restore_failed",
+        "恢复通知失败，可重试：{error}",
+    );
     dict.set("notifications.tooltip.mute_realm", "静音此 Realm");
     dict.set(
         "notifications.feedback.refresh_failed",
@@ -2178,7 +2250,7 @@ pub fn chinese_translations() -> TranslationDict {
     );
     dict.set("applets.bridge_errors", "桥接错误");
     dict.set("applets.bridge_errors_empty", "尚未观察到桥接错误。");
-    dict.set("applets.installed", "已安装的小程序");
+    dict.set("applets.installed", "已观察到的小程序 Service");
     dict.set("applets.close_install", "关闭安装表单");
     dict.set("applets.open_install", "+ 安装小程序");
     dict.set("applets.manifest_placeholder", "清单网址或 JSON 内容");
@@ -2190,9 +2262,28 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("applets.allow_ghost", "允许由小程序管理的 Ghost Actor");
     dict.set("applets.preview_plan", "预览计划");
     dict.set("applets.install", "安装小程序");
-    dict.set("applets.installed_empty", "尚未安装小程序。");
-    dict.set("applets.bot_creation_help", "服务安装可以包含零个或多个独立 Bot。请通过小程序自己的管理入口创建 Bot；此客户端尚无已认证的小程序控制连接。所有必要审批都必须在接纳前完成。");
+    dict.set(
+        "applets.installed_empty",
+        "此 Realm 尚未观察到小程序 Service。",
+    );
     dict.set("applets.trace_events", "查看事件追踪");
+    dict.set("applets.revoke_scope", "卸载目标");
+    dict.set("applets.revoke_scope_help", "填写要卸载的 Circle，留空表示 Realm 安装。只影响所选 Service。登记历史不代表当前安装仍有效。");
+    dict.set("applets.bot_name", "Bot 显示名称（可选）");
+    dict.set("applets.create_bot", "创建 Bot");
+    dict.set(
+        "applets.configure_accepted",
+        "Bot 创建已获接纳，密钥与设备由 Applet 管理。",
+    );
+    dict.set("applets.configure_denied", "配置请求已被拒绝。");
+    dict.set("applets.configure_cancelled", "配置请求已取消。");
+    dict.set(
+        "applets.configure_pending",
+        "此请求尚未结束。请查询原请求结果后再创建下一个。",
+    );
+    dict.set("applets.configure_recover", "查询原请求结果");
+    dict.set("applets.configure_cancel", "取消此请求");
+    dict.set("applets.configure_retry", "重试原请求");
     dict.set("applets.uninstall", "卸载");
     dict.set("applets.trace_empty", "尚未观察到此小程序的事件。");
     dict.set("applets.registered_count", "已注册 {count} 个");
@@ -2266,6 +2357,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("chat.composer.search_members", "搜索成员");
     dict.set("chat.composer.mention_member", "提及成员");
     dict.set("chat.composer.add_attachment", "添加附件");
+    dict.set("chat.composer.choose_files", "选择文件");
     dict.set("chat.composer.schedule_message", "定时发送消息");
     dict.set("chat.composer.poll_question", "问题");
     dict.set("chat.composer.poll_option", "选项 {number}");
@@ -2501,7 +2593,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("realm_admin.roster.invite_member", "邀请成员");
     dict.set(
         "realm_admin.roster.invite_target_placeholder",
-        "alice:example.com",
+        "粘贴个人邀请链接",
     );
     dict.set("realm_admin.roster.send_invite", "发送邀请");
     dict.set("realm_admin.roster.pending_count", "{total} 个待处理");
@@ -2548,7 +2640,10 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("realm_admin.roster.public", "公开");
     dict.set("realm_admin.roster.reply", "以 Agent 身份回复");
     dict.set("realm_admin.roster.mention", "接受 @提及");
-    dict.set("realm_admin.roster.act_on_behalf", "代表我执行操作");
+    dict.set(
+        "realm_admin.roster.acting_on_behalf_allowed",
+        "代表我执行操作",
+    );
     dict.set(
         "realm_admin.roster.load_more",
         "加载更多 — 已显示 {visible}/{total} 组",
@@ -2707,7 +2802,6 @@ fn add_feedback_keys_zh(dict: &mut TranslationDict) {
         "feedback.read_receipt_override_inherit",
         "{realm} 的已读回执:跟随默认",
     );
-    dict.set("feedback.enter_realm_id", "请先输入 Realm ID");
     dict.set(
         "feedback.realm_remark_saved",
         "Realm 备注已保存:{realm} \u{2192} {name}",
@@ -2718,7 +2812,7 @@ fn add_feedback_keys_zh(dict: &mut TranslationDict) {
     );
     dict.set(
         "feedback.enter_realm_and_name",
-        "请同时输入 Realm ID 和本地名称",
+        "请选择 Realm 并输入本地名称",
     );
     dict.set(
         "feedback.invalid_realm_id",
@@ -2767,12 +2861,12 @@ fn add_contacts_keys_zh(dict: &mut TranslationDict) {
     dict.set("contacts.new.subtitle", "需对方同意");
     dict.set(
         "contacts.new.intro",
-        "输入对方的邀请链接、handle 或完整账号标识发送好友请求。默认允许全部联系人权限，添加后可在设置中修改。",
+        "输入对方的邀请链接或完整账号标识发送好友请求。默认允许全部联系人权限，添加后可在设置中修改。",
     );
-    dict.set("contacts.new.target_label", "对方邀请链接、handle 或账号");
+    dict.set("contacts.new.target_label", "对方邀请链接或完整账号标识");
     dict.set(
         "contacts.new.target_placeholder",
-        "粘贴邀请链接或输入 alice:example.com",
+        "粘贴邀请链接或完整账号标识",
     );
     dict.set("contacts.new.message_label", "附言(可选)");
     dict.set("contacts.new.message_placeholder", "打个招呼…");
@@ -2923,6 +3017,37 @@ fn add_contacts_keys_zh(dict: &mut TranslationDict) {
         "settings.capabilities.hint_pending",
         "服务端尚未解析该授权，放弃操作将等待授权记录就绪。如仍未完成，请同步后重试。",
     );
+    dict.set(
+        "consent.edit_intro",
+        "编辑单个对方的完整许可。读取当前值、复核改动后确认。",
+    );
+    dict.set("consent.closed", "所有许可已关闭");
+    dict.set("consent.edit_select", "选择对方");
+    dict.set("consent.grantee_station_label", "对方的 Station 身份");
+    dict.set("consent.read_complete", "读取完整许可");
+    dict.set(
+        "consent.edit_preserve",
+        "过期、未来生效和附条件的许可均保留显示。未修改的条目保持原样。确认过期后需重新读取。",
+    );
+    dict.set("consent.complete_permissions", "完整许可及条件");
+    dict.set("consent.preview", "复核改动");
+    dict.set("consent.before", "当前许可");
+    dict.set("consent.after", "替换后的许可");
+    dict.set("consent.confirm_replace", "确认完整替换");
+    dict.set("consent.replace_success", "许可已替换");
+    dict.set(
+        "consent.never_written",
+        "尚未为此对方作出决定。保存空集合会明确关闭所有许可。",
+    );
+    dict.set(
+        "consent.existing",
+        "将替换已有决定。改动被接受前，当前许可继续生效。",
+    );
+    dict.set("consent.recover_original", "恢复原待定写入");
+    dict.set(
+        "consent.recovery_complete",
+        "已检查恢复结果。编辑前请重新读取当前许可。",
+    );
     dict.set("consent.title", "联系许可");
     dict.set("consent.grant", "授予许可");
     dict.set("consent.request", "请求许可");
@@ -2933,9 +3058,8 @@ fn add_contacts_keys_zh(dict: &mut TranslationDict) {
     dict.set("consent.scope.voice_call", "语音通话");
     dict.set("consent.scope.video_call", "视频通话");
     dict.set("consent.scope.presence", "在线状态");
-    dict.set("consent.scope.any", "全部联系许可");
     dict.set("consent.scope.unknown", "未知范围");
-    dict.set("consent.grantee", "接收方 DID");
+    dict.set("consent.grantee", "完整对方 Actor JSON 或 Account 主体 DID");
     dict.set("consent.ttl", "有效时长（例如 30d）");
     dict.set("consent.grant_submit", "授予");
     dict.set("consent.holder", "许可持有人 DID");
@@ -2996,7 +3120,7 @@ fn add_contacts_keys_zh(dict: &mut TranslationDict) {
         "未能从服务器读取现有策略(将使用默认值):{error}",
     );
     dict.set("invite_policy.kinds_title", "允许的邀请来源");
-    dict.set("invite_policy.kind.consent_grant", "联系人(已同意的好友)");
+    dict.set("invite_policy.kind.consent_grant", "持有我的邀请许可的对象");
     dict.set("invite_policy.kind.locator_ref", "邀请链接");
     dict.set("invite_policy.kind.shared_realm", "同群成员");
     dict.set("invite_policy.kind.handle_claim", "知道我 handle 的人");
@@ -3060,7 +3184,7 @@ fn add_contacts_keys_zh(dict: &mut TranslationDict) {
     dict.set("realm_admin.invite_unauthorized", "对方未授权邀请");
     dict.set(
         "realm_admin.invite_none_eligible",
-        "没有可邀请的联系人(缺少同意凭证)。",
+        "没有获得邀请授权的联系人。",
     );
     dict.set("realm_admin.invite_sending", "正在邀请 {total} 位联系人…");
     dict.set("realm_admin.invite_sent", "已邀请 {ok} 位联系人(待接受)。");
@@ -3069,10 +3193,10 @@ fn add_contacts_keys_zh(dict: &mut TranslationDict) {
         "已邀请 {ok}/{total} 位联系人;部分失败:{error}",
     );
     dict.set("realm_admin.invite_selected", "邀请所选联系人");
-    dict.set("realm_admin.invite_divider", "或通过 handle 添加");
-    dict.set("realm_admin.invite_by_handle", "通过 handle 添加");
-    dict.set("realm_admin.invite_handle_opt_in", "需对方允许");
-    dict.set("realm_admin.invite_target_label", "Handle 或邀请地址");
+    dict.set("realm_admin.invite_divider", "或使用邀请地址");
+    dict.set("realm_admin.invite_by_address", "使用邀请地址");
+    dict.set("realm_admin.invite_link_recommended", "推荐个人邀请链接");
+    dict.set("realm_admin.invite_target_label", "邀请地址");
     dict.set("realm_admin.invite_bad_server", "无效的服务器地址:{error}");
 }
 
@@ -3871,6 +3995,20 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
     dict.set("app.account.server", "服务器");
     dict.set("app.account.refresh_session", "刷新会话");
     dict.set("app.account.log_out", "退出登录");
+    dict.set("app.account.switching", "正在切换账号…");
+    dict.set("app.account.switch", "切换账号");
+    dict.set("app.account.unnamed", "未命名账号");
+    dict.set("app.account.return_previous", "返回上个账号");
+    dict.set("app.account.choose", "选择已保存的账号");
+    dict.set("app.account.add", "登录另一个账号");
+    dict.set(
+        "app.account.saved_unavailable",
+        "无法读取已保存的账号，数据已保留。",
+    );
+    dict.set(
+        "app.account.switch_failed",
+        "账号切换失败，已保存的账号已保留，请重试。",
+    );
     dict.set("theme.switch_to_light", "切换到浅色主题");
     dict.set("theme.switch_to_night", "切换到深色主题");
     dict.set("account.not_signed_in", "尚未登录");
@@ -3938,6 +4076,10 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
     dict.set("agent_runtime.requested_scope", "完整权限范围");
     dict.set("agent_runtime.replaced_authorizations", "被替换的连接");
     dict.set("agent_runtime.permission_read", "读取已授权的内容");
+    dict.set(
+        "agent_runtime.permission_metadata",
+        "读取已授权对象的元数据",
+    );
     dict.set("agent_runtime.permission_post", "在已授权的对话中发送消息");
     dict.set("agent_runtime.permission_react", "回应消息");
     dict.set("agent_runtime.permission_draft", "提交草稿和操作供你批准");
