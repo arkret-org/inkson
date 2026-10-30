@@ -1262,6 +1262,96 @@ fn a_rejected_item_reports_the_station_reason_code_on_its_row() {
     ));
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn failed_message_refusal_survives_cold_projection_without_reviving_sending() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("refused-message.json");
+    let event = author_and_sign(
+        message_intent(
+            REALM,
+            "ak:strand:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
+        ),
+        &test_signer(),
+    );
+    let mut store = crate::state::LocalStateStore::with_path(path.clone());
+    let operation = "local-message:refused-before-grant";
+    assert!(record_queued_operation_identity(
+        &mut store,
+        operation,
+        event.event()
+    ));
+    let mut snapshot = snapshot_of(vec![(event.clone(), SendQueueStatus::Failed)]);
+    let item = &mut snapshot.items[0];
+    item.last_error = Some("capability_denied".to_owned());
+    item.last_problem = Some(Box::new(arkret_wire::Problem::new(
+        "capability_denied",
+        403,
+        "message creation is not granted",
+    )));
+    let original = item.submission.clone();
+    assert!(reconcile_settled_outbound_item(&mut store, item));
+    assert_eq!(
+        item.submission, original,
+        "a holder failure must not invent a Station rejection or change signed bytes"
+    );
+    store.flush().unwrap();
+    drop(store);
+    let reopened = crate::state::LocalStateStore::with_path(path);
+    let state = reopened.load();
+    let projected =
+        crate::views::chat::model::chat_messages_from_local_state_with_sidecar(&state, None, None);
+    assert_eq!(projected.len(), 1);
+    assert!(projected[0].failed);
+    assert!(
+        !projected[0].pending,
+        "a definitive refusal is not an unknown submission outcome"
+    );
+    assert_eq!(projected[0].error.as_deref(), Some("capability_denied"));
+    assert_eq!(
+        state.raw_operations[0].payload["event"],
+        serde_json::to_value(event.event()).unwrap()
+    );
+}
+
+#[test]
+fn an_unverified_message_outcome_is_not_turned_into_a_refusal() {
+    let event = author_and_sign(
+        message_intent(
+            REALM,
+            "ak:strand:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
+        ),
+        &test_signer(),
+    );
+    for status in [
+        SendQueueStatus::Queued,
+        SendQueueStatus::Forwarding,
+        SendQueueStatus::Failed,
+    ] {
+        let mut store = local_state_store("unknown-message-outcome");
+        record_queued_operation_identity(
+            &mut store,
+            "local-message:unknown-outcome",
+            event.event(),
+        );
+        let mut snapshot = snapshot_of(vec![(event.clone(), status)]);
+        snapshot.items[0].last_error = Some("unverified response after submission".into());
+        assert!(snapshot.items[0].last_problem.is_none());
+        assert!(!reconcile_settled_outbound_item(
+            &mut store,
+            &snapshot.items[0]
+        ));
+        let projected = crate::views::chat::model::chat_messages_from_local_state_with_sidecar(
+            &store.load(),
+            None,
+            None,
+        );
+        assert_eq!(projected.len(), 1);
+        assert!(projected[0].pending);
+        assert!(!projected[0].failed);
+    }
+}
+
 #[test]
 fn a_committed_item_yields_the_commit_that_covers_exactly_this_event() {
     let signer = test_signer();
