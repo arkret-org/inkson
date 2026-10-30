@@ -4,6 +4,39 @@ use crate::state::projection_views::{RsvpCellProjectionView, RsvpWinnerProjectio
 const TEST_CALENDAR_STRAND_ID: &str = "ak:strand:Ac_zaRRyp7i2guabQjAsFr7CdWBbP2ULfqGAcp4_we-V";
 
 #[test]
+fn calendar_location_uses_the_shared_metadata_encryption_boundary_once() {
+    let current = test_card(TEST_CALENDAR_STRAND_ID, "U");
+    let mut draft = card_detail_draft_from_card(&current);
+    draft.calendar = CalendarCardFields {
+        start: "2026-10-31T13:20:00".to_owned(),
+        end: "2026-10-31T16:30:00".to_owned(),
+        timezone: "Asia/Shanghai".to_owned(),
+        location: "Community entrance desk".to_owned(),
+        ..CalendarCardFields::default()
+    };
+    let patch = card_detail_update_patch(&current, &draft).unwrap();
+    assert!(
+        collect_encryptable_private_patch_values(&patch)
+            .unwrap()
+            .is_empty(),
+        "metadata must not acquire an inner ciphertext whose producer context disappears when EventSubmitter seals the whole metadata"
+    );
+    let event = build_card_detail_update_operation(
+        TEST_REALM_ID,
+        "ak:did_core:web:alice.example",
+        TEST_CALENDAR_STRAND_ID,
+        patch,
+    )
+    .unwrap();
+    for security in [Some(true), None] {
+        assert!(
+            kanban_plaintext_block_reason(security, &event).is_some(),
+            "the unchanged guard must reject metadata until the shared boundary seals it"
+        );
+    }
+}
+
+#[test]
 fn calendar_location_is_bound_to_its_signed_subtree_patch() {
     let envelope = json!({"ciphertext": "opaque", "content_type": "application/json"});
     let patch = json!({
@@ -112,8 +145,8 @@ fn calendar_patch_writes_one_activation_pair() {
     // child patch path.
     assert_eq!(calendar["location"], json!({ "title": "Board room" }));
 
-    // The activation pair plus the encrypted `location` child are the only
-    // schedule entries: no flat field or profile-id impostor is ever written.
+    // The activation pair owns the complete schedule. Metadata is sealed at
+    // the shared producer boundary; no flat field or profile-id impostor enters.
     for path in [
         "metadata.fields.profile",
         "metadata.fields.profile_refs",
@@ -127,25 +160,14 @@ fn calendar_patch_writes_one_activation_pair() {
         assert!(patch.get(path).is_none(), "{path} must not be written");
     }
 
-    let private_values = collect_encryptable_private_patch_values(&patch).unwrap();
-    assert_eq!(private_values.len(), 1);
-    assert_eq!(private_values[0].0, CALENDAR_LOCATION_PRIVATE_PATH);
-
-    let mut encrypted_patch = patch.clone();
-    replace_private_patch_values(
-        &mut encrypted_patch,
-        &[CALENDAR_LOCATION_PRIVATE_PATH.to_owned()],
-        vec![json!({"ciphertext": "calendar-location"})],
-    )
-    .unwrap();
     assert!(
-        encrypted_patch
-            .get(CALENDAR_LOCATION_PRIVATE_PATH)
-            .is_none()
+        collect_encryptable_private_patch_values(&patch)
+            .unwrap()
+            .is_empty()
     );
     assert_eq!(
-        encrypted_patch[CALENDAR_SUBTREE_PATH]["value"]["location"]["ciphertext"],
-        "calendar-location"
+        patch[CALENDAR_SUBTREE_PATH]["value"]["location"]["title"],
+        "Board room"
     );
 }
 
