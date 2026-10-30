@@ -613,6 +613,14 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("kanban.rename_list_hint", "双击重命名");
     dict.set("realm_admin.apply_policy", "应用策略");
     dict.set("realm_admin.grant_capability_move", "授予权限");
+    dict.set("realm_admin.allowed_write_fields", "允许编辑的字段");
+    dict.set("realm_admin.description_only", "仅描述");
+    dict.set("realm_admin.synthesis_only", "仅总结");
+    dict.set("realm_admin.write_fields_hint", "选择预设，或每行输入一个精确字段路径。描述和总结的编辑权限相互独立；此授权覆盖本 Realm 中所选字段。");
+    dict.set(
+        "realm_admin.write_fields_required",
+        "请先选择此成员可以编辑的字段，再授予权限。",
+    );
     dict.set("realm_admin.grant_capability_pending", "正在授予权限…");
     dict.set("realm_admin.capability_granted", "权限已授予。授权 ID：");
     dict.set("realm_admin.revoke_capability_move", "撤销权限");
