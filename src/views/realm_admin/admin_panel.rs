@@ -59,6 +59,7 @@ struct AdminPage {
     cap_constraint_kind: Cage<String>,
     cap_temporal_not_before: Cage<String>,
     cap_temporal_expires_at: Cage<String>,
+    cap_allowed_write_fields: Cage<String>,
     move_detail_open: Cage<Option<String>>,
 }
 impl AdminPage {
@@ -94,6 +95,7 @@ impl AdminPage {
             cap_constraint_kind: scope.cage("none".to_owned()),
             cap_temporal_not_before: scope.cage((String::new)()),
             cap_temporal_expires_at: scope.cage((String::new)()),
+            cap_allowed_write_fields: scope.cage((String::new)()),
             move_detail_open: scope.cage(Option::<String>::None),
             owner: scope.downgrade(),
             context,
@@ -566,6 +568,7 @@ impl AdminPage {
         let cap_constraint_kind = self.cap_constraint_kind;
         let cap_temporal_not_before = self.cap_temporal_not_before;
         let cap_temporal_expires_at = self.cap_temporal_expires_at;
+        let cap_allowed_write_fields = self.cap_allowed_write_fields;
         let action = {
             let base = base_url.clone();
             let realm = selected_realm_id.clone();
@@ -616,6 +619,16 @@ impl AdminPage {
                         return;
                     }
                 };
+                let field_access = match capability_field_access(
+                    &tag_val,
+                    &cap_allowed_write_fields.get(),
+                ) {
+                    Ok(constraint) => constraint,
+                    Err(key) => {
+                        status_msg.revise(|value| *value = crate::i18n::tr(key));
+                        return;
+                    }
+                };
                 // Pull the active constraint from the editor
                 // signals into the canonical `grant-constraint`
                 // shape (`{constraint_kind, effect, …}`). Empty
@@ -631,7 +644,7 @@ impl AdminPage {
                 } else {
                     None
                 };
-                let constraint_json: serde_json::Value = if kind == "temporal" {
+                let mut constraint_json: serde_json::Value = if kind == "temporal" {
                     let nb = cap_temporal_not_before.get();
                     let nb_trim = nb.trim();
                     if nb_trim.is_empty() && expires_at_opt.is_none() {
@@ -663,6 +676,19 @@ impl AdminPage {
                 } else {
                     serde_json::Value::Null
                 };
+                if let Some(field_access) = field_access {
+                    let mut constraints = constraint_json.as_array().cloned().unwrap_or_default();
+                    match serde_json::to_value(field_access) {
+                        Ok(constraint) => constraints.push(constraint),
+                        Err(error) => {
+                            status_msg.revise(|value| {
+                                *value = format!("capability field selection failed: {error}");
+                            });
+                            return;
+                        }
+                    }
+                    constraint_json = serde_json::Value::Array(constraints);
+                }
                 let envelope = crate::operation::ak_ops::capability_grant_actions(
                     &realm,
                     &actor_id,
@@ -1042,6 +1068,17 @@ pub(super) fn page(
     section: RealmAdminSection,
 ) -> View {
     let state = AdminPage::new(scope, context.clone(), realm.clone());
+    let cap_tag = state.cap_tag;
+    let cap_allowed_write_fields = state.cap_allowed_write_fields;
+    let previous_cap_tag = scope.cage(cap_tag.get_untracked());
+    scope.effect(move || {
+        let next = cap_tag.get();
+        if previous_cap_tag.get_untracked() == next {
+            return;
+        }
+        previous_cap_tag.revise(|value| *value = next);
+        cap_allowed_write_fields.revise(|value| value.clear());
+    });
     let sync_state = state.clone();
     let sync_context = context.clone();
     scope.effect(move || {
@@ -1690,6 +1727,65 @@ fn advanced_view(scope: &Scope, state: &AdminPage) -> View {
     let temporal = state.cap_constraint_kind;
     let before = state.cap_temporal_not_before;
     let expires = state.cap_temporal_expires_at;
+    let field_state = state.clone();
+    let field_tag = field_state.cap_tag;
+    let field_context = context.clone();
+    let field_editor = reactive(scope.bond(move || field_tag.get()), move |scope, tag| {
+        if !capability_requires_write_fields(tag.trim()) {
+            return empty();
+        }
+        let fields = field_state.cap_allowed_write_fields;
+        let mut children = Vec::new();
+        if tag.trim() == "ak.strand.update" {
+            children.push(line(
+                "actions",
+                vec![
+                    action(
+                        scope,
+                        field_context.clone(),
+                        "cap-fields-description-only",
+                        "realm_admin.description_only",
+                        "secondary",
+                        true,
+                        move || {
+                            fields.revise(|value| {
+                                *value = "content\nencrypted_content".to_owned();
+                            });
+                        },
+                    ),
+                    action(
+                        scope,
+                        field_context.clone(),
+                        "cap-fields-synthesis-only",
+                        "realm_admin.synthesis_only",
+                        "secondary",
+                        true,
+                        move || {
+                            fields.revise(|value| {
+                                *value = "tracks.synthesis.content\ntracks.synthesis.encrypted_content"
+                                    .to_owned();
+                            });
+                        },
+                    ),
+                ],
+            ));
+        }
+        children.push(field(
+            scope,
+            field_context.clone(),
+            "cap-allowed-write-fields-input",
+            "realm_admin.allowed_write_fields",
+            fields,
+            true,
+            true,
+            move |next| fields.revise(|value| *value = next),
+        ));
+        children.push(paragraph(
+            "muted",
+            field_context.translated(scope, "realm_admin.write_fields_hint"),
+        ));
+        stack("cap-field-access-editor", children)
+    });
     stack(
         "security-advanced-controls",
         vec![
@@ -1763,6 +1859,7 @@ fn advanced_view(scope: &Scope, state: &AdminPage) -> View {
                         expires,
                         true,
                     ),
+                    field_editor,
                     line(
                         "actions",
                         vec![

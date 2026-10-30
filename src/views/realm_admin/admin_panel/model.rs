@@ -11,6 +11,43 @@ use super::*;
 
 pub(super) const VERIFIED_AUTHORITY_ROOT_UNAVAILABLE: &str = "verified governing Station authority-root current is unavailable; sync it before authoring this governance Event";
 
+pub(super) fn capability_requires_write_fields(action: &str) -> bool {
+    arkret_schema::capability_action(action).is_some_and(|descriptor| {
+        descriptor
+            .required_constraints
+            .contains(&"allowed_write_fields")
+    })
+}
+
+/// Preserve the owner's explicit selection; no field or track is implied.
+pub(super) fn capability_field_access(
+    action: &str,
+    field_paths: &str,
+) -> Result<Option<arkret_sdk::GrantConstraint>, &'static str> {
+    if !capability_requires_write_fields(action) {
+        return Ok(None);
+    }
+    let mut fields = Vec::new();
+    for path in field_paths
+        .lines()
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+    {
+        if !fields.iter().any(|field| field == path) {
+            fields.push(path.to_owned());
+        }
+    }
+    if fields.is_empty() {
+        return Err("realm_admin.write_fields_required");
+    }
+    let mut constraint = arkret_sdk::GrantConstraint::new(
+        arkret_sdk::GrantConstraintKind::FieldAccess,
+        arkret_sdk::GrantConstraintEffect::Allow,
+    );
+    constraint.allowed_write_fields = fields;
+    Ok(Some(constraint))
+}
+
 /// Owner transfer/reset still require their complete authoring and acceptance
 /// proof flow. A root current row alone does not enable those transitions.
 /// Keep the explicit gate until that flow is wired and verified.
