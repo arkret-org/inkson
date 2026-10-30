@@ -792,15 +792,23 @@ pub(crate) fn calendar_fields_from_metadata_and_event(
         .and_then(|value| serde_json::from_value::<arkret_sdk::CalendarLocation>(value).ok())
         .filter(|location| location.validate().is_ok());
     if let Some(location) = location {
-        if let Ok(value) = serde_json::to_value(location) {
-            calendar.location = calendar_location_plaintext_label(&value);
-            calendar.location_locked = false;
-        }
+        install_authenticated_calendar_location(&mut calendar, location);
     } else {
         calendar.location.clear();
         calendar.location_locked = true;
     }
     calendar
+}
+
+pub(crate) fn install_authenticated_calendar_location(
+    calendar: &mut CalendarCardFields,
+    location: arkret_sdk::CalendarLocation,
+) {
+    if let Ok(value) = serde_json::to_value(location) {
+        calendar.location = calendar_location_plaintext_label(&value);
+        calendar.location_source = Some(value);
+        calendar.location_locked = false;
+    }
 }
 
 fn calendar_location_display_value(
