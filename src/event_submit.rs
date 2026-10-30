@@ -798,6 +798,18 @@ fn reconcile_settled_outbound_item(
                     .to_owned(),
             ),
         ),
+        // A typed API refusal is a definite holder-local failure even when
+        // it is not an authority-submit Rejected response. Preserve the
+        // frozen submission; only its local display metadata changes. Without
+        // an API answer the acceptance outcome remains unknown.
+        SendQueueStatus::Failed if item.last_problem.is_some() => (
+            "rejected",
+            item.last_error.clone().or_else(|| {
+                item.last_problem
+                    .as_ref()
+                    .map(|problem| problem.code().to_owned())
+            }),
+        ),
         _ => return false,
     };
     let operation_id = local_operation_for_event(&state_store.load(), &event_id);
@@ -2774,6 +2786,8 @@ impl EventSubmitter {
                     error,
                     problem,
                 } if item.event_id() == &event_id => {
+                    check()?;
+                    self.settle_other_item(&item);
                     #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
                     if let Some(problem) = problem.as_ref() {
                         let wire_code = problem
