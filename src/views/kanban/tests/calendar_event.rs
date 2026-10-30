@@ -4,6 +4,44 @@ use crate::state::projection_views::{RsvpCellProjectionView, RsvpWinnerProjectio
 const TEST_CALENDAR_STRAND_ID: &str = "ak:strand:Ac_zaRRyp7i2guabQjAsFr7CdWBbP2ULfqGAcp4_we-V";
 
 #[test]
+fn content_only_edits_do_not_rewrite_an_existing_calendar() {
+    let mut current = test_card(TEST_CALENDAR_STRAND_ID, "U");
+    current.description_body = "Original description".to_owned();
+    current.synthesis = "Original synthesis".to_owned();
+    current.calendar = CalendarCardFields {
+        start: "2026-10-31T13:20:00".to_owned(),
+        end: "2026-10-31T16:45:00".to_owned(),
+        timezone: "Asia/Shanghai".to_owned(),
+        location: "Community desk".to_owned(),
+        ..CalendarCardFields::default()
+    };
+    for locked in [false, true] {
+        current.calendar.location_locked = locked;
+        for synthesis in [false, true] {
+            let mut draft = card_detail_draft_from_card(&current);
+            let path = if synthesis {
+                draft.synthesis = "Updated synthesis".to_owned();
+                KANBAN_SYNTHESIS_CONTENT_PATH
+            } else {
+                draft.description_body = "Updated description".to_owned();
+                KANBAN_CONTENT_PATH
+            };
+            let patch = card_detail_update_patch(&current, &draft).unwrap();
+            assert_eq!(
+                patch
+                    .as_object()
+                    .unwrap()
+                    .keys()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>(),
+                vec![path],
+                "a content-only grant must not also require calendar/schema permissions or introduce a new schedule revision"
+            );
+        }
+    }
+}
+
+#[test]
 fn authenticated_structured_location_survives_an_unrelated_schedule_edit() {
     let location = json!({
         "title":"Community entrance desk",
