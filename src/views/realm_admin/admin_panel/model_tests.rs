@@ -3,6 +3,47 @@ use super::*;
 const REALM: &str = "ak:realm:AV1bzsPGpTD74Cq12d9EOrCkieTddiSndS0kDtK1W2hM";
 
 #[test]
+fn capability_editor_requires_explicit_fields_and_keeps_description_and_synthesis_separate() {
+    assert!(capability_requires_write_fields("ak.strand.update"));
+    assert!(capability_field_access("ak.strand.update", " \n\t").is_err());
+    let description =
+        capability_field_access("ak.strand.update", "content\nencrypted_content\ncontent")
+            .unwrap()
+            .unwrap();
+    let wire = serde_json::to_value(description).unwrap();
+    assert_eq!(wire["constraint_kind"], "field_access");
+    assert_eq!(wire["effect"], "allow");
+    assert_eq!(
+        wire["allowed_write_fields"],
+        json!(["content", "encrypted_content"])
+    );
+    assert!(!wire.to_string().contains("tracks.synthesis"));
+    let synthesis = capability_field_access(
+        "ak.strand.update",
+        "tracks.synthesis.content\ntracks.synthesis.encrypted_content",
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        synthesis.allowed_write_fields,
+        vec![
+            "tracks.synthesis.content",
+            "tracks.synthesis.encrypted_content"
+        ]
+    );
+    assert!(
+        capability_field_access("ak.message.create", "")
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        capability_field_access("ak.message.create", "content")
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
 fn governance_events_fail_closed_without_verified_authority_root_current() {
     assert_eq!(
         governance_authoring_gate(),
