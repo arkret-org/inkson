@@ -1,4 +1,4 @@
-import { expect, type Page, type Route } from "@playwright/test";
+import { expect, type Page, type Route, type Request as PlaywrightRequest, type Response as PlaywrightResponse } from "@playwright/test";
 import { spawnSync } from "node:child_process";
 import { Buffer } from "node:buffer";
 import { createHash, randomUUID } from "node:crypto";
@@ -18,6 +18,37 @@ import {
 } from "./currentDescribeCapabilities";
 
 const DEMO_FRONTIER_EVENT = "ak:event:Ad0EZUHcfLJv92Of4w-RJec6fkNlWP11fsQAQ4dqUOHS";
+// These are the exact serialized bytes handed to this request's fulfillment,
+// not an assertion that the client has verified or installed the cut.
+const deliveredAccountBodies = new WeakMap<PlaywrightRequest, Promise<string>>();
+
+export async function deliveredMockAccountBody(response: PlaywrightResponse): Promise<string> {
+  const request = response.request();
+  if (request.method() !== "GET"
+    || new URL(request.url()).pathname !== "/_arkret/self/account/subscribe"
+    || response.status() !== 200
+    || response.headers()["content-type"]?.split(";")[0].trim().toLowerCase() !== "application/x-ndjson") {
+    throw new Error("Account cut observation requires its exact successful NDJSON response");
+  }
+  const delivered = deliveredAccountBodies.get(request);
+  if (!delivered) throw new Error("Account cut observation has no matching fulfilled mock request");
+  return delivered;
+}
+
+export function observeSuccessfulSignerQueries(page: Page): (eventId: string) => boolean {
+  const eventIds = new Set<string>();
+  page.on("response", response => {
+    if (response.request().method() !== "POST" || response.status() !== 200
+      || new URL(response.url()).pathname !== "/_arkret/self/signer-keys/query") return;
+    const queries = response.request().postDataJSON()?.queries;
+    if (!Array.isArray(queries)) return;
+    for (const query of queries) {
+      const eventId = query?.committed_event_ref?.event_id;
+      if (typeof eventId === "string") eventIds.add(eventId);
+    }
+  });
+  return eventId => eventIds.has(eventId);
+}
 const DIRECT_BOB_REALM =
   "ak:realm:AUEAoXMJeJWBETvkqm7gk4imduk7g-l8bim19OPFQDaO";
 const DIRECT_BOB_STRAND =
@@ -121,6 +152,7 @@ type MockArkretApiOptions = {
   demoNotification?: boolean;
   demoEventRedaction?: () => boolean;
   demoSearchPolicy?: () => boolean;
+  observeAccountSubscribe?: (body: string, url: URL) => void;
   invitePreview?: "disclosed" | "restricted" | "retry_once";
   beforeInvitePreviewResponse?: (page: Page) => Promise<void>;
   contactRequestOutcome?: "failed" | "tampered";
@@ -2583,11 +2615,19 @@ export async function mockArkretApi(
       frames.forEach((value) =>
         validateMockSchema("schemas/account-subscribe-frame.schema.json", value),
       );
-      return route.fulfill({
-        status: 200,
-        contentType: "application/x-ndjson",
-        body: `${frames.map(canonicalJson).join("\n")}\n`,
+      const body = `${frames.map(canonicalJson).join("\n")}\n`;
+      // Register before sending headers; resolve only after actual fulfillment.
+      // A non-catchup consumer may cancel its body after the first valid delta.
+      const delivered = Promise.resolve().then(async () => {
+        await route.fulfill({ status: 200, contentType: "application/x-ndjson", body });
+        return body;
       });
+      deliveredAccountBodies.set(route.request(), delivered);
+      await delivered;
+      // Only completed fulfillment is observable. Installation is independently
+      // proved by the new cut's visible content or exact durable UI cursor.
+      options.observeAccountSubscribe?.(body, url);
+      return;
     }
 
     if (

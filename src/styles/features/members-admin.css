@@ -21,7 +21,7 @@
   font-size: 12px;
 }
 
-.invite-by-handle {
+.invite-by-address {
   display: grid;
   gap: 8px;
   padding: 10px;
@@ -30,7 +30,7 @@
   background: var(--surface-2, var(--ak-surface));
 }
 
-.invite-by-handle input {
+.invite-by-address input {
   width: 100%;
 }
 

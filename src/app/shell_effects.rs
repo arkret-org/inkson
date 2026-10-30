@@ -41,7 +41,6 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
     let SessionContext {
         mut state_store,
         base_url,
-        active_account,
         session_generation,
         ..
     } = SessionContext::get();
@@ -82,45 +81,53 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
     // Realm invite notification carrier. Keep this inbox live even when the
     // Contacts sidebar has never been opened. A session change cancels the
     // resource and fences responses from the previous account.
-    use_resource(move || async move {
-        let account = active_account().map(|account| account.authority);
-        let api_token = token();
-        let base = base_url();
-        let generation = session_generation();
-        direct_contact_rows.set(Vec::new());
-        if account.is_none() || api_token.trim().is_empty() {
-            return;
-        }
-        loop {
-            let result = crate::transport::auth::with_authed_sdk_client(
-                &base,
-                api_token.clone(),
-                |http| async move { crate::transport::account::contacts(&http).await },
-            )
-            .await;
-            if *session_generation.peek() != generation
-                || active_account
-                    .peek()
-                    .as_ref()
-                    .map(|account| &account.authority)
-                    != account.as_ref()
-                || *base_url.peek() != base
-                || *token.peek() != api_token
-            {
+    let contact_session = SessionContext::get();
+    let contact_scope = use_memo(move || {
+        crate::views::contacts::ContactSessionStamp::capture(contact_session, token)
+    });
+    use_resource(move || {
+        let stamp = contact_scope();
+        async move {
+            let account = contact_session.active_account.peek().clone();
+            let base = base_url.peek().clone();
+            direct_contact_rows.set(Vec::new());
+            if account.is_none() || token.peek().trim().is_empty() {
                 return;
             }
-            match result {
-                Ok(response) => {
-                    state_store
-                        .write()
-                        .replace_accepted_human_contacts(&response.contacts);
-                    direct_contact_rows.set(response.contacts);
+            loop {
+                if !stamp.is_current(contact_session, token) {
+                    return;
                 }
-                Err(error) => {
-                    tracing::warn!(error = %error.display_diagnostic(), "contact inbox refresh failed")
+                let api_token = token.peek().clone();
+                let request_stamp = stamp.clone();
+                let result = crate::transport::auth::with_authed_sdk_client(
+                    &base,
+                    api_token,
+                    |http| async move {
+                        anyhow::ensure!(
+                            request_stamp.is_current(contact_session, token),
+                            "contact read belongs to a replaced session"
+                        );
+                        crate::transport::account::contacts(&http).await
+                    },
+                )
+                .await;
+                if !stamp.is_current(contact_session, token) {
+                    return;
                 }
+                match result {
+                    Ok(response) => {
+                        state_store
+                            .write()
+                            .replace_accepted_human_contacts(&response.contacts);
+                        direct_contact_rows.set(response.contacts);
+                    }
+                    Err(error) => {
+                        tracing::warn!(error = %error.display_diagnostic(), "contact inbox refresh failed")
+                    }
+                }
+                crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(15)).await;
             }
-            crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(15)).await;
         }
     });
 

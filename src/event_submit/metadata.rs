@@ -57,7 +57,7 @@ impl EventSubmitter {
         Ok(())
     }
 
-    pub(super) async fn prepare_metadata(
+    pub(crate) async fn prepare_metadata(
         &self,
         intent: EventIntent,
     ) -> anyhow::Result<EventIntent> {
@@ -681,6 +681,59 @@ mod tests {
         assert!(value.get("title").is_none());
         assert_eq!(value["rank"], "V");
         assert!(value.get("encrypted_metadata").is_some());
+    }
+
+    #[test]
+    fn calendar_location_is_inside_the_single_metadata_envelope() {
+        let event_id =
+            arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [0x55; 32]);
+        let strand_id = arkret_sdk::StrandId::from_event_id(&event_id);
+        let payload: arkret_sdk::StrandPatchPayload = serde_json::from_value(serde_json::json!({
+            "target_ref": strand_id,
+            "patch": {
+                "schema_refs": {"$op":"set", "value":["ak.schema.calendar_event.v1"]},
+                "metadata.fields.calendar": {"$op":"set", "value": {
+                    "start":"2026-10-31T13:20:00", "end":"2026-10-31T16:30:00",
+                    "timezone":"Asia/Shanghai", "tzdb_version":"2025b",
+                    "all_day":false, "status":"confirmed",
+                    "location":{"title":"Community entrance desk"}
+                }}
+            }
+        }))
+        .unwrap();
+        let intent =
+            arkret_sdk::TypedEventDraft::<event_spec::StrandUpdate>::new(scope(), actor(), payload)
+                .unwrap()
+                .into_intent(crate::clock::now_utc())
+                .unwrap();
+        let mut sealed_values = 0;
+        let prepared = seal_metadata(
+            &intent,
+            |id, strand| {
+                assert!(strand);
+                assert_eq!(id, strand_id.as_str());
+                Ok(serde_json::json!({"title":"Existing task","fields":{}}))
+            },
+            |metadata| {
+                sealed_values += 1;
+                let location: arkret_sdk::CalendarLocation =
+                    serde_json::from_value(metadata["fields"]["calendar"]["location"].clone())
+                        .unwrap();
+                location.validate().unwrap();
+                assert_eq!(location.title.as_deref(), Some("Community entrance desk"));
+                Ok(encrypt("ak.strand.update", metadata))
+            },
+        )
+        .unwrap();
+        assert_eq!(sealed_values, 1);
+        let wire = serde_json::to_value(prepared.payload()).unwrap();
+        assert!(wire["patch"]["encrypted_metadata"]["value"]["ciphertext"].is_string());
+        assert!(wire["patch"].get("metadata.fields.calendar").is_none());
+        assert!(!wire.to_string().contains("Community entrance desk"));
+        assert_eq!(
+            wire["patch"]["schema_refs"]["value"],
+            serde_json::json!(["ak.schema.calendar_event.v1"])
+        );
     }
 
     #[test]

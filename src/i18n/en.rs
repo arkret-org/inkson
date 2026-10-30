@@ -950,7 +950,7 @@ pub fn english_translations() -> TranslationDict {
     );
     dict.set(
         "realm_admin.invite_hint",
-        "For the most secure invite, use the invite link the person shares with you. If they allow being found, enter their handle or identity address plus their server.",
+        "Use the personal invitation link shared by the recipient, or a complete invitation address. A username, handle or bare DID is not a complete invitation address.",
     );
 
     // F-NOTIF-VLIST-1: client-side paging UI.
@@ -2608,6 +2608,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("chat.composer.search_members", "Search members");
     dict.set("chat.composer.mention_member", "Mention member");
     dict.set("chat.composer.add_attachment", "Add attachment");
+    dict.set("chat.composer.choose_files", "Choose files");
     dict.set("chat.composer.schedule_message", "Schedule message");
     dict.set("chat.composer.poll_question", "Question");
     dict.set("chat.composer.poll_option", "Option {number}");
@@ -2843,7 +2844,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("realm_admin.roster.invite_member", "Invite member");
     dict.set(
         "realm_admin.roster.invite_target_placeholder",
-        "alice:example.com",
+        "Paste a personal invitation link",
     );
     dict.set("realm_admin.roster.send_invite", "Send Invite");
     dict.set("realm_admin.roster.pending_count", "{total} pending");
@@ -3147,15 +3148,15 @@ fn add_contacts_keys(dict: &mut TranslationDict) {
     dict.set("contacts.new.subtitle", "Needs their approval");
     dict.set(
         "contacts.new.intro",
-        "Enter the other person's invite link, handle, or complete account selector to send a friend request. All contact permissions are allowed by default. You can change them later in Settings.",
+        "Enter the other person's invite link or complete account selector to send a friend request. All contact permissions are allowed by default. You can change them later in Settings.",
     );
     dict.set(
         "contacts.new.target_label",
-        "Their invite link, handle, or account",
+        "Their invite link or complete account selector",
     );
     dict.set(
         "contacts.new.target_placeholder",
-        "Paste an invite link or enter alice:example.com",
+        "Paste an invite link or complete account selector",
     );
     dict.set("contacts.new.message_label", "Note (optional)");
     dict.set("contacts.new.message_placeholder", "Say hello…");
@@ -3554,13 +3555,13 @@ fn add_contacts_keys(dict: &mut TranslationDict) {
         "Invited {ok}/{total} contact(s); some failed: {error}",
     );
     dict.set("realm_admin.invite_selected", "Invite selected contacts");
-    dict.set("realm_admin.invite_divider", "Or add by handle");
-    dict.set("realm_admin.invite_by_handle", "Add by handle");
-    dict.set("realm_admin.invite_handle_opt_in", "Recipient opt-in");
+    dict.set("realm_admin.invite_divider", "Or use an invitation address");
+    dict.set("realm_admin.invite_by_address", "Use an invitation address");
     dict.set(
-        "realm_admin.invite_target_label",
-        "Handle or invite address",
+        "realm_admin.invite_link_recommended",
+        "Personal invitation link recommended",
     );
+    dict.set("realm_admin.invite_target_label", "Invitation address");
     dict.set(
         "realm_admin.invite_bad_server",
         "Invalid server address: {error}",
