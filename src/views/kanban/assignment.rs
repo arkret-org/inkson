@@ -312,6 +312,10 @@ pub(super) fn dispatch_card_assignees_update(
         {
             Ok(mutations) => mutations,
             Err(err) => {
+                tracing::warn!(
+                    error = %err.display_diagnostic(),
+                    "exact assignee state read failed"
+                );
                 let msg = format!("cannot verify exact assignee state: {}", err.display());
                 assignee_edit_status.set(msg.clone());
                 board_status.set(msg);
