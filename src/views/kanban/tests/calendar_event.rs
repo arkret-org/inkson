@@ -4,6 +4,38 @@ use crate::state::projection_views::{RsvpCellProjectionView, RsvpWinnerProjectio
 const TEST_CALENDAR_STRAND_ID: &str = "ak:strand:Ac_zaRRyp7i2guabQjAsFr7CdWBbP2ULfqGAcp4_we-V";
 
 #[test]
+fn authenticated_structured_location_survives_an_unrelated_schedule_edit() {
+    let location = json!({
+        "title":"Community entrance desk",
+        "address":"Simulated community room",
+        "geo_uri":"geo:0,0",
+        "uri":"https://example.invalid/community"
+    });
+    let authenticated: arkret_sdk::CalendarLocation =
+        serde_json::from_value(location.clone()).unwrap();
+    authenticated.validate().unwrap();
+    let fields = json!({"calendar":{
+        "start":"2026-10-31T13:20:00", "end":"2026-10-31T16:30:00",
+        "timezone":"Asia/Shanghai", "tzdb_version":"2025b",
+        "all_day":false, "status":"confirmed",
+        "location":{"ciphertext":"verified-envelope", "content_type":"application/json"}
+    }});
+    let mut current =
+        calendar_fields_from_metadata(fields.as_object().unwrap(), None, TEST_CALENDAR_STRAND_ID);
+    assert!(current.location_locked);
+    // Exercise the production transition after the original Event's sender,
+    // envelope and decrypted closed location have been authenticated.
+    install_authenticated_calendar_location(&mut current, authenticated);
+    assert!(!current.location_locked);
+    assert_eq!(current.location, "Community entrance desk");
+    let mut draft = current.clone();
+    draft.end = "2026-10-31T17:00:00".to_owned();
+    let mut patch = serde_json::Map::new();
+    calendar_patch_entries(&mut patch, &current, &draft).unwrap();
+    assert_eq!(patch[CALENDAR_SUBTREE_PATH]["value"]["location"], location);
+}
+
+#[test]
 fn calendar_location_uses_the_shared_metadata_encryption_boundary_once() {
     let current = test_card(TEST_CALENDAR_STRAND_ID, "U");
     let mut draft = card_detail_draft_from_card(&current);
