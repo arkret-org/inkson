@@ -55,6 +55,18 @@ pub(crate) fn private_strand_event_field_text(
     field_path: &str,
     value: &Value,
 ) -> Option<String> {
+    let plaintext =
+        private_strand_event_field_value(ctx, event_value, strand_id, field_path, value)?;
+    Some(strand_body_display_text(Some(&plaintext)))
+}
+
+pub(crate) fn private_strand_event_field_value(
+    ctx: &MlsDecryptCtx<'_>,
+    event_value: &Value,
+    strand_id: &str,
+    field_path: &str,
+    value: &Value,
+) -> Option<Value> {
     let (authority, device_id) = ctx.identity?;
     let device_id = arkret_sdk::DeviceId::new(device_id.to_owned()).ok()?;
     let event: arkret_sdk::Event = serde_json::from_value(event_value.clone()).ok()?;
@@ -115,11 +127,22 @@ pub(crate) fn private_strand_event_field_text(
             None,
         )
         .or_else(|| {
+            // The author's own MLS ciphertext need not be self-receivable.
+            // Use its local sidecar only after verifying this exact Event,
+            // sender and patch value above, and only for the same Account.
+            if event.actor_id.as_account_id() == Some(authority) {
+                return ctx
+                    .state_store
+                    .private_plaintext_for(ctx.realm_id, strand_id, field_path)
+                    .map(|text| text.into_bytes());
+            }
+            None
+        })
+        .or_else(|| {
             warn_pending("Strand verified envelope or receive state is unavailable");
             None
         })?;
-    let plaintext: Value = serde_json::from_slice(&plaintext).ok()?;
-    Some(strand_body_display_text(Some(&plaintext)))
+    serde_json::from_slice(&plaintext).ok()
 }
 
 fn should_enter_mls_decrypt_runtime(

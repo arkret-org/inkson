@@ -762,6 +762,47 @@ fn parse_calendar_attendees(value: &str) -> Result<Vec<arkret_sdk::CalendarAtten
         .map_err(|err| format!("calendar attendees must be a JSON array: {err}"))
 }
 
+pub(crate) fn calendar_fields_from_metadata_and_event(
+    fields: &Map<String, Value>,
+    decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
+    strand_id: &str,
+    event: Option<&Value>,
+) -> CalendarCardFields {
+    let mut calendar = calendar_fields_from_metadata(fields, decrypt_ctx, strand_id);
+    let Some(event) = event else {
+        return calendar;
+    };
+    let Some(envelope) = fields
+        .get(arkret_sdk::CALENDAR_METADATA_FIELDS_NAMESPACE)
+        .and_then(|calendar| calendar.get("location"))
+        .filter(|value| value_is_mls_envelope(value))
+    else {
+        return calendar;
+    };
+    let location = decrypt_ctx
+        .and_then(|ctx| {
+            private_strand_event_field_value(
+                ctx,
+                event,
+                strand_id,
+                CALENDAR_LOCATION_PRIVATE_PATH,
+                envelope,
+            )
+        })
+        .and_then(|value| serde_json::from_value::<arkret_sdk::CalendarLocation>(value).ok())
+        .filter(|location| location.validate().is_ok());
+    if let Some(location) = location {
+        if let Ok(value) = serde_json::to_value(location) {
+            calendar.location = calendar_location_plaintext_label(&value);
+            calendar.location_locked = false;
+        }
+    } else {
+        calendar.location.clear();
+        calendar.location_locked = true;
+    }
+    calendar
+}
+
 fn calendar_location_display_value(
     value: Option<&Value>,
     decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
@@ -793,7 +834,7 @@ fn calendar_location_plaintext_label(value: &Value) -> String {
     let Some(object) = value.as_object() else {
         return String::new();
     };
-    ["title", "address", "url", "geo_uri"]
+    ["title", "address", "uri", "geo_uri"]
         .iter()
         .find_map(|key| object.get(*key).and_then(Value::as_str))
         .map(str::trim)

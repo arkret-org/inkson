@@ -4,6 +4,74 @@ use crate::state::projection_views::{RsvpCellProjectionView, RsvpWinnerProjectio
 const TEST_CALENDAR_STRAND_ID: &str = "ak:strand:Ac_zaRRyp7i2guabQjAsFr7CdWBbP2ULfqGAcp4_we-V";
 
 #[test]
+fn calendar_location_is_bound_to_its_signed_subtree_patch() {
+    let envelope = json!({"ciphertext": "opaque", "content_type": "application/json"});
+    let patch = json!({
+        CALENDAR_SUBTREE_PATH: {"$op": "set", "value": {
+            "start": "2026-10-31T13:20:00",
+            "location": envelope.clone()
+        }}
+    });
+    let op = patch_op_for_private_path(patch.as_object().unwrap(), CALENDAR_LOCATION_PRIVATE_PATH)
+        .expect("the signed calendar subtree contains the exact encrypted location");
+    assert_eq!(op.as_ref(), &json!({"$op": "set", "value": envelope}));
+}
+
+#[test]
+fn calendar_location_without_a_signed_parent_value_stays_unavailable() {
+    for patch in [
+        json!({CALENDAR_SUBTREE_PATH: {"$op": "unset"}}),
+        json!({CALENDAR_SUBTREE_PATH: {"$op": "set", "value": {"start": "2026-10-31T13:20:00"}}}),
+        json!({"metadata.fields.calendar_elsewhere": {"$op": "set", "value": {"location": "unrelated"}}}),
+    ] {
+        assert!(
+            patch_op_for_private_path(patch.as_object().unwrap(), CALENDAR_LOCATION_PRIVATE_PATH,)
+                .is_none()
+        );
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn unverified_calendar_update_cannot_reuse_an_unrelated_location_cache() {
+    let mut store = isolated_store_for_tests("calendar-unverified-location");
+    store.save_private_plaintext(
+        TEST_REALM_ID,
+        TEST_CALENDAR_STRAND_ID,
+        CALENDAR_LOCATION_PRIVATE_PATH,
+        "{\"title\":\"old author-only location\"}",
+    );
+    let authority =
+        fixture::authority_at_station("ak:did_core:web:alice.example", fixture::SERVER_STATION_ID);
+    let ctx = MlsDecryptCtx {
+        state_store: &store,
+        realm_id: TEST_REALM_ID,
+        identity: Some((&authority, "ak:device:01904100-0000-7000-8000-0000000000a1")),
+    };
+    let fields = json!({"calendar": {"location": {
+        "ciphertext": "unverified", "content_type": "application/json"
+    }}});
+    let fields = fields.as_object().unwrap();
+    assert!(
+        !calendar_fields_from_metadata(fields, Some(&ctx), TEST_CALENDAR_STRAND_ID).location_locked
+    );
+    for actor in [
+        serde_json::to_value(fixture::account_actor("ak:did_core:web:alice.example")).unwrap(),
+        serde_json::to_value(fixture::account_actor("ak:did_core:web:bob.example")).unwrap(),
+    ] {
+        let unverified_event = json!({"actor_id": actor});
+        let result = calendar_fields_from_metadata_and_event(
+            fields,
+            Some(&ctx),
+            TEST_CALENDAR_STRAND_ID,
+            Some(&unverified_event),
+        );
+        assert!(result.location_locked);
+        assert!(result.location.is_empty());
+    }
+}
+
+#[test]
 fn calendar_patch_writes_one_activation_pair() {
     let current = test_card(TEST_CALENDAR_STRAND_ID, "U");
     let mut draft = card_detail_draft_from_card(&current);
