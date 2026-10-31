@@ -51,7 +51,12 @@ pub(crate) fn page(
         account_context
             .active_account
             .get()
-            .map(|account| format!("{} @ {}", account.authority.principal_id, account.authority.station_id))
+            .map(|account| {
+                format!(
+                    "{} @ {}",
+                    account.authority.principal_id, account.authority.station_id
+                )
+            })
             .unwrap_or_else(|| {
                 "Sign in and choose an account first; then reopen the invitation.".into()
             })

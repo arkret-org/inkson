@@ -159,36 +159,38 @@ pub(super) fn realms_page(scope: &Scope, context: Rc<InksonContext>, ui: Rc<Shel
         vec![
             crate::views::realm_admin::invite_links::page(scope, context.clone(), None, None),
             block(
-            "settings-shell realm-manage-shell",
-            vec![block(
-                "settings-content-stack realm-manage-main",
+                "settings-shell realm-manage-shell",
                 vec![block(
-                    "event realm-manage-list-card",
-                    vec![
-                        block(
-                            "realm-manage-list-tools",
-                            vec![
-                                input_field(
-                                    context.clone(),
-                                    "manage-realms",
-                                    context.translated(scope, "sidebar.search_realms"),
-                                    ui.realm_query,
-                                    Purpose::Text,
-                                ),
-                                nav(
-                                    context.clone(),
-                                    Route::PrincipalControl,
-                                    "btn sm secondary realm-manage-pcr-link",
-                                    context.translated(scope, "manage.principal_control_button"),
-                                    "key",
-                                ),
-                            ],
-                        ),
-                        rows,
-                    ],
+                    "settings-content-stack realm-manage-main",
+                    vec![block(
+                        "event realm-manage-list-card",
+                        vec![
+                            block(
+                                "realm-manage-list-tools",
+                                vec![
+                                    input_field(
+                                        context.clone(),
+                                        "manage-realms",
+                                        context.translated(scope, "sidebar.search_realms"),
+                                        ui.realm_query,
+                                        Purpose::Text,
+                                    ),
+                                    nav(
+                                        context.clone(),
+                                        Route::PrincipalControl,
+                                        "btn sm secondary realm-manage-pcr-link",
+                                        context
+                                            .translated(scope, "manage.principal_control_button"),
+                                        "key",
+                                    ),
+                                ],
+                            ),
+                            rows,
+                        ],
+                    )],
                 )],
-            )],
-        )],
+            ),
+        ],
     )
 }
 pub(super) fn principal_control_page(

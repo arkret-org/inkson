@@ -619,16 +619,14 @@ impl AdminPage {
                         return;
                     }
                 };
-                let field_access = match capability_field_access(
-                    &tag_val,
-                    &cap_allowed_write_fields.get(),
-                ) {
-                    Ok(constraint) => constraint,
-                    Err(key) => {
-                        status_msg.revise(|value| *value = crate::i18n::tr(key));
-                        return;
-                    }
-                };
+                let field_access =
+                    match capability_field_access(&tag_val, &cap_allowed_write_fields.get()) {
+                        Ok(constraint) => constraint,
+                        Err(key) => {
+                            status_msg.revise(|value| *value = crate::i18n::tr(key));
+                            return;
+                        }
+                    };
                 // Pull the active constraint from the editor
                 // signals into the canonical `grant-constraint`
                 // shape (`{constraint_kind, effect, …}`). Empty
@@ -1762,8 +1760,9 @@ fn advanced_view(scope: &Scope, state: &AdminPage) -> View {
                         true,
                         move || {
                             fields.revise(|value| {
-                                *value = "tracks.synthesis.content\ntracks.synthesis.encrypted_content"
-                                    .to_owned();
+                                *value =
+                                    "tracks.synthesis.content\ntracks.synthesis.encrypted_content"
+                                        .to_owned();
                             });
                         },
                     ),
