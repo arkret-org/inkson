@@ -507,9 +507,9 @@ impl SettingsController {
     /// Serialize writes and fence their completion against the live session roots.
     pub(super) fn change_invite_locator(self, revoke: bool) {
         let started = self.settings_session.capture();
-        let base = started.base_url.clone();
-        let token = started.token.clone();
-        if token.trim().is_empty() || started.account.is_none() {
+        let base = started.base_url().to_owned();
+        let token = started.session_credential().to_owned();
+        if token.trim().is_empty() || !started.has_account() {
             return;
         }
         let session = self.settings_session;

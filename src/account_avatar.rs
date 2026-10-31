@@ -22,6 +22,18 @@ pub(crate) struct SettingsSessionStamp {
 }
 
 impl SettingsSessionStamp {
+    pub(crate) fn base_url(&self) -> &str {
+        &self.base_url
+    }
+
+    pub(crate) fn session_credential(&self) -> &str {
+        &self.token
+    }
+
+    pub(crate) fn has_account(&self) -> bool {
+        self.account.is_some()
+    }
+
     pub(crate) fn matches_authority(&self, authority: &arkret_sdk::AccountId) -> bool {
         self.account
             .as_ref()
