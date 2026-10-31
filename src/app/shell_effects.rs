@@ -10,7 +10,6 @@ pub(super) struct ShellEffectState {
     pub personal_handles_lookup_key: Signal<String>,
     pub device_id: Signal<String>,
     pub current_account_display_name: Signal<String>,
-    pub current_account_avatar_blob_ref: Signal<String>,
     pub current_device_display_name: Signal<String>,
     pub account_identity_lookup_key: Signal<String>,
     pub contact_handles_lookup_key: Signal<String>,
@@ -30,7 +29,6 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
         personal_handles_lookup_key: _,
         device_id,
         mut current_account_display_name,
-        mut current_account_avatar_blob_ref,
         mut current_device_display_name,
         mut account_identity_lookup_key,
         contact_handles_lookup_key: _,
@@ -44,6 +42,9 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
         session_generation,
         ..
     } = SessionContext::get();
+    let account_avatar = use_context::<crate::account_avatar::AccountAvatarContext>();
+    let mut avatar_lookup_session =
+        use_signal(|| None::<crate::account_avatar::SettingsSessionStamp>);
     let navigator = use_navigator();
 
     // Recheck failed bootstrap probes independently of session refresh. A
@@ -147,13 +148,17 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
             lookup_device,
             !lookup_token.trim().is_empty(),
         );
-        if account_identity_lookup_key() == key {
+        let current_session = account_avatar.session.capture();
+        if account_identity_lookup_key() == key
+            && avatar_lookup_session.peek().as_ref() == Some(&current_session)
+        {
             return;
         }
+        avatar_lookup_session.set(Some(current_session));
         account_identity_lookup_key.set(key);
+        let avatar_ticket = account_avatar.begin_read();
         if lookup_token.trim().is_empty() || lookup_actor.trim().is_empty() {
             current_account_display_name.set(String::new());
-            current_account_avatar_blob_ref.set(String::new());
             current_device_display_name.set(String::new());
             return;
         }
@@ -161,7 +166,6 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
         // Never keep the previous account's labels visible while a new
         // account/device lookup is in flight (or if that lookup fails).
         current_account_display_name.set(String::new());
-        current_account_avatar_blob_ref.set(String::new());
         current_device_display_name.set(String::new());
         account_primary_handle.set(String::new());
         personal_handles.set(Vec::new());
@@ -185,7 +189,7 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
                 return;
             };
             // Ignore a late response from the previous account.
-            if crate::app::principal_id_text(&principal_id()) != actor.trim() {
+            if !account_avatar.is_current(&avatar_ticket) {
                 return;
             }
             let display_name = viewer
@@ -213,7 +217,10 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
                 .write()
                 .set_primary_handle_for_principal_id(&actor, &primary_handle);
             try_set_signal(current_account_display_name, display_name);
-            try_set_signal(current_account_avatar_blob_ref, avatar_blob_ref);
+            account_avatar.resolve(
+                &avatar_ticket,
+                (!avatar_blob_ref.is_empty()).then_some(avatar_blob_ref),
+            );
             try_set_signal(current_device_display_name, device_display_name);
             if !primary_handle.is_empty() {
                 try_set_signal(account_primary_handle, primary_handle.clone());

@@ -23,9 +23,20 @@ fn harness(control: Control) -> Element {
     let base = use_signal(String::new);
     let token = use_signal(String::new);
     let generation = use_signal(|| 0_u64);
+    let avatar_state = use_signal(crate::account_avatar::AvatarProjection::default);
+    let account_avatar = use_context_provider(|| AccountAvatarContext {
+        session: SettingsSessionSignals {
+            active_account: active,
+            base_url: base,
+            token,
+            generation,
+        },
+        state: avatar_state,
+    });
     let controller = SettingsController {
         invite_locator: use_signal(InviteLocatorState::default),
         profile_avatar_blob_ref: use_signal(String::new),
+        account_avatar,
         avatar_upload_status: use_signal(String::new),
         avatar_uploading: use_signal(|| false),
         avatar_cache_status: use_signal(String::new),

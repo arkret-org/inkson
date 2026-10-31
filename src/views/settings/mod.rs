@@ -38,6 +38,7 @@ use sections::*;
 use serde_json::{Map, Value, json};
 use widgets::*;
 
+use crate::account_avatar::AccountAvatarContext;
 use crate::components::{HelpTip, UiIcon};
 use crate::config::LocalConfigStore;
 use crate::i18n::UiLocale;
@@ -130,7 +131,7 @@ fn select_locale(
 /// `recent_realms`, `avatar_blob_ref` and every other field of the cell
 /// survive the update.
 ///
-/// Mirrors [`push_client_ui_account_data_with_avatar`]: signed-out is a no-op
+/// Unlike awaited avatar publication, signed-out preference sync is a no-op
 /// (the device preference already holds the choice and the next sign-in
 /// republishes it), and a failed write is logged rather than surfaced — the
 /// user can see the language changed, and telling them the sync failed gives
@@ -197,6 +198,8 @@ fn push_client_ui_account_data_patches(
     });
 }
 
+/// Awaited avatar mirror publication, unlike best-effort preference updates.
+/// Canonical profile state has already been accepted before this is called.
 /// A4b — variant of [`push_client_ui_account_data`] that also carries
 /// the most-recently uploaded `avatar_blob_ref`. The avatar itself is
 /// also published via `ak.self.account.command.update_profile.v1` so other actors see
@@ -207,19 +210,66 @@ fn push_client_ui_account_data_patches(
 /// Pass `None` to skip the avatar mirror (theme-only sync). Pass
 /// `Some("")` to tombstone the cached ref so other devices fall back to
 /// the public profile when the avatar is cleared.
-pub(crate) fn push_client_ui_account_data_with_avatar(
+pub(crate) async fn push_client_ui_account_data_with_avatar(
     base_url: String,
     api_token: String,
     local_theme: String,
     avatar_blob_ref: Option<String>,
-) {
+    session: crate::account_avatar::SettingsSessionSignals,
+    stamp: crate::account_avatar::SettingsSessionStamp,
+) -> anyhow::Result<()> {
+    anyhow::ensure!(session.is_current(&stamp), "avatar mirror session changed");
+    anyhow::ensure!(
+        !api_token.trim().is_empty(),
+        "avatar mirror requires an active session"
+    );
+    let authority = crate::secure_key_store::active_device_seed_scope()
+        .map(|scope| scope.authority)
+        .ok_or_else(|| anyhow::anyhow!("avatar mirror requires active device authority"))?;
+    anyhow::ensure!(
+        stamp.matches_authority(&authority),
+        "avatar mirror device authority changed"
+    );
     let mut patches = vec![crate::account_data::ClientUiStatePatch::Theme(local_theme)];
     if let Some(avatar_blob_ref) = avatar_blob_ref {
         patches.push(crate::account_data::ClientUiStatePatch::AvatarBlobRef(
             avatar_blob_ref,
         ));
     }
-    push_client_ui_account_data_patches(base_url, api_token, patches);
+    with_event_submitter(&base_url, api_token, move |sub| async move {
+        anyhow::ensure!(
+            session.is_current(&stamp),
+            "avatar mirror session changed before authoring"
+        );
+        crate::transport::account::update_account_data_with_merge(
+            &sub,
+            AccountDataKey::CLIENT_UI_STATE,
+            |snapshot| {
+                anyhow::ensure!(
+                    session.is_current(&stamp),
+                    "avatar mirror session changed during merge"
+                );
+                let mut plaintext = match snapshot.entry.as_ref() {
+                    Some(entry) => crate::account_data::decrypt_account_data_entry(
+                        &authority,
+                        AccountDataKey::CLIENT_UI_STATE,
+                        entry,
+                    )?,
+                    None => serde_json::json!({}),
+                };
+                crate::account_data::apply_client_ui_state_patches(&mut plaintext, &patches);
+                crate::account_data::encrypt_account_data_value(
+                    &authority,
+                    AccountDataKey::CLIENT_UI_STATE,
+                    &plaintext,
+                )
+            },
+        )
+        .await
+    })
+    .await
+    .map(|_| ())
+    .map_err(|error| anyhow::anyhow!(error.display()))
 }
 
 /// Build the canonical `content` body for a read-receipt preferences
@@ -468,6 +518,7 @@ pub fn SettingsPanel(
 ) -> Element {
     let session = crate::app::SessionContext::get();
     let mut state_store = session.state_store;
+    let account_avatar = use_context::<AccountAvatarContext>();
     let Some(active_account) = session.active_account() else {
         return rsx! {};
     };
@@ -564,10 +615,13 @@ pub fn SettingsPanel(
     // `avatar_blob_ref` mirrors the most-recently uploaded avatar via
     // `ak.account_data.set("ak.client.ui_state", { avatar_blob_ref })` and is also
     // published through the spec profile endpoint so directory projections can index it.
-    let initial_avatar_blob_ref = state_store
-        .read()
-        .load_plain_local_data("avatar_blob_ref")
-        .unwrap_or_default();
+    let initial_avatar_blob_ref = {
+        let store = state_store.read();
+        account_avatar.display(
+            store.load_plain_local_data("avatar_blob_ref"),
+            store.active_authority(),
+        )
+    };
     let mut profile_avatar_blob_ref = use_signal(|| initial_avatar_blob_ref.clone());
     let mut avatar_upload_status = use_signal(String::new);
     let mut avatar_uploading = use_signal(|| false);
@@ -584,7 +638,8 @@ pub fn SettingsPanel(
     let mut profile_bio = use_signal(String::new);
     let profile_text_status = use_signal(String::new);
     let profile_text_saving = use_signal(|| false);
-    let mut profile_hydration_subject = use_signal(String::new);
+    let mut profile_hydration_subject =
+        use_signal(|| None::<crate::account_avatar::SettingsSessionStamp>);
     let mimi_directory = use_signal(|| crate::i18n::tr("settings.mimi.not_loaded"));
     let mimi_receipt = use_signal(|| crate::i18n::tr("settings.mimi.no_receipt"));
     let mimi_directory_loading = use_signal(|| false);
@@ -607,12 +662,13 @@ pub fn SettingsPanel(
     let controller = controller::SettingsController {
         invite_locator,
         profile_avatar_blob_ref,
+        account_avatar,
         avatar_upload_status,
         avatar_uploading,
         avatar_cache_status,
         avatar_removing,
         avatar_reading,
-        settings_session: controller::SettingsSessionSignals {
+        settings_session: crate::account_avatar::SettingsSessionSignals {
             active_account: session.active_account,
             base_url: session.base_url,
             token,
@@ -657,13 +713,15 @@ pub fn SettingsPanel(
         let current_base_url = base_url();
         use_effect(move || {
             if current_account.trim().is_empty() || current_token.trim().is_empty() {
-                profile_hydration_subject.set(String::new());
+                profile_hydration_subject.set(None);
                 return;
             }
-            if current_account == profile_hydration_subject() {
+            let current_session = account_avatar.session.capture();
+            if profile_hydration_subject.peek().as_ref() == Some(&current_session) {
                 return;
             }
-            profile_hydration_subject.set(current_account.clone());
+            profile_hydration_subject.set(Some(current_session));
+            let avatar_ticket = account_avatar.begin_read();
             let base = current_base_url.clone();
             let api_token = current_token.clone();
             spawn(async move {
@@ -673,6 +731,15 @@ pub fn SettingsPanel(
                 .await
                 {
                     Ok(viewer) => {
+                        if !account_avatar.is_current(&avatar_ticket) {
+                            return;
+                        }
+                        let avatar = viewer
+                            .profile
+                            .as_ref()
+                            .and_then(|profile| profile.avatar_blob_ref.as_ref())
+                            .map(ToString::to_string);
+                        account_avatar.resolve(&avatar_ticket, avatar);
                         if let Some(profile) = viewer.profile {
                             let profile = profile.into_inner();
                             profile_display_name.set(profile.display_name);
@@ -717,10 +784,13 @@ pub fn SettingsPanel(
     let device_short_label = short_protocol_id(&device_label);
     {
         use_effect(move || {
-            let hydrated = state_store
-                .read()
-                .load_plain_local_data("avatar_blob_ref")
-                .unwrap_or_default();
+            let hydrated = {
+                let store = state_store.read();
+                account_avatar.display(
+                    store.load_plain_local_data("avatar_blob_ref"),
+                    store.active_authority(),
+                )
+            };
             if hydrated != profile_avatar_blob_ref() {
                 profile_avatar_blob_ref.set(hydrated.clone());
                 avatar_refresh_nonce.set(avatar_refresh_nonce() + 1);
@@ -732,6 +802,14 @@ pub fn SettingsPanel(
             }
         });
     }
+    // Read the shared session fence during render, before any cleanup effect.
+    let displayed_avatar_blob_ref = use_memo(move || {
+        let store = state_store.read();
+        account_avatar.display(
+            store.load_plain_local_data("avatar_blob_ref"),
+            store.active_authority(),
+        )
+    });
     rsx! {
         div { class: "settings settings-page", "data-testid": "settings-panel",
             div { class: "settings-shell",
@@ -886,7 +964,7 @@ pub fn SettingsPanel(
                                 }
                                 div { class: "settings-avatar-actions",
                                     {
-                                        let blob_ref = profile_avatar_blob_ref();
+                                        let blob_ref = displayed_avatar_blob_ref();
                                         rsx! {
                                             crate::components::IdentityAvatar {
                                                 key: "{blob_ref}:{avatar_refresh_nonce()}",
@@ -1068,7 +1146,7 @@ pub fn SettingsPanel(
                                                 {crate::i18n::tr("settings.avatar.cancel_crop")}
                                             }
                                         }
-                                        if !profile_avatar_blob_ref().trim().is_empty() {
+                                        if !displayed_avatar_blob_ref().trim().is_empty() {
                                             Button {
                                                 variant: ButtonVariant::Secondary,
                                                 "data-testid": "settings-avatar-clear",

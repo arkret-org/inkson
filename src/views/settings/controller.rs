@@ -11,12 +11,15 @@
 //! validate it, set the in-progress status.
 
 use super::*;
+use crate::account_avatar::AccountAvatarContext;
+pub(super) use crate::account_avatar::{SettingsSessionSignals, SettingsSessionStamp};
 
 /// Signals the settings writes fold their outcome back into.
 #[derive(Clone, Copy, PartialEq)]
 pub(super) struct SettingsController {
     pub invite_locator: Signal<InviteLocatorState>,
     pub profile_avatar_blob_ref: Signal<String>,
+    pub account_avatar: AccountAvatarContext,
     pub avatar_upload_status: Signal<String>,
     pub avatar_uploading: Signal<bool>,
     pub avatar_cache_status: Signal<String>,
@@ -49,45 +52,6 @@ pub(super) struct SettingsController {
     /// the merged `ak.client.ui_state` patch never drops it.
     pub theme: Signal<String>,
     pub state_store: SyncSignal<crate::state::LocalStateStore>,
-}
-
-/// Root-owned session coordinates; each completion checks these synchronously,
-/// so an account switch is effective before the UI cleanup effect is polled.
-#[derive(Clone, Copy, PartialEq)]
-pub(super) struct SettingsSessionSignals {
-    pub active_account: Signal<Option<crate::config::ActiveAccountContext>>,
-    pub base_url: Signal<String>,
-    pub token: Signal<String>,
-    pub generation: Signal<u64>,
-}
-
-#[derive(Clone, PartialEq)]
-pub(super) struct SettingsSessionStamp {
-    account: Option<(arkret_sdk::AccountId, arkret_sdk::DeviceId, String)>,
-    base_url: String,
-    token: String,
-    generation: u64,
-}
-
-impl SettingsSessionSignals {
-    pub(super) fn capture(self) -> SettingsSessionStamp {
-        SettingsSessionStamp {
-            account: (self.active_account)().map(|account| {
-                (
-                    account.authority,
-                    account.device_id,
-                    account.server_url.to_string(),
-                )
-            }),
-            base_url: (self.base_url)(),
-            token: (self.token)(),
-            generation: (self.generation)(),
-        }
-    }
-
-    pub(super) fn is_current(self, started: &SettingsSessionStamp) -> bool {
-        self.capture() == *started
-    }
 }
 
 /// UI cleanup subscribes to the same live roots as the synchronous completion
@@ -297,6 +261,7 @@ impl SettingsController {
             settings_session,
             theme,
             mut profile_avatar_blob_ref,
+            account_avatar,
             mut avatar_upload_status,
             mut avatar_uploading,
             mut pending_avatar_crop,
@@ -384,29 +349,42 @@ impl SettingsController {
                     }
                     match profile_result {
                         Ok(_) => {
+                            // The accepted public profile wins immediately, even if its
+                            // private cache cannot be synchronized on this attempt.
+                            if !account_avatar.accepted(&started_session, Some(blob_ref.clone())) {
+                                return;
+                            }
                             state_store
                                 .write()
                                 .save_plain_local_data("avatar_blob_ref", blob_ref.clone());
-                            push_client_ui_account_data_with_avatar(
+                            profile_avatar_blob_ref.set(blob_ref.clone());
+                            avatar_refresh_nonce.set(avatar_refresh_nonce() + 1);
+                            let mirror_result = push_client_ui_account_data_with_avatar(
                                 base.clone(),
                                 api_token.clone(),
                                 theme(),
-                                Some(blob_ref.clone()),
-                            );
-                            let refreshed = state_store
-                                .read()
-                                .load_plain_local_data("avatar_blob_ref")
-                                .filter(|value| !value.trim().is_empty())
-                                .unwrap_or_else(|| blob_ref.clone());
-                            profile_avatar_blob_ref.set(refreshed);
-                            avatar_refresh_nonce.set(avatar_refresh_nonce() + 1);
+                                Some(blob_ref),
+                                settings_session,
+                                started_session.clone(),
+                            )
+                            .await;
+                            if !settings_session.is_current(&started_session) {
+                                return;
+                            }
                             avatar_uploading.set(false);
                             pending_avatar_crop.set(None);
-                            avatar_upload_status.set(String::new());
-                            crate::components::feedback::toast_success(
-                                "feedback.avatar_updated",
-                                vec![],
-                            );
+                            match mirror_result {
+                                Ok(()) => {
+                                    avatar_upload_status.set(String::new());
+                                    crate::components::feedback::toast_success(
+                                        "feedback.avatar_updated",
+                                        vec![],
+                                    );
+                                }
+                                Err(error) => avatar_upload_status.set(format!(
+                                    "Avatar updated; preference synchronization failed: {error}"
+                                )),
+                            }
                         }
                         Err(err) => {
                             avatar_uploading.set(false);
@@ -444,6 +422,7 @@ impl SettingsController {
             settings_session,
             theme,
             mut profile_avatar_blob_ref,
+            account_avatar,
             mut avatar_removing,
             mut avatar_cache_status,
             mut pending_avatar_crop,
@@ -487,20 +466,34 @@ impl SettingsController {
             }
             match result {
                 Ok(_) => {
+                    if !account_avatar.accepted(&started_session, None) {
+                        return;
+                    }
                     state_store
                         .write()
                         .save_plain_local_data("avatar_blob_ref", "");
-                    push_client_ui_account_data_with_avatar(
+                    profile_avatar_blob_ref.set(String::new());
+                    avatar_refresh_nonce.set(avatar_refresh_nonce() + 1);
+                    pending_avatar_crop.set(None);
+                    let mirror_result = push_client_ui_account_data_with_avatar(
                         base,
                         api_token,
                         theme(),
                         Some(String::new()),
-                    );
-                    profile_avatar_blob_ref.set(String::new());
-                    avatar_refresh_nonce.set(avatar_refresh_nonce() + 1);
-                    pending_avatar_crop.set(None);
+                        settings_session,
+                        started_session.clone(),
+                    )
+                    .await;
+                    if !settings_session.is_current(&started_session) {
+                        return;
+                    }
                     avatar_removing.set(false);
-                    avatar_cache_status.set(crate::i18n::tr("settings.avatar.removed"));
+                    avatar_cache_status.set(match mirror_result {
+                        Ok(()) => crate::i18n::tr("settings.avatar.removed"),
+                        Err(error) => {
+                            format!("Avatar removed; preference synchronization failed: {error}")
+                        }
+                    });
                 }
                 Err(err) => {
                     avatar_removing.set(false);

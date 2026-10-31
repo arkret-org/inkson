@@ -447,6 +447,16 @@ fn AppBootstrap() -> Element {
         session_generation,
         owned_agents_rev,
     });
+    let account_avatar_state = use_signal(crate::account_avatar::AvatarProjection::default);
+    let account_avatar = use_context_provider(|| crate::account_avatar::AccountAvatarContext {
+        session: crate::account_avatar::SettingsSessionSignals {
+            active_account,
+            base_url,
+            token,
+            generation: session_generation,
+        },
+        state: account_avatar_state,
+    });
     let sidecar_session = use_signal(|| None::<crate::sidecar::HostedSidecarState>);
     use_context_provider(|| crate::sidecar::HostedSidecarStateContext(sidecar_session));
     let runtime_services = use_context::<crate::runtime::services::RuntimeServices>();
@@ -577,7 +587,6 @@ fn AppBootstrap() -> Element {
     let mut personal_handles_status = use_signal(|| "Not published".to_owned());
     let mut personal_handles_lookup_key = use_signal(String::new);
     let current_account_display_name = use_signal(String::new);
-    let current_account_avatar_blob_ref = use_signal(String::new);
     let current_device_display_name = use_signal(String::new);
     let account_identity_lookup_key = use_signal(String::new);
     let contact_handles_lookup_key = use_signal(String::new);
@@ -807,18 +816,14 @@ fn AppBootstrap() -> Element {
         principal_id_value: &principal_id_value,
         store: &state_store.read(),
     });
-    // The actor-private mirror is authoritative when present (including an
-    // explicit empty tombstone after clearing an avatar). Otherwise use the
-    // public Actor Profile projection loaded from account/viewer.
+    // A resolved own profile, including an empty avatar, wins over the mirror.
+    // The mirror only primes the current account before its profile lookup.
     let topbar_avatar_blob_ref = use_memo(move || {
-        if token().trim().is_empty() {
-            String::new()
-        } else {
-            state_store
-                .read()
-                .load_plain_local_data("avatar_blob_ref")
-                .unwrap_or_else(&*current_account_avatar_blob_ref)
-        }
+        let store = state_store.read();
+        account_avatar.display(
+            store.load_plain_local_data("avatar_blob_ref"),
+            store.active_authority(),
+        )
     })();
     let board_ready = StationFeature::Board.ready(active_server_description.as_ref());
     let event_write_ready = active_server_description
@@ -1293,7 +1298,6 @@ fn AppBootstrap() -> Element {
                         personal_handles_lookup_key,
                         device_id,
                         current_account_display_name,
-                        current_account_avatar_blob_ref,
                         current_device_display_name,
                         account_identity_lookup_key,
                         contact_handles_lookup_key,
