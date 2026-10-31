@@ -151,6 +151,10 @@ jobs:
         working-directory: inkson
         run: node scripts/verify_vendored_assets.mjs
 
+      - name: Development launcher regressions
+        working-directory: inkson
+        run: python scripts/test_dev_dioxus.py
+
       # ARC-0002 (重构计划 2026-07-10): legacy patterns must ratchet to zero.
       - name: Deletion gate
         working-directory: inkson

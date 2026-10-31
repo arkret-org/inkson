@@ -177,7 +177,7 @@ def watched_files(
             ['git', '-C', str(root), 'ls-files', '-z', '--cached', '--others', '--exclude-standard'],
             check=True,
             stdout=subprocess.PIPE,
-        ).stdout.decode('utf-8')
+        ).stdout.decode('utf-8', errors='surrogateescape')
         for name in listed.split('\0'):
             if not name:
                 continue

@@ -1,6 +1,7 @@
 """Regression coverage for automatic SDK repair and dependency rebuilds."""
 
 import hashlib
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -118,6 +119,31 @@ class RegistryRepairTests(unittest.TestCase):
 
 
 class DependencyWatchTests(unittest.TestCase):
+    def test_unrelated_non_utf8_filename_does_not_stop_source_watching(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            subprocess.run(['git', 'init', '--quiet', str(root)], check=True)
+            source = root / 'lib.rs'
+            source.write_text('pub fn source() {}\n', encoding='utf-8')
+            original_run = subprocess.run
+            if os.name == 'posix':
+                with open(os.fsencode(root) + b'/notes-\xff.txt', 'wb') as unrelated:
+                    unrelated.write(b'unrelated local file')
+
+            def list_with_unrelated_byte_filename(*args, **kwargs):
+                result = original_run(*args, **kwargs)
+                if os.name == 'posix':
+                    return result
+                # Windows cannot create this Unix byte filename. Preserve the
+                # actual Git listing and inject only that unrelated raw entry.
+                return subprocess.CompletedProcess(result.args, result.returncode, result.stdout + b'notes-\xff.txt\0', result.stderr)
+
+            with patch.object(dev, 'SPEC_REGISTRY', root / 'missing-registry.json'), patch.object(dev.subprocess, 'run', side_effect=list_with_unrelated_byte_filename):
+                before = dev.watched_files([root], set())
+                self.assertEqual(set(before), {source})
+                source.write_text('pub fn changed_source() {}\n', encoding='utf-8')
+                self.assertNotEqual(dev.watched_files([root], set()), before)
+
     def test_only_git_source_inputs_trigger_dependency_rebuilds(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()
