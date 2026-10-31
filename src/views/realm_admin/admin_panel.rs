@@ -88,6 +88,7 @@ pub fn RealmAdminPanel(
     let cap_constraint_kind_selected = use_memo(move || Some(cap_constraint_kind()));
     let mut cap_temporal_not_before = use_signal(String::new);
     let mut cap_temporal_expires_at = use_signal(String::new);
+    let mut cap_allowed_write_fields = use_signal(String::new);
     // Selected Move for the failure detail inline panel. Clicking a row
     // that's in a failed state stores its move_id here.
     let mut move_detail_open = use_signal(|| Option::<String>::None);
@@ -985,7 +986,10 @@ pub fn RealmAdminPanel(
                     id: "cap-grant-tag-input",
                     "data-testid": "cap-grant-tag-input",
                     value: "{cap_tag}",
-                    oninput: move |event: FormEvent| cap_tag.set(event.value()),
+                    oninput: move |event: FormEvent| {
+                        cap_tag.set(event.value());
+                        cap_allowed_write_fields.set(String::new());
+                    },
                 }
                 Label { html_for: "cap-grant-subject-input", "Subject DID (grantee — required for grant)" }
                 Input {
@@ -1055,6 +1059,38 @@ pub fn RealmAdminPanel(
                         "is forwarded as a free-form JSON object on the grant once a UI lands."
                     }
                 }
+                if capability_requires_write_fields(cap_tag().trim()) {
+                    div { "data-testid": "cap-field-access-editor",
+                        Label { html_for: "cap-allowed-write-fields-input",
+                            {crate::i18n::tr("realm_admin.allowed_write_fields")}
+                        }
+                        if cap_tag().trim() == "ak.strand.update" {
+                            div { class: "actions",
+                                Button {
+                                    variant: ButtonVariant::Secondary,
+                                    r#type: "button",
+                                    "data-testid": "cap-fields-description-only",
+                                    onclick: move |_| cap_allowed_write_fields.set("content\nencrypted_content".to_owned()),
+                                    {crate::i18n::tr("realm_admin.description_only")}
+                                }
+                                Button {
+                                    variant: ButtonVariant::Secondary,
+                                    r#type: "button",
+                                    "data-testid": "cap-fields-synthesis-only",
+                                    onclick: move |_| cap_allowed_write_fields.set("tracks.synthesis.content\ntracks.synthesis.encrypted_content".to_owned()),
+                                    {crate::i18n::tr("realm_admin.synthesis_only")}
+                                }
+                            }
+                        }
+                        Textarea {
+                            id: "cap-allowed-write-fields-input",
+                            "data-testid": "cap-allowed-write-fields-input",
+                            value: "{cap_allowed_write_fields}",
+                            oninput: move |event: FormEvent| cap_allowed_write_fields.set(event.value()),
+                        }
+                        p { class: "muted", {crate::i18n::tr("realm_admin.write_fields_hint")} }
+                    }
+                }
                 div { class: "actions",
                     Button {
                         variant: ButtonVariant::Primary,
@@ -1080,6 +1116,16 @@ pub fn RealmAdminPanel(
                                     );
                                     return;
                                 }
+                                let field_access = match capability_field_access(
+                                    &tag_val,
+                                    &cap_allowed_write_fields(),
+                                ) {
+                                    Ok(constraint) => constraint,
+                                    Err(key) => {
+                                        status_msg.set(crate::i18n::tr(key));
+                                        return;
+                                    }
+                                };
                                 // Capability events are authored by the account/principal DID,
                                 // not the device DID, or the server returns
                                 // `actor_session_mismatch`.
@@ -1127,7 +1173,7 @@ pub fn RealmAdminPanel(
                                 } else {
                                     None
                                 };
-                                let constraint_json: serde_json::Value =
+                                let mut constraint_json: serde_json::Value =
                                     if kind == "temporal" {
                                         let nb = cap_temporal_not_before();
                                         let nb_trim = nb.trim();
@@ -1160,6 +1206,17 @@ pub fn RealmAdminPanel(
                                     } else {
                                         serde_json::Value::Null
                                     };
+                                if let Some(field_access) = field_access {
+                                    let mut constraints = constraint_json.as_array().cloned().unwrap_or_default();
+                                    match serde_json::to_value(field_access) {
+                                        Ok(constraint) => constraints.push(constraint),
+                                        Err(error) => {
+                                            status_msg.set(format!("capability field selection failed: {error}"));
+                                            return;
+                                        }
+                                    }
+                                    constraint_json = serde_json::Value::Array(constraints);
+                                }
                                 let envelope = crate::operation::ak_ops::capability_grant_actions(
                                     &realm,
                                     &actor_id,
