@@ -719,7 +719,9 @@ impl RealmMembersController {
         let request_realm = realm_id.clone();
         let request_invite_id = invite_id.clone();
         let Some(request_invitee) = direct_invitee.clone() else {
-            self.status_msg.set("The accepted directed invitation target is unavailable; refresh before cancelling.".into());
+            self.status_msg.revise(|value| {
+                *value = "The accepted directed invitation target is unavailable; refresh before cancelling.".into();
+            });
             return;
         };
         match crate::transport::auth::with_event_submitter(&base_url, api_token, |sub| async move {

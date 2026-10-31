@@ -330,6 +330,7 @@ fn account_owner(scope: &Scope, context: Rc<InksonContext>) -> View {
             scope.report_error(error);
         }
     }
+    let invitation = crate::views::realm_admin::invite_links::landing(scope, context.clone());
     let content = reactive_distinct(surface, move |scope, surface| match surface {
         super::AuthSurface::AppShell => super::session_shell::shell(scope, context.clone()),
         super::AuthSurface::Restoring => auth_card(
@@ -384,7 +385,6 @@ fn account_owner(scope: &Scope, context: Rc<InksonContext>) -> View {
             )
         }
     });
-    let invitation = crate::views::realm_admin::invite_links::landing(scope, context.clone());
     Box::new(
         view()
             .class("inkson-account-owner")

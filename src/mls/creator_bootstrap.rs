@@ -1110,8 +1110,6 @@ mod tests {
         let base = format!("http://{}", listener.local_addr().unwrap());
         drop(listener);
         let api = crate::transport::TransportClient::unauthenticated(&base).unwrap();
-        let mut dom = dioxus::prelude::VirtualDom::new(dioxus::prelude::VNode::empty);
-        dom.rebuild_in_place();
         for epoch in [None, Some(3)] {
             let mut store = temp_store("late-member-no-genesis-read");
             crate::test_support::install_current_entries(
@@ -1146,12 +1144,8 @@ mod tests {
             );
             let probe = should_resume_creator_genesis(&api, &handle, REALM, &authority);
             tokio::pin!(probe);
-            let result = std::future::poll_fn(|cx| {
-                dom.runtime().in_scope(dioxus::prelude::ScopeId::ROOT, || {
-                    std::future::Future::poll(probe.as_mut(), cx)
-                })
-            })
-            .await;
+            let result =
+                std::future::poll_fn(|cx| std::future::Future::poll(probe.as_mut(), cx)).await;
             assert_eq!(
                 result,
                 Ok(false),

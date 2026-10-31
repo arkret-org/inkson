@@ -103,6 +103,7 @@ pub(crate) fn page(
         ));
 
         let prepare_context = context.clone();
+        let prepare_enabled_context = prepare_context.clone();
         let prepare_realm = realm.clone();
         children.push(Box::new(
             sapid::button()
@@ -110,7 +111,9 @@ pub(crate) fn page(
                 .class("btn btn-primary realm-invite-link-prepare")
                 .label("Prepare invitation")
                 .enabled(scope.bond(move || {
-                    !busy.get() && context.active_account.get().is_some() && pending.get().is_none()
+                    !busy.get()
+                        && prepare_enabled_context.active_account.get().is_some()
+                        && pending.get().is_none()
                 }))
                 .on_press(move || {
                     let Some(account) = prepare_context.active_account.get() else {
@@ -173,7 +176,7 @@ pub(crate) fn page(
         ) as View);
 
         let pending_context = context.clone();
-        children.push(reactive(pending, move |scope, saved| {
+        children.push(reactive(pending, move |_scope, saved| {
             let Some(saved) = saved else {
                 return empty();
             };
@@ -482,8 +485,8 @@ pub(crate) fn landing(scope: &Scope, context: Rc<InksonContext>) -> View {
     };
     let input = scope.cage(value);
     let open = scope.cage(true);
-    reactive(open, move |scope, open| {
-        if !open {
+    reactive(open, move |scope, is_open| {
+        if !is_open {
             return empty();
         }
         stack(

@@ -540,13 +540,10 @@ pub(super) async fn dispatch_card_detail_update(
                 sealed_patch,
             )?
             .with_effective_scope(source_scope.clone())?;
-            let authority = crate::app::SessionContext::get()
-                .active_account
-                .read()
-                .as_ref()
-                .map(|account| account.authority.clone())
+            let authority = state_store
+                .read(|store| store.active_authority())
                 .ok_or_else(|| anyhow::anyhow!("active account authority is unavailable"))?;
-            let store = crate::app::runtime_adapter::state_store_handle(state_store);
+            let store = state_store.handle();
             let intent = with_authed_api(&base_url, api_token.clone(), |api| async move {
                 api.event_submitter()?
                     .with_state_store(store)
@@ -569,7 +566,9 @@ pub(super) async fn dispatch_card_detail_update(
         match prepared {
             Ok(patch) => patch,
             Err(error) => {
-                board_status.set(format!("cannot seal card metadata: {error:#}"));
+                board_status.revise(|value| {
+                    *value = format!("cannot seal card metadata: {error:#}");
+                });
                 return false;
             }
         }

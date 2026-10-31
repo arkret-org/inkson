@@ -89,6 +89,7 @@ pub(super) fn install(scope: &Scope, context: Rc<InksonContext>, ui: Rc<ShellSta
         let base = base_url.get();
         let stamp = crate::views::contacts::ContactSessionStamp::capture(&contact_context);
         let state_store = state_store.clone();
+        let contact_context = contact_context.clone();
         async move {
             direct_contact_rows.revise(|value| *value = Vec::new());
             if account.is_none() || api_token.trim().is_empty() {
