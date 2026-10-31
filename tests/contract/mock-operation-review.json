@@ -265,8 +265,8 @@
     },
     {
       "operation_id": "ak.gate.account.command.logout.v1",
-      "verification_need": "native_authority",
-      "reason": "Requires the Account Authority's authenticated holder/DPoP context and its actual issuer/onboarding/session/device/revocation ledger. OIDC exchange, leases/fences, accepted device possession, ordered PCR admission and terminal replay cannot be established by a client-created response. The exact operation obligations are retained verbatim in normative_notes.",
+      "verification_need": "mock_behavior",
+      "reason": "A concrete known-object request and positive mock response are available. Tests validate canonical schema and observable fixture behavior; this does not certify native authorization, persistence or all domain branches.",
       "normative_documents": [
         "zh/identity/account-lifecycle.md",
         "zh/crypto-media/device-lifecycle.md"
@@ -276,7 +276,10 @@
         "coauth/crates/backend/src/handlers/arkret/device_pairing.rs",
         "coauth/crates/backend/src/handlers/arkret/session_grant/session_logout.rs"
       ],
-      "mock_test": null,
+      "mock_test": {
+        "file": "tests/contract/remaining-operations.spec.ts",
+        "name": "remaining valid request and response contract: ak.gate.account.command.logout.v1"
+      },
       "contract_digest": "sha256:78c8e8990dc526087db3f44a6db5cb530cab95987e91f4165a8e1c7b2a32fbde"
     },
     {
