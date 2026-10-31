@@ -47,32 +47,32 @@ jobs:
             platform: macos
     steps:
       - name: Checkout inkson
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           path: arkret-org/inkson
       - name: Checkout arkret-rust-sdk
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: ${{ github.repository_owner }}/arkret-rust-sdk
           path: arkret-org/arkret-rust-sdk
           ref: 4b12edf50ce465c9d27296ef7249376342d6c2a7
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
       - name: Checkout arkret-spec
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: ${{ github.repository_owner }}/arkret-spec
           path: arkret-org/arkret-spec
           ref: 127c6442e5585b25a6c6596e76a0bb8cfe796991
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
       - name: Checkout garth
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: ${{ github.repository_owner }}/garth
           path: arkret-org/garth
           ref: 213a2c6fbb2fdd1ef8ff81d4b6dcb5024eb3060c
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
       - name: Checkout chime
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: ${{ github.repository_owner }}/chime
           path: arkret-org/chime
