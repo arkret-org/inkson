@@ -18,6 +18,6 @@
     "test:mock-gates": "python -m unittest discover -s tools -p test_mock*.py"
   },
   "devDependencies": {
-    "@playwright/test": "^1.63.0"
+    "@playwright/test": "^1.64.1"
   }
 }
