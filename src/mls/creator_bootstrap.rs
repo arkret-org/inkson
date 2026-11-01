@@ -220,6 +220,44 @@ pub(crate) fn creator_record_needs_background_resume(
         && record.quarantine_diagnostic().is_none()
 }
 
+fn ordinary_collaboration_current(entries: &[arkret_wire::CurrentState]) -> bool {
+    entries.iter().any(|entry| {
+        let arkret_wire::CurrentState::Value {
+            selector, value, ..
+        } = entry;
+        matches!(selector, arkret_wire::CurrentSelector::RealmGenesis)
+            && serde_json::from_value::<arkret_sdk::RealmGenesis>(value.clone())
+                .is_ok_and(|genesis| genesis.purpose == arkret_sdk::RealmPurpose::Collaboration)
+    })
+}
+
+async fn accepted_ordinary_realm_current(
+    api: &crate::transport::TransportClient,
+    state_store: &StateStoreHandle,
+    realm_id: &arkret_sdk::RealmId,
+) -> Result<bool, String> {
+    if state_store.read(|store| {
+        ordinary_collaboration_current(&store.realm_current_state_entries(realm_id.as_str()))
+    }) {
+        return Ok(true);
+    }
+    let client = crate::transport::own_station_results::client_for_http(api.http())
+        .await
+        .map_err(|error| error.to_string())?;
+    let response = client
+        .snapshot_head(realm_id)
+        .await
+        .map_err(|error| error.to_string())?;
+    let mut replica = garth::own_station_results::OwnStationReplica::new(realm_id.clone());
+    replica
+        .install_bound_snapshot(&response)
+        .map_err(|error| error.to_string())?;
+    let snapshot = response.value().map_err(|error| error.to_string())?;
+    Ok(ordinary_collaboration_current(
+        &snapshot.current_state_entries,
+    ))
+}
+
 /// Background recovery gate for an already accepted or staged creator Genesis.
 /// An ordinary Realm without local creator work follows member recovery,
 /// including after MLS activation. A candidate is still checked against
@@ -266,21 +304,7 @@ pub(crate) async fn should_resume_creator_genesis(
     // gate still verify their own accepted evidence. It grants no authority.
     if durable_intent.is_none()
         && !creator_genesis_has_resume_evidence(false, staged_checkpoint, durable_queued_genesis)
-        && state_store.read(|store| {
-            store
-                .realm_current_state_entries(realm_id)
-                .iter()
-                .any(|entry| {
-                    let arkret_wire::CurrentState::Value {
-                        selector, value, ..
-                    } = entry;
-                    matches!(selector, arkret_wire::CurrentSelector::RealmGenesis)
-                        && serde_json::from_value::<arkret_sdk::RealmGenesis>(value.clone())
-                            .is_ok_and(|genesis| {
-                                genesis.purpose == arkret_sdk::RealmPurpose::Collaboration
-                            })
-                })
-        })
+        && accepted_ordinary_realm_current(api, state_store, scope.realm_id()).await?
     {
         return Ok(false);
     }
