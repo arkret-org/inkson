@@ -32,7 +32,7 @@ base64 = "0.23"
 chacha20poly1305 = { version = "0.11", default-features = false }
 chime = { version = "0.3.0", path = "../chime" }
 chrono = "0.4.45"
-glory = { git = "https://github.com/glory-rs/glory.git", branch = "main", version = "0.3.1", default-features = false, features = ["css"] }
+glory = { git = "https://github.com/glory-rs/glory.git", rev = "b9d06545c701510ba18d5cdb7cd363c102cad906", version = "0.3.1", default-features = false, features = ["css"] }
 sapid = { git = "https://github.com/sapid-ui/sapid.git", branch = "main", version = "0.1.0", default-features = false, features = ["chat", "code", "editor", "files", "json", "dates"] }
 ed25519-dalek = "3.0.0"
 futures-util = { version = "0.3.34", default-features = false, features = ["sink", "std"] }
@@ -411,4 +411,4 @@ debug-assertions = false
 # Sapid main currently declares its sibling Glory path. Resolve that package
 # from the same remote Glory source as the application, without a local override.
 [patch."https://github.com/sapid-ui/sapid.git"]
-glory = { git = "https://github.com/glory-rs/glory.git", branch = "main", version = "0.3.1" }
+glory = { git = "https://github.com/glory-rs/glory.git", rev = "b9d06545c701510ba18d5cdb7cd363c102cad906", version = "0.3.1" }
