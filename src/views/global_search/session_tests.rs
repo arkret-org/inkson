@@ -58,17 +58,21 @@ async fn native_search_policy_window_withdraws_and_restores_without_a_new_cut() 
         arkret_wire::PolicyKind::Retention,
     ] {
         let (_directory, mut store, account, original) = authorized_store().await;
-        let starts = chrono::DateTime::from_timestamp_millis(chrono::Utc::now().timestamp_millis())
-            .unwrap()
-            + chrono::Duration::seconds(2);
+        let initial =
+            chrono::DateTime::from_timestamp_millis(chrono::Utc::now().timestamp_millis()).unwrap();
+        let timer = Rc::new(ManualSearchClock::new(initial));
+        let starts = initial + chrono::Duration::seconds(2);
         let ends = starts + chrono::Duration::seconds(2);
         let policy = search_policy(&original, kind, Some(starts), Some(ends));
         install_search_policies(&mut store, &[policy]).await;
         let generation = store.current_generation();
-        let (mut dom, harness) = mount(store, account);
+        let (mut dom, harness) =
+            mount_with_clock(store, account, SearchClock::Controlled(timer.clone()));
         settle(&mut dom, &harness, 1).await;
         let (context, search) = harness.handles.borrow().clone().unwrap();
+        assert_eq!(timer.now(), initial);
         assert_eq!(search.recheck_at.get_untracked(), Some(starts));
+        timer.advance_to(starts);
         settle(&mut dom, &harness, 0).await;
         {
             assert_eq!(search.recheck_at.get_untracked(), Some(ends));
@@ -78,6 +82,7 @@ async fn native_search_policy_window_withdraws_and_restores_without_a_new_cut() 
             );
             assert!(search_holder_ready(&context));
         };
+        timer.advance_to(ends);
         settle(&mut dom, &harness, 1).await;
         {
             assert_eq!(search.recheck_at.get_untracked(), None);
@@ -106,9 +111,10 @@ async fn native_search_policy_window_withdraws_and_restores_without_a_new_cut() 
 async fn native_search_policy_replacement_cancels_the_old_boundary_and_cold_read_rechecks() {
     use crate::state::current_index::search::tests::{install_search_policies, search_policy};
     let (directory, mut store, account, original) = authorized_store().await;
-    let old_start = chrono::DateTime::from_timestamp_millis(chrono::Utc::now().timestamp_millis())
-        .unwrap()
-        + chrono::Duration::seconds(2);
+    let initial =
+        chrono::DateTime::from_timestamp_millis(chrono::Utc::now().timestamp_millis()).unwrap();
+    let timer = Rc::new(ManualSearchClock::new(initial));
+    let old_start = initial + chrono::Duration::seconds(2);
     let first = search_policy(
         &original,
         arkret_wire::PolicyKind::Retention,
@@ -116,7 +122,11 @@ async fn native_search_policy_replacement_cancels_the_old_boundary_and_cold_read
         None,
     );
     install_search_policies(&mut store, std::slice::from_ref(&first)).await;
-    let (mut dom, harness) = mount(store, account.clone());
+    let (mut dom, harness) = mount_with_clock(
+        store,
+        account.clone(),
+        SearchClock::Controlled(timer.clone()),
+    );
     settle(&mut dom, &harness, 1).await;
     let (context, search) = harness.handles.borrow().clone().unwrap();
     let mut replacement = first.clone();
@@ -125,20 +135,22 @@ async fn native_search_policy_replacement_cancels_the_old_boundary_and_cold_read
     install_search_policies(&mut updated, &[first, replacement.clone()]).await;
     context.state_store.write(|store| *store = updated);
     settle(&mut dom, &harness, 1).await;
-    while chrono::Utc::now() < old_start + chrono::Duration::milliseconds(100) {
-        dom.flush().unwrap();
-        crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(10)).await;
-    }
+    timer.advance_to(old_start + chrono::Duration::milliseconds(100));
+    settle(&mut dom, &harness, 1).await;
     {
         assert_eq!(search.results.get_untracked().len(), 1);
         assert_eq!(search.recheck_at.get_untracked(), replacement.not_before);
     };
+    timer.advance_to(replacement.not_before.unwrap());
     settle(&mut dom, &harness, 0).await;
     let mut reopened = LocalStateStore::with_path(directory.path().join("holder.json"));
     reopened.switch_active_account(&account).unwrap();
     assert!(
-        local_decrypted_index_search(
-            &reopened,
+        search_local_with_clock(
+            (
+                SearchSource::Borrowed(&reopened),
+                SearchClock::Controlled(timer.clone())
+            ),
             &account.authority,
             &account.device_id,
             "needle",
@@ -148,6 +160,7 @@ async fn native_search_policy_replacement_cancels_the_old_boundary_and_cold_read
         )
         .await
         .unwrap()
+        .0
         .results
         .is_empty()
     );
@@ -465,6 +478,13 @@ fn mount(
     store: LocalStateStore,
     account: crate::config::ActiveAccountContext,
 ) -> (TestApp, Harness) {
+    mount_with_clock(store, account, SearchClock::System)
+}
+fn mount_with_clock(
+    store: LocalStateStore,
+    account: crate::config::ActiveAccountContext,
+    time: SearchClock,
+) -> (TestApp, Harness) {
     let directory = Rc::new(
         tempfile::Builder::new()
             .prefix("search-ui-")
@@ -489,7 +509,7 @@ fn mount(
     context.active_account.revise(|value| {
         *value = Some(account);
     });
-    let search = local_search(scope, context.clone(), "needle".into());
+    let search = local_search_with_clock(scope, context.clone(), "needle".into(), time);
     let ctx = context.clone();
     let owner = scope.downgrade();
     let retry = Rc::new(move |()| run_search(ctx.clone(), owner.clone(), search, "needle".into()));
@@ -713,4 +733,78 @@ impl TestApp {
         }
         self.app.flush()
     }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn manual_search_clock_retains_an_advance_before_wait_and_is_instance_local() {
+    let initial = chrono::Utc::now();
+    let first = Rc::new(ManualSearchClock::new(initial));
+    let second = ManualSearchClock::new(initial);
+    let boundary = initial + chrono::Duration::seconds(2);
+    first.advance_to(boundary);
+    tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        SearchClock::Controlled(first.clone()).wait_once(boundary, chrono::Duration::seconds(2)),
+    )
+    .await
+    .expect("an already reached boundary must not lose its wakeup");
+    assert_eq!(first.now(), boundary);
+    assert_eq!(second.now(), initial);
+}
+
+#[test]
+#[should_panic(expected = "search fixture clock must not move backwards")]
+fn manual_search_clock_rejects_time_reversal() {
+    let initial = chrono::Utc::now();
+    let clock = ManualSearchClock::new(initial);
+    clock.advance_to(initial - chrono::Duration::milliseconds(1));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn native_search_holder_samples_expiry_inside_the_acquired_store_read() {
+    let (_directory, mut store, account, _) = authorized_store().await;
+    let grant = store.session_grant().unwrap();
+    let deadline = store
+        .search_valid_until_with_grant(
+            &account.authority,
+            &account.device_id,
+            chrono::Utc::now(),
+            Some(&grant),
+        )
+        .unwrap();
+    let initial = deadline - chrono::Duration::milliseconds(1);
+    assert_eq!(
+        store.search_valid_until_with_grant(
+            &account.authority,
+            &account.device_id,
+            initial,
+            Some(&grant),
+        ),
+        Some(deadline)
+    );
+    store.set_session_grant(None);
+    let shared = std::sync::Arc::new(std::sync::Mutex::new(store));
+    let reader = shared.clone();
+    let writer = shared.clone();
+    let timer = Rc::new(ManualSearchClock::new(initial));
+    let advance_after_lock = timer.current.clone();
+    let handle = crate::runtime::input::StateStoreHandle::new(
+        move |read| {
+            let store = reader.lock().unwrap();
+            advance_after_lock.send_replace(deadline);
+            read(&store)
+        },
+        move |write| write(&mut writer.lock().unwrap()),
+    );
+    assert_eq!(timer.now(), initial);
+    let source = SearchSource::Host(handle, &grant);
+    assert_eq!(
+        source.holder_deadline_with_clock(
+            &account.authority,
+            &account.device_id,
+            &SearchClock::Controlled(timer.clone()),
+        ),
+        None
+    );
+    assert_eq!(timer.now(), deadline);
 }

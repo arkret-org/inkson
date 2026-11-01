@@ -407,7 +407,7 @@ fn shell(
             !shell_props.embedded && !shell_props.direct_mode && controller.left_panel_open.get();
         let right = !shell_props.embedded && right_panel.get().is_some();
         format!(
-            "discussion-shell chat-panel{}{}{}{}{}",
+            "discussion-shell chat-panel{}{}{}{}{}{}",
             if shell_props.embedded {
                 " embedded"
             } else {
@@ -420,7 +420,12 @@ fn shell(
             },
             if sidecar { " sidecar-mode" } else { "" },
             if left { "" } else { " left-collapsed" },
-            if right { "" } else { " right-collapsed" }
+            if right { "" } else { " right-collapsed" },
+            if snapshot.get().shared_sync_finished {
+                " initial-sync-complete"
+            } else {
+                " initial-sync-pending"
+            }
         )
     });
     let left_props = props.clone();

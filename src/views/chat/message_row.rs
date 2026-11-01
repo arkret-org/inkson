@@ -281,6 +281,9 @@ fn row_surface(
             pin.target_ref == message.pin_saved_target_ref() || pin.target_ref == message.id
         });
         let mut class = "discussion-message chat-message chat-message-row".to_owned();
+        if arkret_sdk::EventId::new(message.id.clone()).is_ok() {
+            class.push_str(" is-canonical-message");
+        }
         if own {
             class.push_str(" is-own");
         }

@@ -602,15 +602,18 @@ fn notification_row(scope: &Scope, state: NotificationPage, notification: UiNoti
         ));
     }
     children.push(line("actions", buttons));
-    Box::new(
-        glory::prelude::view()
-            .class(if notification.read {
-                "event notification-item notification-read"
-            } else {
-                "event notification-item"
-            })
-            .fill(children),
-    )
+    let row = glory::prelude::view()
+        .class(if notification.read {
+            "event notification-item notification-read"
+        } else {
+            "event notification-item"
+        })
+        .fill(children);
+    Box::new(if notification.realm_id.is_empty() {
+        row
+    } else {
+        row.name(notification.realm_id.clone())
+    })
 }
 fn contact_request(
     scope: &Scope,

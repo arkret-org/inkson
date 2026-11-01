@@ -42,7 +42,7 @@ jobs:
         with:
           repository: ${{ github.repository_owner }}/arkret-rust-sdk
           path: arkret-rust-sdk
-          ref: 1abbf74976504a00903282f5aa9a5edf3750f291
+          ref: 606676ba0fb7208f87994314c4054779424833e2
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
 
       - name: Checkout arkret-spec fixtures
@@ -159,6 +159,8 @@ jobs:
           sha256sum "$profile"
           sudo apparmor_parser --replace "$profile"
           sysctl kernel.apparmor_restrict_unprivileged_userns
+          # Expand this capability check inside the sandboxed shell, not the runner shell.
+          # shellcheck disable=SC2016
           bwrap --unshare-user --unshare-pid --ro-bind / / --proc /proc --dev /dev \
             /bin/sh -c 'test "$(awk "/^CapEff:/{print \$2}" /proc/self/status)" = "0000000000000000"'
 

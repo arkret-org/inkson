@@ -74,6 +74,73 @@ pub struct SearchDestination {
     pub label_key: &'static str,
 }
 
+// Production uses the wall clock. A controlled clock only exists in native
+// unit tests and belongs to one search instance, never a global provider.
+#[derive(Clone)]
+enum SearchClock {
+    System,
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    Controlled(Rc<ManualSearchClock>),
+}
+impl SearchClock {
+    fn now(&self) -> chrono::DateTime<chrono::Utc> {
+        match self {
+            Self::System => chrono::Utc::now(),
+            #[cfg(all(test, not(target_arch = "wasm32")))]
+            Self::Controlled(clock) => clock.now(),
+        }
+    }
+    async fn wait_once(&self, until: chrono::DateTime<chrono::Utc>, remaining: chrono::TimeDelta) {
+        match self {
+            Self::System => {
+                let _ = until;
+                crate::runtime_helpers::sleep_for(
+                    remaining
+                        .to_std()
+                        .unwrap_or_default()
+                        .min(std::time::Duration::from_secs(60)),
+                )
+                .await;
+            }
+            #[cfg(all(test, not(target_arch = "wasm32")))]
+            Self::Controlled(clock) => clock.wait_once(until).await,
+        }
+    }
+}
+#[cfg(all(test, not(target_arch = "wasm32")))]
+struct ManualSearchClock {
+    current: tokio::sync::watch::Sender<chrono::DateTime<chrono::Utc>>,
+}
+#[cfg(all(test, not(target_arch = "wasm32")))]
+impl ManualSearchClock {
+    fn new(now: chrono::DateTime<chrono::Utc>) -> Self {
+        let (current, _) = tokio::sync::watch::channel(now);
+        Self { current }
+    }
+    fn now(&self) -> chrono::DateTime<chrono::Utc> {
+        *self.current.borrow()
+    }
+    fn advance_to(&self, now: chrono::DateTime<chrono::Utc>) {
+        assert!(
+            now >= self.now(),
+            "search fixture clock must not move backwards"
+        );
+        self.current.send_replace(now);
+    }
+    async fn wait_once(&self, until: chrono::DateTime<chrono::Utc>) {
+        // subscribe-before-read covers advances both before polling and between
+        // the read and changed(): watch retains the latest value/version.
+        let mut current = self.current.subscribe();
+        if *current.borrow_and_update() >= until {
+            return;
+        }
+        current
+            .changed()
+            .await
+            .expect("search fixture clock retains its sender");
+    }
+}
+
 enum SearchSource<'a> {
     #[allow(dead_code)]
     Borrowed(&'a LocalStateStore),
@@ -95,25 +162,27 @@ impl SearchSource<'_> {
         }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn holder_deadline(
         &self,
         account: &arkret_sdk::AccountId,
         device: &arkret_sdk::DeviceId,
     ) -> SearchDeadline {
+        self.holder_deadline_with_clock(account, device, &SearchClock::System)
+    }
+    fn holder_deadline_with_clock(
+        &self,
+        account: &arkret_sdk::AccountId,
+        device: &arkret_sdk::DeviceId,
+        time: &SearchClock,
+    ) -> SearchDeadline {
         #[cfg(not(target_arch = "wasm32"))]
         if let Self::Host(_, grant) = self {
             return self.with_store(|store| {
-                store.search_valid_until_with_grant(
-                    account,
-                    device,
-                    chrono::Utc::now(),
-                    Some(grant),
-                )
+                store.search_valid_until_with_grant(account, device, time.now(), Some(grant))
             });
         }
-        self.with_store(|store| {
-            store.search_session_valid_until(account, device, chrono::Utc::now())
-        })
+        self.with_store(|store| store.search_session_valid_until(account, device, time.now()))
     }
 }
 
@@ -172,8 +241,29 @@ async fn local_decrypted_index_search(
     .map(|(view, _)| view)
 }
 
+#[cfg(any(test, not(target_arch = "wasm32")))]
 async fn search_local(
     source: SearchSource<'_>,
+    authority: &arkret_sdk::AccountId,
+    device_id: &arkret_sdk::DeviceId,
+    query: &str,
+    realm_ids: &[String],
+    object_kinds: Option<&[&str]>,
+    limit: usize,
+) -> anyhow::Result<(IndexSearchView, SearchDeadline)> {
+    search_local_with_clock(
+        (source, SearchClock::System),
+        authority,
+        device_id,
+        query,
+        realm_ids,
+        object_kinds,
+        limit,
+    )
+    .await
+}
+async fn search_local_with_clock(
+    (source, time): (SearchSource<'_>, SearchClock),
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
     query: &str,
@@ -190,7 +280,9 @@ async fn search_local(
     if query.is_empty()
         || limit == 0
         || object_kinds.is_some_and(|kinds| !kinds.contains(&"message"))
-        || source.holder_deadline(authority, device_id).is_none()
+        || source
+            .holder_deadline_with_clock(authority, device_id, &time)
+            .is_none()
     {
         return Ok((response, None));
     }
@@ -209,10 +301,12 @@ async fn search_local(
     let mut recheck_at = None;
     loop {
         let page = index
-            .read_search_page(&actor, after.as_deref(), chrono::Utc::now())
+            .read_search_page(&actor, after.as_deref(), time.now())
             .await?;
         if page.generation != generation
-            || source.holder_deadline(authority, device_id).is_none()
+            || source
+                .holder_deadline_with_clock(authority, device_id, &time)
+                .is_none()
             || source.with_store(search_blocked_actors) != blocked
         {
             response.results.clear();
@@ -294,9 +388,11 @@ async fn search_local(
         after = page.next;
     }
     if source.with_store(|store| store.current_generation()) != generation
-        || source.holder_deadline(authority, device_id).is_none()
+        || source
+            .holder_deadline_with_clock(authority, device_id, &time)
+            .is_none()
         || source.with_store(search_blocked_actors) != blocked
-        || recheck_at.is_some_and(|deadline| deadline <= chrono::Utc::now())
+        || recheck_at.is_some_and(|deadline| deadline <= time.now())
     {
         response.results.clear()
     }
@@ -384,6 +480,7 @@ struct LocalSearchState {
     recheck_at: Cage<SearchDeadline>,
     holder_deadline: Cage<SearchDeadline>,
     request_task: Cage<Option<glory::core::TaskToken>>,
+    time: Cage<SearchClock>,
 }
 fn search_holder_ready(context: &InksonContext) -> bool {
     context
@@ -400,6 +497,14 @@ fn local_search(
     scope: &Scope,
     context: Rc<InksonContext>,
     initial_query: String,
+) -> LocalSearchState {
+    local_search_with_clock(scope, context, initial_query, SearchClock::System)
+}
+fn local_search_with_clock(
+    scope: &Scope,
+    context: Rc<InksonContext>,
+    initial_query: String,
+    time: SearchClock,
 ) -> LocalSearchState {
     let initial_request = context
         .active_account
@@ -424,6 +529,7 @@ fn local_search(
         recheck_at: scope.cage(None),
         holder_deadline: scope.cage(None),
         request_task: scope.cage(None),
+        time: scope.cage(time),
     };
     let clock = scope.cage(0_u64);
     let fence = {
@@ -438,7 +544,7 @@ fn local_search(
             let generation = ctx.session_generation.get();
             ctx.state_store.read(|store| {
                 let until = account.as_ref().and_then(|(account, device)| {
-                    store.search_session_valid_until(account, device, chrono::Utc::now())
+                    store.search_session_valid_until(account, device, state.time.get().now())
                 });
                 (
                     account,
@@ -459,10 +565,11 @@ fn local_search(
             earliest_deadline(fence.get().5, state.holder_deadline.get()),
             state.recheck_at.get(),
         );
+        let time = state.time.get_untracked();
         async move {
             if let Some(until) = until {
                 loop {
-                    let remaining = until.signed_duration_since(chrono::Utc::now());
+                    let remaining = until.signed_duration_since(time.now());
                     if remaining <= chrono::TimeDelta::zero() {
                         #[cfg(all(target_arch = "wasm32", feature = "spec-conformance"))]
                         tracing::warn!(
@@ -477,13 +584,7 @@ fn local_search(
                         clock.revise(|v| *v = v.wrapping_add(1));
                         break;
                     }
-                    crate::runtime_helpers::sleep_for(
-                        remaining
-                            .to_std()
-                            .unwrap_or_default()
-                            .min(std::time::Duration::from_secs(60)),
-                    )
-                    .await;
+                    time.wait_once(until, remaining).await;
                 }
             }
             Ok(())
@@ -646,9 +747,10 @@ fn run_search(
     state.error_key.revise(|v| *v = None);
     state.has_searched.revise(|v| *v = true);
     state.results.revise(|v| v.clear());
+    let time = state.time.get_untracked();
     let holder_deadline = context
         .state_store
-        .read(|store| store.search_session_valid_until(&authority, &device, chrono::Utc::now()));
+        .read(|store| store.search_session_valid_until(&authority, &device, time.now()));
     state
         .holder_deadline
         .revise(|deadline| *deadline = holder_deadline);
@@ -663,8 +765,8 @@ fn run_search(
         };
         #[cfg(all(target_arch = "wasm32", feature = "spec-conformance"))]
         observe_search_holder(&context, &authority, &device);
-        let response = search_local(
-            SearchSource::Live(context.state_store.clone()),
+        let response = search_local_with_clock(
+            (SearchSource::Live(context.state_store.clone()), time.clone()),
             &authority,
             &device,
             &query,
@@ -694,7 +796,7 @@ fn run_search(
         } else {
             match response {
                 Ok((mut response, deadline)) => {
-                    if deadline.is_some_and(|deadline| deadline <= chrono::Utc::now()) {
+                    if deadline.is_some_and(|deadline| deadline <= time.now()) {
                         response.results.clear();
                     }
                     state.recheck_at.revise(|v| *v = deadline);

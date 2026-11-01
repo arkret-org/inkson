@@ -510,14 +510,40 @@ pub(super) async fn create_and_bind_identity(
         }
     };
     let mut completed = completed;
-    completed.initial_mls_backup_id = finish_principal_setup(
+    completed.initial_mls_backup_id = match finish_principal_setup(
         &registration,
         recovery_key,
         &completed,
         &handoff.holder_jkt,
         state_store.clone(),
     )
-    .await?;
+    .await
+    {
+        Ok(backup_id) => backup_id,
+        Err(error) => {
+            let inventory = collect_bound_completion_resume_inventory(
+                handoff,
+                &registration,
+                &completed.account,
+                state_store.clone(),
+            )
+            .await;
+            let correlation =
+                crate::identity::account_auth::transition::LoginCorrelation::for_handoff(handoff);
+            crate::identity::account_auth::transition::record_onboarding_completion_transition(
+                crate::identity::account_auth::transition::OnboardingCompletionOrigin::ResumeRestore,
+                crate::identity::account_auth::transition::OnboardingCompletionOutcome::Failed,
+                "onboarding_continuation_failed",
+                &correlation,
+                None,
+            );
+            return Ok(IdentityCreationCommandOutcome::Terminal(ResumeTerminal {
+                kind: ResumeTerminalKind::RetryableFailure,
+                reason: format!("{error:#}"),
+                inventory: inventory.checklist(),
+            }));
+        }
+    };
     Ok(IdentityCreationCommandOutcome::Completed(Box::new(
         completed,
     )))

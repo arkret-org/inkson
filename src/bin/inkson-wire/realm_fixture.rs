@@ -3042,7 +3042,8 @@ mod tests {
         assert!(builder.append(foreign_actor).is_err());
         assert_eq!(builder.rows, rows);
         assert_eq!(builder.events, events);
-        for (id, previous) in [(missing, InvitePreviousState::Pending)] {
+        {
+            let (id, previous) = (missing, InvitePreviousState::Pending);
             let rows = builder.rows.clone();
             let events = builder.events.clone();
             assert!(

@@ -1144,8 +1144,6 @@ mod tests {
             move |read| read(&reader.lock().unwrap()),
             move |write| write(&mut writer.lock().unwrap()),
         );
-        let mut dom = dioxus::prelude::VirtualDom::new(dioxus::prelude::VNode::empty);
-        dom.rebuild_in_place();
         for phase in ["missing", "installed", "invalid_schema", "restored"] {
             if phase != "missing" {
                 let mut value = serde_json::to_value(&genesis).unwrap();
@@ -1178,16 +1176,9 @@ mod tests {
             tokio::pin!(probe);
             // A unit-only fail-fast bound: this local classification must not
             // wait on an accepted/historical HTTP request. No UI budget changes.
-            let result = tokio::time::timeout(
-                std::time::Duration::from_secs(2),
-                std::future::poll_fn(|cx| {
-                    dom.runtime().in_scope(dioxus::prelude::ScopeId::ROOT, || {
-                        std::future::Future::poll(probe.as_mut(), cx)
-                    })
-                }),
-            )
-            .await
-            .expect("creator probe unexpectedly awaited HTTP");
+            let result = tokio::time::timeout(std::time::Duration::from_secs(2), probe.as_mut())
+                .await
+                .expect("creator probe unexpectedly awaited HTTP");
             let expected = if phase == "missing" || phase == "invalid_schema" {
                 Err("MLS creator recovery awaits a complete current Realm origin".to_owned())
             } else {

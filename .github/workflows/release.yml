@@ -55,7 +55,7 @@ jobs:
         with:
           repository: ${{ github.repository_owner }}/arkret-rust-sdk
           path: arkret-org/arkret-rust-sdk
-          ref: 4b12edf50ce465c9d27296ef7249376342d6c2a7
+          ref: 606676ba0fb7208f87994314c4054779424833e2
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
       - name: Checkout arkret-spec
         uses: actions/checkout@v7
@@ -81,6 +81,22 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+      - name: Configure Windows build and cache directories
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $inksonCacheRoot = 'D:/BuildCache/inkson-glory'
+          $inksonCargoHome = 'D:/BuildCache/cargo'
+          $inksonTargetDir = Join-Path $inksonCacheRoot 'target'
+          $inksonTmpDir = Join-Path $inksonCacheRoot 'tmp'
+          foreach ($inksonDirectory in @($inksonCargoHome, $inksonTargetDir, $inksonTmpDir)) {
+            New-Item -ItemType Directory -Force -Path $inksonDirectory | Out-Null
+          }
+          "CARGO_HOME=$inksonCargoHome" >> $env:GITHUB_ENV
+          "CARGO_TARGET_DIR=$inksonTargetDir" >> $env:GITHUB_ENV
+          "TEMP=$inksonTmpDir" >> $env:GITHUB_ENV
+          "TMP=$inksonTmpDir" >> $env:GITHUB_ENV
+          "TMPDIR=$inksonTmpDir" >> $env:GITHUB_ENV
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
