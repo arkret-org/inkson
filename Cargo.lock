@@ -3334,7 +3334,7 @@ dependencies = [
 [[package]]
 name = "glory"
 version = "0.6.1"
-source = "git+https://github.com/glory-rs/glory.git?branch=main#e6f58e9e881216a1d2e205bfd49bf53c2525775b"
+source = "git+https://github.com/glory-rs/glory.git?branch=main#16b5fd35b6107388c9808294cc99a0772a5bbb25"
 dependencies = [
  "glory-apace",
  "glory-core",
@@ -3350,7 +3350,7 @@ dependencies = [
 [[package]]
 name = "glory-apace"
 version = "0.6.1"
-source = "git+https://github.com/glory-rs/glory.git?branch=main#e6f58e9e881216a1d2e205bfd49bf53c2525775b"
+source = "git+https://github.com/glory-rs/glory.git?branch=main#16b5fd35b6107388c9808294cc99a0772a5bbb25"
 dependencies = [
  "accesskit",
  "anyrender",
@@ -3385,7 +3385,7 @@ dependencies = [
 [[package]]
 name = "glory-core"
 version = "0.6.1"
-source = "git+https://github.com/glory-rs/glory.git?branch=main#e6f58e9e881216a1d2e205bfd49bf53c2525775b"
+source = "git+https://github.com/glory-rs/glory.git?branch=main#16b5fd35b6107388c9808294cc99a0772a5bbb25"
 dependencies = [
  "glory-render",
 ]
@@ -3393,7 +3393,7 @@ dependencies = [
 [[package]]
 name = "glory-html"
 version = "0.6.1"
-source = "git+https://github.com/glory-rs/glory.git?branch=main#e6f58e9e881216a1d2e205bfd49bf53c2525775b"
+source = "git+https://github.com/glory-rs/glory.git?branch=main#16b5fd35b6107388c9808294cc99a0772a5bbb25"
 dependencies = [
  "glory-render",
  "glory-style",
@@ -3402,7 +3402,7 @@ dependencies = [
 [[package]]
 name = "glory-render"
 version = "0.6.1"
-source = "git+https://github.com/glory-rs/glory.git?branch=main#e6f58e9e881216a1d2e205bfd49bf53c2525775b"
+source = "git+https://github.com/glory-rs/glory.git?branch=main#16b5fd35b6107388c9808294cc99a0772a5bbb25"
 dependencies = [
  "glory-style",
 ]
@@ -3410,7 +3410,7 @@ dependencies = [
 [[package]]
 name = "glory-ssr"
 version = "0.6.1"
-source = "git+https://github.com/glory-rs/glory.git?branch=main#e6f58e9e881216a1d2e205bfd49bf53c2525775b"
+source = "git+https://github.com/glory-rs/glory.git?branch=main#16b5fd35b6107388c9808294cc99a0772a5bbb25"
 dependencies = [
  "glory-core",
  "glory-html",
@@ -3421,7 +3421,7 @@ dependencies = [
 [[package]]
 name = "glory-style"
 version = "0.6.1"
-source = "git+https://github.com/glory-rs/glory.git?branch=main#e6f58e9e881216a1d2e205bfd49bf53c2525775b"
+source = "git+https://github.com/glory-rs/glory.git?branch=main#16b5fd35b6107388c9808294cc99a0772a5bbb25"
 dependencies = [
  "cssparser 0.38.0",
 ]
@@ -3429,7 +3429,7 @@ dependencies = [
 [[package]]
 name = "glory-ui"
 version = "0.6.1"
-source = "git+https://github.com/glory-rs/glory.git?branch=main#e6f58e9e881216a1d2e205bfd49bf53c2525775b"
+source = "git+https://github.com/glory-rs/glory.git?branch=main#16b5fd35b6107388c9808294cc99a0772a5bbb25"
 dependencies = [
  "glory-core",
  "glory-render",
@@ -3439,7 +3439,7 @@ dependencies = [
 [[package]]
 name = "glory-web"
 version = "0.6.1"
-source = "git+https://github.com/glory-rs/glory.git?branch=main#e6f58e9e881216a1d2e205bfd49bf53c2525775b"
+source = "git+https://github.com/glory-rs/glory.git?branch=main#16b5fd35b6107388c9808294cc99a0772a5bbb25"
 dependencies = [
  "futures-util",
  "glory-core",
@@ -3455,7 +3455,7 @@ dependencies = [
 [[package]]
 name = "glory-wry"
 version = "0.6.1"
-source = "git+https://github.com/glory-rs/glory.git?branch=main#e6f58e9e881216a1d2e205bfd49bf53c2525775b"
+source = "git+https://github.com/glory-rs/glory.git?branch=main#16b5fd35b6107388c9808294cc99a0772a5bbb25"
 dependencies = [
  "glory-core",
  "glory-html",
