@@ -1734,7 +1734,7 @@ fn advanced_view(scope: &Scope, state: &AdminPage) -> View {
         }
         let fields = field_state.cap_allowed_write_fields;
         let mut children = Vec::new();
-        if tag.trim() == "ak.strand.update" {
+        if tag.trim() == CapabilityActionId::STRAND_UPDATE {
             children.push(line(
                 "actions",
                 vec![

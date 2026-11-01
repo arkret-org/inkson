@@ -357,7 +357,7 @@ pub(super) fn open_client_ui_value(value: Value) -> Result<Value> {
     }
     let mut input: Input = serde_json::from_value(value)?;
     ensure!(
-        input.key == "ak.client.ui_state",
+        input.key == arkret_sdk::AccountDataKey::CLIENT_UI_STATE,
         "fixture supports only client UI values"
     );
     input.account_id.validate()?;
