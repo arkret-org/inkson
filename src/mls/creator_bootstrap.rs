@@ -177,6 +177,41 @@ async fn publish_accepted_scope_creator_genesis(
     result
 }
 
+// This only gates a background creator probe. Current purpose never proves
+// accepted inception provenance, transferability or authority to author.
+fn creator_probe_current_purpose(
+    store: &LocalStateStore,
+    realm_id: &str,
+) -> Option<arkret_sdk::RealmPurpose> {
+    store.current_product_cut_generation(realm_id)?;
+    let realm = arkret_sdk::RealmId::new(realm_id).ok()?;
+    let entries = store.realm_current_state_entries(realm_id);
+    let mut origins = entries.iter().filter(|entry| {
+        matches!(
+            entry,
+            arkret_wire::CurrentState::Value {
+                selector: arkret_wire::CurrentSelector::RealmGenesis,
+                ..
+            }
+        )
+    });
+    let arkret_wire::CurrentState::Value {
+        source_stream_ref,
+        revision,
+        value,
+        ..
+    } = origins.next()?;
+    if origins.next().is_some()
+        || source_stream_ref != &(arkret_wire::CommitStreamRef::Realm { realm_id: realm })
+        || revision.stream_position != 0
+    {
+        return None;
+    }
+    let genesis = serde_json::from_value::<arkret_sdk::RealmGenesis>(value.clone()).ok()?;
+    genesis.validate().ok()?;
+    Some(genesis.purpose)
+}
+
 fn has_staged_creator_genesis(store: &LocalStateStore, realm_id: &str) -> bool {
     store
         .mls_checkpoint_for(realm_id)
@@ -266,23 +301,15 @@ pub(crate) async fn should_resume_creator_genesis(
     // gate still verify their own accepted evidence. It grants no authority.
     if durable_intent.is_none()
         && !creator_genesis_has_resume_evidence(false, staged_checkpoint, durable_queued_genesis)
-        && state_store.read(|store| {
-            store
-                .realm_current_state_entries(realm_id)
-                .iter()
-                .any(|entry| {
-                    let arkret_wire::CurrentState::Value {
-                        selector, value, ..
-                    } = entry;
-                    matches!(selector, arkret_wire::CurrentSelector::RealmGenesis)
-                        && serde_json::from_value::<arkret_sdk::RealmGenesis>(value.clone())
-                            .is_ok_and(|genesis| {
-                                genesis.purpose == arkret_sdk::RealmPurpose::Collaboration
-                            })
-                })
-        })
     {
-        return Ok(false);
+        let purpose = state_store
+            .read(|store| creator_probe_current_purpose(store, realm_id))
+            .ok_or_else(|| {
+                "MLS creator recovery awaits a complete current Realm origin".to_owned()
+            })?;
+        if purpose == arkret_sdk::RealmPurpose::Collaboration {
+            return Ok(false);
+        }
     }
     let accepted = submitter
         .find_mls_genesis_event_id(realm_id)
@@ -1079,6 +1106,156 @@ mod tests {
 
     #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
+    async fn creator_probe_keeps_unknown_pending_and_recovers_on_the_same_current_handle() {
+        let principal = format!(
+            "did:web:pending-creator-{}.example",
+            crate::operation::uuid_v7()
+        );
+        let account = crate::test_support::AccountFixture::new(&principal)
+            .station(crate::test_support::SERVER_STATION_ID)
+            .build();
+        let authority = account.authority.clone();
+        let genesis = arkret_sdk::RealmGenesis::new(
+            arkret_sdk::RealmPurpose::Collaboration,
+            arkret_sdk::GenesisSalt::new("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA").unwrap(),
+            arkret_sdk::TrustDomainId::new("ak:trust_domain:station.example").unwrap(),
+            arkret_sdk::SecurityClass::Standard,
+            account.authority.station_id.clone(),
+            arkret_sdk::JoinRule::Invite,
+            arkret_sdk::HistoryAccess::SinceJoin,
+            arkret_sdk::Discoverability::Listed,
+            None,
+            None,
+        )
+        .unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let api = crate::transport::TransportClient::unauthenticated(&format!(
+            "http://{}",
+            listener.local_addr().unwrap()
+        ))
+        .unwrap();
+        let mut local = temp_store("pending-current-same-handle");
+        local.switch_active_account(&account).unwrap();
+        let shared = std::sync::Arc::new(std::sync::Mutex::new(local));
+        let reader = shared.clone();
+        let writer = shared.clone();
+        let handle = StateStoreHandle::new(
+            move |read| read(&reader.lock().unwrap()),
+            move |write| write(&mut writer.lock().unwrap()),
+        );
+        let mut dom = dioxus::prelude::VirtualDom::new(dioxus::prelude::VNode::empty);
+        dom.rebuild_in_place();
+        for phase in ["missing", "installed", "invalid_schema", "restored"] {
+            if phase != "missing" {
+                let mut value = serde_json::to_value(&genesis).unwrap();
+                if phase == "invalid_schema" {
+                    value["schema"] = json!("ak.schema.unregistered_origin.v1");
+                    let invalid: arkret_sdk::RealmGenesis =
+                        serde_json::from_value(value.clone()).unwrap();
+                    assert!(
+                        invalid.validate().is_err(),
+                        "this is parsed-but-invalid, not a JSON decode error"
+                    );
+                }
+                crate::test_support::install_current_entries(
+                    &mut shared.lock().unwrap(),
+                    REALM,
+                    vec![arkret_wire::CurrentState::Value {
+                        selector: arkret_wire::CurrentSelector::RealmGenesis,
+                        source_stream_ref: arkret_wire::CommitStreamRef::Realm {
+                            realm_id: arkret_sdk::RealmId::new(REALM).unwrap(),
+                        },
+                        revision: arkret_wire::CurrentRevision {
+                            commit_id: arkret_wire::RealmCommitId::from_digest([0x61; 32]),
+                            stream_position: 0,
+                        },
+                        value,
+                    }],
+                );
+            }
+            let probe = should_resume_creator_genesis(&api, &handle, REALM, &authority);
+            tokio::pin!(probe);
+            // A unit-only fail-fast bound: this local classification must not
+            // wait on an accepted/historical HTTP request. No UI budget changes.
+            let result = tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                std::future::poll_fn(|cx| {
+                    dom.runtime().in_scope(dioxus::prelude::ScopeId::ROOT, || {
+                        std::future::Future::poll(probe.as_mut(), cx)
+                    })
+                }),
+            )
+            .await
+            .expect("creator probe unexpectedly awaited HTTP");
+            let expected = if phase == "missing" || phase == "invalid_schema" {
+                Err("MLS creator recovery awaits a complete current Realm origin".to_owned())
+            } else {
+                Ok(false)
+            };
+            assert_eq!(result, expected, "phase {phase}");
+            match listener.accept() {
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+                _ => panic!("phase {phase} unexpectedly connected for an accepted/historical read"),
+            }
+        }
+    }
+
+    #[test]
+    fn complete_direct_current_preserves_only_the_accepted_creator_qualification_branch() {
+        let account = crate::test_support::AccountFixture::new("did:web:direct-probe.example")
+            .station(crate::test_support::SERVER_STATION_ID)
+            .build();
+        let mut store = temp_store("direct-creator-probe");
+        store.switch_active_account(&account).unwrap();
+        let genesis = arkret_sdk::RealmGenesis::new(
+            arkret_sdk::RealmPurpose::DirectConversation,
+            arkret_sdk::GenesisSalt::new("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA").unwrap(),
+            arkret_sdk::TrustDomainId::new("ak:trust_domain:station.example").unwrap(),
+            arkret_sdk::SecurityClass::Standard,
+            account.authority.station_id.clone(),
+            arkret_sdk::JoinRule::Closed,
+            arkret_sdk::HistoryAccess::SinceJoin,
+            arkret_sdk::Discoverability::InviteOnly,
+            None,
+            None,
+        )
+        .unwrap();
+        let entries = vec![arkret_wire::CurrentState::Value {
+            selector: arkret_wire::CurrentSelector::RealmGenesis,
+            source_stream_ref: arkret_wire::CommitStreamRef::Realm {
+                realm_id: arkret_sdk::RealmId::new(REALM).unwrap(),
+            },
+            revision: arkret_wire::CurrentRevision {
+                commit_id: arkret_wire::RealmCommitId::from_digest([0x62; 32]),
+                stream_position: 0,
+            },
+            value: serde_json::to_value(genesis).unwrap(),
+        }];
+        store
+            .install_current_product_view(
+                crate::current_projection::RealmCurrentView::new(REALM, entries.clone(), false)
+                    .unwrap(),
+            )
+            .unwrap();
+        assert_eq!(creator_probe_current_purpose(&store, REALM), None);
+        store
+            .install_current_product_view(
+                crate::current_projection::RealmCurrentView::new(REALM, entries, true).unwrap(),
+            )
+            .unwrap();
+        assert_eq!(
+            creator_probe_current_purpose(&store, REALM),
+            Some(arkret_sdk::RealmPurpose::DirectConversation)
+        );
+        // This is not founder authority. should_resume still continues into
+        // the unchanged original accepted_scope_genesis_author verifier.
+        assert!(creator_genesis_has_resume_evidence(false, true, false));
+        assert!(creator_genesis_has_resume_evidence(false, false, true));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
     async fn ordinary_late_member_does_not_probe_prejoin_genesis_for_creator_recovery() {
         let principal = format!(
             "ak:did_core:web:late-member-{}.example",
@@ -1112,6 +1289,11 @@ mod tests {
         let api = crate::transport::TransportClient::unauthenticated(&base).unwrap();
         for epoch in [None, Some(3)] {
             let mut store = temp_store("late-member-no-genesis-read");
+            let account = crate::test_support::AccountFixture::new(&principal)
+                .station(crate::test_support::SERVER_STATION_ID)
+                .build();
+            assert_eq!(account.authority, authority);
+            store.switch_active_account(&account).unwrap();
             crate::test_support::install_current_entries(
                 &mut store,
                 REALM,
