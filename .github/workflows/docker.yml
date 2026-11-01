@@ -47,7 +47,7 @@ jobs:
         with:
           repository: ${{ github.repository_owner }}/arkret-spec
           path: arkret-spec
-          token: ${{ secrets.CI_REPO_TOKEN }}
+          token: ${{ secrets.CI_REPO_TOKEN || github.token }}
 
       - name: Checkout Glory and Sapid
         shell: bash

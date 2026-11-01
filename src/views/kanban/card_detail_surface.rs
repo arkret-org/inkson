@@ -2998,7 +2998,7 @@ mod production_retention_tests {
     async fn production_card_detail_keeps_chat_draft_owner_across_current_updates_and_gaps() {
         let directory = tempfile::Builder::new()
             .prefix("card-detail-owner-")
-            .tempdir_in("D:/BuildCache/inkson-glory/tmp")
+            .tempdir()
             .unwrap();
         let executor = Rc::new(glory::core::executor::Executor::new(256));
         let app = glory::ui::App::with_host(executor.clone(), glory::render::memory::Memory::new);

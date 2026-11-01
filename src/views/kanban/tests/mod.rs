@@ -177,7 +177,7 @@ pub(super) fn assert_native_badge(state: CardState, expected: CardState) {
     let scope = app.scope();
     let directory = tempfile::Builder::new()
         .prefix("kanban-badge-")
-        .tempdir_in("D:/BuildCache/inkson-glory/tmp")
+        .tempdir()
         .unwrap();
     let config_store =
         crate::config::LocalConfigStore::with_path(directory.path().join("config.json"));

@@ -465,11 +465,10 @@ fn mount(
     store: LocalStateStore,
     account: crate::config::ActiveAccountContext,
 ) -> (TestApp, Harness) {
-    eprintln!("[search-phase] mount:start now={}", chrono::Utc::now());
     let directory = Rc::new(
         tempfile::Builder::new()
             .prefix("search-ui-")
-            .tempdir_in("D:/BuildCache/inkson-glory/tmp")
+            .tempdir()
             .unwrap(),
     );
     let app = TestApp::new();
@@ -487,10 +486,6 @@ fn mount(
     let context = InksonContext::new(scope, boot, Route::Search, |_| {
         Box::pin(async { crate::runtime::session::CurrentSessionRefresh::retry_later("unused") })
     });
-    eprintln!(
-        "[search-phase] mount:context-ready now={}",
-        chrono::Utc::now()
-    );
     context.active_account.revise(|value| {
         *value = Some(account);
     });
@@ -504,14 +499,9 @@ fn mount(
         _directory: directory,
     };
     app.flush().unwrap();
-    eprintln!("[search-phase] mount:flushed now={}", chrono::Utc::now());
     (app, harness)
 }
 async fn settle(dom: &mut TestApp, harness: &Harness, expected: usize) {
-    eprintln!(
-        "[search-phase] settle:start now={} expected={expected}",
-        chrono::Utc::now()
-    );
     tokio::time::timeout(std::time::Duration::from_secs(10), async {
         loop {
             dom.flush().unwrap();
@@ -520,11 +510,6 @@ async fn settle(dom: &mut TestApp, harness: &Harness, expected: usize) {
                 && !search.loading.get_untracked()
                 && search.results.get_untracked().len() == expected
             {
-                eprintln!(
-                    "[search-phase] settle:ready now={} expected={expected} deadline={:?}",
-                    chrono::Utc::now(),
-                    search.recheck_at.get_untracked()
-                );
                 return;
             }
             crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(2)).await;

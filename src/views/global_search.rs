@@ -661,11 +661,6 @@ fn run_search(
             tracing::warn!(phase="read_started", serial, holder_ready=holder_deadline.is_some(), "local search lifecycle");
             SearchReadObservation { owner: owner.clone(), epoch: state.search_epoch, serial, complete:false }
         };
-        #[cfg(all(test, not(target_arch = "wasm32")))]
-        eprintln!(
-            "[search-phase] request:start now={} serial={serial}",
-            chrono::Utc::now()
-        );
         #[cfg(all(target_arch = "wasm32", feature = "spec-conformance"))]
         observe_search_holder(&context, &authority, &device);
         let response = search_local(
@@ -683,15 +678,6 @@ fn run_search(
             observation.complete = true;
             tracing::warn!(phase="read_completed", serial, current_serial=state.search_epoch.get_untracked(), success=response.is_ok(), rows=?response.as_ref().ok().map(|(view,_)|view.results.len()), "local search lifecycle");
         }
-        #[cfg(all(test, not(target_arch = "wasm32")))]
-        eprintln!(
-            "[search-phase] request:response now={} serial={serial} current_serial={} result={:?}",
-            chrono::Utc::now(),
-            state.search_epoch.get_untracked(),
-            response
-                .as_ref()
-                .map(|(view, deadline)| (view.results.len(), deadline))
-        );
         if owner.upgrade().is_none() || state.search_epoch.get_untracked() != serial {
             return;
         }
