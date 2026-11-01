@@ -1,0 +1,165 @@
+name: Review-only latest UI lock candidate
+
+on:
+  push:
+    branches: ["ci-repair/ui-lock-refresh-*"]
+    paths:
+      - ".github/workflows/ui-lock-candidate.yml"
+      - "scripts/prepare_ui_lock_candidate.py"
+      - "scripts/ui_lock_sources.json"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ui-lock-candidate-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  candidate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+    steps:
+      - name: Checkout arkret-spec
+        uses: actions/checkout@v7
+        with:
+          repository: arkret-org/arkret-spec
+          ref: main
+          path: arkret-spec
+          token: ${{ secrets.CI_REPO_TOKEN || github.token }}
+          persist-credentials: false
+      - name: Checkout arkret-rust-sdk
+        uses: actions/checkout@v7
+        with:
+          repository: arkret-org/arkret-rust-sdk
+          ref: main
+          path: arkret-rust-sdk
+          token: ${{ secrets.CI_REPO_TOKEN || github.token }}
+          persist-credentials: false
+      - name: Checkout floria
+        uses: actions/checkout@v7
+        with:
+          repository: arkret-org/floria
+          ref: main
+          path: floria
+          token: ${{ secrets.CI_REPO_TOKEN || github.token }}
+          persist-credentials: false
+      - name: Checkout coland
+        uses: actions/checkout@v7
+        with:
+          repository: arkret-org/coland
+          ref: main
+          path: coland
+          token: ${{ secrets.CI_REPO_TOKEN || github.token }}
+          persist-credentials: false
+      - name: Checkout coauth
+        uses: actions/checkout@v7
+        with:
+          repository: arkret-org/coauth
+          ref: main
+          path: coauth
+          token: ${{ secrets.CI_REPO_TOKEN || github.token }}
+          persist-credentials: false
+      - name: Checkout garth
+        uses: actions/checkout@v7
+        with:
+          repository: arkret-org/garth
+          ref: main
+          path: garth
+          token: ${{ secrets.CI_REPO_TOKEN || github.token }}
+          persist-credentials: false
+      - name: Checkout chime
+        uses: actions/checkout@v7
+        with:
+          repository: arkret-org/chime
+          ref: main
+          path: chime
+          token: ${{ secrets.CI_REPO_TOKEN || github.token }}
+          persist-credentials: false
+      - name: Checkout inkson
+        uses: actions/checkout@v7
+        with:
+          repository: arkret-org/inkson
+          ref: ${{ github.sha }}
+          path: inkson
+          token: ${{ secrets.CI_REPO_TOKEN || github.token }}
+          persist-credentials: false
+      - name: Checkout cotest
+        uses: actions/checkout@v7
+        with:
+          repository: arkret-org/cotest
+          ref: main
+          path: cotest
+          token: ${{ secrets.CI_REPO_TOKEN || github.token }}
+          persist-credentials: false
+      - name: Checkout codmin
+        uses: actions/checkout@v7
+        with:
+          repository: arkret-org/codmin
+          ref: main
+          path: codmin
+          token: ${{ secrets.CI_REPO_TOKEN || github.token }}
+          persist-credentials: false
+      - name: Verify reviewed UI upstream glory
+        uses: actions/checkout@v7
+        with:
+          repository: glory-rs/glory
+          ref: c988506d40938d50c210d2b8a27a708121449609
+          path: .ui-lock-inputs/glory
+          persist-credentials: false
+      - name: Verify reviewed UI upstream sapid
+        uses: actions/checkout@v7
+        with:
+          repository: sapid-ui/sapid
+          ref: b2c8f05cc72c9438672fa519c7d4a81d1f734b26
+          path: .ui-lock-inputs/sapid
+          persist-credentials: false
+      - name: Verify reviewed UI upstream apace
+        uses: actions/checkout@v7
+        with:
+          repository: glory-rs/apace
+          ref: 191c48adf6d7deb120c9d3ee1b098d7dc020891f
+          path: .ui-lock-inputs/apace
+          persist-credentials: false
+      - name: Verify reviewed UI upstream takia
+        uses: actions/checkout@v7
+        with:
+          repository: glory-rs/takia
+          ref: ed436701c22b565baa127f2a5bf543ebbd1b2b90
+          path: .ui-lock-inputs/takia
+          persist-credentials: false
+      - name: Verify reviewed UI upstream wingy
+        uses: actions/checkout@v7
+        with:
+          repository: glory-rs/wingy
+          ref: 2d1f938cf3c1e257aa85b3fa7301c80ad6c19d6e
+          path: .ui-lock-inputs/wingy
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.98"
+      - name: Produce candidate without changing checked-out manifests or locks
+        env:
+          CARGO_HOME: ${{ runner.temp }}/ui-lock-cargo
+        run: >-
+          python inkson/scripts/prepare_ui_lock_candidate.py
+          --workspace-root "$GITHUB_WORKSPACE"
+          --output "$RUNNER_TEMP/ui-lock-candidate"
+          --expected-manifest-sha256 4f0afc209f7db5781f7df41287a4d9c8021da00f391dec9665ecd2ed64f11465
+          --expected-glory-main c988506d40938d50c210d2b8a27a708121449609
+          --expected-sapid-main b2c8f05cc72c9438672fa519c7d4a81d1f734b26
+          --source-contract inkson/scripts/ui_lock_sources.json
+          --source-contract-sha256 2bbcb5487bac19d3e99d6fb9249ac8cf93fa664f2493baf2d096305b20d92690
+      - name: Upload resolution candidate and explicit unapproved status
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: review-only-ui-lock-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ui-lock-candidate/
+          if-no-files-found: error
+          retention-days: 14
