@@ -42,11 +42,6 @@ def main():
     parser.add_argument('--app', default='inkson')
     parser.add_argument('--crates', action='store_true')
     args = parser.parse_args()
-    if os.name == "nt":
-        cache = Path("D:/BuildCache/inkson-glory/tmp")
-        cache.mkdir(parents=True, exist_ok=True)
-        tempfile.tempdir = str(cache)
-        os.environ["TEMP"] = os.environ["TMP"] = str(cache)
     root = Path.cwd()
     project = root.name
     tag = os.environ.get('GITHUB_REF_NAME', 'verification')
@@ -55,8 +50,6 @@ def main():
     metadata = cargo_metadata(root)
     ui_sources = ui_provenance(metadata)
     target = Path(metadata['target_directory']).resolve()
-    if os.name == "nt" and target.drive.lower() != "d:":
-        raise RuntimeError(f"Cargo build output must be on D: {target}")
     output = root / 'release-assets'
     output.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='release-') as temporary:

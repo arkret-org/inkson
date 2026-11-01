@@ -130,8 +130,7 @@ python scripts/build_web.py --release --out-dir dist/web
 
 Outputs land in the requested `dist/web/` directory, including `ui-build-info.json`.
 Serve the complete directory with an SPA fallback for application routes; missing
-assets must remain HTTP 404. Cargo targets must be on D: on Windows, and
-`cargo metadata --no-deps --format-version 1` reports the actual target directory.
+assets must remain HTTP 404. `cargo metadata --no-deps --format-version 1` reports the actual target directory.
 The native helper also stages `assets/` beside the executable.
 
 The web build uses the same in-tree OpenMLS patch as native builds for

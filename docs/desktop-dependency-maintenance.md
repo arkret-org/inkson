@@ -6,7 +6,7 @@ Cargo.lock records the exact renderer graph, including the Glory-owned Blitz and
 
 Review the exact dependency revision before updating it, resolve the lockfile, and run both browser and native checks. Native evidence must include the actual application binary, its assets and visible process-owned window on the affected operating system. Window startup alone does not establish visual parity or authenticated behavior. Metadata, library tests and Web builds cannot replace the platform checks.
 
-All Windows build/cache output belongs under `D:/BuildCache/inkson-glory`; verify Cargo’s resolved target directory. WSL requires the verified D-drive mount. Docker builder storage must be verified separately before a local image build. Historical desktop receipts retain their original source scope and are not receipts for the Glory migration.
+Build helpers inherit the current environment and Cargo configuration; verify the resolved target directory with Cargo metadata. Docker builder storage must be verified separately before a local image build. Historical desktop receipts retain their original source scope and are not receipts for the Glory migration.
 
 The native asset layout is `assets` beside the binary on Windows/Linux and `Contents/Resources/assets` in a macOS application bundle. Development uses an explicit `INKSON_ASSET_DIR`. Clipboard, image selection and notifications use OS services. The media transport and its isolated process remain bounded by their call owner.
 

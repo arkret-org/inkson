@@ -7,10 +7,6 @@ const shouldStartServer = !process.env.INKSON_E2E_BASE_URL;
 const serverURL = new URL(baseURL);
 const serverPort =
   serverURL.port || (serverURL.protocol === "https:" ? "443" : "80");
-const e2eCargoTargetDir =
-  process.env.INKSON_E2E_CARGO_TARGET_DIR ??
-  (process.platform === "win32" ? "D:/BuildCache/inkson-glory/playwright-e2e" :
-    process.env.WSL_DISTRO_NAME ? "/mnt/d/BuildCache/inkson-glory/playwright-e2e" : "target/playwright-e2e");
 const e2eBuildProfile = process.env.INKSON_E2E_BUILD_PROFILE ?? "joint-e2e";
 const browserProjects = (process.env.INKSON_E2E_BROWSERS ?? "chromium")
   .split(",")
@@ -56,9 +52,7 @@ export default defineConfig({
         url: `${baseURL}/assets/pkg/inkson.js`,
         reuseExistingServer: !process.env.CI,
         timeout: 900_000,
-        // Keep E2E output separate from the active development bundle.
         env: {
-          INKSON_E2E_CARGO_TARGET_DIR: e2eCargoTargetDir,
           INKSON_E2E_BUILD_PROFILE: e2eBuildProfile,
           INKSON_E2E_PORT: serverPort,
         },

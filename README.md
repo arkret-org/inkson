@@ -95,7 +95,8 @@ the arkret-work specs for the active cross-project task plan.
 
 The developer runner repairs stale SDK registry projections through the SDK’s `tools/sync-spec.ps1`, verifies the canonical registry, and rebuilds after application or local path dependency changes. `python scripts/dev_glory.py --check` is read-only. PowerShell and the SDK generator must be available for automatic repair.
 
-Windows tooling uses `D:/BuildCache/inkson-glory` for build output, temporary files and caches; Cargo metadata verifies the resolved target. WSL builds must use a verified D-drive mount. Glory and Sapid resolve from their GitHub `main` branches at the exact revisions in `Cargo.lock`; local path overrides are not used.
+
+Build helpers inherit Cargo and temporary-file settings. Cargo metadata determines the target directory; Web bundles default to its web subdirectory. Glory and Sapid use the revisions pinned in Cargo.lock.
 
 The browser host uses Glory Web and Sapid semantic controls. The desktop host uses Glory/Blitz and the same application state and stylesheet layers. It loads assets beside the executable, or from `Contents/Resources/assets` in a macOS bundle. The development runner sets an explicit repository asset directory. Native file and clipboard actions use OS services.
 
@@ -120,22 +121,12 @@ Station presets can be added to the local config file with `stations`. The login
 The Rust crate also runs normal verification:
 
 ```powershell
-$env:CARGO_HOME = "D:/BuildCache/cargo"
-$env:CARGO_TARGET_DIR = "D:/BuildCache/inkson-glory/target"
-$env:TEMP = "D:/BuildCache/inkson-glory/tmp"
-$env:TMP = $env:TEMP
-New-Item -ItemType Directory -Force -Path $env:TEMP | Out-Null
 cargo test --locked --features app
 ```
 
 Browser workflow verification uses Playwright with mocked Arkret HTTP endpoints:
 
 ```powershell
-$env:CARGO_HOME = "D:/BuildCache/cargo"
-$env:CARGO_TARGET_DIR = "D:/BuildCache/inkson-glory/target"
-$env:TEMP = "D:/BuildCache/inkson-glory/tmp"
-$env:TMP = $env:TEMP
-New-Item -ItemType Directory -Force -Path $env:TEMP | Out-Null
 $inksonMetadata = cargo metadata --locked --no-deps --format-version 1 | ConvertFrom-Json
 cargo build --locked --profile joint-e2e --no-default-features --features spec-conformance --bin inkson-wire
 $env:INKSON_WIRE_BIN = Join-Path $inksonMetadata.target_directory "joint-e2e/inkson-wire.exe"
@@ -145,7 +136,8 @@ npm run e2e
 
 The language-sync regression sends its fixture secret only through an in-memory pipe to the prebuilt verifier and checks the real SDK AEAD result. It requires `INKSON_WIRE_BIN`; it does not use the generic file-backed fixture helper for secrets.
 
-The Playwright runner invokes `scripts/serve_e2e.mjs`, builds the real Web artifact with the `joint-e2e` profile and test-only fixture feature, then starts the static host on port 4727. Windows E2E output lives under `D:/BuildCache/inkson-glory/playwright-e2e`. Use `INKSON_E2E_BASE_URL=http://127.0.0.1:<port>` for an already-running build. The production bundle never enables the fixture feature.
+
+The Playwright server builds the joint-e2e profile into Cargo's reported target directory and serves its web subdirectory. Test fixture features are confined to the test build; production bundles do not enable them. INKSON_E2E_CARGO_TARGET_DIR explicitly selects a separate build directory when needed.
 
 That validation runs on its own too, without a browser and without the WASM build:
 

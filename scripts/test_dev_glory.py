@@ -26,7 +26,7 @@ class DeveloperWorkflowTests(unittest.TestCase):
             self.assertEqual(order,['repair','metadata','build']);order.append('launch')
             return Mock(poll=Mock(return_value=0),returncode=0)
         def metadata():
-            order.append('metadata');return {'target_directory':'D:/BuildCache/inkson-glory/target','packages':[]}
+            order.append('metadata');return {'target_directory':'C:/workspace/inkson-output','packages':[]}
         thread=Mock();thread.is_alive.return_value=False
         with patch.object(dev,'parse_args',return_value=Mock(check=False,platform='desktop',port=8080)),patch.object(dev,'build_environment',return_value={}),patch.object(dev.registry,'ensure_registry_alignment',side_effect=repair),patch.object(dev.registry,'cargo_metadata',side_effect=metadata),patch.object(dev.registry,'local_dependency_roots',return_value=[]),patch.object(dev.registry,'watched_files',return_value={}),patch.object(dev.threading,'Thread',return_value=thread),patch.object(dev,'run_owned_build',side_effect=build),patch.object(dev.subprocess,'Popen',side_effect=launch):
             self.assertEqual(dev.main(),0)
@@ -91,7 +91,7 @@ class LifecycleTests(unittest.TestCase):
             owner.close('build');owner.start('desktop',['owned-new-desktop'])
             return original(owner,name)
         with ExitStack() as stack:
-            for obj,name,value in [(dev,'parse_args',Mock(check=False,platform='desktop',port=8080)),(dev,'build_environment',{}),(dev.registry,'cargo_metadata',{'target_directory':'D:/BuildCache/inkson-glory/target','packages':[]}),(dev.registry,'local_dependency_roots',[]),(dev.registry,'watched_files',{}),(dev,'run_owned_build',True),(dev.threading,'Thread',worker)]:stack.enter_context(patch.object(obj,name,return_value=value))
+            for obj,name,value in [(dev,'parse_args',Mock(check=False,platform='desktop',port=8080)),(dev,'build_environment',{}),(dev.registry,'cargo_metadata',{'target_directory':'C:/workspace/inkson-output','packages':[]}),(dev.registry,'local_dependency_roots',[]),(dev.registry,'watched_files',{}),(dev,'run_owned_build',True),(dev.threading,'Thread',worker)]:stack.enter_context(patch.object(obj,name,return_value=value))
             stack.enter_context(patch.object(dev.registry,'ensure_registry_alignment'))
             stack.enter_context(patch.object(dev.subprocess,'Popen',side_effect=[old,build,replacement]))
             stack.enter_context(patch.object(dev.OwnedProcesses,'poll_slot',interleave))
@@ -156,7 +156,7 @@ class LifecycleTests(unittest.TestCase):
         server.handle_request.side_effect=request
         if mode=='interrupt-join-error':child.poll.side_effect=[KeyboardInterrupt(),0]
         with ExitStack() as stack:
-            for obj,name,value in [(dev,'parse_args',Mock(check=False,platform=platform,port=8080)),(dev,'build_environment',{}),(dev.registry,'cargo_metadata',{'target_directory':'D:/BuildCache/inkson-glory/target','packages':[]}),(dev.registry,'local_dependency_roots',[])]:stack.enter_context(patch.object(obj,name,return_value=value))
+            for obj,name,value in [(dev,'parse_args',Mock(check=False,platform=platform,port=8080)),(dev,'build_environment',{}),(dev.registry,'cargo_metadata',{'target_directory':'C:/workspace/inkson-output','packages':[]}),(dev.registry,'local_dependency_roots',[])]:stack.enter_context(patch.object(obj,name,return_value=value))
             stack.enter_context(patch.object(dev.registry,'ensure_registry_alignment'))
             scan=stack.enter_context(patch.object(dev.registry,'watched_files',side_effect=(subprocess.TimeoutExpired('git',2) if mode=='initial-scan' else None),return_value={}))
             build=stack.enter_context(patch.object(dev,'run_owned_build',return_value=True))

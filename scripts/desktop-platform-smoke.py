@@ -26,7 +26,7 @@ result = {'platform': platform, 'binary_sha256': hashlib.sha256(binary.read_byte
           'test': 'real owning Glory/Blitz process window visible and remains live; visual and authenticated acceptance are separate'}
 
 
-temporary_root = Path("D:/BuildCache/inkson-glory/tmp") if platform == "win32" else Path(tempfile.gettempdir())
+temporary_root = Path(tempfile.gettempdir())
 temporary_root.mkdir(parents=True, exist_ok=True)
 private_directory = tempfile.TemporaryDirectory(prefix="inkson-desktop-runtime-", dir=temporary_root)
 with private_directory as private:

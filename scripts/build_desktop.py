@@ -26,8 +26,6 @@ def main():
         ['cargo', 'metadata', '--locked', '--no-deps', '--format-version', '1'],
         cwd=ROOT, env=env, text=True))
     target = Path(metadata['target_directory']).resolve()
-    if os.name == 'nt' and target.drive.lower() != 'd:':
-        raise SystemExit(f'Cargo output must be on D: {target}')
     print(f'Cargo target directory: {target}', flush=True)
     command = ['cargo', 'build', '--locked', '--features', 'desktop', '--bin', 'inkson']
     if args.release:

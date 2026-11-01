@@ -22,8 +22,9 @@
 set -eu
 . "$(dirname "$0")/build_env.sh"
 
-gate_dir="${INKSON_CLIPPY_GATE_DIR:-$CARGO_TARGET_DIR/clippy-gate}"
-target_dir="${INKSON_CLIPPY_GATE_TARGET_DIR:-$CARGO_TARGET_DIR}"
+target_dir="$(cargo metadata --locked --no-deps --format-version 1 | python -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')"
+target_dir="${INKSON_CLIPPY_GATE_TARGET_DIR:-$target_dir}"
+gate_dir="${INKSON_CLIPPY_GATE_DIR:-$target_dir/clippy-gate}"
 
 mkdir -p "$gate_dir"
 CARGO_TARGET_DIR="$target_dir" cargo metadata --locked --no-deps --format-version 1 > "$gate_dir/metadata.json"

@@ -3,7 +3,7 @@
 # (the pagefile is too small), which surfaces as a *test* failure. One job
 # removes it. Raise this on a machine with headroom.
 gate_jobs := env_var_or_default("INKSON_GATE_JOBS", "1")
-gate_dir := env_var_or_default("INKSON_GATE_DIR", "D:/BuildCache/inkson-glory/gate")
+gate_dir := env_var_or_default("INKSON_GATE_DIR", "")
 
 # Show available local tasks.
 default:

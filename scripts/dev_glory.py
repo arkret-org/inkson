@@ -122,7 +122,6 @@ def main():
         else:registry.ensure_registry_alignment()
         metadata=registry.cargo_metadata()
         target=Path(metadata['target_directory']).resolve()
-        if os.name=='nt' and target.drive.lower()!='d:':raise RuntimeError(f'Cargo output must be on D: {target}')
         roots=[PROJECT_ROOT,*registry.local_dependency_roots(metadata)]
         build_dirs=registry.build_directories(metadata)
         print(f'Cargo target directory: {target}',flush=True)

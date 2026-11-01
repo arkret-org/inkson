@@ -24,11 +24,6 @@ or upload Sigstore transparency-log entries.
 ## Verification
 
 ```powershell
-$env:CARGO_HOME = "D:/BuildCache/cargo"
-$env:CARGO_TARGET_DIR = "D:/BuildCache/inkson-glory/target"
-$env:TEMP = "D:/BuildCache/inkson-glory/tmp"
-$env:TMP = $env:TEMP
-New-Item -ItemType Directory -Force -Path $env:TEMP | Out-Null
 cargo +nightly fmt --check
 cargo clippy --all-targets -- -D warnings
 cargo test --locked
