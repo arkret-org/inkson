@@ -1190,7 +1190,7 @@ mod tests {
     fn actual_notification_control_retains_live_localized_status_and_persists_toggle() {
         let directory = tempfile::Builder::new()
             .prefix("notification-kind-ui-")
-            .tempdir_in("D:/BuildCache/inkson-glory/tmp")
+            .tempdir()
             .unwrap();
         let app = glory::App::memory();
         let context = InksonContext::new(

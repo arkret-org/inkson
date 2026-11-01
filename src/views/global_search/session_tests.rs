@@ -469,7 +469,7 @@ fn mount(
     let directory = Rc::new(
         tempfile::Builder::new()
             .prefix("search-ui-")
-            .tempdir_in("D:/BuildCache/inkson-glory/tmp")
+            .tempdir()
             .unwrap(),
     );
     let app = TestApp::new();

@@ -37,7 +37,7 @@ fn nodes(app: &glory::App, class: &str) -> Vec<NodeId> {
 fn actual_blitz_accepts_help_and_me_badge_and_operates_managed_dialogs() {
     let directory = tempfile::Builder::new()
         .prefix("native-hint-")
-        .tempdir_in("D:/BuildCache/inkson-glory/tmp")
+        .tempdir()
         .unwrap();
     let app = glory::App::new(glory::blitz::Renderer::new);
     let context = context(&app, directory.path());
@@ -94,7 +94,7 @@ fn actual_blitz_accepts_help_and_me_badge_and_operates_managed_dialogs() {
 fn actual_blitz_theme_buttons_publish_pressed_state_and_real_persist_callbacks() {
     let directory = tempfile::Builder::new()
         .prefix("native-theme-")
-        .tempdir_in("D:/BuildCache/inkson-glory/tmp")
+        .tempdir()
         .unwrap();
     let app = glory::App::new(glory::blitz::Renderer::new);
     let context = context(&app, directory.path());

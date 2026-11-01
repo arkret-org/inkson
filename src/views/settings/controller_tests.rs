@@ -18,7 +18,7 @@ async fn mounted_with_cleanup(
 ) -> (tempfile::TempDir, TestApp, SettingsController, Boundary) {
     let directory = tempfile::Builder::new()
         .prefix("settings-controller-")
-        .tempdir_in("D:/BuildCache/inkson-glory/tmp")
+        .tempdir()
         .unwrap();
     let app = TestApp::new();
     let scope = app.scope();

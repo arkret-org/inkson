@@ -133,7 +133,7 @@ mod frame_tests {
     fn real_self_badge_and_inline_action_content_are_admitted_by_memory_frame() {
         let directory = tempfile::Builder::new()
             .prefix("self-badge-")
-            .tempdir_in("D:/BuildCache/inkson-glory/tmp")
+            .tempdir()
             .unwrap();
         let executor = Rc::new(glory::core::executor::Executor::new(32));
         let app = App::with_host(executor, glory::render::memory::Memory::new);

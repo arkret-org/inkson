@@ -600,7 +600,7 @@ fn live_route_tab_updates_same_page_node_without_another_store_revision() {
     let app = glory::App::memory();
     let directory = tempfile::Builder::new()
         .prefix("kanban-tab-route-")
-        .tempdir_in("D:/BuildCache/inkson-glory/tmp")
+        .tempdir()
         .unwrap();
     let context = crate::presentation::InksonContext::new(
         app.scope(),
