@@ -7124,7 +7124,7 @@ dependencies = [
 [[package]]
 name = "sapid"
 version = "0.6.1"
-source = "git+https://github.com/sapid-ui/sapid.git?branch=main#14b18dec7c36d0b13f44b0a23f2edc332a5a0499"
+source = "git+https://github.com/sapid-ui/sapid.git?branch=main#ec8f74828565264091a31c5c39f703918206e987"
 dependencies = [
  "glory",
  "serde_json",

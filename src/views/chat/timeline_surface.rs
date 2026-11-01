@@ -185,10 +185,10 @@ pub(super) fn chat_timeline(
                     .to_vec()
             });
             let row_app = app.clone();
-            let items = each(
-                selected,
-                |row| row.id.clone(),
-                move |row, _| {
+            let items = each(selected)
+                .key(|row| row.id.clone())
+                .children(move |each_row| {
+                    let row = each_row.value;
                     let app = row_app.clone();
                     widget(move |scope| {
                         message_row::message_row(
@@ -201,8 +201,7 @@ pub(super) fn chat_timeline(
                         )
                         .build(scope)
                     })
-                },
-            );
+                });
             Box::new(
                 view()
                     .class("chat-virtual-rows virtual-timeline")
@@ -583,7 +582,8 @@ mod row_lifetime_tests {
                 .map(str::to_owned)
                 .collect::<Vec<_>>()
         });
-        app.mount(each(rows, Clone::clone, move |row, _| {
+        app.mount(each(rows).key(Clone::clone).children(move |each_row| {
+            let row = each_row.value;
             let observed = observed.clone();
             widget(move |scope| {
                 let id = row.get_untracked();
