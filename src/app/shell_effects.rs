@@ -128,11 +128,14 @@ pub(super) fn install(scope: &Scope, context: Rc<InksonContext>, ui: Rc<ShellSta
         }
     });
 
+    let account_avatar = context.account_avatar();
+    let previous_avatar_session = scope.cage(None::<crate::account_avatar::SettingsSessionStamp>);
     // Account-viewer is the authoritative source for the Actor Profile,
     // device display_name, and signed primary handle claim. Keep those
     // user-facing labels separate from protocol IDs and from the Account
     // Authority handoff's unsigned account_handle hint.
     scope.effect(move || {
+        let lookup_session = account_avatar.session.capture();
         let lookup_base_url = base_url.get();
         let lookup_actor = crate::app::principal_id_owned(principal_id.get());
         let lookup_device = device_id.get();
@@ -144,10 +147,16 @@ pub(super) fn install(scope: &Scope, context: Rc<InksonContext>, ui: Rc<ShellSta
             lookup_device,
             !lookup_token.trim().is_empty(),
         );
-        if account_identity_lookup_key.get() == key {
+        if previous_avatar_session.get_untracked().as_ref() == Some(&lookup_session)
+            && account_identity_lookup_key.get() == key
+        {
             return;
         }
+        previous_avatar_session.revise(|value| *value = Some(lookup_session.clone()));
         account_identity_lookup_key.revise(|value| *value = key);
+        let Some(avatar_ticket) = account_avatar.begin_read() else {
+            return;
+        };
         if lookup_token.trim().is_empty() || lookup_actor.trim().is_empty() {
             current_account_display_name.revise(|value| *value = String::new());
             current_account_avatar_blob_ref.revise(|value| *value = String::new());
@@ -183,7 +192,10 @@ pub(super) fn install(scope: &Scope, context: Rc<InksonContext>, ui: Rc<ShellSta
                 |http| async move { crate::transport::keys::list_devices(&http).await },
             )
             .await;
-            if weak.upgrade().is_none() || !application.session_matches(generation, &account) {
+            if weak.upgrade().is_none()
+                || !application.session_matches(generation, &account)
+                || !account_avatar.is_current(&avatar_ticket)
+            {
                 return;
             }
             let Ok(viewer) = result else {
@@ -202,8 +214,7 @@ pub(super) fn install(scope: &Scope, context: Rc<InksonContext>, ui: Rc<ShellSta
                 .profile
                 .as_ref()
                 .and_then(|profile| profile.avatar_blob_ref.as_ref())
-                .map(ToString::to_string)
-                .unwrap_or_default();
+                .map(ToString::to_string);
             let device_display_name = viewer
                 .devices
                 .iter()
@@ -217,7 +228,12 @@ pub(super) fn install(scope: &Scope, context: Rc<InksonContext>, ui: Rc<ShellSta
             handle_store
                 .write(|store| store.set_primary_handle_for_principal_id(&actor, &primary_handle));
             set_state(current_account_display_name, display_name);
-            set_state(current_account_avatar_blob_ref, avatar_blob_ref);
+            if account_avatar.resolve(&avatar_ticket, avatar_blob_ref) {
+                set_state(
+                    current_account_avatar_blob_ref,
+                    application.account_avatar_display(),
+                );
+            }
             set_state(current_device_display_name, device_display_name);
             if !primary_handle.is_empty() {
                 set_state(account_primary_handle, primary_handle.clone());

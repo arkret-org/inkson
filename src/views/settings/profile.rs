@@ -51,16 +51,30 @@ pub(super) fn page(scope: &Scope, context: Rc<InksonContext>) -> View {
     let account = context.active_account.get();
     let token = context.token.get();
     let base = context.base_url.get();
+    let account_avatar = context.account_avatar();
+    let avatar_ticket = account_avatar.begin_read();
     spawn(scope, async move {
         let result = with_authed_sdk_client(&base, token, |http| async move {
             crate::transport::account::account_viewer(&http).await
         })
         .await;
-        if !hydrate_context.session_matches(generation, &account) {
+        if !hydrate_context.session_matches(generation, &account)
+            || !avatar_ticket
+                .as_ref()
+                .is_some_and(|ticket| account_avatar.is_current(ticket))
+        {
             return;
         }
         match result {
             Ok(viewer) => {
+                if let Some(ticket) = avatar_ticket.as_ref() {
+                    let avatar = viewer
+                        .profile
+                        .as_ref()
+                        .and_then(|profile| profile.avatar_blob_ref.as_ref())
+                        .map(ToString::to_string);
+                    account_avatar.resolve(ticket, avatar);
+                }
                 if let Some(profile) = viewer.profile {
                     let profile = profile.into_inner();
                     hydrate
@@ -110,6 +124,15 @@ pub(super) fn page(scope: &Scope, context: Rc<InksonContext>) -> View {
                 true,
                 move || cancel_read.clone().cancel_avatar_crop(),
             )
+        }
+    });
+    // All account avatar surfaces read the same root-owned canonical state.
+    let avatar_bridge_context = context.clone();
+    let avatar_bridge = controller.profile_avatar_blob_ref;
+    scope.effect(move || {
+        let display = avatar_bridge_context.account_avatar_display();
+        if avatar_bridge.get_untracked() != display {
+            avatar_bridge.revise(|value| *value = display);
         }
     });
     let _avatar_state = controller.clone();

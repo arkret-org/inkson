@@ -214,20 +214,66 @@ fn push_client_ui_account_data_patches(
 /// Pass `None` to skip the avatar mirror (theme-only sync). Pass
 /// `Some("")` to tombstone the cached ref so other devices fall back to
 /// the public profile when the avatar is cleared.
-pub(crate) fn push_client_ui_account_data_with_avatar(
-    context: Rc<InksonContext>,
+pub(crate) async fn push_client_ui_account_data_with_avatar(
     base_url: String,
     api_token: String,
     local_theme: String,
     avatar_blob_ref: Option<String>,
-) {
+    session: crate::account_avatar::SettingsSessionSignals,
+    stamp: crate::account_avatar::SettingsSessionStamp,
+) -> anyhow::Result<()> {
+    anyhow::ensure!(session.is_current(&stamp), "avatar mirror session changed");
+    anyhow::ensure!(
+        !api_token.trim().is_empty(),
+        "avatar mirror requires an active session"
+    );
+    let authority = crate::secure_key_store::active_device_seed_scope()
+        .map(|scope| scope.authority)
+        .ok_or_else(|| anyhow::anyhow!("avatar mirror requires active device authority"))?;
+    anyhow::ensure!(
+        stamp.matches_authority(&authority),
+        "avatar mirror device authority changed"
+    );
     let mut patches = vec![crate::account_data::ClientUiStatePatch::Theme(local_theme)];
     if let Some(avatar_blob_ref) = avatar_blob_ref {
         patches.push(crate::account_data::ClientUiStatePatch::AvatarBlobRef(
             avatar_blob_ref,
         ));
     }
-    push_client_ui_account_data_patches(context.clone(), base_url, api_token, patches);
+    with_event_submitter(&base_url, api_token, move |sub| async move {
+        anyhow::ensure!(
+            session.is_current(&stamp),
+            "avatar mirror session changed before authoring"
+        );
+        crate::transport::account::update_account_data_with_merge(
+            &sub,
+            AccountDataKey::CLIENT_UI_STATE,
+            |snapshot| {
+                anyhow::ensure!(
+                    session.is_current(&stamp),
+                    "avatar mirror session changed during merge"
+                );
+                let mut plaintext = match snapshot.entry.as_ref() {
+                    Some(entry) => crate::account_data::decrypt_account_data_entry(
+                        &authority,
+                        AccountDataKey::CLIENT_UI_STATE,
+                        entry,
+                    )?,
+                    None => serde_json::json!({}),
+                };
+                crate::account_data::apply_client_ui_state_patches(&mut plaintext, &patches);
+                crate::account_data::encrypt_account_data_value(
+                    &authority,
+                    AccountDataKey::CLIENT_UI_STATE,
+                    &plaintext,
+                )
+            },
+        )
+        .await
+    })
+    .await
+    .map(|_| ())
+    .map_err(|error| anyhow::anyhow!(error.display()))
 }
 
 /// Build the canonical `content` body for a read-receipt preferences

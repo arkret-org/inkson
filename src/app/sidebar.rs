@@ -1735,7 +1735,7 @@ fn contacts(scope: &Scope, context: Rc<InksonContext>, ui: Rc<ShellState>) -> Vi
                 context.principal_id.get(),
                 context.account_primary_handle.get(),
                 context.token.get(),
-                ui.avatar.get(),
+                context.account_avatar_display(),
                 context.state_revision.get(),
                 context.locale.get(),
             )
@@ -1773,13 +1773,8 @@ fn contacts(scope: &Scope, context: Rc<InksonContext>, ui: Rc<ShellState>) -> Vi
                 crate::components::IdentityAvatarProps {
                     seed: actor.clone(),
                     alt_text: own_label.clone(),
-                    blob_ref: Some(
-                        context
-                            .state_store
-                            .read(|store| store.load_plain_local_data("avatar_blob_ref"))
-                            .unwrap_or_else(|| ui.avatar.get()),
-                    )
-                    .filter(|value| !value.is_empty()),
+                    blob_ref: Some(context.account_avatar_display())
+                        .filter(|value| !value.is_empty()),
                     class: "sidebar-nav-icon contact-sidebar-user-avatar avatar-img".into(),
                     test_id: None,
                 },

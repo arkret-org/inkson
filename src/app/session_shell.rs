@@ -904,15 +904,11 @@ fn account_menu_identity(
 fn account_menu(scope: &Scope, context: Rc<InksonContext>, ui: Rc<ShellState>) -> View {
     let avatar_source = scope.bond({
         let context = context.clone();
-        let ui = ui.clone();
         move || {
-            let _ = context.state_revision.get();
-            let fallback = ui.avatar.get();
-            let blob = context
-                .state_store
-                .read(|store| store.load_plain_local_data("avatar_blob_ref"))
-                .unwrap_or(fallback);
-            (super::principal_id_owned(context.principal_id.get()), blob)
+            (
+                super::principal_id_owned(context.principal_id.get()),
+                context.account_avatar_display(),
+            )
         }
     });
     let avatar = reactive_distinct(avatar_source, {

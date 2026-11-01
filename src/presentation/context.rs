@@ -35,6 +35,8 @@ pub struct InksonContext {
     pub owned_agents_rev: Cage<u64>,
     pub state_store: SharedStateStore,
     pub state_revision: Cage<u64>,
+    pub(crate) avatar_projection:
+        Cage<crate::account_avatar::AvatarProjection<crate::account_avatar::SettingsSessionStamp>>,
     pub services: RuntimeServices,
     pub call_signal_hub: crate::views::call_signals::CallSignalHub,
     pub message_stream_hub: crate::views::message_streams::MessageStreamHub,
@@ -185,6 +187,7 @@ impl InksonContext {
             session_generation: scope.cage(0),
             owned_agents_rev: scope.cage(0),
             state_revision: scope.cage(state_store.revision()),
+            avatar_projection: scope.cage(crate::account_avatar::AvatarProjection::default()),
             state_store,
             services,
             call_signal_hub: crate::views::call_signals::CallSignalHub::new(scope),
@@ -249,6 +252,7 @@ impl InksonContext {
             #[cfg(all(not(target_arch = "wasm32"), feature = "desktop"))]
             native_images: RefCell::new(None),
         });
+        let _ = context.account_avatar().begin_read();
         *context_slot.borrow_mut() = Rc::downgrade(&context);
         crate::i18n::bind_application_locale(context.locale);
         super::bind_current_host(&context);
