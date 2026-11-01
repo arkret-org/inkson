@@ -1,0 +1,194 @@
+name: Review-only multi-root UI lock candidates
+
+on:
+  push:
+    branches: ["ci-repair/ui-lock-refresh-*"]
+    paths:
+      - ".github/workflows/ui-lock-candidate.yml"
+      - "scripts/prepare_ui_lock_candidate.py"
+      - "scripts/ui_lock_sources.json"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: multi-root-ui-lock-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  candidate:
+    name: candidate (${{ matrix.consumer }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        consumer: [coauth, flagon, codmin, cotest, savfox]
+    env:
+      CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+    steps:
+      - name: Checkout arkret-org/arkret-spec
+        uses: actions/checkout@v7
+        with:
+          repository: arkret-org/arkret-spec
+          ref: main
+          path: arkret-org/arkret-spec
+          token: ${{ secrets.CI_REPO_TOKEN || github.token }}
+          persist-credentials: false
+      - name: Checkout arkret-org/arkret-rust-sdk
+        uses: actions/checkout@v7
+        with:
+          repository: arkret-org/arkret-rust-sdk
+          ref: main
+          path: arkret-org/arkret-rust-sdk
+          token: ${{ secrets.CI_REPO_TOKEN || github.token }}
+          persist-credentials: false
+      - name: Checkout arkret-org/floria
+        uses: actions/checkout@v7
+        with:
+          repository: arkret-org/floria
+          ref: main
+          path: arkret-org/floria
+          token: ${{ secrets.CI_REPO_TOKEN || github.token }}
+          persist-credentials: false
+      - name: Checkout arkret-org/coland
+        uses: actions/checkout@v7
+        with:
+          repository: arkret-org/coland
+          ref: main
+          path: arkret-org/coland
+          token: ${{ secrets.CI_REPO_TOKEN || github.token }}
+          persist-credentials: false
+      - name: Checkout arkret-org/coauth
+        uses: actions/checkout@v7
+        with:
+          repository: arkret-org/coauth
+          ref: ${{ matrix.consumer == 'coauth' && 'bf07bbf97c9b95fbb20769c15f9e5f16b3303fb9' || 'main' }}
+          path: arkret-org/coauth
+          token: ${{ secrets.CI_REPO_TOKEN || github.token }}
+          persist-credentials: false
+      - name: Checkout arkret-org/garth
+        uses: actions/checkout@v7
+        with:
+          repository: arkret-org/garth
+          ref: main
+          path: arkret-org/garth
+          token: ${{ secrets.CI_REPO_TOKEN || github.token }}
+          persist-credentials: false
+      - name: Checkout arkret-org/chime
+        uses: actions/checkout@v7
+        with:
+          repository: arkret-org/chime
+          ref: main
+          path: arkret-org/chime
+          token: ${{ secrets.CI_REPO_TOKEN || github.token }}
+          persist-credentials: false
+      - name: Checkout arkret-org/inkson
+        uses: actions/checkout@v7
+        with:
+          repository: arkret-org/inkson
+          ref: ${{ github.sha }}
+          path: arkret-org/inkson
+          token: ${{ secrets.CI_REPO_TOKEN || github.token }}
+          persist-credentials: false
+      - name: Checkout arkret-org/cotest
+        uses: actions/checkout@v7
+        with:
+          repository: arkret-org/cotest
+          ref: ${{ matrix.consumer == 'cotest' && '2567807591e60754c1a4628e9ed1f7b8858529f4' || 'main' }}
+          path: arkret-org/cotest
+          token: ${{ secrets.CI_REPO_TOKEN || github.token }}
+          persist-credentials: false
+      - name: Checkout arkret-org/codmin
+        uses: actions/checkout@v7
+        with:
+          repository: arkret-org/codmin
+          ref: ${{ matrix.consumer == 'codmin' && 'f6ea03fd2762d79bc90c222d56d6f351e02e49bd' || 'main' }}
+          path: arkret-org/codmin
+          token: ${{ secrets.CI_REPO_TOKEN || github.token }}
+          persist-credentials: false
+      - name: Checkout arkret-org/flagon
+        uses: actions/checkout@v7
+        with:
+          repository: arkret-org/flagon
+          ref: ${{ matrix.consumer == 'flagon' && '222c7e6ce6f3e2525a79088070104c26efdc7afe' || 'main' }}
+          path: arkret-org/flagon
+          token: ${{ secrets.CI_REPO_TOKEN || github.token }}
+          persist-credentials: false
+      - name: Checkout arkret-org/bridges
+        uses: actions/checkout@v7
+        with:
+          repository: arkret-org/bridges
+          ref: main
+          path: arkret-org/bridges
+          token: ${{ secrets.CI_REPO_TOKEN || github.token }}
+          persist-credentials: false
+      - name: Checkout savfox-ai/savfox
+        uses: actions/checkout@v7
+        with:
+          repository: savfox-ai/savfox
+          ref: ${{ matrix.consumer == 'savfox' && 'f7c967873915c9af34aa8d7b6d19ceb19f9077e3' || 'main' }}
+          path: savfox-ai/savfox
+          token: ${{ secrets.CI_REPO_TOKEN || github.token }}
+          persist-credentials: false
+      - name: Checkout reviewed UI source glory
+        uses: actions/checkout@v7
+        with:
+          repository: glory-rs/glory
+          ref: c988506d40938d50c210d2b8a27a708121449609
+          path: .ui-lock-inputs/glory
+          persist-credentials: false
+      - name: Checkout reviewed UI source sapid
+        uses: actions/checkout@v7
+        with:
+          repository: sapid-ui/sapid
+          ref: 14b18dec7c36d0b13f44b0a23f2edc332a5a0499
+          path: .ui-lock-inputs/sapid
+          persist-credentials: false
+      - name: Checkout reviewed UI source apace
+        uses: actions/checkout@v7
+        with:
+          repository: glory-rs/apace
+          ref: 191c48adf6d7deb120c9d3ee1b098d7dc020891f
+          path: .ui-lock-inputs/apace
+          persist-credentials: false
+      - name: Checkout reviewed UI source takia
+        uses: actions/checkout@v7
+        with:
+          repository: glory-rs/takia
+          ref: ed436701c22b565baa127f2a5bf543ebbd1b2b90
+          path: .ui-lock-inputs/takia
+          persist-credentials: false
+      - name: Checkout reviewed UI source wingy
+        uses: actions/checkout@v7
+        with:
+          repository: glory-rs/wingy
+          ref: 2d1f938cf3c1e257aa85b3fa7301c80ad6c19d6e
+          path: .ui-lock-inputs/wingy
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.98"
+          targets: wasm32-unknown-unknown
+      - name: Resolve independent root candidate without changing original inputs
+        env:
+          CARGO_HOME: ${{ runner.temp }}/ui-lock-cargo
+        run: >-
+          python arkret-org/inkson/scripts/prepare_ui_lock_candidate.py
+          --workspace-root "$GITHUB_WORKSPACE"
+          --consumer "${{ matrix.consumer }}"
+          --source-config arkret-org/inkson/scripts/ui_lock_sources.json
+          --source-config-sha256 5d406718d00ac149c205308ccfeb4cc57cf5ce5dfa8de57fbf696651013e16e3
+          --output "$RUNNER_TEMP/ui-lock-${{ matrix.consumer }}"
+      - name: Preserve this root candidate and unapproved status
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: review-only-ui-lock-${{ matrix.consumer }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ui-lock-${{ matrix.consumer }}/
+          if-no-files-found: error
+          retention-days: 14
