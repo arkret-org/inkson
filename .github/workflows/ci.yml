@@ -298,7 +298,7 @@ jobs:
           # observes a real cancelled 12s timer after its large IndexedDB cases.
           WASM_BINDGEN_TEST_TIMEOUT: "120"
         run: >-
-          cargo test --locked --target wasm32-unknown-unknown
+          cargo test --locked --target wasm32-unknown-unknown --features web
           --test mls_data_plane_wasm
           --test wasm_indexed_db_capacity
 
