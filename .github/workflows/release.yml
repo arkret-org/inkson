@@ -93,12 +93,10 @@ jobs:
         with:
           workspaces: arkret-org/inkson
           key: release-${{ matrix.target }}
-      - name: Install Dioxus CLI
-        run: cargo install dioxus-cli --version 0.7.10 --locked
       - name: Build desktop application and assets
-        run: dx build --release --platform desktop --features desktop --target ${{ matrix.target }} --locked
+        run: python scripts/build_desktop.py --release --target ${{ matrix.target }}
       - name: Package desktop application
-        run: python .ci/package-release.py --target ${{ matrix.target }} --dx ${{ matrix.platform }} --app inkson
+        run: python .ci/package-release.py --target ${{ matrix.target }} --desktop-platform ${{ matrix.platform }} --app inkson
       - name: Upload release assets
         uses: actions/upload-artifact@v7
         with:

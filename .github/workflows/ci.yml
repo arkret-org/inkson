@@ -194,9 +194,6 @@ jobs:
           path: inkson/artifacts/ci-native-read-evidence/
           if-no-files-found: ignore
 
-      - name: Install Dioxus CLI
-        run: cargo install dioxus-cli --version "${DIOXUS_CLI_VERSION}" --locked
-
       - name: Check formatting
         working-directory: inkson
         run: cargo +nightly fmt -p inkson -- --check
