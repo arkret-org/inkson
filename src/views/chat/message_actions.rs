@@ -42,12 +42,12 @@ impl MessageMenuAction {
 #[derive(Clone)]
 pub struct MessageMenuEntry {
     pub action: MessageMenuAction,
-    pub label: Lotus<String>,
-    pub enabled: Lotus<bool>,
+    pub label: Vary<String>,
+    pub enabled: Vary<bool>,
 }
 pub struct MessageActionsMenuProps {
     pub key: String,
-    pub label: Lotus<String>,
+    pub label: Vary<String>,
     pub open: Cage<bool>,
     pub entries: Vec<MessageMenuEntry>,
     pub on_open_change: Rc<dyn Fn(bool)>,
@@ -371,16 +371,16 @@ pub(super) type MenuContent = Rc<dyn Fn(&Scope) -> View>;
 
 pub(super) struct FiniteMenuEntry {
     pub key: String,
-    pub class: Lotus<String>,
-    pub label: Lotus<String>,
-    pub enabled: Lotus<bool>,
+    pub class: Vary<String>,
+    pub label: Vary<String>,
+    pub enabled: Vary<bool>,
     pub content: Option<MenuContent>,
     pub on_activate: Rc<dyn Fn()>,
 }
 pub(super) struct FiniteMenuProps {
     pub key: String,
-    pub label: Lotus<String>,
-    pub enabled: Lotus<bool>,
+    pub label: Vary<String>,
+    pub enabled: Vary<bool>,
     pub open: Cage<bool>,
     pub entries: Vec<FiniteMenuEntry>,
     pub on_open_change: Rc<dyn Fn(bool)>,

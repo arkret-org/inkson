@@ -12,6 +12,7 @@
     warn(clippy::unwrap_used, clippy::expect_used, clippy::panic)
 )]
 
+pub(crate) mod account_avatar;
 pub mod account_data;
 /// Single-source-of-truth resolver for the post-boot "account health" prompt
 /// chain (device authorization → MLS unlock → MLS backup → recovery-missing →

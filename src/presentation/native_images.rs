@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
-use glory::blitz::assets::{Body, Bytes, Method, NetHandler, NetProvider, Request};
+use glory::apace::assets::{Body, Bytes, Method, NetHandler, NetProvider, Request};
 use tokio::sync::Notify;
 
 const HOST: &str = "inkson-live";

@@ -45,3 +45,7 @@ MENT = "MENT"
 ANONICAL = "ANONICAL"
 # "Theme" in several locales (i18n)
 Tema = "Tema"
+
+[type.css]
+# CSS Unicode range endpoints are hexadecimal code points.
+extend-ignore-re = ['\bU\+[0-9A-Fa-f]{1,6}(?:-[0-9A-Fa-f]{1,6})?\b']

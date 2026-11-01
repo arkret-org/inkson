@@ -625,7 +625,7 @@ type TextPageSelection = (String, u64);
 type LoadedTextPage = Option<(TextPageSelection, std::result::Result<String, String>)>;
 fn verified_text_page(
     scope: &Scope,
-    artifact: impl Into<Lotus<Rc<crate::attachments::artifact::Artifact>>>,
+    artifact: impl Into<Vary<Rc<crate::attachments::artifact::Artifact>>>,
 ) -> (Cage<TextPageSelection>, Cage<LoadedTextPage>) {
     let artifact = artifact.into();
     let selection = scope.cage((glory::core::untracked(|| artifact.get()).url.clone(), 0_u64));

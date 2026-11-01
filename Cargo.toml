@@ -32,8 +32,8 @@ base64 = "0.23"
 chacha20poly1305 = { version = "0.11", default-features = false }
 chime = { version = "0.3.0", path = "../chime" }
 chrono = "0.4.45"
-glory = { git = "https://github.com/glory-rs/glory.git", branch = "main", version = "0.3.1", default-features = false, features = ["css"] }
-sapid = { git = "https://github.com/sapid-ui/sapid.git", branch = "main", version = "0.1.0", default-features = false, features = ["chat", "code", "editor", "files", "json", "dates"] }
+glory = { git = "https://github.com/glory-rs/glory.git", branch = "main", version = "0.6.1", default-features = false, features = ["css"] }
+sapid = { git = "https://github.com/sapid-ui/sapid.git", branch = "main", version = "0.6.1", default-features = false, features = ["chat", "code", "editor", "files", "json", "dates"] }
 ed25519-dalek = "3.0.0"
 futures-util = { version = "0.3.34", default-features = false, features = ["sink", "std"] }
 getrandom = "0.4.3"
@@ -76,7 +76,7 @@ default = []
 # Library consumers do not choose a UI renderer. Application builds select
 # their actual renderer explicitly, keeping desktop system libraries optional.
 app = []
-desktop = ["app", "glory/blitz-shell", "glory/blitz-assets", "glory/blitz-accesskit", "dep:wry", "dep:tao"]
+desktop = ["app", "glory/apace-shell", "glory/apace-assets", "glory/apace-accesskit", "dep:wry", "dep:tao"]
 web = ["app", "glory/web"]
 # Deferred protocol surfaces are compiled by default for unit coverage but
 # hidden from the local 1.0 UI unless explicitly opted in.
@@ -411,4 +411,16 @@ debug-assertions = false
 # Sapid main currently declares its sibling Glory path. Resolve that package
 # from the same remote Glory source as the application, without a local override.
 [patch."https://github.com/sapid-ui/sapid.git"]
-glory = { git = "https://github.com/glory-rs/glory.git", branch = "main", version = "0.3.1" }
+glory = { git = "https://github.com/glory-rs/glory.git", branch = "main", version = "0.6.1" }
+
+[patch."https://github.com/glory-rs/glory.git"]
+apace-dom = { git = "https://github.com/glory-rs/apace", version = "=0.3.0", rev = "191c48adf6d7deb120c9d3ee1b098d7dc020891f" }
+apace-paint = { git = "https://github.com/glory-rs/apace", version = "=0.3.0", rev = "191c48adf6d7deb120c9d3ee1b098d7dc020891f" }
+apace-shell = { git = "https://github.com/glory-rs/apace", version = "=0.3.0", rev = "191c48adf6d7deb120c9d3ee1b098d7dc020891f" }
+apace-traits = { git = "https://github.com/glory-rs/apace", version = "=0.3.0", rev = "191c48adf6d7deb120c9d3ee1b098d7dc020891f" }
+apace_accesskit = { git = "https://github.com/glory-rs/apace", version = "=0.2.2", rev = "191c48adf6d7deb120c9d3ee1b098d7dc020891f" }
+wingy = { git = "https://github.com/glory-rs/wingy", version = "=0.31.1", rev = "2d1f938cf3c1e257aa85b3fa7301c80ad6c19d6e" }
+
+[patch."https://github.com/glory-rs/apace"]
+takia = { git = "https://github.com/glory-rs/takia", version = "=0.15.1", rev = "ed436701c22b565baa127f2a5bf543ebbd1b2b90" }
+wingy = { git = "https://github.com/glory-rs/wingy", version = "=0.31.1", rev = "2d1f938cf3c1e257aa85b3fa7301c80ad6c19d6e" }

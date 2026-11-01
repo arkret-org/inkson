@@ -908,8 +908,8 @@ fn capability_row(
     key: String,
     title: &str,
     help: &str,
-    checked: impl Into<glory::Lotus<bool>>,
-    enabled: impl Into<glory::Lotus<bool>>,
+    checked: impl Into<glory::Vary<bool>>,
+    enabled: impl Into<glory::Vary<bool>>,
     changed: Option<Rc<dyn Fn(bool)>>,
 ) -> View {
     let checked = checked.into();

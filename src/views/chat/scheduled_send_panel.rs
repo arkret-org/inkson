@@ -17,7 +17,7 @@ pub(super) struct ScheduledSendPanelContext {
     pub token: Cage<String>,
     pub draft: Cage<String>,
     pub status_msg: Cage<String>,
-    pub writable: Lotus<bool>,
+    pub writable: Vary<bool>,
 }
 
 fn plan_body_preview(value: &arkret_sdk::ScheduledSendValue) -> String {

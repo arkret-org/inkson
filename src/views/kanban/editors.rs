@@ -183,9 +183,9 @@ pub(super) fn card_markdown_editor(
     });
     let editor_actions = scope.bond(move || cfg!(target_arch = "wasm32") || source.get());
     #[cfg(target_arch = "wasm32")]
-    let mode_label: glory::Lotus<String> = "Markdown / Rich text".to_owned().into();
+    let mode_label: glory::Vary<String> = "Markdown / Rich text".to_owned().into();
     #[cfg(not(target_arch = "wasm32"))]
-    let mode_label: glory::Lotus<String> = {
+    let mode_label: glory::Vary<String> = {
         let app = app.clone();
         scope
             .bond(move || {
@@ -308,7 +308,7 @@ pub(super) fn edit_actions(
     scope: &Scope,
     app: Rc<InksonContext>,
     status: Cage<String>,
-    enabled: impl Into<glory::Lotus<bool>>,
+    enabled: impl Into<glory::Vary<bool>>,
     save: impl FnMut() + 'static,
     cancel: impl FnMut() + 'static,
 ) -> View {
@@ -374,7 +374,7 @@ pub(super) fn calendar_schedule_edit_form(
     app: Rc<InksonContext>,
     calendar: Cage<CalendarCardFields>,
     status: Cage<String>,
-    enabled: glory::Lotus<bool>,
+    enabled: glory::Vary<bool>,
     save: impl FnMut() + 'static,
     cancel: impl FnMut() + 'static,
 ) -> View {
@@ -687,7 +687,7 @@ mod tests {
                 .unwrap()
         }
         let directory = tempfile::tempdir().unwrap();
-        let window = glory::blitz::shell::WindowApp::new();
+        let window = glory::apace::shell::WindowApp::new();
         let app = window.app();
         let scope = app.scope();
         let context = InksonContext::new(

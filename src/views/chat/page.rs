@@ -5,7 +5,7 @@ pub struct ChatPanelProps {
     pub selected_realm_id: String,
     pub initial_strand_id: String,
     pub embedded: bool,
-    pub source_suspended: Lotus<bool>,
+    pub source_suspended: Vary<bool>,
     pub direct_mode: bool,
     pub direct_peer_id: String,
     pub sidecar_session: Option<crate::sidecar::HostedSidecarState>,

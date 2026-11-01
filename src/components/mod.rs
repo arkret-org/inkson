@@ -138,7 +138,7 @@ pub fn security_state_badge(
         let label = if props.unknown {
             context.translated(scope, "realm.security_unknown").into()
         } else {
-            Lotus::from(if props.encrypted {
+            Vary::from(if props.encrypted {
                 "Encrypted".to_owned()
             } else {
                 "Unencrypted".to_owned()
@@ -167,8 +167,8 @@ pub struct HelpTipProps {
 pub fn button_hint(
     context: Rc<InksonContext>,
     key: String,
-    label: impl Into<Lotus<String>>,
-    description: impl Into<Lotus<String>>,
+    label: impl Into<Vary<String>>,
+    description: impl Into<Vary<String>>,
     target: impl FnMut(sapid::FloatingTarget) -> glory::ui::Button + 'static,
 ) -> View {
     Box::new(

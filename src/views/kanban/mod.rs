@@ -370,8 +370,8 @@ pub fn page(scope: &Scope, app: Rc<InksonContext>, route: Route) -> View {
     let send = crate::views::secure_send::scope_send_probe(
         scope,
         app.clone(),
-        glory::Lotus::from(Some(arkret_sdk::ScopeRef::Realm { realm_id: typed })),
-        glory::Lotus::from(account.device_id.clone()),
+        glory::Vary::from(Some(arkret_sdk::ScopeRef::Realm { realm_id: typed })),
+        glory::Vary::from(account.device_id.clone()),
     );
     let ready = {
         let app = app.clone();

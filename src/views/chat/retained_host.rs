@@ -7,7 +7,7 @@ use glory::prelude::*;
 use crate::presentation::View;
 
 pub(crate) fn retained_discussion_host(
-    ready: impl Into<Lotus<bool>>,
+    ready: impl Into<Vary<bool>>,
     render: impl Fn(&Scope, Cage<bool>) -> View + 'static,
 ) -> View {
     let ready = ready.into();

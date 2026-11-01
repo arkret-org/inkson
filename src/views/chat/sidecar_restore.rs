@@ -220,7 +220,7 @@ pub(super) fn sidecar_reconciliation(
 
     base_url: String,
     realm_id: String,
-    strand_id: Lotus<String>,
+    strand_id: Vary<String>,
     authority: arkret_sdk::AccountId,
     device_id: arkret_sdk::DeviceId,
     token: Cage<String>,
@@ -349,7 +349,7 @@ pub(super) fn sidecar_restore(
 
     base_url: String,
     realm_id: String,
-    strand_id: Lotus<String>,
+    strand_id: Vary<String>,
     authority: arkret_sdk::AccountId,
     device_id: arkret_sdk::DeviceId,
     token: Cage<String>,

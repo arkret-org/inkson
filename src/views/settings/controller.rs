@@ -9,6 +9,7 @@ use crate::presentation::{InksonContext, SharedStateStore};
 #[derive(Clone)]
 pub(super) struct SettingsController {
     pub context: Rc<InksonContext>,
+    pub account_avatar: crate::account_avatar::AccountAvatarContext,
     pub owner: glory::ui::WeakScope,
     pub invite_locator: Cage<InviteLocatorState>,
     pub profile_avatar_blob_ref: Cage<String>,
@@ -47,44 +48,7 @@ pub(super) struct SettingsController {
     pub state_store: SharedStateStore,
 }
 
-/// Root-owned session coordinates; each completion checks these synchronously,
-/// so an account switch is effective before the UI cleanup effect is polled.
-#[derive(Clone, Copy)]
-pub(super) struct SettingsSessionSignals {
-    pub active_account: Cage<Option<crate::config::ActiveAccountContext>>,
-    pub base_url: Cage<String>,
-    pub token: Cage<String>,
-    pub generation: Cage<u64>,
-}
-
-#[derive(Clone, PartialEq)]
-pub(super) struct SettingsSessionStamp {
-    account: Option<(arkret_sdk::AccountId, arkret_sdk::DeviceId, String)>,
-    base_url: String,
-    token: String,
-    generation: u64,
-}
-
-impl SettingsSessionSignals {
-    pub(super) fn capture(self) -> SettingsSessionStamp {
-        SettingsSessionStamp {
-            account: self.active_account.get().map(|account| {
-                (
-                    account.authority,
-                    account.device_id,
-                    account.server_url.to_string(),
-                )
-            }),
-            base_url: self.base_url.get(),
-            token: self.token.get(),
-            generation: self.generation.get(),
-        }
-    }
-
-    pub(super) fn is_current(self, started: &SettingsSessionStamp) -> bool {
-        self.capture() == *started
-    }
-}
+pub(super) use crate::account_avatar::{SettingsSessionSignals, SettingsSessionStamp};
 
 /// UI cleanup subscribes to the same live roots as the synchronous completion
 /// fence; it does not create a second session authority or decide acceptance.
@@ -125,12 +89,8 @@ impl SettingsController {
         let avatar_reading = scope.cage(false);
         Self {
             invite_locator: scope.cage(InviteLocatorState::default()),
-            profile_avatar_blob_ref: scope.cage(
-                context
-                    .state_store
-                    .read(|store| store.load_plain_local_data("avatar_blob_ref"))
-                    .unwrap_or_default(),
-            ),
+            account_avatar: context.account_avatar(),
+            profile_avatar_blob_ref: scope.cage(context.account_avatar_display()),
             avatar_upload_status: scope.cage(String::new()),
             avatar_uploading: scope.cage(false),
             avatar_cache_status: scope.cage(String::new()),
@@ -419,11 +379,11 @@ impl SettingsController {
         selection: PendingAvatarCrop,
         crop: crate::avatar_crop::AvatarCrop,
     ) {
-        let context = self.context.clone();
         let page_owner = self.owner.clone();
 
         let SettingsController {
             settings_session,
+            account_avatar,
             theme,
             profile_avatar_blob_ref,
             avatar_upload_status,
@@ -523,44 +483,46 @@ impl SettingsController {
                             }
                             match profile_result {
                                 Ok(_) => {
+                                    // Public acceptance is canonical before the private mirror is
+                                    // attempted.
+                                    if !account_avatar
+                                        .accepted(&started_session, Some(blob_ref.clone()))
+                                    {
+                                        return;
+                                    }
                                     state_store.write(|store| {
                                         store.save_plain_local_data(
                                             "avatar_blob_ref",
                                             blob_ref.clone(),
                                         )
                                     });
-                                    push_client_ui_account_data_with_avatar(
-                                        context.clone(),
+                                    profile_avatar_blob_ref
+                                        .revise(|value| *value = blob_ref.clone());
+                                    avatar_refresh_nonce.revise(|value| *value += 1);
+                                    let local_theme = theme.get();
+                                    let mirror_result = push_client_ui_account_data_with_avatar(
                                         base.clone(),
                                         api_token.clone(),
-                                        theme.get(),
-                                        Some(blob_ref.clone()),
-                                    );
-                                    let refreshed = state_store
-                                        .read(|store| {
-                                            store.load_plain_local_data("avatar_blob_ref")
-                                        })
-                                        .filter(|value| !value.trim().is_empty())
-                                        .unwrap_or_else(|| blob_ref.clone());
-                                    profile_avatar_blob_ref.revise(|value| {
-                                        *value = refreshed;
-                                    });
-                                    avatar_refresh_nonce.revise(|value| {
-                                        *value = avatar_refresh_nonce.get() + 1;
-                                    });
-                                    avatar_uploading.revise(|value| {
-                                        *value = false;
-                                    });
-                                    pending_avatar_crop.revise(|value| {
-                                        *value = None;
-                                    });
-                                    avatar_upload_status.revise(|value| {
-                                        *value = String::new();
-                                    });
-                                    crate::components::feedback::toast_success(
-                                        "feedback.avatar_updated",
-                                        vec![],
-                                    );
+                                        local_theme,
+                                        Some(blob_ref),
+                                        settings_session,
+                                        started_session.clone(),
+                                    )
+                                    .await;
+                                    if !settings_session.is_current(&started_session) {
+                                        return;
+                                    }
+                                    avatar_uploading.revise(|value| *value = false);
+                                    pending_avatar_crop.revise(|value| *value = None);
+                                    match mirror_result {
+                                        Ok(()) => {
+                                            avatar_upload_status.revise(|value| value.clear());
+                                            crate::components::feedback::toast_success("feedback.avatar_updated", vec![]);
+                                        }
+                                        Err(error) => avatar_upload_status.revise(|value| {
+                                            *value = format!("Avatar updated; preference synchronization failed: {error}");
+                                        }),
+                                    }
                                 }
                                 Err(err) => {
                                     avatar_uploading.revise(|value| {
@@ -602,11 +564,11 @@ impl SettingsController {
         api_token: String,
         first_profile_display_name: String,
     ) {
-        let context = self.context.clone();
         let page_owner = self.owner.clone();
 
         let SettingsController {
             settings_session,
+            account_avatar,
             theme,
             profile_avatar_blob_ref,
             avatar_removing,
@@ -656,29 +618,35 @@ impl SettingsController {
                     }
                     match result {
                         Ok(_) => {
+                            if !account_avatar.accepted(&started_session, None) {
+                                return;
+                            }
                             state_store
                                 .write(|store| store.save_plain_local_data("avatar_blob_ref", ""));
-                            push_client_ui_account_data_with_avatar(
-                                context.clone(),
+                            profile_avatar_blob_ref.revise(|value| value.clear());
+                            avatar_refresh_nonce.revise(|value| *value += 1);
+                            let local_theme = theme.get();
+                            let mirror_result = push_client_ui_account_data_with_avatar(
                                 base,
                                 api_token,
-                                theme.get(),
+                                local_theme,
                                 Some(String::new()),
-                            );
-                            profile_avatar_blob_ref.revise(|value| {
-                                *value = String::new();
-                            });
-                            avatar_refresh_nonce.revise(|value| {
-                                *value = avatar_refresh_nonce.get() + 1;
-                            });
-                            pending_avatar_crop.revise(|value| {
-                                *value = None;
-                            });
-                            avatar_removing.revise(|value| {
-                                *value = false;
-                            });
+                                settings_session,
+                                started_session.clone(),
+                            )
+                            .await;
+                            if !settings_session.is_current(&started_session) {
+                                return;
+                            }
+                            pending_avatar_crop.revise(|value| *value = None);
+                            avatar_removing.revise(|value| *value = false);
                             avatar_cache_status.revise(|value| {
-                                *value = crate::i18n::tr("settings.avatar.removed")
+                                *value = match mirror_result {
+                                    Ok(()) => crate::i18n::tr("settings.avatar.removed"),
+                                    Err(error) => format!(
+                                        "Avatar removed; preference synchronization failed: {error}"
+                                    ),
+                                };
                             });
                         }
                         Err(err) => {
@@ -699,9 +667,9 @@ impl SettingsController {
     /// Serialize writes and fence their completion against the live session roots.
     pub(super) fn change_invite_locator(self, revoke: bool) {
         let started = self.settings_session.capture();
-        let base = started.base_url.clone();
-        let token = started.token.clone();
-        if token.trim().is_empty() || started.account.is_none() {
+        let base = started.base_url().to_owned();
+        let token = started.session_credential().to_owned();
+        if token.trim().is_empty() || !started.has_account() {
             return;
         }
         let session = self.settings_session;

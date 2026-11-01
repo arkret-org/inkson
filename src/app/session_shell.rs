@@ -16,7 +16,7 @@ pub(super) fn block(class: impl Into<String>, children: Vec<View>) -> View {
 }
 pub(super) fn action(
     class: impl Into<String>,
-    label: impl Into<Lotus<String>>,
+    label: impl Into<Vary<String>>,
     handler: impl FnMut() + 'static,
 ) -> View {
     Box::new(
@@ -29,7 +29,7 @@ pub(super) fn action(
 }
 pub(super) fn icon_action(
     class: &str,
-    label: impl Into<Lotus<String>>,
+    label: impl Into<Vary<String>>,
     icon: &str,
     handler: impl FnMut() + 'static,
 ) -> View {
@@ -46,7 +46,7 @@ pub(super) fn nav(
     context: Rc<InksonContext>,
     route: Route,
     class: impl Into<String>,
-    label: impl Into<Lotus<String>>,
+    label: impl Into<Vary<String>>,
     icon: &str,
 ) -> View {
     let label = label.into();
@@ -816,7 +816,7 @@ fn account_menu_avatar(
 fn account_menu_copy(
     scope: &Scope,
     context: Rc<InksonContext>,
-    label: impl Into<Lotus<String>>,
+    label: impl Into<Vary<String>>,
     value: String,
     success: &'static str,
 ) -> View {
@@ -865,7 +865,7 @@ fn account_menu_copy(
     #[cfg(not(target_arch = "wasm32"))]
     Box::new(button)
 }
-fn account_menu_text(class: impl Into<String>, value: impl Into<Lotus<String>>) -> View {
+fn account_menu_text(class: impl Into<String>, value: impl Into<Vary<String>>) -> View {
     Box::new(text().class(class.into()).content(value))
 }
 fn account_menu_identity(
@@ -904,15 +904,11 @@ fn account_menu_identity(
 fn account_menu(scope: &Scope, context: Rc<InksonContext>, ui: Rc<ShellState>) -> View {
     let avatar_source = scope.bond({
         let context = context.clone();
-        let ui = ui.clone();
         move || {
-            let _ = context.state_revision.get();
-            let fallback = ui.avatar.get();
-            let blob = context
-                .state_store
-                .read(|store| store.load_plain_local_data("avatar_blob_ref"))
-                .unwrap_or(fallback);
-            (super::principal_id_owned(context.principal_id.get()), blob)
+            (
+                super::principal_id_owned(context.principal_id.get()),
+                context.account_avatar_display(),
+            )
         }
     });
     let avatar = reactive_distinct(avatar_source, {
