@@ -25,6 +25,30 @@ class ReviewGateTests(unittest.TestCase):
     def test_current_bindings_need_no_revision_or_copied_contract_members(self):
         gate.verify_contract_bindings(self.document)
 
+    def test_logout_mock_probe_preserves_its_native_authority_obligation(self):
+        identifier = "ak.gate.account.command.logout.v1"
+        row = next(row for row in self.document["operations"] if row["operation_id"] == identifier)
+        self.assertIn(identifier, gate.implemented_ids())
+        self.assertEqual(row["verification_need"], "native_authority")
+        self.assertIsNone(row["mock_test"])
+        gate.verify_contract_bindings(self.document)
+        row["mock_test"] = {"file": "tests/contract/remaining-operations.spec.ts",
+                            "name": f"remaining valid request and response contract: {identifier}"}
+        with self.assertRaises(AssertionError):
+            gate.verify_contract_bindings(self.document)
+
+    def test_summary_counts_native_logout_even_while_its_mock_probe_remains(self):
+        self.assertIn("ak.gate.account.command.logout.v1", gate.implemented_ids())
+        # Isolate arithmetic only; these stubs grant no native evidence credit.
+        with patch.object(gate, "verify_contract_bindings"), \
+             patch.object(gate, "read", return_value={}), \
+             patch.object(gate, "native_digest", return_value="fixture-digest"), \
+             patch.object(gate, "validate_native") as producer:
+            result = gate.validate(self.document)
+        producer.assert_called_once_with({}, {}, "fixture-digest")
+        self.assertEqual(result, {"operations": 135, "mock_behavior": 29,
+                                  "native_fixture_replay": 14, "uncovered": 92})
+
     def test_missing_operation(self):
         self.document["operations"].pop()
         with self.assertRaisesRegex(AssertionError, "operation set drift"):

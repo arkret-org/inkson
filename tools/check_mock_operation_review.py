@@ -53,6 +53,10 @@ def verify_contract_bindings(document):
             assert row["verification_need"] == "native_fixture_replay", identifier
             assert row["mock_test"] == {"file": "tests/contract/native-read-evidence.spec.ts", "name": f"native accepted read replay preserves original contract: {identifier}"}, identifier
             assert "native accepted read replay preserves original contract: ${id}, install ${index}" in (REPO / row["mock_test"]["file"]).read_text(encoding="utf-8")
+        elif row["verification_need"] == "native_authority":
+            # A positive schema/mock probe does not discharge a real authority
+            # obligation. Its independent mock test remains in the probe set.
+            assert row["mock_test"] is None, identifier
         elif identifier in implemented:
             assert row["verification_need"] == "mock_behavior", identifier
             test = row["mock_test"]
@@ -66,11 +70,13 @@ def verify_contract_bindings(document):
 
 def validate(document):
     verify_contract_bindings(document)
-    implemented = implemented_ids()
     native = native_ids()
     validate_native(read(FIXTURE), read(MANIFEST), native_digest(FIXTURE))
     rows = document["operations"]
-    return {"operations": len(rows), "mock_behavior": len(implemented), "native_fixture_replay": len(native), "uncovered": len(rows) - len(implemented) - len(native)}
+    return {"operations": len(rows),
+            "mock_behavior": sum(row["verification_need"] == "mock_behavior" for row in rows),
+            "native_fixture_replay": len(native),
+            "uncovered": sum(row["verification_need"] in {"native_authority", "native_evidence_fixture"} for row in rows)}
 
 
 def render(document):

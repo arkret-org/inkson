@@ -265,8 +265,8 @@
     },
     {
       "operation_id": "ak.gate.account.command.logout.v1",
-      "verification_need": "mock_behavior",
-      "reason": "A concrete known-object request and positive mock response are available. Tests validate canonical schema and observable fixture behavior; this does not certify native authorization, persistence or all domain branches.",
+      "verification_need": "native_authority",
+      "reason": "Hard logout requires the current grant's authenticated holder/DPoP context and Account Authority orchestration of the issuer revocation ledger. A mock response cannot establish durable grant-chain termination, revocation freshness or idempotent replay. The exact requirements are bound by normative_documents and contract_digest.",
       "normative_documents": [
         "zh/identity/account-lifecycle.md",
         "zh/crypto-media/device-lifecycle.md"
@@ -276,10 +276,7 @@
         "coauth/crates/backend/src/handlers/arkret/device_pairing.rs",
         "coauth/crates/backend/src/handlers/arkret/session_grant/session_logout.rs"
       ],
-      "mock_test": {
-        "file": "tests/contract/remaining-operations.spec.ts",
-        "name": "remaining valid request and response contract: ak.gate.account.command.logout.v1"
-      },
+      "mock_test": null,
       "contract_digest": "sha256:78c8e8990dc526087db3f44a6db5cb530cab95987e91f4165a8e1c7b2a32fbde"
     },
     {
