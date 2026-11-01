@@ -1,7 +1,7 @@
 //! Account selection retains its root authority while page owners retire.
 use std::rc::Rc;
 
-use glory::{Cage, Lotus, Scope};
+use glory::{Cage, Scope, Vary};
 
 use crate::config::{ActiveAccountContext, LocalConfigStore, MultiProfileConfig};
 use crate::presentation::widgets::{empty, reactive, stack};
@@ -322,7 +322,7 @@ pub fn account_picker_options(profiles: &MultiProfileConfig) -> Vec<(String, Str
         .collect()
 }
 
-pub fn account_switcher(scope: &Scope, context: Rc<InksonContext>, enabled: Lotus<bool>) -> View {
+pub fn account_switcher(scope: &Scope, context: Rc<InksonContext>, enabled: Vary<bool>) -> View {
     let root = AccountSessionRoot::from_context(context.clone());
     let source = scope.bond({
         let context = context.clone();
@@ -456,7 +456,7 @@ pub fn account_switcher(scope: &Scope, context: Rc<InksonContext>, enabled: Lotu
 pub(crate) fn return_to_previous_account(
     scope: &Scope,
     context: Rc<InksonContext>,
-    enabled: Lotus<bool>,
+    enabled: Vary<bool>,
 ) -> View {
     if context.active_account.get_untracked().is_some() {
         return empty();

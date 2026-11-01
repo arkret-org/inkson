@@ -222,7 +222,7 @@ impl RecoverySetup {
 }
 fn setup_dialog(
     open: Cage<bool>,
-    name: Lotus<String>,
+    name: Vary<String>,
     dismiss: impl FnMut(glory::render::DismissReason) + 'static,
     content: View,
 ) -> View {

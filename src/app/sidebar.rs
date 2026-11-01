@@ -703,8 +703,8 @@ use crate::routes::Route;
 fn icon_link(
     context: Rc<InksonContext>,
     route: Route,
-    class: impl Into<Lotus<String>>,
-    label: impl Into<Lotus<String>>,
+    class: impl Into<Vary<String>>,
+    label: impl Into<Vary<String>>,
     icon: &str,
 ) -> View {
     Box::new(

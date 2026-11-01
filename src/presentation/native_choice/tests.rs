@@ -105,5 +105,5 @@ fn native_choice_preserves_values_permissions_dismissal_and_trigger_identity() {
 #[cfg(feature = "desktop")]
 #[test]
 fn actual_blitz_accepts_and_operates_the_native_choice_without_select_or_menu_descriptors() {
-    exercise(glory::App::new(glory::blitz::Renderer::new));
+    exercise(glory::App::new(glory::apace::Renderer::new));
 }

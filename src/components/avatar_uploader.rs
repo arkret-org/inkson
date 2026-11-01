@@ -139,8 +139,8 @@ pub fn image_file_picker_labeled(
     scope: &Scope,
     context: Rc<InksonContext>,
     key: String,
-    label: Lotus<String>,
-    enabled: Lotus<bool>,
+    label: Vary<String>,
+    enabled: Vary<bool>,
     on_selected: Rc<dyn Fn(SelectedImage)>,
     on_error: Rc<dyn Fn(String)>,
 ) -> View {
@@ -152,8 +152,8 @@ pub fn image_file_picker_labeled(
 pub fn image_file_picker_labeled_with_state(
     context: Rc<InksonContext>,
     key: String,
-    label: Lotus<String>,
-    enabled: Lotus<bool>,
+    label: Vary<String>,
+    enabled: Vary<bool>,
     on_selected: Rc<dyn Fn(SelectedImage)>,
     on_error: Rc<dyn Fn(String)>,
     state: ImageReadState,
@@ -312,8 +312,8 @@ mod image_read_tests;
 pub fn image_file_picker_labeled_with_state(
     context: Rc<InksonContext>,
     key: String,
-    label: Lotus<String>,
-    enabled: Lotus<bool>,
+    label: Vary<String>,
+    enabled: Vary<bool>,
     on_selected: Rc<dyn Fn(SelectedImage)>,
     on_error: Rc<dyn Fn(String)>,
     state: ImageReadState,
@@ -411,7 +411,7 @@ pub fn avatar_uploader(
     context: Rc<InksonContext>,
     props: AvatarUploaderProps,
 ) -> View {
-    let seed: Lotus<String> = props.alt_text.clone().into();
+    let seed: Vary<String> = props.alt_text.clone().into();
     avatar_uploader_with_seed(scope, context, props, seed)
 }
 
@@ -420,7 +420,7 @@ pub fn avatar_uploader_with_seed(
     scope: &Scope,
     context: Rc<InksonContext>,
     props: AvatarUploaderProps,
-    seed: Lotus<String>,
+    seed: Vary<String>,
 ) -> View {
     let pending = scope.cage(None::<SelectedImage>);
     let zoom = scope.cage(125.0_f64);

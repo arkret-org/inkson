@@ -48,11 +48,11 @@ pub fn line(class: impl Into<String>, children: Vec<View>) -> View {
     )
 }
 
-pub fn plain(value: impl Into<Lotus<String>>) -> View {
+pub fn plain(value: impl Into<Vary<String>>) -> View {
     Box::new(text().content(value))
 }
 
-pub fn paragraph(class: impl Into<String>, value: impl Into<Lotus<String>>) -> View {
+pub fn paragraph(class: impl Into<String>, value: impl Into<Vary<String>>) -> View {
     Box::new(
         text()
             .kind(TextKind::Paragraph)
@@ -61,7 +61,7 @@ pub fn paragraph(class: impl Into<String>, value: impl Into<Lotus<String>>) -> V
     )
 }
 
-pub fn heading(level: u8, class: impl Into<String>, value: impl Into<Lotus<String>>) -> View {
+pub fn heading(level: u8, class: impl Into<String>, value: impl Into<Vary<String>>) -> View {
     Box::new(
         text()
             .kind(TextKind::Heading(level))
@@ -88,23 +88,23 @@ pub fn panel(
 /// The container owns the replacement position as well as the child lifetime.
 pub trait ReactiveSource: 'static {
     type Value: Clone + 'static;
-    fn into_lotus(self) -> Lotus<Self::Value>;
+    fn into_lotus(self) -> Vary<Self::Value>;
 }
 impl<T: Clone + 'static> ReactiveSource for Cage<T> {
     type Value = T;
-    fn into_lotus(self) -> Lotus<T> {
+    fn into_lotus(self) -> Vary<T> {
         self.into()
     }
 }
 impl<T: Clone + 'static> ReactiveSource for Bond<T> {
     type Value = T;
-    fn into_lotus(self) -> Lotus<T> {
+    fn into_lotus(self) -> Vary<T> {
         self.into()
     }
 }
-impl<T: Clone + 'static> ReactiveSource for Lotus<T> {
+impl<T: Clone + 'static> ReactiveSource for Vary<T> {
     type Value = T;
-    fn into_lotus(self) -> Lotus<T> {
+    fn into_lotus(self) -> Vary<T> {
         self
     }
 }
@@ -134,7 +134,7 @@ where
 type ReactiveEquality<T> = Rc<dyn Fn(&T, &T) -> bool>;
 
 fn reactive_checked<T: Clone + 'static>(
-    source: Lotus<T>,
+    source: Vary<T>,
     equal: Option<ReactiveEquality<T>>,
     render: impl Fn(&Scope, T) -> View + 'static,
 ) -> View {
@@ -274,7 +274,7 @@ pub fn resource_content<T: Clone + 'static>(
 pub fn input_field(
     _context: Rc<InksonContext>,
     key: impl Into<String>,
-    label: impl Into<Lotus<String>>,
+    label: impl Into<Vary<String>>,
     value: Cage<String>,
     purpose: Purpose,
 ) -> View {
@@ -297,7 +297,7 @@ pub fn input_field(
 pub fn table(
     _context: Rc<InksonContext>,
     key: impl Into<String>,
-    headers: Vec<Lotus<String>>,
+    headers: Vec<Vary<String>>,
     rows: Vec<Vec<View>>,
 ) -> View {
     let head = sapid::table_head().row(sapid::table_row("head").cells(

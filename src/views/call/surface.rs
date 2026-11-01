@@ -20,8 +20,8 @@ impl Callbacks {
     fn button(
         &self,
         key: &'static str,
-        label: impl Into<Lotus<String>>,
-        enabled: impl Into<Lotus<bool>>,
+        label: impl Into<Vary<String>>,
+        enabled: impl Into<Vary<bool>>,
         destructive: bool,
     ) -> View {
         let callback = self.0.get(key).cloned();
@@ -52,7 +52,7 @@ impl Callbacks {
         &self,
         scope: &Scope,
         key: &'static str,
-        label: impl Into<Lotus<String>>,
+        label: impl Into<Vary<String>>,
         pressed: Cage<bool>,
     ) -> View {
         let callback = self.0.get(key).cloned();
@@ -101,13 +101,13 @@ pub(super) struct CallSurface {
 fn block(class: &str, children: Vec<View>) -> View {
     Box::new(view().class(class.to_owned()).fill(children))
 }
-fn label(class: &str, value: impl Into<Lotus<String>>) -> View {
+fn label(class: &str, value: impl Into<Vary<String>>) -> View {
     Box::new(text().class(class.to_owned()).content(value))
 }
 fn field(
     scope: &Scope,
     key: &str,
-    title: impl Into<Lotus<String>>,
+    title: impl Into<Vary<String>>,
     value: Cage<String>,
     multiline: bool,
     state: CallSurface,

@@ -149,7 +149,7 @@ fn nav_view(context: Rc<InksonContext>, route: Route, class: &str, children: Vec
     )
 }
 
-fn surface_title(value: impl Into<glory::Lotus<String>>) -> View {
+fn surface_title(value: impl Into<glory::Vary<String>>) -> View {
     Box::new(
         glory::ui::text()
             .class("dashboard-section-title")

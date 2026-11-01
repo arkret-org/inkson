@@ -2,7 +2,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::atomic::AtomicUsize;
 
-use glory::blitz::assets::{LoadConfig, Loader, NetReady, Url};
+use glory::apace::assets::{LoadConfig, Loader, NetReady, Url};
 use glory::ui::Widget;
 
 use super::*;
@@ -231,7 +231,7 @@ fn real_blitz_loads_and_registers_the_self_hosted_inter_truetype_fallback() {
         ..Default::default()
     })
     .unwrap();
-    let window = glory::blitz::shell::WindowApp::with_config(glory::blitz::Config {
+    let window = glory::apace::shell::WindowApp::with_config(glory::apace::Config {
         base_url: Url::parse("asset://inkson/").unwrap(),
         provider: Some(Arc::new(FontRequests {
             loader,
@@ -276,7 +276,7 @@ fn assert_real_blitz_decode(mime: &'static str, bytes: Vec<u8>) {
         images: images.clone(),
         assets,
     });
-    let window = glory::blitz::shell::WindowApp::with_config(glory::blitz::Config {
+    let window = glory::apace::shell::WindowApp::with_config(glory::apace::Config {
         provider: Some(provider),
         ..Default::default()
     });

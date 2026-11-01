@@ -1190,7 +1190,7 @@ pub(super) fn page(
             };
             let metric =
                 |label: View, value: View, link: View| stack("metric", vec![label, value, link]);
-            let label = |value: glory::Lotus<String>| {
+            let label = |value: glory::Vary<String>| {
                 Box::new(
                     glory::prelude::text()
                         .class("realm-overview-label")

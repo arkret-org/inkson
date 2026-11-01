@@ -39,7 +39,7 @@ fn actual_blitz_accepts_help_and_me_badge_and_operates_managed_dialogs() {
         .prefix("native-hint-")
         .tempdir_in("D:/BuildCache/inkson-glory/tmp")
         .unwrap();
-    let app = glory::App::new(glory::blitz::Renderer::new);
+    let app = glory::App::new(glory::apace::Renderer::new);
     let context = context(&app, directory.path());
     app.mount(group().fill((
         help_tip(
@@ -96,7 +96,7 @@ fn actual_blitz_theme_buttons_publish_pressed_state_and_real_persist_callbacks()
         .prefix("native-theme-")
         .tempdir_in("D:/BuildCache/inkson-glory/tmp")
         .unwrap();
-    let app = glory::App::new(glory::blitz::Renderer::new);
+    let app = glory::App::new(glory::apace::Renderer::new);
     let context = context(&app, directory.path());
     let theme = app.scope().cage("system".to_owned());
     let changes = app.scope().cage(Vec::<String>::new());

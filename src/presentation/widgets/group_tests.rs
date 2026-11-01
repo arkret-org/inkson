@@ -133,5 +133,5 @@ fn reactive_groups_preserve_sibling_order_empty_positions_locale_and_bounded_own
 #[cfg(all(not(target_arch = "wasm32"), feature = "desktop"))]
 #[test]
 fn actual_blitz_accepts_repeated_group_replacement_between_stable_controls() {
-    exercise(glory::App::new(glory::blitz::Renderer::new));
+    exercise(glory::App::new(glory::apace::Renderer::new));
 }

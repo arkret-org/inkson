@@ -512,12 +512,12 @@ pub(super) fn card_detail(
     let probe = crate::views::secure_send::scope_send_probe(
         scope,
         app.clone(),
-        glory::Lotus::from(
+        glory::Vary::from(
             arkret_sdk::RealmId::new(context.selected_realm_id.clone())
                 .ok()
                 .map(|realm_id| arkret_sdk::ScopeRef::Realm { realm_id }),
         ),
-        glory::Lotus::from(context.device_id.clone()),
+        glory::Vary::from(context.device_id.clone()),
     );
     let retained = retained_card(scope, app.clone(), c.selected_card, &context);
     let detail = Detail {
@@ -1878,7 +1878,7 @@ fn assignee_avatar(
     )
 }
 
-pub(super) fn inline_label(class: &str, value: impl Into<glory::Lotus<String>>) -> View {
+pub(super) fn inline_label(class: &str, value: impl Into<glory::Vary<String>>) -> View {
     Box::new(glory::ui::text().class(class.to_owned()).content(value))
 }
 

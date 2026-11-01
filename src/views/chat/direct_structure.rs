@@ -552,7 +552,7 @@ fn direct_chat_option_label(
 fn structure_select(
     scope: &Scope,
     key: &str,
-    label: impl Into<Lotus<String>>,
+    label: impl Into<Vary<String>>,
     selected: Cage<String>,
     options: Vec<(String, String)>,
     changed: Rc<dyn Fn(String)>,
@@ -593,7 +593,7 @@ fn structure_select(
 fn web_structure_select(
     scope: &Scope,
     key: &str,
-    label: impl Into<Lotus<String>>,
+    label: impl Into<Vary<String>>,
     selected: Cage<String>,
     options: Vec<(String, String)>,
     changed: Rc<dyn Fn(String)>,

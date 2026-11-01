@@ -29,20 +29,20 @@ impl NativeChoiceOption {
 
 pub struct NativeChoiceProps {
     pub key: String,
-    pub label: Lotus<String>,
-    pub value: Lotus<Option<String>>,
+    pub label: Vary<String>,
+    pub value: Vary<Option<String>>,
     pub options: Vec<NativeChoiceOption>,
-    pub enabled: Lotus<bool>,
+    pub enabled: Vary<bool>,
     pub class: String,
-    pub close_label: Lotus<String>,
+    pub close_label: Vary<String>,
     pub control_id: Option<SemanticId>,
     pub on_change: Rc<dyn Fn(Option<String>)>,
 }
 impl NativeChoiceProps {
     pub fn new(
         key: impl Into<String>,
-        label: impl Into<Lotus<String>>,
-        value: impl Into<Lotus<Option<String>>>,
+        label: impl Into<Vary<String>>,
+        value: impl Into<Vary<Option<String>>>,
         options: Vec<NativeChoiceOption>,
         on_change: impl Fn(Option<String>) + 'static,
     ) -> Self {
@@ -58,7 +58,7 @@ impl NativeChoiceProps {
             on_change: Rc::new(on_change),
         }
     }
-    pub fn enabled(mut self, enabled: impl Into<Lotus<bool>>) -> Self {
+    pub fn enabled(mut self, enabled: impl Into<Vary<bool>>) -> Self {
         self.enabled = enabled.into();
         self
     }
@@ -66,7 +66,7 @@ impl NativeChoiceProps {
         self.class = class.into();
         self
     }
-    pub fn close_label(mut self, label: impl Into<Lotus<String>>) -> Self {
+    pub fn close_label(mut self, label: impl Into<Vary<String>>) -> Self {
         self.close_label = label.into();
         self
     }

@@ -47,7 +47,7 @@ pub(super) fn picker(
 pub fn realm_preference_picker(
     scope: &Scope,
     context: Rc<InksonContext>,
-    options: glory::Lotus<Vec<(String, String)>>,
+    options: glory::Vary<Vec<(String, String)>>,
     selected: Cage<String>,
     key: &str,
 ) -> View {

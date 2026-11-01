@@ -18,9 +18,9 @@ fn creator_scope(realm: String, circle: Option<String>) -> anyhow::Result<arkret
 }
 
 pub(crate) struct CreatorMlsRetryProps {
-    pub realm_id: Lotus<String>,
+    pub realm_id: Vary<String>,
     pub circle_id: Option<String>,
-    pub refresh_hint: Lotus<String>,
+    pub refresh_hint: Vary<String>,
     pub token: Cage<String>,
 }
 pub(crate) fn creator_mls_retry(

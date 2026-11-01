@@ -23,7 +23,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use glory::{Bond, Lotus, Scope};
+use glory::{Bond, Scope, Vary};
 
 use crate::presentation::InksonContext;
 
@@ -93,8 +93,8 @@ pub(crate) struct ScopeSendProbe {
 pub(crate) fn scope_send_probe(
     ui_scope: &Scope,
     context: Rc<InksonContext>,
-    target: Lotus<Option<arkret_sdk::ScopeRef>>,
-    device: Lotus<arkret_sdk::DeviceId>,
+    target: Vary<Option<arkret_sdk::ScopeRef>>,
+    device: Vary<arkret_sdk::DeviceId>,
 ) -> Bond<ScopeSendProbe> {
     let creator_revision = ui_scope.cage(0_u64);
     let weak = ui_scope.downgrade();

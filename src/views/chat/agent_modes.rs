@@ -36,7 +36,7 @@ pub(crate) struct AgentModeReadKey {
 // generation also rejects leaving and returning to an identical scope (ABA).
 fn mode_reads<K: Clone + PartialEq + 'static>(
     scope: &Scope,
-    key: Lotus<K>,
+    key: Vary<K>,
     expected_count: Rc<dyn Fn(&K) -> usize>,
     read: ModeRead<K>,
     wait: RetryWait,
@@ -129,7 +129,7 @@ fn mode_reads<K: Clone + PartialEq + 'static>(
 pub(crate) fn agent_modes(
     scope: &Scope,
     context: Rc<crate::presentation::InksonContext>,
-    key: Lotus<AgentModeReadKey>,
+    key: Vary<AgentModeReadKey>,
     read_origin: &'static str,
 ) -> Bond<Modes> {
     let generation = context.session_generation.get_untracked();
@@ -201,7 +201,7 @@ mod tests {
         let current = live.clone();
         let modes = mode_reads(
             scope,
-            Lotus::<u64>::from(key),
+            Vary::<u64>::from(key),
             Rc::new(|_| 1),
             Rc::new(move |_| {
                 read_calls.set(read_calls.get() + 1);
@@ -236,7 +236,7 @@ mod tests {
             let receiver = Rc::new(RefCell::new(Some(receiver)));
             let modes = mode_reads(
                 scope,
-                Lotus::<u64>::from(key),
+                Vary::<u64>::from(key),
                 Rc::new(|_| 1),
                 Rc::new(move |_| {
                     observed.set(observed.get() + 1);

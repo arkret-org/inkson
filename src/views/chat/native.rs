@@ -5,9 +5,9 @@ pub(super) fn block(class: impl Into<String>, children: Vec<View>) -> View {
     Box::new(view().class(class.into()).fill(children))
 }
 pub(super) fn button(
-    label: impl Into<Lotus<String>>,
+    label: impl Into<Vary<String>>,
     class: impl Into<String>,
-    enabled: impl Into<Lotus<bool>>,
+    enabled: impl Into<Vary<bool>>,
     on_press: impl FnMut() + 'static,
 ) -> View {
     Box::new(
@@ -21,9 +21,9 @@ pub(super) fn button(
 }
 pub(super) fn icon_button(
     icon: &str,
-    label: impl Into<Lotus<String>>,
+    label: impl Into<Vary<String>>,
     class: impl Into<String>,
-    enabled: impl Into<Lotus<bool>>,
+    enabled: impl Into<Vary<bool>>,
     on_press: impl FnMut() + 'static,
 ) -> View {
     Box::new(
@@ -37,9 +37,9 @@ pub(super) fn icon_button(
     )
 }
 pub(super) fn field(
-    label: impl Into<Lotus<String>>,
+    label: impl Into<Vary<String>>,
     class: impl Into<String>,
-    value: impl Into<Lotus<String>>,
+    value: impl Into<Vary<String>>,
     multiline: bool,
     change: impl FnMut(String) + 'static,
 ) -> View {
@@ -81,7 +81,7 @@ pub(super) fn date_time(
     scope: &Scope,
     context: Rc<crate::presentation::InksonContext>,
     key: impl Into<String>,
-    label: impl Into<Lotus<String>>,
+    label: impl Into<Vary<String>>,
     value: Cage<String>,
 ) -> View {
     date_time_with_field(scope, context, key, label, value, None)
@@ -91,7 +91,7 @@ pub(super) fn date_time_with_field(
     scope: &Scope,
     context: Rc<crate::presentation::InksonContext>,
     key: impl Into<String>,
-    label: impl Into<Lotus<String>>,
+    label: impl Into<Vary<String>>,
     value: Cage<String>,
     field: Option<sapid::FieldControl>,
 ) -> View {
