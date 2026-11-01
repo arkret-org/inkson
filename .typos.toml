@@ -22,6 +22,7 @@ extend-exclude = [
   # vendored third-party bundles
   "assets/vendor",
   "assets/livekit_vendor.js",
+  "web/fonts.css",
 ]
 
 [default.extend-words]

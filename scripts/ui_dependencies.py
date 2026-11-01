@@ -58,8 +58,12 @@ def ui_packages(metadata):
         package = packages[0]
         source = package.get("source") or ""
         location, separator, revision = source.partition("#")
-        if location != "git+" + expected + "?branch=main" or not separator or len(revision) != 40 or any(c not in "0123456789abcdef" for c in revision):
-            raise RuntimeError(f"{name} must resolve to the locked GitHub main dependency: {source!r}")
+        valid_source = location in {
+            "git+" + expected + "?branch=main",
+            "git+" + expected + "?rev=" + revision,
+        }
+        if not valid_source or not separator or len(revision) != 40 or any(c not in "0123456789abcdef" for c in revision):
+            raise RuntimeError(f"{name} must resolve to the locked GitHub dependency: {source!r}")
         manifest = Path(package["manifest_path"]).resolve()
         if not manifest.is_file():
             raise FileNotFoundError(manifest)
