@@ -350,7 +350,7 @@ impl ApprovalController {
         }
     }
 }
-fn approval_details(scope: &Scope, key: &str, label: Lotus<String>, content: View) -> View {
+fn approval_details(scope: &Scope, key: &str, label: Vary<String>, content: View) -> View {
     let mut content = Some(content);
     Box::new(
         sapid::collapsible(format!("{}-{key}", scope.id().slot()))

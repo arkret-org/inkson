@@ -312,7 +312,7 @@ mod tests {
 fn local_ordinary_timeline(
     scope: &Scope,
 
-    selected_realm_id: Lotus<String>,
+    selected_realm_id: Vary<String>,
     ordinary_timeline: Bond<Vec<ChatMessage>>,
     messages: Cage<Vec<ChatMessage>>,
     sync_cursor: Cage<String>,

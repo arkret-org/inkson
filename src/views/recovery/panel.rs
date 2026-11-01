@@ -236,7 +236,7 @@ impl RecoveryPage {
 #[path = "panel_surface_tests.rs"]
 mod surface_tests;
 
-fn recovery_label(value: impl Into<glory::Lotus<String>>) -> View {
+fn recovery_label(value: impl Into<glory::Vary<String>>) -> View {
     use glory::prelude::*;
     Box::new(text().class("recovery-strong-label").content(value))
 }

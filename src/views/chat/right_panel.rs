@@ -66,14 +66,14 @@ fn tabs(
     )
 }
 
-fn subhead(label: impl Into<Lotus<String>>) -> View {
+fn subhead(label: impl Into<Vary<String>>) -> View {
     Box::new(
         view()
             .class("discussion-subhead")
             .fill(text().content(label)),
     )
 }
-fn detail(label: impl Into<Lotus<String>>, value: impl Into<Lotus<String>>, class: &str) -> View {
+fn detail(label: impl Into<Vary<String>>, value: impl Into<Vary<String>>, class: &str) -> View {
     Box::new(
         view().class("detail-row").fill((
             text().content(label),
@@ -84,7 +84,7 @@ fn detail(label: impl Into<Lotus<String>>, value: impl Into<Lotus<String>>, clas
         )),
     )
 }
-fn panel_head(label: impl Into<Lotus<String>>) -> View {
+fn panel_head(label: impl Into<Vary<String>>) -> View {
     Box::new(
         view().class("discussion-panel-head").fill(
             view()
@@ -687,7 +687,7 @@ pub(super) fn settings_panel(
 
 fn settings_check(
     key: &str,
-    label: impl Into<Lotus<String>>,
+    label: impl Into<Vary<String>>,
     checked: Bond<bool>,
     changed: Rc<dyn Fn(bool)>,
 ) -> View {

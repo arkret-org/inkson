@@ -32,8 +32,8 @@ base64 = "0.23"
 chacha20poly1305 = { version = "0.11", default-features = false }
 chime = { version = "0.3.0", path = "../chime" }
 chrono = "0.4.45"
-glory = { git = "https://github.com/glory-rs/glory.git", branch = "main", version = "0.3.1", default-features = false, features = ["css"] }
-sapid = { git = "https://github.com/sapid-ui/sapid.git", branch = "main", version = "0.1.0", default-features = false, features = ["chat", "code", "editor", "files", "json", "dates"] }
+glory = { git = "https://github.com/glory-rs/glory.git", branch = "main", version = "0.6.1", default-features = false, features = ["css"] }
+sapid = { git = "https://github.com/sapid-ui/sapid.git", branch = "main", version = "0.6.1", default-features = false, features = ["chat", "code", "editor", "files", "json", "dates"] }
 ed25519-dalek = "3.0.0"
 futures-util = { version = "0.3.34", default-features = false, features = ["sink", "std"] }
 getrandom = "0.4.3"
@@ -76,7 +76,7 @@ default = []
 # Library consumers do not choose a UI renderer. Application builds select
 # their actual renderer explicitly, keeping desktop system libraries optional.
 app = []
-desktop = ["app", "glory/blitz-shell", "glory/blitz-assets", "glory/blitz-accesskit", "dep:wry", "dep:tao"]
+desktop = ["app", "glory/apace-shell", "glory/apace-assets", "glory/apace-accesskit", "dep:wry", "dep:tao"]
 web = ["app", "glory/web"]
 # Deferred protocol surfaces are compiled by default for unit coverage but
 # hidden from the local 1.0 UI unless explicitly opted in.
@@ -411,4 +411,4 @@ debug-assertions = false
 # Sapid main currently declares its sibling Glory path. Resolve that package
 # from the same remote Glory source as the application, without a local override.
 [patch."https://github.com/sapid-ui/sapid.git"]
-glory = { git = "https://github.com/glory-rs/glory.git", branch = "main", version = "0.3.1" }
+glory = { git = "https://github.com/glory-rs/glory.git", branch = "main", version = "0.6.1" }

@@ -139,8 +139,8 @@ pub fn run_native() -> Result<(), Box<dyn std::error::Error>> {
     use std::collections::BTreeMap;
     use std::sync::Arc;
 
-    use glory::blitz::assets::{LoadConfig, Loader, Url};
-    use glory::blitz::shell::{Shell, WindowApp, WindowAttributes};
+    use glory::apace::assets::{LoadConfig, Loader, Url};
+    use glory::apace::shell::{Shell, WindowApp, WindowAttributes};
     use glory::ui::Widget;
 
     let loader = Arc::new(Loader::new(LoadConfig {
@@ -153,7 +153,7 @@ pub fn run_native() -> Result<(), Box<dyn std::error::Error>> {
         images: images.clone(),
         assets: loader,
     });
-    let window = WindowApp::with_config(glory::blitz::Config {
+    let window = WindowApp::with_config(glory::apace::Config {
         base_url: Url::parse("asset://inkson/")?,
         provider: Some(provider),
         ..Default::default()

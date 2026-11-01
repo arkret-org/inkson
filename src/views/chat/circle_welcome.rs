@@ -5,7 +5,7 @@ pub(super) fn circle_welcome(
     context: Rc<crate::presentation::InksonContext>,
     base_url: String,
     realm_id: String,
-    circle_id: Lotus<Option<String>>,
+    circle_id: Vary<Option<String>>,
     authority: arkret_sdk::AccountId,
     device_id: arkret_sdk::DeviceId,
     token: Cage<String>,

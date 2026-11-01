@@ -8,9 +8,9 @@ mod send;
 
 fn primary_send_action(
     scope: &Scope,
-    label: impl Into<Lotus<String>>,
-    enabled: impl Into<Lotus<bool>>,
-    busy: impl Into<Lotus<bool>>,
+    label: impl Into<Vary<String>>,
+    enabled: impl Into<Vary<bool>>,
+    busy: impl Into<Vary<bool>>,
     mut send: impl FnMut() + 'static,
 ) -> View {
     let busy = busy.into();

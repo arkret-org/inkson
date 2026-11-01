@@ -430,9 +430,9 @@ impl AppBannerKind {
 pub fn app_banner(
     _scope: &Scope,
     context: Rc<InksonContext>,
-    offline: impl Into<Lotus<bool>>,
+    offline: impl Into<Vary<bool>>,
 ) -> View {
-    let offline: Lotus<bool> = offline.into();
+    let offline: Vary<bool> = offline.into();
     reactive(offline, move |scope, offline| {
         if !offline {
             return Box::new(widget(|_| Ok(())));

@@ -73,7 +73,7 @@ fn metric(label: View, value: View) -> View {
     stack("metric", vec![label, value])
 }
 
-fn metric_label(value: impl Into<Lotus<String>>) -> View {
+fn metric_label(value: impl Into<Vary<String>>) -> View {
     Box::new(text().class("storage-metric-label").content(value))
 }
 

@@ -13,7 +13,7 @@ pub(crate) fn field(
     key: &str,
     label_key: &str,
     value: Cage<String>,
-    enabled: impl Into<Lotus<bool>>,
+    enabled: impl Into<Vary<bool>>,
     multiline: bool,
     changed: impl FnMut(String) + 'static,
 ) -> View {
@@ -43,7 +43,7 @@ pub(crate) fn input(
     key: &str,
     label_key: &str,
     value: Cage<String>,
-    enabled: impl Into<Lotus<bool>>,
+    enabled: impl Into<Vary<bool>>,
 ) -> View {
     field(
         scope,
@@ -62,7 +62,7 @@ pub(crate) fn action(
     key: &str,
     label_key: &str,
     class: &str,
-    enabled: impl Into<Lotus<bool>>,
+    enabled: impl Into<Vary<bool>>,
     handler: impl FnMut() + 'static,
 ) -> View {
     Box::new(
@@ -79,8 +79,8 @@ pub(crate) fn toggle(
     context: Rc<InksonContext>,
     key: &str,
     label_key: &str,
-    checked: impl Into<Lotus<bool>>,
-    enabled: impl Into<Lotus<bool>>,
+    checked: impl Into<Vary<bool>>,
+    enabled: impl Into<Vary<bool>>,
     handler: impl FnMut(bool) + 'static,
 ) -> View {
     Box::new(
@@ -98,8 +98,8 @@ pub(crate) fn switch_toggle(
     context: Rc<InksonContext>,
     key: &str,
     label_key: &str,
-    checked: impl Into<Lotus<bool>>,
-    enabled: impl Into<Lotus<bool>>,
+    checked: impl Into<Vary<bool>>,
+    enabled: impl Into<Vary<bool>>,
     handler: impl FnMut(bool) + 'static,
 ) -> View {
     Box::new(
@@ -134,7 +134,7 @@ pub(crate) fn choice(
     label_key: &str,
     value: Cage<String>,
     options: Vec<(String, String)>,
-    enabled: impl Into<Lotus<bool>>,
+    enabled: impl Into<Vary<bool>>,
     handler: impl FnMut(String) + 'static,
 ) -> View {
     #[cfg(target_arch = "wasm32")]
@@ -204,7 +204,7 @@ fn web_choice(
     label_key: &str,
     value: Cage<String>,
     options: Vec<(String, String)>,
-    enabled: impl Into<Lotus<bool>>,
+    enabled: impl Into<Vary<bool>>,
     handler: impl FnMut(String) + 'static,
 ) -> View {
     let options = Rc::new(options);
@@ -254,7 +254,7 @@ pub(crate) fn card(
     nodes.extend(children);
     stack("event", nodes)
 }
-pub(crate) fn status(value: impl Into<Lotus<String>>) -> View {
+pub(crate) fn status(value: impl Into<Vary<String>>) -> View {
     let value = value.into();
     Box::new(widget(move |scope| {
         let mut content = reactive(value.clone(), |_, message| {
@@ -271,7 +271,7 @@ pub(crate) fn confirmation(
     scope: &Scope,
     context: Rc<InksonContext>,
     key: &str,
-    title: impl Into<Lotus<String>>,
+    title: impl Into<Vary<String>>,
     body: View,
     mut close: impl FnMut() + 'static,
 ) -> View {
@@ -307,7 +307,7 @@ pub(crate) fn line(class: impl Into<String>, children: Vec<View>) -> View {
 /// Keeps empty-field guidance visible on hosts without a placeholder property.
 pub(crate) fn input_prompt(
     scope: &Scope,
-    prompt: Lotus<String>,
+    prompt: Vary<String>,
     value: Cage<String>,
     control: View,
 ) -> View {

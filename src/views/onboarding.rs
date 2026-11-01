@@ -35,9 +35,9 @@ fn discard_consequence(binding_registered: bool) -> &'static str {
 
 fn button(
     key: &str,
-    label: impl Into<glory::Lotus<String>>,
+    label: impl Into<glory::Vary<String>>,
     class: &str,
-    enabled: impl Into<glory::Lotus<bool>>,
+    enabled: impl Into<glory::Vary<bool>>,
     handler: impl FnMut() + 'static,
 ) -> View {
     Box::new(
@@ -53,7 +53,7 @@ fn entry(
     key: &str,
     label: &str,
     value: Cage<String>,
-    enabled: impl Into<glory::Lotus<bool>>,
+    enabled: impl Into<glory::Vary<bool>>,
 ) -> View {
     let enabled = enabled.into();
     Box::new(
@@ -109,7 +109,7 @@ fn progress(current: usize) -> View {
             .collect(),
     )
 }
-fn notice(title: &str, body: impl Into<glory::Lotus<String>>, children: Vec<View>) -> View {
+fn notice(title: &str, body: impl Into<glory::Vary<String>>, children: Vec<View>) -> View {
     let mut nodes = vec![heading(2, "", title.to_owned()), paragraph("muted", body)];
     nodes.extend(children);
     stack("event onboarding-card onboarding-centered", nodes)

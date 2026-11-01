@@ -126,7 +126,7 @@ fn icon_button(
     key: &str,
     label: &str,
     icon: &str,
-    enabled: impl Into<glory::Lotus<bool>>,
+    enabled: impl Into<glory::Vary<bool>>,
     handler: impl FnMut() + 'static,
 ) -> View {
     Box::new(

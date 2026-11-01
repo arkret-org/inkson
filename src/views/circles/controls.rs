@@ -26,7 +26,7 @@ fn options(
     context: Rc<InksonContext>,
     key: &str,
     label: &str,
-    value: Lotus<Option<String>>,
+    value: Vary<Option<String>>,
     items: &[(&str, &str)],
     change: impl FnMut(Option<String>) + 'static,
 ) -> View {
