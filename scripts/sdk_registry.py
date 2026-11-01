@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import threading
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 WORKSPACE_ROOT = PROJECT_ROOT.parent
@@ -30,6 +31,7 @@ SDK_EVENT_KINDS = (
 )
 WATCHED_SUFFIXES = {".json", ".lock", ".rs", ".toml", ".yaml", ".yml", ".css", ".js", ".html", ".svg", ".woff", ".woff2", ".png", ".jpg", ".jpeg", ".py", ".list", ".ico"}
 IGNORED_DIRECTORIES = {".git", "node_modules", "target", "artifacts", "release-assets", ".local", "dist"}
+GIT_LIST_TIMEOUT_SECONDS = 2
 REGISTRY_DIGEST_PATTERN = re.compile(
     r'pub const EVENT_KIND_REGISTRY_SHA256: &str\s*=\s*"([0-9a-f]{64})";'
 )
@@ -154,27 +156,36 @@ def build_directories(metadata: dict) -> set[Path]:
 
 
 def watched_files(
-    roots: list[Path], build_dirs: set[Path]
+    roots: list[Path], build_dirs: set[Path], stop: threading.Event | None = None
 ) -> dict[Path, tuple[int, int]]:
     snapshot: dict[Path, tuple[int, int]] = {}
     for root in roots:
-        for directory, child_directories, files in os.walk(root):
-            directory_path = Path(directory)
-            child_directories[:] = [
-                name
-                for name in child_directories
-                if name not in IGNORED_DIRECTORIES
-                and directory_path / name not in build_dirs
-            ]
-            for name in files:
-                path = directory_path / name
-                if path.suffix.lower() not in WATCHED_SUFFIXES:
-                    continue
-                try:
-                    stat = path.stat()
-                except FileNotFoundError:
-                    continue
-                snapshot[path] = (stat.st_mtime_ns, stat.st_size)
+        if stop is not None and stop.is_set():
+            break
+        # Git includes tracked normative artifacts even under ignored directory
+        # names, and nonignored new source files, without scanning local proof
+        # logs, dependency caches or build products as source inputs.
+        listed = subprocess.run(
+            ['git', '-C', str(root), 'ls-files', '-z', '--cached', '--others', '--exclude-standard'],
+            check=True,
+            stdout=subprocess.PIPE,
+            timeout=GIT_LIST_TIMEOUT_SECONDS,
+        ).stdout.decode('utf-8', errors='surrogateescape')
+        for name in listed.split('\0'):
+            if stop is not None and stop.is_set():
+                break
+            if not name:
+                continue
+            path = root / name
+            if path.suffix.lower() not in WATCHED_SUFFIXES:
+                continue
+            if any(path.is_relative_to(directory) for directory in build_dirs):
+                continue
+            try:
+                stat = path.stat()
+            except FileNotFoundError:
+                continue
+            snapshot[path] = (stat.st_mtime_ns, stat.st_size)
     try:
         stat = SPEC_REGISTRY.stat()
         snapshot[SPEC_REGISTRY] = (stat.st_mtime_ns, stat.st_size)

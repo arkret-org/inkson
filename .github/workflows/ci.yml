@@ -154,6 +154,12 @@ jobs:
         working-directory: inkson
         run: node scripts/verify_vendored_assets.mjs
 
+      - name: Verify development launcher and source inventory
+        working-directory: inkson
+        run: |
+          python3 scripts/test_sdk_registry.py
+          python3 scripts/test_dev_glory.py
+
       - name: Install matching wasm-bindgen CLI
         working-directory: inkson
         run: python .ci/install-wasm-bindgen.py
