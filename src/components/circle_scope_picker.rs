@@ -19,6 +19,7 @@ pub fn circle_scope_picker(
     props: CircleScopePickerProps,
 ) -> View {
     let selected = props.selected;
+    #[cfg(not(target_arch = "wasm32"))]
     let value = scope.bond(move || {
         Some(match selected.get() {
             CircleScope::Realm => "__realm__".into(),
@@ -93,34 +94,22 @@ pub fn circle_scope_picker(
                     }
                     #[cfg(target_arch = "wasm32")]
                     {
-                        let mut options = vec![
-                            sapid::select_option("__realm__", realm_label.clone())
-                                .value("__realm__"),
-                        ];
-                        options.extend(circles.iter().map(|circle| {
-                            sapid::select_option(
-                                circle.id.clone(),
-                                format!("{} ({} members)", circle.title, circle.member_count),
+                        let props = CircleScopePickerProps {
+                            selected,
+                            circles: circles.clone(),
+                            test_id: Some(key.clone()),
+                            onchange: handler.clone(),
+                        };
+                        let realm_label = realm_label.clone();
+                        widget(move |scope| {
+                            web_scope_select(
+                                scope,
+                                field.clone(),
+                                props.clone(),
+                                realm_label.clone(),
                             )
-                            .value(circle.id.clone())
-                        }));
-                        let circles = circles.clone();
-                        sapid::select(key.clone())
-                            .unstyled()
-                            .class("select")
-                            .field(field)
-                            .value(value)
-                            .options(options)
-                            .on_value_change(move |value| {
-                                let Some(value) = value else { return };
-                                if value == "__realm__" {
-                                    handler(CircleScope::Realm)
-                                } else if let Some(circle) =
-                                    circles.iter().find(|circle| circle.id == value)
-                                {
-                                    handler(circle.clone().into_scope())
-                                }
-                            })
+                            .build(scope)
+                        })
                     }
                 }),
         ) as View
@@ -154,6 +143,58 @@ pub fn circle_scope_picker(
             ),
         ],
     )
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn web_scope_select(
+    scope: &Scope,
+    field: sapid::FieldControl,
+    props: CircleScopePickerProps,
+    realm_label: String,
+) -> sapid::Select {
+    let key = props
+        .test_id
+        .unwrap_or_else(|| "circle-scope-picker".into());
+    let mut options = vec![("__realm__".to_owned(), realm_label)];
+    options.extend(props.circles.iter().map(|circle| {
+        (
+            circle.id.clone(),
+            format!("{} ({} members)", circle.title, circle.member_count),
+        )
+    }));
+    let options = Rc::new(options);
+    let selection = options.clone();
+    let selected = props.selected;
+    let value = scope.bond(move || {
+        let reference = match selected.get() {
+            CircleScope::Realm => "__realm__".to_owned(),
+            CircleScope::Circle { circle_id, .. } => circle_id,
+        };
+        crate::views::settings::widgets::select_key(&selection, &reference)
+    });
+    sapid::select(key)
+        .unstyled()
+        .class("select")
+        .field(field)
+        .value(value)
+        .options(
+            options.iter().enumerate().map(|(index, (_, label))| {
+                sapid::select_option(format!("opt-{index}"), label.clone())
+            }),
+        )
+        .on_value_change(move |key| {
+            let Some(reference) =
+                key.and_then(|key| crate::views::settings::widgets::select_value(&options, &key))
+            else {
+                return;
+            };
+            if reference == "__realm__" {
+                (props.onchange)(CircleScope::Realm);
+            } else if let Some(circle) = props.circles.iter().find(|circle| circle.id == reference)
+            {
+                (props.onchange)(circle.clone().into_scope());
+            }
+        })
 }
 #[derive(Clone)]
 pub struct CircleComposerBannerProps {
@@ -387,5 +428,77 @@ mod tests {
         let two = sample("ak:circle:two");
         assert_eq!(one.into_scope().circle_id(), Some("ak:circle:one"));
         assert_eq!(two.into_scope().circle_id(), Some("ak:circle:two"));
+    }
+
+    #[test]
+    fn web_picker_mounts_and_keyboard_selection_retains_full_circle_identity() {
+        use glory::render::{ChoiceCommand, Event};
+
+        let (app, _context, _directory) = crate::views::settings::restored_surface_tests::harness();
+        let event = arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [231; 32]);
+        let circle = arkret_sdk::CircleId::from_event_id(&event).to_string();
+        let selected = app.scope().cage(CircleScope::Realm);
+        let props = CircleScopePickerProps {
+            selected,
+            circles: vec![sample(&circle)],
+            test_id: None,
+            onchange: Rc::new(move |next| selected.revise(|value| *value = next)),
+        };
+        app.mount(Box::new(
+            sapid::field("circle-picker-regression")
+                .label("Scope")
+                .control(move |field| {
+                    let props = props.clone();
+                    widget(move |scope| {
+                        web_scope_select(scope, field.clone(), props.clone(), "Everyone".into())
+                            .build(scope)
+                    })
+                }),
+        ) as View)
+            .unwrap();
+        let mut nodes = app.tree().roots().to_vec();
+        let trigger = loop {
+            let id = nodes.pop().expect("the Circle combobox rendered");
+            let tree = app.tree();
+            let node = tree.node(id).unwrap();
+            if node
+                .descriptor
+                .view()
+                .semantics
+                .as_ref()
+                .is_some_and(|value| value.combobox.is_some())
+            {
+                break id;
+            }
+            nodes.extend(node.children.iter().copied());
+        };
+        for command in [ChoiceCommand::OpenLast, ChoiceCommand::Commit] {
+            app.dispatch(
+                trigger,
+                Event::Choice {
+                    from: trigger,
+                    command,
+                },
+            )
+            .unwrap();
+        }
+        app.flush().unwrap();
+        assert_eq!(selected.get().circle_id(), Some(circle.as_str()));
+        for command in [
+            ChoiceCommand::OpenFirst,
+            ChoiceCommand::First,
+            ChoiceCommand::Commit,
+        ] {
+            app.dispatch(
+                trigger,
+                Event::Choice {
+                    from: trigger,
+                    command,
+                },
+            )
+            .unwrap();
+        }
+        app.flush().unwrap();
+        assert!(matches!(selected.get(), CircleScope::Realm));
     }
 }

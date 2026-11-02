@@ -887,6 +887,24 @@ pub fn contact_new_panel(
         ],
     )
 }
+fn contact_petname_draft(scope: &Scope, saved: glory::Bond<String>) -> Cage<String> {
+    let initial = saved.get_untracked();
+    let draft = scope.cage(initial.clone());
+    let baseline = scope.cage(initial);
+    scope.effect(move || {
+        let next = saved.get();
+        let previous = baseline.get_untracked();
+        if next == previous {
+            return;
+        }
+        if draft.get_untracked() == previous {
+            draft.revise(|value| *value = next.clone());
+        }
+        baseline.revise(|value| *value = next);
+    });
+    draft
+}
+
 fn contact_row(
     scope: &Scope,
     context: Rc<InksonContext>,
@@ -899,15 +917,18 @@ fn contact_row(
     let busy = scope.cage(false);
     let status = scope.cage(ContactFeedback::default());
     let confirm = scope.cage(false);
-    let remark = context
-        .state_store
-        .read(|store| store.contact_remark(&principal));
-    let petname = scope.cage(
-        remark
-            .as_ref()
-            .map(|r| r.petname.clone())
-            .unwrap_or_default(),
-    );
+    let petname_context = context.clone();
+    let petname_principal = principal.clone();
+    let saved_petname = scope.bond(move || {
+        let _ = petname_context.state_revision.get();
+        petname_context.state_store.read(|store| {
+            store
+                .contact_remark(&petname_principal)
+                .map(|remark| remark.petname)
+                .unwrap_or_default()
+        })
+    });
+    let petname = contact_petname_draft(scope, saved_petname);
     let label_context = context.clone();
     let label_contact = contact.clone();
     let label = scope.bond(move || {
@@ -1594,6 +1615,35 @@ pub fn contacts_panel(scope: &Scope, context: Rc<InksonContext>, advanced: bool)
 mod feedback_tests {
     use super::*;
     use crate::transport::auth::ApiCallError;
+
+    #[test]
+    fn contact_petname_hydrates_late_and_preserves_unsaved_edits() {
+        let app = glory::App::memory();
+        let scope = app.scope();
+        let saved = scope.cage(String::new());
+        let draft = contact_petname_draft(scope, scope.bond(move || saved.get()));
+        app.flush().unwrap();
+        assert!(draft.get_untracked().is_empty());
+        saved.revise(|value| *value = "Bee".into());
+        app.flush().unwrap();
+        assert_eq!(draft.get_untracked(), "Bee");
+
+        draft.revise(|value| *value = "unsaved local edit".into());
+        saved.revise(|value| *value = "new saved petname".into());
+        app.flush().unwrap();
+        assert_eq!(draft.get_untracked(), "unsaved local edit");
+
+        draft.revise(String::clear);
+        saved.revise(|value| *value = "another saved petname".into());
+        app.flush().unwrap();
+        assert!(draft.get_untracked().is_empty());
+
+        draft.revise(|value| *value = "another saved petname".into());
+        saved.revise(String::clear);
+        app.flush().unwrap();
+        assert!(draft.get_untracked().is_empty());
+    }
+
     #[test]
     fn retained_contact_feedback_rerenders_with_locale_and_keeps_opaque_values() {
         let problem: arkret_sdk::Problem = serde_json::from_value(serde_json::json!({
