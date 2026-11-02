@@ -152,7 +152,12 @@ pub(super) fn page(scope: &Scope, context: Rc<InksonContext>) -> View {
                     line(
                         "event-head",
                         vec![
-                            Box::new(glory::ui::text().name(raw).content(label)),
+                            plain(label),
+                            Box::new(
+                                glory::ui::text()
+                                    .class("sr-only blocked-actor-identity")
+                                    .content(raw),
+                            ),
                             plain(entry.created_at.to_string()),
                         ],
                     ),

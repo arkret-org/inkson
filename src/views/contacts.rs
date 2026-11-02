@@ -95,25 +95,25 @@ fn save_contact_remark(
             if state_store.read(|store| store.active_authority()).as_ref() != Some(&authority) {
                 return;
             }
-            if !context.session_matches(generation, &account)
-                || !busy.is_alive()
-                || !row_status.is_alive()
-            {
+            if !context.session_matches(generation, &account) {
                 return;
             }
             match result {
                 Ok(remark) => {
                     let principal = remark.subject.principal_id.to_string();
                     state_store.write(|store| store.set_contact_remark(principal, remark));
-                    row_status.revise(|value| {
+                    let _ = row_status.try_revise(|value| {
                         *value = ContactFeedback::new(success_key);
                     });
                 }
-                Err(error) => row_status.revise(|value| {
-                    *value = ContactFeedback::new("contacts.action_failed").with_api_error(error);
-                }),
+                Err(error) => {
+                    let _ = row_status.try_revise(|value| {
+                        *value =
+                            ContactFeedback::new("contacts.action_failed").with_api_error(error);
+                    });
+                }
             }
-            busy.revise(|value| {
+            let _ = busy.try_revise(|value| {
                 *value = false;
             });
         });

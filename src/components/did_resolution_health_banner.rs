@@ -140,10 +140,6 @@ pub fn did_resolution_health_banner(
                     vec![
                         ui_icon("alert"),
                         paragraph(
-                            "did-resolution-health-banner-title",
-                            context.translated(scope, presentation.title),
-                        ),
-                        paragraph(
                             "did-resolution-health-banner-label",
                             context.translated(scope, presentation.label),
                         ),
@@ -155,6 +151,7 @@ pub fn did_resolution_health_banner(
         Box::new(
             sapid::alert("did-resolution-health")
                 .unstyled()
+                .content(context.translated(scope, presentation.title))
                 .severity(if presentation.token == "outage" {
                     sapid::AlertSeverity::Danger
                 } else {

@@ -349,10 +349,7 @@ pub fn toast_host(scope: &Scope, context: Rc<InksonContext>) -> View {
                     FeedbackSeverity::Info => "bell",
                     FeedbackSeverity::Warning | FeedbackSeverity::Error => "alert",
                 };
-                let mut row = vec![
-                    super::ui_icon(icon),
-                    stack("toast-body", vec![paragraph("", message)]),
-                ];
+                let mut row = vec![super::ui_icon(icon)];
                 if let Some(detail) = toast.detail {
                     row.push(Box::new(
                         sapid::button()
@@ -376,6 +373,7 @@ pub fn toast_host(scope: &Scope, context: Rc<InksonContext>) -> View {
                     sapid::alert(format!("toast-{id}"))
                         .unstyled()
                         .class(class)
+                        .content(message)
                         .severity(match severity {
                             FeedbackSeverity::Success => sapid::AlertSeverity::Success,
                             FeedbackSeverity::Info => sapid::AlertSeverity::Info,

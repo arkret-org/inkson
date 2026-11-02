@@ -96,7 +96,8 @@ pub(crate) fn creator_mls_retry(
             })
         }
     });
-    // Feedback replaces the button row, but the component owns its command.
+    // Both the row and its parent topbar can be repainted by account frames.
+    // The window owns the accepted command; the initiating scope owns feedback.
     let component_owner = scope.downgrade();
     let source = scope.bond(move || (recovery.data.get(), busy.get(), status.get()));
     reactive(source, move |scope, (data, is_busy, current_status)| {
@@ -123,7 +124,8 @@ pub(crate) fn creator_mls_retry(
                 let realm=realm_id.get();let realm_for_result=realm.clone();let circle=circle.clone();let base=ctx.base_url.get();let credential=token.get();let state_store=ctx.state_store.handle();let context=ctx.clone();let realm_id=realm_id.clone();let owner=scope.downgrade();
                 try_set_state(busy,true);try_set_state(status,ctx.tr("setup.action.finishing"));
                 let fence=crate::transport::auth::AuthoringSessionFence::capture();
-                let _=scope.owner().spawn(async move {
+                let task_owner=context.clone();
+                let _=task_owner.spawn(async move {
                     let result=async {
                         let fence=fence?;
                         fence.check()?;

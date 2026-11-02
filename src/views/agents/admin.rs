@@ -304,12 +304,14 @@ pub fn page(scope: &Scope, context: Rc<InksonContext>, route: Route) -> View {
                                     .content(super::model::agent_state_label(runtime)),
                                 glory::ui::text()
                                     .class("mono muted agent-admin-row-id")
-                                    .name(
+                                    .content(short_protocol_id(&id)),
+                                glory::ui::text()
+                                    .class("sr-only agent-actor-identity")
+                                    .content(
                                         crate::mls_api_helpers::local_account_actor_id(&id)
                                             .map(|actor| actor.to_string())
                                             .unwrap_or_else(|_| id.clone()),
-                                    )
-                                    .content(short_protocol_id(&id)),
+                                    ),
                             )),
                         )
                         .on(glory::render::EventKind::Activate, move |_| {
