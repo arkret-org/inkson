@@ -16,31 +16,6 @@ mod section;
 pub use organization::{ServerAdminSignal, is_server_admin};
 
 pub fn page(scope: &Scope, context: Rc<InksonContext>, route: Route) -> View {
-    if let (Some(realm), Some(account)) = (route.realm_id(), context.active_account.get()) {
-        let realm = realm.to_owned();
-        let authority = account.authority;
-        let demand_store = context.state_store.clone();
-        let demand_account = authority.clone();
-        let demand_realm = realm.clone();
-        scope.effect(move || {
-            demand_store.read(|store| {
-                store.set_product_current_demand(
-                    &demand_account,
-                    &demand_realm,
-                    Some(Vec::new()),
-                    vec![arkret_wire::CurrentSelector::RealmAuthorityRoot],
-                );
-            });
-        });
-        let store = context.state_store.clone();
-        scope
-            .on_cleanup(move || {
-                store.read(|store| {
-                    store.set_product_current_demand(&authority, &realm, None, Vec::new());
-                });
-            })
-            .unwrap_or_else(|error| scope.report_error(error));
-    }
     match route {
         Route::RealmMembers { realm_id } => members_panel::page(scope, context, realm_id),
         Route::RealmAdminSection { realm_id, section } => admin_panel::page(

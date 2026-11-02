@@ -1722,6 +1722,25 @@ fn advanced_view(scope: &Scope, state: &AdminPage) -> View {
     let revoke_admin = state.clone();
     let pending = state.capability_grant_pending;
     let enabled = scope.bond(move || !pending.get());
+    let authority_context = context.clone();
+    let authority_realm = state.realm.clone();
+    let authority_ready = scope.bond(move || {
+        let _ = authority_context.realm_live_epoch.get();
+        let _ = authority_context.state_revision.get();
+        let _ = authority_context.active_account.get();
+        !pending.get()
+            && authority_context.state_store.read(|store| {
+                store.current_product_view_ready(&authority_realm)
+                    && store.active_authority().is_some_and(|issuer| {
+                        capability_issuer_basis(
+                            &authority_realm,
+                            &store.realm_current_state_entries(&authority_realm),
+                            &issuer,
+                        )
+                        .is_some()
+                    })
+            })
+    });
     let temporal = state.cap_constraint_kind;
     let before = state.cap_temporal_not_before;
     let expires = state.cap_temporal_expires_at;
@@ -1868,7 +1887,7 @@ fn advanced_view(scope: &Scope, state: &AdminPage) -> View {
                                 "cap-grant-submit-button",
                                 "realm_admin.grant_capability_move",
                                 "primary",
-                                enabled,
+                                authority_ready,
                                 move || grant.grant(),
                             ),
                             action(
@@ -1914,7 +1933,7 @@ fn advanced_view(scope: &Scope, state: &AdminPage) -> View {
                                 "realm-admin-grant-button",
                                 "realm_admin.admin_grant_button",
                                 "primary",
-                                true,
+                                authority_ready,
                                 move || grant_admin.grant_admin(),
                             ),
                             action(
