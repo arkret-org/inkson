@@ -1019,7 +1019,9 @@ fn withdraw_button(
             if pending.get_untracked() {
                 return;
             }
-            let Some(scope) = owner.upgrade() else { return };
+            let Some(_scope) = owner.upgrade() else {
+                return;
+            };
             let context = task_context.clone();
             let base = context.base_url.get();
             let token = context.token.get();
@@ -1029,23 +1031,37 @@ fn withdraw_button(
             pending.revise(|value| {
                 *value = true;
             });
-            spawn(&scope, async move {
-                let result = withdraw_owned_grant(context, &base, token, realm, account, id).await;
+            let generation = context.session_generation.get_untracked();
+            let session = context.active_account.get_untracked();
+            let command_context = context.clone();
+            let feedback_context = context.clone();
+            let result = context.spawn(async move {
+                let result =
+                    withdraw_owned_grant(command_context, &base, token, realm, account, id).await;
+                if !feedback_context.session_matches(generation, &session) {
+                    return;
+                }
                 match result {
                     Ok(()) => {
-                        message.revise(|value| {
+                        let _ = message.try_revise(|value| {
                             *value = "已撤回；再次授权需要重新确认并签发新记录".into();
                         });
-                        refresh.revise(|value| *value += 1);
+                        let _ = refresh.try_revise(|value| *value += 1);
                     }
-                    Err(error) => message.revise(|value| {
-                        *value = error.display();
-                    }),
+                    Err(error) => {
+                        let _ = message.try_revise(|value| {
+                            *value = error.display();
+                        });
+                    }
                 }
-                pending.revise(|value| {
+                let _ = pending.try_revise(|value| {
                     *value = false;
                 });
             });
+            if let Err(error) = result {
+                let _ = pending.try_revise(|value| *value = false);
+                let _ = message.try_revise(|value| *value = error.to_string());
+            }
         },
     )
 }

@@ -532,12 +532,13 @@ pub(super) fn page(scope: &Scope, context: Rc<InksonContext>) -> View {
         stack("consent-permissions-editor", children)
     });
     let preview_context = context.clone();
+    let replacement_owner = scope.downgrade();
     let preview = reactive(editor.preview, move |scope, preview| {
         let Some(preview) = preview else {
             return empty();
         };
         let context = preview_context.clone();
-        let weak = scope.downgrade();
+        let weak = replacement_owner.clone();
         let submit_context = context.clone();
         stack(
             "consent-replacement-diff",
