@@ -7,6 +7,7 @@ pub(super) fn render_protocol_content(
     scope: &Scope,
     context: Rc<crate::presentation::InksonContext>,
     source: &AuthenticatedMessageContent,
+    source_committed: bool,
     mentions: &[MentionNode],
     base_url: &str,
 ) -> View {
@@ -25,6 +26,7 @@ pub(super) fn render_protocol_content(
                             content: part.clone(),
                             ..source.clone()
                         },
+                        source_committed,
                         mentions,
                         base_url,
                     )
@@ -34,6 +36,12 @@ pub(super) fn render_protocol_content(
     }
     match content.rendered_encrypted_attachment() {
         Ok(Some(descriptor)) => {
+            if !source_committed {
+                return crate::presentation::widgets::paragraph(
+                    "attachment-pending muted",
+                    "Waiting for message acceptance…",
+                );
+            }
             return verified_attachment(scope, context, source.clone(), descriptor);
         }
         Err(error) => {

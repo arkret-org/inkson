@@ -27,7 +27,7 @@ use glory::prelude::*;
 
 use crate::circle::CircleErrorKind;
 use crate::i18n::tr;
-use crate::presentation::widgets::{line, paragraph, reactive, stack};
+use crate::presentation::widgets::{line, reactive, stack};
 use crate::presentation::{InksonContext, View};
 
 /// Severity of a toast; drives styling, ARIA role and auto-dismiss.

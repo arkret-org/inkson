@@ -1373,3 +1373,73 @@ fn local_redaction_tombstone_without_signed_scope_cannot_render_row() {
     let restored = chat_messages_from_local_state_with_sidecar(&state, None, None);
     assert!(restored.is_empty());
 }
+
+#[test]
+fn reply_quote_resolves_the_protocol_message_id_and_preserves_redaction() {
+    let event = arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [221; 32]);
+    let target = arkret_sdk::MessageId::from_event_id(&event).to_string();
+    let mut original = sidecar_projection_message(
+        event.as_str(),
+        "ak:strand:ALH536fxXVv9EDZIoWa7sN1gzbTVJQ02x6AugHURwkvE",
+        "the quoted original body",
+    );
+    original.protocol_message_id = Some(target.clone());
+    let quote = |message: &ChatMessage, reference: &str| {
+        chat_reply_quote_preview(
+            std::slice::from_ref(message),
+            reference,
+            &message.sender,
+            "Alice",
+            &[],
+        )
+    };
+    assert_eq!(
+        quote(&original, &target).unwrap().1,
+        "the quoted original body"
+    );
+    let other_event = arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [222; 32]);
+    assert!(
+        quote(
+            &original,
+            arkret_sdk::MessageId::from_event_id(&other_event).as_str()
+        )
+        .is_none()
+    );
+    original.redacted = true;
+    assert_eq!(quote(&original, &target).unwrap().1, "[Message redacted]");
+}
+
+#[test]
+fn receipt_status_keeps_uncommitted_sources_pending_and_definite_failures_failed() {
+    let realm =
+        arkret_sdk::RealmId::new("ak:realm:AUkVX3O4YS1KHnF-rBBp6xN650srYAO3w11NkWM23fXI").unwrap();
+    let committed = verified_chat_create(&realm, "alice.example", "queued original");
+    for (status, pending, failed) in [
+        ("queued", true, false),
+        ("forwarding", true, false),
+        ("committed", false, false),
+        ("rejected", false, true),
+        ("failed", false, true),
+        ("cancelled", false, true),
+    ] {
+        let record = json!({
+            "event": committed.event,
+            "event_id": committed.event.event_id,
+            "status": status,
+        });
+        let row = chat_message_from_event(realm.as_str(), &record).unwrap();
+        assert_eq!(row.pending, pending, "{status}");
+        assert_eq!(row.failed, failed, "{status}");
+    }
+    let record = json!({
+        "event": committed.event,
+        "event_id": committed.event.event_id,
+        "write_state": "queued",
+        "status": "committed",
+    });
+    assert!(
+        chat_message_from_event(realm.as_str(), &record)
+            .unwrap()
+            .pending
+    );
+}
