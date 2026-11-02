@@ -646,6 +646,7 @@ fn column_view(
                     sapid::button()
                         .unstyled()
                         .class("entity-title kanban-column-title")
+                        .name(format!("{} ({})", title, column.id))
                         .label(title)
                         .enabled(board.ready)
                         .on_press(move || {

@@ -46,8 +46,12 @@ pub(crate) fn creator_mls_retry(
     let refresh = props.refresh_hint;
     let token = props.token;
     let realm_reset = realm_id.clone();
+    let reset_context = context.clone();
     scope.effect(move || {
         let _ = realm_reset.get();
+        let _ = reset_context.session_generation.get();
+        let _ = reset_context.active_account.get();
+        try_set_state(busy, false);
         try_set_state(status, String::new());
     });
     let ctx = context.clone();
@@ -92,6 +96,8 @@ pub(crate) fn creator_mls_retry(
             })
         }
     });
+    // Feedback replaces the button row, but the component owns its command.
+    let component_owner = scope.downgrade();
     let source = scope.bond(move || (recovery.data.get(), busy.get(), status.get()));
     reactive(source, move |scope, (data, is_busy, current_status)| {
         let (retryable, quarantined) = data.and_then(|value| value.ok()).unwrap_or((false, false));
@@ -109,19 +115,25 @@ pub(crate) fn creator_mls_retry(
             let context = context.clone();
             let realm_id = realm_id.clone();
             let circle = props.circle_id.clone();
-            let owner = scope.downgrade();
+            let owner = component_owner.clone();
             let ctx = context.clone();
             let label = context.translated(scope, "setup.action.retry_mls");
             children.push(Box::new(sapid::button().unstyled().class("secondary creator-mls-retry-button").label(label).enabled(!is_busy).on_press(move ||{
                 if busy.get(){return}let Some(scope)=owner.upgrade()else{return};let Some(account)=ctx.active_account.get()else{return};let generation=ctx.session_generation.get();let active=ctx.active_account.get();
                 let realm=realm_id.get();let realm_for_result=realm.clone();let circle=circle.clone();let base=ctx.base_url.get();let credential=token.get();let state_store=ctx.state_store.handle();let context=ctx.clone();let realm_id=realm_id.clone();let owner=scope.downgrade();
                 try_set_state(busy,true);try_set_state(status,ctx.tr("setup.action.finishing"));
+                let fence=crate::transport::auth::AuthoringSessionFence::capture();
                 let _=scope.owner().spawn(async move {
                     let result=async {
+                        let fence=fence?;
+                        fence.check()?;
                         let scope=creator_scope(realm.clone(),circle)?;
                         let api=crate::transport::auth::authed_api_ready(&base,credential).await?;
+                        fence.check()?;
+                        anyhow::ensure!(context.session_matches(generation,&active),"creator retry account session changed");
                         let submitter=crate::event_submit::EventSubmitter::new(api.http().clone()).with_authority(account.authority.clone());
                         let record=submitter.creator_bootstrap_record(&scope).await?.ok_or_else(||anyhow::anyhow!("creator retry lost its durable record"))?;
+                        fence.check()?;
                         anyhow::ensure!(record.rejection().is_some(),"creator attempt is no longer rejected");
                         anyhow::ensure!(record.intent().creator_device_id()==&account.device_id,"creator retry requires the original device");
                         if matches!(scope,arkret_sdk::ScopeRef::Circle{..}){crate::mls::creator_bootstrap::ensure_creator_circle_mls_genesis(&api,&state_store,&scope,&account.authority,&account.device_id,true).await.map_err(anyhow::Error::msg)}else{crate::mls::creator_bootstrap::retry_creator_realm_mls_genesis(&api,&state_store,&realm,&account.authority,&account.device_id).await.map_err(anyhow::Error::msg)}

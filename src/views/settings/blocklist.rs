@@ -5,16 +5,9 @@
 //! client-side filter; spec `discovery/client-preferences.md` §2
 //! defines the `ak.account.blocklist` account_data shape.
 //!
-//! Surfaces:
-//! - `blocked-users-panel` wrapper
-//! - `blocked-users-list` list wrapper
-//! - `blocked-user-row[data-actor-id, data-blocked-at]` per entry
-//! - `block-target-input`, `block-user-button`, `unblock-button`
-//! - `write-status`
-//!
-//! The `block-actor-button` testid exposed elsewhere (directory rows,
-//! space member rows) is owned by the respective view modules — this
-//! file only owns the settings surface.
+//! The settings card exposes its title, the complete target's accessible
+//! identity, and ordinary input/action controls. Directory and member-list
+//! block actions are owned by their respective views.
 
 use std::rc::Rc;
 
@@ -158,7 +151,10 @@ pub(super) fn page(scope: &Scope, context: Rc<InksonContext>) -> View {
                 vec![
                     line(
                         "event-head",
-                        vec![plain(label), plain(entry.created_at.to_string())],
+                        vec![
+                            Box::new(glory::ui::text().name(raw).content(label)),
+                            plain(entry.created_at.to_string()),
+                        ],
                     ),
                     paragraph(
                         "muted",

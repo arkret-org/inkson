@@ -1794,6 +1794,12 @@ fn contacts(scope: &Scope, context: Rc<InksonContext>, ui: Rc<ShellState>) -> Vi
                     }))
                     .fill(vec![
                         own_avatar,
+                        Box::new(text().class("sr-only contact-sidebar-self-identity").content(
+                            context.active_account.get().map(|account| format!(
+                                "Principal: {} · Station: {}",
+                                account.authority.principal_id, account.authority.station_id
+                            )).unwrap_or_default()
+                        )),
                         Box::new(text().class("grow truncate").content(own_label)),
                         crate::components::self_attribution::self_attribution_badge_inline(
                             scope,
