@@ -715,7 +715,11 @@ fn column_view(
                     "add-card-button",
                     "kanban.add_card",
                     "secondary board-add-card",
-                    board.ready,
+                    scope.bond({
+                        let ready = board.ready;
+                        let accepted = arkret_sdk::SpaceId::new(column.id.as_str()).is_ok();
+                        move || ready.get() && accepted
+                    }),
                     move || {
                         c.adding_card_to
                             .revise(|value| *value = Some(column_id.clone()))

@@ -422,6 +422,80 @@ pub(super) fn scheduled_send_surface(
     })
 }
 
+#[cfg(target_arch = "wasm32")]
+fn attachment_file_control(
+    scope: &Scope,
+    app: Rc<crate::presentation::InksonContext>,
+    controller: ChatController,
+    context: Bond<ChatComposerContext>,
+    preview: Bond<Preview>,
+    available: Cage<bool>,
+    menu: bool,
+) -> View {
+    let label = if menu {
+        "chat.composer.add_attachment"
+    } else {
+        "chat.composer.drop_attachment"
+    };
+    let file_control = scope.cage(None::<sapid::FileController>);
+    let selected_leases = scope.cage(0usize);
+    let owner = scope.downgrade();
+    let upload_app = app.clone();
+    Box::new(
+        sapid::file_button()
+            .unstyled()
+            .label(app.translated(scope, label))
+            .class(if menu {
+                "secondary attachment-menu-item attachment-file-picker"
+            } else {
+                "secondary compose-drop-zone"
+            })
+            .name(app.translated(scope, label))
+            .configuration(glory::render::FileConfig {
+                multiple: true,
+                drop: true,
+                max_files: 32,
+                max_file_bytes: 64 * 1024 * 1024,
+                max_total_bytes: 64 * 1024 * 1024,
+                ..Default::default()
+            })
+            .controller_ref(file_control)
+            .enabled(scope.bond(move || {
+                (!menu || controller.attachment_menu_open.get())
+                    && preview.get().upload_scope.is_some()
+                    || selected_leases.get() > 0
+            }))
+            .on_files(move |selected| {
+                let Some(owner) = owner.upgrade() else { return };
+                let Some(control) = file_control.get_untracked() else {
+                    return;
+                };
+                let files = selected
+                    .into_iter()
+                    .map(|file| {
+                        files::AttachmentFile::selected(
+                            &owner,
+                            control.clone(),
+                            file,
+                            selected_leases,
+                            available,
+                        )
+                    })
+                    .collect();
+                controller
+                    .attachment_menu_open
+                    .revise(|value| *value = false);
+                commands::upload_dropped_attachments(
+                    controller,
+                    upload_app.base_url.get_untracked(),
+                    context.get_untracked().token.get_untracked(),
+                    preview.get_untracked().upload_scope,
+                    files,
+                );
+            }),
+    )
+}
+
 pub(super) fn chat_composer(
     scope: &Scope,
     app: Rc<crate::presentation::InksonContext>,
@@ -650,60 +724,15 @@ pub(super) fn chat_composer(
         },
     )];
     #[cfg(target_arch = "wasm32")]
-    {
-        let file_control = scope.cage(None::<sapid::FileController>);
-        let selected_leases = scope.cage(0usize);
-        let owner = scope.downgrade();
-        let upload_app = app.clone();
-        menu_items.push(Box::new(
-            sapid::file_button()
-                .unstyled()
-                .label(app.translated(scope, "chat.composer.add_attachment"))
-                .class("secondary attachment-menu-item attachment-file-picker")
-                .name(app.translated(scope, "chat.composer.add_attachment"))
-                .configuration(glory::render::FileConfig {
-                    multiple: true,
-                    drop: true,
-                    max_files: 32,
-                    max_file_bytes: 64 * 1024 * 1024,
-                    max_total_bytes: 64 * 1024 * 1024,
-                    ..Default::default()
-                })
-                .controller_ref(file_control)
-                .enabled(scope.bond(move || {
-                    controller.attachment_menu_open.get() && preview.get().upload_scope.is_some()
-                        || selected_leases.get() > 0
-                }))
-                .on_files(move |selected| {
-                    let Some(owner) = owner.upgrade() else { return };
-                    let Some(control) = file_control.get_untracked() else {
-                        return;
-                    };
-                    let files = selected
-                        .into_iter()
-                        .map(|file| {
-                            files::AttachmentFile::selected(
-                                &owner,
-                                control.clone(),
-                                file,
-                                selected_leases,
-                                _available,
-                            )
-                        })
-                        .collect();
-                    controller
-                        .attachment_menu_open
-                        .revise(|value| *value = false);
-                    commands::upload_dropped_attachments(
-                        controller,
-                        upload_app.base_url.get_untracked(),
-                        context.get_untracked().token.get_untracked(),
-                        preview.get_untracked().upload_scope,
-                        files,
-                    );
-                }),
-        ));
-    }
+    menu_items.push(attachment_file_control(
+        scope,
+        app.clone(),
+        controller,
+        context,
+        preview,
+        _available,
+        true,
+    ));
     #[cfg(not(target_arch = "wasm32"))]
     {
         let upload_app = app.clone();
@@ -1105,6 +1134,18 @@ pub(super) fn chat_composer(
                 }
             },
         );
+    #[cfg(target_arch = "wasm32")]
+    let drop_target = attachment_file_control(
+        scope,
+        app.clone(),
+        controller,
+        context,
+        preview,
+        _available,
+        false,
+    );
+    #[cfg(not(target_arch = "wasm32"))]
+    let drop_target = empty();
     block(
         "discussion-composer chat-composer",
         vec![
@@ -1116,8 +1157,9 @@ pub(super) fn chat_composer(
             circle_banner,
             reply,
             block(
-                "compose-drop-zone",
+                "composer-input-surface",
                 vec![
+                    drop_target,
                     storage_error,
                     input,
                     mentions,
