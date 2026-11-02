@@ -50,6 +50,7 @@ fn outcome_label(record: &ConfigurationRecord) -> String {
 #[derive(Clone)]
 struct ConfigurationState {
     context: Rc<InksonContext>,
+    owner: glory::ui::WeakScope,
     realm_id: String,
     applet_id: String,
     service_id: String,
@@ -62,6 +63,7 @@ struct ConfigurationState {
 }
 impl ConfigurationState {
     fn create(self) {
+        let owner = self.owner.clone();
         let context = self.context.clone();
         let active_account = context.active_account;
         let token = context.token;
@@ -133,9 +135,9 @@ impl ConfigurationState {
                                     "active Account changed before configuration delivery"
                                 );
                             }
-                            pending.revise(|value| {
-                                *value = Some(original.clone());
-                            });
+                            if owner.upgrade().is_some() {
+                                pending.revise(|value| *value = Some(original.clone()));
+                            }
                             submit(
                                 &base,
                                 credential,
@@ -145,11 +147,12 @@ impl ConfigurationState {
                             .await
                         }
                         .await;
-                        if active_account
-                            .get()
-                            .map(|account| account.authority)
-                            .as_ref()
-                            != Some(&expected_account)
+                        if owner.upgrade().is_none()
+                            || active_account
+                                .get()
+                                .map(|account| account.authority)
+                                .as_ref()
+                                != Some(&expected_account)
                         {
                             return;
                         }
@@ -176,6 +179,7 @@ impl ConfigurationState {
         handler(());
     }
     fn command(self, original: ConfigurationRecord, command: AppletConfigurationCommand) {
+        let owner = self.owner.clone();
         let context = self.context.clone();
         let active_account = context.active_account;
         let token = context.token;
@@ -204,11 +208,12 @@ impl ConfigurationState {
                     let _ = task_owner.spawn(async move {
                         let expected_account = original.authority.clone();
                         let result = submit(&base, credential, original, command).await;
-                        if active_account
-                            .get()
-                            .map(|account| account.authority)
-                            .as_ref()
-                            != Some(&expected_account)
+                        if owner.upgrade().is_none()
+                            || active_account
+                                .get()
+                                .map(|account| account.authority)
+                                .as_ref()
+                                != Some(&expected_account)
                         {
                             return;
                         }
@@ -244,6 +249,7 @@ pub(super) fn page(
 ) -> View {
     let state = ConfigurationState {
         context: context.clone(),
+        owner: scope.downgrade(),
         realm_id: realm_id.clone(),
         applet_id: applet_id.clone(),
         service_id: service_id.clone(),
@@ -266,6 +272,7 @@ pub(super) fn page(
     let load_service = service_id.clone();
     let load_realm = crate::operation::trim_realm_id(&realm_id);
     let load_context = context.clone();
+    let row_owner = scope.downgrade();
     scope.effect(move || {
         let account = active_account.get().map(|account| account.authority);
         let applet = load_applet.clone();
@@ -290,6 +297,7 @@ pub(super) fn page(
             *value = None;
         });
         {
+            let owner = row_owner.clone();
             let task_owner = load_context.clone();
             let _ = task_owner.spawn(async move {
                 let expected_account = account.clone();
@@ -305,7 +313,9 @@ pub(super) fn page(
                     }))
                 }
                 .await;
-                if active_account.get().map(|account| account.authority) != expected_account {
+                if owner.upgrade().is_none()
+                    || active_account.get().map(|account| account.authority) != expected_account
+                {
                     return;
                 }
                 match result {

@@ -1707,10 +1707,9 @@ fn direct_button(
                     });
                     return;
                 }
-                if let Some(scope) = weak.upgrade() {
+                if weak.upgrade().is_some() {
                     opening.revise(|value| *value = Some(key.clone()));
                     super::direct_open::open_direct_conversation(
-                        &scope,
                         context.clone(),
                         context.base_url.get(),
                         context.token.get(),

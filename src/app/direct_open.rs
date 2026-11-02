@@ -66,7 +66,6 @@ impl DirectConversationTarget {
 /// exit path, including the failures, so a failed open does not leave the
 /// sidebar permanently disabled.
 pub(super) fn open_direct_conversation(
-    scope: &Scope,
     context: Rc<InksonContext>,
     base_url: String,
     api_token: String,
@@ -78,9 +77,16 @@ pub(super) fn open_direct_conversation(
     let initiating_account = context.active_account.get();
     let generation = context.session_generation.get();
     let account = initiating_account.clone();
-    let weak = scope.downgrade();
+    let Some(owner) = context.root_scope() else {
+        let _ = direct_chat_opening.try_revise(|opening| *opening = None);
+        return;
+    };
+    let weak = owner.downgrade();
+    let initiating_route = context.route.get_untracked();
+    let early_route = initiating_route.clone();
+    let early_account = initiating_account.clone();
     let session_fence = crate::transport::auth::AuthoringSessionFence::capture();
-    spawn_direct_open_task(scope, async move {
+    spawn_direct_open_task(&owner, async move {
         let Ok(session_fence) = session_fence else {
             let _ = direct_chat_opening.try_revise(|opening| *opening = None);
             return;
@@ -135,11 +141,15 @@ pub(super) fn open_direct_conversation(
                                 .await?;
                             session_fence.check()?;
                             let _ = direct_chat_opening.try_revise(|opening| *opening = None);
-                            early_context.navigate(Route::DirectConversation {
-                                realm_id: accepted.realm_id.to_string(),
-                                strand_id: accepted.main_strand_id.to_string(),
-                            });
-                            early_routed.set(true);
+                            if early_context.session_matches(generation, &early_account)
+                                && early_context.route.get_untracked() == early_route
+                            {
+                                early_context.navigate(Route::DirectConversation {
+                                    realm_id: accepted.realm_id.to_string(),
+                                    strand_id: accepted.main_strand_id.to_string(),
+                                });
+                                early_routed.set(true);
+                            }
                             let founded = crate::transport::account::direct_conversation_resolve(
                                 &api,
                                 &state_store,
@@ -200,11 +210,15 @@ pub(super) fn open_direct_conversation(
                                 .await?;
                             session_fence.check()?;
                             let _ = direct_chat_opening.try_revise(|opening| *opening = None);
-                            early_context.navigate(Route::DirectConversation {
-                                realm_id: accepted.realm_id.to_string(),
-                                strand_id: accepted.main_strand_id.to_string(),
-                            });
-                            early_routed.set(true);
+                            if early_context.session_matches(generation, &early_account)
+                                && early_context.route.get_untracked() == early_route
+                            {
+                                early_context.navigate(Route::DirectConversation {
+                                    realm_id: accepted.realm_id.to_string(),
+                                    strand_id: accepted.main_strand_id.to_string(),
+                                });
+                                early_routed.set(true);
+                            }
                             let founded = crate::transport::account::direct_conversation_resolve(
                                 &api,
                                 &state_store,
@@ -235,7 +249,9 @@ pub(super) fn open_direct_conversation(
         if final_fence.check_session_identity().is_ok() {
             let _ = direct_chat_opening.try_revise(|opening| *opening = None);
         }
-        if final_fence.check().is_err() {
+        if final_fence.check().is_err()
+            || (!routed.get() && context.route.get_untracked() != initiating_route)
+        {
             return;
         }
         let route = match outcome {
@@ -361,17 +377,16 @@ mod lifecycle_tests {
         }
     }
     #[test]
-    fn direct_open_task_is_cancelled_on_its_owner_retirement() {
+    fn direct_open_survives_sidebar_retirement_and_stops_with_its_window() {
         let executor = Rc::new(glory::core::executor::Executor::new(32));
         let app = glory::ui::App::with_host(executor, glory::render::memory::Memory::new);
         let dropped = Rc::new(Cell::new(false));
-        let child = app.scope().child().expect("child owner");
-        spawn_direct_open_task(&child, Pending(dropped.clone()));
-        assert!(!dropped.get());
-        drop(child);
-        assert!(
-            dropped.get(),
-            "retired shell must cancel its direct-open command"
-        );
+        let window = app.scope().child().expect("window owner");
+        let row = window.child().expect("sidebar row owner");
+        spawn_direct_open_task(&window, Pending(dropped.clone()));
+        drop(row);
+        assert!(!dropped.get(), "sidebar refresh must retain the command");
+        drop(window);
+        assert!(dropped.get(), "retiring the window must cancel the command");
     }
 }

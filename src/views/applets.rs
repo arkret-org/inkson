@@ -886,16 +886,8 @@ impl AppletPage {
         handler(());
     }
 }
-fn applet_inventory_surface(
-    scope: &Scope,
-    st: AppletPage,
-    selected_realm_id: String,
-    services: bool,
-    installed_count: Cage<usize>,
-) -> View {
-    let _self_ref = st.clone();
+fn applet_inventory_surface(st: AppletPage, selected_realm_id: String) -> View {
     let state_store = st.context.state_store.clone();
-    let trace_open_for = st.trace_open_for;
     let raw_ops = state_store.read(|store| store.load()).raw_operations;
     let registrations: Vec<_> = raw_ops
         .iter()
@@ -935,81 +927,7 @@ fn applet_inventory_surface(
         .cloned()
         .collect();
 
-    // Observed registrations identify Services, not active installation scopes.
-    // Revisions remain visible in the history panel; each Service has one action row.
-    let mut applet_rows: BTreeSet<_> = registrations
-        .iter()
-        .filter_map(|(r, service_id)| {
-            let body = observed_applet_body(&r.payload)?;
-            let applet_id = arkret_sdk::AppletId::new(body.get("applet_id")?.as_str()?).ok()?;
-            let scope: ScopeRef =
-                serde_json::from_value(observed_applet_event(&r.payload).get("scope_ref")?.clone())
-                    .ok()?;
-            if !matches!(scope, ScopeRef::Realm { .. })
-                || scope.realm_id_opt()?.as_str()
-                    != crate::operation::trim_realm_id(&selected_realm_id)
-            {
-                return None;
-            }
-            Some((applet_id.to_string(), service_id.clone()))
-        })
-        .collect();
-
-    if let Some(entries) = state_store.read(|store| {
-        store.realm_current_view_entries(&crate::operation::trim_realm_id(&selected_realm_id))
-    }) {
-        for entry in entries {
-            let arkret_wire::CurrentState::Value {
-                selector, value, ..
-            } = entry;
-            if let arkret_wire::CurrentSelector::AppletRegistration {
-                applet_id,
-                service_id,
-            } = selector
-                && let Ok(registration) =
-                    serde_json::from_value::<arkret_sdk::AppletRegistrationPayload>(value)
-                && registration.applet_id == applet_id
-                && registration.service_id == service_id
-            {
-                applet_rows.insert((applet_id.to_string(), service_id.to_string()));
-            }
-        }
-    }
-
-    let trace_target_id = trace_open_for.get();
-    let _trace_events: Vec<_> = match &trace_target_id {
-        Some((applet, target)) => raw_ops
-            .iter()
-            .filter(|r| {
-                let kind_is_applet = observed_applet_event(&r.payload)
-                    .get("kind")
-                    .and_then(Value::as_str)
-                    .map(|k| k.starts_with("ak.applet."))
-                    .unwrap_or(false);
-                let matches_did = observed_applet_body(&r.payload)
-                    .and_then(|b| b.get("service_id"))
-                    .and_then(Value::as_str)
-                    .map(|d| d == target.as_str())
-                    .unwrap_or(false);
-                let matches_applet = observed_applet_body(&r.payload)
-                    .and_then(|b| b.get("applet_id"))
-                    .and_then(Value::as_str)
-                    == Some(applet.as_str());
-                let matches_realm = observed_applet_event(&r.payload)
-                    .get("scope_ref")
-                    .and_then(|value| serde_json::from_value::<ScopeRef>(value.clone()).ok())
-                    .and_then(|scope| scope.realm_id_opt().map(ToString::to_string))
-                    .is_some_and(|realm| {
-                        realm == crate::operation::trim_realm_id(&selected_realm_id)
-                    });
-                kind_is_applet && matches_did && matches_applet && matches_realm
-            })
-            .cloned()
-            .collect(),
-        None => Vec::new(),
-    };
-
-    if !services {
+    {
         let registry = stack(
             "event",
             vec![
@@ -1118,72 +1036,177 @@ fn applet_inventory_surface(
         );
         return Box::new(glory::ui::group().fill(vec![registry, errors]));
     }
-    let count = applet_rows.len();
-    if installed_count.get_untracked() != count {
-        installed_count.revise(|value| *value = count);
+}
+
+fn applet_service_ids(
+    context: &InksonContext,
+    selected_realm_id: &str,
+) -> BTreeSet<(String, String)> {
+    let state_store = context.state_store.clone();
+    let raw_ops = state_store.read(|store| store.load()).raw_operations;
+    // Observed registrations identify Services, not active installation scopes.
+    // Revisions remain visible in the history panel; each Service has one action row.
+    let mut applet_rows: BTreeSet<_> = raw_ops
+        .iter()
+        .filter_map(|r| {
+            if r.realm_id.as_deref()
+                != Some(crate::operation::trim_realm_id(selected_realm_id).as_str())
+                || observed_applet_event(&r.payload)
+                    .get("kind")
+                    .and_then(Value::as_str)
+                    != Some(event_kind_str::APPLET_REGISTRATION)
+            {
+                return None;
+            }
+            let service_id = observed_applet_body(&r.payload)?
+                .get("service_id")?
+                .as_str()?;
+            let service_id = DidCoreId::new(service_id.to_owned()).ok()?.into_string();
+            let body = observed_applet_body(&r.payload)?;
+            let applet_id = arkret_sdk::AppletId::new(body.get("applet_id")?.as_str()?).ok()?;
+            let scope: ScopeRef =
+                serde_json::from_value(observed_applet_event(&r.payload).get("scope_ref")?.clone())
+                    .ok()?;
+            if !matches!(scope, ScopeRef::Realm { .. })
+                || scope.realm_id_opt()?.as_str()
+                    != crate::operation::trim_realm_id(&selected_realm_id)
+            {
+                return None;
+            }
+            Some((applet_id.to_string(), service_id.clone()))
+        })
+        .collect();
+
+    if let Some(entries) = state_store.read(|store| {
+        store.realm_current_view_entries(&crate::operation::trim_realm_id(&selected_realm_id))
+    }) {
+        for entry in entries {
+            let arkret_wire::CurrentState::Value {
+                selector, value, ..
+            } = entry;
+            if let arkret_wire::CurrentSelector::AppletRegistration {
+                applet_id,
+                service_id,
+            } = selector
+                && let Ok(registration) =
+                    serde_json::from_value::<arkret_sdk::AppletRegistrationPayload>(value)
+                && registration.applet_id == applet_id
+                && registration.service_id == service_id
+            {
+                applet_rows.insert((applet_id.to_string(), service_id.to_string()));
+            }
+        }
     }
-    if applet_rows.is_empty() {
-        paragraph("muted applet-empty", tr("applets.installed_empty"))
-    } else {
-        stack(
-            "applet-service-list",
-            applet_rows
-                .into_iter()
-                .map(|(applet, service)| {
-                    let trace = st.trace_open_for;
-                    let aid = applet.clone();
-                    let sid = service.clone();
-                    let revoke = st.clone();
-                    let a = applet.clone();
-                    let s = service.clone();
-                    stack(
-                        "event applet-row",
-                        vec![
-                            line(
-                                "event-head",
-                                vec![
-                                    paragraph("mono", short_protocol_id(&service)),
-                                    paragraph("mono muted", short_protocol_id(&applet)),
-                                ],
-                            ),
-                            configuration::page(
-                                scope,
-                                st.context.clone(),
-                                selected_realm_id.clone(),
-                                applet,
-                                service,
-                            ),
-                            line(
-                                "actions",
-                                vec![
-                                    action(
-                                        scope,
-                                        st.context.clone(),
-                                        "applet-accountability-trace-button",
-                                        "applets.trace_events",
-                                        "secondary",
-                                        true,
-                                        move || {
-                                            trace.revise(|v| *v = Some((aid.clone(), sid.clone())))
-                                        },
-                                    ),
-                                    action(
-                                        scope,
-                                        st.context.clone(),
-                                        "applet-uninstall-button",
-                                        "applets.uninstall",
-                                        "destructive",
-                                        true,
-                                        move || revoke.clone().revoke(a.clone(), s.clone()),
-                                    ),
-                                ],
-                            ),
-                        ],
-                    )
+
+    applet_rows
+}
+
+fn applet_services_surface(scope: &Scope, state: AppletPage, installed_count: Cage<usize>) -> View {
+    let context = state.context.clone();
+    let rows = scope.bond(move || {
+        let _ = context.state_revision.get();
+        let _ = context.locale.get();
+        let realm = context.selected_realm_id.get();
+        let Some(account) = context.active_account.get() else {
+            return Vec::new();
+        };
+        applet_service_ids(&context, &realm)
+            .into_iter()
+            .map(|(applet, service)| {
+                (
+                    account.authority.principal_id.to_string(),
+                    account.authority.station_id.to_string(),
+                    realm.clone(),
+                    applet,
+                    service,
+                )
+            })
+            .collect::<Vec<_>>()
+    });
+    scope.effect(move || {
+        let count = rows.get().len();
+        if installed_count.get_untracked() != count {
+            installed_count.revise(|value| *value = count);
+        }
+    });
+    let empty_state = reactive(
+        scope.bond(move || rows.get().is_empty()),
+        move |_, is_empty| {
+            if is_empty {
+                paragraph("muted applet-empty", tr("applets.installed_empty"))
+            } else {
+                empty()
+            }
+        },
+    );
+    let services: View = Box::new(
+        glory::ui::each(rows)
+            .key(|row: &(String, String, String, String, String)| row.clone())
+            .seed(move |(_, _, realm, applet, service)| {
+                let state = state.clone();
+                glory::ui::widget(move |scope| {
+                    use glory::ui::Widget;
+                    let applet = applet.clone();
+                    let service = service.clone();
+                    let mut row = {
+                        let trace = state.trace_open_for;
+                        let aid = applet.clone();
+                        let sid = service.clone();
+                        let revoke = state.clone();
+                        let a = applet.clone();
+                        let s = service.clone();
+                        stack(
+                            "event applet-row",
+                            vec![
+                                line(
+                                    "event-head",
+                                    vec![
+                                        paragraph("mono", short_protocol_id(&service)),
+                                        paragraph("mono muted", short_protocol_id(&applet)),
+                                    ],
+                                ),
+                                configuration::page(
+                                    scope,
+                                    state.context.clone(),
+                                    realm.clone(),
+                                    applet,
+                                    service,
+                                ),
+                                line(
+                                    "actions",
+                                    vec![
+                                        action(
+                                            scope,
+                                            state.context.clone(),
+                                            "applet-accountability-trace-button",
+                                            "applets.trace_events",
+                                            "secondary",
+                                            true,
+                                            move || {
+                                                trace.revise(|v| {
+                                                    *v = Some((aid.clone(), sid.clone()))
+                                                })
+                                            },
+                                        ),
+                                        action(
+                                            scope,
+                                            state.context.clone(),
+                                            "applet-uninstall-button",
+                                            "applets.uninstall",
+                                            "destructive",
+                                            true,
+                                            move || revoke.clone().revoke(a.clone(), s.clone()),
+                                        ),
+                                    ],
+                                ),
+                            ],
+                        )
+                    };
+                    row.build(scope)
                 })
-                .collect(),
-        )
-    }
+            }),
+    );
+    stack("applet-service-list", vec![empty_state, services])
 }
 
 pub fn page(scope: &Scope, context: Rc<InksonContext>, _route: crate::routes::Route) -> View {
@@ -1307,28 +1330,9 @@ pub fn page(scope: &Scope, context: Rc<InksonContext>, _route: crate::routes::Ro
     let installed_count = scope.cage(0usize);
     let inventory = reactive(source, {
         let state = state.clone();
-        move |scope, selected_realm_id| {
-            applet_inventory_surface(
-                scope,
-                state.clone(),
-                selected_realm_id,
-                false,
-                installed_count,
-            )
-        }
+        move |_, selected_realm_id| applet_inventory_surface(state.clone(), selected_realm_id)
     });
-    let services = reactive(source, {
-        let state = state.clone();
-        move |scope, selected_realm_id| {
-            applet_inventory_surface(
-                scope,
-                state.clone(),
-                selected_realm_id,
-                true,
-                installed_count,
-            )
-        }
-    });
+    let services = applet_services_surface(scope, state.clone(), installed_count);
     let trace = {
         let state = state.clone();
         reactive(state.trace_open_for, move |scope, target| {
