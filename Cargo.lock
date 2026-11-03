@@ -289,7 +289,7 @@ dependencies = [
 [[package]]
 name = "apace-dom"
 version = "0.3.0"
-source = "git+https://github.com/glory-rs/apace?rev=191c48adf6d7deb120c9d3ee1b098d7dc020891f#191c48adf6d7deb120c9d3ee1b098d7dc020891f"
+source = "git+https://github.com/glory-rs/apace?rev=a2407c3b2c1d6e25b7fd2ce1421daffff266e584#a2407c3b2c1d6e25b7fd2ce1421daffff266e584"
 dependencies = [
  "accesskit",
  "anyrender",
@@ -315,7 +315,7 @@ dependencies = [
  "parley",
  "percent-encoding",
  "rayon",
- "selectors 0.41.0",
+ "selectors 0.42.0",
  "skrifa",
  "slotmap",
  "smallvec",
@@ -334,7 +334,7 @@ dependencies = [
 [[package]]
 name = "apace-paint"
 version = "0.3.0"
-source = "git+https://github.com/glory-rs/apace?rev=191c48adf6d7deb120c9d3ee1b098d7dc020891f#191c48adf6d7deb120c9d3ee1b098d7dc020891f"
+source = "git+https://github.com/glory-rs/apace?rev=a2407c3b2c1d6e25b7fd2ce1421daffff266e584#a2407c3b2c1d6e25b7fd2ce1421daffff266e584"
 dependencies = [
  "anyrender",
  "apace-dom",
@@ -354,7 +354,7 @@ dependencies = [
 [[package]]
 name = "apace-shell"
 version = "0.3.0"
-source = "git+https://github.com/glory-rs/apace?rev=191c48adf6d7deb120c9d3ee1b098d7dc020891f#191c48adf6d7deb120c9d3ee1b098d7dc020891f"
+source = "git+https://github.com/glory-rs/apace?rev=a2407c3b2c1d6e25b7fd2ce1421daffff266e584#a2407c3b2c1d6e25b7fd2ce1421daffff266e584"
 dependencies = [
  "android-activity",
  "anyrender",
@@ -373,7 +373,7 @@ dependencies = [
 [[package]]
 name = "apace-traits"
 version = "0.3.0"
-source = "git+https://github.com/glory-rs/apace?rev=191c48adf6d7deb120c9d3ee1b098d7dc020891f#191c48adf6d7deb120c9d3ee1b098d7dc020891f"
+source = "git+https://github.com/glory-rs/apace?rev=a2407c3b2c1d6e25b7fd2ce1421daffff266e584#a2407c3b2c1d6e25b7fd2ce1421daffff266e584"
 dependencies = [
  "atomic_refcell",
  "bitflags",
@@ -389,7 +389,7 @@ dependencies = [
 [[package]]
 name = "apace_accesskit"
 version = "0.2.2"
-source = "git+https://github.com/glory-rs/apace?rev=191c48adf6d7deb120c9d3ee1b098d7dc020891f#191c48adf6d7deb120c9d3ee1b098d7dc020891f"
+source = "git+https://github.com/glory-rs/apace?rev=a2407c3b2c1d6e25b7fd2ce1421daffff266e584#a2407c3b2c1d6e25b7fd2ce1421daffff266e584"
 dependencies = [
  "accesskit",
  "accesskit_macos",
@@ -402,7 +402,7 @@ dependencies = [
 [[package]]
 name = "apace_debug_timer"
 version = "0.1.4"
-source = "git+https://github.com/glory-rs/apace?rev=191c48adf6d7deb120c9d3ee1b098d7dc020891f#191c48adf6d7deb120c9d3ee1b098d7dc020891f"
+source = "git+https://github.com/glory-rs/apace?rev=a2407c3b2c1d6e25b7fd2ce1421daffff266e584#a2407c3b2c1d6e25b7fd2ce1421daffff266e584"
 
 [[package]]
 name = "app_units"
@@ -3290,7 +3290,7 @@ dependencies = [
 [[package]]
 name = "glory"
 version = "0.6.1"
-source = "git+https://github.com/glory-rs/glory.git?branch=main#5a6e793bd270b794c6f3758e4c962de0699ff79a"
+source = "git+https://github.com/glory-rs/glory.git?branch=main#04a7095a938e7758d0f80ef1b5470719aed7095c"
 dependencies = [
  "glory-apace",
  "glory-core",
@@ -3306,7 +3306,7 @@ dependencies = [
 [[package]]
 name = "glory-apace"
 version = "0.6.1"
-source = "git+https://github.com/glory-rs/glory.git?branch=main#5a6e793bd270b794c6f3758e4c962de0699ff79a"
+source = "git+https://github.com/glory-rs/glory.git?branch=main#04a7095a938e7758d0f80ef1b5470719aed7095c"
 dependencies = [
  "accesskit",
  "anyrender",
@@ -3341,7 +3341,7 @@ dependencies = [
 [[package]]
 name = "glory-core"
 version = "0.6.1"
-source = "git+https://github.com/glory-rs/glory.git?branch=main#5a6e793bd270b794c6f3758e4c962de0699ff79a"
+source = "git+https://github.com/glory-rs/glory.git?branch=main#04a7095a938e7758d0f80ef1b5470719aed7095c"
 dependencies = [
  "glory-render",
 ]
@@ -3349,7 +3349,7 @@ dependencies = [
 [[package]]
 name = "glory-html"
 version = "0.6.1"
-source = "git+https://github.com/glory-rs/glory.git?branch=main#5a6e793bd270b794c6f3758e4c962de0699ff79a"
+source = "git+https://github.com/glory-rs/glory.git?branch=main#04a7095a938e7758d0f80ef1b5470719aed7095c"
 dependencies = [
  "glory-render",
  "glory-style",
@@ -3358,7 +3358,7 @@ dependencies = [
 [[package]]
 name = "glory-render"
 version = "0.6.1"
-source = "git+https://github.com/glory-rs/glory.git?branch=main#5a6e793bd270b794c6f3758e4c962de0699ff79a"
+source = "git+https://github.com/glory-rs/glory.git?branch=main#04a7095a938e7758d0f80ef1b5470719aed7095c"
 dependencies = [
  "glory-style",
 ]
@@ -3366,7 +3366,7 @@ dependencies = [
 [[package]]
 name = "glory-ssr"
 version = "0.6.1"
-source = "git+https://github.com/glory-rs/glory.git?branch=main#5a6e793bd270b794c6f3758e4c962de0699ff79a"
+source = "git+https://github.com/glory-rs/glory.git?branch=main#04a7095a938e7758d0f80ef1b5470719aed7095c"
 dependencies = [
  "glory-core",
  "glory-html",
@@ -3377,7 +3377,7 @@ dependencies = [
 [[package]]
 name = "glory-style"
 version = "0.6.1"
-source = "git+https://github.com/glory-rs/glory.git?branch=main#5a6e793bd270b794c6f3758e4c962de0699ff79a"
+source = "git+https://github.com/glory-rs/glory.git?branch=main#04a7095a938e7758d0f80ef1b5470719aed7095c"
 dependencies = [
  "cssparser 0.38.0",
 ]
@@ -3385,7 +3385,7 @@ dependencies = [
 [[package]]
 name = "glory-ui"
 version = "0.6.1"
-source = "git+https://github.com/glory-rs/glory.git?branch=main#5a6e793bd270b794c6f3758e4c962de0699ff79a"
+source = "git+https://github.com/glory-rs/glory.git?branch=main#04a7095a938e7758d0f80ef1b5470719aed7095c"
 dependencies = [
  "glory-core",
  "glory-render",
@@ -3395,7 +3395,7 @@ dependencies = [
 [[package]]
 name = "glory-web"
 version = "0.6.1"
-source = "git+https://github.com/glory-rs/glory.git?branch=main#5a6e793bd270b794c6f3758e4c962de0699ff79a"
+source = "git+https://github.com/glory-rs/glory.git?branch=main#04a7095a938e7758d0f80ef1b5470719aed7095c"
 dependencies = [
  "futures-util",
  "glory-core",
@@ -3411,7 +3411,7 @@ dependencies = [
 [[package]]
 name = "glory-wry"
 version = "0.6.1"
-source = "git+https://github.com/glory-rs/glory.git?branch=main#5a6e793bd270b794c6f3758e4c962de0699ff79a"
+source = "git+https://github.com/glory-rs/glory.git?branch=main#04a7095a938e7758d0f80ef1b5470719aed7095c"
 dependencies = [
  "glory-core",
  "glory-html",
@@ -7165,7 +7165,7 @@ dependencies = [
 [[package]]
 name = "sapid"
 version = "0.6.1"
-source = "git+https://github.com/sapid-ui/sapid.git?branch=main#0c3286d8f4a9e4f189e1a355dbc7fc8fbf64c6a8"
+source = "git+https://github.com/sapid-ui/sapid.git?branch=main#f13004b6f6a8b9578945944801380faa78e751e9"
 dependencies = [
  "glory",
  "serde_json",
@@ -7281,8 +7281,9 @@ dependencies = [
 
 [[package]]
 name = "selectors"
-version = "0.41.0"
-source = "git+https://github.com/nicoburns/stylo?rev=78734bf554bb40af9dc11c0eedbe724f6055697c#78734bf554bb40af9dc11c0eedbe724f6055697c"
+version = "0.42.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "284ac2879477575f13b22201f7e98aa33aacc765b790536808cf580fd79339f1"
 dependencies = [
  "bitflags",
  "cssparser 0.38.0",
@@ -7292,7 +7293,7 @@ dependencies = [
  "new_debug_unreachable",
  "precomputed-hash",
  "rustc-hash",
- "servo_arc 0.5.0",
+ "servo_arc 0.6.0",
  "smallvec",
  "to_shmem",
  "to_shmem_derive",
@@ -7524,8 +7525,9 @@ dependencies = [
 
 [[package]]
 name = "servo_arc"
-version = "0.5.0"
-source = "git+https://github.com/nicoburns/stylo?rev=78734bf554bb40af9dc11c0eedbe724f6055697c#78734bf554bb40af9dc11c0eedbe724f6055697c"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9f121f129345b5201873a0e253f630413d750b9d799613e2873fb768e592c2a7"
 dependencies = [
  "serde",
  "stable_deref_trait",
@@ -7955,8 +7957,9 @@ dependencies = [
 
 [[package]]
 name = "stylo"
-version = "0.22.0"
-source = "git+https://github.com/nicoburns/stylo?rev=78734bf554bb40af9dc11c0eedbe724f6055697c#78734bf554bb40af9dc11c0eedbe724f6055697c"
+version = "0.23.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "84fe6be1e185e318b93be8f1e025667c196584a9bc9d5b7aca34bba4a07fb488"
 dependencies = [
  "app_units",
  "arrayvec",
@@ -7986,9 +7989,9 @@ dependencies = [
  "rayon",
  "rayon-core",
  "rustc-hash",
- "selectors 0.41.0",
+ "selectors 0.42.0",
  "serde",
- "servo_arc 0.5.0",
+ "servo_arc 0.6.0",
  "smallbitvec",
  "smallvec",
  "static_assertions",
@@ -8013,8 +8016,9 @@ dependencies = [
 
 [[package]]
 name = "stylo_atoms"
-version = "0.22.0"
-source = "git+https://github.com/nicoburns/stylo?rev=78734bf554bb40af9dc11c0eedbe724f6055697c#78734bf554bb40af9dc11c0eedbe724f6055697c"
+version = "0.23.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf5f78e379ca000ebacf94d1eaa3ce4c72a1b14b0fd8c5547a6fb3fe0d767c62"
 dependencies = [
  "string_cache 0.11.0",
  "string_cache_codegen 0.11.2",
@@ -8022,8 +8026,9 @@ dependencies = [
 
 [[package]]
 name = "stylo_derive"
-version = "0.22.0"
-source = "git+https://github.com/nicoburns/stylo?rev=78734bf554bb40af9dc11c0eedbe724f6055697c#78734bf554bb40af9dc11c0eedbe724f6055697c"
+version = "0.23.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d7fdb4416be784fd22b2bc3d1c7be82f6bb55e58af99b0e1e7e975b5575be8bb"
 dependencies = [
  "darling",
  "proc-macro2",
@@ -8034,8 +8039,9 @@ dependencies = [
 
 [[package]]
 name = "stylo_dom"
-version = "0.22.0"
-source = "git+https://github.com/nicoburns/stylo?rev=78734bf554bb40af9dc11c0eedbe724f6055697c#78734bf554bb40af9dc11c0eedbe724f6055697c"
+version = "0.23.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "137701caa61df2cbba072468a322b92729bb9e4838b5d6e3890360ea3e74a9e9"
 dependencies = [
  "bitflags",
  "stylo_malloc_size_of",
@@ -8043,16 +8049,17 @@ dependencies = [
 
 [[package]]
 name = "stylo_malloc_size_of"
-version = "0.22.0"
-source = "git+https://github.com/nicoburns/stylo?rev=78734bf554bb40af9dc11c0eedbe724f6055697c#78734bf554bb40af9dc11c0eedbe724f6055697c"
+version = "0.23.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e1f70f5473f53bfd468197313daa6fc944cdef0fe39e03e5179c54e7b5d7f72a"
 dependencies = [
  "app_units",
  "cssparser 0.38.0",
  "euclid",
  "hashbrown 0.17.1",
  "parking_lot",
- "selectors 0.41.0",
- "servo_arc 0.5.0",
+ "selectors 0.42.0",
+ "servo_arc 0.6.0",
  "smallbitvec",
  "smallvec",
  "string_cache 0.11.0",
@@ -8062,8 +8069,9 @@ dependencies = [
 
 [[package]]
 name = "stylo_static_prefs"
-version = "0.22.0"
-source = "git+https://github.com/nicoburns/stylo?rev=78734bf554bb40af9dc11c0eedbe724f6055697c#78734bf554bb40af9dc11c0eedbe724f6055697c"
+version = "0.23.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8e06c605a1d428d159798ebfed3f81f3a145f1838872360ebb24ec6d85993fe1"
 dependencies = [
  "toml",
 ]
@@ -8071,7 +8079,7 @@ dependencies = [
 [[package]]
 name = "stylo_takia"
 version = "0.3.0"
-source = "git+https://github.com/glory-rs/apace?rev=191c48adf6d7deb120c9d3ee1b098d7dc020891f#191c48adf6d7deb120c9d3ee1b098d7dc020891f"
+source = "git+https://github.com/glory-rs/apace?rev=a2407c3b2c1d6e25b7fd2ce1421daffff266e584#a2407c3b2c1d6e25b7fd2ce1421daffff266e584"
 dependencies = [
  "bitflags",
  "stylo",
@@ -8081,17 +8089,18 @@ dependencies = [
 
 [[package]]
 name = "stylo_traits"
-version = "0.22.0"
-source = "git+https://github.com/nicoburns/stylo?rev=78734bf554bb40af9dc11c0eedbe724f6055697c#78734bf554bb40af9dc11c0eedbe724f6055697c"
+version = "0.23.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3bfa703936a384ea36c9257e9263021a37963e3f9aee51bc515fb331ee4dbfb1"
 dependencies = [
  "app_units",
  "bitflags",
  "cssparser 0.38.0",
  "euclid",
  "malloc_size_of_derive",
- "selectors 0.41.0",
+ "selectors 0.42.0",
  "serde",
- "servo_arc 0.5.0",
+ "servo_arc 0.6.0",
  "stylo_atoms",
  "stylo_malloc_size_of",
  "thin-vec",
@@ -8177,7 +8186,7 @@ dependencies = [
 [[package]]
 name = "takia"
 version = "0.15.1"
-source = "git+https://github.com/glory-rs/takia?rev=ed436701c22b565baa127f2a5bf543ebbd1b2b90#ed436701c22b565baa127f2a5bf543ebbd1b2b90"
+source = "git+https://github.com/glory-rs/takia?rev=c7dfdfa0ca7fc94cad5c57e2f5e93b1d91b3de03#c7dfdfa0ca7fc94cad5c57e2f5e93b1d91b3de03"
 dependencies = [
  "serde",
  "slotmap",
@@ -8258,7 +8267,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.6",
  "windows-sys 0.61.2",
@@ -8450,12 +8459,13 @@ dependencies = [
 
 [[package]]
 name = "to_shmem"
-version = "0.6.0"
-source = "git+https://github.com/nicoburns/stylo?rev=78734bf554bb40af9dc11c0eedbe724f6055697c#78734bf554bb40af9dc11c0eedbe724f6055697c"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2124b7c691cfffe4c3607ba502b898076f4c281eb80c1aa633c40b1711a319c1"
 dependencies = [
  "cssparser 0.38.0",
  "hashbrown 0.17.1",
- "servo_arc 0.5.0",
+ "servo_arc 0.6.0",
  "smallbitvec",
  "smallvec",
  "string_cache 0.11.0",
@@ -8464,8 +8474,9 @@ dependencies = [
 
 [[package]]
 name = "to_shmem_derive"
-version = "0.2.0"
-source = "git+https://github.com/nicoburns/stylo?rev=78734bf554bb40af9dc11c0eedbe724f6055697c#78734bf554bb40af9dc11c0eedbe724f6055697c"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "41fef02c6bedb48041c2d9c9883cfd677afb3bc026435bf6828b74e9db30068d"
 dependencies = [
  "darling",
  "proc-macro2",
@@ -9831,7 +9842,7 @@ checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
 [[package]]
 name = "wingy"
 version = "0.31.1"
-source = "git+https://github.com/glory-rs/wingy?rev=2d1f938cf3c1e257aa85b3fa7301c80ad6c19d6e#2d1f938cf3c1e257aa85b3fa7301c80ad6c19d6e"
+source = "git+https://github.com/glory-rs/wingy?rev=d6613df82dbdf2409d9bfa8762ef431639e42fdc#d6613df82dbdf2409d9bfa8762ef431639e42fdc"
 dependencies = [
  "bitflags",
  "cfg_aliases",
@@ -9857,7 +9868,7 @@ dependencies = [
 [[package]]
 name = "wingy-android"
 version = "0.31.1"
-source = "git+https://github.com/glory-rs/wingy?rev=2d1f938cf3c1e257aa85b3fa7301c80ad6c19d6e#2d1f938cf3c1e257aa85b3fa7301c80ad6c19d6e"
+source = "git+https://github.com/glory-rs/wingy?rev=d6613df82dbdf2409d9bfa8762ef431639e42fdc#d6613df82dbdf2409d9bfa8762ef431639e42fdc"
 dependencies = [
  "android-activity",
  "bitflags",
@@ -9872,7 +9883,7 @@ dependencies = [
 [[package]]
 name = "wingy-appkit"
 version = "0.31.1"
-source = "git+https://github.com/glory-rs/wingy?rev=2d1f938cf3c1e257aa85b3fa7301c80ad6c19d6e#2d1f938cf3c1e257aa85b3fa7301c80ad6c19d6e"
+source = "git+https://github.com/glory-rs/wingy?rev=d6613df82dbdf2409d9bfa8762ef431639e42fdc#d6613df82dbdf2409d9bfa8762ef431639e42fdc"
 dependencies = [
  "bitflags",
  "block2 0.6.2",
@@ -9894,7 +9905,7 @@ dependencies = [
 [[package]]
 name = "wingy-common"
 version = "0.31.1"
-source = "git+https://github.com/glory-rs/wingy?rev=2d1f938cf3c1e257aa85b3fa7301c80ad6c19d6e#2d1f938cf3c1e257aa85b3fa7301c80ad6c19d6e"
+source = "git+https://github.com/glory-rs/wingy?rev=d6613df82dbdf2409d9bfa8762ef431639e42fdc#d6613df82dbdf2409d9bfa8762ef431639e42fdc"
 dependencies = [
  "block2 0.6.2",
  "memmap2",
@@ -9912,7 +9923,7 @@ dependencies = [
 [[package]]
 name = "wingy-core"
 version = "0.31.1"
-source = "git+https://github.com/glory-rs/wingy?rev=2d1f938cf3c1e257aa85b3fa7301c80ad6c19d6e#2d1f938cf3c1e257aa85b3fa7301c80ad6c19d6e"
+source = "git+https://github.com/glory-rs/wingy?rev=d6613df82dbdf2409d9bfa8762ef431639e42fdc#d6613df82dbdf2409d9bfa8762ef431639e42fdc"
 dependencies = [
  "bitflags",
  "cursor-icon",
@@ -9926,12 +9937,12 @@ dependencies = [
 [[package]]
 name = "wingy-dpi"
 version = "0.1.3"
-source = "git+https://github.com/glory-rs/wingy?rev=2d1f938cf3c1e257aa85b3fa7301c80ad6c19d6e#2d1f938cf3c1e257aa85b3fa7301c80ad6c19d6e"
+source = "git+https://github.com/glory-rs/wingy?rev=d6613df82dbdf2409d9bfa8762ef431639e42fdc#d6613df82dbdf2409d9bfa8762ef431639e42fdc"
 
 [[package]]
 name = "wingy-orbital"
 version = "0.31.1"
-source = "git+https://github.com/glory-rs/wingy?rev=2d1f938cf3c1e257aa85b3fa7301c80ad6c19d6e#2d1f938cf3c1e257aa85b3fa7301c80ad6c19d6e"
+source = "git+https://github.com/glory-rs/wingy?rev=d6613df82dbdf2409d9bfa8762ef431639e42fdc#d6613df82dbdf2409d9bfa8762ef431639e42fdc"
 dependencies = [
  "bitflags",
  "libredox 0.2.0",
@@ -9947,7 +9958,7 @@ dependencies = [
 [[package]]
 name = "wingy-uikit"
 version = "0.31.1"
-source = "git+https://github.com/glory-rs/wingy?rev=2d1f938cf3c1e257aa85b3fa7301c80ad6c19d6e#2d1f938cf3c1e257aa85b3fa7301c80ad6c19d6e"
+source = "git+https://github.com/glory-rs/wingy?rev=d6613df82dbdf2409d9bfa8762ef431639e42fdc#d6613df82dbdf2409d9bfa8762ef431639e42fdc"
 dependencies = [
  "bitflags",
  "block2 0.6.2",
@@ -9967,7 +9978,7 @@ dependencies = [
 [[package]]
 name = "wingy-wayland"
 version = "0.31.1"
-source = "git+https://github.com/glory-rs/wingy?rev=2d1f938cf3c1e257aa85b3fa7301c80ad6c19d6e#2d1f938cf3c1e257aa85b3fa7301c80ad6c19d6e"
+source = "git+https://github.com/glory-rs/wingy?rev=d6613df82dbdf2409d9bfa8762ef431639e42fdc#d6613df82dbdf2409d9bfa8762ef431639e42fdc"
 dependencies = [
  "bitflags",
  "calloop",
@@ -9994,7 +10005,7 @@ dependencies = [
 [[package]]
 name = "wingy-web"
 version = "0.31.1"
-source = "git+https://github.com/glory-rs/wingy?rev=2d1f938cf3c1e257aa85b3fa7301c80ad6c19d6e#2d1f938cf3c1e257aa85b3fa7301c80ad6c19d6e"
+source = "git+https://github.com/glory-rs/wingy?rev=d6613df82dbdf2409d9bfa8762ef431639e42fdc#d6613df82dbdf2409d9bfa8762ef431639e42fdc"
 dependencies = [
  "atomic-waker",
  "bitflags",
@@ -10016,7 +10027,7 @@ dependencies = [
 [[package]]
 name = "wingy-win32"
 version = "0.31.1"
-source = "git+https://github.com/glory-rs/wingy?rev=2d1f938cf3c1e257aa85b3fa7301c80ad6c19d6e#2d1f938cf3c1e257aa85b3fa7301c80ad6c19d6e"
+source = "git+https://github.com/glory-rs/wingy?rev=d6613df82dbdf2409d9bfa8762ef431639e42fdc#d6613df82dbdf2409d9bfa8762ef431639e42fdc"
 dependencies = [
  "bitflags",
  "cursor-icon",
@@ -10034,7 +10045,7 @@ dependencies = [
 [[package]]
 name = "wingy-x11"
 version = "0.31.1"
-source = "git+https://github.com/glory-rs/wingy?rev=2d1f938cf3c1e257aa85b3fa7301c80ad6c19d6e#2d1f938cf3c1e257aa85b3fa7301c80ad6c19d6e"
+source = "git+https://github.com/glory-rs/wingy?rev=d6613df82dbdf2409d9bfa8762ef431639e42fdc#d6613df82dbdf2409d9bfa8762ef431639e42fdc"
 dependencies = [
  "bitflags",
  "bytemuck",

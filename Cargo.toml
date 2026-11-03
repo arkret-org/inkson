@@ -414,13 +414,13 @@ debug-assertions = false
 glory = { git = "https://github.com/glory-rs/glory.git", branch = "main" }
 
 [patch."https://github.com/glory-rs/glory.git"]
-apace-dom = { git = "https://github.com/glory-rs/apace", version = "=0.3.0", rev = "191c48adf6d7deb120c9d3ee1b098d7dc020891f" }
-apace-paint = { git = "https://github.com/glory-rs/apace", version = "=0.3.0", rev = "191c48adf6d7deb120c9d3ee1b098d7dc020891f" }
-apace-shell = { git = "https://github.com/glory-rs/apace", version = "=0.3.0", rev = "191c48adf6d7deb120c9d3ee1b098d7dc020891f" }
-apace-traits = { git = "https://github.com/glory-rs/apace", version = "=0.3.0", rev = "191c48adf6d7deb120c9d3ee1b098d7dc020891f" }
-apace_accesskit = { git = "https://github.com/glory-rs/apace", version = "=0.2.2", rev = "191c48adf6d7deb120c9d3ee1b098d7dc020891f" }
-wingy = { git = "https://github.com/glory-rs/wingy", version = "=0.31.1", rev = "2d1f938cf3c1e257aa85b3fa7301c80ad6c19d6e" }
+apace-dom = { git = "https://github.com/glory-rs/apace", version = "=0.3.0", rev = "a2407c3b2c1d6e25b7fd2ce1421daffff266e584" }
+apace-paint = { git = "https://github.com/glory-rs/apace", version = "=0.3.0", rev = "a2407c3b2c1d6e25b7fd2ce1421daffff266e584" }
+apace-shell = { git = "https://github.com/glory-rs/apace", version = "=0.3.0", rev = "a2407c3b2c1d6e25b7fd2ce1421daffff266e584" }
+apace-traits = { git = "https://github.com/glory-rs/apace", version = "=0.3.0", rev = "a2407c3b2c1d6e25b7fd2ce1421daffff266e584" }
+apace_accesskit = { git = "https://github.com/glory-rs/apace", version = "=0.2.2", rev = "a2407c3b2c1d6e25b7fd2ce1421daffff266e584" }
+wingy = { git = "https://github.com/glory-rs/wingy", version = "=0.31.1", rev = "d6613df82dbdf2409d9bfa8762ef431639e42fdc" }
 
 [patch."https://github.com/glory-rs/apace"]
-takia = { git = "https://github.com/glory-rs/takia", version = "=0.15.1", rev = "ed436701c22b565baa127f2a5bf543ebbd1b2b90" }
-wingy = { git = "https://github.com/glory-rs/wingy", version = "=0.31.1", rev = "2d1f938cf3c1e257aa85b3fa7301c80ad6c19d6e" }
+takia = { git = "https://github.com/glory-rs/takia", version = "=0.15.1", rev = "c7dfdfa0ca7fc94cad5c57e2f5e93b1d91b3de03" }
+wingy = { git = "https://github.com/glory-rs/wingy", version = "=0.31.1", rev = "d6613df82dbdf2409d9bfa8762ef431639e42fdc" }
