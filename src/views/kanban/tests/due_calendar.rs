@@ -1,6 +1,36 @@
 use super::*;
 
 #[test]
+fn card_due_projection_retains_absence_and_explicit_dates_without_display_placeholders() {
+    for fields in [
+        json!({}),
+        json!({"due_date": null}),
+        json!({"due_date": ""}),
+    ] {
+        let strand: crate::state::projection_views::StrandProjectionView =
+            serde_json::from_value(json!({
+                "strand_id": "ak:strand:AV624IkuHj3HmxAYE6uyYmBa4Est3gGGdnOsjn71z5L2",
+                "realm_id": TEST_REALM_ID,
+                "state": "active",
+                "fields": fields,
+            }))
+            .unwrap();
+        let card = card_from_strand_projection(&strand, None);
+        assert!(card.due.is_empty());
+        assert!(!due_value_is_overdue(&card.due));
+    }
+    let strand: crate::state::projection_views::StrandProjectionView =
+        serde_json::from_value(json!({
+            "strand_id": "ak:strand:AV624IkuHj3HmxAYE6uyYmBa4Est3gGGdnOsjn71z5L2",
+            "realm_id": TEST_REALM_ID,
+            "state": "active",
+            "fields": {"due_date": "2020-01-01"},
+        }))
+        .unwrap();
+    assert_eq!(card_from_strand_projection(&strand, None).due, "2020-01-01");
+}
+
+#[test]
 fn parse_card_labels_trims_and_deduplicates() {
     assert_eq!(
         parse_card_labels(" release, ops, release, ,OPS "),

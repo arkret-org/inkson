@@ -32,7 +32,7 @@ pub(crate) fn local_created_card(
         labels: vec!["draft".to_owned()],
         assignee: "inkson".to_owned(),
         assigned_to_relations: Vec::new(),
-        due: "unscheduled".to_owned(),
+        due: String::new(),
         calendar_rsvp: CalendarRsvpDisplay::default(),
         calendar_rsvp_cells: Vec::new(),
         authoring_basis: None,
@@ -695,13 +695,13 @@ pub(crate) fn apply_card_update_overlay(card: &mut KanbanCard, update: &LocalCar
             .or_else(|| fields.get("due_date"))
             .and_then(Value::as_str)
         {
-            card.due = display_optional_card_field(due);
+            card.due = due.trim().to_owned();
         } else if update.fields_replaces_all
             || fields.contains_key("due_at")
             || fields.contains_key("due")
             || fields.contains_key("due_date")
         {
-            card.due = display_optional_card_field("");
+            card.due.clear();
         }
     }
     if let Some(calendar) = &update.calendar {

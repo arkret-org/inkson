@@ -206,6 +206,110 @@ async fn production_command_callback_does_not_allocate_hooks_and_survives_rerend
     };
 }
 
+#[tokio::test(flavor = "current_thread")]
+async fn encrypted_public_update_policy_rejects_before_io_and_retains_the_original_draft() {
+    let directory = tempfile::tempdir().unwrap();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let (app, executor) = host();
+    let scope = app.scope();
+    let context = fixture_context(scope, &directory.path().join("public-update.json"));
+    scope.retain(context.clone()).unwrap();
+    let authority = crate::test_support::authority("ak:did_core:web:alice.example");
+    let device =
+        arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000001").unwrap();
+    let controller = super::super::super::controller::chat_controller(
+        scope, context, "", "", &authority, &device,
+    )
+    .unwrap();
+    let frontier = scope.cage(String::new());
+    let realm = "ak:realm:AZAySZA7XRDeJ9cO4MqaDWrJD-rqPk6Cudk7CCzsDQz1";
+    let strand = "ak:strand:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
+    for body in [
+        "Public update: root cause leaked token".to_owned(),
+        format!(
+            "Public update: leaked token {}",
+            "x".repeat(arkret_sdk::CONTENT_TEXT_INLINE_MAX_BYTES)
+        ),
+    ] {
+        let local_id = new_chat_local_id();
+        controller.messages.revise(|messages| {
+            *messages = vec![ChatMessage {
+                protocol_content: None,
+                local_scope: None,
+                realm_id: realm.to_owned(),
+                id: local_id.clone(),
+                protocol_message_id: None,
+                actor_id: Some(arkret_sdk::ActorId::account(authority.clone())),
+                sender: authority.principal_id.to_string(),
+                executed_by: None,
+                body: body.clone(),
+                content_format: Some(arkret_sdk::TextFormat::Markdown),
+                timestamp: String::new(),
+                created_at: None,
+                strand_id: strand.to_owned(),
+                reply_to: None,
+                reactions: Vec::new(),
+                redacted: false,
+                edited: false,
+                revisions: Vec::new(),
+                revision_source: None,
+                pending: true,
+                failed: false,
+                error: None,
+                mentions: Vec::new(),
+                crypto_state: MessageCryptoState::Plaintext,
+            }]
+        });
+        controller.draft.revise(|draft| draft.clear());
+        send_encrypted_message(
+            controller,
+            frontier,
+            EncryptedSendRequest {
+                base_url: format!("http://{}", listener.local_addr().unwrap()),
+                api_token: String::new(),
+                wait_for: None,
+                realm_id: realm.to_owned(),
+                circle_id: None,
+                strand_id: strand.to_owned(),
+                actor: authority.principal_id.to_string(),
+                authority: authority.clone(),
+                device_id: device.clone(),
+                message_id: local_id,
+                body: body.clone(),
+                reply_to: None,
+                mentions: Vec::new(),
+                shared_agent_targets: Vec::new(),
+                backup_trigger_signal: None,
+            },
+        );
+        pump(&app, &executor);
+        assert_eq!(controller.draft.get_untracked(), body);
+        assert!(controller.pending_drafts.get_untracked().is_empty());
+        let messages = controller.messages.get_untracked();
+        assert_eq!(messages.len(), 1);
+        assert!(messages[0].failed);
+        assert!(!messages[0].pending);
+        assert!(
+            messages[0]
+                .error
+                .as_deref()
+                .unwrap()
+                .contains("public_update_blocked")
+        );
+        assert!(
+            controller
+                .status_msg
+                .get_untracked()
+                .contains("public_update_blocked")
+        );
+        assert_eq!(
+            listener.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+    }
+}
+
 type UploadHandles = Rc<RefCell<Option<(Rc<dyn Fn()>, Cage<String>, Cage<String>)>>>;
 
 #[derive(Clone)]

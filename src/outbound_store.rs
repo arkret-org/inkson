@@ -1166,7 +1166,6 @@ impl InksonOutboundStore {
         Ok(())
     }
 
-    #[cfg(test)]
     pub(crate) async fn freeze_creator_intent(
         &self,
         intent: MlsCreatorBootstrapIntent,

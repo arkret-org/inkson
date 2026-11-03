@@ -347,7 +347,7 @@ fn overlay_local_card_update_records_clears_due_from_fields_replacement() {
         }),
     };
     let overlaid = overlay_local_card_update_records(columns, &[queued], None);
-    assert_eq!(overlaid[0].cards[0].due, "—");
+    assert!(overlaid[0].cards[0].due.is_empty());
 }
 
 #[test]

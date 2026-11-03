@@ -1263,9 +1263,9 @@ pub(crate) async fn read_consent_edit(
     registered_pcr: &arkret_sdk::RealmId,
     peer: &arkret_sdk::ConsentPeer,
 ) -> anyhow::Result<ConsentEdit> {
+    // Reading a later current does not settle an unknown original. The writer
+    // separately refuses a new replacement while that exact peer is pending.
     let fence = crate::transport::auth::AuthoringSessionFence::capture()?;
-    crate::event_submit::ensure_consent_replacement_settled(holder, peer).await?;
-    fence.check()?;
     let epoch = crate::identity::device_directory::session_cache_epoch();
     let principal = current_principal_for_authority(http, holder).await?;
     anyhow::ensure!(

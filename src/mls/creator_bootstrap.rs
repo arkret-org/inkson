@@ -295,7 +295,7 @@ pub(crate) async fn should_resume_creator_genesis(
             .map_err(|e| e.to_string())?
     };
     // A later member's since-join window need not disclose the original
-    // create or the original MLS Genesis. Check the accepted ordinary current
+    // create or the original MLS Genesis. Check the accepted current
     // before any historical read, regardless of whether MLS is activated.
     // This only declines creator work: Welcome/commit recovery and the send
     // gate still verify their own accepted evidence. It grants no authority.
@@ -307,7 +307,13 @@ pub(crate) async fn should_resume_creator_genesis(
             .ok_or_else(|| {
                 "MLS creator recovery awaits a complete current Realm origin".to_owned()
             })?;
-        if purpose == arkret_sdk::RealmPurpose::Collaboration {
+        if matches!(
+            purpose,
+            arkret_sdk::RealmPurpose::Collaboration | arkret_sdk::RealmPurpose::DirectConversation
+        ) {
+            // A Direct founder's original transaction is frozen before its
+            // four-Event creation can leave the holder. A matching Account on
+            // another device must not silently open another creator attempt.
             return Ok(false);
         }
     }
@@ -325,11 +331,10 @@ pub(crate) async fn should_resume_creator_genesis(
             false,
         ));
     }
-    // A Direct Conversation is MLS-backed from its founding: its founder
-    // authors the one scope-derived Genesis the bootstrap phases require
-    // (`identity/contact-and-direct-conversation.md` 7.2 / 7.3). Unlike an
-    // ordinary plaintext Realm, the absence of an accepted Genesis there is
-    // outstanding founder work, not a declined MLS activation.
+    // A Direct Conversation is MLS-backed from its founding: retained original
+    // creator work resumes its one scope-derived Genesis
+    // (`identity/contact-and-direct-conversation.md` 7.2 / 7.3). The Account's
+    // founder qualification still cannot replace the local intent or checkpoint.
     let (genesis_author, direct_conversation) = submitter
         .accepted_scope_genesis_author(realm_id, authority)
         .await
@@ -405,8 +410,8 @@ pub(crate) async fn retry_creator_realm_mls_genesis(
     .await
 }
 
-/// Resume only a previously staged epoch-zero checkpoint or durable Genesis
-/// queue item. A plaintext Realm with neither is not an activation request.
+/// Resume an original durable intent, staged epoch-zero checkpoint or exact
+/// Genesis queue item. A scope with none is not a new activation request.
 /// The common implementation is idempotent and converges exact accepted
 /// Genesis evidence before reporting success.
 pub(crate) async fn ensure_creator_realm_mls_genesis(
@@ -416,20 +421,13 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
 ) -> Result<(), String> {
-    let founder_genesis = api
-        .event_submitter()
-        .map_err(|error| format!("MLS genesis Event submitter: {error}"))?
-        .accepted_scope_genesis_author(realm_id, authority)
-        .await
-        .map_err(|error| format!("resolve accepted Realm creator: {error}"))?
-        .1;
     bootstrap_creator_realm_mls_genesis(
         api,
         state_store,
         realm_id,
         authority,
         device_id,
-        founder_genesis,
+        false,
         false,
     )
     .await
@@ -1192,9 +1190,13 @@ mod tests {
         }
     }
 
-    #[test]
-    fn complete_direct_current_preserves_only_the_accepted_creator_qualification_branch() {
-        let account = crate::test_support::AccountFixture::new("did:web:direct-probe.example")
+    #[tokio::test]
+    async fn complete_direct_current_without_original_work_does_not_open_another_creator_attempt() {
+        let principal = format!(
+            "did:web:direct-probe-{}.example",
+            crate::operation::uuid_v7()
+        );
+        let account = crate::test_support::AccountFixture::new(&principal)
             .station(crate::test_support::SERVER_STATION_ID)
             .build();
         let mut store = temp_store("direct-creator-probe");
@@ -1239,8 +1241,33 @@ mod tests {
             creator_probe_current_purpose(&store, REALM),
             Some(arkret_sdk::RealmPurpose::DirectConversation)
         );
-        // This is not founder authority. should_resume still continues into
-        // the unchanged original accepted_scope_genesis_author verifier.
+        // The real purpose stays Direct. Without this holder's original work,
+        // it must follow Welcome/recovery instead of inventing creator state.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let api = crate::transport::TransportClient::unauthenticated(&format!(
+            "http://{}",
+            listener.local_addr().unwrap()
+        ))
+        .unwrap();
+        let shared = std::sync::Arc::new(std::sync::Mutex::new(store));
+        let reader = shared.clone();
+        let writer = shared.clone();
+        let handle = StateStoreHandle::new(
+            move |read| read(&reader.lock().unwrap()),
+            move |write| write(&mut writer.lock().unwrap()),
+        );
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            should_resume_creator_genesis(&api, &handle, REALM, &account.authority),
+        )
+        .await
+        .expect("a device with no original creator work must not await HTTP");
+        assert_eq!(result, Ok(false));
+        match listener.accept() {
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+            _ => panic!("a device without creator work must not read a founding authority"),
+        }
         assert!(creator_genesis_has_resume_evidence(false, true, false));
         assert!(creator_genesis_has_resume_evidence(false, false, true));
     }

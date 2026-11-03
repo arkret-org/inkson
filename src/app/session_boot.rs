@@ -692,6 +692,20 @@ pub(super) async fn inject_test_session_grant(
         "test session injection: session grant installed"
     );
     state_store.write(|store| store.set_session_grant(Some(grant)));
+    // This one-shot handoff also installs the accepted PCR evidence. Its
+    // synchronous setters only enqueue browser account-record transactions;
+    // retain the handoff until that exact state survives a document reload.
+    let persisted = match state_store.read(crate::state::LocalStateStore::begin_durable_flush) {
+        Ok(barrier) => barrier.wait().await,
+        Err(error) => Err(error),
+    };
+    if let Err(error) = persisted {
+        tracing::warn!(
+            ?error,
+            "test session injection: account state durable persist failed"
+        );
+        return None;
+    }
     // Mirror the grant into the persisted config credential slot so a re-render /
     // reload rehydrates the same session instead of bouncing to /login.
     persist_config(

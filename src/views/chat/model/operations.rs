@@ -313,7 +313,7 @@ pub(crate) fn message_id_or_new_local_id(value: &str) -> String {
     }
 }
 
-fn public_update_policy_error(body: &str) -> Option<&'static str> {
+pub(crate) fn public_update_policy_error(body: &str) -> Option<&'static str> {
     let lower = body.to_ascii_lowercase();
     if !lower.contains("public update") {
         return None;

@@ -1662,6 +1662,19 @@ pub(super) fn send_encrypted_message(
         shared_agent_targets,
         backup_trigger_signal,
     } = request;
+    // Encryption changes the transport, not the local public-update policy.
+    // Refuse before content preparation can upload text or author an Event.
+    if let Some(error) = public_update_policy_error(&body) {
+        fail_optimistic_chat_send(
+            messages,
+            chat_draft,
+            status_msg,
+            &message_id,
+            &body,
+            format!("Send blocked: {error}"),
+        );
+        return;
+    }
     let device_for_cache = did.clone();
     let base_for_backup_trigger = base.clone();
     let token_for_backup_trigger = api_token.clone();

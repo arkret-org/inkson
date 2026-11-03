@@ -2217,10 +2217,26 @@ impl EventSubmitter {
             events: self.prepare_initial_submissions(&events).await?.try_into()
                 .map_err(|_| anyhow::anyhow!("Direct Conversation founding requires exactly four Events"))?,
         };
+        let submission = QueuedSubmission::direct_conversation_founding(unit)?;
+        let device = submission
+            .primary_event()
+            .account_device_producer()?
+            .ok_or_else(|| {
+                anyhow::anyhow!("Direct Conversation founder requires its signed device")
+            })?
+            .device_id;
+        let intent = creator_intent_for_submission(&submission, device)?;
+        // Direct scopes are encrypted from their founding. Freeze their exact
+        // creator transaction with the original four Events before forwarding;
+        // a lost receipt must resume this intent rather than legacy epoch zero.
+        self.outbound(OutboundLane::Standard)?
+            .store()
+            .freeze_creator_intent(intent, submission.clone())
+            .await?;
         let item = self
             .enqueue_and_drive(QueuedWrite {
                 lane: OutboundLane::Standard,
-                submission: QueuedSubmission::direct_conversation_founding(unit)?,
+                submission,
                 local_operation_id,
                 post_accept: PostAccept::None,
                 retry_scope: InteractiveRetryScope::RealmBootstrap,

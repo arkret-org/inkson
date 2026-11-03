@@ -1641,6 +1641,7 @@ pub(super) fn editor_value_for_optional_card_field(value: &str) -> String {
     }
 }
 
+#[cfg(test)]
 pub(super) fn display_optional_card_field(value: &str) -> String {
     let trimmed = value.trim();
     if trimmed.is_empty() || trimmed == "—" {

@@ -283,7 +283,7 @@ pub(crate) fn card_from_strand_projection_for_actor(
         assignee: strand_projection_assignee(strand).unwrap_or_else(|| "—".to_owned()),
         assigned_to_relations: strand_projection_assigned_to_relations(strand),
         due: strand_projection_field_string(strand, None, &["due_at", "due", "due_date"])
-            .unwrap_or_else(|| "—".to_owned()),
+            .unwrap_or_default(),
         // Fold the projected RSVP winner for the card's base occurrence. The
         // self actor is filled in by the view layer, which knows the session.
         calendar_rsvp: calendar_rsvp_display_with_decrypt(

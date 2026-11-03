@@ -117,7 +117,7 @@ pub(super) fn apply_card_detail_draft(card: &mut KanbanCard, draft: &CardDetailD
     card.synthesis = draft.synthesis.trim().to_owned();
     card.labels = draft.labels.clone();
     card.assignee = display_optional_card_field(&draft.assignee);
-    card.due = display_optional_card_field(&draft.due);
+    card.due = draft.due.trim().to_owned();
     card.calendar = draft.calendar.clone();
     card.state = CardState::Queued;
 }

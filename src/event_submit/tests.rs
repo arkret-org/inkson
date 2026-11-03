@@ -2129,6 +2129,27 @@ async fn direct_founding_queue_restores_all_events_and_binds_every_receipt() {
     );
     assert_eq!(restored.items().len(), 1);
     assert_eq!(restored.items()[0].request(), &queued.request);
+    // The creator selector and all four original Events survive the same
+    // durable cut before any authority response or epoch-zero randomness.
+    let intent =
+        creator_intent_for_submission(&queued, arkret_sdk::DeviceId::new(DEVICE).unwrap()).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let queue_path = directory.path().join("direct-founding.json");
+    let vault = InksonOutboundStore::for_test_path(queue_path.clone());
+    vault
+        .freeze_creator_intent(intent.clone(), queued.clone())
+        .await
+        .unwrap();
+    drop(vault);
+    let reopened = InksonOutboundStore::for_test_path(queue_path);
+    let record = reopened
+        .creator_record(intent.owner_actor_id(), intent.effective_scope())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(record.intent(), &intent);
+    assert!(record.accepted_create().is_none());
+    assert!(record.epoch_zero().is_none());
     let outcome = DirectConversationFoundingAcceptanceOutcome {
         unit_kind: DirectConversationFoundingUnitKind::DirectConversationFounding,
         status: AggregateAcceptanceStatus::Committed,
@@ -2180,11 +2201,10 @@ async fn direct_founding_queue_restores_all_events_and_binds_every_receipt() {
         },
         submits: calls.clone(),
     });
-    let engine = OutboundEngine::new(garth::MemoryOutboundQueueStore::new(), InksonHostClock);
-    engine
-        .enqueue(restored.items()[0].submission.clone())
-        .await
-        .unwrap();
+    let engine = OutboundEngine::new(reopened, InksonHostClock);
+    let persisted_original = engine.snapshot().await.unwrap();
+    assert_eq!(persisted_original.items.len(), 1);
+    assert_eq!(persisted_original.items[0].request(), &queued.request);
     assert!(matches!(
         engine
             .submit_next(
