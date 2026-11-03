@@ -226,3 +226,88 @@ fn common_target_distinguishes_station_device_realm_strand_and_unselected_or_inv
         CommonCoordinate::Invalid(_)
     ));
 }
+
+#[test]
+fn realm_default_refresh_preserves_explicit_circle_selection_and_pinned_targets() {
+    let directory = tempfile::tempdir().unwrap();
+    let app = glory::App::memory();
+    let scope = app.scope();
+    let context = context(scope, directory.path());
+    let authority = crate::test_support::authority("ak:did_core:web:alice.example");
+    let device =
+        arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000001").unwrap();
+    let event =
+        |byte| arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [byte; 32]);
+    let realm = arkret_sdk::RealmId::from_event_id(&event(51)).to_string();
+    let strand = |byte| arkret_sdk::StrandId::from_event_id(&event(byte)).to_string();
+    let original_default = strand(52);
+    let updated_default = strand(53);
+    let circle_strand = strand(54);
+    let acquire = |initial: &str, pinned| {
+        chat_controller_for_initial_target(
+            scope,
+            context.clone(),
+            &realm,
+            initial,
+            &authority,
+            &device,
+            pinned,
+        )
+        .unwrap()
+    };
+    let original = acquire("", false);
+    assert!(original.selected_channel.get_untracked().is_empty());
+    let hydrated = acquire(&original_default, false);
+    ChatProjectionSink::new(hydrated).emit(ChatProjectionEvent::EnsureChannel(
+        discussion_channel_for_strand(&original_default).unwrap(),
+    ));
+    assert_eq!(original.selected_channel.get_untracked(), original_default);
+    original.select_channel(circle_strand.clone());
+    let circle_composer = original
+        .for_strand(&context, &authority, &device, &realm, &circle_strand)
+        .unwrap();
+    circle_composer
+        .draft
+        .revise(|draft| *draft = "unsent Circle body".into());
+    let selected_revision = original.selection_revision.get_untracked();
+    let node_count = app.graph_stats().nodes;
+    for initial in [&original_default, &updated_default, ""] {
+        let refreshed = acquire(initial, false);
+        if let Some(channel) = discussion_channel_for_strand(&updated_default) {
+            ChatProjectionSink::new(refreshed).emit(ChatProjectionEvent::EnsureChannel(channel));
+        } else {
+            panic!("The updated default fixture must be a valid Strand");
+        }
+        assert_eq!(refreshed.selected_channel.get_untracked(), circle_strand);
+        assert_eq!(
+            refreshed.selection_revision.get_untracked(),
+            selected_revision
+        );
+        let composer = refreshed
+            .for_strand(&context, &authority, &device, &realm, &circle_strand)
+            .unwrap();
+        assert_eq!(composer.draft.get_untracked(), "unsent Circle body");
+        assert_eq!(app.graph_stats().nodes, node_count);
+    }
+    let pinned_original = acquire(&original_default, true);
+    let pinned_updated = acquire(&updated_default, true);
+    assert_eq!(
+        pinned_original.selected_channel.get_untracked(),
+        original_default
+    );
+    assert_eq!(
+        pinned_updated.selected_channel.get_untracked(),
+        updated_default
+    );
+    assert_eq!(original.selected_channel.get_untracked(), circle_strand);
+    assert_ne!(
+        CommonTarget::for_initial_target(&authority, &device, &realm, "", false),
+        CommonTarget::new(&authority, &device, &realm, ""),
+        "An unpinned Realm is distinct from an empty pinned target",
+    );
+    context.chat_state.retire_session();
+    let returned = acquire(&updated_default, false);
+    assert_eq!(returned.selected_channel.get_untracked(), updated_default);
+    returned.select_channel(circle_strand.clone());
+    assert_eq!(original.selected_channel.get_untracked(), circle_strand);
+}

@@ -80,9 +80,13 @@ fn member_identity_title(
     let mut title = vec![Box::new(
         glory::ui::text()
             .class(format!("member-row-primary {}", tier.css_class()))
-            .name(profile.actor_id.clone())
             .content(profile.primary_label()),
     ) as View];
+    title.push(Box::new(
+        glory::ui::text()
+            .class("sr-only member-actor-identity")
+            .content(profile.actor_id.clone()),
+    ));
     if let Some((badge, detail)) = tier.degraded_badge() {
         title.push(paragraph(
             "badge muted identity-tier-badge member-identity-degraded",
@@ -1146,8 +1150,14 @@ fn owned_agent(scope: &Scope, state: &MembersPage, agent: MemberAgentRow) -> Vie
                                 glory::ui::text()
                                     .kind(glory::render::TextKind::Paragraph)
                                     .class("muted member-row-sub mono")
-                                    .name(owned_agent_actor_key(&id).unwrap_or_else(|| id.clone()))
                                     .content(short_protocol_id(&id)),
+                            ),
+                            Box::new(
+                                glory::ui::text()
+                                    .class("sr-only member-actor-identity")
+                                    .content(
+                                        owned_agent_actor_key(&id).unwrap_or_else(|| id.clone()),
+                                    ),
                             ),
                         ],
                     ),
@@ -1392,10 +1402,11 @@ fn add_agent_modal(scope: &Scope, state: &MembersPage) -> View {
             choices.push(line(
                 "member-self-agent-row",
                 vec![
+                    plain(agent.display_name),
                     Box::new(
                         glory::ui::text()
-                            .name(target.clone())
-                            .content(agent.display_name),
+                            .class("sr-only member-actor-identity")
+                            .content(target.clone()),
                     ),
                     action(
                         scope,

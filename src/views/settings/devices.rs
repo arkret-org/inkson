@@ -4,8 +4,8 @@
 //! Surfaces:
 //! - `device-list` — wrapper element listing the principal's active devices from `GET
 //!   /_arkret/self/account/viewer` via [`crate::transport::TransportClient::list_devices`]
-//! - `device-row` per row, with `data-device-id` and a `device-row-current` boolean tag on the row
-//!   matching the local `LocalStateStore::device_id`
+//! - `device-row` exposes the full public DeviceId to assistive technology; `device-row-current`
+//!   marks the current Device badge.
 //! - `device-revoke-button` per row, which opens a confirmation modal
 //! - `device-revoke-confirm-button` / `device-revoke-status` after the user confirms; revoke
 //!   submits the spec-canonical durable `ak.device.revoke` Control Move on the principal control
@@ -786,6 +786,7 @@ pub(super) fn page(scope: &Scope, context: Rc<InksonContext>, pair_mode: bool) -
                 short_protocol_id(&row.device_id)
             };
             let mut identity = vec![
+                paragraph("sr-only device-row-identity", row.device_id.clone()),
                 paragraph(
                     "device-list-cell-label",
                     context.translated(scope, "settings.devices.column_device"),

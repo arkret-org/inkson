@@ -21,6 +21,7 @@ use super::model::{
     build_agent_pairing_handoff_token, is_pairing_request_expired, key_state_runtime_state,
     render_agent_pairing_qr_svg, requested_scope_for_presets,
 };
+use crate::presentation::widgets::reactive_distinct;
 use crate::presentation::{InksonContext, SharedStateStore, View};
 use crate::routes::Route;
 use crate::transport::auth::{with_authed_sdk_client, with_event_submitter};
@@ -304,12 +305,14 @@ pub fn page(scope: &Scope, context: Rc<InksonContext>, route: Route) -> View {
                                     .content(super::model::agent_state_label(runtime)),
                                 glory::ui::text()
                                     .class("mono muted agent-admin-row-id")
-                                    .name(
+                                    .content(short_protocol_id(&id)),
+                                glory::ui::text()
+                                    .class("sr-only agent-actor-identity")
+                                    .content(
                                         crate::mls_api_helpers::local_account_actor_id(&id)
                                             .map(|actor| actor.to_string())
                                             .unwrap_or_else(|_| id.clone()),
-                                    )
-                                    .content(short_protocol_id(&id)),
+                                    ),
                             )),
                         )
                         .on(glory::render::EventKind::Activate, move |_| {
@@ -333,41 +336,33 @@ pub fn page(scope: &Scope, context: Rc<InksonContext>, route: Route) -> View {
         },
     );
     let detail_state = state.clone();
-    let detail = reactive(
-        scope.bond(move || {
-            let creating = create.get();
-            (
-                agents.get(),
-                selected.get(),
-                creating,
-                if creating {
-                    String::new()
-                } else {
-                    filter.get()
-                },
-            )
-        }),
-        move |scope, (rows, id, create, current_filter)| {
-            let state = detail_state.clone();
-            if create {
-                return creation(scope, &state);
-            }
-            if id.is_empty() {
-                return card(
-                    scope,
-                    state.context.clone(),
-                    "Select an agent",
-                    vec![paragraph(
-                        "muted",
-                        "Choose an agent on the left, or create one first.",
-                    )],
-                );
-            }
-            let now = crate::clock::now_timestamp();
-            let view = build_agent_admin_view(&rows, &id, &current_filter, &now);
-            details_view(scope, &state, view, id)
-        },
-    );
+    // An unrelated directory refresh must not retire the live input handlers
+    // while a user edits the creation form. Its owner follows only this phase.
+    let detail = reactive_distinct(create, move |scope, creating| {
+        let state = detail_state.clone();
+        if creating {
+            return creation(scope, &state);
+        }
+        reactive(
+            scope.bond(move || (agents.get(), selected.get(), filter.get())),
+            move |scope, (rows, id, current_filter)| {
+                if id.is_empty() {
+                    return card(
+                        scope,
+                        state.context.clone(),
+                        "Select an agent",
+                        vec![paragraph(
+                            "muted",
+                            "Choose an agent on the left, or create one first.",
+                        )],
+                    );
+                }
+                let now = crate::clock::now_timestamp();
+                let view = build_agent_admin_view(&rows, &id, &current_filter, &now);
+                details_view(scope, &state, view, id)
+            },
+        )
+    });
     stack(
         "agent-admin-page agent-admin",
         vec![

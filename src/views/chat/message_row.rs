@@ -7,6 +7,7 @@ struct BodyState {
     redacted: bool,
     blocked: bool,
     protocol: Option<AuthenticatedMessageContent>,
+    source_committed: bool,
     body: String,
     format: Option<arkret_sdk::TextFormat>,
     mentions: Vec<MentionNode>,
@@ -499,6 +500,7 @@ fn row_surface(
             redacted: message.redacted,
             blocked,
             protocol: message.protocol_content,
+            source_committed: !message.pending && !message.failed,
             body: message.body,
             format: message.content_format,
             mentions: message.mentions,
@@ -532,6 +534,7 @@ fn row_surface(
                 scope,
                 body_app.clone(),
                 &source,
+                state.source_committed,
                 &state.mentions,
                 &state.base,
             )

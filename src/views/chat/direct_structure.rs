@@ -1260,7 +1260,7 @@ fn structure_surface(
                         if !context.session_matches(generation, &account) {
                             return;
                         }
-                        match result {
+                        let selected_chat = match result {
                             Ok((accepted, chat)) => {
                                 {
                                     let next_value = accepted.event_id;
@@ -1269,27 +1269,29 @@ fn structure_surface(
                                 props
                                     .live_epoch
                                     .revise(|value| *value = value.wrapping_add(1));
-                                if let Some(chat) = chat {
-                                    on_select(chat);
-                                }
                                 {
                                     let next_value = "Saved".into();
-                                    status.revise(|current| *current = next_value)
+                                    let _ = status.try_revise(|current| *current = next_value);
                                 };
                                 {
                                     let next_value = String::new();
-                                    title.revise(|current| *current = next_value)
+                                    let _ = title.try_revise(|current| *current = next_value);
                                 };
+                                chat
                             }
                             Err(error) => {
                                 let next_value = format!("{error:#}");
-                                status.revise(|current| *current = next_value)
+                                let _ = status.try_revise(|current| *current = next_value);
+                                None
                             }
-                        }
+                        };
                         {
                             let next_value = false;
-                            pending.revise(|current| *current = next_value)
+                            let _ = pending.try_revise(|current| *current = next_value);
                         };
+                        if let Some(chat) = selected_chat {
+                            on_select(chat);
+                        }
                     }) {
                         {
                             let next_value = false;

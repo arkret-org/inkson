@@ -202,7 +202,7 @@ fn board_allowed(scope: &Scope, board: Board) -> View {
                                     .class("input new-column-input")
                                     .name(board.app.translated(scope, "kanban.ui.new_list_title"))
                                     .value(c.new_column_title)
-                                    .enabled(board.ready)
+                                    .enabled(add_list_ready)
                                     .on_value_change(move |next| {
                                         c.new_column_title.revise(|value| *value = next)
                                     }),

@@ -1140,6 +1140,7 @@ fn release_page(scope: &Scope, context: Rc<InksonContext>) -> View {
                             vec![
                                 plain(context.translated(scope, "settings.signer.label")),
                                 paragraph("settings-signer-did", short_protocol_id(&signer)),
+                                paragraph("sr-only settings-signer-identity", signer),
                             ],
                         ),
                     ],
