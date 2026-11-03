@@ -862,7 +862,9 @@ fn shell(
                 frontier: context.frontier_state,
                 live_epoch: context.realm_live_epoch,
                 on_select: Rc::new(move |id| {
-                    controller.select_channel(id.clone());
+                    // The controller belongs to this route's Strand. The
+                    // destination mounts its own controller with its draft.
+                    controller.prepare_channel_switch(&id);
                     select_context.navigate(Route::DirectConversation {
                         realm_id: realm.clone(),
                         strand_id: id,

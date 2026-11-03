@@ -684,17 +684,15 @@ impl ChatController {
     }
 
     pub fn select_channel(self, strand_id: String) {
-        if self.selected_channel.get_untracked() != strand_id {
-            let next = self.selection_revision.get_untracked().wrapping_add(1);
-            {
-                let next_value = next;
-                self.selection_revision.revise(|value| *value = next_value);
-            };
+        self.prepare_channel_switch(&strand_id);
+        self.selected_channel.revise(|value| *value = strand_id);
+    }
+
+    pub(super) fn prepare_channel_switch(self, next_strand: &str) {
+        if self.selected_channel.get_untracked() != next_strand {
+            self.selection_revision
+                .revise(|value| *value = value.wrapping_add(1));
         }
-        {
-            let next_value = strand_id;
-            self.selected_channel.revise(|value| *value = next_value);
-        };
         {
             let next_value = None;
             self.message_context_menu

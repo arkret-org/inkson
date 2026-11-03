@@ -42,6 +42,30 @@ pub(super) fn icon_action(
             .on_press(handler),
     )
 }
+fn notifications_button(
+    scope: &Scope,
+    context: &InksonContext,
+    unread: Bond<bool>,
+    handler: impl FnMut() + 'static,
+) -> View {
+    Box::new(
+        sapid::button()
+            .unstyled()
+            .class("btn icon topbar-notifications-link")
+            .name(context.translated(scope, "nav.notifications"))
+            .fill((
+                crate::components::ui_icon("bell"),
+                reactive_distinct(unread, |_, unread| {
+                    if unread {
+                        Box::new(view().class("topbar-notifications-badge"))
+                    } else {
+                        empty()
+                    }
+                }),
+            ))
+            .on_press(handler),
+    )
+}
 pub(super) fn nav(
     context: Rc<InksonContext>,
     route: Route,
@@ -132,6 +156,15 @@ fn route_boundary(
 pub(super) fn shell(scope: &Scope, context: Rc<InksonContext>) -> View {
     let ui = ShellState::new(scope, &context);
     super::shell_effects::install(scope, context.clone(), ui.clone());
+    let unread = scope.bond({
+        let context = context.clone();
+        move || {
+            let _ = context.state_revision.get();
+            context
+                .state_store
+                .read(|store| unread_notification_count(&store.load()) > 0)
+        }
+    });
     #[cfg(target_arch = "wasm32")]
     super::global_shortcuts::install(scope, context.clone(), ui.clone());
     let content = route_boundary(scope, context.clone(), {
@@ -203,12 +236,12 @@ pub(super) fn shell(scope: &Scope, context: Rc<InksonContext>) -> View {
             crate::components::agent_runtime_approval_prompt(scope, context.clone()),
             crate::components::recovery_key_setup_prompt(scope, context.clone()),
             health_prompt(scope, context.clone()),
-            mobile_bar(scope, context.clone(), ui.clone()),
+            mobile_bar(scope, context.clone(), ui.clone(), unread),
             mobile_drawer(scope, context.clone(), ui.clone()),
             super::sidebar::sidebar(scope, context.clone(), ui.clone()),
             block(
                 "main realm",
-                vec![topbar(scope, context.clone(), ui.clone()), content],
+                vec![topbar(scope, context.clone(), ui.clone(), unread), content],
             ),
             super::notifications_drawer::notifications_drawer(
                 scope,
@@ -362,7 +395,12 @@ fn theme_toggle_button(scope: &Scope, context: Rc<InksonContext>) -> View {
             }),
     )
 }
-fn mobile_bar(scope: &Scope, context: Rc<InksonContext>, ui: Rc<ShellState>) -> View {
+fn mobile_bar(
+    scope: &Scope,
+    context: Rc<InksonContext>,
+    ui: Rc<ShellState>,
+    unread: Bond<bool>,
+) -> View {
     let theme = theme_toggle_button(scope, context.clone());
     let drawer_id = match glory::render::SemanticId::new("mobile-navigation-drawer") {
         Ok(id) => id,
@@ -418,19 +456,14 @@ fn mobile_bar(scope: &Scope, context: Rc<InksonContext>, ui: Rc<ShellState>) -> 
                     }
                 },
             ),
-            icon_action(
-                "btn icon topbar-notifications-link",
-                context.translated(scope, "nav.notifications"),
-                "bell",
-                move || {
-                    ui.mobile_open.revise(|value| *value = false);
-                    ui.account_open.revise(|value| *value = false);
-                    ui.server_open.revise(|value| *value = false);
-                    ui.search_open.revise(|value| *value = false);
-                    ui.search_query.revise(String::clear);
-                    ui.notifications_open.revise(|value| *value = !*value);
-                },
-            ),
+            notifications_button(scope, &context, unread, move || {
+                ui.mobile_open.revise(|value| *value = false);
+                ui.account_open.revise(|value| *value = false);
+                ui.server_open.revise(|value| *value = false);
+                ui.search_open.revise(|value| *value = false);
+                ui.search_query.revise(String::clear);
+                ui.notifications_open.revise(|value| *value = !*value);
+            }),
         ],
     )
 }
@@ -600,7 +633,12 @@ fn connection_status_region(scope: &Scope, context: Rc<InksonContext>) -> View {
             ]),
     )
 }
-fn topbar(scope: &Scope, context: Rc<InksonContext>, ui: Rc<ShellState>) -> View {
+fn topbar(
+    scope: &Scope,
+    context: Rc<InksonContext>,
+    ui: Rc<ShellState>,
+    unread: Bond<bool>,
+) -> View {
     let source = scope.bond({
         let context = context.clone();
         move || {
@@ -777,15 +815,10 @@ fn topbar(scope: &Scope, context: Rc<InksonContext>, ui: Rc<ShellState>) -> View
                             move || ui.shortcut_open.revise(|value| *value = !*value)
                         },
                     ),
-                    icon_action(
-                        "btn icon topbar-notifications-link",
-                        context.translated(scope, "nav.notifications"),
-                        "bell",
-                        {
-                            let ui = ui.clone();
-                            move || ui.notifications_open.revise(|value| *value = !*value)
-                        },
-                    ),
+                    notifications_button(scope, &context, unread, {
+                        let ui = ui.clone();
+                        move || ui.notifications_open.revise(|value| *value = !*value)
+                    }),
                     connection_status_region(scope, context.clone()),
                     account_menu(scope, context, ui),
                 ],
@@ -1422,8 +1455,9 @@ mod tests {
         assert_eq!(retired.get(), 3);
         for realm in ["one", "two"] {
             context.route.revise(|route| {
-                *route = Route::Realm {
+                *route = Route::RealmAdminSection {
                     realm_id: realm.into(),
+                    section: "access".into(),
                 }
             });
             app.flush().unwrap();

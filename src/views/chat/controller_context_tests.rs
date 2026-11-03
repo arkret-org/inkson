@@ -299,6 +299,19 @@ fn realm_default_refresh_preserves_explicit_circle_selection_and_pinned_targets(
         pinned_updated.selected_channel.get_untracked(),
         updated_default
     );
+    let original_revision = pinned_original.selection_revision.get_untracked();
+    pinned_original.prepare_channel_switch(&updated_default);
+    assert_ne!(
+        pinned_original.selection_revision.get_untracked(),
+        original_revision
+    );
+    assert_eq!(
+        acquire(&original_default, true)
+            .selected_channel
+            .get_untracked(),
+        original_default,
+        "reopening the original pinned controller retains its own Strand",
+    );
     assert_eq!(original.selected_channel.get_untracked(), circle_strand);
     assert_ne!(
         CommonTarget::for_initial_target(&authority, &device, &realm, "", false),

@@ -181,6 +181,19 @@ struct Detail {
     probe: glory::Bond<crate::views::secure_send::ScopeSendProbe>,
 }
 impl Detail {
+    fn writable_card(&self) -> Option<KanbanCard> {
+        let current = self.c.selected_card.get()?;
+        let displayed = self.card.get()?;
+        (current.primary_strand_id == displayed.primary_strand_id
+            && card_detail_write_ready(&current))
+        .then_some(current)
+    }
+
+    fn save_ready(&self, scope: &Scope) -> glory::Bond<bool> {
+        let detail = self.clone();
+        scope.bond(move || detail.writable_card().is_some() && detail.probe.get().gate.is_some())
+    }
+
     fn close(&self) {
         let c = self.c;
         c.selected_card.revise(|value| *value = None);
@@ -268,7 +281,10 @@ impl Detail {
     }
     fn save(&self) {
         let c = self.c;
-        let Some(current) = c.selected_card.get_untracked() else {
+        let Some(current) = self.writable_card() else {
+            c.card_detail_edit_status.revise(|status| {
+                *status = "Waiting for the current card before saving...".to_owned();
+            });
             return;
         };
         let app = self.app.clone();
@@ -1027,10 +1043,7 @@ fn detail_contents(scope: &Scope, detail: Detail, card: KanbanCard) -> View {
                                 scope,
                                 detail.app.clone(),
                                 c.card_detail_edit_status,
-                                {
-                                    let probe = detail.probe;
-                                    scope.bond(move || probe.get().gate.is_some())
-                                },
+                                detail.save_ready(scope),
                                 move || save.save(),
                                 move || cancel.cancel(),
                             ),
@@ -1322,10 +1335,7 @@ fn track_editor(scope: &Scope, detail: Detail, synthesis: bool) -> View {
         .selected_scope_security_encrypted
         .get_untracked()
         == Some(false);
-    let ready = {
-        let probe = detail.probe;
-        scope.bond(move || probe.get().gate.is_some())
-    };
+    let ready = detail.save_ready(scope);
     stack(
         "workflow-form card-detail-edit-form",
         vec![

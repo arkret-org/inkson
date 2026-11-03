@@ -551,6 +551,16 @@ fn strand_scope_matches(current: &arkret_sdk::Strand, scope: &arkret_sdk::ScopeR
 static SIGNAL_RECEIVER_EVIDENCE: Mutex<Vec<(String, u64, Value)>> = Mutex::new(Vec::new());
 
 #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+fn record_signal_receiver_evidence(principal: String, epoch: u64, value: Value) {
+    if let Ok(mut rows) = SIGNAL_RECEIVER_EVIDENCE.lock() {
+        rows.push((principal, epoch, value));
+        if rows.len() > 128 {
+            rows.remove(0);
+        }
+    }
+}
+
+#[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
 pub(crate) fn signal_receiver_evidence(principal: &str, clear: bool) -> String {
     let epoch = crate::identity::device_directory::session_cache_epoch();
     let Ok(mut rows) = SIGNAL_RECEIVER_EVIDENCE.lock() else {
@@ -849,23 +859,18 @@ impl InksonSignalSink {
                 })
                 .count()
         });
-        if let Ok(mut rows) = SIGNAL_RECEIVER_EVIDENCE.lock() {
-            rows.push((
-                principal,
-                epoch,
-                serde_json::json!({
-                    "scope_ref": signal.scope_ref(), "strand_id": typing.strand_id,
+        record_signal_receiver_evidence(
+            principal,
+            epoch,
+            serde_json::json!({
+                "scope_ref": signal.scope_ref(), "strand_id": typing.strand_id,
                 "sender_actor_id": signal.actor_id(), "sender_endpoint": signal.sender_endpoint(),
-                    "payload_sequence": signal.payload_sequence(), "typing": typing.typing,
-                    "admitted_and_decrypted": true, "target_scope_matches": target_scope_matches,
-                    "target_scope_error": target_scope_error,
-                    "live_applied": live_applied, "visible_count": visible_count
-                }),
-            ));
-            if rows.len() > 128 {
-                rows.remove(0);
-            }
-        }
+                "payload_sequence": signal.payload_sequence(), "typing": typing.typing,
+                "admitted_and_decrypted": true, "target_scope_matches": target_scope_matches,
+                "target_scope_error": target_scope_error,
+                "live_applied": live_applied, "visible_count": visible_count
+            }),
+        );
     }
 
     async fn call_exists_at_verified_cut(&self, signal: &AdmittedSignal) -> garth::Result<bool> {
@@ -1512,6 +1517,19 @@ async fn run_signal_receive_attempt(
                 envelope,
                 delivery_authority,
             } => {
+                #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+                let observation = {
+                    let principal = ctx.account.principal_id().to_string();
+                    let epoch = crate::identity::device_directory::session_cache_epoch();
+                    envelope.envelope_digest().ok().map(|digest| {
+                        record_signal_receiver_evidence(
+                            principal.clone(),
+                            epoch,
+                            serde_json::json!({"envelope_digest": digest, "receive_stage": "frame_received"}),
+                        );
+                        (principal, epoch, digest)
+                    })
+                };
                 let outcome = receiver
                     .receive(
                         &envelope,
@@ -1519,7 +1537,29 @@ async fn run_signal_receive_attempt(
                         decryptor,
                         crate::clock::now_utc(),
                     )
-                    .await?;
+                    .await;
+                if !signal_engine_is_active(ctx, generation, start_generation, start_profile_id) {
+                    return Ok(SignalStreamStopReason::Ended);
+                }
+                #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+                if let Some((principal, epoch, digest)) = observation {
+                    let stage = match &outcome {
+                        Ok(SignalReceiveOutcome::Accepted { .. }) => "admitted",
+                        Ok(SignalReceiveOutcome::Expired) => "expired",
+                        Ok(SignalReceiveOutcome::StaleSequence) => "stale_sequence",
+                        Err(_) => "rejected",
+                    };
+                    record_signal_receiver_evidence(
+                        principal,
+                        epoch,
+                        serde_json::json!({"envelope_digest": digest, "receive_stage": stage}),
+                    );
+                }
+                // Proof, nonce and plaintext admission are per-envelope.
+                // Replays or malformed items must not cut the live stream.
+                let Ok(outcome) = outcome else {
+                    continue;
+                };
                 sink.handle(outcome).await?;
                 *healthy_progress = true;
             }
