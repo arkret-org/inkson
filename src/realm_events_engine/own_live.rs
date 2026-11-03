@@ -13,6 +13,7 @@ mod sidecar_tests;
 const MAX_REPLAY_BYTES: usize = 64 * 1024 * 1024;
 const DISCOVERY_INTERVAL: Duration = Duration::from_secs(30);
 const MAX_HINT_BATCH: usize = 64;
+const MAX_DISCOVERY_REPLAYS: usize = 8;
 const MAX_COVERED_HINTS: usize = 2048;
 
 type HintOriginals = BTreeMap<(CommitStreamRef, u64), [u8; 32]>;
@@ -237,6 +238,7 @@ pub(super) async fn subscription<F: Fn() -> bool>(
     is_active: &F,
     current: &mut OwnStationReplica,
     resume: &mut SubscriptionState,
+    backoff: &mut RetrySchedule,
 ) -> garth::Result<()> {
     use arkret_models_collaboration::sync_frames::committed_event_subscribe::CommittedEventSubscribeFrameKind as Kind;
     client.check_session()?;
@@ -252,9 +254,19 @@ pub(super) async fn subscription<F: Fn() -> bool>(
     // The bounded hint subscription cannot notify every discovered stream.
     // Re-enumerate at rollover and while idle or busy so the first 64 cannot
     // permanently starve another stream. Only verified scans move checkpoints.
-    follow_once(client, http, realm, projector, ctx, is_active, current).await?;
+    let complete = follow_once(client, http, realm, projector, ctx, is_active, current).await?;
+    // A verified cut is recovery progress even if the long-lived hint read
+    // later times out. Healthy admission must not inherit old transport delays.
+    backoff.reset();
     let mut coverage = None;
-    let mut rediscovery = Box::pin(crate::runtime_helpers::sleep_for(DISCOVERY_INTERVAL));
+    let discovery_delay = |complete| {
+        if complete {
+            DISCOVERY_INTERVAL
+        } else {
+            Duration::ZERO
+        }
+    };
+    let mut rediscovery = Box::pin(crate::runtime_helpers::sleep_for(discovery_delay(complete)));
     while is_active() {
         client.check_session()?;
         let frame = loop {
@@ -270,8 +282,12 @@ pub(super) async fn subscription<F: Fn() -> bool>(
             {
                 Either::Left(_) => {
                     coverage = None;
-                    follow_once(client, http, realm, projector, ctx, is_active, current).await?;
-                    rediscovery = Box::pin(crate::runtime_helpers::sleep_for(DISCOVERY_INTERVAL));
+                    let complete =
+                        follow_once(client, http, realm, projector, ctx, is_active, current)
+                            .await?;
+                    backoff.reset();
+                    rediscovery =
+                        Box::pin(crate::runtime_helpers::sleep_for(discovery_delay(complete)));
                 }
                 Either::Right((Either::Left((frame, _)), _)) => break resume.hint_read(frame)?,
                 Either::Right(_) if !is_active() => return Ok(()),
@@ -306,12 +322,18 @@ pub(super) async fn subscription<F: Fn() -> bool>(
                 &mut coverage,
             )
             .await?;
+            backoff.reset();
             if !is_active() {
                 return Ok(());
             }
             if hints.discover {
                 coverage = None;
-                follow_once(client, http, realm, projector, ctx, is_active, current).await?;
+                let complete =
+                    follow_once(client, http, realm, projector, ctx, is_active, current).await?;
+                backoff.reset();
+                if !complete {
+                    rediscovery = Box::pin(crate::runtime_helpers::sleep_for(Duration::ZERO));
+                }
             }
             client.check_session()?;
             if let Some(cursor) = hints.cursor {
@@ -372,7 +394,7 @@ async fn follow_once<F: Fn() -> bool>(
     _ctx: &RealmEventsEngineContext,
     is_active: &F,
     current: &mut OwnStationReplica,
-) -> garth::Result<()> {
+) -> garth::Result<bool> {
     client.check_session()?;
     let mut streams = garth::discover_realm_streams(client, realm).await?;
     let list_fence = projector
@@ -390,9 +412,26 @@ async fn follow_once<F: Fn() -> bool>(
     // New/changed streams precede rechecking already admitted heads so an
     // outside-page update need not wait behind a full unchanged prefix.
     // Bound-cut and admitted-original requirements remain independent per stream.
+    let durable = projector
+        .state_store
+        .read(|store| {
+            streams
+                .iter()
+                .map(|row| {
+                    Ok((
+                        row.stream_ref.clone(),
+                        store.verified_commit_stream_cursor(&row.stream_ref)?,
+                    ))
+                })
+                .collect::<Result<BTreeMap<_, _>, String>>()
+        })
+        .map_err(protocol)?;
     streams.sort_by_key(|row| {
         (
             !matches!(row.stream_ref, CommitStreamRef::Realm { .. }),
+            heads.get(&row.stream_ref).is_some_and(|head| {
+                durable.get(&row.stream_ref).and_then(Option::as_ref) == Some(*head)
+            }),
             heads
                 .get(&row.stream_ref)
                 .is_some_and(|head| current.head(&row.stream_ref) == Some(*head)),
@@ -402,9 +441,10 @@ async fn follow_once<F: Fn() -> bool>(
         .iter()
         .any(|s| matches!(s.stream_ref, CommitStreamRef::Sidecar { .. }));
     let mut installed_generation = None;
+    let mut replayed = 0;
     for row in streams {
         if !is_active() {
-            return Ok(());
+            return Ok(true);
         }
         if matches!(row.stream_ref, CommitStreamRef::Sidecar { .. }) {
             continue;
@@ -438,6 +478,14 @@ async fn follow_once<F: Fn() -> bool>(
                 continue;
             }
         }
+        // Re-enumerate a fresh cut between bounded batches. After a session
+        // change every retained head needs original admission again; draining
+        // that entire cold prefix must not hide a newly changed outside-page
+        // stream. Durable heads only affect scheduling, never authorization or
+        // the original-admission and checkpoint requirements above.
+        if replayed == MAX_DISCOVERY_REPLAYS {
+            return Ok(false);
+        }
         let admitted = drain_from_snapshot(
             client,
             http,
@@ -450,6 +498,7 @@ async fn follow_once<F: Fn() -> bool>(
             Some(&list_fence),
         )
         .await?;
+        replayed += 1;
         installed_generation = admitted.generation;
     }
     if private && is_active() {
@@ -465,7 +514,7 @@ async fn follow_once<F: Fn() -> bool>(
         )
         .await?;
     }
-    Ok(())
+    Ok(true)
 }
 
 async fn drain_hints<F: Fn() -> bool>(

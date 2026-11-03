@@ -142,13 +142,14 @@ pub fn chat_panel(
         let Some(account) = context.active_account.get_untracked() else {
             return crate::presentation::widgets::empty();
         };
-        let controller = match controller::chat_controller(
+        let controller = match controller::chat_controller_for_initial_target(
             scope,
             context.clone(),
             &props.selected_realm_id,
             &props.initial_strand_id,
             &account.authority,
             &account.device_id,
+            props.embedded || props.direct_mode,
         ) {
             Ok(controller) => controller,
             Err(error) => {

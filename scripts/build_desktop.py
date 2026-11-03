@@ -24,7 +24,7 @@ def main():
     require_registry_alignment()
     metadata = json.loads(subprocess.check_output(
         ['cargo', 'metadata', '--locked', '--no-deps', '--format-version', '1'],
-        cwd=ROOT, env=env, text=True))
+        cwd=ROOT, env=env, text=True, encoding='utf-8'))
     target = Path(metadata['target_directory']).resolve()
     print(f'Cargo target directory: {target}', flush=True)
     command = ['cargo', 'build', '--locked', '--features', 'desktop', '--bin', 'inkson']

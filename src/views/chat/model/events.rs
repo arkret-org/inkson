@@ -21,7 +21,9 @@ pub(crate) fn chat_reply_quote_preview(
     account_display_name: &str,
     participants: &[SpaceParticipant],
 ) -> Option<(String, String)> {
-    let quoted = messages.iter().find(|m| m.id == reply_id)?;
+    let quoted = messages
+        .iter()
+        .find(|m| m.matches_id_or_protocol(reply_id))?;
     let name = sender_display_label(
         &quoted.sender,
         principal_id,
@@ -1305,6 +1307,10 @@ fn chat_message_from_event_with_proof(
     // supplies reaction members after message construction.
     let reactions = Vec::new();
     let sender = message_actor_from_candidates(&candidates)?;
+    let write_state = event
+        .get("write_state")
+        .and_then(Value::as_str)
+        .or_else(|| event.get("status").and_then(Value::as_str));
     Some(ChatMessage {
         protocol_content: if proof_verdict == ChatProofVerdict::Verified && !is_redaction_tombstone
         {
@@ -1351,11 +1357,8 @@ fn chat_message_from_event_with_proof(
         edited: false,
         revisions: Vec::new(),
         revision_source: None,
-        pending: matches!(
-            event.get("write_state").and_then(Value::as_str),
-            Some("queued" | "forwarding")
-        ),
-        failed: event.get("write_state").and_then(Value::as_str) == Some("rejected"),
+        pending: matches!(write_state, Some("queued" | "forwarding")),
+        failed: matches!(write_state, Some("rejected" | "failed" | "cancelled")),
         error: event
             .get("error")
             .and_then(Value::as_str)

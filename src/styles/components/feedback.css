@@ -102,8 +102,7 @@
   max-width: none;
   pointer-events: auto;
 }
-.toast-host .toast .toast-body { flex: 1; min-width: 0; }
-.toast-host .toast .toast-body p { margin: 0; overflow-wrap: anywhere; }
+.toast-host .toast .sapid-alert-content { flex: 1; min-width: 0; margin: 0; overflow-wrap: anywhere; }
 .toast-host .toast .toast-severity-icon { display: inline-flex; margin-top: 1px; }
 .toast-host .toast-overflow { align-self: flex-end; pointer-events: auto; }
 

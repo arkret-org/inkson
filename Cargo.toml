@@ -211,7 +211,7 @@ wry = { git = "https://github.com/Ranrar/wry", rev = "006d0155eb46dedb6c43fa3aa1
 tao = { git = "https://github.com/johncarmack1984/tao", rev = "1879ad839cb8caaf7b4c733392c21f68a86787f4", version = "0.35.3", optional = true }
 arboard = { version = "3.6.1", default-features = false }
 mime_guess = { version = "2" }
-rfd = { version = "0.15.4", default-features = false, features = ["xdg-portal", "async-std"] }
+rfd = { version = "0.17.2", default-features = false, features = ["xdg-portal"] }
 # P3.2c request-layer SSRF guard for DID fetches (native only): judges the
 # derived URL, resolves the host, judges every DNS answer, and pins the
 # validated addresses into the client. wasm has no socket to pin — the

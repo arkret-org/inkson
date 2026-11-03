@@ -95,25 +95,25 @@ fn save_contact_remark(
             if state_store.read(|store| store.active_authority()).as_ref() != Some(&authority) {
                 return;
             }
-            if !context.session_matches(generation, &account)
-                || !busy.is_alive()
-                || !row_status.is_alive()
-            {
+            if !context.session_matches(generation, &account) {
                 return;
             }
             match result {
                 Ok(remark) => {
                     let principal = remark.subject.principal_id.to_string();
                     state_store.write(|store| store.set_contact_remark(principal, remark));
-                    row_status.revise(|value| {
+                    let _ = row_status.try_revise(|value| {
                         *value = ContactFeedback::new(success_key);
                     });
                 }
-                Err(error) => row_status.revise(|value| {
-                    *value = ContactFeedback::new("contacts.action_failed").with_api_error(error);
-                }),
+                Err(error) => {
+                    let _ = row_status.try_revise(|value| {
+                        *value =
+                            ContactFeedback::new("contacts.action_failed").with_api_error(error);
+                    });
+                }
             }
-            busy.revise(|value| {
+            let _ = busy.try_revise(|value| {
                 *value = false;
             });
         });
@@ -908,9 +908,14 @@ fn contact_row(
             .map(|r| r.petname.clone())
             .unwrap_or_default(),
     );
-    let label = context
-        .state_store
-        .read(|store| crate::views::helpers::contact_peer_label(store, &contact));
+    let label_context = context.clone();
+    let label_contact = contact.clone();
+    let label = scope.bond(move || {
+        let _ = label_context.state_revision.get();
+        label_context
+            .state_store
+            .read(|store| crate::views::helpers::contact_peer_label(store, &label_contact))
+    });
     let shared = contact
         .direct_conversation
         .as_ref()
@@ -978,7 +983,7 @@ fn contact_row(
         }
     };
     let description_id = identity_id.clone();
-    let row_name = label.clone();
+    let row_name = label;
     let mut nodes = vec![Box::new(
         glory::ui::text()
             .class("sr-only contact-row-identity")
@@ -1002,21 +1007,32 @@ fn contact_row(
         let ctx = context.clone();
         let shared = shared.clone();
         let peer = peer.clone();
-        let remark = remark.clone();
         let st = state.clone();
-        nodes.push(reactive(resolve.data, move |scope, read| {
-            if !matches!(read, Some(Ok(()))) {
-                return empty();
+        let identity_context = ctx.clone();
+        let identity_principal = principal.clone();
+        let identity = scope.bond(move || {
+            let _ = identity_context.state_revision.get();
+            if !matches!(resolve.data.get(), Some(Ok(()))) {
+                return None;
             }
-            let Some(realm) = &shared else { return empty() };
-            let current = crate::identity::contact_profile::current_display_name(realm, &peer);
-            let verified =
-                crate::identity::contact_profile::current_verified_display_name(realm, &peer);
-            let confirmation = crate::identity::contact_profile::confirmed_display_name_state(
-                realm,
-                &peer,
-                remark.as_ref(),
-            );
+            let realm = shared.as_ref()?;
+            let remark = identity_context
+                .state_store
+                .read(|store| store.contact_remark(&identity_principal));
+            Some((
+                crate::identity::contact_profile::current_display_name(realm, &peer),
+                crate::identity::contact_profile::current_verified_display_name(realm, &peer),
+                crate::identity::contact_profile::confirmed_display_name_state(
+                    realm,
+                    &peer,
+                    remark.as_ref(),
+                ),
+            ))
+        });
+        nodes.push(crate::presentation::widgets::reactive_distinct(identity, move |scope, identity| {
+            let Some((current, verified, confirmation)) = identity else {
+                return empty();
+            };
             let mut children = vec![];
             if let Some(current) = current {
                 children.push(paragraph("muted contact-profile-display", current));

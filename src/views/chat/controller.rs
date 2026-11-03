@@ -264,7 +264,7 @@ impl ChatProjectionSink {
                 // EnsureChannel runs in the route-derived effect. An observed
                 // read here would subscribe that effect to user selection and
                 // reset every newly selected Strand back to the route default.
-                if self.0.selected_channel.get_untracked().as_str() != channel.strand_id.as_str() {
+                if self.0.selected_channel.get_untracked().trim().is_empty() {
                     {
                         let next_value = channel.strand_id.clone();
                         self.0.selected_channel.revise(|value| *value = next_value);
@@ -501,6 +501,7 @@ pub(super) struct CommonTarget {
     device_id: arkret_sdk::DeviceId,
     realm: CommonCoordinate<arkret_sdk::RealmId>,
     initial_strand: CommonCoordinate<arkret_sdk::StrandId>,
+    pinned_initial_strand: bool,
 }
 impl CommonTarget {
     fn new(
@@ -530,7 +531,23 @@ impl CommonTarget {
             device_id: device.clone(),
             realm,
             initial_strand,
+            pinned_initial_strand: true,
         }
+    }
+
+    fn for_initial_target(
+        authority: &arkret_sdk::AccountId,
+        device: &arkret_sdk::DeviceId,
+        realm: &str,
+        strand: &str,
+        pinned: bool,
+    ) -> Self {
+        let mut target = Self::new(authority, device, realm, strand);
+        target.pinned_initial_strand = pinned;
+        if !pinned {
+            target.initial_strand = CommonCoordinate::Unselected;
+        }
+        target
     }
 }
 
@@ -3062,6 +3079,7 @@ pub(super) fn install_composer_persistence(
 #[path = "controller_context_tests.rs"]
 mod controller_context_tests;
 
+#[cfg(test)]
 pub(super) fn chat_controller(
     _scope: &Scope,
     context: Rc<crate::presentation::InksonContext>,
@@ -3069,6 +3087,28 @@ pub(super) fn chat_controller(
     initial_strand_id: &str,
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
+) -> glory::ui::Result<ChatController> {
+    chat_controller_for_initial_target(
+        _scope,
+        context,
+        selected_realm_id,
+        initial_strand_id,
+        authority,
+        device_id,
+        true,
+    )
+}
+
+/// Ordinary discussion selection survives changes to the projected default.
+/// Embedded and Direct surfaces retain their route-pinned initial target.
+pub(super) fn chat_controller_for_initial_target(
+    _scope: &Scope,
+    context: Rc<crate::presentation::InksonContext>,
+    selected_realm_id: &str,
+    initial_strand_id: &str,
+    authority: &arkret_sdk::AccountId,
+    device_id: &arkret_sdk::DeviceId,
+    pinned: bool,
 ) -> glory::ui::Result<ChatController> {
     let root_scope = context.state_scope().ok_or(glory::ui::Error::Gone)?;
     let scope = &root_scope;
@@ -3083,7 +3123,13 @@ pub(super) fn chat_controller(
         .clone()
         .into_iter()
         .collect::<Vec<_>>();
-    let target = CommonTarget::new(authority, device_id, selected_realm_id, initial_strand_id);
+    let target = CommonTarget::for_initial_target(
+        authority,
+        device_id,
+        selected_realm_id,
+        initial_strand_id,
+        pinned,
+    );
     let revision = context.chat_state.revision();
     let cached = context
         .chat_state
