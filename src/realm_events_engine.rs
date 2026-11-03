@@ -298,6 +298,7 @@ pub async fn run_realm_events_engine_with_transport<P, F>(
             &is_active,
             &mut replica,
             &mut subscription_state,
+            &mut backoff,
         )
         .await
         {

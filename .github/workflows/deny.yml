@@ -40,7 +40,7 @@ jobs:
           path: chime
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
       - name: Checkout arkret-spec
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: ${{ github.repository_owner }}/arkret-spec
           path: arkret-spec
