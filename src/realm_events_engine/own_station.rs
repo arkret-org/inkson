@@ -201,13 +201,19 @@ fn require_accepted_sidecar_event(
 mod accepted_readback_tests;
 
 pub(super) async fn account_frame(
-    http: &arkret_sdk::http_client::Client,
+    client: OwnStationStateClient,
     frame: &arkret_models_collaboration::sync_frames::account_subscribe::AccountSubscribeFrame,
     recovery: &mut super::AccountRecoveryHistory,
 ) -> garth::Result<VerifiedAccountFrame> {
-    let client = crate::transport::own_station_results::client_for_http(http).await?;
+    frame.validate().map_err(protocol)?;
     let mut accepted = VerifiedAccountFrame::default();
     for (realm, entry) in frame.realms.iter().flat_map(|realms| &realms.entries) {
+        // An unavailable entry carries no Realm projection to authenticate.
+        // Reading that Realm's snapshot here can stop the Account rail before
+        // it reaches the list removal for a former member.
+        if entry.unavailable.is_some() {
+            continue;
+        }
         let realm_id = arkret_sdk::RealmId::new(realm.clone()).map_err(protocol)?;
         let response = client.snapshot_head(&realm_id).await?;
         let mut current_replica = OwnStationReplica::new(realm_id.clone());

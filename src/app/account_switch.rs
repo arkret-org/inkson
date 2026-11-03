@@ -322,6 +322,56 @@ pub fn account_picker_options(profiles: &MultiProfileConfig) -> Vec<(String, Str
         .collect()
 }
 
+#[cfg(any(target_arch = "wasm32", test))]
+fn web_account_picker(
+    scope: &Scope,
+    label: impl Into<Vary<String>>,
+    enabled: impl Into<Vary<bool>>,
+    selection: glory::Bond<Option<String>>,
+    options: Vec<(String, String)>,
+    mut on_select: impl FnMut(Option<String>) + 'static,
+) -> impl glory::ui::Widget {
+    // The renderer's keys are bounded ASCII tokens. The persisted profile
+    // IDs are opaque and remain the HTML option values and selection targets.
+    let entries: Rc<Vec<_>> = Rc::new(
+        options
+            .into_iter()
+            .enumerate()
+            .map(|(index, (id, label))| (format!("profile-{index}"), id, label))
+            .collect(),
+    );
+    let selected_key = {
+        let entries = entries.clone();
+        scope.bond(move || {
+            let selected = selection.get()?;
+            entries
+                .iter()
+                .find(|(_, id, _)| id == &selected)
+                .map(|(key, ..)| key.clone())
+        })
+    };
+    let choices: Vec<_> = entries
+        .iter()
+        .map(|(key, id, label)| sapid::select_option(key.clone(), label.clone()).value(id.clone()))
+        .collect();
+    sapid::native_select("account-switcher")
+        .unstyled()
+        .class("select account-picker__select")
+        .label(label)
+        .enabled(enabled)
+        .value(selected_key)
+        .options(choices)
+        .on_value_change(move |selected| {
+            let id = selected.and_then(|key| {
+                entries
+                    .iter()
+                    .find(|(candidate, ..)| candidate == &key)
+                    .map(|(_, id, _)| id.clone())
+            });
+            on_select(id);
+        })
+}
+
 pub fn account_switcher(scope: &Scope, context: Rc<InksonContext>, enabled: Vary<bool>) -> View {
     let root = AccountSessionRoot::from_context(context.clone());
     let source = scope.bond({
@@ -389,20 +439,14 @@ pub fn account_switcher(scope: &Scope, context: Rc<InksonContext>, enabled: Vary
             }
         };
         #[cfg(target_arch = "wasm32")]
-        let picker = Box::new(
-            sapid::native_select("account-switcher")
-                .unstyled()
-                .class("select account-picker__select")
-                .label(context.translated(scope, "app.account.switch"))
-                .enabled(ready)
-                .value(selection)
-                .options(
-                    options
-                        .into_iter()
-                        .map(|(id, label)| sapid::select_option(id.clone(), label).value(id)),
-                )
-                .on_value_change(on_select),
-        ) as View;
+        let picker = Box::new(web_account_picker(
+            scope,
+            context.translated(scope, "app.account.switch"),
+            ready,
+            selection,
+            options,
+            on_select,
+        )) as View;
         #[cfg(not(target_arch = "wasm32"))]
         let picker = {
             use crate::presentation::native_choice::{

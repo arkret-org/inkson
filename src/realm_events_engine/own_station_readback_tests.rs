@@ -2,6 +2,47 @@ use serde_json::json;
 
 use super::*;
 
+#[tokio::test]
+async fn unavailable_realm_detail_does_not_read_an_inaccessible_snapshot() {
+    let account = crate::test_support::authority_at_station(
+        "did:web:alice.example",
+        "ak:did_core:web:test-server.example",
+    );
+    let (client, server) =
+        crate::transport::own_station_results::test_http::client(&account, vec![]);
+    // Close the listener so any independent HTTP read fails immediately.
+    server.join().unwrap();
+    let (realm, ..) = readback_ids();
+    let mut frame: arkret_sdk::sync::AccountSubscribeFrame = serde_json::from_value(json!({
+        "kind": "delta", "cursor": "ak:cursor:Yg",
+        "realms": { (realm.as_str()): { "unavailable": { "error_code": "not_found" } } }
+    }))
+    .unwrap();
+    let proof = account_frame(client.clone(), &frame, &mut Default::default())
+        .await
+        .unwrap();
+    assert!(proof.current_snapshots().is_empty());
+    assert!(
+        proof.product_frame(&frame).realms.unwrap().entries[realm.as_str()]
+            .unavailable
+            .is_some()
+    );
+
+    frame
+        .realms
+        .as_mut()
+        .unwrap()
+        .entries
+        .get_mut(realm.as_str())
+        .unwrap()
+        .streams = Some(vec![]);
+    let failure = account_frame(client, &frame, &mut Default::default())
+        .await
+        .err();
+    assert!(matches!(failure, Some(garth::Error::Protocol(reason))
+        if reason.contains("unavailable Realm detail cannot carry projection data")));
+}
+
 #[test]
 fn bound_readback_session_guard_is_safe_inside_the_store_write_callback() {
     let account = crate::test_support::authority_at_station(

@@ -558,6 +558,14 @@ pub(super) async fn create_and_bind_identity(
 pub(super) async fn clear_pending_principal_setup(
     state_store: crate::presentation::SharedStateStore,
 ) -> anyhow::Result<()> {
+    begin_pending_principal_setup_cleanup(state_store)?.await
+}
+
+/// Remove the active checkpoint before the setup view can refresh it again.
+/// The returned work finishes the durable flush and clears its retained keys.
+pub(super) fn begin_pending_principal_setup_cleanup(
+    state_store: crate::presentation::SharedStateStore,
+) -> anyhow::Result<impl std::future::Future<Output = anyhow::Result<()>>> {
     let pending_registration = state_store.read(|store| store.pending_principal_registration());
     let pending_handoff = state_store.read(|store| store.pending_account_handoff());
     let barrier = state_store.write(|store| -> anyhow::Result<_> {
@@ -567,17 +575,19 @@ pub(super) async fn clear_pending_principal_setup(
             store.begin_durable_flush()?
         })
     })?;
-    barrier.wait().await?;
-    if let Some(handoff) = pending_handoff.as_ref() {
-        crate::identity::account_auth::clear_pending_identity_creation_recovery_key(handoff)?;
-        crate::identity::account_auth::clear_account_handoff_grant(handoff)?;
-    }
-    if let Some(checkpoint) = pending_registration.as_ref() {
-        crate::identity::account_auth::clear_prepared_identity_creation_request_for_checkpoint(
-            checkpoint,
-        )?;
-    }
-    Ok(())
+    Ok(async move {
+        barrier.wait().await?;
+        if let Some(handoff) = pending_handoff.as_ref() {
+            crate::identity::account_auth::clear_pending_identity_creation_recovery_key(handoff)?;
+            crate::identity::account_auth::clear_account_handoff_grant(handoff)?;
+        }
+        if let Some(checkpoint) = pending_registration.as_ref() {
+            crate::identity::account_auth::clear_prepared_identity_creation_request_for_checkpoint(
+                checkpoint,
+            )?;
+        }
+        Ok(())
+    })
 }
 pub(super) fn checkpoint_for_handoff(
     checkpoint: &crate::state::PendingPrincipalRegistration,

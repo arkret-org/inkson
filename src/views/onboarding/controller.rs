@@ -216,18 +216,49 @@ impl PcrRecoveryController {
                     )
                     .await
                     {
-                        Ok(()) => match clear_pending_principal_setup(state_store.clone()).await {
-                            Ok(()) => {
-                                status.revise(|value|{let next=format!(
-                                    "Identity recovered. Device receipt {} and the Standard session grant are durable.",
-                                    recovery.readiness.terminal_receipt_id
-                                );*value=next;});
-                                navigator.navigate(Route::Dashboard);
+                        Ok(()) => {
+                            // Remove the checkpoint in this turn, before the new
+                            // session remounts the setup view. The flush can
+                            // outlive that view, so finish it under the window owner.
+                            match begin_pending_principal_setup_cleanup(state_store.clone()) {
+                                Ok(cleanup) => {
+                                    let generation = session_generation.get_untracked();
+                                    let account = Some(completed.account.clone());
+                                    let receipt = recovery.readiness.terminal_receipt_id.to_string();
+                                    let root = navigator.clone();
+                                    let _ = navigator.spawn(async move {
+                                        let result = cleanup.await;
+                                        if !root.session_matches(generation, &account) {
+                                            return;
+                                        }
+                                        match result {
+                                            Ok(()) => {
+                                                let _ = status.try_revise(|value| {
+                                                    *value = format!(
+                                                        "Identity recovered. Device receipt {receipt} and the Standard session grant are durable."
+                                                    );
+                                                });
+                                                if matches!(root.route.get_untracked(), Route::Onboarding) {
+                                                    root.navigate(Route::Dashboard);
+                                                }
+                                            }
+                                            Err(error) => {
+                                                let _ = status.try_revise(|value| {
+                                                    *value = format!(
+                                                        "Identity recovered, but local cleanup failed: {error:#}"
+                                                    );
+                                                });
+                                            }
+                                        }
+                                    });
+                                }
+                                Err(error) => status.revise(|value| {
+                                    *value = format!(
+                                        "Identity recovered, but local cleanup failed: {error:#}"
+                                    );
+                                }),
                             }
-                            Err(error) => status.revise(|value|{let next=format!(
-                                "Identity recovered, but local cleanup failed: {error:#}"
-                            );*value=next;}),
-                        },
+                        }
                         Err(error) => status.revise(|value|{let next=format!(
                             "Recovered device could not be committed: {error:#}"
                         );*value=next;}),

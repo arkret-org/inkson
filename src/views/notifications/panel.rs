@@ -169,6 +169,7 @@ pub fn page(scope: &Scope, context: Rc<InksonContext>, _route: Route) -> View {
         let ctx = context.clone();
         let authority = authority.clone();
         scope.effect(move || {
+            let _ = ctx.state_revision.get();
             let account = ctx.active_account.get();
             let hydrated = if account
                 .as_ref()

@@ -3,6 +3,56 @@ use crate::app::initial_session_credential_from_state;
 use crate::config::{AccountProfile, ClientConfig};
 use crate::presentation::{BootState, InksonContext, SharedStateStore};
 
+#[test]
+fn web_picker_mounts_opaque_profile_ids_and_selects_the_exact_account() {
+    use glory::render::{Event, Props};
+
+    let app = glory::ui::App::memory();
+    let first = "ak:profile:019b0000-0000-7000-8000-000000000001".to_owned();
+    let second = "ak:profile:019b0000-0000-7000-8000-000000000002".to_owned();
+    let scope = app.scope();
+    let active = scope.cage(Some(first.clone()));
+    let chosen = scope.cage(None::<String>);
+    let _picker = app
+        .mount(web_account_picker(
+            scope,
+            "Switch account",
+            true,
+            scope.bond(move || active.get()),
+            vec![
+                (first.clone(), "First".into()),
+                (second.clone(), "Second".into()),
+            ],
+            move |id| chosen.revise(|value| *value = id),
+        ))
+        .unwrap();
+    let (node, props) = {
+        let tree = app.tree();
+        let mut pending = tree.roots().to_vec();
+        loop {
+            let id = pending.pop().expect("mounted web account picker");
+            let node = tree.node(id).unwrap();
+            if let Props::Select(props) = &node.descriptor.view().props {
+                break (id, props.clone());
+            }
+            pending.extend(node.children.iter().copied());
+        }
+    };
+    let entries: Vec<_> = props.options().map(|(option, _)| option).collect();
+    assert_eq!(entries[0].value, first);
+    assert_eq!(entries[1].value, second);
+    assert_eq!(props.selection.keys, [entries[0].key.clone()]);
+    app.dispatch(
+        node,
+        Event::SelectChanged {
+            keys: vec![entries[1].key.clone()],
+            revision: props.selection.revision,
+        },
+    )
+    .unwrap();
+    assert_eq!(chosen.get(), Some(second));
+}
+
 struct Fixture {
     directory: tempfile::TempDir,
     dom: glory::ui::App,

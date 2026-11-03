@@ -1437,7 +1437,8 @@ pub(crate) async fn verify_account_frame_recovering(
     frame: &arkret_models_collaboration::sync_frames::account_subscribe::AccountSubscribeFrame,
     recovery: &mut AccountRecoveryHistory,
 ) -> garth::Result<VerifiedAccountFrame> {
-    own_station::account_frame(http, frame, recovery).await
+    let client = crate::transport::own_station_results::client_for_http(http).await?;
+    own_station::account_frame(client, frame, recovery).await
 }
 
 #[cfg(test)]

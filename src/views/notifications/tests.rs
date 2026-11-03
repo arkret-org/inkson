@@ -13,6 +13,99 @@ use crate::state::{
 };
 
 #[test]
+fn mounted_notification_feed_follows_store_revisions_without_replacing_the_account() {
+    fn rows(app: &glory::App, class_name: &str) -> usize {
+        let tree = app.tree();
+        let mut pending = tree.roots().to_vec();
+        let mut count = 0;
+        while let Some(id) = pending.pop() {
+            let node = tree.node(id).unwrap();
+            count += usize::from(
+                node.descriptor
+                    .view()
+                    .classes
+                    .iter()
+                    .any(|class| class == class_name),
+            );
+            pending.extend(node.children.iter().copied());
+        }
+        count
+    }
+    let (app, context, _directory) = crate::views::settings::restored_surface_tests::harness();
+    let account = crate::test_support::AccountFixture::new("ak:did_core:web:alice.example").build();
+    context
+        .state_store
+        .write(|store| store.switch_active_account(&account))
+        .unwrap();
+    context
+        .active_account
+        .revise(|current| *current = Some(account.clone()));
+    app.mount(super::panel::page(
+        app.scope(),
+        context.clone(),
+        crate::routes::Route::Notifications,
+    ))
+    .unwrap();
+    app.flush().unwrap();
+    assert_eq!(rows(&app, "notification-item"), 0);
+    let realm = "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-";
+    let first = test_event_notification(
+        1,
+        arkret_sdk::NotificationKind::Mention,
+        realm,
+        None,
+        json!({"event_kind":"ak.message.create","body":"first retained mention"}),
+    );
+    let second = test_event_notification(
+        2,
+        arkret_sdk::NotificationKind::Mention,
+        realm,
+        None,
+        json!({"event_kind":"ak.message.create","body":"second retained mention"}),
+    );
+    let first_id = first.notification_id();
+    context
+        .state_store
+        .write(|store| store.save_notification_projection(vec![first.clone()]));
+    context.state_revision.revise(|revision| *revision += 1);
+    app.flush().unwrap();
+    assert_eq!(rows(&app, "notification-item"), 1);
+    context
+        .state_store
+        .write(|store| store.save_notification_projection(vec![first, second]));
+    context.state_revision.revise(|revision| *revision += 1);
+    app.flush().unwrap();
+    assert_eq!(rows(&app, "notification-item"), 2);
+
+    for (enabled, expected) in [(true, 0), (false, 2)] {
+        let settings = crate::notification_rules::parse_dnd_settings(&json!({"dnd":{
+            "enabled":enabled,"schedule":{"timezone":"Asia/Shanghai","tzdb_version":"2025b",
+                "all_day":true,"periods":[]},"exceptions":[]
+        }}))
+        .unwrap();
+        context
+            .state_store
+            .write(|store| store.set_notification_dnd_settings(Some(settings)));
+        context.state_revision.revise(|revision| *revision += 1);
+        app.flush().unwrap();
+        assert_eq!(rows(&app, "notification-item"), expected);
+    }
+    for (read, expected) in [(true, 1), (false, 0)] {
+        context
+            .state_store
+            .write(|store| store.set_notification_read(first_id.clone(), read));
+        context.state_revision.revise(|revision| *revision += 1);
+        app.flush().unwrap();
+        assert_eq!(rows(&app, "notification-item"), 2);
+        assert_eq!(rows(&app, "notification-read"), expected);
+    }
+    let current = context.active_account.get_untracked().unwrap();
+    assert_eq!(current.authority, account.authority);
+    assert_eq!(current.device_id, account.device_id);
+    assert_eq!(current.profile_id, account.profile_id);
+}
+
+#[test]
 fn blocklist_revision_rehydrates_retained_contact_notification() {
     use arkret_models_collaboration::objects::productivity::AccountBlocklistSurface;
 

@@ -60,29 +60,39 @@ fn install_test_hooks(scope: &Scope, context: Rc<InksonContext>) {
                 let state_store = context.state_store.clone();
                 let account = active_account.get_untracked();
                 let generation = session_generation.get_untracked();
+                let api_token = context.token.get_untracked();
                 if let Err(error) = crate::runtime_helpers::spawn_owned(&scope, async move {
+                    let phase = std::cell::Cell::new("account");
                     let result: anyhow::Result<serde_json::Value> = async {
                             let account =
                                 account.ok_or_else(|| anyhow::anyhow!("account absent"))?;
+                            phase.set("authoring_fence");
                             let fence = crate::transport::auth::AuthoringSessionFence::capture()?;
+                            phase.set("scope");
                             let realm = arkret_sdk::RealmId::new(realm_text)?;
                             let strand = arkret_sdk::StrandId::new(strand_text)?;
                             let scope = arkret_sdk::ScopeRef::Realm {
                                 realm_id: realm.clone(),
                             };
+                            phase.set("material");
                             let material = state_store.read(|store| crate::signal::key_material_for_scope(store, realm.as_str(), None))?;
                             let store =
                                 state_store.handle();
+                            phase.set("session");
                             let session = store
                                 .read(|store| store.session_grant())
                                 .ok_or_else(|| anyhow::anyhow!("session absent"))?;
+                            phase.set("session_scope");
                             anyhow::ensure!(
                                 session.account_id == account.authority
                                     && session.device_id == account.device_id,
                                 "session does not belong to the active Device"
                             );
+                            phase.set("credential");
+                            anyhow::ensure!(!api_token.is_empty(), "session credential absent");
                             let group_id = scope.canonical_mls_group_id()?;
                             let epoch = material.epoch;
+                            phase.set("pre_dispatch_fence");
                             fence.check()?;
                             anyhow::ensure!(
                                 session_generation.get_untracked() == generation
@@ -97,9 +107,16 @@ fn install_test_hooks(scope: &Scope, context: Rc<InksonContext>) {
                             let base_url = account.server_url.to_string();
                             let authority = account.authority.clone();
                             let device = account.device_id.clone();
+                            phase.set("blocklist_freshness");
+                            let payload = crate::signal::SignalPayload::Typing {
+                                strand_id: strand,
+                                typing,
+                            };
+                            store.read(|store| store.require_blocklist_signal_freshness(&payload))?;
+                            phase.set("send");
                             let outcome = crate::transport::auth::with_event_submitter(
                                 &base_url,
-                                session.grant_jwt,
+                                api_token,
                                 |submitter| async move {
                                     submitter
                                         .send_scope_signal(
@@ -107,10 +124,7 @@ fn install_test_hooks(scope: &Scope, context: Rc<InksonContext>) {
                                             &authority,
                                             &device,
                                             &material,
-                                            &crate::signal::SignalPayload::Typing {
-                                                strand_id: strand,
-                                                typing,
-                                            },
+                                            &payload,
                                             &store,
                                         )
                                         .await
@@ -118,6 +132,7 @@ fn install_test_hooks(scope: &Scope, context: Rc<InksonContext>) {
                             )
                             .await
                             .map_err(|_| anyhow::anyhow!("Signal send failed"))?;
+                            phase.set("post_dispatch_fence");
                             fence.check()?;
                             anyhow::ensure!(
                                 session_generation.get_untracked() == generation
@@ -138,9 +153,10 @@ fn install_test_hooks(scope: &Scope, context: Rc<InksonContext>) {
                         }
                         .await;
                     // Never return arbitrary transport errors or any body/key bytes.
-                    let safe = result.unwrap_or_else(
-                        |_| serde_json::json!({"error": "real_signal_send_unavailable"}),
-                    );
+                    let safe = result.unwrap_or_else(|_| {
+                        serde_json::json!({"error": "real_signal_send_unavailable",
+                            "failure_stage": phase.get()})
+                    });
                     let _ = reply.send(safe.to_string());
                 }) {
                     scope.report_error(error);
@@ -148,7 +164,9 @@ fn install_test_hooks(scope: &Scope, context: Rc<InksonContext>) {
             }
             wasm_bindgen_futures::future_to_promise(async move {
                 let safe = received.await.unwrap_or_else(|_| {
-                    serde_json::json!({"error":"real_signal_send_unavailable"}).to_string()
+                    serde_json::json!({"error":"real_signal_send_unavailable",
+                        "failure_stage":"owner_retired"})
+                    .to_string()
                 });
                 Ok(wasm_bindgen::JsValue::from_str(&safe))
             })
