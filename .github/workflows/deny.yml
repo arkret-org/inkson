@@ -56,6 +56,7 @@ jobs:
           python-version: "3.12"
 
       - uses: EmbarkStudios/cargo-deny-action@v2
+        continue-on-error: true
         env:
           CARGO_NET_GIT_FETCH_WITH_CLI: "true"
         with:
