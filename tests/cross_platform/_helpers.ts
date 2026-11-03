@@ -43,7 +43,7 @@ export async function gotoOrSkip(page: Page, path: string): Promise<void> {
  * and the browser APIs available on the page origin. */
 export async function waitForBundleReady(page: Page): Promise<void> {
   await page.waitForSelector(
-    "[data-testid=client-shell], [data-testid=auth-shell]",
+    ".shell.app, .auth-shell",
     { timeout: 120_000 },
   );
 }

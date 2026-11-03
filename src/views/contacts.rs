@@ -983,7 +983,7 @@ fn contact_row(
         }
     };
     let description_id = identity_id.clone();
-    let row_name = label.clone();
+    let row_name = label;
     let mut nodes = vec![Box::new(
         glory::ui::text()
             .class("sr-only contact-row-identity")

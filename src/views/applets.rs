@@ -1034,7 +1034,7 @@ fn applet_inventory_surface(st: AppletPage, selected_realm_id: String) -> View {
                 },
             ],
         );
-        return Box::new(glory::ui::group().fill(vec![registry, errors]));
+        Box::new(glory::ui::group().fill(vec![registry, errors]))
     }
 }
 
@@ -1069,7 +1069,7 @@ fn applet_service_ids(
                     .ok()?;
             if !matches!(scope, ScopeRef::Realm { .. })
                 || scope.realm_id_opt()?.as_str()
-                    != crate::operation::trim_realm_id(&selected_realm_id)
+                    != crate::operation::trim_realm_id(selected_realm_id)
             {
                 return None;
             }
@@ -1078,7 +1078,7 @@ fn applet_service_ids(
         .collect();
 
     if let Some(entries) = state_store.read(|store| {
-        store.realm_current_view_entries(&crate::operation::trim_realm_id(&selected_realm_id))
+        store.realm_current_view_entries(&crate::operation::trim_realm_id(selected_realm_id))
     }) {
         for entry in entries {
             let arkret_wire::CurrentState::Value {
