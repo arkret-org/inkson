@@ -672,3 +672,51 @@ fn e2ee_plaintext_cache_key_is_account_scoped_and_indexeddb_only() {
         e2ee_plaintext_cache_store_key(&authority_a_namespace)
     );
 }
+#[test]
+fn presentation_secure_store_override_is_nested_and_thread_local() {
+    let first: std::sync::Arc<dyn SecureKeyStore + Send + Sync> =
+        std::sync::Arc::new(MemorySecureKeyStore::new());
+    let _outer = DefaultSecureKeyStoreTestGuard::replace(first.clone());
+    first.store_secret("fixture", "outer").unwrap();
+    let second: std::sync::Arc<dyn SecureKeyStore + Send + Sync> =
+        std::sync::Arc::new(MemorySecureKeyStore::new());
+    {
+        let _inner = DefaultSecureKeyStoreTestGuard::replace(second.clone());
+        assert!(std::sync::Arc::ptr_eq(
+            &default_secure_key_store("inkson"),
+            &second
+        ));
+        assert_eq!(
+            default_secure_key_store("inkson")
+                .get_secret("fixture")
+                .unwrap(),
+            None
+        );
+    }
+    std::thread::spawn(|| {
+        let third = std::sync::Arc::new(MemorySecureKeyStore::new());
+        let _guard = DefaultSecureKeyStoreTestGuard::replace(third);
+        assert_eq!(
+            default_secure_key_store("inkson")
+                .get_secret("fixture")
+                .unwrap(),
+            None
+        );
+        default_secure_key_store("inkson")
+            .store_secret("fixture", "other thread")
+            .unwrap();
+    })
+    .join()
+    .unwrap();
+    assert!(std::sync::Arc::ptr_eq(
+        &default_secure_key_store("inkson"),
+        &first
+    ));
+    assert_eq!(
+        default_secure_key_store("inkson")
+            .get_secret("fixture")
+            .unwrap()
+            .as_deref(),
+        Some("outer")
+    );
+}

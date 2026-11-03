@@ -928,7 +928,7 @@ pub(super) fn install(scope: &Scope, context: Rc<InksonContext>) {
                     tracing::warn!(
                         realm = %creator_bootstrap_realm_id,
                         circle = circle_id.as_deref().unwrap_or("-"),
-                        "MLS governance coverage is stale; advancing the epoch to resume encrypted sending",
+                        "MLS coverage repair is scheduled; checking accepted current before repair",
                     );
                     let coverage_result = match crate::transport::auth::authed_api_ready(
                         &detect_base,

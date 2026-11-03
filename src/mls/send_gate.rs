@@ -227,6 +227,24 @@ pub(crate) async fn resolve_mls_send_gate(
                 || snapshot.group_state_event_id.as_ref()
                     != Some(&current.current_mls_commit_event_ref)
         }) {
+            #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+            {
+                let latest = MlsSendGateInput::capture(&input.store, scope);
+                tracing::warn!(
+                    scope = ?scope,
+                    accepted_epoch = current.epoch,
+                    accepted_ref = %current.current_mls_commit_event_ref,
+                    captured_epoch = ?input.local.as_ref().map(|group| group.epoch),
+                    captured_ref = ?input.local.as_ref().and_then(|group| group.group_state_ref.as_ref()),
+                    durable_epoch = ?durable.as_ref().map(|snapshot| snapshot.epoch),
+                    durable_ref = ?durable.as_ref().and_then(|snapshot| snapshot.group_state_event_id.as_ref()),
+                    live_epoch = ?latest.local.as_ref().map(|group| group.epoch),
+                    live_ref = ?latest.local.as_ref().and_then(|group| group.group_state_ref.as_ref()),
+                    generation = input.store.read(|state| state.current_generation()),
+                    persist_failed = input.store.read(|state| state.persist_error().is_some()),
+                    "MLS send gate publication mismatch"
+                );
+            }
             return Err(MlsSendGateBlocked::NotReady(
                 "private MLS publication is not durably committed".into(),
             ));

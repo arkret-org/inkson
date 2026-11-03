@@ -9,6 +9,11 @@ fn host() -> (glory::App, Rc<glory::core::executor::Executor>) {
         executor,
     )
 }
+fn isolated_secure_store() -> crate::secure_key_store::DefaultSecureKeyStoreTestGuard {
+    crate::secure_key_store::DefaultSecureKeyStoreTestGuard::replace(std::sync::Arc::new(
+        crate::secure_key_store::MemorySecureKeyStore::new(),
+    ))
+}
 fn pump(app: &glory::App, executor: &glory::core::executor::Executor) {
     for _ in 0..32 {
         executor.poll_one();
@@ -120,6 +125,7 @@ fn props(suspended: Cage<bool>) -> ChatPanelProps {
 
 #[tokio::test(flavor = "current_thread")]
 async fn production_native_list_settles_under_repeated_flushes() {
+    let _secure = isolated_secure_store();
     let directory = tempfile::tempdir().unwrap();
     let (app, executor) = host();
     let scope = app.scope();
@@ -142,6 +148,7 @@ async fn production_native_list_settles_under_repeated_flushes() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn production_chat_panel_keeps_input_owner_draft_and_bounds_across_source_gaps() {
+    let _secure = isolated_secure_store();
     let directory = tempfile::tempdir().unwrap();
     let (app, executor) = host();
     let scope = app.scope();
@@ -200,6 +207,7 @@ async fn production_chat_panel_keeps_input_owner_draft_and_bounds_across_source_
 
 #[tokio::test(flavor = "current_thread")]
 async fn production_route_return_restores_typed_draft_and_retires_previous_input_nodes() {
+    let _secure = isolated_secure_store();
     let directory = tempfile::tempdir().unwrap();
     let (app, executor) = host();
     let context = fixture(app.scope(), directory.path());

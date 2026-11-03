@@ -173,6 +173,27 @@ pub(super) fn bare_member_row(actor_id: arkret_sdk::ActorId) -> RealmMemberRow {
     }
 }
 
+pub(super) fn card_member_roster(store: &LocalStateStore, realm_id: &str) -> Vec<RealmMemberRow> {
+    if store.current_product_cut_generation(realm_id).is_none() {
+        return Vec::new();
+    }
+    // The optional display projection is not a membership source. Preserve
+    // exact Actors from the installed complete cut; display resolution can
+    // enrich each row independently without inventing account disclosure.
+    store
+        .complete_joined_member_hint_for_realm(realm_id)
+        .ok()
+        .flatten()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|actor| {
+            let mut row = bare_member_row(actor);
+            row.membership = Some(arkret_sdk::sync::MemberRosterMembership::Join);
+            row
+        })
+        .collect()
+}
+
 pub(super) fn assignment_picker_roster(
     member_rows: &[RealmMemberRow],
     card: &KanbanCard,

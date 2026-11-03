@@ -154,10 +154,12 @@ pub(crate) fn mls_coverage_repair_dedup_hint(store: &LocalStateStore, realm_id: 
 /// Advance the MLS epoch so the scope's new commit covers its current
 /// key-access revision, restoring encrypted sending.
 ///
-/// Returns `Ok(true)` when a commit was accepted and installed, `Ok(false)`
-/// when nothing was pending. Idempotent: the stale marker is cleared only by an
-/// accepted commit, and a still-insufficient epoch re-arms it from the next
-/// refusal, so this never declares the repair finished on its own.
+/// Returns `Ok(true)` when repair is settled: nothing remains scheduled, an
+/// accepted transition already covers current, or this pass installed a Commit.
+/// `Ok(false)` retains pending work without claiming a new accepted Commit.
+/// A stale scheduling hint cannot require another rotation after a member-add
+/// or another device's accepted Commit has restored coverage. This does not
+/// make a lagging private group ready; the ordinary send gate still checks it.
 pub(crate) async fn ensure_mls_governance_coverage(
     api: &crate::transport::TransportClient,
     state_store: &StateStoreHandle,
@@ -176,14 +178,23 @@ pub(crate) async fn ensure_mls_governance_coverage(
         .filter(|circle_id| !circle_id.is_empty());
     let authoring_lock = crate::mls::admission::mls_admission_authoring_lock(realm_id);
     let _authoring_guard = authoring_lock.lock().await;
-    if state_store.read(|store| {
-        store
-            .mls_coverage_stale_reason(realm_id, circle_id)
-            .is_none()
-            || store
+    if state_store.read(|store| store.active_authority().as_ref() != Some(authority)) {
+        return Err("MLS coverage repair belongs to a replaced account".to_owned());
+    }
+    let (pending, has_checkpoint) = state_store.read(|store| {
+        (
+            store
+                .mls_coverage_stale_reason(realm_id, circle_id)
+                .is_some(),
+            store
                 .mls_checkpoint_for_effective_scope(realm_id, circle_id)
-                .is_none()
-    }) {
+                .is_some(),
+        )
+    });
+    if !pending {
+        return Ok(true);
+    }
+    if !has_checkpoint {
         return Ok(false);
     }
 
@@ -192,6 +203,7 @@ pub(crate) async fn ensure_mls_governance_coverage(
     let submitter = api
         .event_submitter()
         .map_err(|error| format!("MLS coverage repair client: {error}"))?
+        .with_authority(authority.clone())
         .with_state_store(state_store.clone());
     submitter
         .drain_mls_outbound()
@@ -214,11 +226,10 @@ pub(crate) async fn ensure_mls_governance_coverage(
         },
         None => arkret_sdk::ScopeRef::Realm { realm_id: realm },
     };
-    let input = crate::mls::send_gate::MlsSendGateInput::capture(state_store, &scope);
-    let current = crate::mls::send_gate::read_durable_mls_current(&input, &scope)
-        .await
-        .map_err(|error| format!("reading MLS coverage repair current failed: {error}"))?
-        .ok_or_else(|| "MLS coverage repair requires verified durable current".to_owned())?;
+    let Some(current) = current_needing_coverage_repair(state_store, &scope, authority).await?
+    else {
+        return Ok(true);
+    };
     // Pin the same verified current used by the send gate for both the MLS
     // authenticated handshake and its outer Event. The product view can lag.
     let binding = crate::mls::governance_proof::binding_for_current_transition(&current)?;
@@ -273,6 +284,53 @@ pub(crate) async fn ensure_mls_governance_coverage(
     Ok(true)
 }
 
+/// Recheck the scheduling hint against the complete durable public cut.
+/// This decision does not imply that this device's private state can send.
+async fn current_needing_coverage_repair(
+    state_store: &StateStoreHandle,
+    scope: &arkret_sdk::ScopeRef,
+    authority: &arkret_sdk::AccountId,
+) -> Result<Option<arkret_wire::MlsGroupValue>, String> {
+    let (realm, circle) = match scope {
+        arkret_sdk::ScopeRef::Realm { realm_id } => (realm_id, None),
+        arkret_sdk::ScopeRef::Circle {
+            realm_id,
+            circle_id,
+        } => (realm_id, Some(circle_id.as_str())),
+        _ => return Err("MLS coverage repair requires a Realm or Circle".to_owned()),
+    };
+    let realm_id = realm.as_str();
+    let circle_id = circle;
+    let read = state_store
+        .read(LocalStateStore::capture_committed_account_read)
+        .map_err(|error| format!("capturing MLS coverage repair cut failed: {error}"))?;
+    let input = crate::mls::send_gate::MlsSendGateInput::capture(state_store, scope);
+    let current = crate::mls::send_gate::read_durable_mls_current(&input, scope)
+        .await
+        .map_err(|error| format!("reading MLS coverage repair current failed: {error}"))?
+        .ok_or_else(|| "MLS coverage repair requires verified durable current".to_owned())?;
+    if current.covered_key_access_revision >= current.current_key_access_revision {
+        state_store.write(|store| {
+            if !read.matches(store)
+                || store.current_reset_required()
+                || store.active_authority().as_ref() != Some(authority)
+            {
+                return Err("MLS coverage repair cut changed before completion".to_owned());
+            }
+            store.clear_mls_coverage_stale(realm_id, circle_id)
+        })?;
+        return Ok(None);
+    }
+    if !state_store.read(|store| {
+        read.matches(store)
+            && !store.current_reset_required()
+            && store.active_authority().as_ref() == Some(authority)
+    }) {
+        return Err("MLS coverage repair cut changed before authoring".to_owned());
+    }
+    Ok(Some(current))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -288,6 +346,224 @@ mod tests {
     }
 
     const REALM: &str = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
+
+    #[cfg(not(target_arch = "wasm32"))]
+    async fn exercise_current_coverage(
+        covered: bool,
+        complete: bool,
+        change_cut: bool,
+        wrong_authority: bool,
+    ) {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::{Arc, Mutex};
+
+        use serde_json::json;
+        let directory = tempfile::tempdir().unwrap();
+        let mut local = LocalStateStore::with_path(directory.path().join("state.json"));
+        local.promote_accepted_context_for_test(
+            &arkret_sdk::Did::new(format!(
+                "did:web:coverage-{}.example",
+                crate::operation::uuid_v7()
+            ))
+            .unwrap(),
+        );
+        let authority = local.active_authority().unwrap();
+        let scope = arkret_sdk::ScopeRef::Realm {
+            realm_id: REALM.parse().unwrap(),
+        };
+        let checkpoint = garth::mls::checkpoint::encrypt_state(
+            REALM,
+            scope.canonical_mls_group_id().unwrap().as_str(),
+            1,
+            b"old-private-state",
+            "test-secret",
+            b"coverage-salt",
+        );
+        local
+            .save_mls_checkpoint_for_scope(&scope, checkpoint.clone())
+            .unwrap();
+        local
+            .record_mls_coverage_stale(REALM, None, "epoch_update_required")
+            .unwrap();
+        let commit = arkret_sdk::RealmCommitId::from_digest([9; 32]);
+        let head = json!([{"stream_ref":scope,"stream_position":1,"commit_id":commit}]);
+        let frame: arkret_sdk::sync::AccountSubscribeFrame = serde_json::from_value(json!({
+            "kind":"delta", "cursor":"ak:cursor:YQ", "realms":{REALM:{
+                "current":{"realm_id":REALM,"governance_generation":"1","stream_heads":head,"entries":[{
+                    "selector":{"kind":"mls_group","scope_ref":scope},
+                    "source_stream_ref":scope,"revision":{"commit_id":commit,"stream_position":1},
+                    "value":{
+                        "effective_scope":scope,
+                        "genesis_event_ref":arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256,[1;32]),
+                        "cipher_suite":"MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519",
+                        "current_mls_commit_event_ref":arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256,[2;32]),
+                        "epoch":"2","current_key_access_revision":"2",
+                        "covered_key_access_revision":if covered {"2"} else {"1"},
+                        "public_tree_ref":format!("ak:blob:sha256:{}","33".repeat(32))
+                    }
+                }]},
+                "baseline":{"snapshot_cursor":"ak:cursor:cw","cut_revision":1,
+                    "coverage":{"realm_id":REALM,"stream_heads":head,"complete_for_authorized_streams":complete},
+                    "complete":complete}
+            }}
+        })).unwrap();
+        let index = crate::state::CurrentIndex::open(&authority, 0, local.current_index_location())
+            .await
+            .unwrap();
+        let mut staged = index.stage_frame(0, &frame).await.unwrap();
+        staged.arm_account_commit();
+        local
+            .verified_projection_transaction(|store| {
+                store.set_current_generation(staged.generation());
+                Ok(())
+            })
+            .unwrap();
+        local.begin_durable_flush().unwrap().wait().await.unwrap();
+        staged.finish();
+        let data = Arc::new(Mutex::new(local));
+        let read = data.clone();
+        let write = data.clone();
+        let reads = AtomicUsize::new(0);
+        let state = StateStoreHandle::new(
+            move |callback| {
+                let mut store = read.lock().unwrap();
+                callback(&store);
+                // Commit after the index captures its generation, before the
+                // coverage decision can clear the old scheduling hint.
+                if change_cut && reads.fetch_add(1, Ordering::SeqCst) == 2 {
+                    store.append_raw_operation("concurrent-write", None, json!({"changed":true}));
+                    store.flush().unwrap();
+                }
+            },
+            move |callback| callback(&mut write.lock().unwrap()),
+        );
+        let caller = if wrong_authority {
+            arkret_sdk::AccountId::new(
+                crate::test_support::core_id("ak:did_core:web:replaced-coverage.example"),
+                authority.station_id.clone(),
+            )
+        } else {
+            authority.clone()
+        };
+        let result = current_needing_coverage_repair(&state, &scope, &caller).await;
+        if wrong_authority {
+            assert!(result.unwrap_err().contains("cut changed before"));
+            assert!(state.read(|store| store.mls_coverage_stale_reason(REALM, None).is_some()));
+        } else if change_cut {
+            assert!(
+                result
+                    .unwrap_err()
+                    .contains("cut changed before completion")
+            );
+            assert!(state.read(|store| store.mls_coverage_stale_reason(REALM, None).is_some()));
+        } else if covered && complete {
+            assert!(result.unwrap().is_none());
+            assert!(state.read(|store| store.mls_coverage_stale_reason(REALM, None).is_none()));
+            let input = crate::mls::send_gate::MlsSendGateInput::capture(&state, &scope);
+            assert!(matches!(
+                crate::mls::send_gate::resolve_mls_send_gate(&input, &scope).await,
+                Err(
+                    crate::mls::send_gate::MlsSendGateBlocked::LocalGroupBehind {
+                        current_epoch: 2
+                    }
+                )
+            ));
+        } else {
+            if complete {
+                let current = result
+                    .unwrap()
+                    .expect("uncovered current still needs repair");
+                assert_eq!(current.current_key_access_revision, 2);
+                assert_eq!(current.covered_key_access_revision, 1);
+                let input = crate::mls::send_gate::MlsSendGateInput::capture(&state, &scope);
+                assert_eq!(
+                    crate::mls::send_gate::resolve_mls_send_gate(&input, &scope).await,
+                    Err(crate::mls::send_gate::MlsSendGateBlocked::EpochUpdateRequired)
+                );
+            } else {
+                let error = result.unwrap_err();
+                assert!(
+                    error.contains("complete authorized-stream coverage"),
+                    "{error}"
+                );
+            }
+            assert!(state.read(|store| store.mls_coverage_stale_reason(REALM, None).is_some()));
+        }
+        assert_eq!(
+            state.read(|store| store.mls_checkpoint_for_scope(&scope)),
+            Some(checkpoint)
+        );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn covered_member_commit_clears_hint_without_rotating_or_readying_old_private_group() {
+        exercise_current_coverage(true, true, false, false).await;
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn incomplete_current_cannot_settle_a_coverage_repair() {
+        exercise_current_coverage(true, false, false, false).await;
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn uncovered_current_keeps_repair_pending() {
+        exercise_current_coverage(false, true, false, false).await;
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn a_changed_checkpoint_cannot_clear_the_old_coverage_hint() {
+        exercise_current_coverage(true, true, true, false).await;
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn a_replaced_account_cannot_clear_covered_or_author_uncovered_current() {
+        exercise_current_coverage(true, true, false, true).await;
+        exercise_current_coverage(false, true, false, true).await;
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn completion_distinguishes_settled_hints_from_missing_private_material() {
+        use std::sync::{Arc, Mutex};
+        let directory = tempfile::tempdir().unwrap();
+        let mut local = LocalStateStore::with_path(directory.path().join("state.json"));
+        local.promote_accepted_context_for_test(
+            &arkret_sdk::Did::new("did:web:coverage-completion.example").unwrap(),
+        );
+        let authority = local.active_authority().unwrap();
+        let shared = Arc::new(Mutex::new(local));
+        let read = shared.clone();
+        let write = shared.clone();
+        let state = StateStoreHandle::new(
+            move |callback| callback(&read.lock().unwrap()),
+            move |callback| callback(&mut write.lock().unwrap()),
+        );
+        let api =
+            crate::transport::TransportClient::unauthenticated("http://127.0.0.1:1/").unwrap();
+        let device =
+            crate::test_support::device_id("ak:device:01904100-0000-7000-8000-000000000001");
+        assert!(
+            ensure_mls_governance_coverage(&api, &state, REALM, None, &authority, &device)
+                .await
+                .unwrap(),
+            "a cleared scheduling hint must let its owner clear the old error and stop retrying"
+        );
+        state
+            .write(|store| store.record_mls_coverage_stale(REALM, None, "epoch_update_required"))
+            .unwrap();
+        assert!(
+            !ensure_mls_governance_coverage(&api, &state, REALM, None, &authority, &device)
+                .await
+                .unwrap(),
+            "missing private material remains pending, without transport or a new Commit"
+        );
+        assert!(state.read(|store| store.mls_coverage_stale_reason(REALM, None).is_some()));
+    }
 
     #[test]
     fn a_verified_send_gate_block_wakes_coverage_repair_without_a_failed_submit() {

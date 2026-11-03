@@ -1428,8 +1428,9 @@ impl LocalStateStore {
         Ok(())
     }
 
-    /// Clear the coverage refusal after an `ak.mls.commit` carrying a freshly
-    /// verified governance binding was accepted.
+    /// Clear the coverage refusal after an accepted `ak.mls.commit`, or after
+    /// verified durable current proves that another accepted transition has
+    /// already covered the scope's current key-access revision.
     ///
     /// Cleared on acceptance rather than on a successful resend: the accepted
     /// commit binds the latest projected Security Frontier. If it still was not

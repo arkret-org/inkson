@@ -1789,7 +1789,7 @@ fn sidebar_view(scope: &Scope, detail: Detail, card: KanbanCard) -> View {
                         &panel_detail.context.projection_realm_id,
                         projection,
                     ),
-                    realm_member_roster(projection),
+                    card_member_roster(store, &panel_detail.context.selected_realm_id),
                 )
             });
             let mut tabs = vec![];
@@ -1946,7 +1946,6 @@ fn details_fields(
             .collect::<Vec<_>>()
     });
     let pick = detail.clone();
-    let chosen = assigned.iter().cloned().collect::<BTreeSet<_>>();
     let mut row = vec![line(
         "assignee-chip-list",
         names
@@ -1980,8 +1979,12 @@ fn details_fields(
             .enabled(card_detail_edit_ready(&card))
             .fill(add_children)
             .on_press(move || {
+                let Some(current) = c.selected_card.get_untracked() else {
+                    return;
+                };
+                let chosen = card_assigned_actor_ids(&current).into_iter().collect();
                 c.assignee_selected_actor_ids
-                    .revise(|value| *value = chosen.clone());
+                    .revise(|value| *value = chosen);
                 c.assignee_filter.revise(String::clear);
                 c.assignee_edit_status.revise(String::clear);
                 c.assignee_picker_open.revise(|value| *value = !*value);
@@ -2006,7 +2009,7 @@ fn details_fields(
         "assignee-editor card-detail-assignees",
         vec![
             line("assignee-chip-row", row),
-            assignee_picker(scope, pick, card.clone(), realm, rows),
+            assignee_picker(scope, pick, realm),
         ],
     );
     let due = card.due.clone();
@@ -2108,18 +2111,19 @@ fn details_fields(
         )],
     )
 }
-fn assignee_picker(
-    _scope: &Scope,
-    detail: Detail,
-    card: KanbanCard,
-    realm: String,
-    rows: Vec<crate::views::member_display::RealmMemberRow>,
-) -> View {
+fn assignee_picker(_scope: &Scope, detail: Detail, realm: String) -> View {
     let c = detail.c;
     reactive(c.assignee_picker_open, move |scope, open| {
         if !open {
             return empty();
         }
+        let Some(card) = c.selected_card.get_untracked() else {
+            return empty();
+        };
+        let rows = detail
+            .app
+            .state_store
+            .read(|store| card_member_roster(store, &realm));
         let options = assignment_picker_roster(&rows, &card);
         let detail_rows = detail.clone();
         let realm = realm.clone();
@@ -3006,6 +3010,15 @@ mod production_retention_tests {
     }
     #[tokio::test(flavor = "current_thread")]
     async fn production_card_detail_keeps_chat_draft_owner_across_current_updates_and_gaps() {
+        exercise_card_detail_current_updates(false).await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn late_accepted_assignment_reopens_selected_without_replacing_discussion_owner() {
+        exercise_card_detail_current_updates(true).await;
+    }
+
+    async fn exercise_card_detail_current_updates(late_assignment: bool) {
         let directory = tempfile::Builder::new()
             .prefix("card-detail-owner-")
             .tempdir()
@@ -3037,10 +3050,13 @@ mod production_retention_tests {
         };
         let mut first = make_card(0x37);
         let assigned_actor = arkret_sdk::ActorId::account(authority.clone());
-        first.assigned_to_relations.push(CardAssignedToRelation {
+        let assignment = CardAssignedToRelation {
             relation_id: "fixture-assigned-relation".into(),
             actor_id: assigned_actor.clone(),
-        });
+        };
+        if !late_assignment {
+            first.assigned_to_relations.push(assignment.clone());
+        }
         first.due = "2026-10-15".into();
         let second = make_card(0x38);
         let route = Route::KanbanTask {
@@ -3122,6 +3138,13 @@ mod production_retention_tests {
         ))
         .unwrap();
         settle(&app, &executor);
+        // Accepted assignment can arrive after this card surface was mounted.
+        // Reopening reads that current card, including actors outside the roster.
+        if late_assignment {
+            first.assigned_to_relations.push(assignment);
+            c.selected_card.revise(|value| *value = Some(first.clone()));
+            settle(&app, &executor);
+        }
         // Exercise the actual production controls before checking the retained
         // discussion owner. The assigned actor remains visible without a roster.
         class_node(&app, "card-detail-header");
@@ -3142,6 +3165,17 @@ mod production_retention_tests {
             c.assignee_selected_actor_ids
                 .get_untracked()
                 .contains(&assigned_actor)
+        );
+        assert_eq!(
+            app.tree()
+                .node(option)
+                .unwrap()
+                .descriptor
+                .view()
+                .semantics
+                .as_ref()
+                .and_then(|value| value.pressed),
+            Some(true)
         );
         app.dispatch(option, Event::Activate).unwrap();
         settle(&app, &executor);

@@ -331,6 +331,36 @@ pub fn unwrap_secret(
     Ok(String::from_utf8(plain).ok())
 }
 
+#[cfg(test)]
+thread_local! {
+    static TEST_SECURE_KEY_STORE: std::cell::RefCell<Option<Arc<dyn SecureKeyStore + Send + Sync>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Keep current-thread presentation tests away from the real OS key store.
+#[cfg(test)]
+pub(crate) struct DefaultSecureKeyStoreTestGuard {
+    previous: Option<Arc<dyn SecureKeyStore + Send + Sync>>,
+    _thread: std::marker::PhantomData<std::rc::Rc<()>>,
+}
+
+#[cfg(test)]
+impl DefaultSecureKeyStoreTestGuard {
+    pub(crate) fn replace(store: Arc<dyn SecureKeyStore + Send + Sync>) -> Self {
+        Self {
+            previous: TEST_SECURE_KEY_STORE.with(|current| current.replace(Some(store))),
+            _thread: std::marker::PhantomData,
+        }
+    }
+}
+
+#[cfg(test)]
+impl Drop for DefaultSecureKeyStoreTestGuard {
+    fn drop(&mut self) {
+        TEST_SECURE_KEY_STORE.with(|current| current.replace(self.previous.take()));
+    }
+}
+
 /// Pick the most secure backend available at compile time.
 ///
 /// | Target          | Backend |
@@ -354,6 +384,10 @@ pub fn unwrap_secret(
 /// default to the IndexedDB + SubtleCrypto-non-extractable tier before
 /// signer bootstrap.
 pub fn default_secure_key_store(service_name: &str) -> Arc<dyn SecureKeyStore + Send + Sync> {
+    #[cfg(test)]
+    if let Some(store) = TEST_SECURE_KEY_STORE.with(|current| current.borrow().clone()) {
+        return store;
+    }
     #[cfg(target_arch = "wasm32")]
     {
         if let Some(store) = WASM_INDEXEDDB_SECURE_KEY_STORE.get() {

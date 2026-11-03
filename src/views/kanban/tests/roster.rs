@@ -1,6 +1,130 @@
 use super::*;
 
 #[test]
+fn card_member_roster_reads_complete_current_without_display_projection() {
+    let principal = arkret_sdk::DidCoreId::new("ak:did_core:web:card-member.example").unwrap();
+    let actors = [
+        "ak:did_core:web:station-a.example",
+        "ak:did_core:web:station-b.example",
+    ]
+    .map(|station| {
+        arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            principal.clone(),
+            arkret_sdk::DidCoreId::new(station).unwrap(),
+        ))
+    });
+    let mut store = isolated_store_for_tests("card-current-roster");
+    fixture::install_complete_joined_members(&mut store, TEST_REALM_ID, actors.to_vec());
+    let rows = card_member_roster(&store, TEST_REALM_ID);
+    assert_eq!(rows.len(), 2);
+    assert_eq!(
+        rows.iter()
+            .map(|row| row.actor_id.clone())
+            .collect::<std::collections::BTreeSet<_>>(),
+        actors.into_iter().collect()
+    );
+    assert!(
+        rows.iter()
+            .all(|row| row.membership == Some(arkret_sdk::sync::MemberRosterMembership::Join))
+    );
+    assert!(
+        rows.iter()
+            .all(|row| row.subject_account_id.is_none() && row.handle_claims.is_empty())
+    );
+    assert!(store.load().raw_operations.is_empty());
+    assert!(
+        !store
+            .load()
+            .realm_tree_projections
+            .contains_key(TEST_REALM_ID)
+    );
+}
+
+#[test]
+fn card_member_roster_does_not_accept_legacy_members_without_current() {
+    let mut store = isolated_store_for_tests("card-legacy-roster");
+    let actor = crate::mls_api_helpers::local_account_actor_id(
+        "ak:did_core:web:legacy-card-member.example",
+    )
+    .unwrap();
+    store.save_realm_tree_projection(
+        TEST_REALM_ID,
+        serde_json::json!({
+            "member_roster_entries_limited": false,
+            "member_roster_entries": [{"actor_id": actor, "membership": "join"}],
+        }),
+    );
+    assert!(card_member_roster(&store, TEST_REALM_ID).is_empty());
+}
+
+#[test]
+fn card_member_roster_replaces_stale_members_and_keeps_existing_assignments() {
+    let mut store = isolated_store_for_tests("card-replaced-roster");
+    let alice = crate::mls_api_helpers::local_account_actor_id(
+        "ak:did_core:web:current-card-alice.example",
+    )
+    .unwrap();
+    let bob = crate::mls_api_helpers::local_account_actor_id(
+        "ak:did_core:web:withdrawn-card-bob.example",
+    )
+    .unwrap();
+    fixture::install_complete_joined_members(
+        &mut store,
+        TEST_REALM_ID,
+        vec![alice.clone(), bob.clone()],
+    );
+    assert_eq!(card_member_roster(&store, TEST_REALM_ID).len(), 2);
+    store.save_realm_tree_projection(
+        TEST_REALM_ID,
+        serde_json::json!({
+            "member_roster_entries": [{"actor_id": bob, "membership": "join"}],
+        }),
+    );
+    fixture::install_complete_joined_members(&mut store, TEST_REALM_ID, vec![alice.clone()]);
+    let rows = card_member_roster(&store, TEST_REALM_ID);
+    assert_eq!(
+        rows.iter().map(|row| &row.actor_id).collect::<Vec<_>>(),
+        vec![&alice]
+    );
+    let mut card = test_card(
+        "ak:strand:AbQHDTvS4ZELwYOPkH_Rdpweaio8GKWhHTHvvDJIAgzZ",
+        "U",
+    );
+    card.assigned_to_relations = vec![CardAssignedToRelation {
+        actor_id: bob.clone(),
+        relation_id: "ak:relation:AbQHDTvS4ZELwYOPkH_Rdpweaio8GKWhHTHvvDJIAgzZ".to_owned(),
+    }];
+    let options = assignment_picker_roster(&rows, &card);
+    assert_eq!(options.len(), 2);
+    assert!(
+        options
+            .iter()
+            .any(|row| row.actor_id == bob && row.membership.is_none())
+    );
+}
+
+#[test]
+fn card_member_roster_rejects_incomplete_and_other_realm_cuts() {
+    let mut store = isolated_store_for_tests("card-incomplete-roster");
+    let actor =
+        crate::mls_api_helpers::local_account_actor_id("ak:did_core:web:card-cut-member.example")
+            .unwrap();
+    fixture::install_complete_joined_members(&mut store, TEST_REALM_ID, vec![actor]);
+    assert_eq!(card_member_roster(&store, TEST_REALM_ID).len(), 1);
+    assert!(
+        card_member_roster(
+            &store,
+            "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
+        )
+        .is_empty()
+    );
+    let mut view = store.current_product_view().unwrap();
+    view.complete_cut = false;
+    store.install_current_product_view(view).unwrap();
+    assert!(card_member_roster(&store, TEST_REALM_ID).is_empty());
+}
+
+#[test]
 fn assignment_mutations_preserve_same_principal_accounts_at_different_stations() {
     use super::super::assignment::{
         assignment_relations_after_mutations, card_assignment_mutations,

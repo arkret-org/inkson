@@ -5,6 +5,79 @@ use arkret_sdk::{SpaceMetadata, StrandMetadata, event_spec};
 use super::*;
 
 impl EventSubmitter {
+    /// Only resample read-only hydration checks. No metadata has been sealed,
+    /// no sender ratchet advanced, and no Event authored or queued here.
+    async fn await_metadata_send_gate(
+        &self,
+        intent: &EventIntent,
+        endpoint: &crate::secure_key_store::ActiveDeviceSeedScope,
+    ) -> anyhow::Result<crate::mls::send_gate::MlsSendGate> {
+        let initial = crate::secure_key_store::active_device_seed_scope_snapshot()
+            .filter(|(scope, _)| scope == endpoint)
+            .ok_or_else(|| anyhow::anyhow!("Metadata device changed before current read"))?;
+        let session = crate::identity::device_directory::session_cache_epoch();
+        let check_endpoint = || -> anyhow::Result<()> {
+            anyhow::ensure!(
+                crate::secure_key_store::active_device_seed_scope_snapshot().as_ref()
+                    == Some(&initial)
+                    && crate::identity::device_directory::session_cache_epoch() == session,
+                "Metadata crossed its account or device fence"
+            );
+            Ok(())
+        };
+        let store = self
+            .state_store
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Metadata current state is unavailable"))?;
+        let realm = intent
+            .realm_id_opt()
+            .ok_or_else(|| anyhow::anyhow!("Metadata has no Realm"))?;
+        for attempt in 0..4 {
+            check_endpoint()?;
+            self.await_application_current(intent).await?;
+            let input = self
+                .mls_send_gate_input(intent.scope_ref())
+                .ok_or_else(|| anyhow::anyhow!("Metadata current state is unavailable"))?;
+            let outcome = crate::mls::send_gate::resolve_restorable_mls_send_gate(
+                &input,
+                intent.scope_ref(),
+                &endpoint.device_id,
+            )
+            .await;
+            check_endpoint()?;
+            let pending =
+                store.read(|state| -> anyhow::Result<bool> {
+                    anyhow::ensure!(
+                        state.active_authority().as_ref() == Some(&endpoint.authority),
+                        "Metadata crossed its Account fence"
+                    );
+                    anyhow::ensure!(
+                        state.persist_error().is_none(),
+                        "Local persistence has failed"
+                    );
+                    Ok(state.current_reset_required()
+                        || state.realm_detail_invalidated(realm.as_str()))
+                })?;
+            let outcome = outcome.and_then(|gate| {
+                if pending {
+                    Err(crate::mls::send_gate::MlsSendGateBlocked::DetailBaselinePending.into())
+                } else {
+                    Ok(gate)
+                }
+            });
+            match outcome {
+                Err(error)
+                    if attempt < 3
+                        && error.downcast_ref::<crate::mls::send_gate::MlsSendGateBlocked>()
+                            == Some(
+                                &crate::mls::send_gate::MlsSendGateBlocked::DetailBaselinePending,
+                            ) => {}
+                result => return result,
+            }
+        }
+        unreachable!("the final read-only probe returns its outcome")
+    }
+
     pub(super) async fn retain_authored_metadata(
         &self,
         event: &arkret_sdk::Event,
@@ -86,21 +159,13 @@ impl EventSubmitter {
         {
             return Ok(intent);
         }
-        let input = self
-            .mls_send_gate_input(intent.scope_ref())
-            .ok_or_else(|| anyhow::anyhow!("Metadata current state is unavailable"))?;
         let endpoint = crate::secure_key_store::active_device_seed_scope()
             .ok_or_else(|| anyhow::anyhow!("Metadata device is unavailable"))?;
         anyhow::ensure!(
             &endpoint.authority == self.authority()?,
             "Metadata belongs to another account"
         );
-        let gate = crate::mls::send_gate::resolve_restorable_mls_send_gate(
-            &input,
-            intent.scope_ref(),
-            &endpoint.device_id,
-        )
-        .await?;
+        let gate = self.await_metadata_send_gate(&intent, &endpoint).await?;
         if matches!(gate, crate::mls::send_gate::MlsSendGate::Plaintext) {
             return Ok(intent);
         }
@@ -534,6 +599,169 @@ mod tests {
         arkret_sdk::ScopeRef::Realm {
             realm_id: arkret_sdk::RealmId::new(REALM).unwrap(),
         }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    async fn exercise_metadata_hydration_race(replace_account: bool) {
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        use std::sync::{Arc, Mutex};
+        let _device_guard = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
+        let directory = tempfile::tempdir().unwrap();
+        let mut local =
+            crate::state::LocalStateStore::with_path(directory.path().join("state.json"));
+        local.promote_accepted_context_for_test(
+            &arkret_sdk::Did::new(format!(
+                "did:web:metadata-current-{}.example",
+                crate::operation::uuid_v7()
+            ))
+            .unwrap(),
+        );
+        let authority = local.active_authority().unwrap();
+        let device =
+            crate::test_support::device_id("ak:device:01904100-0000-7000-8000-000000000001");
+        crate::secure_key_store::set_active_device_seed_scope(Some((&authority, &device)));
+        local
+            .save_sync_demand_filter(Some(arkret_sdk::sync::AccountFilter {
+                realm_ids: Some(vec![REALM.parse().unwrap()]),
+                ..Default::default()
+            }))
+            .unwrap();
+        let head = serde_json::json!([{"stream_ref":scope(),"stream_position":1,
+            "commit_id":arkret_sdk::RealmCommitId::from_digest([0x37;32])}]);
+        let make_frame = |cursor: &str, snapshot: &str, cut: u64| {
+            serde_json::from_value::<arkret_sdk::sync::AccountSubscribeFrame>(serde_json::json!({
+                "kind":"delta","cursor":cursor,"realms":{REALM:{
+                    "current":{"realm_id":REALM,"governance_generation":"1","stream_heads":head,"entries":[]},
+                    "baseline":{"snapshot_cursor":snapshot,"cut_revision":cut,
+                        "coverage":{"realm_id":REALM,"stream_heads":head,"complete_for_authorized_streams":true},
+                        "complete":true}
+                }}
+            })).unwrap()
+        };
+        let initial = make_frame("ak:cursor:YQ", "ak:cursor:cw", 1);
+        let replacement = make_frame("ak:cursor:Yw", "ak:cursor:bmV3", 3);
+        let invalidation: arkret_sdk::sync::AccountSubscribeFrame=serde_json::from_value(serde_json::json!({
+            "kind":"delta","cursor":"ak:cursor:Yg","realm_invalidations":[{"realm_id":REALM,"revision":2}]
+        })).unwrap();
+        let index = crate::state::CurrentIndex::open(&authority, 0, local.current_index_location())
+            .await
+            .unwrap();
+        let mut stage = index.stage_frame(0, &initial).await.unwrap();
+        stage.arm_account_commit();
+        local
+            .verified_projection_transaction(|store| {
+                store.set_current_generation(stage.generation());
+                Ok(())
+            })
+            .unwrap();
+        local.begin_durable_flush().unwrap().wait().await.unwrap();
+        stage.finish();
+        let accepted = local.prepare_account_demand_frame(&initial).unwrap();
+        local.finish_account_demand_frame(&accepted).unwrap();
+        assert!(!local.realm_detail_invalidated(REALM));
+        let data = Arc::new(Mutex::new(local));
+        let read = data.clone();
+        let write = data.clone();
+        let reads = AtomicUsize::new(0);
+        let observed = Arc::new(AtomicBool::new(false));
+        let observed_read = observed.clone();
+        let handle = crate::runtime::input::StateStoreHandle::new(
+            move |callback| {
+                let mut store = read.lock().unwrap();
+                callback(&store);
+                let count = reads.fetch_add(1, Ordering::SeqCst) + 1;
+                // The sixth read is the final complete-baseline check in the
+                // initial wait. Its cut becomes invalid immediately afterwards.
+                if count == 6 {
+                    let accepted = store.prepare_account_demand_frame(&invalidation).unwrap();
+                    store.finish_account_demand_frame(&accepted).unwrap();
+                    assert!(store.realm_detail_invalidated(REALM));
+                }
+                if count >= 9 && store.realm_detail_invalidated(REALM) {
+                    observed_read.store(true, Ordering::SeqCst);
+                    if replace_account {
+                        store.promote_accepted_context_for_test(
+                            &arkret_sdk::Did::new("did:web:replacement-metadata.example").unwrap(),
+                        );
+                    }
+                }
+            },
+            move |callback| callback(&mut write.lock().unwrap()),
+        );
+        let http = arkret_sdk::http_client::Client::builder("http://127.0.0.1:1/".parse().unwrap())
+            .allow_insecure_localhost()
+            .build()
+            .unwrap();
+        let submitter = EventSubmitter::new(http)
+            .with_authority(authority.clone())
+            .with_state_store(handle);
+        let creator = arkret_sdk::ActorId::account(authority);
+        let object = arkret_sdk::Strand::new_create(
+            REALM.parse().unwrap(),
+            "Retained original title",
+            creator.clone(),
+        );
+        let intent = arkret_sdk::TypedEventDraft::<event_spec::StrandCreate>::new(
+            scope(),
+            creator,
+            arkret_sdk::StrandCreatePayload { object },
+        )
+        .unwrap()
+        .into_intent(crate::clock::now_utc())
+        .unwrap();
+        let endpoint = crate::secure_key_store::active_device_seed_scope().unwrap();
+        let waiting = submitter.await_metadata_send_gate(&intent, &endpoint);
+        tokio::pin!(waiting);
+        if replace_account {
+            let error = tokio::time::timeout(Duration::from_secs(5), waiting)
+                .await
+                .unwrap()
+                .unwrap_err();
+            assert!(error.to_string().contains("fence"), "{error}");
+            assert!(observed.load(Ordering::SeqCst));
+        } else {
+            tokio::time::timeout(Duration::from_secs(5),async {
+                tokio::select! {
+                    result=&mut waiting=>panic!("invalidated detail opened the metadata gate: {result:?}"),
+                    _=async {while !observed.load(Ordering::SeqCst) {tokio::task::yield_now().await}}=>{}
+                }
+            }).await.unwrap();
+            {
+                let mut store = data.lock().unwrap();
+                assert!(store.realm_detail_invalidated(REALM));
+                let accepted = store.prepare_account_demand_frame(&replacement).unwrap();
+                store.finish_account_demand_frame(&accepted).unwrap();
+                assert!(!store.realm_detail_invalidated(REALM));
+            }
+            assert_eq!(
+                tokio::time::timeout(Duration::from_secs(5), waiting)
+                    .await
+                    .unwrap()
+                    .unwrap(),
+                crate::mls::send_gate::MlsSendGate::Plaintext
+            );
+        }
+        let store = data.lock().unwrap();
+        assert!(
+            store.load().raw_operations.is_empty(),
+            "read-only retries must not author or enqueue an Event"
+        );
+        assert!(
+            store.mls_checkpoint_for_scope(&scope()).is_none(),
+            "read-only retries must not create private group material"
+        );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn metadata_gate_waits_again_when_detail_is_invalidated_after_the_ready_read() {
+        exercise_metadata_hydration_race(false).await;
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn metadata_gate_never_rebinds_a_pending_read_to_another_account() {
+        exercise_metadata_hydration_race(true).await;
     }
 
     fn encrypt(kind: &str, metadata: &Value) -> arkret_sdk::EncryptedEnvelope {
