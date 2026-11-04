@@ -5,7 +5,7 @@
     "failed": 0,
     "ignored": 0
   },
-  "corpus_sha256": "edbe8d9be102c4965a614811bb39001c2cf6a46d3e98ec658b35a9f30a80b053",
+  "corpus_sha256": "5da1813325022309b3af9b7bcd394c56cc00b0942688bc1035224e2540bce334",
   "source_sha256": {
     "arkret-rust-sdk/Cargo.lock": "cc796599940534e7c70930d375eacc983bd8c6e4d1da3bd0d511876c1a233812",
     "arkret-rust-sdk/Cargo.toml": "7c9afd6789a3a171271aa834cc636f9d7554d30231bdac79af7fe9d5f9c096a6",
@@ -1091,7 +1091,7 @@
     "coland/crates/http/src/account_erasure_worker.rs": "0351c674233a806dbb634443a8a3b418f5e9b24f1fea8d80d235759f9eef0ca1",
     "coland/crates/http/src/approval_admission.rs": "bbabbee28279f70760c03ab8eb500ffc1e84961e2277f9f33f4327c1bf755f52",
     "coland/crates/http/src/authz.rs": "a8799ed95de6257fc1221ceeb4b38654456d3cf1871fa90580a5674aa0e05c8f",
-    "coland/crates/http/src/canonical_body.rs": "53f899a01a3cb958b1e75aa84dc6372a26cbef589d93192d5e15cdd24fd68e65",
+    "coland/crates/http/src/canonical_body.rs": "80f07ae7315d6f6632720e3bddf52ed76489a01be348a81b1e3f775c8e18cdbd",
     "coland/crates/http/src/config.rs": "5b0281300a837745e0b062b070d43d9a89e8012965689564a858416828e82fe5",
     "coland/crates/http/src/content_encoding.rs": "3ff16151dbca3d5360d10cc64a08f57a9cd7d946a72e7809af3fc304fa0223dd",
     "coland/crates/http/src/deactivation_push_fanout.rs": "1f4ae8e4fd405e008e684dd0eb076e8772bf74a23275b75b0a5f2c1cce6fe929",
@@ -1295,7 +1295,7 @@
     "coland/crates/http/src/routing/interop/mimi.rs": "656d13bc02a3fe239535841d32c7883ba4446296e821d8609d206f9d5bd7c6a4",
     "coland/crates/http/src/routing/interop/mimi/binding.rs": "e2c4d19b3bc53ddcd8887087056edf2678afb9b7592d9061b5572965df5c8c61",
     "coland/crates/http/src/routing/interop/mimi/handlers.rs": "ee0eb6190120fc6a6cbf935bd0ef09fea62aac43778b56cc3cb92a2c1a221028",
-    "coland/crates/http/src/routing/interop/mimi/payload.rs": "087885f64f282b00efa3bb41bcafc239b8b3d63b569e3a31b6147a60e96ec46a",
+    "coland/crates/http/src/routing/interop/mimi/payload.rs": "3ea4c299a8ea8a691e70cef217f661587f08c32912427fea01db8cda9adafcba",
     "coland/crates/http/src/routing/interop/mimi/signature.rs": "f1020d6a296aa60658e748bc99ee0c9969dd124acf9e54c3e413e8158079a442",
     "coland/crates/http/src/routing/interop/mod.rs": "07fc8a7c5054a72e5230b60655ddae6ea326d5f7ef90525f37bf7beb13c0af43",
     "coland/crates/http/src/routing/interop/push.rs": "0d799075d6edec352e4faec0879a7f23b98fca7a649d9cc068ca4639bb4ca8bf",
