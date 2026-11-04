@@ -105,33 +105,9 @@ pub(super) fn card_assignment_mutations(
     // `actor_id` (the acting user / event author, an principal_id) signs the
     // assignment events; `assignee_id` is the person being assigned/unassigned
     // and only appears as the relation target.
-    for assignee_id in selected_actor_ids.difference(&current_actor_ids) {
-        let current_basis = current_by_actor.get(assignee_id).ok_or_else(|| {
-            format!(
-                "assignment for {} lacks a verified exact current result",
-                short_protocol_id(assignee_id.signing_principal_id().as_str())
-            )
-        })?;
-        let operation = crate::operation::ak_ops::relation_create_for_actor(
-            realm_id,
-            actor_id,
-            "assigned_to",
-            &current.id,
-            assignee_id,
-            current_basis,
-        )
-        .map_err(|err| format!("cannot build assigned_to relation: {err:#}"))?
-        .build_sdk_event("inkson")
-        .map_err(|err| format!("cannot build assigned_to relation event: {err}"))?;
-        // The Relation id is derived from this create Event, not carried in the
-        // payload (spec `zh/models/common-fields.md` section 6.0), so it exists
-        // only once the Event is accepted.
-        mutations.push(CardAssignmentMutation::Create {
-            actor_id: assignee_id.clone(),
-            operation,
-        });
-    }
-
+    // A changed endpoint retires its old domain before creating the new
+    // edge (relation.md section 6.3). Construction and submission share this
+    // order, including the durable queue's operation timestamps.
     for assignee_id in current_actor_ids.difference(selected_actor_ids) {
         let current_basis = current_by_actor.get(assignee_id).ok_or_else(|| {
             format!(
@@ -158,6 +134,32 @@ pub(super) fn card_assignment_mutations(
         mutations.push(CardAssignmentMutation::Tombstone {
             actor_id: assignee_id.clone(),
             relation_id,
+            operation,
+        });
+    }
+    for assignee_id in selected_actor_ids.difference(&current_actor_ids) {
+        let current_basis = current_by_actor.get(assignee_id).ok_or_else(|| {
+            format!(
+                "assignment for {} lacks a verified exact current result",
+                short_protocol_id(assignee_id.signing_principal_id().as_str())
+            )
+        })?;
+        let operation = crate::operation::ak_ops::relation_create_for_actor(
+            realm_id,
+            actor_id,
+            "assigned_to",
+            &current.id,
+            assignee_id,
+            current_basis,
+        )
+        .map_err(|err| format!("cannot build assigned_to relation: {err:#}"))?
+        .build_sdk_event("inkson")
+        .map_err(|err| format!("cannot build assigned_to relation event: {err}"))?;
+        // The Relation id is derived from this create Event, not carried in the
+        // payload (spec `zh/models/common-fields.md` section 6.0), so it exists
+        // only once the Event is accepted.
+        mutations.push(CardAssignmentMutation::Create {
+            actor_id: assignee_id.clone(),
             operation,
         });
     }

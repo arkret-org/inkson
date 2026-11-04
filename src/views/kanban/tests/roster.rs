@@ -237,6 +237,31 @@ fn assignment_mutations_preserve_same_principal_accounts_at_different_stations()
         assignment_relations_after_mutations(&card, &retained, &removes)[0].actor_id,
         second
     );
+
+    // Changing the target uses two domains: retire the old edge before
+    // creating the replacement (relation.md section 6.3).
+    card.assigned_to_relations.truncate(1);
+    let mut handover_bases = create_bases;
+    handover_bases.extend(bases);
+    let handover = card_assignment_mutations(
+        TEST_REALM_ID,
+        "did:web:author.example",
+        &card,
+        &retained,
+        &handover_bases,
+    )
+    .unwrap();
+    assert_eq!(handover.len(), 2);
+    assert_eq!(
+        handover
+            .iter()
+            .map(|mutation| mutation.operation().kind().as_str())
+            .collect::<Vec<_>>(),
+        ["ak.relation.tombstone", "ak.relation.create"]
+    );
+    assert_eq!(handover[0].relation_id(), Some(removed_relation_id));
+    assert_eq!(handover[0].actor_id(), &first);
+    assert_eq!(handover[1].actor_id(), &second);
 }
 
 #[test]
