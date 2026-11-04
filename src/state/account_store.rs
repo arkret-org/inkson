@@ -849,7 +849,7 @@ pub(super) mod browser {
         }
         cached
             .queued
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |count| {
                 (count < 32).then_some(count + 1)
             })
             .map_err(|_| anyhow::anyhow!("account transaction queue reached its physical bound"))?;
