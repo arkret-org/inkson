@@ -767,7 +767,7 @@ impl AdminPage {
                 };
                 if grant_val.is_empty() || subject_val.is_empty() {
                     status_msg.revise(|value| {
-                        *value = "fill grant_id + subject DID before reading the current Grant row"
+                        *value = "fill grant_id + subject AccountId before reading the current Grant row"
                             .to_owned();
                     });
                     return;
@@ -1832,7 +1832,7 @@ fn advanced_view(scope: &Scope, state: &AdminPage) -> View {
                         scope,
                         context.clone(),
                         "cap-grant-subject-input",
-                        "Subject DID (grantee — required for grant)",
+                        "Subject AccountId (required for grant and revoke)",
                         state.cap_subject,
                         true,
                     ),
