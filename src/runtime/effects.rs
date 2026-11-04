@@ -116,6 +116,17 @@ impl EffectRegistry {
         self.cancel_where(|_| true).await;
     }
 
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    pub(crate) fn registered_for_test(&self, name: &str) -> Vec<EffectHandle> {
+        self.effects
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .values()
+            .filter(|handle| handle.key().name == name)
+            .cloned()
+            .collect()
+    }
+
     pub fn complete(&self, handle: &EffectHandle) {
         handle.finish();
         let mut effects = self.effects.lock().unwrap_or_else(PoisonError::into_inner);

@@ -31,7 +31,7 @@ pub(super) fn install(scope: &Scope, context: Rc<InksonContext>) {
     let profiles = context.profiles;
     let base_url = context.base_url;
     let active_account = context.active_account;
-    let sync_engine_active_generation = scope.cage(None::<String>);
+    let sync_engine_active_generation = scope.cage(None::<u64>);
     let realm_events_engine_active_key = scope.cage(None::<String>);
     let signal_receive_engine_active_generation = scope.cage(None::<u64>);
     let websocket_rail_active_generation = scope.cage(None::<u64>);
@@ -45,7 +45,6 @@ pub(super) fn install(scope: &Scope, context: Rc<InksonContext>) {
     scope.effect(move || {
         let Some(scope) = owner.upgrade() else { return };
         let current_gen = sync_generation.get();
-        let selected_realm = selected_realm_id.get();
         let Some(account) = active_account.get() else {
             return;
         };
@@ -54,11 +53,12 @@ pub(super) fn install(scope: &Scope, context: Rc<InksonContext>) {
         if base.trim().is_empty() || session.trim().is_empty() || !sync_bootstrap_complete.get() {
             return;
         }
-        let active_key = format!("{current_gen}|{selected_realm}");
-        if sync_engine_active_generation.get_untracked().as_deref() == Some(active_key.as_str()) {
+        // One Account consumer owns the whole session. Its existing demand
+        // fence resubscribes after navigation and releases the old channel.
+        if sync_engine_active_generation.get_untracked() == Some(current_gen) {
             return;
         }
-        sync_engine_active_generation.revise(|current| *current = Some(active_key.clone()));
+        sync_engine_active_generation.revise(|current| *current = Some(current_gen));
         let effect = sync_effects.register(crate::runtime::effects::EffectKey {
             owner: crate::runtime::effects::EffectOwner::Account(
                 account.principal_id().to_string(),
@@ -91,7 +91,7 @@ pub(super) fn install(scope: &Scope, context: Rc<InksonContext>) {
             )
             .await;
             completion_effects.complete(&effect);
-            if active_generation.get_untracked().as_deref() == Some(active_key.as_str()) {
+            if active_generation.get_untracked() == Some(current_gen) {
                 active_generation.revise(|current| *current = None);
             }
         }) {
@@ -310,3 +310,7 @@ pub(super) fn install(scope: &Scope, context: Rc<InksonContext>) {
         }
     });
 }
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[path = "sync_effects_tests.rs"]
+mod tests;
