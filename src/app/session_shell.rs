@@ -57,7 +57,7 @@ fn notifications_button(
                 crate::components::ui_icon("bell"),
                 reactive_distinct(unread, |_, unread| {
                     if unread {
-                        Box::new(view().class("topbar-notifications-badge"))
+                        Box::new(text().class("topbar-notifications-badge").content(""))
                     } else {
                         empty()
                     }
@@ -1288,7 +1288,63 @@ fn filtered_mobile_realm_items<'a>(
 
 #[cfg(test)]
 mod tests {
-    use super::filtered_mobile_realm_items;
+    use super::*;
+
+    #[test]
+    fn both_notification_buttons_follow_the_shared_unread_projection() {
+        let (app, context, _directory) = crate::views::settings::restored_surface_tests::harness();
+        let unread = app.scope().bond({
+            let context = context.clone();
+            move || {
+                let _ = context.state_revision.get();
+                context
+                    .state_store
+                    .read(|store| unread_notification_count(&store.load()) > 0)
+            }
+        });
+        app.mount(group().fill((
+            notifications_button(app.scope(), &context, unread, || {}),
+            notifications_button(app.scope(), &context, unread, || {}),
+        )))
+        .unwrap();
+        let badge_count = || {
+            let tree = app.tree();
+            let mut pending = tree.roots().to_vec();
+            let mut count = 0;
+            while let Some(id) = pending.pop() {
+                let node = tree.node(id).unwrap();
+                count += usize::from(
+                    node.descriptor
+                        .view()
+                        .classes
+                        .iter()
+                        .any(|class| class == "topbar-notifications-badge"),
+                );
+                pending.extend(node.children.iter().copied());
+            }
+            count
+        };
+        assert_eq!(badge_count(), 0);
+        let notification = crate::state::projection::notifications::test_event_notification(
+            1,
+            arkret_sdk::NotificationKind::Message,
+            "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
+            None,
+            serde_json::json!({}),
+        );
+        for expected in [2, 0, 2, 0] {
+            context.state_store.write(|store| {
+                store.save_notification_projection(if expected == 2 {
+                    vec![notification.clone()]
+                } else {
+                    Vec::new()
+                });
+            });
+            context.state_revision.revise(|revision| *revision += 1);
+            app.flush().unwrap();
+            assert_eq!(badge_count(), expected);
+        }
+    }
 
     #[test]
     fn card_tab_query_preserves_the_page_owned_mention_until_a_real_target_changes() {
