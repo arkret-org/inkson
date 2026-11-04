@@ -143,6 +143,7 @@ pub(super) fn mount_effects(
         card_edit_scope,
         card_detail_edit_status,
         assignee_picker_open,
+        assignee_picker_dirty,
         assignee_filter,
         assignee_selected_actor_ids,
         assignee_edit_status,
@@ -373,8 +374,9 @@ pub(super) fn mount_effects(
             // Preserve an accepted editor basis while allowing a pending create's
             // receipt to install its event-derived identity. Editor signals retain
             // the user's draft through that transition.
-            let preserve_edit_basis =
-                editing_card_detail.get() || due_picker_open.get() || assignee_picker_open.get();
+            let preserve_edit_basis = editing_card_detail.get()
+                || due_picker_open.get()
+                || (assignee_picker_open.get() && assignee_picker_dirty.get());
             let raw_operations = state_store.read(|store| store.load()).raw_operations;
             let refreshing_content = {
                 state_store.read(|store| {

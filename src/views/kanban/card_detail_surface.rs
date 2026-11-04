@@ -1983,6 +1983,7 @@ fn details_fields(
                     return;
                 };
                 let chosen = card_assigned_actor_ids(&current).into_iter().collect();
+                c.assignee_picker_dirty.revise(|dirty| *dirty = false);
                 c.assignee_selected_actor_ids
                     .revise(|value| *value = chosen);
                 c.assignee_filter.revise(String::clear);
@@ -2111,24 +2112,43 @@ fn details_fields(
         )],
     )
 }
-fn assignee_picker(_scope: &Scope, detail: Detail, realm: String) -> View {
+fn assignee_picker(scope: &Scope, detail: Detail, realm: String) -> View {
     let c = detail.c;
+    scope.effect(move || {
+        if !c.assignee_picker_open.get() || c.assignee_picker_dirty.get() {
+            return;
+        }
+        let Some(current) = c.selected_card.get() else {
+            return;
+        };
+        // Opening for inspection does not capture an edit basis. An accepted
+        // assignment may still be arriving from the preceding save.
+        let chosen = card_assigned_actor_ids(&current).into_iter().collect();
+        if c.assignee_selected_actor_ids.get_untracked() != chosen {
+            c.assignee_selected_actor_ids
+                .revise(|value| *value = chosen);
+        }
+    });
     reactive(c.assignee_picker_open, move |scope, open| {
         if !open {
             return empty();
         }
-        let Some(card) = c.selected_card.get_untracked() else {
+        if c.selected_card.get_untracked().is_none() {
             return empty();
-        };
+        }
         let rows = detail
             .app
             .state_store
             .read(|store| card_member_roster(store, &realm));
-        let options = assignment_picker_roster(&rows, &card);
         let detail_rows = detail.clone();
         let realm = realm.clone();
         let rows = rows.clone();
-        let body = reactive(c.assignee_filter, move |scope, filter| {
+        let filter_and_card = scope.bond(move || (c.assignee_filter.get(), c.selected_card.get()));
+        let body = reactive(filter_and_card, move |scope, (filter, current)| {
+            let Some(current) = current else {
+                return empty();
+            };
+            let options = assignment_picker_roster(&rows, &current);
             let labels = detail_rows.app.state_store.read(|store| {
                 options
                     .iter()
@@ -2191,6 +2211,7 @@ fn assignee_picker(_scope: &Scope, detail: Detail, realm: String) -> View {
                                     inline_label("assignee-option-meta", short_id),
                                 ])
                                 .on(glory::render::EventKind::Activate, move |_| {
+                                    c.assignee_picker_dirty.revise(|dirty| *dirty = true);
                                     c.assignee_selected_actor_ids.revise(|values| {
                                         if !values.insert(actor.clone()) {
                                             values.remove(&actor);
@@ -2248,7 +2269,10 @@ fn assignee_picker(_scope: &Scope, detail: Detail, realm: String) -> View {
                             "kanban.ui.clear",
                             "secondary",
                             true,
-                            move || c.assignee_selected_actor_ids.revise(BTreeSet::clear),
+                            move || {
+                                c.assignee_picker_dirty.revise(|dirty| *dirty = true);
+                                c.assignee_selected_actor_ids.revise(BTreeSet::clear);
+                            },
                         ),
                         action(
                             scope,
@@ -3010,15 +3034,20 @@ mod production_retention_tests {
     }
     #[tokio::test(flavor = "current_thread")]
     async fn production_card_detail_keeps_chat_draft_owner_across_current_updates_and_gaps() {
-        exercise_card_detail_current_updates(false).await;
+        exercise_card_detail_current_updates(false, false).await;
     }
 
     #[tokio::test(flavor = "current_thread")]
     async fn late_accepted_assignment_reopens_selected_without_replacing_discussion_owner() {
-        exercise_card_detail_current_updates(true).await;
+        exercise_card_detail_current_updates(true, false).await;
     }
 
-    async fn exercise_card_detail_current_updates(late_assignment: bool) {
+    #[tokio::test(flavor = "current_thread")]
+    async fn late_accepted_assignment_refreshes_pristine_open_picker() {
+        exercise_card_detail_current_updates(true, true).await;
+    }
+
+    async fn exercise_card_detail_current_updates(late_assignment: bool, while_open: bool) {
         let directory = tempfile::Builder::new()
             .prefix("card-detail-owner-")
             .tempdir()
@@ -3140,8 +3169,8 @@ mod production_retention_tests {
         settle(&app, &executor);
         // Accepted assignment can arrive after this card surface was mounted.
         // Reopening reads that current card, including actors outside the roster.
-        if late_assignment {
-            first.assigned_to_relations.push(assignment);
+        if late_assignment && !while_open {
+            first.assigned_to_relations.push(assignment.clone());
             c.selected_card.revise(|value| *value = Some(first.clone()));
             settle(&app, &executor);
         }
@@ -3160,6 +3189,11 @@ mod production_retention_tests {
         .unwrap();
         settle(&app, &executor);
         class_node(&app, "assignee-popover");
+        if late_assignment && while_open {
+            first.assigned_to_relations.push(assignment.clone());
+            c.selected_card.revise(|value| *value = Some(first.clone()));
+            settle(&app, &executor);
+        }
         let option = class_node(&app, "assignee-option");
         assert!(
             c.assignee_selected_actor_ids
@@ -3188,6 +3222,17 @@ mod production_retention_tests {
             !c.assignee_selected_actor_ids
                 .get_untracked()
                 .contains(&assigned_actor)
+        );
+        // A later current presentation must not undo an explicit draft edit.
+        let mut concurrent = first.clone();
+        concurrent.title = "Updated card presentation".into();
+        c.selected_card.revise(|value| *value = Some(concurrent));
+        settle(&app, &executor);
+        assert!(
+            !c.assignee_selected_actor_ids
+                .get_untracked()
+                .contains(&assigned_actor),
+            "a user's unsaved selection survives a current update"
         );
         let filter = class_node(&app, "card-detail-assignee-filter");
         let revision = match app.tree().node(filter).unwrap().descriptor.view().props {
