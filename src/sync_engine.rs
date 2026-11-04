@@ -2461,6 +2461,115 @@ mod removal_schedule_tests {
 
     const REALM: &str = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
 
+    fn pending_schedule(realm: &arkret_sdk::RealmId) -> RemovalSchedule {
+        let mut schedule = RemovalSchedule::default();
+        schedule.pending.insert(realm.clone());
+        schedule
+    }
+
+    #[test]
+    fn incomplete_scope_inventory_does_not_create_removal_gate() {
+        let realm = arkret_sdk::RealmId::new(REALM).unwrap();
+        let mut store = crate::state::isolated_store_for_tests("incomplete-removal-inventory");
+        let mut schedule = pending_schedule(&realm);
+        finish_removal_scope_round(&mut store, &realm, &[], &mut schedule, false);
+        assert!(
+            schedule.has_pending(),
+            "incomplete discovery still needs a retry"
+        );
+        assert!(
+            !store.realm_has_pending_mls_binding(REALM),
+            "incomplete inventory is not evidence of a member-removal obligation"
+        );
+        assert!(store.all_move_submissions().is_empty());
+    }
+
+    #[test]
+    fn incomplete_scope_inventory_preserves_existing_member_removal_gate() {
+        let realm = arkret_sdk::RealmId::new(REALM).unwrap();
+        let mut store = crate::state::isolated_store_for_tests("existing-removal-inventory");
+        let original = store.record_move_submission(
+            "actual-remove",
+            REALM,
+            "mls_member_remove",
+            crate::state::MoveSubmissionState::PendingMlsBinding,
+            Some("accepted membership removal still needs its MLS transition".into()),
+            None,
+        );
+        let mut schedule = pending_schedule(&realm);
+        finish_removal_scope_round(&mut store, &realm, &[], &mut schedule, false);
+        assert!(schedule.has_pending());
+        assert!(store.realm_has_pending_mls_binding(REALM));
+        assert_eq!(
+            store.all_move_submissions(),
+            vec![original],
+            "discovery neither clears the real gate nor manufactures another removal"
+        );
+    }
+
+    #[test]
+    fn removal_round_requires_every_exact_covered_stamp_before_clearing_real_gate() {
+        let realm = arkret_sdk::RealmId::new(REALM).unwrap();
+        let scope = arkret_sdk::ScopeRef::Realm {
+            realm_id: realm.clone(),
+        };
+        let group = scope.canonical_mls_group_id().unwrap();
+        let base =
+            arkret_sdk::EventId::new("ak:event:AZEvldDJcWI9IRHqP2BMibDDfc59Ax_LwrbsrQmeD6Ml")
+                .unwrap();
+        let mut store = crate::state::isolated_store_for_tests("covered-removal-inventory");
+        // Local bookkeeping fixture, not a claim of cryptographic admission.
+        store
+            .save_mls_checkpoint_for_scope(
+                &scope,
+                garth::mls::checkpoint::encrypt_state(
+                    REALM,
+                    &group,
+                    1,
+                    b"snapshot-bytes",
+                    "secret",
+                    &[1; 16],
+                ),
+            )
+            .unwrap();
+        store
+            .record_mls_group_state_ref_for_scope(&scope, &group, 1, base)
+            .unwrap();
+        crate::test_support::install_accepted_mls_group_at_epoch(&mut store, &scope, 1, 7);
+        let desired = BTreeSet::new();
+        let stamp = removal_scope_stamp(&store, &scope, &desired).unwrap();
+        let mut schedule = pending_schedule(&realm);
+        schedule
+            .scopes
+            .entry(realm.clone())
+            .or_default()
+            .empty
+            .insert(group.to_string(), stamp);
+        store.record_move_submission(
+            "actual-remove",
+            REALM,
+            "mls_member_remove",
+            crate::state::MoveSubmissionState::PendingMlsBinding,
+            None,
+            None,
+        );
+        let scopes = vec![(scope.clone(), desired)];
+        let mut entries = store.realm_current_state_entries(REALM);
+        let arkret_wire::CurrentState::Value { value, .. } = &mut entries[0];
+        value["covered_key_access_revision"] = serde_json::json!("6");
+        crate::test_support::install_current_entries(&mut store, REALM, entries);
+        finish_removal_scope_round(&mut store, &realm, &scopes, &mut schedule, true);
+        assert!(
+            store.realm_has_pending_mls_binding(REALM),
+            "a stale empty stamp cannot clear the gate"
+        );
+        assert!(schedule.has_pending());
+        crate::test_support::install_accepted_mls_group_at_epoch(&mut store, &scope, 1, 7);
+        finish_removal_scope_round(&mut store, &realm, &scopes, &mut schedule, true);
+        assert!(!store.realm_has_pending_mls_binding(REALM));
+        assert!(!schedule.has_pending());
+    }
+
     #[test]
     fn pending_realm_round_robin_does_not_starve_later_realms() {
         let first = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19".to_owned();
@@ -2529,6 +2638,34 @@ mod removal_schedule_tests {
         value["covered_key_access_revision"] = serde_json::json!(6);
         crate::test_support::install_current_entries(&mut store, REALM, entries);
         assert!(removal_scope_stamp(&store, &scope, &desired).is_none());
+    }
+}
+
+fn finish_removal_scope_round(
+    store: &mut LocalStateStore,
+    realm: &arkret_sdk::RealmId,
+    relevant_scopes: &[(arkret_sdk::ScopeRef, BTreeSet<arkret_sdk::ActorId>)],
+    scheduling: &mut RemovalSchedule,
+    all_reconciled: bool,
+) {
+    let round = scheduling.scopes.entry(realm.clone()).or_default();
+    let complete = all_reconciled
+        && relevant_scopes.iter().all(|(scope, desired_members)| {
+            let Ok(group) = scope.canonical_mls_group_id() else {
+                return false;
+            };
+            removal_scope_stamp(store, scope, desired_members)
+                .is_some_and(|stamp| round.empty.get(group.as_str()) == Some(&stamp))
+        });
+    if complete {
+        store.resolve_member_remove_mls_bindings(realm.as_str());
+        scheduling.pending.remove(realm);
+        scheduling.scopes.remove(realm);
+    } else {
+        // Discovery may be incomplete while an Add or a private epoch catches
+        // up. Keep the scheduled retry without inventing a member Remove.
+        // Existing membership gates are cleared only by the exact stamps above.
+        tracing::debug!(%realm, "MLS scope inventory remains pending; existing membership gates unchanged");
     }
 }
 
@@ -2822,37 +2959,15 @@ async fn run_circle_scope_rotate_pass(
             let Some(mut scheduling) = removal_schedule_lock(schedule) else {
                 return;
             };
-            let round = scheduling.scopes.entry(realm.clone()).or_default();
-            let complete = all_reconciled
-                && ctx.state_store.write(|store| {
-                    let exact = relevant_scopes.iter().all(|(scope, desired_members)| {
-                        let Ok(group) = scope.canonical_mls_group_id() else {
-                            return false;
-                        };
-                        removal_scope_stamp(store, scope, desired_members)
-                            .is_some_and(|stamp| round.empty.get(group.as_str()) == Some(&stamp))
-                    });
-                    if exact {
-                        store.resolve_member_remove_mls_bindings(realm.as_str());
-                    }
-                    exact
-                });
-            if complete {
-                scheduling.pending.remove(&realm);
-                scheduling.scopes.remove(&realm);
-            } else {
-                // A partial round or failed discovery must wake the next bounded poll.
-                ctx.state_store.write(|store| {
-                    store.record_move_submission(
-                        format!("mls-removal-round:{realm}"),
-                        realm.to_string(),
-                        "mls_member_remove",
-                        crate::state::MoveSubmissionState::PendingMlsBinding,
-                        Some("MLS scope reconciliation is pending".to_owned()),
-                        None,
-                    );
-                });
-            }
+            ctx.state_store.write(|store| {
+                finish_removal_scope_round(
+                    store,
+                    &realm,
+                    &relevant_scopes,
+                    &mut scheduling,
+                    all_reconciled,
+                );
+            });
         }
     }
 }
