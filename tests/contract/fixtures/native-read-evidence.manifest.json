@@ -5,7 +5,7 @@
     "failed": 0,
     "ignored": 0
   },
-  "corpus_sha256": "5da1813325022309b3af9b7bcd394c56cc00b0942688bc1035224e2540bce334",
+  "corpus_sha256": "413d37202551e94b66795f708e102ab97342d98efb8ba81b78a530765f1619f2",
   "source_sha256": {
     "arkret-rust-sdk/Cargo.lock": "cc796599940534e7c70930d375eacc983bd8c6e4d1da3bd0d511876c1a233812",
     "arkret-rust-sdk/Cargo.toml": "7c9afd6789a3a171271aa834cc636f9d7554d30231bdac79af7fe9d5f9c096a6",
@@ -1323,7 +1323,7 @@
     "coland/crates/http/src/routing/realm_organization.rs": "0d16bce8615a384acaefe6be2b93b558cdd6c441fb1c1de5a167feca18be44c1",
     "coland/crates/http/src/routing/realm_state_snapshot.rs": "ee55a7c8622e20260790354d7cdd96d5d013501a63c98178715958959bb6d97c",
     "coland/crates/http/src/routing/realms.rs": "d2a1d7c34ade8eeeb3890082d0c0fdc8483226eff1bd7de658257526dcfb526a",
-    "coland/crates/http/src/routing/router_build.rs": "b015eec25b090b4963a4ce10705920861c956123af1a732be307edc8c5aca6ae",
+    "coland/crates/http/src/routing/router_build.rs": "dd37f6c79eb7eaf4f8ab82a2cfd17f99a885b58b30211ded4dffe16a2061c14a",
     "coland/crates/http/src/routing/self_current_reads.rs": "d9d805cf4d10ab3e364b5a8da67026f3ee222d03218c154929d885567138ab6c",
     "coland/crates/http/src/routing/self_current_reads/stream_listing.rs": "45697d1b84d76a879f2942a90f0856cba25e1b34f86d318b502aee0f4fc66f22",
     "coland/crates/http/src/routing/spaces/actor_private_events.rs": "47b853cbbbd02c3dd46304221ec2b09e492003922d46d0ebea0ea78bad66a862",
@@ -1630,7 +1630,7 @@
     "coland/crates/storage-postgres/src/sidecar_replica_current.rs": "1888919801ee2fd0ca9daaadcdc230798f8e860a105b6980ed4a1f9ab3cca899",
     "coland/crates/storage-postgres/src/sidecars.rs": "369eb5b9d031d62425594fc56b773acccd9bcea7c5a5b1e42c18c7febb5665ca",
     "coland/crates/storage-postgres/src/signal.rs": "49eb1211a12587b0e10c677a10e094e25ab8b04629c982d8af9df712934d71f6",
-    "coland/crates/storage-postgres/src/signal_scope_authority.rs": "5a4a14d6d8a0d1da1d439ceb64a1c622c5b3ccff554b4bea7059f89f74bedb8e",
+    "coland/crates/storage-postgres/src/signal_scope_authority.rs": "362df778a862979ed6821e36090f3f9ac7c24053403b2470057a27a9605ca227",
     "coland/crates/storage-postgres/src/snapshot_disclosure_gate.rs": "5010807d022a522b0e920d9ca8369960b2dbe2eba2fef7a85fb0760549673da4",
     "coland/crates/storage-postgres/src/space_current_states.rs": "413c781791c1b1194ed334d86c6b4ddf06bfd94ee2e02ebbf281db15fcd9a3b9",
     "coland/crates/storage-postgres/src/strand_current_states.rs": "be7222d815fb9e88de47a646de538bef8d1765d5a2c22f13e6e9d56c05e26cc4",
