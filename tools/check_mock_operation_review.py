@@ -80,8 +80,10 @@ def validate(document):
 
 
 def render(document):
+    uncovered = sum(row["verification_need"] in {"native_authority", "native_evidence_fixture"}
+                    for row in document["operations"])
     labels = {"mock_behavior": "mock behavior", "native_authority": "native authority", "native_evidence_fixture": "native evidence fixture missing", "native_fixture_replay": "native accepted fixture / archival replay"}
-    lines = ["# Remaining mock operation contract review", "", "Generated from mock-operation-review.json. Classification is not executed coverage.", "Fourteen reads have a mandatory native PostgreSQL/registered-route fixture producer and exact archival replay. The replay is not live authorization; StandardGrant introspection uses the trusted native test channel. Five IVS operations and one reporting operation were withdrawn from the original 140-operation review; withdrawal grants no native coverage. The other 91 native contracts remain independently tracked. Source references alone never certify execution.", "", "| Operation | Mock implementation | Verification need | Reason / scope |", "| --- | --- | --- | --- |"]
+    lines = ["# Remaining mock operation contract review", "", "Generated from mock-operation-review.json. Classification is not executed coverage.", f"Fourteen reads have a mandatory native PostgreSQL/registered-route fixture producer and exact archival replay. The replay is not live authorization; StandardGrant introspection uses the trusted native test channel. Five IVS operations and the retired MIMI report operation were withdrawn from the original 140-operation review; withdrawal grants no native coverage. The remaining {uncovered} native contracts remain independently tracked. Source references alone never certify execution.", "", "| Operation | Mock implementation | Verification need | Reason / scope |", "| --- | --- | --- | --- |"]
     implemented, native = implemented_ids(), native_ids()
     for row in document["operations"]:
         implementation = "implemented" if row["operation_id"] in implemented else "archival_fixture" if row["operation_id"] in native else "missing"

@@ -49,6 +49,14 @@ class ReviewGateTests(unittest.TestCase):
         self.assertEqual(result, {"operations": 134, "mock_behavior": 29,
                                   "native_fixture_replay": 14, "uncovered": 91})
 
+    def test_render_counts_remaining_native_obligations(self):
+        rows = [row for row in self.document["operations"]
+                if row["verification_need"] == "native_authority"][:2]
+        self.assertEqual(len(rows), 2)
+        rendered = gate.render({"operations": rows})
+        self.assertIn("remaining 2 native contracts", rendered)
+        self.assertNotIn("remaining 92 native contracts", rendered)
+
     def test_missing_operation(self):
         self.document["operations"].pop()
         with self.assertRaisesRegex(AssertionError, "operation set drift"):
