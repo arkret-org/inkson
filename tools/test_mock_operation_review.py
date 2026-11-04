@@ -46,8 +46,8 @@ class ReviewGateTests(unittest.TestCase):
              patch.object(gate, "validate_native") as producer:
             result = gate.validate(self.document)
         producer.assert_called_once_with({}, {}, "fixture-digest")
-        self.assertEqual(result, {"operations": 135, "mock_behavior": 29,
-                                  "native_fixture_replay": 14, "uncovered": 92})
+        self.assertEqual(result, {"operations": 134, "mock_behavior": 29,
+                                  "native_fixture_replay": 14, "uncovered": 91})
 
     def test_missing_operation(self):
         self.document["operations"].pop()

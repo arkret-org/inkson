@@ -1,7 +1,7 @@
 # Remaining mock operation contract review
 
 Generated from mock-operation-review.json. Classification is not executed coverage.
-Fourteen reads have a mandatory native PostgreSQL/registered-route fixture producer and exact archival replay. The replay is not live authorization; StandardGrant introspection uses the trusted native test channel. Five IVS operations were withdrawn from the original 140-operation review; withdrawal grants no native coverage. The other 92 native contracts remain independently tracked. Source references alone never certify execution.
+Fourteen reads have a mandatory native PostgreSQL/registered-route fixture producer and exact archival replay. The replay is not live authorization; StandardGrant introspection uses the trusted native test channel. Five IVS operations and one reporting operation were withdrawn from the original 140-operation review; withdrawal grants no native coverage. The other 91 native contracts remain independently tracked. Source references alone never certify execution.
 
 | Operation | Mock implementation | Verification need | Reason / scope |
 | --- | --- | --- | --- |
