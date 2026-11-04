@@ -60,7 +60,6 @@ fn dispatch(
             MessageMenuAction::Reply
                 | MessageMenuAction::React
                 | MessageMenuAction::Edit
-                | MessageMenuAction::Report
                 | MessageMenuAction::Redact
         )
     {
@@ -83,25 +82,6 @@ fn dispatch(
         ),
         MessageMenuAction::PrivateSave => {
             controller.save_message_private(command, message.pin_saved_target_ref().into())
-        }
-        MessageMenuAction::Report => {
-            let scope = arkret_sdk::RealmId::new(message.realm_id.clone())
-                .ok()
-                .and_then(
-                    |realm_id| match context.strand_scope_lookup.get(&message.strand_id) {
-                        Some(circle) => arkret_sdk::CircleId::new(circle.circle_id.clone())
-                            .ok()
-                            .map(|circle_id| arkret_sdk::ScopeRef::Circle {
-                                realm_id,
-                                circle_id,
-                            }),
-                        None => Some(arkret_sdk::ScopeRef::Realm { realm_id }),
-                    },
-                );
-            if let Some(scope) = scope {
-                let target = message.pin_saved_target_ref().to_owned();
-                controller.begin_moderation_report(message.realm_id, scope, target);
-            }
         }
         MessageMenuAction::Redact => controller.confirm_redaction(message.id),
     }
@@ -135,7 +115,7 @@ fn entries(
     }
     actions.push(MessageMenuAction::PrivateSave);
     if !redacted && !private {
-        actions.extend([MessageMenuAction::Report, MessageMenuAction::Redact]);
+        actions.push(MessageMenuAction::Redact);
     }
     actions
         .into_iter()
@@ -166,7 +146,6 @@ fn entries(
                                     "message.private_save"
                                 }
                             }
-                            MessageMenuAction::Report => "moderation.report.action",
                             MessageMenuAction::Redact => "chat.button.redact",
                         };
                     label_app.tr(key)
@@ -179,7 +158,6 @@ fn entries(
                         .private_saved_targets
                         .get()
                         .contains(message.pin_saved_target_ref()),
-                    MessageMenuAction::Report => arkret_sdk::RealmId::new(message.realm_id).is_ok(),
                     _ => true,
                 }
             });

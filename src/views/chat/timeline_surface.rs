@@ -1,9 +1,9 @@
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 
-use super::native::{block, button, field};
+use super::native::{block, button};
 use super::*;
-use crate::presentation::widgets::{empty, line, paragraph, plain, reactive_distinct};
+use crate::presentation::widgets::{empty, line, paragraph, reactive_distinct};
 
 #[derive(Clone)]
 pub(super) struct ChatTimelineContext {
@@ -361,7 +361,6 @@ pub(super) fn chat_timeline(
                 }
             },
         );
-        let report = report_dialog(scope, app.clone(), controller, context);
         let Ok(identity) = glory::render::SemanticId::new(feed_id) else {
             return paragraph(
                 "message-error",
@@ -386,177 +385,7 @@ pub(super) fn chat_timeline(
                     id: Some(identity),
                     ..Default::default()
                 })))
-                .fill(vec![stream, messages, report, empty_state]),
-        )
-    })
-}
-
-fn report_dialog(
-    scope: &Scope,
-    app: Rc<crate::presentation::InksonContext>,
-    controller: ChatController,
-    context: Bond<ChatTimelineContext>,
-) -> View {
-    let open = scope.bond(move || controller.moderation_report_draft.get().is_some());
-    reactive_distinct(open, move |scope, open| {
-        if !open {
-            return empty();
-        };
-        let app = app.clone();
-        crate::components::dismissible_popup(
-            scope,
-            app.clone(),
-            crate::components::DismissiblePopupProps {
-                overlay_class: "discussion-modal-backdrop moderation-report-modal".into(),
-                surface_class: "discussion-modal".into(),
-                aria_label: app.tr("moderation.report.title"),
-                on_dismiss: Rc::new(move |()| controller.cancel_moderation_report()),
-                overlay_test_id: None,
-                surface_test_id: None,
-                overlay_style: None,
-                surface_style: None,
-                children: Rc::new(move |scope| {
-                    let label_app = app.clone();
-                    let options = [
-                        "spam",
-                        "harassment",
-                        "hate_speech",
-                        "nsfw",
-                        "illegal",
-                        "misinformation",
-                        "other",
-                    ]
-                    .into_iter()
-                    .map(|reason| {
-                        #[cfg(target_arch = "wasm32")]
-                        {
-                            sapid::select_option(
-                                reason,
-                                label_app.tr(&format!("moderation.report.reason.{reason}")),
-                            )
-                        }
-                        #[cfg(not(target_arch = "wasm32"))]
-                        {
-                            crate::presentation::native_choice::NativeChoiceOption::new(
-                                reason,
-                                label_app.tr(&format!("moderation.report.reason.{reason}")),
-                            )
-                        }
-                    })
-                    .collect::<Vec<_>>();
-                    let reason = scope.bond(move || {
-                        controller
-                            .moderation_report_draft
-                            .get()
-                            .map(|draft| draft.reason)
-                    });
-                    let description = scope.bond(move || {
-                        controller
-                            .moderation_report_draft
-                            .get()
-                            .map(|draft| draft.description)
-                            .unwrap_or_default()
-                    });
-                    let enabled = scope.bond(move || !controller.moderation_report_pending.get());
-                    let submit = scope.bond(move || {
-                        !controller.moderation_report_pending.get()
-                            && controller
-                                .moderation_report_draft
-                                .get()
-                                .is_some_and(|draft| {
-                                    draft.reason != "other" || !draft.description.trim().is_empty()
-                                })
-                    });
-                    let change_reason = move |value: Option<String>| {
-                        if let Some(value) = value {
-                            controller.update_moderation_report_reason(value);
-                        }
-                    };
-                    #[cfg(target_arch = "wasm32")]
-                    let reason_control: View = Box::new(
-                        sapid::native_select("moderation-report-reason")
-                            .unstyled()
-                            .class("moderation-report-reason")
-                            .name(app.translated(scope, "moderation.report.reason"))
-                            .enabled(enabled)
-                            .value(reason)
-                            .options(options)
-                            .on_value_change(change_reason),
-                    );
-                    #[cfg(not(target_arch = "wasm32"))]
-                    let reason_control = crate::presentation::native_choice::native_choice(
-                        scope,
-                        crate::presentation::native_choice::NativeChoiceProps::new(
-                            "moderation-report-reason",
-                            app.translated(scope, "moderation.report.reason"),
-                            reason,
-                            options,
-                            change_reason,
-                        )
-                        .enabled(enabled)
-                        .class("moderation-report-reason")
-                        .close_label(app.translated(scope, "common.close")),
-                    );
-                    block(
-                        "discussion-modal-content",
-                        vec![
-                            crate::presentation::widgets::heading(
-                                2,
-                                "discussion-modal-head",
-                                app.translated(scope, "moderation.report.title"),
-                            ),
-                            block(
-                                "discussion-modal-body workflow-form",
-                                vec![
-                                    plain(app.translated(scope, "moderation.report.help")),
-                                    line(
-                                        "form-row",
-                                        vec![
-                                            plain(
-                                                app.translated(scope, "moderation.report.reason"),
-                                            ),
-                                            reason_control,
-                                        ],
-                                    ),
-                                    field(
-                                        app.translated(scope, "moderation.report.description"),
-                                        "moderation-report-description",
-                                        description,
-                                        true,
-                                        move |value| {
-                                            controller.update_moderation_report_description(value)
-                                        },
-                                    ),
-                                ],
-                            ),
-                            line(
-                                "discussion-modal-actions",
-                                vec![
-                                    button(
-                                        app.translated(scope, "common.cancel"),
-                                        "secondary",
-                                        enabled,
-                                        move || controller.cancel_moderation_report(),
-                                    ),
-                                    button(
-                                        app.translated(scope, "moderation.report.submit"),
-                                        "primary moderation-report-submit",
-                                        submit,
-                                        move || {
-                                            controller.submit_moderation_report(
-                                                message_row::command_context(
-                                                    &context.get_untracked(),
-                                                    false,
-                                                ),
-                                            )
-                                        },
-                                    ),
-                                ],
-                            ),
-                        ],
-                    )
-                }),
-            },
+                .fill(vec![stream, messages, empty_state]),
         )
     })
 }

@@ -47,7 +47,6 @@ fn fixture(scope: &Scope, options: Options) -> crate::presentation::View {
         (MessageMenuAction::Edit, "编辑", false),
         (MessageMenuAction::SharedPin, "共享钉选", true),
         (MessageMenuAction::PrivateSave, "仅为我保存", true),
-        (MessageMenuAction::Report, "举报", true),
         (MessageMenuAction::Redact, "撤回", true),
     ]
     .into_iter()

@@ -61,9 +61,6 @@ impl ChatStatePool {
                 .attachment_target_revision
                 .revise(|value| *value = value.wrapping_add(1));
             state.compose_dragover.revise(|value| *value = false);
-            state
-                .moderation_report_pending
-                .revise(|value| *value = false);
         }
     }
     pub(super) fn install(&self, context: &Rc<crate::presentation::InksonContext>) {

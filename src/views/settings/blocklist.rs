@@ -257,7 +257,7 @@ pub(super) fn page(scope: &Scope, context: Rc<InksonContext>) -> View {
     reasons.extend(BLOCK_REASON_CODES.iter().map(|code| {
         (
             code.to_string(),
-            context.tr(&format!("moderation.report.reason.{code}")),
+            context.tr(&format!("moderation.reason.{code}")),
         )
     }));
     let add_context = context.clone();

@@ -366,20 +366,6 @@ fn inkson_accepts_server_contract_payloads() {
         .is_err()
     );
 
-    // SDK spec shape: status is `submitted`, and routed_to_ids carries principal cores.
-    let report: inkson::models::ModerationReportResponseBody = serde_json::from_value(json!({
-        "report_id": "ak:report:AV1bzsPGpTD74Cq12d9EOrCkieTddiSndS0kDtK1W2hM",
-        "status": "submitted",
-        "routed_to_ids": ["ak:did_core:web:server.local"]
-    }))
-    .unwrap();
-    assert_eq!(report.status, arkret_sdk::ModerationReportStatus::Submitted);
-    assert_eq!(report.routed_to_ids.len(), 1);
-    assert_eq!(
-        report.routed_to_ids[0].as_str(),
-        "ak:did_core:web:server.local"
-    );
-
     let error = decode_arkret_error(
         StatusCode::CONFLICT,
         &problem_bytes(StatusCode::CONFLICT, "conflict", "revision mismatch"),

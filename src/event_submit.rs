@@ -1583,7 +1583,7 @@ impl EventSubmitter {
 
     /// Author and sign one write for a protocol endpoint that carries the
     /// Event in its own request body rather than going through the durable
-    /// submit queue (`account.update_profile`, `moderation.report`,
+    /// submit queue (`account.update_profile`,
     /// `recovery-policy.publish`).
     pub(crate) async fn author_for_direct_submission(
         &self,

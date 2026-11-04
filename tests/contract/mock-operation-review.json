@@ -472,20 +472,6 @@
       "contract_digest": "sha256:72b36e962880e915db85b00d24fdbfb1c60b4a689869740789c47e176688b67c"
     },
     {
-      "operation_id": "ak.open.mimi.command.report_abuse.v1",
-      "verification_need": "native_authority",
-      "reason": "Provider-scoped full-body hash must atomically bind the service-authored Event and Commit with exact replay and conflicting-body refusal.",
-      "normative_documents": [
-        "zh/extensions/mimi-interop.md"
-      ],
-      "source_references": [
-        "coland/crates/http/src/routing/interop/mimi.rs",
-        "coland/crates/http/src/state/authority_mimi_unit.rs"
-      ],
-      "mock_test": null,
-      "contract_digest": "sha256:b9da2dd2d50fdced3101a8d899b0f623436413d51bc6c02d99bf97c3c4774b57"
-    },
-    {
       "operation_id": "ak.open.mimi.command.request_consent.v1",
       "verification_need": "native_authority",
       "reason": "Provider authentication and holder-private consent-contact admission/quarantine must not become a public permission oracle.",

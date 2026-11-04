@@ -212,7 +212,7 @@ Unauthenticated users see only the login or registration entry screen. After a r
 
 - Space list and exact directory resolve.
 - Timeline/composer surface with plaintext development mode and encrypted payload preservation.
-- Sync status, device queue count, Event Envelope audit status, directory browser, settings, devices, push registration, and moderation report controls.
+- Sync status, device queue count, Event Envelope audit status, directory browser, settings, devices, and push registration.
 - Server-owned OIDC/coauth sign-in and registration. The client opens the authorization URL from server discovery and completes the callback into a Station session.
 
 ---

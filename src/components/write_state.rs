@@ -10,7 +10,7 @@
 //! - `sync/authority-commit-log.md`: only the exact Event's covering RealmCommit confirms
 //!   admission.
 //! - `governance/content-moderation.md`: quarantined writes remain visible but flow through the
-//!   moderation queue.
+//!   committed moderation review state.
 //!
 //! State machine:
 //! ```text

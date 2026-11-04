@@ -4140,16 +4140,6 @@ export async function mockArkretApi(
       return route.fulfill({ status: 200, contentType: "image/png", body: Buffer.from(DEMO_AVATAR_PNG_BASE64, "base64") });
     }
 
-    if (
-      url.pathname === "/_arkret/self/moderation/report" &&
-      route.request().method() === "POST"
-    ) {
-      return json(route, {
-        report_id: "ak:report:AX-AFSYZHl0U2MQP-Ng7mU-aOm_Flhf0pVBoHYUK6Shg",
-        status: "submitted",
-      });
-    }
-
     // Recovery bootstrap publishes a signed policy and then uploads an
     // encrypted secret_storage backup. The server mock stores only the public
     // policy summary plus opaque backup bodies.
@@ -4547,7 +4537,6 @@ function mimiProviderDirectory() {
     "submit_message",
     "consent",
     "identifier_query",
-    "report_abuse",
     "proxy_download",
   ].sort();
   return inksonWire("mock-mimi-directory", {

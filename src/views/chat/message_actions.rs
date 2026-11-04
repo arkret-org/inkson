@@ -12,7 +12,6 @@ pub enum MessageMenuAction {
     Edit,
     SharedPin,
     PrivateSave,
-    Report,
     Redact,
 }
 impl MessageMenuAction {
@@ -23,7 +22,6 @@ impl MessageMenuAction {
             Self::Edit => "edit",
             Self::SharedPin => "shared-pin",
             Self::PrivateSave => "private-save",
-            Self::Report => "report",
             Self::Redact => "redact",
         }
     }
@@ -34,7 +32,6 @@ impl MessageMenuAction {
             Self::Edit => "message-context-edit-button",
             Self::SharedPin => "message-shared-pin-button",
             Self::PrivateSave => "message-private-save-button",
-            Self::Report => "danger message-context-report-button",
             Self::Redact => "danger message-context-redact-button",
         }
     }

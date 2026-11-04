@@ -1087,11 +1087,6 @@ pub use arkret_models_collaboration::governance::authorization::AuthorizationInv
 pub use arkret_models_collaboration::governance::authorization::{
     EffectiveCapabilityGrantView, EffectiveGrantSnapshot,
 };
-/// `POST /_arkret/self/moderation/report` response. coland emits the SDK
-/// `ModerationReportResponseBody` wire shape verbatim (`status: "submitted"`,
-/// `routed_to_ids: Vec<Did>` — scalar DIDs only, no fragments, per
-/// `service-operation-dtos.schema.json#/$defs/ModerationReportResponseBody`).
-pub use arkret_models_collaboration::governance::moderation::ModerationReportResponseBody;
 pub use arkret_models_collaboration::objects::blob::BlobUploadResponseBody;
 pub use arkret_models_crypto::{
     KeysClaimResponseBody, KeysQueryResponseBody, KeysUploadResponseBody,

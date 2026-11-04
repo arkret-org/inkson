@@ -18,7 +18,7 @@ test("the account fixture serves a native signed directory and never invents pro
   expect(directory.proof.jws.split("..")[1].length).toBeGreaterThan(80);
   expect(Math.abs(Date.now() - Date.parse(directory.proof.created_at))).toBeLessThan(30_000);
   for (const path of [
-    "key-material", "identifiers/query", "consent/request", "consent/update", "report-abuse", "proxy-download",
+    "key-material", "identifiers/query", "consent/request", "consent/update", "proxy-download",
     "strands/fixture-room/update", "strands/fixture-room/notify", "strands/fixture-room/messages",
   ]) {
     await expect(driveOnce(handler(), {

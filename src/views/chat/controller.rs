@@ -210,15 +210,6 @@ pub(super) struct ChatCommandContext {
     pub private_agent_scope: bool,
 }
 
-#[derive(Clone, PartialEq)]
-pub(super) struct ModerationReportDraft {
-    pub realm_id: String,
-    pub effective_scope: arkret_sdk::ScopeRef,
-    pub target_ref: String,
-    pub reason: String,
-    pub description: String,
-}
-
 pub(super) enum ChatProjectionEvent {
     EnsureChannel(ChannelEntity),
     SharedPins(Vec<SharedMessagePin>),
@@ -424,8 +415,6 @@ pub(super) struct ChatController {
     pub private_saved_targets: Cage<std::collections::BTreeSet<String>>,
     pub private_saved_account_data: Cage<std::collections::BTreeMap<String, serde_json::Value>>,
     pub message_context_menu: Cage<Option<String>>,
-    pub moderation_report_draft: Cage<Option<ModerationReportDraft>>,
-    pub moderation_report_pending: Cage<bool>,
     pub new_channel_name: Cage<String>,
     pub new_channel_topic: Cage<String>,
     pub new_channel_create_card: Cage<bool>,
@@ -671,8 +660,6 @@ impl ChatController {
         self.attachment_target_revision = composer.attachment_target_revision;
         self.attachment_upload_revision = composer.attachment_upload_revision;
         self.message_context_menu = composer.message_context_menu;
-        self.moderation_report_draft = composer.moderation_report_draft;
-        self.moderation_report_pending = composer.moderation_report_pending;
         self.status_msg = composer.status_msg;
         self.redact_confirm = composer.redact_confirm;
         self.reaction_picker = composer.reaction_picker;
@@ -818,125 +805,6 @@ impl ChatController {
             self.message_context_menu
                 .revise(|value| *value = next_value);
         };
-    }
-
-    pub fn begin_moderation_report(
-        self,
-        realm_id: String,
-        effective_scope: arkret_sdk::ScopeRef,
-        target_ref: String,
-    ) {
-        {
-            let next_value = Some(ModerationReportDraft {
-                realm_id,
-                effective_scope,
-                target_ref,
-                reason: "spam".to_owned(),
-                description: String::new(),
-            });
-            self.moderation_report_draft
-                .revise(|value| *value = next_value);
-        };
-        {
-            let next_value = None;
-            self.message_context_menu
-                .revise(|value| *value = next_value);
-        };
-    }
-
-    pub fn update_moderation_report_reason(self, reason: String) {
-        self.moderation_report_draft.revise(|values| {
-            if let Some(draft) = values.as_mut() {
-                draft.reason = reason;
-            }
-        });
-    }
-
-    pub fn update_moderation_report_description(self, description: String) {
-        self.moderation_report_draft.revise(|values| {
-            if let Some(draft) = values.as_mut() {
-                draft.description = description;
-            }
-        });
-    }
-
-    pub fn cancel_moderation_report(self) {
-        if !self.moderation_report_pending.get() {
-            {
-                let next_value = None;
-                self.moderation_report_draft
-                    .revise(|value| *value = next_value);
-            };
-        }
-    }
-
-    pub fn submit_moderation_report(self, context: ChatCommandContext) {
-        let Some(draft) = self.moderation_report_draft.get() else {
-            return;
-        };
-        if self.moderation_report_pending.get() {
-            return;
-        }
-        if draft.reason == "other" && draft.description.trim().is_empty() {
-            {
-                let next_value = crate::i18n::tr("moderation.report.other_required");
-                self.status_msg.revise(|value| *value = next_value);
-            };
-            return;
-        }
-        {
-            let next_value = true;
-            self.moderation_report_pending
-                .revise(|value| *value = next_value);
-        };
-        let base_url = context.base_url;
-        let session_credential = context.token.get();
-        let principal_id = context.principal_id;
-        super::task::dispatch(async move {
-            let result = crate::transport::auth::with_event_submitter(
-                &base_url,
-                session_credential,
-                move |submitter| async move {
-                    crate::transport::moderation::report(
-                        &submitter,
-                        &draft.realm_id,
-                        principal_id.as_str(),
-                        draft.effective_scope,
-                        &draft.target_ref,
-                        &draft.reason,
-                        Some(&draft.description),
-                    )
-                    .await
-                },
-            )
-            .await;
-            {
-                let next_value = false;
-                self.moderation_report_pending
-                    .revise(|value| *value = next_value);
-            };
-            match result {
-                Ok(_) => {
-                    {
-                        let next_value = None;
-                        self.moderation_report_draft
-                            .revise(|value| *value = next_value);
-                    };
-                    {
-                        let next_value = crate::i18n::tr("moderation.report.submitted");
-                        self.status_msg.revise(|value| *value = next_value);
-                    };
-                }
-                Err(error) => {
-                    let next_value = format!(
-                        "{}: {}",
-                        crate::i18n::tr("moderation.report.failed"),
-                        error.display()
-                    );
-                    self.status_msg.revise(|value| *value = next_value);
-                }
-            }
-        });
     }
 
     pub fn show_blocked_message(self, message_id: String) {
@@ -2831,8 +2699,6 @@ pub(super) struct ComposerState {
     pub(super) attachment_target_revision: Cage<u64>,
     pub(super) attachment_upload_revision: Cage<u64>,
     pub(super) message_context_menu: Cage<Option<String>>,
-    pub(super) moderation_report_draft: Cage<Option<ModerationReportDraft>>,
-    pub(super) moderation_report_pending: Cage<bool>,
     pub(super) status_msg: Cage<String>,
     pub(super) redact_confirm: Cage<Option<String>>,
     pub(super) reaction_picker: Cage<Option<String>>,
@@ -2932,8 +2798,6 @@ fn composer_state(
         attachment_target_revision: scope.cage(0),
         attachment_upload_revision: scope.cage(0),
         message_context_menu: scope.cage(None),
-        moderation_report_draft: scope.cage(None),
-        moderation_report_pending: scope.cage(false),
         status_msg: scope.cage(String::new()),
         redact_confirm: scope.cage(None),
         reaction_picker: scope.cage(None),
@@ -3202,8 +3066,6 @@ pub(super) fn chat_controller_for_initial_target(
         private_saved_account_data: scope
             .cage((std::collections::BTreeMap::<String, serde_json::Value>::new)()),
         message_context_menu: composer.message_context_menu,
-        moderation_report_draft: composer.moderation_report_draft,
-        moderation_report_pending: composer.moderation_report_pending,
         new_channel_name: scope.cage((String::new)()),
         new_channel_topic: scope.cage((String::new)()),
         new_channel_create_card: scope.cage(false),
