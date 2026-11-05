@@ -2248,6 +2248,157 @@ pub(super) mod tests {
     }
 
     #[tokio::test]
+    async fn link_join_success_persists_live_start_before_later_tail() {
+        let (rows, mut snapshot) = burst_fixture();
+        let row = rows.last().unwrap().clone();
+        snapshot.retention_and_history_floor.stream_floors[0].oldest_position = 3;
+        seal_current_snapshot(&mut snapshot);
+        let head = snapshot.visible_stream_heads[0].clone();
+        let account = crate::test_support::AccountFixture::new("did:web:alice.example")
+            .station("ak:did_core:web:station.example")
+            .build();
+        let (client, _, server) = http_for_account(
+            vec![
+                serde_json::to_value(&snapshot).unwrap(),
+                serde_json::json!({"committed_events":[row.clone()],"readable_floor":null,"truncated":true}),
+            ],
+            account.authority.clone(),
+            Some(head.clone()),
+        );
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("link-join-start.json");
+        let mut local = crate::state::LocalStateStore::with_path(&path);
+        local.switch_active_account(&account).unwrap();
+        local.save_sync_cursor("ak:cursor:unchanged-account");
+        let store = Arc::new(Mutex::new(local));
+        let projector = test_projector(store.clone(), &snapshot.realm_id);
+        let http = client.http_client().unwrap();
+        let queued =
+            crate::models::EventSubmissionProgress::queued(row.commit().event_ref.to_string());
+        let pending = crate::views::realm_admin::invite_links::link_join_completion_message(
+            &http,
+            &account.authority,
+            &snapshot.realm_id,
+            projector.state_store.clone(),
+            &queued,
+        )
+        .await
+        .unwrap();
+        assert!(pending.contains("pending"));
+        assert!(
+            store
+                .lock()
+                .unwrap()
+                .verified_commit_stream_cursor(&head.stream_ref)
+                .unwrap()
+                .is_none()
+        );
+        let committed = crate::models::EventSubmissionProgress::committed(
+            row.commit().event_ref.to_string(),
+            row.commit().clone(),
+        );
+        let message = crate::views::realm_admin::invite_links::link_join_completion_message(
+            &http,
+            &account.authority,
+            &snapshot.realm_id,
+            projector.state_store.clone(),
+            &committed,
+        )
+        .await
+        .unwrap();
+        assert!(message.starts_with("Joined."));
+        assert_eq!(
+            store
+                .lock()
+                .unwrap()
+                .verified_commit_stream_cursor(&head.stream_ref)
+                .unwrap(),
+            Some(head.clone()),
+            "a successful link join must persist its live start before any later report"
+        );
+        server.join().unwrap();
+        let other = arkret_sdk::AccountId::new(
+            "ak:did_core:web:bob.example".parse().unwrap(),
+            account.authority.station_id.clone(),
+        );
+        assert!(
+            crate::views::realm_admin::invite_links::link_join_completion_message(
+                &http,
+                &other,
+                &snapshot.realm_id,
+                projector.state_store.clone(),
+                &committed,
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(
+            store
+                .lock()
+                .unwrap()
+                .verified_commit_stream_cursor(&head.stream_ref)
+                .unwrap(),
+            Some(head.clone())
+        );
+        let mut cold = crate::state::LocalStateStore::with_path(path);
+        cold.switch_active_account(&account).unwrap();
+        let saved = cold
+            .verified_commit_stream_cursor(&head.stream_ref)
+            .unwrap();
+        assert_eq!(saved, Some(head.clone()));
+        assert_eq!(
+            cold.sync_cursor().as_deref(),
+            Some("ak:cursor:unchanged-account")
+        );
+        assert!(
+            cold.load().raw_operations.is_empty(),
+            "the join checkpoint must not promote preview history"
+        );
+        let mut commit = row.commit().clone();
+        commit.stream_position += 1;
+        commit.previous_commit_ref = Some(head.commit_id.clone());
+        commit.event_ref =
+            arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [77; 32]);
+        let commit =
+            crate::test_support::committed_event::FixtureStation::did_web().seal_commit(commit);
+        let next: CommittedEventView = serde_json::from_value(serde_json::json!({
+            "commit":commit,"event_disclosure":{"status":"withheld"}
+        }))
+        .unwrap();
+        let mut later = snapshot.clone();
+        later.visible_stream_heads[0] = arkret_sdk::CommitStreamHead {
+            stream_ref: commit.stream_ref.clone(),
+            stream_position: commit.stream_position,
+            commit_id: commit.commit_id.clone(),
+        };
+        seal_current_snapshot(&mut later);
+        let (client, _, server) = http_for_account(
+            vec![
+                serde_json::to_value(&later).unwrap(),
+                serde_json::json!({"committed_events":[row],"readable_floor":null,"truncated":true}),
+                serde_json::json!({"committed_events":[next.clone()],"readable_floor":{
+                    "oldest_position":3,"floor_commit_id":arkret_sdk::RealmCommitId::from_digest([43;32]),
+                    "floor_reason":"membership_join"},"truncated":false}),
+            ],
+            account.authority,
+            Some(head.clone()),
+        );
+        let bound = client.snapshot_head(&later.realm_id).await.unwrap();
+        let (_, pages) = replay(
+            &client,
+            &later.realm_id,
+            &head.stream_ref,
+            &bound,
+            saved.as_ref(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(pages.len(), 1);
+        assert_eq!(pages[0].rows().unwrap(), &[next]);
+        server.join().unwrap();
+    }
+
+    #[tokio::test]
     async fn late_live_cut_retries_before_arming_without_poisoning_or_cursor_advance() {
         let first = withheld(0, None);
         let second = withheld(1, Some(first.commit().commit_id.clone()));

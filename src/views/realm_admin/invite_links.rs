@@ -7,6 +7,49 @@ use crate::presentation::widgets::{empty, heading, input_field, paragraph, react
 use crate::presentation::{InksonContext, View};
 use crate::transport::realm_invite_link::{PendingRealmInviteLink, parse_realm_invite_link};
 
+const JOINED_MESSAGE: &str =
+    "Joined. Membership is accepted; encrypted access follows the Realm's normal security flow.";
+
+async fn joined_link_message(
+    http: &arkret_sdk::http_client::Client,
+    authority: &arkret_sdk::AccountId,
+    realm: &arkret_sdk::RealmId,
+    store: crate::runtime::input::StateStoreHandle,
+) -> anyhow::Result<String> {
+    crate::realm_events_engine::refresh_joined_realm(http, authority, realm, store).await?;
+    Ok(JOINED_MESSAGE.into())
+}
+
+pub(crate) async fn link_join_completion_message(
+    http: &arkret_sdk::http_client::Client,
+    authority: &arkret_sdk::AccountId,
+    realm: &arkret_sdk::RealmId,
+    store: crate::runtime::input::StateStoreHandle,
+    progress: &crate::models::EventSubmissionProgress,
+) -> anyhow::Result<String> {
+    if !progress.is_committed() {
+        return Ok("Join submitted; authority acceptance is still pending.".into());
+    }
+    joined_link_message(http, authority, realm, store).await
+}
+
+enum LinkJoinAttempt {
+    Accept(arkret_sdk::RealmInviteLinkToken),
+    Readback(arkret_sdk::RealmId),
+}
+
+fn link_join_attempt(
+    input: &str,
+    accepted: Option<arkret_sdk::RealmId>,
+) -> anyhow::Result<LinkJoinAttempt> {
+    if input.is_empty()
+        && let Some(realm) = accepted
+    {
+        return Ok(LinkJoinAttempt::Readback(realm));
+    }
+    Ok(LinkJoinAttempt::Accept(parse_realm_invite_link(input)?))
+}
+
 pub(crate) fn page(
     scope: &Scope,
     context: Rc<InksonContext>,
@@ -17,6 +60,7 @@ pub(crate) fn page(
     let message = scope.cage(String::new());
     let busy = scope.cage(false);
     let pending = scope.cage(None::<PendingRealmInviteLink>);
+    let accepted_join = scope.cage(None::<arkret_sdk::RealmId>);
     let share = scope.cage(String::new());
     let landing = scope.cage("https://arkret.org".to_owned());
     let days = scope.cage("7".to_owned());
@@ -40,6 +84,7 @@ pub(crate) fn page(
         previous_generation.revise(|value| *value = generation);
         input.revise(|value| value.zeroize());
         pending.revise(|value| *value = None);
+        accepted_join.revise(|value| *value = None);
         share.revise(|value| value.zeroize());
         views.revise(|value| value.clear());
         busy.revise(|value| *value = false);
@@ -409,13 +454,22 @@ pub(crate) fn page(
                         let Some(account) = action_context.active_account.get() else {
                             return;
                         };
-                        let credential = match parse_realm_invite_link(&input.get_untracked()) {
+                        if busy.get_untracked() {
+                            return;
+                        }
+                        let attempt = match link_join_attempt(
+                            &input.get_untracked(),
+                            if accept { accepted_join.get_untracked() } else { None },
+                        ) {
                             Ok(value) => value,
                             Err(_) => {
                                 message.revise(|value| *value = "Invalid invitation link".into());
                                 return;
                             }
                         };
+                        if accept && matches!(&attempt, LinkJoinAttempt::Accept(_)) {
+                            accepted_join.revise(|value| *value = None);
+                        }
                         let Some(scope) = action_context.root_scope() else {
                             return;
                         };
@@ -429,30 +483,35 @@ pub(crate) fn page(
                         let active = Some(account);
                         busy.revise(|value| *value = true);
                         let operation_context = action_context.clone();
+                        let submission_store = operation_context.state_store.handle();
+                        let acceptance_context = operation_context.clone();
+                        let acceptance_account = active.clone();
                         let _ = scope.owner().spawn(async move {
                             let result = crate::transport::auth::with_authed_api(
                                 &base,
                                 token,
                                 |api| async move {
-                                    if accept {
-                                        api.accept_realm_invite_link(&credential, &authority)
-                                            .await
-                                            .map(|progress| {
-                                                if progress.is_committed() {
-                                                    "Joined. Membership is accepted; encrypted access follows the Realm's normal security flow.".into()
-                                                } else {
-                                                    "Join submitted; authority acceptance is still pending.".into()
-                                                }
+                                    match attempt {
+                                        LinkJoinAttempt::Readback(realm) => {
+                                            joined_link_message(&api.sdk_http_client()?, &authority, &realm, submission_store).await
+                                        }
+                                        LinkJoinAttempt::Accept(credential) if accept => {
+                                            let progress = api.accept_realm_invite_link(&credential, &authority).await?;
+                                            anyhow::ensure!(acceptance_context.session_matches(generation, &acceptance_account), "join account session changed");
+                                            if progress.is_committed() {
+                                                accepted_join.revise(|value| *value = Some(credential.realm_id.clone()));
+                                            }
+                                            link_join_completion_message(
+                                                &api.sdk_http_client()?, &authority, &credential.realm_id,
+                                                submission_store, &progress,
+                                            ).await
+                                        }
+                                        LinkJoinAttempt::Accept(credential) => {
+                                            api.preview_realm_invite_link(&credential, &authority).await.map(|value| {
+                                                format!("Preview: {}. Confirm below to join with the displayed account.",
+                                                    value.preview.display_name.unwrap_or_else(|| value.preview.realm_id.to_string()))
                                             })
-                                    } else {
-                                        api.preview_realm_invite_link(&credential, &authority)
-                                            .await
-                                            .map(|value| {
-                                                format!(
-                                                    "Preview: {}. Confirm below to join with the displayed account.",
-                                                    value.preview.display_name.unwrap_or_else(|| value.preview.realm_id.to_string())
-                                                )
-                                            })
+                                        }
                                     }
                                 },
                             )
@@ -463,6 +522,9 @@ pub(crate) fn page(
                             busy.revise(|value| *value = false);
                             match result {
                                 Ok(value) => message.revise(|current| *current = value),
+                                Err(_) if accept && accepted_join.get_untracked().is_some() => message.revise(|value| {
+                                    *value = "Membership is accepted, but live synchronization is pending. Confirm again to retry synchronization without submitting another invitation.".into()
+                                }),
                                 Err(_) if accept => message.revise(|value| {
                                     *value = "Invitation could not be accepted. Reopen the link to retry; pending exact Events continue through the durable queue.".into()
                                 }),
@@ -538,4 +600,23 @@ fn take_browser_invite() -> Option<String> {
 #[cfg(not(target_arch = "wasm32"))]
 fn take_browser_invite() -> Option<String> {
     None
+}
+
+#[cfg(test)]
+mod join_retry_tests {
+    use super::*;
+
+    #[test]
+    fn accepted_join_retry_reads_the_same_realm_without_an_invitation_secret() {
+        let realm = arkret_sdk::RealmId::from_event_id(&arkret_sdk::EventId::from_digest(
+            arkret_sdk::DigestSuite::Sha256,
+            [17; 32],
+        ));
+        assert!(
+            matches!(link_join_attempt("", Some(realm.clone())).unwrap(),
+            LinkJoinAttempt::Readback(target) if target == realm)
+        );
+        assert!(link_join_attempt("", None).is_err());
+        assert!(link_join_attempt("invalid replacement link", Some(realm)).is_err());
+    }
 }
