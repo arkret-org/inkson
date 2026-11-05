@@ -1,5 +1,6 @@
 //! Request, inspect and decide an original management review without committing
 //! the candidate before approval. Recovery material exists only in this process.
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use arkret_sdk::{ManagementOperation, ManagementReviewDecision, ManagementReviewStatus, RealmId};
@@ -12,6 +13,30 @@ use crate::transport::management_review::{
 };
 use crate::views::settings::widgets::*;
 mod model;
+
+fn retry_decision_action(
+    context: Rc<InksonContext>,
+    retained: glory::Bond<bool>,
+    enabled: glory::Bond<bool>,
+    retry: impl FnMut() + 'static,
+) -> View {
+    let retry = Rc::new(RefCell::new(retry));
+    reactive(retained, move |scope, retained| {
+        if !retained {
+            return empty();
+        }
+        let retry = retry.clone();
+        action(
+            scope,
+            context.clone(),
+            "management-review-retry-decision",
+            "核对并重试原决定（保留原签署内容）",
+            "secondary",
+            enabled,
+            move || (retry.borrow_mut())(),
+        )
+    })
+}
 
 fn drive<F, Fut>(
     owner: glory::ui::WeakScope,
@@ -630,12 +655,9 @@ pub(super) fn page(scope: &Scope, context: Rc<InksonContext>, realm: String) -> 
             scope.bond(move || !busy.get()),
             move || refresh.refresh(),
         ));
-        children.push(action(
-            scope,
+        children.push(retry_decision_action(
             context.clone(),
-            "management-review-retry-decision",
-            "核对并重试原决定（保留原签署内容）",
-            "secondary",
+            scope.bond(move || decision.get().is_some()),
             scope.bond(move || !busy.get() && confirmed.get() && decision.get().is_some()),
             move || retry.retry(),
         ));
@@ -828,4 +850,80 @@ pub(super) fn page(scope: &Scope, context: Rc<InksonContext>, realm: String) -> 
             status(state.status),
         ],
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn retry_nodes(app: &glory::ui::App) -> Vec<glory::render::NodeId> {
+        let tree = app.tree();
+        let mut pending = tree.roots().to_vec();
+        let mut found = Vec::new();
+        while let Some(id) = pending.pop() {
+            let node = tree.node(id).unwrap();
+            pending.extend(node.children.iter().copied());
+            if node
+                .descriptor
+                .view()
+                .classes
+                .iter()
+                .any(|class| class == "management-review-retry-decision")
+            {
+                found.push(id);
+            }
+        }
+        found
+    }
+
+    fn retry_enabled(app: &glory::ui::App, id: glory::render::NodeId) -> bool {
+        let tree = app.tree();
+        let glory::render::Props::Button(button) = tree.node(id).unwrap().descriptor.view().props
+        else {
+            panic!("actual retry Button required")
+        };
+        button.enabled
+    }
+
+    #[test]
+    fn retry_action_requires_a_retained_original_decision() {
+        let (app, context, _directory) = crate::views::settings::restored_surface_tests::harness();
+        let scope = app.scope();
+        let retained = scope.cage(false);
+        let enabled = scope.cage(false);
+        app.mount(retry_decision_action(
+            context,
+            scope.bond(move || retained.get()),
+            scope.bond(move || enabled.get()),
+            || {},
+        ))
+        .unwrap();
+        app.flush().unwrap();
+        assert!(
+            retry_nodes(&app).is_empty(),
+            "there is no original decision to retry"
+        );
+        for _ in 0..4 {
+            retained.revise(|value| *value = true);
+            app.flush().unwrap();
+            let nodes = retry_nodes(&app);
+            assert_eq!(nodes.len(), 1);
+            let old = nodes[0];
+            assert!(
+                !retry_enabled(&app, old),
+                "a retained decision still needs explicit confirmation"
+            );
+            enabled.revise(|value| *value = true);
+            app.flush().unwrap();
+            assert!(retry_enabled(&app, old));
+            retained.revise(|value| *value = false);
+            app.flush().unwrap();
+            assert!(retry_nodes(&app).is_empty());
+            assert!(
+                app.tree().node(old).is_err(),
+                "retired original decisions have no live action node"
+            );
+            enabled.revise(|value| *value = false);
+        }
+    }
 }
