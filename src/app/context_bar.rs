@@ -14,8 +14,8 @@ pub(super) fn context_bar(
     realm_id: String,
     route: Route,
     board_ready: bool,
+    menu: Cage<bool>,
 ) -> View {
-    let menu = scope.cage(false);
     let account = principal_id_owned(context.principal_id.get());
     let (allows, current) = context.state_store.read(|store| {
         (

@@ -726,21 +726,64 @@ fn topbar(
             block("topbar-context", children)
         }
     });
-    let realm_navigation = reactive(source, {
+    let realm_navigation_model = scope.bond({
         let context = context.clone();
-        move |scope, (route, _, _, _, _, description)| {
+        move || {
+            let (route, _, _, _, locale, description) = source.get();
             let navigation = super::sidebar::navigation_model(&context, &route, "");
             let id = navigation.active_projection_realm_id;
             if !route_uses_realm_context(&route) || id.is_empty() {
-                return empty();
+                return None;
             }
-            super::context_bar::context_bar(
-                scope,
-                context.clone(),
-                id,
+            let (allows_spaces, surface) = context.state_store.read(|store| {
+                (
+                    store.realm_allows_spaces(&id),
+                    super::resolve_realm_surface(
+                        &route,
+                        store,
+                        &super::principal_id_owned(context.principal_id.get()),
+                        Some(&id),
+                    ),
+                )
+            });
+            Some((
                 route,
+                id,
                 StationFeature::Board.ready(description.as_ref()),
-            )
+                allows_spaces,
+                surface,
+                locale,
+            ))
+        }
+    });
+    let realm_navigation_target =
+        scope.bond(move || realm_navigation_model.get().map(|(_, id, ..)| id));
+    // The open intent belongs to this Realm, including while its route is
+    // canonicalized. Presentation updates may replace links, not their owner.
+    let realm_navigation = reactive_distinct(realm_navigation_target, {
+        let context = context.clone();
+        move |scope, target| {
+            let Some(target) = target else {
+                return empty();
+            };
+            let menu = scope.cage(false);
+            let context = context.clone();
+            reactive_distinct(realm_navigation_model, move |scope, model| {
+                let Some((route, id, board_ready, ..)) = model else {
+                    return empty();
+                };
+                if id != target {
+                    return empty();
+                }
+                super::context_bar::context_bar(
+                    scope,
+                    context.clone(),
+                    id,
+                    route,
+                    board_ready,
+                    menu,
+                )
+            })
         }
     });
     let search = Box::new(view().class("topbar-command-search").fill(vec![
@@ -1865,6 +1908,129 @@ mod tests {
         assert!(!ui.account_open.get_untracked());
         assert!(class_nodes(&app, "account-menu").is_empty());
         assert_eq!(trigger(&app), button);
+    }
+
+    #[test]
+    fn realm_menu_survives_background_updates_and_retargets_on_navigation() {
+        fn nodes(app: &glory::App, class: &str) -> Vec<glory::render::NodeId> {
+            let tree = app.tree();
+            let mut pending = tree.roots().to_vec();
+            let mut found = Vec::new();
+            while let Some(id) = pending.pop() {
+                let node = tree.node(id).unwrap();
+                if node
+                    .descriptor
+                    .view()
+                    .classes
+                    .iter()
+                    .any(|value| value == class)
+                {
+                    found.push(id);
+                }
+                pending.extend(node.children.iter().copied());
+            }
+            found
+        }
+        let (app, context, _directory) = crate::views::settings::restored_surface_tests::harness();
+        let realm = |byte| {
+            arkret_sdk::RealmId::from_event_id(&arkret_sdk::EventId::from_digest(
+                arkret_sdk::DigestSuite::Sha256,
+                [byte; 32],
+            ))
+            .to_string()
+        };
+        let first = realm(0x71);
+        let second = realm(0x72);
+        context.realm_tree_nodes.revise(|nodes| {
+            *nodes = vec![
+                item(&first, "First Realm").node,
+                item(&second, "Second Realm").node,
+            ];
+        });
+        context.route.revise(|route| {
+            *route = Route::KanbanRealm {
+                realm_id: first.clone(),
+            }
+        });
+        context
+            .selected_realm_id
+            .revise(|value| *value = first.clone());
+        let ui = ShellState::new(app.scope(), &context);
+        app.mount(topbar(
+            app.scope(),
+            context.clone(),
+            ui,
+            app.scope().bond(|| false),
+        ))
+        .unwrap();
+        app.flush().unwrap();
+        let trigger = nodes(&app, "realm-nav-menu-button")[0];
+        app.dispatch(trigger, glory::render::Event::Activate)
+            .unwrap();
+        app.flush().unwrap();
+        let panel = nodes(&app, "realm-nav-menu-panel");
+        assert_eq!(panel.len(), 1);
+        for _ in 0..3 {
+            context.state_revision.revise(|revision| *revision += 1);
+            app.flush().unwrap();
+            assert_eq!(nodes(&app, "realm-nav-menu-button"), vec![trigger]);
+            assert_eq!(
+                nodes(&app, "realm-nav-menu-panel"),
+                panel,
+                "background commits must not dispose an open Realm menu"
+            );
+        }
+        let board = arkret_sdk::SpaceId::from_event_id(&arkret_sdk::EventId::from_digest(
+            arkret_sdk::DigestSuite::Sha256,
+            [0x73; 32],
+        ));
+        context.route.revise(|route| {
+            *route = Route::KanbanBoard {
+                realm_id: first.clone(),
+                board_id: board.to_string(),
+            }
+        });
+        app.flush().unwrap();
+        assert_eq!(
+            nodes(&app, "realm-nav-menu-panel").len(),
+            1,
+            "canonical navigation inside the same Realm must preserve the open menu intent"
+        );
+        context.route.revise(|route| {
+            *route = Route::KanbanRealm {
+                realm_id: second.clone(),
+            }
+        });
+        context
+            .selected_realm_id
+            .revise(|value| *value = second.clone());
+        app.flush().unwrap();
+        assert!(nodes(&app, "realm-nav-menu-panel").is_empty());
+        let next_trigger = nodes(&app, "realm-nav-menu-button")[0];
+        assert_ne!(next_trigger, trigger);
+        app.dispatch(next_trigger, glory::render::Event::Activate)
+            .unwrap();
+        app.flush().unwrap();
+        let settings = nodes(&app, "realm-nav-menu-item")
+            .into_iter()
+            .find(|id| {
+                app.tree()
+                    .node(*id)
+                    .unwrap()
+                    .descriptor
+                    .view()
+                    .name
+                    .as_deref()
+                    == Some(context.tr("nav.settings").as_str())
+            })
+            .expect("the new Realm menu exposes Settings");
+        app.dispatch(settings, glory::render::Event::Activate)
+            .unwrap();
+        app.flush().unwrap();
+        assert_eq!(
+            context.route.get_untracked(),
+            Route::RealmAdmin { realm_id: second }
+        );
     }
 
     fn item(id: &str, title: &str) -> crate::realm_tree::RealmTreeItem {

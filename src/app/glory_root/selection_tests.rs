@@ -197,6 +197,7 @@ fn actual_context_links_render_one_visible_label_with_their_icon() {
             realm_id: realm(0x24),
         },
         true,
+        app.scope().cage(false),
     ))
     .unwrap();
     let tree = app.tree();
