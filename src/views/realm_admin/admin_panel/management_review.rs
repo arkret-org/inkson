@@ -38,6 +38,72 @@ fn retry_decision_action(
     })
 }
 
+fn fresh_decision_controls(
+    state: ReviewPage,
+    retained: glory::Bond<bool>,
+    enabled: glory::Bond<bool>,
+) -> View {
+    reactive(retained, move |scope, retained| {
+        if retained {
+            return empty();
+        }
+        let context = state.context.clone();
+        let recovery = state.recovery;
+        let value = scope.bond(move || recovery.get().as_str().to_owned());
+        let approve = state.clone();
+        let reject = state.clone();
+        stack(
+            "management-review-new-decision-controls",
+            vec![
+                Box::new(
+                    sapid::field("management-review-recovery-key")
+                        .unstyled()
+                        .class("field")
+                        .label("身份控制 Recovery Key（仅本次签署，不保存）")
+                        .control(move |field| {
+                            sapid::text_field()
+                                .unstyled()
+                                .field(field)
+                                .purpose(glory::prelude::Purpose::Password)
+                                .value(value)
+                                .on_value_change(move |next| {
+                                    recovery.revise(|value| {
+                                        *value = Zeroizing::new(next);
+                                    })
+                                })
+                        }),
+                ),
+                input(
+                    scope,
+                    context.clone(),
+                    "management-review-root-generation",
+                    "当前身份控制 Root generation",
+                    state.root_generation,
+                    true,
+                ),
+                action(
+                    scope,
+                    context.clone(),
+                    "management-review-approve",
+                    "用原生身份控制签名批准该候选",
+                    "primary",
+                    enabled,
+                    move || approve.approve(),
+                ),
+                action(
+                    scope,
+                    context,
+                    "management-review-reject",
+                    "拒绝原候选",
+                    "destructive",
+                    enabled,
+                    move || reject.reject(),
+                ),
+            ],
+        )
+    })
+}
+
 fn drive<F, Fut>(
     owner: glory::ui::WeakScope,
     context: Rc<InksonContext>,
@@ -574,8 +640,6 @@ pub(super) fn page(scope: &Scope, context: Rc<InksonContext>, realm: String) -> 
         let state = details_state.clone();
         let refresh = state.clone();
         let retry = state.clone();
-        let approve = state.clone();
-        let reject = state.clone();
         let cancel = state.clone();
         let submit = state.clone();
         let is_requester = review.request.requester_actor_id
@@ -662,51 +726,10 @@ pub(super) fn page(scope: &Scope, context: Rc<InksonContext>, realm: String) -> 
             move || retry.retry(),
         ));
         if pending && !is_requester {
-            let recovery = state.recovery;
-            let value = scope.bond(move || recovery.get().as_str().to_owned());
-            children.push(Box::new(
-                sapid::field("management-review-recovery-key")
-                    .unstyled()
-                    .class("field")
-                    .label("身份控制 Recovery Key（仅本次签署，不保存）")
-                    .control(move |field| {
-                        sapid::text_field()
-                            .unstyled()
-                            .field(field)
-                            .purpose(glory::prelude::Purpose::Password)
-                            .value(value)
-                            .on_value_change(move |next| {
-                                recovery.revise(|value| {
-                                    *value = Zeroizing::new(next);
-                                })
-                            })
-                    }),
-            ));
-            children.push(input(
-                scope,
-                context.clone(),
-                "management-review-root-generation",
-                "当前身份控制 Root generation",
-                state.root_generation,
-                true,
-            ));
-            children.push(action(
-                scope,
-                context.clone(),
-                "management-review-approve",
-                "用原生身份控制签名批准该候选",
-                "primary",
+            children.push(fresh_decision_controls(
+                state.clone(),
+                scope.bond(move || decision.get().is_some()),
                 enabled,
-                move || approve.approve(),
-            ));
-            children.push(action(
-                scope,
-                context.clone(),
-                "management-review-reject",
-                "拒绝原候选",
-                "destructive",
-                enabled,
-                move || reject.reject(),
             ));
         }
         if pending && is_requester {
@@ -856,7 +879,7 @@ pub(super) fn page(scope: &Scope, context: Rc<InksonContext>, realm: String) -> 
 mod tests {
     use super::*;
 
-    fn retry_nodes(app: &glory::ui::App) -> Vec<glory::render::NodeId> {
+    fn nodes_with_class(app: &glory::ui::App, class: &str) -> Vec<glory::render::NodeId> {
         let tree = app.tree();
         let mut pending = tree.roots().to_vec();
         let mut found = Vec::new();
@@ -868,12 +891,16 @@ mod tests {
                 .view()
                 .classes
                 .iter()
-                .any(|class| class == "management-review-retry-decision")
+                .any(|found| found == class)
             {
                 found.push(id);
             }
         }
         found
+    }
+
+    fn retry_nodes(app: &glory::ui::App) -> Vec<glory::render::NodeId> {
+        nodes_with_class(app, "management-review-retry-decision")
     }
 
     fn retry_enabled(app: &glory::ui::App, id: glory::render::NodeId) -> bool {
@@ -924,6 +951,85 @@ mod tests {
                 "retired original decisions have no live action node"
             );
             enabled.revise(|value| *value = false);
+        }
+    }
+
+    #[test]
+    fn retained_decision_retires_the_fresh_approval_form() {
+        let (app, context, _directory) = crate::views::settings::restored_surface_tests::harness();
+        let scope = app.scope();
+        let retained = scope.cage(false);
+        let confirmed = scope.cage(true);
+        let busy = scope.cage(false);
+        let state = ReviewPage {
+            context: context.clone(),
+            owner: scope.downgrade(),
+            realm: "ak:realm:AeEFmfOZxsx5kLi2kpOJu8m7TFXZ_G8E4019rUp4wmT6".into(),
+            principal: scope.cage(String::new()),
+            station: scope.cage(String::new()),
+            operation: scope.cage("join".into()),
+            loaded: scope.cage(None),
+            retained_request: scope.cage(None),
+            retained_decision: scope.cage(None),
+            shared: scope.cage(String::new()),
+            recovery: scope.cage(Zeroizing::new(String::new())),
+            root_generation: scope.cage("0".into()),
+            confirmed,
+            status: scope.cage(String::new()),
+            busy,
+        };
+        app.mount(stack(
+            "review-decision-test",
+            vec![
+                fresh_decision_controls(
+                    state,
+                    scope.bond(move || retained.get()),
+                    scope.bond(move || !busy.get() && confirmed.get() && !retained.get()),
+                ),
+                retry_decision_action(
+                    context,
+                    scope.bond(move || retained.get()),
+                    scope.bond(move || !busy.get() && confirmed.get()),
+                    || {},
+                ),
+            ],
+        ))
+        .unwrap();
+        app.flush().unwrap();
+        for _ in 0..4 {
+            assert_eq!(nodes_with_class(&app, "management-review-approve").len(), 1);
+            assert_eq!(nodes_with_class(&app, "management-review-reject").len(), 1);
+            assert!(retry_nodes(&app).is_empty());
+            let old = nodes_with_class(&app, "management-review-new-decision-controls")[0];
+            let old_approve = nodes_with_class(&app, "management-review-approve")[0];
+            let old_reject = nodes_with_class(&app, "management-review-reject")[0];
+            retained.revise(|value| *value = true);
+            confirmed.revise(|value| *value = false);
+            app.flush().unwrap();
+            assert_eq!(
+                nodes_with_class(&app, "management-review-approve").len(),
+                0,
+                "an original decision awaiting reconciliation cannot offer another approval"
+            );
+            assert!(nodes_with_class(&app, "management-review-reject").is_empty());
+            assert!(nodes_with_class(&app, "management-review-new-decision-controls").is_empty());
+            for id in [old, old_approve, old_reject] {
+                assert!(
+                    app.tree().node(id).is_err(),
+                    "old signing controls must retire"
+                );
+            }
+            let retry = retry_nodes(&app);
+            assert_eq!(retry.len(), 1);
+            assert!(!retry_enabled(&app, retry[0]));
+            confirmed.revise(|value| *value = true);
+            app.flush().unwrap();
+            assert!(
+                retry_enabled(&app, retry[0]),
+                "only the original decision can be retried"
+            );
+            retained.revise(|value| *value = false);
+            app.flush().unwrap();
         }
     }
 }
