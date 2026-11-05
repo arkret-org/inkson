@@ -192,6 +192,8 @@ The Docker image serves the Glory/Sapid Web bundle with nginx and SPA deep-link 
 
 Set `INKSON_STATION_URL=https://your-station.example` when running the image to preselect the deployment's Station for fresh web clients. This optional HTML metadata is validated with the client's normal URL policy; existing saved accounts and Station choices are retained. Without it, the development default remains `https://local.host`.
 
+Release web bundles omit the Wasm debugging name section and include deterministic gzip files for Wasm, JavaScript, CSS, JSON, and SVG resources. The image negotiates gzip with browsers and sets `Vary: Accept-Encoding`; HTML uses dynamic compression so the runtime Station metadata is still injected.
+
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/prepare-docker-context.ps1
 docker build -f docker-context/inkson/Dockerfile -t inkson-web docker-context

@@ -87,12 +87,19 @@ def main():
                 raise SystemExit(f"Stylesheet escapes the source tree: {source}")
             styles.append(source.read_text(encoding="utf-8"))
         (assets / "app.css").write_text("\n".join(styles) + "\n", encoding="utf-8")
-        subprocess.run([
+        bindgen_command = [
             bindgen, str(target / "wasm32-unknown-unknown" / profile / "inkson.wasm"),
             "--target", "web", "--out-name", "inkson", "--out-dir", str(assets / "pkg"),
-        ], cwd=ROOT, env=env, check=True, timeout=3600)
+        ]
+        if profile == "release":
+            bindgen_command.append("--remove-name-section")
+        subprocess.run(bindgen_command, cwd=ROOT, env=env, check=True, timeout=3600)
         sapid = sapid_stylesheet(metadata)
         shutil.copy2(sapid, assets / "sapid.css")
+        if profile == "release":
+            from web_compression import precompress_assets
+
+            precompress_assets(stage)
         (stage / ".inkson-generated-web").write_text("Glory/Sapid frontend\n", encoding="utf-8")
         if output.exists() and any(output.iterdir()):
             owned = output in {target / "web", ROOT / "dist"} or (output / ".inkson-generated-web").is_file()

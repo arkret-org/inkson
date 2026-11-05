@@ -105,6 +105,9 @@ jobs:
             chime/ docker-context/chime/
           rsync -a --delete --exclude .git arkret-spec/ docker-context/arkret-spec/
 
+      - name: Test web resource compression
+        run: python3 inkson/scripts/test_web_compression.py
+
       - name: Build image
         uses: docker/build-push-action@v7
         with:
