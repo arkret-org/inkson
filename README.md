@@ -167,7 +167,7 @@ The repository includes CI for:
 - `Typos`: spell checking through `crate-ci/typos`.
 - `CI`: Rust format, clippy, tests, and Glory/Sapid Web build on Ubuntu.
 - `Packages` (manual `workflow_dispatch`): native Linux, Windows and macOS artifacts, actual platform startup probes, advisory checks and local signing evidence. Historical renderer receipts describe their original fixed source; a framework migration requires fresh platform evidence.
-- `Docker`: local web image build, Trivy scan, SBOM evidence, and local cosign blob evidence when a local key is supplied. It does not push to GHCR or any registry.
+- `Docker`: native amd64/arm64 web image builds, hosted-client smoke tests, Trivy scans and SBOM evidence. Successful main/master builds publish `ghcr.io/arkret-org/inkson:latest` and `:sha-<full-commit>`; pull requests only build and verify.
 - `Dependabot`: weekly updates for GitHub Actions, Cargo, npm, and Docker.
 
 CI checks out `arkret-rust-sdk`, `garth`, and `chime` next to `inkson` because `Cargo.toml` uses sibling path dependencies. The expected GitHub repository names use those three names under `${OWNER}`.
@@ -189,6 +189,8 @@ cargo test --locked --features app
 The expected Gitea repository names use the three dependency repository names under `${OWNER}`.
 
 The Docker image serves the Glory/Sapid Web bundle with nginx and SPA deep-link fallback. Prepare the sibling application/SDK/spec context; Cargo fetches the locked Glory/Sapid Git dependencies during the build. On Windows, verify that the builder stores its data on D: or a remote host before building:
+
+Set `INKSON_STATION_URL=https://your-station.example` when running the image to preselect the deployment's Station for fresh web clients. This optional HTML metadata is validated with the client's normal URL policy; existing saved accounts and Station choices are retained. Without it, the development default remains `https://local.host`.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/prepare-docker-context.ps1

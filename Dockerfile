@@ -14,7 +14,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,targe
     WASM_BINDGEN="$(python3 .ci/install-wasm-bindgen.py)" && export WASM_BINDGEN && \
     python3 scripts/build_web.py --release --out-dir /web-public
 FROM nginx:1.31-alpine
+ENV INKSON_STATION_URL=""
 COPY --from=build /web-public /usr/share/nginx/html
-COPY --from=build /workspace/inkson/docker/nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /workspace/inkson/docker/nginx.conf /etc/nginx/templates/default.conf.template
 EXPOSE 80
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 CMD wget -qO- http://127.0.0.1/ >/dev/null || exit 1

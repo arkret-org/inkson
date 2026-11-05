@@ -100,10 +100,26 @@ impl ClientConfig {
 }
 
 fn default_stations() -> Vec<Url> {
+    #[cfg(target_arch = "wasm32")]
+    if let Some(station) = hosted_station() {
+        return vec![station];
+    }
     DEFAULT_STATIONS
         .iter()
         .filter_map(|server| Url::parse(server).ok())
         .collect()
+}
+
+/// A web deployment can advertise its Station without changing saved accounts
+/// or assuming that every host serving Inkson also serves the protocol.
+#[cfg(target_arch = "wasm32")]
+fn hosted_station() -> Option<Url> {
+    let document = web_sys::window()?.document()?;
+    let meta = document
+        .query_selector("meta[name='inkson-station-url']")
+        .ok()??;
+    let value = meta.get_attribute("content")?;
+    validate_server_url(value.trim()).ok()
 }
 
 pub fn server_url_key(server_url: &str) -> String {
@@ -153,8 +169,8 @@ pub fn station_options_for(current_server_url: &str, configured_stations: &[Url]
     for server_url in configured_stations {
         push(server_url.as_str());
     }
-    for server_url in DEFAULT_STATIONS {
-        push(server_url);
+    for server_url in default_stations() {
+        push(server_url.as_str());
     }
     options
 }

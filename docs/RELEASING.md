@@ -5,6 +5,11 @@ push commits, publish crates, push container images, upload to GHCR, submit
 macOS notarization requests, staple tickets, contact timestamp authorities,
 or upload Sigstore transparency-log entries.
 
+The separate GitHub `Docker` workflow publishes verified amd64/arm64 web images
+to GHCR on main/master. It retains per-architecture local image evidence and
+publishes `latest` plus `sha-<full-commit>` tags after both smoke tests pass.
+This checklist continues to describe local desktop and evidence operations.
+
 ## Inputs
 
 - A clean inkson worktree except for deliberate release changes.
@@ -103,8 +108,8 @@ available, and signs the image tar as a blob through Cosign only when
 
 Before recording a local `v0.9.0` milestone in notes:
 
-- Confirm no release workflow has registry push, tag-triggered publish, or
-  notarization submit semantics.
+- Confirm local release scripts do not push images or tags, submit notarization,
+  or upload signing evidence to external services.
 - Confirm `dist/signing/` and `dist/web-image/` contain evidence JSON files.
 - Confirm unresolved items remain listed in `_inkson_todos.md`.
 - Commit with a subject beginning `inkson:`.

@@ -116,6 +116,7 @@ jobs:
           cargo test --locked --target wasm32-unknown-unknown --features web
           --test mls_data_plane_wasm
           --test wasm_indexed_db_capacity
+          --test wasm_hosted_station
 
   rust-and-web:
     name: Rust tests and web build
