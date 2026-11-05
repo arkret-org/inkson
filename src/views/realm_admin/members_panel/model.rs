@@ -9,7 +9,7 @@
 use super::*;
 #[cfg(test)]
 pub(super) use crate::state::realm_membership::{
-    MemberJoinKeyPackageRoute, claim_target_device_id, member_join_key_package_route,
+    MemberJoinKeyPackageRoute, claim_target_device_id,
 };
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

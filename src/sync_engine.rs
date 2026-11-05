@@ -3477,25 +3477,6 @@ fn membership_operation_from_event(event: &arkret_sdk::Event) -> Option<RawOpera
     })
 }
 
-pub(crate) fn ingest_membership_projection_events(
-    store: &mut LocalStateStore,
-    realm_id: &str,
-    events: &[arkret_sdk::Event],
-) -> usize {
-    if events.is_empty() {
-        return 0;
-    }
-    let mut changed = 0;
-    for record in events.iter().filter_map(membership_operation_from_event) {
-        let operation_id = record.operation_id;
-        let record_realm_id = record.realm_id.or_else(|| Some(realm_id.to_owned()));
-        if store.upsert_raw_operation(operation_id, record_realm_id, record.payload) {
-            changed += 1;
-        }
-    }
-    changed
-}
-
 fn membership_operation_from_client_event(
     client_event: &garth::ClientEvent,
 ) -> Option<RawOperationRecord> {
@@ -5012,7 +4993,11 @@ mod tests {
                 ),
             ],
         ).into_iter().map(|item| item.event).collect::<Vec<_>>();
-        let changed = ingest_membership_projection_events(&mut store, realm_id, &events);
+        let events = events
+            .into_iter()
+            .map(|event| garth::ClientEvent::Event(Box::new(event)))
+            .collect::<Vec<_>>();
+        let changed = ingest_membership_events(&mut store, realm_id, &events);
 
         assert_eq!(changed, 2);
         let state = store.load();

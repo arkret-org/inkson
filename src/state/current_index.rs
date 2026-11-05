@@ -265,6 +265,17 @@ pub(crate) struct CurrentRealmProgress {
     pub observed_governance_generation: Option<u64>,
 }
 
+/// Admission inputs from one complete, leased local current cut. These are
+/// existing SDK current values, not a second membership or authorization ledger.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct RealmAdmissionCurrent {
+    pub generation: u64,
+    pub joined: std::collections::BTreeMap<String, arkret_wire::CurrentRevision>,
+    pub mls_group: Option<arkret_wire::MlsGroupValue>,
+    pub direct_binding:
+        Option<arkret_models_collaboration::events_payloads::DirectConversationBindingCurrentValue>,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct SignedSnapshotCoverage {
     snapshot_id: arkret_wire::RealmSnapshotId,
@@ -1498,6 +1509,127 @@ impl CurrentIndex {
             );
         }
         Ok(complete.then_some(generation))
+    }
+
+    pub(crate) async fn read_realm_admission_ready(
+        &self,
+        realm: &arkret_sdk::RealmId,
+    ) -> anyhow::Result<RealmAdmissionCurrent> {
+        let _lease = self.acquire_lease().await?;
+        anyhow::ensure!(
+            !self.is_poisoned(),
+            "current pointer durability is unresolved"
+        );
+        let generation = self.generation.load(Ordering::Acquire);
+        let progress = self.progress_at(realm.as_str(), generation).await?;
+        anyhow::ensure!(
+            progress_is_complete_cut(&progress, realm),
+            "MLS admission requires a complete verified Realm current cut"
+        );
+        let stream = arkret_wire::CommitStreamRef::Realm {
+            realm_id: realm.clone(),
+        };
+        let prefix = format!("{}target/{}/", self.prefix, hash(&realm.as_str())?);
+        let mut after = None::<String>;
+        let mut joined = std::collections::BTreeMap::new();
+        let mut direct_binding = None;
+        loop {
+            let rows = self
+                .backend
+                .scan(&prefix, None, after.as_deref(), PAGE_LIMIT)
+                .await?;
+            let count = rows.len();
+            let next = rows.last().map(|(key, _)| key.clone());
+            for (_, bytes) in rows {
+                let selector: CurrentSelector = serde_json::from_slice(&bytes)?;
+                if !matches!(
+                    &selector,
+                    CurrentSelector::MemberState { .. }
+                        | CurrentSelector::DirectConversationBinding { .. }
+                ) {
+                    continue;
+                }
+                let Some(CurrentState::Value {
+                    selector: found,
+                    source_stream_ref,
+                    revision,
+                    value,
+                }) = self
+                    .ready_selector(realm.as_str(), &selector, generation)
+                    .await?
+                else {
+                    continue;
+                };
+                anyhow::ensure!(
+                    found == selector && source_stream_ref == stream,
+                    "MLS admission member current belongs to another subject or stream"
+                );
+                match selector {
+                    CurrentSelector::MemberState { actor_id } => {
+                        let member: arkret_wire::MemberStateValue = serde_json::from_value(value)?;
+                        if member.membership == arkret_wire::MembershipState::Join {
+                            joined.insert(actor_id.to_string(), revision);
+                        }
+                    }
+                    CurrentSelector::DirectConversationBinding { pair_key } => {
+                        let binding: arkret_models_collaboration::events_payloads::DirectConversationBindingCurrentValue =
+                            serde_json::from_value(value)?;
+                        binding.validate_shape()?;
+                        anyhow::ensure!(
+                            binding.binding.realm_id == *realm
+                                && binding.binding.pair_key == pair_key
+                                && direct_binding.is_none(),
+                            "MLS admission Direct binding differs from its current selector"
+                        );
+                        direct_binding = Some(binding);
+                    }
+                    _ => unreachable!(),
+                }
+            }
+            if count < PAGE_LIMIT {
+                break;
+            }
+            anyhow::ensure!(
+                next.is_some() && next != after,
+                "current member pagination did not advance"
+            );
+            after = next;
+        }
+        let scope = arkret_sdk::ScopeRef::Realm {
+            realm_id: realm.clone(),
+        };
+        let selector = CurrentSelector::MlsGroup {
+            scope_ref: scope.clone(),
+        };
+        let mls_group = match self
+            .ready_selector(realm.as_str(), &selector, generation)
+            .await?
+        {
+            None => None,
+            Some(CurrentState::Value {
+                selector: found,
+                source_stream_ref,
+                value,
+                ..
+            }) => {
+                anyhow::ensure!(
+                    found == selector && source_stream_ref == stream,
+                    "MLS admission group current belongs to another subject or stream"
+                );
+                let group: arkret_wire::MlsGroupValue = serde_json::from_value(value)?;
+                anyhow::ensure!(
+                    group.effective_scope == scope,
+                    "MLS admission group has another scope"
+                );
+                Some(group)
+            }
+        };
+        Ok(RealmAdmissionCurrent {
+            generation,
+            joined,
+            mls_group,
+            direct_binding,
+        })
     }
 
     /// Public coordinates of one complete durable cut, read under the same
