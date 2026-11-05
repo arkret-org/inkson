@@ -28,7 +28,7 @@ struct Target {
 pub(super) struct BoardDrag {
     board: Board,
     owner: glory::ui::WeakScope,
-    targets: RefCell<Vec<Target>>,
+    targets: RefCell<Vec<std::rc::Weak<Target>>>,
     rects: RefCell<Vec<(Landing, Rect)>>,
     subject: RefCell<Option<(DragSubject, Option<arkret_sdk::SpaceId>)>>,
     remaining: Cell<usize>,
@@ -48,34 +48,68 @@ impl BoardDrag {
             pending_drop: Cell::new(None),
         })
     }
-    pub(super) fn column(&self, node: Cage<Option<NodeId>>, column: &KanbanColumn) {
-        self.targets.borrow_mut().push(Target {
-            node,
-            landing: Landing::Column {
-                column: column.id.clone(),
-                tail: column
-                    .cards
-                    .iter()
-                    .rfind(|card| card.lifecycle == StrandLifecycleState::Active)
-                    .map(|card| card.rank.clone()),
-            },
+    fn register(self: &Rc<Self>, scope: &Scope, target: Target) {
+        let target = Rc::new(target);
+        self.targets
+            .borrow_mut()
+            .retain(|value| value.strong_count() > 0);
+        self.targets.borrow_mut().push(Rc::downgrade(&target));
+        let owner = Rc::downgrade(self);
+        let _ = scope.on_cleanup(move || {
+            drop(target);
+            if let Some(owner) = owner.upgrade() {
+                owner
+                    .targets
+                    .borrow_mut()
+                    .retain(|value| value.strong_count() > 0);
+                owner.ticket.set(owner.ticket.get().wrapping_add(1));
+                owner.rects.borrow_mut().clear();
+                if owner.owner.upgrade().is_some() {
+                    owner.clear();
+                }
+            }
         });
     }
+    pub(super) fn column(
+        self: &Rc<Self>,
+        scope: &Scope,
+        node: Cage<Option<NodeId>>,
+        column: &KanbanColumn,
+    ) {
+        self.register(
+            scope,
+            Target {
+                node,
+                landing: Landing::Column {
+                    column: column.id.clone(),
+                    tail: column
+                        .cards
+                        .iter()
+                        .rfind(|card| card.lifecycle == StrandLifecycleState::Active)
+                        .map(|card| card.rank.clone()),
+                },
+            },
+        );
+    }
     pub(super) fn card(
-        &self,
+        self: &Rc<Self>,
+        scope: &Scope,
         node: Cage<Option<NodeId>>,
         column: &str,
         previous: Option<String>,
         card: &KanbanCard,
     ) {
-        self.targets.borrow_mut().push(Target {
-            node,
-            landing: Landing::Card {
-                column: column.into(),
-                previous,
-                next: card.rank.clone(),
+        self.register(
+            scope,
+            Target {
+                node,
+                landing: Landing::Card {
+                    column: column.into(),
+                    previous,
+                    next: card.rank.clone(),
+                },
             },
-        });
+        );
     }
     fn hit(&self, x: f64, y: f64) -> Option<Landing> {
         let rects = self.rects.borrow();
@@ -209,6 +243,7 @@ impl BoardDrag {
                     .targets
                     .borrow()
                     .iter()
+                    .filter_map(std::rc::Weak::upgrade)
                     .filter_map(|target| {
                         target
                             .node

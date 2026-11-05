@@ -1,5 +1,11 @@
+use glory::prelude::Widget;
+
 use super::*;
 use crate::presentation::widgets::reactive_distinct;
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[path = "surface_lifetime_tests.rs"]
+mod lifetime_tests;
 fn disclosure(
     scope: &Scope,
     _app: Rc<InksonContext>,
@@ -484,125 +490,139 @@ fn board_grid(scope: &Scope, board: Board) -> View {
             )
         })
     };
-    let source = scope.bond({
+    let active = scope.bond(move || {
+        columns
+            .get()
+            .into_iter()
+            .filter(|column| column.state == SpaceContainerLifecycleState::Active)
+            .collect::<Vec<_>>()
+    });
+    let ids = scope.bond(move || {
+        page_state
+            .get()
+            .0
+            .into_iter()
+            .map(|id| id.to_string())
+            .collect::<BTreeSet<_>>()
+    });
+    let phase = scope.bond({
         let board = board.clone();
         move || {
+            if !active.get().is_empty() {
+                return None;
+            }
             let _ = board.app.state_revision.get();
-            let has_board_surface = board.controller.selected_board.get().is_some()
-                || board.app.state_store.read(|store| {
-                    !pending_board_creates_from_ops(
-                        &store.load().raw_operations,
-                        &board.local_realm,
-                    )
-                    .is_empty()
-                });
-            (columns.get(), page_state.get().0, has_board_surface)
+            Some(
+                board.controller.selected_board.get().is_some()
+                    || board.app.state_store.read(|store| {
+                        !pending_board_creates_from_ops(
+                            &store.load().raw_operations,
+                            &board.local_realm,
+                        )
+                        .is_empty()
+                    }),
+            )
         }
     });
-    let grid = {
-        let board = board.clone();
-        crate::presentation::widgets::reactive_distinct(
-            source,
-            move |scope, (columns, ids, has_board_surface)| {
-                let ids = ids
-                    .into_iter()
-                    .map(|id| id.to_string())
-                    .collect::<BTreeSet<_>>();
-                let active = columns
-                    .into_iter()
-                    .filter(|column| column.state == SpaceContainerLifecycleState::Active)
-                    .collect::<Vec<_>>();
-                if active.is_empty() {
-                    let selected = has_board_surface;
-                    return stack(
-                        "board-grid kanban-board-grid",
-                        vec![stack(
-                            "board-empty-state",
-                            vec![crate::components::empty_state(
-                            scope,
-                            board.app.clone(),
-                            crate::components::EmptyStateProps {
-                                title: crate::i18n::tr(if selected {
-                                    "kanban.ui.no_lists_yet"
+    let grid = reactive_distinct(phase, move |scope, empty_state| {
+        if let Some(selected) = empty_state {
+            return stack(
+                "board-grid kanban-board-grid",
+                vec![stack(
+                    "board-empty-state",
+                    vec![crate::components::empty_state(
+                        scope,
+                        board.app.clone(),
+                        crate::components::EmptyStateProps {
+                            title: crate::i18n::tr(if selected {
+                                "kanban.ui.no_lists_yet"
+                            } else {
+                                "kanban.ui.no_board_selected"
+                            }),
+                            kind: crate::components::EmptyStateKind::Empty,
+                            message: Some(
+                                if selected {
+                                    "Add a list before adding cards to this board."
                                 } else {
-                                    "kanban.ui.no_board_selected"
-                                }),
-                                kind: crate::components::EmptyStateKind::Empty,
-                                message: Some(
-                                    if selected {
-                                        "Add a list before adding cards to this board."
-                                    } else {
-                                        "Create or select a board before adding lists and cards."
-                                    }
-                                    .into(),
-                                ),
-                                badge_override: Some(
-                                    if selected {
-                                        "empty board"
-                                    } else {
-                                        "select board"
-                                    }
-                                    .into(),
-                                ),
-                                test_id: Some("kanban-empty-board".into()),
-                            },
-                        )],
-                        )],
-                    );
-                }
-                let drag = drag_surface::BoardDrag::new(scope, board.clone());
-                let children = active
-                    .into_iter()
-                    .map(|column| column_view(scope, board.clone(), column, &ids, drag.clone()))
-                    .collect::<Vec<_>>();
-                let controller = board.controller;
-                Box::new(
-                    glory::prelude::view()
-                        .class(scope.bond(move || {
-                            format!(
-                                "board-grid kanban-board-grid{}{}",
-                                if controller.dragging_card.get().is_some() {
-                                    " is-dragging"
-                                } else {
-                                    ""
-                                },
-                                if controller.dragging_column.get().is_some() {
-                                    " is-column-dragging"
-                                } else {
-                                    ""
+                                    "Create or select a board before adding lists and cards."
                                 }
-                            )
-                        }))
-                        .fill(children),
-                )
-            },
+                                .into(),
+                            ),
+                            badge_override: Some(
+                                if selected {
+                                    "empty board"
+                                } else {
+                                    "select board"
+                                }
+                                .into(),
+                            ),
+                            test_id: Some("kanban-empty-board".into()),
+                        },
+                    )],
+                )],
+            );
+        }
+        let drag = drag_surface::BoardDrag::new(scope, board.clone());
+        let controller = board.controller;
+        let board = board.clone();
+        Box::new(
+            glory::prelude::view()
+                .class(scope.bond(move || {
+                    format!(
+                        "board-grid kanban-board-grid{}{}",
+                        if controller.dragging_card.get().is_some() {
+                            " is-dragging"
+                        } else {
+                            ""
+                        },
+                        if controller.dragging_column.get().is_some() {
+                            " is-column-dragging"
+                        } else {
+                            ""
+                        }
+                    )
+                }))
+                .fill(
+                    glory::ui::each(active)
+                        .key(|column| column.id.clone())
+                        .children(move |row| {
+                            let board = board.clone();
+                            let drag = drag.clone();
+                            glory::ui::widget(move |scope| {
+                                column_view(scope, board.clone(), row.value, ids, drag.clone())
+                                    .build(scope)
+                            })
+                        }),
+                ),
         )
-    };
+    });
     stack("kanban-board-container", vec![pages, grid])
 }
 fn column_view(
     scope: &Scope,
     board: Board,
-    column: KanbanColumn,
-    ids: &BTreeSet<String>,
+    column: Cage<KanbanColumn>,
+    ids: glory::Bond<BTreeSet<String>>,
     drag: Rc<drag_surface::BoardDrag>,
 ) -> View {
     let c = board.controller;
-    let column_id = column.id.clone();
-    let title = kanban_title_label(
-        &column.title,
-        &column.id,
-        &crate::i18n::tr("kanban.title_pending"),
-    );
+    let column_id = column.get_untracked().id;
     let node = scope.cage(None);
-    drag.column(node, &column);
+    let title = scope.bond(move || {
+        let column = column.get();
+        kanban_title_label(
+            &column.title,
+            &column.id,
+            &crate::i18n::tr("kanban.title_pending"),
+        )
+    });
     let grip = {
         let drag = drag.clone();
-        let column_id = column.id.clone();
+        let column_id = column_id.clone();
         Box::new(
             glory::prelude::view()
                 .class("column-drag-handle")
-                .name(format!("Move list {title}"))
+                .name(scope.bond(move || format!("Move list {}", title.get())))
                 .semantics(Some(Box::new(glory::render::Semantics {
                     drag_capture: Some(glory::render::DragCapture::Press),
                     ..Default::default()
@@ -620,11 +640,10 @@ fn column_view(
     };
     let title_view = {
         let board = board.clone();
-        let column = column.clone();
-        reactive(c.editing_column_id, move |_scope, editing| {
-            if editing.as_deref() == Some(column.id.as_str()) {
+        let column_id = column_id.clone();
+        reactive_distinct(c.editing_column_id, move |scope, editing| {
+            if editing.as_deref() == Some(column_id.as_str()) {
                 let rename = board.clone();
-                let saved = column.clone();
                 Box::new(
                     sapid::text_field()
                         .unstyled()
@@ -633,83 +652,100 @@ fn column_view(
                         .on_value_change(move |next| {
                             c.editing_column_title.revise(|value| *value = next)
                         })
-                        .on_commit(move |_| rename.rename_column(&saved)),
+                        .on_commit(move |_| rename.rename_column(&column.get_untracked())),
                 )
             } else {
-                let title = kanban_title_label(
-                    &column.title,
-                    &column.id,
-                    &crate::i18n::tr("kanban.title_pending"),
-                );
-                let column = column.clone();
                 Box::new(
                     sapid::button()
                         .unstyled()
                         .class("entity-title kanban-column-title")
-                        .name(format!("{} ({})", title, column.id))
+                        .name(scope.bond({
+                            let column_id = column_id.clone();
+                            move || format!("{} ({column_id})", title.get())
+                        }))
                         .label(title)
                         .enabled(board.ready)
                         .on_press(move || {
+                            let current = column.get_untracked();
                             c.editing_column_title
-                                .revise(|value| *value = column.title.clone());
+                                .revise(|value| *value = current.title);
                             c.editing_column_id
-                                .revise(|value| *value = Some(column.id.clone()));
+                                .revise(|value| *value = Some(current.id));
                         }),
                 )
             }
         })
     };
-    let active = column
-        .cards
-        .iter()
-        .filter(|card| card.lifecycle == StrandLifecycleState::Active)
-        .cloned()
-        .collect::<Vec<_>>();
-    let mut body = vec![line(
+    let count = scope.bond(move || {
+        column
+            .get()
+            .cards
+            .iter()
+            .filter(|card| card.lifecycle == StrandLifecycleState::Active)
+            .count()
+            .to_string()
+    });
+    let header = line(
         "event-head board-column-head",
         vec![
             line("board-column-title", vec![grip, title_view]),
-            paragraph("badge", active.len().to_string()),
+            paragraph("badge", count),
         ],
-    )];
-    let mut previous = None;
-    for card in active {
-        let rank = card.rank.clone();
-        if ids.contains(&card.id) {
-            body.push(card_tile(
-                scope,
-                board.clone(),
-                &column,
-                card,
-                previous.clone(),
-                drag.clone(),
-            ));
-        }
-        previous = Some(rank);
-    }
-    for card in column
-        .cards
-        .iter()
-        .filter(|card| card.lifecycle == StrandLifecycleState::Redacted)
-    {
-        body.push(stack(
-            "board-card board-card-redacted",
-            vec![
-                crate::components::ui_icon("eye-off"),
-                paragraph(
-                    "board-card-redacted-label",
-                    crate::i18n::tr("Redacted card"),
-                ),
-                paragraph("muted", short_protocol_id(&card.id)),
-            ],
-        ));
-    }
+    );
+    let cards = {
+        let board = board.clone();
+        let drag = drag.clone();
+        let source = scope.bond(move || (column.get(), ids.get()));
+        reactive_distinct(source, move |scope, (column, ids)| {
+            drag.column(scope, node, &column);
+            let active = column
+                .cards
+                .iter()
+                .filter(|card| card.lifecycle == StrandLifecycleState::Active)
+                .cloned()
+                .collect::<Vec<_>>();
+            let mut body = Vec::new();
+            let mut previous = None;
+            for card in active {
+                let rank = card.rank.clone();
+                if ids.contains(&card.id) {
+                    body.push(card_tile(
+                        scope,
+                        board.clone(),
+                        &column,
+                        card,
+                        previous.clone(),
+                        drag.clone(),
+                    ));
+                }
+                previous = Some(rank);
+            }
+            for card in column
+                .cards
+                .iter()
+                .filter(|card| card.lifecycle == StrandLifecycleState::Redacted)
+            {
+                body.push(stack(
+                    "board-card board-card-redacted",
+                    vec![
+                        crate::components::ui_icon("eye-off"),
+                        paragraph(
+                            "board-card-redacted-label",
+                            crate::i18n::tr("Redacted card"),
+                        ),
+                        paragraph("muted", short_protocol_id(&card.id)),
+                    ],
+                ));
+            }
+            Box::new(glory::ui::fragment(body))
+        })
+    };
     let composer = {
         let board = board.clone();
         let column = column.clone();
         reactive(c.adding_card_to, move |scope, adding| {
-            if adding.as_deref() != Some(column.id.as_str()) {
-                let column_id = column.id.clone();
+            if adding.as_deref() != Some(column.get_untracked().id.as_str()) {
+                let column_id = column.get_untracked().id.clone();
                 return action(
                     scope,
                     board.app.clone(),
@@ -718,7 +754,8 @@ fn column_view(
                     "secondary board-add-card",
                     scope.bond({
                         let ready = board.ready;
-                        let accepted = arkret_sdk::SpaceId::new(column.id.as_str()).is_ok();
+                        let accepted =
+                            arkret_sdk::SpaceId::new(column.get_untracked().id.as_str()).is_ok();
                         move || ready.get() && accepted
                     }),
                     move || {
@@ -763,7 +800,7 @@ fn column_view(
                                 "kanban.ui.save_card",
                                 "primary board-card-composer-save",
                                 board.ready,
-                                move || save.create_card(column.clone()),
+                                move || save.create_card(column.get_untracked()),
                             ),
                             action(
                                 scope,
@@ -783,15 +820,7 @@ fn column_view(
             )
         })
     };
-    body.push(composer);
-    let id = column.id.clone();
-    let name = column.title.clone();
-    let count = column
-        .cards
-        .iter()
-        .filter(|card| card.lifecycle == StrandLifecycleState::Active)
-        .count();
-    body.push(action(
+    let archive = action(
         scope,
         board.app.clone(),
         "list-archive-button",
@@ -799,11 +828,17 @@ fn column_view(
         "secondary kanban-inline-action",
         board.ready,
         move || {
+            let current = column.get_untracked();
+            let count = current
+                .cards
+                .iter()
+                .filter(|card| card.lifecycle == StrandLifecycleState::Active)
+                .count();
             c.list_archive_confirm
-                .revise(|value| *value = Some((id.clone(), name.clone(), count)))
+                .revise(|value| *value = Some((current.id, current.title, count)));
         },
-    ));
-    let drag_column_id = column.id.clone();
+    );
+    let drag_column_id = column_id.clone();
     Box::new(
         glory::prelude::view()
             .class(scope.bond(move || {
@@ -830,7 +865,7 @@ fn column_view(
                     }),
                 );
             })
-            .fill(body),
+            .fill(vec![header, cards, composer, archive]),
     )
 }
 fn card_tile(
@@ -843,7 +878,7 @@ fn card_tile(
 ) -> View {
     let c = board.controller;
     let node = scope.cage(None);
-    drag.card(node, &column.id, previous, &card);
+    drag.card(scope, node, &column.id, previous, &card);
     let snapshot = DraggedCard {
         card_id: card.id.clone(),
         from_column_id: column.id.clone(),
