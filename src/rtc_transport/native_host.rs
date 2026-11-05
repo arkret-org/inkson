@@ -514,7 +514,7 @@ fn media_data_directory() -> io::Result<std::path::PathBuf> {
         .unwrap_or_else(|| {
             #[cfg(windows)]
             {
-                std::path::PathBuf::from("D:/BuildCache/inkson-glory/media")
+                crate::state::app_data_dir().join("media")
             }
             #[cfg(not(windows))]
             {
