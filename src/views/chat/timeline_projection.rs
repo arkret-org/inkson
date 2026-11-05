@@ -44,7 +44,7 @@ pub(super) fn ordinary_timeline_projection(
                     identity,
                 ),
             );
-            #[cfg(all(target_arch = "wasm32", feature = "spec-conformance"))]
+            #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
             {
                 let count = |state: &ClientLocalState| {
                     state

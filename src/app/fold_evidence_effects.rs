@@ -173,29 +173,30 @@ fn install_test_hooks(scope: &Scope, context: Rc<InksonContext>) {
         },
     );
     let timeline_context = context.clone();
-    let timeline = Closure::<dyn Fn(String, String) -> String>::new(move |realm, event| {
-        if !timeline_context.session_generation.is_alive() {
-            return serde_json::json!({"error":"owner_retired"}).to_string();
-        }
-        let Some(account) = timeline_context.active_account.get_untracked() else {
-            return serde_json::json!({"error":"account_absent"}).to_string();
-        };
-        let Ok(realm) = arkret_sdk::RealmId::new(realm) else {
-            return serde_json::json!({"error":"invalid_realm"}).to_string();
-        };
-        let event = if event.is_empty() {
-            None
-        } else {
-            match arkret_sdk::EventId::new(event) {
-                Ok(event) => Some(event),
-                Err(_) => return serde_json::json!({"error":"invalid_event"}).to_string(),
+    let timeline =
+        Closure::<dyn Fn(String, String) -> String>::new(move |realm: String, event: String| {
+            if !timeline_context.session_generation.is_alive() {
+                return serde_json::json!({"error":"owner_retired"}).to_string();
             }
-        };
-        timeline_context.state_store.read(|store| {
-            ordinary_timeline_evidence(store, &account.authority, &realm, event.as_ref())
-                .to_string()
-        })
-    });
+            let Some(account) = timeline_context.active_account.get_untracked() else {
+                return serde_json::json!({"error":"account_absent"}).to_string();
+            };
+            let Ok(realm) = arkret_sdk::RealmId::new(realm) else {
+                return serde_json::json!({"error":"invalid_realm"}).to_string();
+            };
+            let event = if event.is_empty() {
+                None
+            } else {
+                match arkret_sdk::EventId::new(event) {
+                    Ok(event) => Some(event),
+                    Err(_) => return serde_json::json!({"error":"invalid_event"}).to_string(),
+                }
+            };
+            timeline_context.state_store.read(|store| {
+                ordinary_timeline_evidence(store, &account.authority, &realm, event.as_ref())
+                    .to_string()
+            })
+        });
     let receiver_context = context;
     let receiver = Closure::<dyn Fn(String) -> String>::new(move |command: String| {
         if !receiver_context.session_generation.is_alive() {

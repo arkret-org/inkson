@@ -2248,6 +2248,119 @@ pub(super) mod tests {
     }
 
     #[tokio::test]
+    async fn independent_window_anchor_cannot_skip_existing_live_history() {
+        let (rows, snapshot) = burst_fixture();
+        let head = snapshot.visible_stream_heads[0].clone();
+        let prior = rows[rows.len() - 2].commit();
+        let old = arkret_sdk::CommitStreamHead {
+            stream_ref: prior.stream_ref.clone(),
+            stream_position: prior.stream_position,
+            commit_id: prior.commit_id.clone(),
+        };
+        let account = crate::test_support::AccountFixture::new("did:web:alice.example")
+            .station("ak:did_core:web:station.example")
+            .build();
+        let (client, _, server) = http_for_account(
+            vec![
+                serde_json::to_value(&snapshot).unwrap(),
+                serde_json::json!({"committed_events":[rows.last().unwrap()],"readable_floor":null,"truncated":true}),
+            ],
+            account.authority.clone(),
+            Some(head.clone()),
+        );
+        let bound = client.snapshot_head(&snapshot.realm_id).await.unwrap();
+        let mut replica = OwnStationReplica::new(snapshot.realm_id.clone());
+        replica.install_bound_snapshot(&bound).unwrap();
+        replica
+            .bootstrap_current_head(&client, &head.stream_ref)
+            .await
+            .unwrap();
+        server.join().unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let mut store =
+            crate::state::LocalStateStore::with_path(directory.path().join("window-live-gap.json"));
+        store.switch_active_account(&account).unwrap();
+        store
+            .save_verified_commit_stream_cursor(&old.stream_ref, old.clone())
+            .unwrap();
+        let mut frame = VerifiedAccountFrame::test_own_context(client);
+        frame.own_replicas.insert(head.stream_ref.clone(), replica);
+        store
+            .verified_projection_transaction(|store| frame.stage_independent_public_history(store))
+            .unwrap();
+        assert_eq!(
+            store
+                .verified_commit_stream_cursor(&head.stream_ref)
+                .unwrap(),
+            Some(old.clone()),
+            "an independently admitted window head is not a downloaded live tail"
+        );
+
+        let (client, _, server) = http_for_account(
+            vec![
+                serde_json::to_value(&snapshot).unwrap(),
+                serde_json::json!({"committed_events":[rows[rows.len()-2]],"readable_floor":null,"truncated":true}),
+                serde_json::json!({"committed_events":[rows.last().unwrap()],"readable_floor":{
+                "oldest_position":0,"floor_commit_id":rows[0].commit().commit_id,"floor_reason":"stream_start"},"truncated":false}),
+            ],
+            account.authority,
+            Some(old.clone()),
+        );
+        let bound = client.snapshot_head(&snapshot.realm_id).await.unwrap();
+        let mut replica = OwnStationReplica::new(snapshot.realm_id.clone());
+        replica.install_bound_snapshot(&bound).unwrap();
+        replica
+            .restore_checkpoint_head(&client, &old)
+            .await
+            .unwrap();
+        let request = StreamScanRequestBody {
+            realm_id: snapshot.realm_id,
+            stream_ref: head.stream_ref.clone(),
+            direction: arkret_sdk::StreamScanDirection::After(Some(old.stream_position)),
+            limit: 1,
+        };
+        let page = replica
+            .apply_bound_scan(&client, client.scan_commit_stream(&request).await.unwrap())
+            .await
+            .unwrap();
+        server.join().unwrap();
+        let mut frame = VerifiedAccountFrame::test_own_context(client);
+        frame.own_replicas.insert(head.stream_ref.clone(), replica);
+        frame.own_pages.push(page);
+        let mut fork = old.clone();
+        fork.commit_id = arkret_sdk::RealmCommitId::from_digest([99; 32]);
+        store
+            .save_verified_commit_stream_cursor(&old.stream_ref, fork.clone())
+            .unwrap();
+        assert!(
+            store
+                .verified_projection_transaction(
+                    |store| frame.stage_independent_public_history(store)
+                )
+                .is_err(),
+            "a continuous suffix on another predecessor cannot replace the durable branch"
+        );
+        assert_eq!(
+            store
+                .verified_commit_stream_cursor(&head.stream_ref)
+                .unwrap(),
+            Some(fork)
+        );
+        store
+            .save_verified_commit_stream_cursor(&old.stream_ref, old.clone())
+            .unwrap();
+        store
+            .verified_projection_transaction(|store| frame.stage_independent_public_history(store))
+            .unwrap();
+        assert_eq!(
+            store
+                .verified_commit_stream_cursor(&head.stream_ref)
+                .unwrap(),
+            Some(head)
+        );
+    }
+
+    #[tokio::test]
     async fn link_join_success_persists_live_start_before_later_tail() {
         let (rows, mut snapshot) = burst_fixture();
         let row = rows.last().unwrap().clone();

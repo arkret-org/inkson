@@ -240,6 +240,7 @@ impl LocalStateStore {
             .head(stream_ref)
             .ok_or("own-Station replay has no accepted head")?;
         let mut anchor = None;
+        let mut originals = BTreeMap::new();
         for page in pages {
             if page.session() != client.session().map_err(|e| e.to_string())? {
                 return Err(
@@ -249,6 +250,13 @@ impl LocalStateStore {
 
             for row in page.rows().map_err(|e| e.to_string())? {
                 let commit = row.commit();
+                if commit.stream_ref == head.stream_ref
+                    && originals
+                        .insert(commit.stream_position, commit)
+                        .is_some_and(|prior| prior != commit)
+                {
+                    return Err("own-Station checkpoint pages conflict at one position".into());
+                }
                 if commit.stream_ref == head.stream_ref
                     && commit.stream_position == head.stream_position
                     && commit.commit_id == head.commit_id
@@ -265,6 +273,40 @@ impl LocalStateStore {
                 || (head.stream_position == old.stream_position && head.commit_id != old.commit_id))
         {
             return Err("own-Station checkpoint regresses or forks the durable stream".into());
+        }
+
+        // A separately admitted window can begin above the live checkpoint.
+        // Its basis authenticates that window, not the intervening downloaded
+        // tail. Keep the live position until actual pages bridge every gap.
+        if let Some(old) = self.cached.verified_commit_stream_cursors.get(&key)
+            && old.stream_position < head.stream_position
+        {
+            let mut position = old.stream_position;
+            let mut predecessor = &old.commit_id;
+            while position < head.stream_position {
+                let next = position
+                    .checked_add(1)
+                    .ok_or("own-Station checkpoint position overflow")?;
+                let Some(commit) = originals.get(&next) else {
+                    #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+                    tracing::warn!(
+                        stored_position = old.stream_position,
+                        candidate_position = head.stream_position,
+                        "Ordinary live checkpoint waits for its continuous history"
+                    );
+                    return Ok(());
+                };
+                if commit.previous_commit_ref.as_ref() != Some(predecessor) {
+                    return Err(
+                        "own-Station checkpoint history forks its durable predecessor".into(),
+                    );
+                }
+                position = next;
+                predecessor = &commit.commit_id;
+            }
+            if predecessor != &head.commit_id {
+                return Err("own-Station checkpoint differs from its installed history".into());
+            }
         }
 
         if anchor.is_none() {
