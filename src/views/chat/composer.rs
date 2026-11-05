@@ -618,12 +618,17 @@ pub(super) fn chat_composer(
     });
     let keyboard_send = send.clone();
     let change_app = app.clone();
+    // This component belongs to its original target. A later selection mounts
+    // the bound composer instead of enabling an input about to be retired.
+    let target_is_bound =
+        arkret_sdk::StrandId::new(controller.selected_channel.get_untracked()).is_ok();
     let input = Box::new(
         sapid::text_field()
             .unstyled()
             .name("Message")
             .class("chat-input")
             .multiline(true)
+            .enabled(target_is_bound)
             .node_ref(input_node)
             .value(controller.draft)
             .on_value_change(move |value| {

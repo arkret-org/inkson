@@ -124,6 +124,61 @@ fn props(suspended: Cage<bool>) -> ChatPanelProps {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn unresolved_discussion_target_cannot_accept_a_draft_before_binding() {
+    let _secure = isolated_secure_store();
+    let directory = tempfile::tempdir().unwrap();
+    let (app, executor) = host();
+    let context = fixture(app.scope(), directory.path());
+    let account = context.active_account.get_untracked().unwrap();
+    let mut target = props(app.scope().cage(false));
+    let strand = std::mem::take(&mut target.initial_strand_id);
+    let controller = super::super::controller::chat_controller_for_initial_target(
+        app.scope(),
+        context.clone(),
+        &target.selected_realm_id,
+        "",
+        &account.authority,
+        &account.device_id,
+        true,
+    )
+    .unwrap();
+    let mounted_context = context.clone();
+    app.mount(widget(move |scope| {
+        super::super::page::chat_panel(scope, mounted_context.clone(), target.clone()).build(scope)
+    }))
+    .unwrap();
+    pump(&app, &executor);
+    let unresolved = nodes(&app, "chat-input");
+    assert_eq!(unresolved.len(), 1);
+    {
+        let tree = app.tree();
+        let node = tree.node(unresolved[0]).unwrap();
+        let glory::render::Props::Input(props) = node.descriptor.view().props else {
+            panic!("expected actual composer input")
+        };
+        assert!(
+            !props.enabled,
+            "an unresolved target cannot accept a user's draft"
+        );
+    }
+    let _ = edit(&app, unresolved[0], "must not belong to an empty Strand");
+    assert_eq!(value(&app, unresolved[0]), "");
+    controller.select_channel(strand);
+    pump(&app, &executor);
+    let bound = nodes(&app, "chat-input");
+    assert_eq!(bound.len(), 1);
+    assert_ne!(bound, unresolved);
+    assert!(app.tree().node(unresolved[0]).is_err());
+    assert!(edit(&app, bound[0], "draft belongs to the bound Strand").unwrap());
+    pump(&app, &executor);
+    assert_eq!(value(&app, bound[0]), "draft belongs to the bound Strand");
+    context.state_revision.revise(|value| *value += 1);
+    pump(&app, &executor);
+    assert_eq!(nodes(&app, "chat-input"), bound);
+    assert_eq!(value(&app, bound[0]), "draft belongs to the bound Strand");
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn production_native_list_settles_under_repeated_flushes() {
     let _secure = isolated_secure_store();
     let directory = tempfile::tempdir().unwrap();
