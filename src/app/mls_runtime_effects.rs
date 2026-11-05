@@ -5,6 +5,20 @@ use glory::prelude::*;
 use super::*;
 use crate::presentation::InksonContext;
 
+fn install_admission_wakeup(
+    scope: &Scope,
+    context: Rc<InksonContext>,
+    reconcile: impl Fn() + 'static,
+) {
+    let realm_epoch = context.realm_live_epoch;
+    let device_revision = context.device_directory_revision;
+    scope.effect(move || {
+        let _ = realm_epoch.get();
+        let _ = device_revision.get();
+        reconcile();
+    });
+}
+
 pub(super) fn install(scope: &Scope, context: Rc<InksonContext>) {
     let mls_key_package_publish_key_seen = scope.cage(None::<String>);
     let secure_store_bootstrap_ready = context.secure_store_bootstrap_ready;
@@ -432,11 +446,9 @@ pub(super) fn install(scope: &Scope, context: Rc<InksonContext>) {
         // the MLS group so their `ak.mls.welcome` is finally produced. Closes
         // the invite-time race where admission ran before the invitee had
         // published a KeyPackage: re-runs when the durable Realm projection
-        // changes. Account sync is also a wake-up axis because a same-account
+        // changes. Device-list changes are also a wake-up axis because a same-account
         // fresh device adds no Realm membership Event: its accepted device
         // authorization is what must trigger a targeted Add/Welcome attempt.
-        let admit_realm_live_epoch = realm_live_epoch;
-        let admit_account_cursor = sync_cursor;
         let admit_in_flight = mls_admission_reconcile_in_flight;
         let admit_pending = mls_admission_reconcile_pending;
         let admit_retry_attempt = mls_admission_retry_attempt;
@@ -446,47 +458,44 @@ pub(super) fn install(scope: &Scope, context: Rc<InksonContext>) {
         {
             let context = context.clone();
             let task_scope = scope.clone();
-            scope.effect(move || {
-            let state_store = context.state_store.clone();
-            let admit_state_store = state_store.clone();
-            if !secure_store_ready_for_admit.get() {
-                return;
-            }
-            let Some(account) = active_account.get() else {
-                return;
-            };
-            let base = account.server_url.to_string();
-            let description = server_description.get();
-            if !StationFeature::MlsAdmission.ready(description.as_ref())
-                || !sync_bootstrap_complete.get()
-            {
-                return;
-            }
-            let session = token.get();
-            let actor = account.principal_id().to_string();
-            let device = account.device_id.clone();
-            if base.trim().is_empty() || session.trim().is_empty() || actor.trim().is_empty() {
-                return;
-            }
-            // Durable Realm changes are the admission freshness axis. The
-            // account cursor additionally wakes same-account endpoint
-            // admission after a device authorization. It remains only a
-            // scheduling hint; reconciliation re-reads the durable device list
-            // and accepted Realm history before authoring anything.
-            let _ = admit_realm_live_epoch.get();
-            let _ = admit_account_cursor.get();
-            let _ = admit_pending.get();
-            let candidate_realms = admit_state_store.read(|store| {
-                // The durable Realm epoch is the projection trigger.
-                crate::mls::admission_reconcile::mls_admission_candidate_realms_for_actor(
-                    store, &actor,
-                )
-            });
-            if candidate_realms.is_empty() {
-                // Make a stuck admin observable. wasm tracing is capped at
-                // WARN, so INFO/DEBUG here would be invisible — emit a
-                // throttled WARN naming the blocking cause.
-                let Some(diag) = admit_state_store.read(|store| {
+            install_admission_wakeup(scope, context.clone(), move || {
+                let state_store = context.state_store.clone();
+                let admit_state_store = state_store.clone();
+                if !secure_store_ready_for_admit.get() {
+                    return;
+                }
+                let Some(account) = active_account.get() else {
+                    return;
+                };
+                let base = account.server_url.to_string();
+                let description = server_description.get();
+                if !StationFeature::MlsAdmission.ready(description.as_ref())
+                    || !sync_bootstrap_complete.get()
+                {
+                    return;
+                }
+                let session = token.get();
+                let actor = account.principal_id().to_string();
+                let device = account.device_id.clone();
+                if base.trim().is_empty() || session.trim().is_empty() || actor.trim().is_empty() {
+                    return;
+                }
+                // The enclosing wakeup observes Realm and device-list changes.
+                // An unrelated Account cursor is not admission work. These remain
+                // scheduling hints: reconciliation independently verifies accepted
+                // history and current endpoint authority before authoring anything.
+                let _ = admit_pending.get();
+                let candidate_realms = admit_state_store.read(|store| {
+                    // The durable Realm epoch is the projection trigger.
+                    crate::mls::admission_reconcile::mls_admission_candidate_realms_for_actor(
+                        store, &actor,
+                    )
+                });
+                if candidate_realms.is_empty() {
+                    // Make a stuck admin observable. wasm tracing is capped at
+                    // WARN, so INFO/DEBUG here would be invisible — emit a
+                    // throttled WARN naming the blocking cause.
+                    let Some(diag) = admit_state_store.read(|store| {
                     let encrypted_local_realms = store
                         .load()
                         .realm_tree_projections
@@ -514,57 +523,72 @@ pub(super) fn install(scope: &Scope, context: Rc<InksonContext>) {
                 }) else {
                     return;
                 };
-                if admit_diag_last.get() != diag {
-                    { let next_value = diag.clone(); admit_diag_last.revise(|current| *current = next_value) };
+                    if admit_diag_last.get() != diag {
+                        {
+                            let next_value = diag.clone();
+                            admit_diag_last.revise(|current| *current = next_value)
+                        };
+                        tracing::warn!(
+                            target: "mls_admission",
+                            %diag,
+                            "admission pre-filter blocked: no local encrypted Realm has an admission-capable MLS snapshot"
+                        );
+                    }
+                    return;
+                }
+                let candidate_diag = candidate_realms
+                    .iter()
+                    .map(|(realm_id, joined_sig)| format!("{realm_id}:joined=[{joined_sig}]"))
+                    .collect::<Vec<_>>()
+                    .join("|");
+                if admit_diag_last.get() != candidate_diag {
+                    {
+                        let next_value = candidate_diag.clone();
+                        admit_diag_last.revise(|current| *current = next_value)
+                    };
                     tracing::warn!(
                         target: "mls_admission",
-                        %diag,
-                        "admission pre-filter blocked: no local encrypted Realm has an admission-capable MLS snapshot"
+                        candidate_count = candidate_realms.len(),
+                        diag = %candidate_diag,
+                        "admission pre-filter passed: reconciling local encrypted Realm candidates"
                     );
                 }
-                return;
-            }
-            let candidate_diag = candidate_realms
-                .iter()
-                .map(|(realm_id, joined_sig)| format!("{realm_id}:joined=[{joined_sig}]"))
-                .collect::<Vec<_>>()
-                .join("|");
-            if admit_diag_last.get() != candidate_diag {
-                { let next_value = candidate_diag.clone(); admit_diag_last.revise(|current| *current = next_value) };
-                tracing::warn!(
-                    target: "mls_admission",
-                    candidate_count = candidate_realms.len(),
-                    diag = %candidate_diag,
-                    "admission pre-filter passed: reconciling local encrypted Realm candidates"
-                );
-            }
-            // Read in-flight with `peek()` (NOT `()`) so this effect does not
-            // subscribe to the guard and self-spin on set(true)/set(false).
-            // If a real sync/realm-stream edge arrives while a reconcile is
-            // running, remember one pending rerun; completion flips that bit
-            // back to false and lets the subscribed effect run once more.
-            if admit_in_flight.get_untracked() {
-                // Write ONLY on a real false→true transition. This effect
-                // subscribes to `admit_pending` (see the `admit_pending.get()`
-                // read above), and a plain `set()` marks the signal dirty even
-                // when the value is unchanged — so an unconditional set() here
-                // would re-fire this very effect and spin the main thread
-                // (same class as the in_flight self-spin fixed earlier).
-                if !admit_pending.get_untracked() {
-                    { let next_value = true; admit_pending.revise(|current| *current = next_value) };
+                // Read in-flight with `peek()` (NOT `()`) so this effect does not
+                // subscribe to the guard and self-spin on set(true)/set(false).
+                // If a real sync/realm-stream edge arrives while a reconcile is
+                // running, remember one pending rerun; completion flips that bit
+                // back to false and lets the subscribed effect run once more.
+                if admit_in_flight.get_untracked() {
+                    // Write ONLY on a real false→true transition. This effect
+                    // subscribes to `admit_pending` (see the `admit_pending.get()`
+                    // read above), and a plain `set()` marks the signal dirty even
+                    // when the value is unchanged — so an unconditional set() here
+                    // would re-fire this very effect and spin the main thread
+                    // (same class as the in_flight self-spin fixed earlier).
+                    if !admit_pending.get_untracked() {
+                        {
+                            let next_value = true;
+                            admit_pending.revise(|current| *current = next_value)
+                        };
+                    }
+                    return;
                 }
-                return;
-            }
-            // Same guard on the reset path: an unconditional `set(false)` runs
-            // on every non-in-flight pass and is the loop seed — it retriggers
-            // the subscribed effect with no external change. Only clear a flag
-            // that is actually set.
-            if admit_pending.get_untracked() {
-                { let next_value = false; admit_pending.revise(|current| *current = next_value) };
-            }
-            { let next_value = true; admit_in_flight.revise(|current| *current = next_value) };
-            if let Err(error) = crate::runtime_helpers::spawn_owned(&task_scope, async move {
-                let outcome =
+                // Same guard on the reset path: an unconditional `set(false)` runs
+                // on every non-in-flight pass and is the loop seed — it retriggers
+                // the subscribed effect with no external change. Only clear a flag
+                // that is actually set.
+                if admit_pending.get_untracked() {
+                    {
+                        let next_value = false;
+                        admit_pending.revise(|current| *current = next_value)
+                    };
+                }
+                {
+                    let next_value = true;
+                    admit_in_flight.revise(|current| *current = next_value)
+                };
+                if let Err(error) = crate::runtime_helpers::spawn_owned(&task_scope, async move {
+                    let outcome =
                     crate::transport::auth::with_authed_api(&base, session, |api| async move {
                         let mut admitted_total = 0_usize;
                         let mut deferred_total = 0_usize;
@@ -590,78 +614,105 @@ pub(super) fn install(scope: &Scope, context: Rc<InksonContext>) {
                         Ok::<_, anyhow::Error>((admitted_total, deferred_total, failures))
                     })
                     .await;
-                let retry_needed = outcome
-                    .as_ref()
-                    .map(|(_, deferred, failures)| *deferred > 0 || !failures.is_empty())
-                    .unwrap_or(true);
-                match &outcome {
-                    Ok((admitted, _, failures)) if *admitted > 0 => {
-                        tracing::warn!(
-                            target: "mls_admission",
-                            admitted = *admitted,
-                            "admitted joined members into MLS group"
-                        );
-                        if !failures.is_empty() {
+                    let retry_needed = outcome
+                        .as_ref()
+                        .map(|(_, deferred, failures)| *deferred > 0 || !failures.is_empty())
+                        .unwrap_or(true);
+                    match &outcome {
+                        Ok((admitted, _, failures)) if *admitted > 0 => {
+                            tracing::warn!(
+                                target: "mls_admission",
+                                admitted = *admitted,
+                                "admitted joined members into MLS group"
+                            );
+                            if !failures.is_empty() {
+                                tracing::warn!(
+                                    target: "mls_admission",
+                                    failures = %failures.join("; "),
+                                    "MLS admission reconcile had per-Realm failures after admitting some members"
+                                );
+                                {
+                                    let next_value = Some(format!(
+                                        "MLS admission reconcile: {}",
+                                        failures.join("; ")
+                                    ));
+                                    admit_last_error.revise(|current| *current = next_value)
+                                };
+                            }
+                        }
+                        Ok((_, _, failures)) if !failures.is_empty() => {
                             tracing::warn!(
                                 target: "mls_admission",
                                 failures = %failures.join("; "),
-                                "MLS admission reconcile had per-Realm failures after admitting some members"
+                                "MLS admission reconcile failed for all attempted Realm candidates"
                             );
-                            { let next_value = Some(format!(
-                                "MLS admission reconcile: {}",
-                                failures.join("; ")
-                            )); admit_last_error.revise(|current| *current = next_value) };
+                            {
+                                let next_value = Some(format!(
+                                    "MLS admission reconcile: {}",
+                                    failures.join("; ")
+                                ));
+                                admit_last_error.revise(|current| *current = next_value)
+                            };
+                        }
+                        Ok(_) => {}
+                        Err(error) => {
+                            tracing::warn!(
+                                target: "mls_admission",
+                                ?error,
+                                "MLS admission reconcile failed"
+                            );
+                            {
+                                let next_value =
+                                    Some(format!("MLS admission reconcile: {error:?}"));
+                                admit_last_error.revise(|current| *current = next_value)
+                            };
                         }
                     }
-                    Ok((_, _, failures)) if !failures.is_empty() => {
-                        tracing::warn!(
-                            target: "mls_admission",
-                            failures = %failures.join("; "),
-                            "MLS admission reconcile failed for all attempted Realm candidates"
-                        );
-                        { let next_value = Some(format!(
-                            "MLS admission reconcile: {}",
-                            failures.join("; ")
-                        )); admit_last_error.revise(|current| *current = next_value) };
-                    }
-                    Ok(_) => {}
-                    Err(error) => {
-                        tracing::warn!(
-                            target: "mls_admission",
-                            ?error,
-                            "MLS admission reconcile failed"
-                        );
-                        { let next_value = Some(format!("MLS admission reconcile: {error:?}")); admit_last_error.revise(|current| *current = next_value) };
-                    }
-                }
 
-                if retry_needed {
-                    // KeyPackage publication and a transient canonical-history
-                    // read failure need not produce another Realm event, so an
-                    // unrelated account cursor is neither a reliable nor a
-                    // bounded retry clock. Hold the single-flight guard across
-                    // an explicit exponential delay, then release one
-                    // coalesced retry: 2, 4, 8, 16, 32, 60 seconds.
-                    let attempt = admit_retry_attempt.get_untracked();
-                    let retry_after_secs = (2_u64 << attempt.min(5)).min(60);
-                    { let next_value = attempt.saturating_add(1).min(5); admit_retry_attempt.revise(|current| *current = next_value) };
-                    if !admit_pending.get_untracked() {
-                        { let next_value = true; admit_pending.revise(|current| *current = next_value) };
+                    if retry_needed {
+                        // KeyPackage publication and a transient canonical-history
+                        // read failure need not produce another Realm event, so an
+                        // unrelated account cursor is neither a reliable nor a
+                        // bounded retry clock. Hold the single-flight guard across
+                        // an explicit exponential delay, then release one
+                        // coalesced retry: 2, 4, 8, 16, 32, 60 seconds.
+                        let attempt = admit_retry_attempt.get_untracked();
+                        let retry_after_secs = (2_u64 << attempt.min(5)).min(60);
+                        {
+                            let next_value = attempt.saturating_add(1).min(5);
+                            admit_retry_attempt.revise(|current| *current = next_value)
+                        };
+                        if !admit_pending.get_untracked() {
+                            {
+                                let next_value = true;
+                                admit_pending.revise(|current| *current = next_value)
+                            };
+                        }
+                        crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(
+                            retry_after_secs,
+                        ))
+                        .await;
+                    } else if admit_retry_attempt.get_untracked() != 0 {
+                        {
+                            let next_value = 0;
+                            admit_retry_attempt.revise(|current| *current = next_value)
+                        };
                     }
-                    crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(
-                        retry_after_secs,
-                    ))
-                    .await;
-                } else if admit_retry_attempt.get_untracked() != 0 {
-                    { let next_value = 0; admit_retry_attempt.revise(|current| *current = next_value) };
+                    {
+                        let next_value = false;
+                        admit_in_flight.revise(|current| *current = next_value)
+                    };
+                    if admit_pending.get_untracked() {
+                        // This transition is the single subscribed retry edge.
+                        {
+                            let next_value = false;
+                            admit_pending.revise(|current| *current = next_value)
+                        };
+                    }
+                }) {
+                    task_scope.report_error(error);
                 }
-                { let next_value = false; admit_in_flight.revise(|current| *current = next_value) };
-                if admit_pending.get_untracked() {
-                    // This transition is the single subscribed retry edge.
-                    { let next_value = false; admit_pending.revise(|current| *current = next_value) };
-                }
-            }) { task_scope.report_error(error); }
-        });
+            });
         }
     }
     {
@@ -1001,5 +1052,52 @@ pub(super) fn install(scope: &Scope, context: Rc<InksonContext>) {
             }) { task_scope.report_error(error); }
         });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn account_cursor_alone_does_not_restart_mls_admission() {
+        let (app, context, _directory) = crate::views::settings::restored_surface_tests::harness();
+        let starts = Rc::new(std::cell::Cell::new(0));
+        let observe = starts.clone();
+        install_admission_wakeup(app.scope(), context.clone(), move || {
+            observe.set(observe.get() + 1);
+        });
+        app.flush().unwrap();
+        assert_eq!(starts.get(), 1);
+        context
+            .sync_cursor
+            .revise(|cursor| *cursor = "ak:cursor:account-data-only".into());
+        app.flush().unwrap();
+        assert_eq!(
+            starts.get(),
+            1,
+            "an Account-only preference update must not scan Realm history"
+        );
+        context.realm_live_epoch.revise(|epoch| *epoch += 1);
+        app.flush().unwrap();
+        assert_eq!(
+            starts.get(),
+            2,
+            "a durable Realm change still wakes admission"
+        );
+        context
+            .device_directory_revision
+            .revise(|revision| *revision += 1);
+        app.flush().unwrap();
+        assert_eq!(
+            starts.get(),
+            3,
+            "device authorization wakes same-account endpoint admission"
+        );
+        context
+            .sync_cursor
+            .revise(|cursor| *cursor = "ak:cursor:another-preference".into());
+        app.flush().unwrap();
+        assert_eq!(starts.get(), 3);
     }
 }

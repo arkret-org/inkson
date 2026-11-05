@@ -69,6 +69,8 @@ pub struct InksonContext {
     pub did_resolution_health: Cage<crate::components::DidResolutionHealth>,
     pub realm_events_route_enabled: Cage<bool>,
     pub device_queue: Cage<usize>,
+    /// Local wakeup after an accepted Device-list notification, never a cursor.
+    pub device_directory_revision: Cage<u64>,
     pub last_error: Cage<Option<String>>,
     pub is_server_admin: Cage<bool>,
     pub needs_device_authorization: Cage<bool>,
@@ -223,6 +225,7 @@ impl InksonContext {
             did_resolution_health: scope.cage(crate::components::DidResolutionHealth::healthy()),
             realm_events_route_enabled: scope.cage(false),
             device_queue: scope.cage(0),
+            device_directory_revision: scope.cage(0),
             last_error: scope.cage(None),
             is_server_admin: scope.cage(false),
             needs_device_authorization: scope.cage(false),
@@ -342,6 +345,7 @@ impl InksonContext {
         self.personal_handles_status
             .revise(|value| *value = "Not published".into());
         self.device_queue.revise(|value| *value = 0);
+        self.device_directory_revision.revise(|value| *value = 0);
         self.is_server_admin.revise(|value| *value = false);
         self.needs_device_authorization
             .revise(|value| *value = false);

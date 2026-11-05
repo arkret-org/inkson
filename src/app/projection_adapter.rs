@@ -16,6 +16,7 @@ pub(super) struct ProjectionAdapter {
     network_state: Cage<String>,
     last_error: Cage<Option<String>>,
     device_queue: Cage<usize>,
+    device_directory_revision: Cage<u64>,
     theme: Cage<String>,
     selected_realm_id: Cage<String>,
 }
@@ -33,6 +34,7 @@ impl ProjectionAdapter {
         selected_realm_id: Cage<String>,
     ) -> Self {
         Self {
+            device_directory_revision: context.device_directory_revision,
             generation: context.session_generation.get_untracked(),
             account: context.active_account.get_untracked(),
             context: Rc::downgrade(&context),
@@ -70,6 +72,10 @@ impl ProjectionSink for ProjectionAdapter {
             }
             ClientProjectionEvent::DeviceQueue { pending } => {
                 self.device_queue.revise(|current| *current = pending);
+            }
+            ClientProjectionEvent::DeviceDirectoryChanged => {
+                self.device_directory_revision
+                    .revise(|revision| *revision = revision.wrapping_add(1));
             }
             ClientProjectionEvent::Theme { value } => {
                 self.theme.revise(|current| *current = value);
@@ -130,6 +136,41 @@ fn fold_sync_status(event: SyncStatusEvent) -> (String, String, Option<String>) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn device_notifications_wake_the_current_session_without_using_its_cursor() {
+        let (app, context, _directory) = crate::views::settings::restored_surface_tests::harness();
+        let adapter = ProjectionAdapter::new(
+            context.clone(),
+            context.projection_events,
+            context.sync_cursor,
+            context.connection_status,
+            context.network_state,
+            context.last_error,
+            context.device_queue,
+            context.theme,
+            context.selected_realm_id,
+        );
+        adapter.projection(ClientProjectionEvent::CursorCheckpoint {
+            scope: "account".into(),
+            cursor: "ak:cursor:preferences".into(),
+        });
+        app.flush().unwrap();
+        assert_eq!(context.device_directory_revision.get_untracked(), 0);
+        adapter.projection(ClientProjectionEvent::DeviceDirectoryChanged);
+        app.flush().unwrap();
+        assert_eq!(context.device_directory_revision.get_untracked(), 1);
+        context
+            .session_generation
+            .revise(|generation| *generation += 1);
+        adapter.projection(ClientProjectionEvent::DeviceDirectoryChanged);
+        app.flush().unwrap();
+        assert_eq!(
+            context.device_directory_revision.get_untracked(),
+            1,
+            "a retired projection adapter cannot wake its replacement's admission"
+        );
+    }
 
     #[test]
     fn projection_events_fold_in_arrival_order() {

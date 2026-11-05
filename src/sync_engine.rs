@@ -1426,9 +1426,7 @@ impl InksonAccountProjector {
             .projection_sink
             .sync_status(SyncStatusEvent::Online);
         refresh_projection_events_from_sync_response(&response, &self.ctx);
-        for account in changed_device_accounts(&response.device_lists()) {
-            crate::identity::device_directory::invalidate_actor(&account.to_string());
-        }
+        invalidate_projected_device_directories(&response, &self.ctx);
         self.ctx
             .projection_sink
             .projection(ClientProjectionEvent::CursorCheckpoint {
@@ -3555,6 +3553,20 @@ fn ingest_member_identity_events_from_projection(
 }
 
 /// Device authority invalidation preserves each account's Station binding.
+fn invalidate_projected_device_directories(response: &AccountFrameStep, ctx: &SyncEngineContext) {
+    let accounts = changed_device_accounts(&response.device_lists());
+    if accounts.is_empty() {
+        return;
+    }
+    for account in accounts {
+        crate::identity::device_directory::invalidate_actor(&account.to_string());
+    }
+    // Publish after the durable frame and cache invalidation. New endpoints
+    // need admission even when they do not change Realm membership.
+    ctx.projection_sink
+        .projection(ClientProjectionEvent::DeviceDirectoryChanged);
+}
+
 fn changed_device_accounts(
     changes: &AccountSubscribeDeviceListChanges,
 ) -> BTreeSet<arkret_sdk::AccountId> {
@@ -3996,6 +4008,31 @@ mod tests {
         fn projection(&self, event: ClientProjectionEvent) {
             self.events.borrow_mut().push(event);
         }
+    }
+
+    #[test]
+    fn only_projected_device_list_changes_wake_endpoint_admission() {
+        let (projector, _) = retired_account_attempt();
+        let probe = Rc::new(CheckpointProjectionProbe::default());
+        projector.ctx.projection_sink.install(probe.clone());
+        let mut response = empty_response("ak:cursor:account-only");
+        invalidate_projected_device_directories(&response, &projector.ctx);
+        assert!(probe.events.borrow().is_empty());
+        let account = arkret_sdk::ActorId::account(projector.ctx.account.authority.clone());
+        for (changed_ids, left_ids) in [(vec![account.clone()], vec![]), (vec![], vec![account])] {
+            response.frame.device_lists = Some(AccountSubscribeDeviceListChanges {
+                changed_ids,
+                left_ids,
+            });
+            invalidate_projected_device_directories(&response, &projector.ctx);
+        }
+        assert_eq!(
+            *probe.events.borrow(),
+            vec![ClientProjectionEvent::DeviceDirectoryChanged; 2]
+        );
+        response.frame.device_lists = Some(Default::default());
+        invalidate_projected_device_directories(&response, &projector.ctx);
+        assert_eq!(probe.events.borrow().len(), 2);
     }
 
     #[tokio::test]

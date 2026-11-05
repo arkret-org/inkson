@@ -8,6 +8,7 @@ pub enum ClientProjectionEvent {
     CursorCheckpoint { scope: String, cursor: String },
     CursorReset { scope: String },
     DeviceQueue { pending: usize },
+    DeviceDirectoryChanged,
     Theme { value: String },
     SelectedRealm { realm_id: String },
     Reset,
