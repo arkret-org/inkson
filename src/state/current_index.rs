@@ -920,6 +920,38 @@ impl CurrentIndex {
         location: CurrentIndexLocation,
         committed_generation: impl FnOnce() -> anyhow::Result<u64>,
     ) -> anyhow::Result<Self> {
+        Self::open_committed_using(
+            authority,
+            location,
+            committed_generation,
+            platform::Backend::open,
+        )
+        .await
+    }
+
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+    pub(crate) async fn open_existing_committed(
+        authority: &AccountId,
+        location: CurrentIndexLocation,
+        committed_generation: impl FnOnce() -> anyhow::Result<u64>,
+    ) -> anyhow::Result<Self> {
+        let backend = platform::Backend::existing_for_evidence()?;
+        Self::open_committed_using(authority, location, committed_generation, move |_| {
+            std::future::ready(Ok(backend))
+        })
+        .await
+    }
+
+    async fn open_committed_using<F, Fut>(
+        authority: &AccountId,
+        location: CurrentIndexLocation,
+        committed_generation: impl FnOnce() -> anyhow::Result<u64>,
+        open_backend: F,
+    ) -> anyhow::Result<Self>
+    where
+        F: FnOnce(CurrentIndexLocation) -> Fut,
+        Fut: std::future::Future<Output = anyhow::Result<platform::Backend>>,
+    {
         #[cfg(not(target_arch = "wasm32"))]
         let location =
             tokio::task::spawn_blocking(move || -> anyhow::Result<CurrentIndexLocation> {
@@ -987,7 +1019,7 @@ impl CurrentIndex {
             (None, None) => unreachable!("committed generation was never read"),
         };
         let _cross = publication_lock::PublicationLock::acquire(location.clone()).await?;
-        let backend = platform::Backend::open(location.clone()).await?;
+        let backend = open_backend(location.clone()).await?;
         let scope = super::account_storage_scope(authority)?;
         let published = backend.get(&super::account_store::root_key(&scope)).await?;
         if let Some(root) = published.as_ref() {

@@ -18,6 +18,19 @@ pub(crate) struct Backend {
 }
 
 impl Backend {
+    /// Test observers use the initialized connection and key. Missing or
+    /// closed storage must not be repaired by opening or deriving anything.
+    #[cfg(feature = "wasm-localstorage-secrets-test")]
+    pub(crate) fn existing_for_evidence() -> anyhow::Result<Self> {
+        let store = super::WASM_INDEXEDDB_SECURE_KEY_STORE
+            .get()
+            .ok_or_else(|| anyhow::anyhow!("product IndexedDB is not initialized"))?;
+        Ok(Self {
+            db: store.db.clone(),
+            key: store.crypto_key.clone(),
+        })
+    }
+
     pub(crate) async fn open(
         _location: crate::state::CurrentIndexLocation,
     ) -> anyhow::Result<Self> {

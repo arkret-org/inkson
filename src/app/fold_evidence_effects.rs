@@ -215,7 +215,7 @@ fn install_test_hooks(scope: &Scope, context: Rc<InksonContext>) {
                         .clone();
                     let store = context.state_store.handle();
                     let location = store.read(|state| state.current_index_location());
-                    let index = crate::state::current_index::CurrentIndex::open_committed(
+                    let index = crate::state::current_index::CurrentIndex::open_existing_committed(
                         &authority,
                         location,
                         || {
