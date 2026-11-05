@@ -786,6 +786,53 @@ impl LocalConfigStore {
         Ok(profiles)
     }
 
+    /// Fill an unnamed active profile from its authenticated viewer response.
+    /// This metadata write never hydrates or rewrites a credential slot.
+    pub(crate) fn repair_active_profile_label(
+        &self,
+        account: &ActiveAccountContext,
+        handle: &str,
+    ) -> anyhow::Result<bool> {
+        let handle = handle.trim();
+        if handle.is_empty() {
+            return Ok(false);
+        }
+        let matches = |candidate: &ActiveAccountContext| {
+            candidate.profile_id == account.profile_id
+                && candidate.authority == account.authority
+                && candidate.device_id == account.device_id
+                && candidate.principal_control_realm_id == account.principal_control_realm_id
+                && candidate.server_url == account.server_url
+        };
+        let config = self.cached.clone().or_else(|| self.read_persisted_config());
+        if !config
+            .and_then(|config| config.active_account)
+            .as_ref()
+            .is_some_and(matches)
+        {
+            return Ok(false);
+        }
+        let mut profiles = self.load_profile_metadata()?;
+        if profiles.active_profile_id.as_deref() != Some(account.profile_id.as_str()) {
+            return Ok(false);
+        }
+        let Some(profile) = profiles
+            .profiles
+            .iter_mut()
+            .find(|profile| matches(&profile.account))
+        else {
+            return Ok(false);
+        };
+        if !profile.label.trim().is_empty() {
+            return Ok(false);
+        }
+        profile.label = handle.to_owned();
+        let result = self.write_profiles_blob(&profiles);
+        self.record_persist_result(&result);
+        result?;
+        Ok(true)
+    }
+
     /// Persist a local selection without touching any account's credential slot.
     /// In particular, `save_profiles` is intentionally not used here: its
     /// credential-redaction writer would clear secrets from metadata-only rows.
@@ -1018,6 +1065,80 @@ mod tests {
             config.stations,
             vec![Url::parse("https://local.host").unwrap()]
         );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn active_profile_label_repair_preserves_credentials_selection_and_custom_labels() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.json");
+        let first = crate::test_support::AccountFixture::new("ak:did_core:web:label.example")
+            .profile_id(format!("profile-{}", uuid_v7()))
+            .device(&format!("ak:device:{}", uuid_v7()))
+            .build();
+        let mut second = crate::test_support::AccountFixture::new("ak:did_core:web:label.example")
+            .station("ak:did_core:web:other-station.example")
+            .profile_id(format!("profile-{}", uuid_v7()))
+            .device(&format!("ak:device:{}", uuid_v7()))
+            .build();
+        // Separate Accounts retain separate PCRs even with the same principal.
+        second.principal_control_realm_id =
+            crate::test_support::realm_id("ak:realm:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1");
+        let mut profiles = MultiProfileConfig::default();
+        profiles
+            .upsert_and_activate(AccountProfile::new(first.clone(), "first-secret".into()))
+            .unwrap();
+        profiles
+            .upsert_and_activate(AccountProfile::new(second.clone(), "second-secret".into()))
+            .unwrap();
+        let mut store = LocalConfigStore::with_path(&path);
+        persist_session_credential_secret(&first, "first-secret").unwrap();
+        persist_session_credential_secret(&second, "second-secret").unwrap();
+        store
+            .save_account_selection(Some(second.clone()), &profiles)
+            .unwrap();
+        let config_before = fs::read(&path).unwrap();
+        assert!(
+            !store
+                .repair_active_profile_label(&first, "wrong-station")
+                .unwrap()
+        );
+        let mut replaced_pcr = second.clone();
+        replaced_pcr.principal_control_realm_id = first.principal_control_realm_id.clone();
+        assert!(
+            !store
+                .repair_active_profile_label(&replaced_pcr, "stale-pcr")
+                .unwrap()
+        );
+        let mut replaced_device = second.clone();
+        replaced_device.device_id = first.device_id.clone();
+        assert!(
+            !store
+                .repair_active_profile_label(&replaced_device, "stale-device")
+                .unwrap()
+        );
+        assert!(
+            store
+                .repair_active_profile_label(&second, " verified-handle ")
+                .unwrap()
+        );
+        assert!(
+            !store
+                .repair_active_profile_label(&second, "replacement")
+                .unwrap()
+        );
+        let restored = LocalConfigStore::with_path(&path).load_profiles();
+        assert_eq!(restored.active_profile_id, Some(second.profile_id.clone()));
+        assert_eq!(restored.profiles[0].label, "");
+        assert_eq!(restored.profiles[0].session_credential, "first-secret");
+        assert_eq!(restored.profiles[1].label, "verified-handle");
+        assert_eq!(restored.profiles[1].session_credential, "second-secret");
+        assert_eq!(fs::read(&path).unwrap(), config_before);
+        let raw = fs::read_to_string(store.profiles_path()).unwrap();
+        assert!(!raw.contains("first-secret"));
+        assert!(!raw.contains("second-secret"));
+        clear_session_credential_secret(&first);
+        clear_session_credential_secret(&second);
     }
 
     #[cfg(not(target_arch = "wasm32"))]

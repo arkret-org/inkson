@@ -381,6 +381,7 @@ pub fn account_switcher(scope: &Scope, context: Rc<InksonContext>, enabled: Vary
                 context.account_revision.get(),
                 context.account_view_retired.get(),
                 context.token.get(),
+                context.account_primary_handle.get(),
             )
         }
     });

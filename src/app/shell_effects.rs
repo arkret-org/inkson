@@ -236,6 +236,14 @@ pub(super) fn install(scope: &Scope, context: Rc<InksonContext>, ui: Rc<ShellSta
             }
             set_state(current_device_display_name, device_display_name);
             if !primary_handle.is_empty() {
+                if let Some(account) = account.as_ref() {
+                    if let Err(error) = application
+                        .config_store
+                        .with(|store| store.repair_active_profile_label(account, &primary_handle))
+                    {
+                        tracing::warn!(%error, "active profile label repair failed");
+                    }
+                }
                 set_state(account_primary_handle, primary_handle.clone());
                 set_state(
                     personal_handles_status,
