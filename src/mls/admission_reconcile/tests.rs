@@ -10,6 +10,138 @@ use serde_json::json;
 
 use super::*;
 
+#[test]
+fn self_authored_membership_join_selects_its_exact_device() {
+    let realm =
+        crate::test_support::realm_id("ak:realm:AY789mrKRCQEVlbVgiTgLdjVO5oCMJiUCrF-D-JlRNxI");
+    let account = crate::test_support::authority("did:web:self-join.example");
+    let actor = arkret_sdk::ActorId::account(account.clone());
+    let device = crate::test_support::device_id("ak:device:01964137-0000-7000-8000-000000000001");
+    let payload: arkret_models_collaboration::governance::membership_invite::MembershipPayload =
+        serde_json::from_value(json!({
+            "member_id": actor, "membership": "join",
+        }))
+        .unwrap();
+    let event = arkret_wire::test_support::raw_event_for_actor_at(
+        "ak.member.state",
+        arkret_sdk::ScopeRef::Realm {
+            realm_id: realm.clone(),
+        },
+        actor.clone(),
+        serde_json::to_value(payload).unwrap(),
+        chrono::Utc::now(),
+    )
+    .unwrap();
+    let mut event = arkret_sdk::AuthoredEvent::finalize_with_digest_suite(
+        event,
+        arkret_sdk::DigestSuite::Sha256,
+    )
+    .unwrap();
+    crate::event_signer::build_ed25519_device_signer(
+        [87; 32],
+        "did:web:self-join.example",
+        device.as_str(),
+    )
+    .sign_sdk_event_with_context(
+        &mut event,
+        crate::event_signer::ProducerProofContext::new()
+            .with_digest_suite(arkret_sdk::DigestSuite::Sha256),
+    )
+    .unwrap();
+    event
+        .validate_proof_bindings_with_digest_suite(arkret_sdk::DigestSuite::Sha256)
+        .unwrap();
+    // This structural accepted coordinate tests the endpoint selector, not
+    // the network's Station signature or chain verification.
+    let commit = arkret_wire::test_support::structural_realm_commit_at(
+        &event,
+        realm.clone(),
+        701,
+        arkret_sdk::DidUrl::new("did:web:authority.example#key-1").unwrap(),
+        chrono::Utc::now(),
+    );
+    let source = arkret_wire::CurrentRevision {
+        commit_id: commit.commit_id.clone(),
+        stream_position: 701,
+    };
+    let page = crate::models::BackfillView(arkret_wire::StreamScanResponseBody {
+        committed_events: vec![arkret_wire::CommittedEventView::Full(
+            arkret_wire::CommittedEventFullView {
+                commit,
+                event: event.into_event(),
+            },
+        )],
+        readable_floor: None,
+        truncated: false,
+    });
+    let route = member_join_route_from_current_original(&page, &realm, &actor, &source).unwrap();
+    assert_eq!(route.destination_id, account.station_id.to_string());
+    assert_eq!(route.target_device_id.as_deref(), Some(device.as_str()));
+    for scenario in [
+        "leave",
+        "knock",
+        "ban",
+        "reviewer",
+        "other_member",
+        "payload_realm",
+        "scope",
+        "proof_controller",
+    ] {
+        let mut page = page.clone();
+        let arkret_wire::CommittedEventView::Full(row) = &mut page.0.committed_events[0] else {
+            unreachable!()
+        };
+        let other = crate::test_support::authority_at_station(
+            account.principal_id.as_str(),
+            "did:web:other-station.example",
+        );
+        match scenario {
+            "leave" | "knock" | "ban" => {
+                row.event
+                    .payload
+                    .insert("membership".into(), json!(scenario));
+            }
+            "reviewer" => {
+                row.event.actor_id = arkret_sdk::ActorId::account(crate::test_support::authority(
+                    "did:web:reviewer.example",
+                ))
+            }
+            "other_member" => {
+                row.event.payload.insert(
+                    "member_id".into(),
+                    json!(arkret_sdk::ActorId::account(other)),
+                );
+            }
+            "payload_realm" => {
+                row.event.payload.insert(
+                    "realm_id".into(),
+                    json!("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"),
+                );
+            }
+            "scope" => {
+                row.event.scope_ref = arkret_sdk::ScopeRef::Realm {
+                    realm_id: crate::test_support::realm_id(
+                        "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+                    ),
+                }
+            }
+            "proof_controller" => {
+                row.event
+                    .producer_proof
+                    .as_mut()
+                    .unwrap()
+                    .verification_method =
+                    arkret_sdk::DidUrl::new(format!("did:web:reviewer.example#{device}")).unwrap()
+            }
+            _ => unreachable!(),
+        }
+        assert!(
+            member_join_route_from_current_original(&page, &realm, &actor, &source).is_err(),
+            "{scenario}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn admission_current_requires_complete_account_cut_and_pages_full_actor_ids() {
     let realm = "ak:realm:AY789mrKRCQEVlbVgiTgLdjVO5oCMJiUCrF-D-JlRNxI";

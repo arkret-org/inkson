@@ -328,10 +328,30 @@ fn member_join_route_from_current_original(
         .reducer_input()
         .context("MLS admission current join original is withheld")?;
     anyhow::ensure!(
-        event.realm_id == *realm && event.actor_id == *invitee,
+        event.realm_id == *realm
+            && matches!(&event.scope_ref, arkret_sdk::ScopeRef::Realm { realm_id } if realm_id == realm)
+            && event.actor_id == *invitee,
         "MLS admission join original belongs to another Realm or Actor"
     );
     let subject = match event.kind {
+        arkret_sdk::EventKind::MemberState => {
+            use arkret_models_collaboration::governance::membership_invite::{
+                MembershipPayload, MembershipPayloadState,
+            };
+            let payload: MembershipPayload =
+                serde_json::from_value(serde_json::to_value(&event.payload)?)?;
+            anyhow::ensure!(
+                payload.membership == MembershipPayloadState::Join
+                    && payload.member_id == *invitee
+                    && payload.realm_id.as_ref().is_none_or(|id| id == realm),
+                "MLS admission self-join differs from its current Realm member"
+            );
+            payload
+                .member_id
+                .as_account_id()
+                .cloned()
+                .context("MLS admission self-join has no human Account endpoint")?
+        }
         arkret_sdk::EventKind::InviteAccept => {
             let payload: arkret_sdk::InviteAcceptPayload =
                 serde_json::from_value(serde_json::to_value(&event.payload)?)?;
