@@ -44,6 +44,26 @@ pub(super) fn ordinary_timeline_projection(
                     identity,
                 ),
             );
+            #[cfg(all(target_arch = "wasm32", feature = "spec-conformance"))]
+            {
+                let count = |state: &ClientLocalState| {
+                    state
+                        .raw_operations
+                        .iter()
+                        .filter(|record| {
+                            message_candidates(&record.payload)
+                                .iter()
+                                .any(|candidate| message_kind_is_create(candidate))
+                        })
+                        .count()
+                };
+                tracing::warn!(
+                    raw_message_rows = count(&snapshot.state),
+                    live_raw_message_rows = count(&store.load()),
+                    projected_message_rows = folded.len(),
+                    "Ordinary timeline projection inputs observed"
+                );
+            }
             position_local_timeline_rows(folded)
         })
     })

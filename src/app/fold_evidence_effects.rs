@@ -172,6 +172,30 @@ fn install_test_hooks(scope: &Scope, context: Rc<InksonContext>) {
             })
         },
     );
+    let timeline_context = context.clone();
+    let timeline = Closure::<dyn Fn(String, String) -> String>::new(move |realm, event| {
+        if !timeline_context.session_generation.is_alive() {
+            return serde_json::json!({"error":"owner_retired"}).to_string();
+        }
+        let Some(account) = timeline_context.active_account.get_untracked() else {
+            return serde_json::json!({"error":"account_absent"}).to_string();
+        };
+        let Ok(realm) = arkret_sdk::RealmId::new(realm) else {
+            return serde_json::json!({"error":"invalid_realm"}).to_string();
+        };
+        let event = if event.is_empty() {
+            None
+        } else {
+            match arkret_sdk::EventId::new(event) {
+                Ok(event) => Some(event),
+                Err(_) => return serde_json::json!({"error":"invalid_event"}).to_string(),
+            }
+        };
+        timeline_context.state_store.read(|store| {
+            ordinary_timeline_evidence(store, &account.authority, &realm, event.as_ref())
+                .to_string()
+        })
+    });
     let receiver_context = context;
     let receiver = Closure::<dyn Fn(String) -> String>::new(move |command: String| {
         if !receiver_context.session_generation.is_alive() {
@@ -189,6 +213,7 @@ fn install_test_hooks(scope: &Scope, context: Rc<InksonContext>) {
         (SIDECAR_FOLD_EVIDENCE_HOOK, hook.as_ref()),
         ("__inkson_signal_sender_evidence", sender.as_ref()),
         ("__inkson_signal_receiver_evidence", receiver.as_ref()),
+        ("__inkson_ordinary_timeline_evidence", timeline.as_ref()),
     ] {
         if js_sys::Reflect::set(&window, &wasm_bindgen::JsValue::from_str(name), function).is_err()
         {
@@ -202,6 +227,7 @@ fn install_test_hooks(scope: &Scope, context: Rc<InksonContext>) {
             (SIDECAR_FOLD_EVIDENCE_HOOK, hook.as_ref()),
             ("__inkson_signal_sender_evidence", sender.as_ref()),
             ("__inkson_signal_receiver_evidence", receiver.as_ref()),
+            ("__inkson_ordinary_timeline_evidence", timeline.as_ref()),
         ] {
             let key = wasm_bindgen::JsValue::from_str(name);
             if js_sys::Reflect::get(&window, &key).is_ok_and(|current| current == *function) {
@@ -210,5 +236,142 @@ fn install_test_hooks(scope: &Scope, context: Rc<InksonContext>) {
         }
     }) {
         scope.report_error(error);
+    }
+}
+
+#[cfg(any(
+    test,
+    all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test")
+))]
+fn ordinary_timeline_evidence(
+    store: &crate::state::LocalStateStore,
+    account: &arkret_sdk::AccountId,
+    realm: &arkret_sdk::RealmId,
+    event: Option<&arkret_sdk::EventId>,
+) -> serde_json::Value {
+    use crate::identity::committed_sender::{
+        ChatProofVerdict, verify_committed_chat_producer_proof,
+    };
+    use crate::state::projection::message_ops::{message_candidates, message_kind_is_create};
+    if store.active_authority().as_ref() != Some(account) {
+        return serde_json::json!({"error":"account_mismatch"});
+    }
+    let state = store.load();
+    let mut count = 0;
+    let mut exact = Vec::new();
+    for record in &state.raw_operations {
+        let candidates = message_candidates(&record.payload);
+        if record.realm_id.as_deref() != Some(realm.as_str())
+            || !candidates
+                .iter()
+                .any(|candidate| message_kind_is_create(candidate))
+        {
+            continue;
+        }
+        count += 1;
+        if !event.is_some_and(|event| {
+            candidates.iter().any(|candidate| {
+                candidate
+                    .get("event_id")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(event.as_str())
+            })
+        }) || exact.len() == 8
+        {
+            continue;
+        }
+        let proof = match verify_committed_chat_producer_proof(&record.payload) {
+            ChatProofVerdict::Verified => "verified",
+            ChatProofVerdict::Rejected => "rejected",
+            ChatProofVerdict::Unresolved => "unresolved",
+            ChatProofVerdict::Unattributed => "unattributed",
+        };
+        let strand = candidates
+            .iter()
+            .find_map(|candidate| {
+                candidate
+                    .get("strand_id")
+                    .and_then(serde_json::Value::as_str)
+            })
+            .and_then(|value| arkret_sdk::StrandId::new(value.to_owned()).ok());
+        exact.push(serde_json::json!({
+            "top_level_signed":record.payload.get("producer_proof").is_some_and(serde_json::Value::is_object),
+            "nested_signed":record.payload.get("event").and_then(|value| value.get("producer_proof")).is_some_and(serde_json::Value::is_object),
+            "proof_verdict":proof,"strand_id":strand,
+        }));
+    }
+    let stream = arkret_sdk::CommitStreamRef::Realm {
+        realm_id: realm.clone(),
+    };
+    let checkpoint = store.verified_commit_stream_cursor(&stream);
+    serde_json::json!({
+        "raw_message_count":count,
+        "exact_records":exact,
+        "verified_message_count":state.verified_message_commits.iter().filter(|row| row.accepted_ref.stream_ref.realm_id() == realm).count(),
+        "exact_committed_count":state.verified_message_commits.iter().filter(|row| event == Some(&row.accepted_ref.event_id)).count(),
+        "checkpoint_readable":checkpoint.is_ok(),
+        "checkpoint_position":checkpoint.ok().flatten().map(|head| head.stream_position.to_string()),
+    })
+}
+
+#[cfg(test)]
+mod timeline_evidence_tests {
+    use super::*;
+
+    #[test]
+    fn ordinary_history_evidence_is_read_only_and_contains_no_content_or_secrets() {
+        let placeholder =
+            arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [31; 32]);
+        let strand = arkret_sdk::StrandId::from_event_id(&placeholder);
+        let (bundle, _, rows) = crate::test_support::committed_event::verified_realm_fixture_as(
+            arkret_sdk::RealmId::from_event_id(&placeholder),
+            vec![(
+                "ak.message.create".into(),
+                serde_json::json!({"strand_id":strand,"track_name":"discussion",
+                "content":{"kind":"ak.content.text","body":"fixture-sensitive-content"}}),
+            )],
+            "alice.example",
+            "ak:device:0196419b-0000-7000-8000-000000000001",
+        );
+        let account = crate::test_support::AccountFixture::new("did:web:alice.example")
+            .station("ak:did_core:web:station.example")
+            .build();
+        let directory = tempfile::tempdir().unwrap();
+        let mut store =
+            crate::state::LocalStateStore::with_path(directory.path().join("evidence.json"));
+        store.switch_active_account(&account).unwrap();
+        let event = &rows[0].event;
+        store.upsert_raw_operation(event.event_id.to_string(), Some(bundle.realm_id.to_string()), serde_json::json!({
+            "event":event,"event_id":event.event_id,"session_grant":"fixture-sensitive-grant","private_material":"fixture-sensitive-private-material"
+        }));
+        let before = store.load();
+        let evidence = ordinary_timeline_evidence(
+            &store,
+            &account.authority,
+            &bundle.realm_id,
+            Some(&event.event_id),
+        );
+        assert_eq!(evidence["raw_message_count"], 1);
+        assert_eq!(evidence["exact_records"][0]["proof_verdict"], "verified");
+        assert_eq!(evidence["exact_records"][0]["nested_signed"], true);
+        let encoded = evidence.to_string();
+        for private in [
+            "fixture-sensitive-content",
+            "fixture-sensitive-grant",
+            "fixture-sensitive-private-material",
+            "signature",
+            "session_grant",
+        ] {
+            assert!(!encoded.contains(private));
+        }
+        assert_eq!(store.load(), before);
+        let other = arkret_sdk::AccountId::new(
+            "ak:did_core:web:bob.example".parse().unwrap(),
+            account.authority.station_id.clone(),
+        );
+        assert_eq!(
+            ordinary_timeline_evidence(&store, &other, &bundle.realm_id, Some(&event.event_id)),
+            serde_json::json!({"error":"account_mismatch"})
+        );
     }
 }
