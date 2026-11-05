@@ -197,6 +197,70 @@ fn install_test_hooks(scope: &Scope, context: Rc<InksonContext>) {
                     .to_string()
             })
         });
+    let cut_scope = scope.downgrade();
+    let cut_context = context.clone();
+    let current_cut = Closure::<dyn Fn(String) -> js_sys::Promise>::new(move |realm: String| {
+        let (reply, received) = tokio::sync::oneshot::channel();
+        if let Some(scope) = cut_scope.upgrade() {
+            let context = cut_context.clone();
+            if let Err(error) = crate::runtime_helpers::spawn_owned(&scope, async move {
+                let result: anyhow::Result<serde_json::Value> = async {
+                    let realm = arkret_sdk::RealmId::new(realm)?;
+                    let generation = context.session_generation.get_untracked();
+                    let account = context.active_account.get_untracked();
+                    let authority = account
+                        .as_ref()
+                        .ok_or_else(|| anyhow::anyhow!("account absent"))?
+                        .authority
+                        .clone();
+                    let store = context.state_store.handle();
+                    let location = store.read(|state| state.current_index_location());
+                    let index = crate::state::current_index::CurrentIndex::open_committed(
+                        &authority,
+                        location,
+                        || {
+                            anyhow::ensure!(
+                                context.session_matches(generation, &account),
+                                "session replaced"
+                            );
+                            store.read(|state| {
+                                anyhow::ensure!(
+                                    state.active_authority().as_ref() == Some(&authority)
+                                        && !state.current_reset_required()
+                                        && state.current_generation() > 0,
+                                    "current index is not installed for this account"
+                                );
+                                Ok(state.current_generation())
+                            })
+                        },
+                    )
+                    .await?;
+                    let heads = index.read_complete_cut_heads(&realm).await?;
+                    anyhow::ensure!(
+                        context.session_matches(generation, &account),
+                        "session replaced"
+                    );
+                    Ok(serde_json::json!({"complete":heads.is_some(),
+                        "heads":heads.unwrap_or_default()}))
+                }
+                .await;
+                // Export only typed public coordinates, never storage contents
+                // or arbitrary error messages. This observer performs no write.
+                let safe =
+                    result.unwrap_or_else(|_| serde_json::json!({"complete":false,"heads":[]}));
+                let _ = reply.send(safe.to_string());
+            }) {
+                scope.report_error(error);
+            }
+        }
+        wasm_bindgen_futures::future_to_promise(async move {
+            Ok(wasm_bindgen::JsValue::from_str(
+                &received.await.unwrap_or_else(|_| {
+                    serde_json::json!({"complete":false,"heads":[]}).to_string()
+                }),
+            ))
+        })
+    });
     let receiver_context = context;
     let receiver = Closure::<dyn Fn(String) -> String>::new(move |command: String| {
         if !receiver_context.session_generation.is_alive() {
@@ -215,6 +279,7 @@ fn install_test_hooks(scope: &Scope, context: Rc<InksonContext>) {
         ("__inkson_signal_sender_evidence", sender.as_ref()),
         ("__inkson_signal_receiver_evidence", receiver.as_ref()),
         ("__inkson_ordinary_timeline_evidence", timeline.as_ref()),
+        ("__inkson_durable_current_cut", current_cut.as_ref()),
     ] {
         if js_sys::Reflect::set(&window, &wasm_bindgen::JsValue::from_str(name), function).is_err()
         {
@@ -229,6 +294,7 @@ fn install_test_hooks(scope: &Scope, context: Rc<InksonContext>) {
             ("__inkson_signal_sender_evidence", sender.as_ref()),
             ("__inkson_signal_receiver_evidence", receiver.as_ref()),
             ("__inkson_ordinary_timeline_evidence", timeline.as_ref()),
+            ("__inkson_durable_current_cut", current_cut.as_ref()),
         ] {
             let key = wasm_bindgen::JsValue::from_str(name);
             if js_sys::Reflect::get(&window, &key).is_ok_and(|current| current == *function) {

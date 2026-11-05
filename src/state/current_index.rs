@@ -1468,6 +1468,34 @@ impl CurrentIndex {
         Ok(complete.then_some(generation))
     }
 
+    /// Public coordinates of one complete durable cut, read under the same
+    /// publication lease as its completeness check. Test evidence must not
+    /// combine an unrelated history checkpoint with an older current view.
+    #[cfg(any(
+        test,
+        all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test")
+    ))]
+    pub(crate) async fn read_complete_cut_heads(
+        &self,
+        realm: &arkret_sdk::RealmId,
+    ) -> anyhow::Result<Option<Vec<arkret_wire::CommitStreamHead>>> {
+        let _lease = self.acquire_lease().await?;
+        anyhow::ensure!(
+            !self.is_poisoned(),
+            "current pointer durability is unresolved"
+        );
+        let progress = self
+            .progress_at(realm.as_str(), self.generation.load(Ordering::Acquire))
+            .await?;
+        if !progress_is_complete_cut(&progress, realm) {
+            return Ok(None);
+        }
+        Ok(progress
+            .signed_snapshot
+            .map(|cut| cut.stream_heads)
+            .or_else(|| progress.baseline.map(|cut| cut.coverage.stream_heads)))
+    }
+
     /// Read the exact MLS group at the installed baseline cut after all
     /// authorized streams are covered. `None` is the answer of that complete
     /// cut: the scope has no accepted `ak.mls.genesis`. An incomplete cut is an
@@ -4534,6 +4562,63 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn durable_cut_evidence_reads_the_installed_current_heads_without_mutation() {
+        let path = path();
+        let index = index(&path, 0).await;
+        let realm = REALM.parse().unwrap();
+        assert_eq!(index.read_complete_cut_heads(&realm).await.unwrap(), None);
+        index
+            .stage_frame(0, &frame(vec![], Some(baseline(CURSORS[0], 1, false))))
+            .await
+            .unwrap()
+            .finish();
+        assert_eq!(index.read_complete_cut_heads(&realm).await.unwrap(), None);
+        index
+            .stage_frame(1, &frame(vec![], Some(baseline(CURSORS[0], 1, true))))
+            .await
+            .unwrap()
+            .finish();
+        let before = index.read_progress(REALM).await.unwrap();
+        let generation = index.generation.load(Ordering::Acquire);
+        for _ in 0..3 {
+            let heads = index
+                .read_complete_cut_heads(&realm)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(heads.len(), 1);
+            assert_eq!(heads[0].stream_position, 1);
+            assert_eq!(heads[0].commit_id.as_str(), COMMIT);
+            assert_eq!(heads[0].stream_ref.realm_id(), &realm);
+        }
+        assert_eq!(index.read_progress(REALM).await.unwrap(), before);
+        assert_eq!(index.generation.load(Ordering::Acquire), generation);
+        assert_eq!(
+            index
+                .read_complete_cut_heads(&OTHER_REALM.parse().unwrap())
+                .await
+                .unwrap(),
+            None
+        );
+        index
+            .stage_frame(2, &frame(vec![], Some(baseline(CURSORS[1], 2, true))))
+            .await
+            .unwrap()
+            .finish();
+        assert_eq!(
+            index
+                .read_complete_cut_heads(&realm)
+                .await
+                .unwrap()
+                .unwrap()[0]
+                .stream_position,
+            2
+        );
+        index.poison();
+        assert!(index.read_complete_cut_heads(&realm).await.is_err());
+    }
+
+    #[tokio::test]
     async fn mls_group_reader_rejects_incomplete_and_invalidated_baselines() {
         let path = path();
         let index = index(&path, 0).await;
@@ -4558,6 +4643,13 @@ mod tests {
                 .is_err()
         );
         assert_eq!(index.read_complete_cut(REALM).await.unwrap(), None);
+        assert_eq!(
+            index
+                .read_complete_cut_heads(&REALM.parse().unwrap())
+                .await
+                .unwrap(),
+            None
+        );
         assert!(
             index
                 .read_progress(REALM)
