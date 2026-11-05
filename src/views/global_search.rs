@@ -571,7 +571,13 @@ fn local_search_with_clock(
                 loop {
                     let remaining = until.signed_duration_since(time.now());
                     if remaining <= chrono::TimeDelta::zero() {
-                        #[cfg(all(target_arch = "wasm32", feature = "spec-conformance"))]
+                        #[cfg(all(
+                            target_arch = "wasm32",
+                            any(
+                                feature = "spec-conformance",
+                                feature = "wasm-localstorage-secrets-test"
+                            )
+                        ))]
                         tracing::warn!(
                             phase = "expiry_elapsed",
                             epoch = state.search_epoch.get_untracked(),
@@ -608,7 +614,13 @@ fn local_search_with_clock(
                 return;
             }
             previous_fence = Some((current.clone(), local_revision));
-            #[cfg(all(target_arch = "wasm32", feature = "spec-conformance"))]
+            #[cfg(all(
+                target_arch = "wasm32",
+                any(
+                    feature = "spec-conformance",
+                    feature = "wasm-localstorage-secrets-test"
+                )
+            ))]
             tracing::warn!(
                 phase = "fence_changed",
                 epoch = state.search_epoch.get_untracked(),
@@ -644,7 +656,13 @@ fn local_search_with_clock(
     }
     state
 }
-#[cfg(all(target_arch = "wasm32", feature = "spec-conformance"))]
+#[cfg(all(
+    target_arch = "wasm32",
+    any(
+        feature = "spec-conformance",
+        feature = "wasm-localstorage-secrets-test"
+    )
+))]
 fn observe_search_holder(
     context: &InksonContext,
     account: &arkret_sdk::AccountId,
@@ -704,14 +722,26 @@ fn observe_search_holder(
     });
 }
 
-#[cfg(all(target_arch = "wasm32", feature = "spec-conformance"))]
+#[cfg(all(
+    target_arch = "wasm32",
+    any(
+        feature = "spec-conformance",
+        feature = "wasm-localstorage-secrets-test"
+    )
+))]
 struct SearchReadObservation {
     owner: glory::ui::WeakScope,
     epoch: Cage<u64>,
     serial: u64,
     complete: bool,
 }
-#[cfg(all(target_arch = "wasm32", feature = "spec-conformance"))]
+#[cfg(all(
+    target_arch = "wasm32",
+    any(
+        feature = "spec-conformance",
+        feature = "wasm-localstorage-secrets-test"
+    )
+))]
 impl Drop for SearchReadObservation {
     fn drop(&mut self) {
         if !self.complete {
@@ -771,12 +801,12 @@ fn run_search(
         .last_search
         .revise(|v| *v = Some((q, authority.clone(), device.clone(), session_generation)));
     let task = scope.owner().spawn(async move {
-        #[cfg(all(target_arch = "wasm32", feature = "spec-conformance"))]
+        #[cfg(all(target_arch = "wasm32", any(feature = "spec-conformance", feature = "wasm-localstorage-secrets-test")))]
         let mut observation = {
             tracing::warn!(phase="read_started", serial, holder_ready=holder_deadline.is_some(), "local search lifecycle");
             SearchReadObservation { owner: owner.clone(), epoch: state.search_epoch, serial, complete:false }
         };
-        #[cfg(all(target_arch = "wasm32", feature = "spec-conformance"))]
+        #[cfg(all(target_arch = "wasm32", any(feature = "spec-conformance", feature = "wasm-localstorage-secrets-test")))]
         observe_search_holder(&context, &authority, &device);
         let response = search_local_with_clock(
             (SearchSource::Live(context.state_store.clone()), time.clone()),
@@ -788,7 +818,7 @@ fn run_search(
             50,
         )
         .await;
-        #[cfg(all(target_arch = "wasm32", feature = "spec-conformance"))]
+        #[cfg(all(target_arch = "wasm32", any(feature = "spec-conformance", feature = "wasm-localstorage-secrets-test")))]
         {
             observation.complete = true;
             tracing::warn!(phase="read_completed", serial, current_serial=state.search_epoch.get_untracked(), success=response.is_ok(), rows=?response.as_ref().ok().map(|(view,_)|view.results.len()), "local search lifecycle");
@@ -803,6 +833,10 @@ fn run_search(
                     && store.search_session_matches(&authority, &device)
                     && search_blocked_actors(store) == blocked
             });
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+        tracing::warn!(phase = "result_gate", serial, current,
+            session_generation_matches = context.session_generation.get_untracked() == session_generation,
+            "local search lifecycle");
         if !current {
             state.results.revise(|v| v.clear());
             state.recheck_at.revise(|v| *v = None);

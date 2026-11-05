@@ -921,6 +921,8 @@ pub(super) fn direct_structure_panel(
             )
         }
     });
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+    let observed_gate = Rc::new(std::cell::Cell::new(None));
     let controls = reactive_distinct(
         source,
         move |scope, (_, selected, is_expanded, chosen_action, main_chat, locale, gate)| {
@@ -942,6 +944,8 @@ pub(super) fn direct_structure_panel(
                 main_chat,
                 locale,
                 matches!(gate, Some(crate::mls::send_gate::MlsSendGate::Encrypted(_))),
+                #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+                observed_gate.clone(),
             )
         },
     );
@@ -971,6 +975,8 @@ fn structure_surface(
     main_chat: Option<String>,
     locale: crate::i18n::UiLocale,
     encryption_ready: bool,
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+    observed_gate: Rc<std::cell::Cell<Option<[bool; 6]>>>,
 ) -> View {
     let realm = &props.realm;
     let actor = arkret_sdk::ActorId::account(props.account.clone());
@@ -1208,7 +1214,32 @@ fn structure_surface(
         let weak = command_scope;
         let on_select = props.on_select.clone();
         let enabled = scope.bond(move || {
-            stable && !pending.get() && !disable_main && (!metadata_action || encryption_ready)
+            let enabled =
+                stable && !pending.get() && !disable_main && (!metadata_action || encryption_ready);
+            #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+            {
+                let coordinates = [
+                    stable,
+                    pending.get_untracked(),
+                    disable_main,
+                    metadata_action,
+                    encryption_ready,
+                    enabled,
+                ];
+                if observed_gate.replace(Some(coordinates)) != Some(coordinates) {
+                    tracing::warn!(
+                        phase = "direct_structure_gate",
+                        stable,
+                        pending = coordinates[1],
+                        main_action_blocked = disable_main,
+                        metadata_action,
+                        encryption_ready,
+                        enabled,
+                        "public UI readiness"
+                    );
+                }
+            }
+            enabled
         });
         children.push(Box::new(
             sapid::button()

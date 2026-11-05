@@ -281,6 +281,8 @@ fn preview(
     controller: ChatController,
     context: &ChatComposerContext,
     probe: &crate::views::secure_send::ScopeSendProbe,
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+    observed_gate: &std::cell::Cell<Option<[bool; 15]>>,
 ) -> Preview {
     let (scope, route) = draft_route(controller, context);
     let private = route == arkret_sdk::AgentMentionRoute::Sidecar;
@@ -375,6 +377,47 @@ fn preview(
             context.selected_realm_pending_mls_binding || creator_reason.is_some(),
             private_blocked || target_missing,
         );
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+    {
+        let coordinates = [
+            private,
+            mixed,
+            unavailable,
+            awaiting,
+            sidecar_blocked,
+            target_missing,
+            creator_reason.is_some(),
+            private_blocked,
+            context.selected_realm_pending_mls_binding,
+            context.send_readiness_checking,
+            !context.selected_channel_security_encrypted && !private,
+            secure_enabled,
+            !text.is_empty(),
+            context.sidecar_send_block_reason.is_some(),
+            context.active_sidecar_session.is_some(),
+        ];
+        if observed_gate.replace(Some(coordinates)) != Some(coordinates) {
+            tracing::warn!(
+                phase = "composer_send_gate",
+                private,
+                mixed,
+                unavailable,
+                awaiting,
+                sidecar_blocked,
+                target_missing,
+                creator_pending = coordinates[6],
+                private_blocked,
+                ordinary_pending = coordinates[8],
+                readiness_checking = coordinates[9],
+                plaintext = coordinates[10],
+                secure_enabled,
+                draft_nonempty = coordinates[12],
+                exchange_blocked = coordinates[13],
+                private_session_installed = coordinates[14],
+                "public UI readiness"
+            );
+        }
+    }
     let title = if target_missing {
         app.tr("chat.composer.private_target_missing")
     } else if private && context.active_sidecar_session.is_none() {
@@ -525,12 +568,16 @@ pub(super) fn chat_composer(
         device.into(),
     );
     let preview_app = app.clone();
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+    let observed_gate = std::cell::Cell::new(None);
     let preview = scope.bond(move || {
         preview(
             &preview_app,
             controller,
             &context.get(),
             &private_probe.get(),
+            #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+            &observed_gate,
         )
     });
     let upload_app = app.clone();
