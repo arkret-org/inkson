@@ -70,8 +70,8 @@ pub(crate) fn page(
     let cleanup_input = input;
     let cleanup_share = share;
     if let Err(error) = scope.on_cleanup(move || {
-        cleanup_input.revise(|value| value.zeroize());
-        cleanup_share.revise(|value| value.zeroize());
+        let _ = cleanup_input.try_revise(|value| value.zeroize());
+        let _ = cleanup_share.try_revise(|value| value.zeroize());
     }) {
         scope.report_error(error);
     }
@@ -605,6 +605,31 @@ fn take_browser_invite() -> Option<String> {
 #[cfg(test)]
 mod join_retry_tests {
     use super::*;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn retiring_invite_page_cleans_live_parent_input_without_accessing_retired_state() {
+        let (app, context, _directory) = crate::views::settings::restored_surface_tests::harness();
+        for (supplied, retire_input_first) in [(false, false), (true, false), (true, true)] {
+            let input_owner = app.scope().child().unwrap();
+            let input = input_owner.cage("fixture-private-invitation".to_owned());
+            let owner = app.scope().child().unwrap();
+            let view = page(&owner, context.clone(), None, supplied.then_some(input));
+            drop(view);
+            if retire_input_first {
+                input_owner.dispose();
+            }
+            owner.dispose();
+            if supplied && !retire_input_first {
+                assert!(
+                    input.get_untracked().is_empty(),
+                    "retiring the invitation must erase a still-live supplied input"
+                );
+            }
+            input_owner.dispose();
+            assert!(app.scope().is_alive());
+        }
+    }
 
     #[test]
     fn accepted_join_retry_reads_the_same_realm_without_an_invitation_secret() {
