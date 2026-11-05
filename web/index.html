@@ -5,10 +5,20 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="dark light">
     <title>Inkson</title>
+    <link rel="stylesheet" href="/startup.css">
     <link id="inkson-sapid-css" rel="stylesheet" href="/assets/sapid.css">
     <link id="inkson-app-css" rel="stylesheet" href="/assets/app.css">
   </head>
   <body>
+    <div id="arkret-startup" role="status" aria-live="polite" aria-busy="true">
+      <img class="startup-logo" src="/arkret-logo.svg" width="88" height="88" alt="Arkret">
+      <div class="startup-brand" aria-hidden="true">ARKRET</div>
+      <h1>Inkson</h1>
+      <p id="arkret-startup-message">Loading Inkson…</p>
+      <span class="startup-spinner" aria-hidden="true"></span>
+      <button id="arkret-startup-retry" type="button" hidden>Reload page</button>
+      <noscript><p>Enable JavaScript and WebAssembly to open Inkson.</p></noscript>
+    </div>
     <div id="app"></div>
     <script type="module" src="/bootstrap.js"></script>
   </body>
