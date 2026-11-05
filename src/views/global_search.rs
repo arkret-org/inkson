@@ -593,8 +593,21 @@ fn local_search_with_clock(
     {
         let ctx = context.clone();
         let owner = scope.downgrade();
+        let mut previous_fence = None;
         scope.effect(move || {
             let current = fence.get();
+            let local_revision = ctx.state_store.revision();
+            // Presentation revisions can invalidate this computation without
+            // changing the search inputs. Every local store write still
+            // invalidates: crypto and private material can change without a
+            // new durable current generation.
+            if previous_fence
+                .as_ref()
+                .is_some_and(|(old, revision)| old == &current && *revision == local_revision)
+            {
+                return;
+            }
+            previous_fence = Some((current.clone(), local_revision));
             #[cfg(all(target_arch = "wasm32", feature = "spec-conformance"))]
             tracing::warn!(
                 phase = "fence_changed",

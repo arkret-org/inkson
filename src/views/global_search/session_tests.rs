@@ -5,6 +5,67 @@ use super::*;
 use crate::state::current_index::search::tests::authorized_store;
 
 #[tokio::test(flavor = "current_thread")]
+async fn unrelated_presentation_revisions_keep_results_and_the_pending_search_owner() {
+    let (_directory, store, account, _) = authorized_store().await;
+    let (mut dom, harness) = mount(store, account);
+    settle(&mut dom, &harness, 1).await;
+    let (context, search) = harness.handles.borrow().clone().unwrap();
+    let results = search.results.get_untracked();
+    let completed_epoch = search.search_epoch.get_untracked();
+    for _ in 0..32 {
+        context.state_revision.revise(|value| *value += 1);
+        dom.app.flush().unwrap();
+        assert_eq!(
+            search.results.get_untracked(),
+            results,
+            "unrelated presentation updates cannot erase already authorized results"
+        );
+        assert_eq!(search.search_epoch.get_untracked(), completed_epoch);
+    }
+    (harness.retry)(());
+    assert!(search.loading.get_untracked());
+    let pending_epoch = search.search_epoch.get_untracked();
+    for _ in 0..32 {
+        context.state_revision.revise(|value| *value += 1);
+        dom.app.flush().unwrap();
+        assert_eq!(
+            search.search_epoch.get_untracked(),
+            pending_epoch,
+            "an unchanged holder and current cut cannot cancel the pending read"
+        );
+    }
+    settle(&mut dom, &harness, 1).await;
+    assert_eq!(search.results.get_untracked(), results);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn local_private_material_withdraws_results_without_advancing_the_current_cut() {
+    let (_directory, store, account, original) = authorized_store().await;
+    let principal = account.authority.principal_id.to_string();
+    let (mut dom, harness) = mount(store, account);
+    settle(&mut dom, &harness, 1).await;
+    let (context, search) = harness.handles.borrow().clone().unwrap();
+    let generation = context.state_store.read(|store| store.current_generation());
+    context.state_store.write(|store| {
+        store.save_plain_local_data(
+            format!("sidecar_context_locator:{principal}:search-private-source"),
+            json!({"internal_locator":original.event.event_id}).to_string(),
+        );
+    });
+    context.state_revision.revise(|value| *value += 1);
+    dom.app.flush().unwrap();
+    assert!(
+        search.results.get_untracked().is_empty(),
+        "new private local material must withdraw the retained body before another read"
+    );
+    settle(&mut dom, &harness, 0).await;
+    assert_eq!(
+        context.state_store.read(|store| store.current_generation()),
+        generation
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn native_host_search_uses_secure_grant_without_publishing_it_to_account_state() {
     let (_directory, mut store, account, original) = authorized_store().await;
     let grant = store.session_grant().unwrap();
