@@ -64,6 +64,10 @@ impl KanbanStatePool {
             state.inventory_owner = existing.inventory_owner;
             state.lifecycle_container_projection = existing.lifecycle_container_projection;
             state.lifecycle_strand_projection = existing.lifecycle_strand_projection;
+            // Creating a Board returns to the Realm route before acceptance.
+            // Both the queued write and its receipt intent survive that page.
+            state.command_queue = existing.command_queue;
+            state.awaiting_board_ops = existing.awaiting_board_ops;
         }
         self.boards.borrow_mut().insert(target, state);
         Some(state)
@@ -154,6 +158,43 @@ mod tests {
             second.lifecycle_strand_projection.try_version().unwrap(),
             strands_version + 1
         );
+        let operation = crate::operation::ak_ops::space_create(
+            target.realm.as_str(),
+            target.authority.principal_id.as_str(),
+            "board",
+            "Next Board",
+            None,
+            None,
+        )
+        .unwrap()
+        .build_sdk_event("inkson")
+        .unwrap();
+        let operation_id = operation.local_operation_id().to_string();
+        second.awaiting_board_ops.revise(|pending| {
+            pending.insert(operation_id.clone());
+        });
+        second.enqueue_operation(
+            "https://station.example".into(),
+            app.scope().cage(String::new()),
+            target.realm.to_string(),
+            operation,
+            Some(false),
+        );
+        let root = pool
+            .board(target.clone(), |_| {
+                panic!("Realm-root controller already exists")
+            })
+            .unwrap();
+        assert_eq!(
+            root.command_queue.get_untracked().len(),
+            1,
+            "returning to the Realm route must retain the queued Board create"
+        );
+        assert!(
+            root.awaiting_board_ops
+                .get_untracked()
+                .contains(&operation_id)
+        );
         let foreign = KanbanTarget {
             authority: crate::test_support::authority("ak:did_core:web:bob.example"),
             ..target.clone()
@@ -164,12 +205,16 @@ mod tests {
             })
             .unwrap();
         assert!(!Rc::ptr_eq(&owner, &other.inventory_owner.get_untracked()));
+        assert!(other.command_queue.get_untracked().is_empty());
+        assert!(other.awaiting_board_ops.get_untracked().is_empty());
         assert_eq!(
             other.inventory_owner.get_untracked().borrow().missing(),
             ProjectionReadSet::all()
         );
         pool.retire_session();
         assert_eq!(owner.borrow().missing(), ProjectionReadSet::all());
+        assert!(root.command_queue.get_untracked().is_empty());
+        assert!(root.awaiting_board_ops.get_untracked().is_empty());
         let replacement = pool
             .board(target, |scope| {
                 new_kanban_controller(scope, &Route::Kanban, vec![], None)

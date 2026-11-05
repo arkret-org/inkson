@@ -552,6 +552,88 @@ fn accepted_board_create_transition_prefers_the_newest_candidate() {
     assert!(still_pending.is_empty());
 }
 
+#[tokio::test]
+async fn accepted_board_create_at_root_replaces_a_seeded_selection_but_preserves_explicit_navigation()
+ {
+    for navigation in 0..4 {
+        let (app, context, _directory) = crate::views::settings::restored_surface_tests::harness();
+        let account =
+            crate::test_support::AccountFixture::new("ak:did_core:web:alice.example").build();
+        context
+            .state_store
+            .write(|store| store.switch_active_account(&account))
+            .unwrap();
+        context
+            .active_account
+            .revise(|value| *value = Some(account.clone()));
+        let root = kanban_board_route(PENDING_TEST_REALM, "");
+        context.route.revise(|value| *value = root.clone());
+        let old_board =
+            arkret_sdk::SpaceId::new("ak:space:AaDn_ypTG8vV4ToKfz6JtG2xnepF9QDlafPZCT-UYPyR")
+                .unwrap();
+        let controller = new_kanban_controller(app.scope(), &root, vec![], Some(old_board.clone()));
+        let queued = pending_board_create_record("queued");
+        context.state_store.write(|store| {
+            store.upsert_raw_operation(queued.operation_id, queued.realm_id, queued.payload);
+        });
+        super::super::effects::mount_effects(
+            app.scope(),
+            context.clone(),
+            controller,
+            app.scope().bond(Vec::new),
+            app.scope().bond(|| Ok(None)),
+            root.clone(),
+            PENDING_TEST_REALM.into(),
+            "https://station.example".into(),
+            context.token,
+            PENDING_TEST_REALM.into(),
+            PENDING_TEST_REALM.into(),
+            account.authority.clone(),
+            account.authority.principal_id.to_string(),
+            account.device_id.to_string(),
+            context.sync_cursor,
+            context.realm_live_epoch,
+        );
+        app.flush().unwrap();
+        assert!(
+            controller
+                .awaiting_board_ops
+                .get_untracked()
+                .contains(PENDING_TEST_OPERATION)
+        );
+        let selected_route = match navigation {
+            0 => root,
+            1 => kanban_board_route(PENDING_TEST_REALM, old_board.as_str()),
+            2 => kanban_board_route("another-realm", ""),
+            _ => Route::Dashboard,
+        };
+        context
+            .route
+            .revise(|value| *value = selected_route.clone());
+        let accepted = accepted_board_create_record();
+        context.state_store.write(|store| {
+            store.upsert_raw_operation(accepted.operation_id, accepted.realm_id, accepted.payload);
+        });
+        context.state_revision.revise(|revision| *revision += 1);
+        app.flush().unwrap();
+        let expected_route = if navigation != 0 {
+            selected_route
+        } else {
+            kanban_board_route(PENDING_TEST_REALM, PENDING_TEST_SPACE)
+        };
+        assert_eq!(context.route.get_untracked(), expected_route);
+        let expected_board = if navigation != 0 {
+            old_board
+        } else {
+            PENDING_TEST_SPACE.parse().unwrap()
+        };
+        assert_eq!(
+            controller.selected_board.get_untracked(),
+            Some(expected_board)
+        );
+    }
+}
+
 #[test]
 fn board_space_options_pick_board_spaces_from_projection() {
     let options = board_space_options_from_projection(&[

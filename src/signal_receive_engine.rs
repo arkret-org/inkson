@@ -866,6 +866,9 @@ impl InksonSignalSink {
                 "scope_ref": signal.scope_ref(), "strand_id": typing.strand_id,
                 "sender_actor_id": signal.actor_id(), "sender_endpoint": signal.sender_endpoint(),
                 "payload_sequence": signal.payload_sequence(), "typing": typing.typing,
+                "observed_at": now, "expires_at": signal.expires_at,
+                "product_authority_present": signal.product_authority.is_some(),
+                "typing_product_allowed": self.typing_product_allowed(signal, &typing.strand_id, now),
                 "admitted_and_decrypted": true, "target_scope_matches": target_scope_matches,
                 "target_scope_error": target_scope_error,
                 "live_applied": live_applied, "visible_count": visible_count
@@ -1525,7 +1528,9 @@ async fn run_signal_receive_attempt(
                         record_signal_receiver_evidence(
                             principal.clone(),
                             epoch,
-                            serde_json::json!({"envelope_digest": digest, "receive_stage": "frame_received"}),
+                            serde_json::json!({"envelope_digest": digest, "receive_stage": "frame_received",
+                                "sent_at": envelope.sent_at, "expires_at": envelope.expires_at,
+                                "received_at": crate::clock::now_utc()}),
                         );
                         (principal, epoch, digest)
                     })

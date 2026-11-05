@@ -117,11 +117,6 @@ pub(super) fn mount_effects(
 ) {
     let state_store = app.state_store.clone();
     let weak = scope.downgrade();
-    // Board-create operation ids still pending as of the last reconciliation
-    // pass. Remembered across passes so the receipt migration below can detect
-    // the pending -> accepted TRANSITION (an accepted row is no longer
-    // pending, so it cannot be found by scanning the pending set).
-    let awaiting_board_ops = scope.cage(BTreeSet::<String>::new());
     let KanbanController {
         board_space_options,
         selected_board,
@@ -159,6 +154,7 @@ pub(super) fn mount_effects(
         card_synthesis_selected_revision_id,
         member_handle_fetching: _,
         command_queue,
+        awaiting_board_ops,
         board_status,
         ..
     } = controller;
@@ -168,8 +164,8 @@ pub(super) fn mount_effects(
     // receipt/backfill merge records the final Event id, so the migration is
     // detected as a TRANSITION: diff the remembered pending operation ids
     // against the current set and resolve the departed ones through the
-    // holder-local alias. When nothing is selected (the create handler clears
-    // the selection; a user who switched away is never hijacked), commit the
+    // holder-local alias. While the user remains at this Realm's Board root,
+    // commit the
     // accepted Space id selection + canonical route in one step. The confirmed
     // option appears from the same op-log projection, so a repeated receipt or
     // a backfill-first ordering cannot duplicate it. Declared FIRST so the
@@ -201,25 +197,23 @@ pub(super) fn mount_effects(
                 let Some(space_id) = accepted else {
                     return;
                 };
-                // The confirmed-options effect can observe the accepted Space in
-                // the same render pass and seed this exact selection first.  That
-                // ordering must not suppress the second half of the migration:
-                // installing the canonical Board route.  A genuinely different
-                // user selection still wins and is never hijacked.
-                if selected_board
-                    .get_untracked()
-                    .as_ref()
-                    .is_some_and(|selected| selected != &space_id)
+                // A retained controller may have seeded an older Board while
+                // the create was in flight. Only the actual route distinguishes
+                // that cache from an explicit user navigation.
+                let accepted_route = kanban_board_route(&route_realm_id, space_id.as_str());
+                let current_route = app.route.get_untracked();
+                if current_route != kanban_board_route(&route_realm_id, "")
+                    && current_route != accepted_route
                 {
                     return;
                 }
-                if selected_board.get_untracked().is_none() {
+                if selected_board.get_untracked().as_ref() != Some(&space_id) {
                     selected_board.revise(|value| {
                         let next = Some(space_id.clone());
                         *value = next;
                     });
                 }
-                app.replace_route(kanban_board_route(&route_realm_id, space_id.as_str()));
+                app.replace_route(accepted_route);
             });
         };
     }

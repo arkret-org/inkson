@@ -77,6 +77,7 @@ pub(super) struct KanbanController {
     pub editing_column_title: Cage<String>,
     pub board_status: Cage<String>,
     pub command_queue: Cage<std::collections::VecDeque<KanbanCommand>>,
+    pub(super) awaiting_board_ops: Cage<BTreeSet<String>>,
 }
 
 impl KanbanController {
@@ -167,6 +168,7 @@ pub(super) fn new_kanban_controller(
         editing_column_title: scope.cage(String::new()),
         board_status: scope.cage(String::new()),
         command_queue: scope.cage(std::collections::VecDeque::new()),
+        awaiting_board_ops: scope.cage(BTreeSet::new()),
     }
 }
 
@@ -205,5 +207,6 @@ impl KanbanController {
             .card_edit_calendar
             .try_revise(|value| *value = CalendarCardFields::default());
         let _ = self.command_queue.try_revise(|value| value.clear());
+        let _ = self.awaiting_board_ops.try_revise(BTreeSet::clear);
     }
 }
