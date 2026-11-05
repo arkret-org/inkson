@@ -229,6 +229,12 @@ pub use browser::PlatformWebSocket;
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::PlatformWebSocket;
 
+/// Exercise the actual browser callback owner without session or Station fixtures.
+#[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+pub async fn open_for_lifetime_test(base_url: &str) -> garth::Result<PlatformWebSocket> {
+    PlatformWebSocket::open(base_url).await
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 mod native {
     use futures_util::{SinkExt, StreamExt};
@@ -369,8 +375,8 @@ mod browser {
     pub struct PlatformWebSocket {
         socket: web_sys::WebSocket,
         inbox: Rc<RefCell<Inbox>>,
-        // Kept alive for the socket's lifetime; dropping a closure detaches the
-        // handler and would silently stop delivery.
+        // Keep callback environments alive until Drop explicitly detaches the
+        // JavaScript handlers. Dropping a Closure alone does not detach it.
         _on_message: Closure<dyn FnMut(MessageEvent)>,
         _on_close: Closure<dyn FnMut(CloseEvent)>,
         _on_error: Closure<dyn FnMut(web_sys::Event)>,
@@ -419,12 +425,23 @@ mod browser {
             });
             socket.set_onopen(Some(on_open.as_ref().unchecked_ref()));
 
+            // Own the installed callbacks before awaiting: an unsuccessful or
+            // cancelled handshake must retire them just like an open socket.
+            let connection = Self {
+                socket,
+                inbox,
+                _on_message: on_message,
+                _on_close: on_close,
+                _on_error: on_error,
+                _on_open: on_open,
+            };
+
             // Wait for the handshake to settle. `protocol` is only meaningful
             // once the socket is open, and §2 makes a missing `arkret.v1` a
             // hard stop rather than a degraded connection.
             loop {
                 {
-                    let state = inbox.borrow();
+                    let state = connection.inbox.borrow();
                     if state.failed {
                         return Err(garth::Error::Protocol(
                             "the WebSocket upgrade failed".to_owned(),
@@ -436,20 +453,26 @@ mod browser {
                 }
                 crate::runtime_helpers::sleep_for(POLL).await;
             }
-            if socket.protocol() != arkret_wire::websocket_binding::WEBSOCKET_SUBPROTOCOL {
+            if connection.socket.protocol() != arkret_wire::websocket_binding::WEBSOCKET_SUBPROTOCOL
+            {
                 return Err(garth::Error::Protocol(
                     "the service did not select the arkret.v1 subprotocol".to_owned(),
                 ));
             }
 
-            Ok(Self {
-                socket,
-                inbox,
-                _on_message: on_message,
-                _on_close: on_close,
-                _on_error: on_error,
-                _on_open: on_open,
-            })
+            Ok(connection)
+        }
+    }
+
+    impl Drop for PlatformWebSocket {
+        fn drop(&mut self) {
+            // Clear handlers while every Rust closure is still alive, then
+            // close the transport. A queued browser CloseEvent is now inert.
+            self.socket.set_onmessage(None);
+            self.socket.set_onclose(None);
+            self.socket.set_onerror(None);
+            self.socket.set_onopen(None);
+            let _ = self.socket.close();
         }
     }
 
