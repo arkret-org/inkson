@@ -24,6 +24,24 @@ struct KanbanProjectionSnapshot {
     strands: Option<Vec<crate::state::projection_views::StrandProjectionView>>,
 }
 
+async fn fetch_kanban_display_bootstrap(
+    http: arkret_sdk::http_client::Client,
+    realm_id: &str,
+    needed: ProjectionReadSet,
+    read_fence: Option<crate::state::RealmListReadFence>,
+    current: &crate::state::CurrentIndex,
+) -> anyhow::Result<Option<KanbanProjectionSnapshot>> {
+    // A cold page can mount before the Account owner publishes its memory
+    // view. A complete durable cut already owns this baseline; let that owner
+    // finish its normal publication instead of issuing duplicate display IO.
+    if current.read_complete_cut(realm_id).await?.is_some() {
+        return Ok(None);
+    }
+    fetch_kanban_projection_snapshot(http, realm_id, needed, read_fence)
+        .await
+        .map(Some)
+}
+
 async fn fetch_kanban_projection_snapshot(
     http: arkret_sdk::http_client::Client,
     realm_id: &str,
@@ -767,6 +785,7 @@ pub(super) fn mount_effects(
                 };
                 let credential = token.get_untracked().clone();
                 let request_fence = list_fence.clone();
+                let request_store = state_store.clone();
                 #[cfg(all(target_arch = "wasm32", feature = "spec-conformance"))]
                 tracing::warn!(generation = scope.2, live_epoch = request.2, spaces = needed.spaces, strands = needed.strands, "kanban projection fetch begins");
                 let result = with_authed_api(&scope.0, credential, move |api| async move {
@@ -782,11 +801,21 @@ pub(super) fn mount_effects(
                             }),
                         "Kanban inventory belongs to another Account or Device session"
                     );
-                    let snapshot = fetch_kanban_projection_snapshot(
+                    let current = crate::state::CurrentIndex::open_committed(
+                        &expected_account,
+                        request_store.read(|store| store.current_index_location()),
+                        || request_store.read(|store| {
+                            anyhow::ensure!(store.active_authority().as_ref() == Some(&expected_account)
+                                && !store.current_reset_required(), "Kanban inventory current scope changed");
+                            Ok(store.current_generation())
+                        }),
+                    ).await?;
+                    let snapshot = fetch_kanban_display_bootstrap(
                         bound.http_client()?,
                         &realm,
                         needed,
                         Some(request_fence),
+                        &current,
                     )
                     .await?;
                     bound.check_session()?;
@@ -809,7 +838,8 @@ pub(super) fn mount_effects(
                     || store.current_product_view_stamp(&scope.1).is_some()
                 ){continue;}
                 match result {
-                    Ok(snapshot) => {
+                    Ok(None) => {}
+                    Ok(Some(snapshot)) => {
                         owner.borrow_mut().cover_if_latest(
                             &request,
                             ProjectionReadSet {
@@ -1021,6 +1051,194 @@ mod projection_read_tests {
     use std::time::{Duration, Instant};
 
     use super::*;
+
+    #[tokio::test]
+    async fn cold_complete_current_cut_does_not_refetch_display_lists() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        use arkret_sdk::http_client::own_station_results::{
+            OwnStationSessionSnapshot, OwnStationSessionSource, OwnStationStateClient,
+        };
+        for mode in [
+            "complete", "missing", "partial", "foreign", "reset", "poison",
+        ] {
+            let realm = "ak:realm:AY789mrKRCQEVlbVgiTgLdjVO5oCMJiUCrF-D-JlRNxI";
+            let requested_realm = if mode == "foreign" {
+                "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
+            } else {
+                realm
+            };
+            let commit = "ak:realm_commit:AT33EWBTXdTx5CjY-ogbIIF2T4vh-v7jCMCQ80Fss2Rq";
+            let directory = tempfile::tempdir().unwrap();
+            let mut store =
+                crate::state::LocalStateStore::with_path(directory.path().join("state.json"));
+            assert!(store.switch_test_account("did:web:alice.example"));
+            let account = store.active_authority().unwrap();
+            let index =
+                crate::state::CurrentIndex::open(&account, 0, store.current_index_location())
+                    .await
+                    .unwrap();
+            let heads = json!([{"stream_ref":{"kind":"realm","realm_id":realm},
+            "stream_position":1,"commit_id":commit}]);
+            let frame = serde_json::from_value(json!({"kind":"delta","cursor":"ak:cursor:YQ",
+            "realms":{realm:{"current":{"realm_id":realm,"governance_generation":"1",
+                "stream_heads":heads,"entries":[]},
+                "baseline":{"snapshot_cursor":"ak:cursor:YQ","cut_revision":1,
+                    "coverage":{"realm_id":realm,"stream_heads":heads,
+                        "complete_for_authorized_streams":true},"complete":mode != "partial"}}}}))
+            .unwrap();
+            if mode != "missing" {
+                let stage = index.stage_frame(0, &frame).await.unwrap();
+                store.commit_current_stage_for_test(stage).unwrap();
+            }
+            if mode == "reset" {
+                let reset = serde_json::from_value(json!({"kind":"resync_required"})).unwrap();
+                let stage = index.stage_frame(1, &reset).await.unwrap();
+                store.commit_current_stage_for_test(stage).unwrap();
+            }
+            drop(index);
+            let current = crate::state::CurrentIndex::open_committed(
+                &account,
+                store.current_index_location(),
+                || Ok(store.current_generation()),
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                current
+                    .read_complete_cut(requested_realm)
+                    .await
+                    .unwrap()
+                    .is_some(),
+                mode == "complete" || mode == "poison",
+                "{mode}"
+            );
+            if mode == "poison" {
+                current.poison();
+            }
+            assert!(
+                store.current_product_view().is_none(),
+                "a cold presentation has no in-memory view"
+            );
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            listener.set_nonblocking(true).unwrap();
+            let base = format!("http://{}/", listener.local_addr().unwrap());
+            let stopped = Arc::new(AtomicBool::new(false));
+            let stop = stopped.clone();
+            let server = std::thread::spawn(move || {
+                let deadline = Instant::now() + Duration::from_secs(10);
+                let mut count = 0;
+                while !stop.load(Ordering::Acquire) && count < 2 {
+                    match listener.accept() {
+                        Ok((mut connection, _)) => {
+                            connection.set_nonblocking(false).unwrap();
+                            connection
+                                .set_read_timeout(Some(Duration::from_secs(2)))
+                                .unwrap();
+                            let mut bytes = Vec::new();
+                            let mut buffer = [0; 4096];
+                            while !bytes.windows(4).any(|value| value == b"\r\n\r\n") {
+                                let n = connection.read(&mut buffer).unwrap();
+                                assert!(n > 0);
+                                bytes.extend_from_slice(&buffer[..n]);
+                            }
+                            let headers = String::from_utf8(bytes).unwrap();
+                            let collection = if headers.starts_with("GET /_arkret/self/realms/")
+                                && headers.lines().next().unwrap().contains("/spaces?")
+                            {
+                                "spaces"
+                            } else {
+                                assert!(headers.lines().next().unwrap().contains("/strands?"));
+                                "strands"
+                            };
+                            let body = json!({"realm_id":requested_realm,(collection):[],"total_count":0,"has_more":false}).to_string();
+                            write!(connection,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{}",body.len(),body).unwrap();
+                            count += 1;
+                        }
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            assert!(
+                                Instant::now() < deadline,
+                                "owned inventory fixture did not terminate"
+                            );
+                            std::thread::sleep(Duration::from_millis(5));
+                        }
+                        Err(error) => panic!("{error}"),
+                    }
+                }
+                count
+            });
+            let binding = arkret_sdk::StationConnectionBinding {
+                service_id: account.station_id.clone(),
+                base_url: base.clone(),
+                trust_domain: arkret_sdk::TrustDomainId::new("ak:trust_domain:station.example")
+                    .unwrap(),
+                authentication_metadata: arkret_sdk::AuthenticationMetadata::minimal(),
+            };
+            struct Source(OwnStationSessionSnapshot);
+            impl OwnStationSessionSource for Source {
+                fn snapshot(&self) -> arkret_sdk::http_client::Result<OwnStationSessionSnapshot> {
+                    Ok(self.0.clone())
+                }
+            }
+            let session = OwnStationSessionSnapshot::new(
+                binding.clone(),
+                account.clone(),
+                account.station_id,
+                arkret_wire::SessionGrantId::from_issuance_digest([34; 32]),
+                1,
+                "cold-inventory-fixture".into(),
+            )
+            .unwrap()
+            .with_provider_identity(Default::default());
+            let raw = arkret_sdk::http_client::ClientBuilder::new(url::Url::parse(&base).unwrap())
+                .allow_insecure_localhost()
+                .auth(arkret_sdk::http_client::Auth::Bearer(
+                    "cold-inventory-fixture".into(),
+                ))
+                .build()
+                .unwrap();
+            let http = OwnStationStateClient::new(raw, binding, Arc::new(Source(session)))
+                .unwrap()
+                .http_client()
+                .unwrap();
+            let result = fetch_kanban_display_bootstrap(
+                http,
+                requested_realm,
+                ProjectionReadSet::all(),
+                None,
+                &current,
+            )
+            .await;
+            stopped.store(true, Ordering::Release);
+            let requests = server.join().unwrap();
+            if mode == "poison" {
+                assert_eq!(
+                    requests, 0,
+                    "a poisoned index fails closed before display HTTP"
+                );
+                assert!(result.is_err());
+            } else if mode == "complete" {
+                assert_eq!(
+                    requests, 0,
+                    "a durable complete cut already owns the display baseline"
+                );
+                assert!(result.unwrap().is_none());
+            } else {
+                assert_eq!(
+                    requests, 2,
+                    "a missing complete cut still bootstraps both display lists: {mode}"
+                );
+                let snapshot = result.unwrap().unwrap();
+                assert_eq!(snapshot.containers, Some(Vec::new()));
+                assert_eq!(snapshot.strands, Some(Vec::new()));
+            }
+            assert!(
+                store.current_product_view().is_none(),
+                "bootstrap must not publish a second product view"
+            );
+        }
+    }
 
     #[tokio::test]
     async fn independent_inventory_reads_start_together_without_an_event_scan() {
