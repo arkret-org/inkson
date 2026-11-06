@@ -7,6 +7,7 @@ pub(crate) struct DirectMessageContext {
     pub query_sequence: u64,
     pub authority_source: arkret_wire::AuthoritySourceId,
     pub authority_event_ref: arkret_sdk::EventId,
+    pub main_strand_id: arkret_sdk::StrandId,
     pub group_state_ref: arkret_sdk::EventId,
     pub structure_only: bool,
 }
@@ -166,6 +167,7 @@ mod tests {
                 query_sequence: sequence,
                 authority_source: arkret_wire::AuthoritySourceId::DirectConversationParticipantV1,
                 authority_event_ref: reference.clone(),
+                main_strand_id: arkret_sdk::StrandId::from_event_id(&reference),
                 group_state_ref: reference,
                 structure_only: false,
             }),
@@ -313,6 +315,9 @@ mod tests {
                 authority_event_ref: arkret_sdk::EventId::from_digest(
                     arkret_sdk::DigestSuite::Sha256,
                     [7; 32],
+                ),
+                main_strand_id: arkret_sdk::StrandId::from_event_id(
+                    &arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [9; 32]),
                 ),
                 group_state_ref: arkret_sdk::EventId::from_digest(
                     arkret_sdk::DigestSuite::Sha256,

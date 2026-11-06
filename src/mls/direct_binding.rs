@@ -402,6 +402,7 @@ pub(crate) async fn install_resolved_message_context(
                 query_sequence,
                 authority_source,
                 authority_event_ref,
+                main_strand_id: coordinates.main_strand_id.clone(),
                 group_state_ref,
                 structure_only,
             }),
@@ -980,7 +981,9 @@ mod tests {
             handle.write(|state| state.set_direct_message_context(realm.into(), Some(crate::state::DirectMessageContext {
                 account: account.clone(), session_epoch: epoch, query_sequence: sequence,
                 authority_source: arkret_wire::AuthoritySourceId::DirectConversationBootstrapParticipantV1,
-                authority_event_ref: founding.clone(), group_state_ref: group.clone(), structure_only: false,
+                authority_event_ref: founding.clone(),
+                main_strand_id: arkret_sdk::StrandId::from_event_id(&founding),
+                group_state_ref: group.clone(), structure_only: false,
             })));
             let coordinates = serde_json::from_value(json!({
                 "pair_key":format!("sha256:{}", "ab".repeat(32)), "realm_id":realm,
@@ -1034,6 +1037,10 @@ mod tests {
                 arkret_wire::AuthoritySourceId::DirectConversationParticipantV1
             );
             assert_eq!(context.authority_event_ref, binding);
+            assert_eq!(
+                context.main_strand_id,
+                found.coordinates().unwrap().main_strand_id,
+            );
         }
     }
 

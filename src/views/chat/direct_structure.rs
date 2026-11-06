@@ -821,7 +821,6 @@ pub(super) fn direct_structure_panel(
     let topic_target = scope.cage(String::new());
     let status = scope.cage(String::new());
     let pending = scope.cage(false);
-    let main = scope.cage(None::<String>);
     let target = arkret_sdk::RealmId::new(&props.realm)
         .ok()
         .map(|realm_id| arkret_sdk::ScopeRef::Realm { realm_id });
@@ -831,37 +830,20 @@ pub(super) fn direct_structure_panel(
         target.into(),
         props.device.clone().into(),
     );
-    let task_scope = scope.downgrade();
-    let query_context = context.clone();
-    let query_props = props.clone();
-    let request = scope.cage(None::<(String, String)>);
-    scope.effect(move || {
-        let _=query_context.state_revision.get();
-        let account=query_context.active_account.get();
-        let credential=query_props.token.get();
-        let binding=query_context.state_store.read(|store| store.direct_structure_context(&query_props.realm,&arkret_sdk::ActorId::account(query_props.account.clone())));
-        let Some(binding)=binding.filter(|binding|binding.authority_source==arkret_wire::AuthoritySourceId::DirectConversationParticipantV1) else {
-            if main.get_untracked().is_some() { { let next_value = None; main.revise(|current| *current = next_value) }; }
-            if request.get_untracked().is_some() { { let next_value = None; request.revise(|current| *current = next_value) }; }
-            return;
-        };
-        let key=(binding.authority_event_ref.to_string(),credential.clone());
-        if request.get_untracked().as_ref()==Some(&key) { return; }
-        let peer=query_context.state_store.read(|store| store.direct_conversation_peer(&query_props.realm));
-        let Some(peer)=peer else { return; };
-        let Some(scope)=task_scope.upgrade() else { return; };
-        { let next_value = Some(key.clone()); request.revise(|current| *current = next_value) };
-        let context=query_context.clone(); let realm=query_props.realm.clone();
-        let generation=context.session_generation.get_untracked();
-        let base=context.base_url.get_untracked();
-        if let Err(error)=scope.spawn(async move {
-            let result=crate::transport::auth::with_authed_sdk_client(&base,credential,|http|async move {
-                let outcome=http.direct_conversation_resolve(&arkret_sdk::direct_conversation::DirectConversationResolveRequestBody {peer}).await?;
-                Ok(outcome.coordinates().filter(|coordinates|coordinates.realm_id.as_str()==realm).map(|coordinates|coordinates.main_strand_id.to_string()))
-            }).await;
-            if !context.session_matches(generation,&account)||request.get_untracked().as_ref()!=Some(&key) { return; }
-            if let Ok(value)=result && main.get_untracked()!=value {{ let next_value = value; main.revise(|current| *current = next_value) };}
-        }) { scope.report_error(error); }
+    let main = scope.bond({
+        let context = context.clone();
+        let props = props.clone();
+        move || {
+            let _ = context.state_revision.get();
+            context.state_store.read(|store| {
+                store
+                    .direct_structure_context(
+                        &props.realm,
+                        &arkret_sdk::ActorId::account(props.account.clone()),
+                    )
+                    .map(|binding| binding.main_strand_id.to_string())
+            })
+        }
     });
     let reply_source = scope.bond({
         let context = context.clone();

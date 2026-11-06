@@ -53,10 +53,17 @@ fn board_allowed(scope: &Scope, board: Board) -> View {
         })
     };
     let switch_name = app.translated(scope, "kanban.ui.switch_board");
+    let switch_semantics = scope.bond(move || {
+        Some(Box::new(glory::render::Semantics {
+            expanded: Some(c.board_popover.get() == BoardToolbarPopover::SelectBoard),
+            ..Default::default()
+        }))
+    });
     let make_switch = move || {
         glory::ui::button()
             .class("board-select-button board-space-select-button")
             .name(switch_name)
+            .semantics(switch_semantics)
             .fill(vec![
                 crate::components::ui_icon("board"),
                 super::card_detail_surface::inline_label("board-select-button-label", title),
