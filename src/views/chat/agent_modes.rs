@@ -63,6 +63,11 @@ fn mode_reads<K: Clone + PartialEq + 'static>(
     let observed_external = externally_current.clone();
     scope.effect(move || {
         let key = observed_key.get();
+        // The snapshot also observes unrelated projection writes. They do not
+        // invalidate this verified cut or cancel its in-flight request.
+        if observed_fence.borrow().0 == key && running.borrow().is_some() {
+            return;
+        }
         let generation = {
             let mut state = observed_fence.borrow_mut();
             if state.0 != key {
@@ -190,6 +195,53 @@ mod tests {
     use std::cell::Cell;
 
     use super::*;
+    #[test]
+    fn independent_projection_updates_preserve_verified_mode_at_unchanged_cut() {
+        let (app, executor) = host();
+        let scope = app.scope();
+        let projection = scope.cage(0_u64);
+        let head = scope.cage(7_u64);
+        let key = scope.bond(move || {
+            let _ = projection.get();
+            head.get()
+        });
+        let account = crate::test_support::authority("did:web:agent.example");
+        let accepted = Modes::from([(account, arkret_sdk::AgentInteractionMode::Private)]);
+        let response = Rc::new(RefCell::new(Some(accepted.clone())));
+        let modes = mode_reads(
+            scope,
+            Vary::<u64>::from(key),
+            Rc::new(|_| 1),
+            Rc::new(move |_| {
+                let response = response.borrow_mut().take();
+                Box::pin(async move {
+                    match response {
+                        Some(value) => value,
+                        None => std::future::pending().await,
+                    }
+                })
+            }),
+            Rc::new(|_| Box::pin(std::future::pending())),
+            Rc::new(|_| true),
+            "test",
+        );
+        settle(&app, &executor);
+        assert_eq!(modes.get_untracked(), accepted);
+        projection.revise(|value| *value += 1);
+        settle(&app, &executor);
+        assert_eq!(
+            modes.get_untracked(),
+            accepted,
+            "unrelated projection updates cannot retire an unchanged verified Realm mode cut"
+        );
+        head.revise(|value| *value += 1);
+        settle(&app, &executor);
+        assert!(
+            modes.get_untracked().is_empty(),
+            "a changed Realm cut must revoke the previous mode until independently verified"
+        );
+    }
+
     #[test]
     fn verified_reads_preserve_unknown_and_retry_with_exact_key_and_owner_fences() {
         let (app, executor) = host();
